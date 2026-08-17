@@ -87,6 +87,23 @@ const machinePromptAssetsListTypesMock = vi.hoisted(() => vi.fn(async () => ({
     },
   ],
 })));
+const administrationTargetState = vi.hoisted(() => ({
+  current: {
+    target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+    serverId: 'server-1',
+    machine: {
+      id: 'machine-1',
+      metadata: {
+        displayName: 'Laptop',
+        host: 'laptop.local',
+      },
+    },
+  } as {
+    target: { serverIdentityId: string; machineId: string };
+    serverId: string;
+    machine: { id: string; metadata: { displayName: string; host: string } };
+  } | null,
+}));
 installPromptRegistriesCommonModuleMocks({
   modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -100,15 +117,6 @@ installPromptRegistriesCommonModuleMocks({
   storage: async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createPartialStorageModuleMock(importOriginal, {
-      useAllMachines: () => [
-        {
-          id: 'machine-1',
-          metadata: {
-            displayName: 'Laptop',
-            host: 'laptop.local',
-          },
-        },
-      ],
       useSettingMutable: (key: string) => {
         if (key === 'promptRegistrySourcesV1') return [{ v: 1, sources: [] }, vi.fn()];
         if (key === 'promptExternalLinksV1') return [{ v: 1, links: [] }, vi.fn()];
@@ -138,6 +146,8 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
   layout: { maxWidth: 1000 },
+  useLayoutMaxWidth: () => 1000,
+  useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -163,10 +173,20 @@ vi.mock('@/components/settings/contextBar/ContextBar', () => ({
 
 vi.mock('@/components/settings/contextBar/useContextBarSelection', () => ({
   useContextBarSelection: () => ({
-    machineId: 'machine-1',
-    setMachineId: vi.fn(),
     workspacePath: '/tmp/project',
     setWorkspacePath: vi.fn(),
+  }),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+  MachineAdministrationTargetSelector: (props: any) => React.createElement('MachineAdministrationTargetSelector', props),
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+  useMachineAdministrationTargetSelection: () => ({
+    selectedTarget: administrationTargetState.current?.target ?? null,
+    canExecute: administrationTargetState.current !== null,
+    resolveExecutionTarget: () => administrationTargetState.current,
   }),
 }));
 
@@ -209,6 +229,17 @@ describe('PromptRegistryItemDetailsScreen', () => {
     createPromptRegistrySkillArtifactFromFetchedItemMock.mockClear();
     installPromptRegistryItemMock.mockClear();
     machinePromptAssetsListTypesMock.mockClear();
+    administrationTargetState.current = {
+      target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+      serverId: 'server-1',
+      machine: {
+        id: 'machine-1',
+        metadata: {
+          displayName: 'Laptop',
+          host: 'laptop.local',
+        },
+      },
+    };
   });
 
   it('renders the utf8 bundle preview without depending on Buffer.from at runtime (web)', async () => {
@@ -225,7 +256,6 @@ describe('PromptRegistryItemDetailsScreen', () => {
       const { PromptRegistryItemDetailsScreen } = await import('./PromptRegistryItemDetailsScreen');
 
       const tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
-        machineId: 'machine-1',
         sourceId: 'skills_sh:featured',
         itemId: 'skills_sh:featured:item-1',
         configuredSources: [],
@@ -247,7 +277,6 @@ describe('PromptRegistryItemDetailsScreen', () => {
 
     let tree!: ReactTestRenderer;
     tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
-          machineId: 'machine-1',
           sourceId: 'skills_sh:featured',
           itemId: 'skills_sh:featured:item-1',
           configuredSources: [],
@@ -260,6 +289,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
         sourceId: 'skills_sh:featured',
         itemId: 'skills_sh:featured:item-1',
       }),
+      { serverId: 'server-1' },
     );
 
     const importRow = tree.findByTestId('promptRegistries.details.import');
@@ -280,7 +310,6 @@ describe('PromptRegistryItemDetailsScreen', () => {
 
     let tree!: ReactTestRenderer;
     tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
-          machineId: 'machine-1',
           sourceId: 'skills_sh:featured',
           itemId: 'skills_sh:featured:item-1',
           configuredSources: [],
@@ -296,6 +325,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
 
     expect(installPromptRegistryItemMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
       machineId: 'machine-1',
+      serverId: 'server-1',
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:item-1',
       previewOnly: true,
@@ -312,6 +342,8 @@ describe('PromptRegistryItemDetailsScreen', () => {
       { confirmText: 'promptLibrary.registriesItemInstallAction' },
     );
     expect(installPromptRegistryItemMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      machineId: 'machine-1',
+      serverId: 'server-1',
       previewOnly: false,
     }));
     expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-2');
@@ -322,7 +354,6 @@ describe('PromptRegistryItemDetailsScreen', () => {
 
     let tree!: ReactTestRenderer;
     tree = (await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
-          machineId: 'machine-1',
           sourceId: 'skills_sh:featured',
           itemId: 'skills_sh:featured:item-1',
           configuredSources: [],
@@ -340,5 +371,21 @@ describe('PromptRegistryItemDetailsScreen', () => {
         scope: 'project',
       }),
     }));
+  });
+
+  it('does not use the route machine id when no fresh Administration target is available', async () => {
+    administrationTargetState.current = null;
+    const { PromptRegistryItemDetailsScreen } = await import('./PromptRegistryItemDetailsScreen');
+
+    await renderScreen(React.createElement(PromptRegistryItemDetailsScreen, {
+      sourceId: 'skills_sh:featured',
+      itemId: 'skills_sh:featured:item-1',
+      configuredSources: [],
+    }));
+    await act(async () => {});
+
+    expect(machinePromptRegistriesDownloadItemMock).not.toHaveBeenCalled();
+    expect(machinePromptAssetsListTypesMock).not.toHaveBeenCalled();
+    expect(installPromptRegistryItemMock).not.toHaveBeenCalled();
   });
 });

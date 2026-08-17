@@ -2,6 +2,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { resolveWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import {
     buildUploadEntryPlan as buildWorkspaceUploadEntryPlan,
+    type UploadConflictResolutionRequest,
     useWorkspaceFileTransfers as useWorkspaceFileTransfersImpl,
     type UploadConflictStrategy,
     type WorkspaceDownloadState,
@@ -16,7 +17,7 @@ export async function buildUploadEntryPlan(input: Readonly<{
     sessionId: string;
     entries: readonly WorkspaceUploadEntry[];
     destinationDir: string;
-    onResolveConflicts?: ((params: Readonly<{ conflictCount: number; totalCount: number }>) => Promise<UploadConflictStrategy>) | null;
+    onResolveConflicts?: ((params: UploadConflictResolutionRequest) => Promise<UploadConflictStrategy>) | null;
 }>): Promise<{ ok: true; tasks: Array<{ entry: WorkspaceUploadEntry; targetPath: string; overwrite: boolean; sizeBytes: number }> } | { ok: false; error: string }> {
     return await buildWorkspaceUploadEntryPlan({
         workspaceScope: resolveWorkspaceScopeForSession(input.sessionId),
@@ -29,7 +30,7 @@ export async function buildUploadEntryPlan(input: Readonly<{
 export function useWorkspaceFileTransfers(params: Readonly<{
     sessionId: string;
     maxConcurrentUploads?: number;
-    onResolveUploadConflicts?: ((params: Readonly<{ conflictCount: number; totalCount: number }>) => Promise<UploadConflictStrategy>) | null;
+    onResolveUploadConflicts?: ((params: UploadConflictResolutionRequest) => Promise<UploadConflictStrategy>) | null;
     onAfterUploadSuccess?: (() => void) | null;
 }>): Readonly<{
     uploadState: WorkspaceUploadState;

@@ -1,12 +1,5 @@
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 
-export function resolveNewSessionAgentPickerEntryByTargetKey(params: Readonly<{
-    resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
-    selectedId: string;
-}>): ResolvedBackendCatalogEntry | null {
-    return params.resolvedBackendEntries.find((entry) => entry.backendTargetKey === params.selectedId) ?? null;
-}
-
 export function resolveNewSessionAgentPickerSingleSelectFallbackEntry(params: Readonly<{
     selectableBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedBackendTargetKey: string;

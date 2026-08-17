@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -8,6 +7,7 @@ import { t } from '@/text';
 import { useAppUpdateStatus } from '@/updates/useAppUpdateStatus';
 
 import { AppUpdateStatusPopover } from './AppUpdateStatusPopover';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type AppUpdateStatusTagProps = Readonly<{
     fallback?: React.ReactNode;
@@ -69,7 +69,7 @@ export function AppUpdateStatusTag(props: AppUpdateStatusTagProps) {
                 accessibilityState={{ expanded: open }}
                 style={({ pressed }) => [styles.tag, pressed ? styles.tagPressed : null]}
             >
-                <Ionicons name={model.iconName} size={14} color={toneColor} />
+                <Icon name={model.iconName} size={14} color={toneColor} />
                 <Text style={[styles.label, { color: toneColor }]} numberOfLines={1}>
                     {props.labelVariant === 'short' ? t('updateBanner.updateShort') : model.label}
                 </Text>

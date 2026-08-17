@@ -1,10 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import type { RightSidebarTabDefinition } from './rightSidebarTabRegistry';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     tabList: {
@@ -68,9 +68,12 @@ export function RightSidebarIconTabBar<TTabId extends string>(props: Readonly<{
                         aria-selected={active}
                         disabled={disabled}
                     >
-                        <Ionicons
+                        <Icon
                             name={tab.icon}
-                            size={18}
+                            // A tab is the pane's primary control and the only thing naming it —
+                            // there is no label underneath. At the list-row step it read as a hint
+                            // rather than a switch, adrift in a 44pt target.
+                            size={ICON_SIZE.md}
                             color={active ? theme.colors.text.primary : theme.colors.text.secondary}
                         />
                     </Pressable>

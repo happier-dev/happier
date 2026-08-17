@@ -1,19 +1,52 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const storageMock = vi.hoisted(() => ({
     getState: vi.fn(),
 }));
 
-type ApiSocketPrivateTestSurface = {
-    socket: {
+type SocketRpcCallPayload = Readonly<{
+    method: string;
+    params: unknown;
+    timeoutMs?: number;
+    requestId?: string;
+}>;
+
+type SocketRpcEmitWithAck = (
+    event: string,
+    payload: SocketRpcCallPayload,
+) => Promise<unknown>;
+type SocketRpcEmit = (
+    event: string,
+    payload: Readonly<{ requestId: string }>,
+) => void;
+type SocketRpcTimeout = (
+    timeoutMs: number,
+) => Readonly<{ emitWithAck: SocketRpcEmitWithAck }>;
+type SessionEncryptionTestDouble = Readonly<{
+    encryptRaw(value: unknown): Promise<unknown>;
+    decryptRaw(value: unknown): Promise<unknown>;
+}>;
+type ApiSocketPrivateTestOverrides = Readonly<{
+    socket: Readonly<{
         connected?: boolean;
-        timeout: (timeoutMs: number) => { emitWithAck: ReturnType<typeof vi.fn> };
-        emitWithAck: ReturnType<typeof vi.fn>;
-    };
-    encryption: { getSessionEncryption: () => null };
-    currentConnectionState: ManagedConnectionState;
-};
+        timeout?: SocketRpcTimeout;
+        emitWithAck: SocketRpcEmitWithAck;
+        emit?: SocketRpcEmit;
+    }>;
+    encryption: Readonly<{
+        getSessionEncryption(sessionId: string): SessionEncryptionTestDouble | null;
+    }>;
+    currentConnectionState?: ManagedConnectionState;
+}>;
+
+function installApiSocketTestOverrides(
+    apiSocket: object,
+    overrides: ApiSocketPrivateTestOverrides,
+): void {
+    Object.assign(apiSocket, overrides);
+}
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -34,11 +67,15 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             },
         });
 
-        const emitWithAck = vi.fn(async () => ({ ok: true, result: { ok: true, value: 123 } }));
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(
+            async () => ({ ok: true, result: { ok: true, value: 123 } }),
+        );
 
         const { apiSocket } = await import('./apiSocket');
-        (apiSocket as any).socket = { emitWithAck };
-        (apiSocket as any).encryption = { getSessionEncryption: () => null };
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { emitWithAck },
+            encryption: { getSessionEncryption: () => null },
+        });
 
         const response = await apiSocket.sessionRPC<{ ok: true; value: number }, { hello: string }>('s1', 'ping', { hello: 'world' });
 
@@ -60,8 +97,10 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
         });
 
         const { apiSocket } = await import('./apiSocket');
-        (apiSocket as any).socket = { emitWithAck: vi.fn() };
-        (apiSocket as any).encryption = { getSessionEncryption: () => null };
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { emitWithAck: vi.fn<SocketRpcEmitWithAck>() },
+            encryption: { getSessionEncryption: () => null },
+        });
 
         await expect(apiSocket.sessionRPC('s1', 'ping', { hello: 'world' })).rejects.toThrow('Session encryption not found');
     });
@@ -73,13 +112,21 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             },
         });
 
-        const emitWithAck = vi.fn(async () => ({ ok: true, result: { ok: true, value: 456 } }));
-        const encryptRaw = vi.fn(async () => ({ encrypted: true }));
-        const decryptRaw = vi.fn(async () => ({ decrypted: true }));
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(
+            async () => ({ ok: true, result: { ok: true, value: 456 } }),
+        );
+        const encryptRaw = vi.fn<(value: unknown) => Promise<unknown>>(
+            async () => ({ encrypted: true }),
+        );
+        const decryptRaw = vi.fn<(value: unknown) => Promise<unknown>>(
+            async () => ({ decrypted: true }),
+        );
 
         const { apiSocket } = await import('./apiSocket');
-        (apiSocket as any).socket = { emitWithAck };
-        (apiSocket as any).encryption = { getSessionEncryption: () => ({ encryptRaw, decryptRaw }) };
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { emitWithAck },
+            encryption: { getSessionEncryption: () => ({ encryptRaw, decryptRaw }) },
+        });
 
         const response = await apiSocket.sessionRPC<{ ok: true; value: number }, { hello: string }>('s1', 'ping', { hello: 'world' });
 
@@ -102,12 +149,16 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             },
         });
 
-        const emitWithAck = vi.fn(async () => ({ ok: true, result: { ok: true, value: 789 } }));
-        const timeout = vi.fn(() => ({ emitWithAck }));
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(
+            async () => ({ ok: true, result: { ok: true, value: 789 } }),
+        );
+        const timeout = vi.fn<SocketRpcTimeout>(() => ({ emitWithAck }));
 
         const { apiSocket } = await import('./apiSocket');
-        (apiSocket as any).socket = { timeout, emitWithAck: vi.fn() };
-        (apiSocket as any).encryption = { getSessionEncryption: () => null };
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { timeout, emitWithAck: vi.fn<SocketRpcEmitWithAck>() },
+            encryption: { getSessionEncryption: () => null },
+        });
 
         const response = await apiSocket.sessionRPC<{ ok: true; value: number }, { hello: string }>(
             's1',
@@ -127,6 +178,91 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
         expect(response).toEqual({ ok: true, value: 789 });
     });
 
+    it('cancels the exact issued relay request when its caller signal aborts', async () => {
+        storageMock.getState.mockReturnValue({
+            sessions: {
+                s1: { id: 's1', encryptionMode: 'plain' },
+            },
+        });
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(
+            () => new Promise<never>(() => {}),
+        );
+        const emit = vi.fn<SocketRpcEmit>();
+        const controller = new AbortController();
+
+        const { apiSocket } = await import('./apiSocket');
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { emitWithAck, emit },
+            encryption: { getSessionEncryption: () => null },
+        });
+
+        const pending = apiSocket.sessionRPC(
+            's1',
+            'catalog.list',
+            { cwd: '/workspace' },
+            { signal: controller.signal },
+        );
+        await vi.waitFor(() => expect(emitWithAck).toHaveBeenCalledTimes(1));
+        const issuedCall = emitWithAck.mock.calls[0];
+        if (!issuedCall || !issuedCall[1].requestId) {
+            throw new Error('Expected session RPC cancellation request id');
+        }
+        const requestId = issuedCall[1].requestId;
+
+        controller.abort();
+
+        const settled = await Promise.race([
+            pending.then(
+                () => ({ status: 'resolved' as const }),
+                (error: unknown) => ({ status: 'rejected' as const, error }),
+            ),
+            new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50)),
+        ]);
+        expect(settled).toMatchObject({
+            status: 'rejected',
+            error: { name: 'AbortError', code: 'SOCKET_RPC_ABORTED' },
+        });
+        expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CANCEL, {
+            requestId,
+        });
+    });
+
+    it('preserves an explicit unbounded session RPC lifetime without forwarding a timeout', async () => {
+        storageMock.getState.mockReturnValue({
+            sessions: {
+                s1: { id: 's1', encryptionMode: 'plain' },
+            },
+        });
+
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(
+            async () => ({ ok: true, result: { ok: true, value: 790 } }),
+        );
+        const timeout = vi.fn<SocketRpcTimeout>();
+
+        const { apiSocket } = await import('./apiSocket');
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { timeout, emitWithAck },
+            encryption: { getSessionEncryption: () => null },
+        });
+
+        const response = await apiSocket.sessionRPC<{ ok: true; value: number }, { hello: string }>(
+            's1',
+            'watch',
+            { hello: 'world' },
+            { timeoutMs: null },
+        );
+
+        expect(timeout).not.toHaveBeenCalled();
+        expect(emitWithAck).toHaveBeenCalledWith(
+            expect.any(String),
+            {
+                method: 's1:watch',
+                params: { hello: 'world' },
+            },
+        );
+        expect(response).toEqual({ ok: true, value: 790 });
+    });
+
     it('signals exact issuance only after encryption, socket validation, and timeout emitter preparation', async () => {
         storageMock.getState.mockReturnValue({
             sessions: {
@@ -134,24 +270,32 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             },
         });
         const calls: string[] = [];
-        const encryptRaw = vi.fn(async () => {
+        const encryptRaw = vi.fn<(value: unknown) => Promise<unknown>>(async () => {
             calls.push('encrypt');
             return 'encrypted-params';
         });
-        const decryptRaw = vi.fn(async () => ({ ok: true }));
-        const emitWithAck = vi.fn(async () => {
+        const decryptRaw = vi.fn<(value: unknown) => Promise<unknown>>(
+            async () => ({ ok: true }),
+        );
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(async () => {
             calls.push('emit');
             return { ok: true, result: 'encrypted-result' };
         });
-        const timeout = vi.fn(() => {
+        const timeout = vi.fn<SocketRpcTimeout>(() => {
             calls.push('timeout-emitter');
             return { emitWithAck };
         });
         const onIssued = vi.fn(() => calls.push('issued'));
 
         const { apiSocket } = await import('./apiSocket');
-        (apiSocket as any).socket = { connected: true, timeout, emitWithAck: vi.fn() };
-        (apiSocket as any).encryption = { getSessionEncryption: () => ({ encryptRaw, decryptRaw }) };
+        installApiSocketTestOverrides(apiSocket, {
+            socket: {
+                connected: true,
+                timeout,
+                emitWithAck: vi.fn<SocketRpcEmitWithAck>(),
+            },
+            encryption: { getSessionEncryption: () => ({ encryptRaw, decryptRaw }) },
+        });
 
         await expect(apiSocket.sessionRPC(
             's1',
@@ -173,22 +317,27 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
                 },
             });
 
-            const emitWithAck = vi.fn(() => new Promise<never>(() => {}));
-            const timeout = vi.fn(() => ({ emitWithAck }));
+            const emitWithAck = vi.fn<SocketRpcEmitWithAck>(
+                () => new Promise<never>(() => {}),
+            );
+            const timeout = vi.fn<SocketRpcTimeout>(
+                (_timeoutMs) => ({ emitWithAck }),
+            );
 
             const { apiSocket } = await import('./apiSocket');
-            const apiSocketTestSurface = apiSocket as unknown as ApiSocketPrivateTestSurface;
-            apiSocketTestSurface.socket = { timeout, emitWithAck: vi.fn() };
-            apiSocketTestSurface.encryption = { getSessionEncryption: () => null };
-            apiSocketTestSurface.currentConnectionState = {
-                phase: 'online',
-                reason: 'initial_connect',
-                attempt: 1,
-                nextRetryAt: null,
-                lastConnectedAt: Date.now(),
-                lastDisconnectedAt: null,
-                lastErrorMessage: null,
-            };
+            installApiSocketTestOverrides(apiSocket, {
+                socket: { timeout, emitWithAck: vi.fn<SocketRpcEmitWithAck>() },
+                encryption: { getSessionEncryption: () => null },
+                currentConnectionState: {
+                    phase: 'online',
+                    reason: 'initial_connect',
+                    attempt: 1,
+                    nextRetryAt: null,
+                    lastConnectedAt: Date.now(),
+                    lastDisconnectedAt: null,
+                    lastErrorMessage: null,
+                },
+            });
 
             const responsePromise = apiSocket.sessionRPC('s1', 'ping', { hello: 'world' }, { timeoutMs: 7500 });
             const settled = responsePromise.then(
@@ -216,24 +365,25 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             },
         });
 
-        const emitWithAck = vi.fn(async () => {
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(async () => {
             throw new Error('operation has timed out');
         });
-        const timeout = vi.fn(() => ({ emitWithAck }));
+        const timeout = vi.fn<SocketRpcTimeout>((_timeoutMs) => ({ emitWithAck }));
 
         const { apiSocket } = await import('./apiSocket');
-        const apiSocketTestSurface = apiSocket as unknown as ApiSocketPrivateTestSurface;
-        apiSocketTestSurface.socket = { timeout, emitWithAck: vi.fn() };
-        apiSocketTestSurface.encryption = { getSessionEncryption: () => null };
-        apiSocketTestSurface.currentConnectionState = {
-            phase: 'auth_failed',
-            reason: 'auth_invalid',
-            attempt: 1,
-            nextRetryAt: null,
-            lastConnectedAt: null,
-            lastDisconnectedAt: Date.now(),
-            lastErrorMessage: 'HTTP 401',
-        };
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { timeout, emitWithAck: vi.fn<SocketRpcEmitWithAck>() },
+            encryption: { getSessionEncryption: () => null },
+            currentConnectionState: {
+                phase: 'auth_failed',
+                reason: 'auth_invalid',
+                attempt: 1,
+                nextRetryAt: null,
+                lastConnectedAt: null,
+                lastDisconnectedAt: Date.now(),
+                lastErrorMessage: 'HTTP 401',
+            },
+        });
 
         await expect(
             apiSocket.sessionRPC('s1', 'ping', { hello: 'world' }, { timeoutMs: 7500 }),
@@ -253,22 +403,25 @@ describe('apiSocket.sessionRPC plaintext sessions', () => {
             },
         });
 
-        const emitWithAck = vi.fn(async () => ({ ok: true, result: { ok: true } }));
-        const timeout = vi.fn(() => ({ emitWithAck }));
+        const emitWithAck = vi.fn<SocketRpcEmitWithAck>(
+            async () => ({ ok: true, result: { ok: true } }),
+        );
+        const timeout = vi.fn<SocketRpcTimeout>((_timeoutMs) => ({ emitWithAck }));
 
         const { apiSocket } = await import('./apiSocket');
-        const apiSocketTestSurface = apiSocket as unknown as ApiSocketPrivateTestSurface;
-        apiSocketTestSurface.socket = { connected: false, timeout, emitWithAck };
-        apiSocketTestSurface.encryption = { getSessionEncryption: () => null };
-        apiSocketTestSurface.currentConnectionState = {
-            phase: 'online',
-            reason: 'initial_connect',
-            attempt: 1,
-            nextRetryAt: null,
-            lastConnectedAt: Date.now(),
-            lastDisconnectedAt: null,
-            lastErrorMessage: null,
-        };
+        installApiSocketTestOverrides(apiSocket, {
+            socket: { connected: false, timeout, emitWithAck },
+            encryption: { getSessionEncryption: () => null },
+            currentConnectionState: {
+                phase: 'online',
+                reason: 'initial_connect',
+                attempt: 1,
+                nextRetryAt: null,
+                lastConnectedAt: Date.now(),
+                lastDisconnectedAt: null,
+                lastErrorMessage: null,
+            },
+        });
 
         await expect(
             apiSocket.sessionRPC('s1', 'ping', { hello: 'world' }, { timeoutMs: 7500 }),

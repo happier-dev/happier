@@ -9,6 +9,7 @@ import { applyExecutionRunControlCapabilities } from '@/sync/domains/session/sub
 import { deriveSessionSubagentSidechainIds } from '@/sync/domains/session/subagents/sidechains/deriveSessionSubagentSidechainIds';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionRuntimeLostSinceMs } from '@/sync/domains/session/attention/runtimePresentation';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { UseExternalSessionRuntimeResult } from '@/components/sessions/model/useExternalSessionRuntime';
 import { useSessionExternalSessionRuntime } from '@/components/sessions/model/useSessionExternalSessionRuntime';
@@ -133,12 +134,25 @@ export function useSessionSubagents(params: Readonly<{
     });
     const externalSessionRuntime = params.externalSessionRuntime ?? internalExternalSessionRuntime;
 
+    // The roster's only use of session liveness is "has the runtime that owns these rows gone, and
+    // since when" — so that instant, not the raw fields, is what the derivation depends on. Keying
+    // the memo on it keeps the roster off the heartbeat: `activeAt` advances continuously while the
+    // session is attached and this stays `null` the whole time, then changes exactly once when the
+    // runtime is judged gone.
+    const sessionRuntimeLostSinceMs = params.session
+        ? readSessionRuntimeLostSinceMs(params.session, Date.now())
+        : null;
+
     const derivedSubagents = React.useMemo(() => {
         if (!params.session) return [] as const;
         const derivedSubagents = deriveSessionSubagents({
             session: {
                 metadataLayoutVersion: 0,
                 metadata: stableSessionMetadata,
+                active: params.session.active,
+                activeAt: params.session.activeAt,
+                archivedAt: params.session.archivedAt ?? null,
+                presence: params.session.presence,
             },
             messages: subagentMessages,
             activeExecutionRuns: runningExecutionRuns,
@@ -153,6 +167,7 @@ export function useSessionSubagents(params: Readonly<{
         externalSessionRuntime.status?.runnerActive,
         params.session != null,
         runningExecutionRuns,
+        sessionRuntimeLostSinceMs,
         stableSessionMetadata,
         subagentMessages,
     ]);

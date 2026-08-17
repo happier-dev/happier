@@ -9,9 +9,8 @@ type AffirmativeDecision = Extract<
 >;
 type OptionalSelection = NonNullable<AffirmativeDecision['optionalSelections']>[number];
 
-export declare function decideMachinePluginInstallReviewAsPresentUser<T>(params: Readonly<{
+type PresentUserDecisionTransport<T> = Readonly<{
     pendingChangeId: string;
-    confirmPresentUser: () => Promise<readonly Readonly<OptionalSelection>[] | null>;
     isAuthorityCurrent: () => boolean | Promise<boolean>;
     callAuthenticatedPrivateRpc: (
         method: typeof HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
@@ -19,4 +18,16 @@ export declare function decideMachinePluginInstallReviewAsPresentUser<T>(params:
     ) => Promise<T>;
     createInteractionId: () => string;
     nowMs: () => number;
-}>): Promise<T>;
+}>;
+
+export declare function decideMachinePluginInstallReviewAsPresentUser<T>(
+    params: PresentUserDecisionTransport<T> & Readonly<{
+        confirmPresentUser: () => Promise<readonly Readonly<OptionalSelection>[] | null>;
+    }>,
+): Promise<T>;
+
+export declare function decideMachinePluginDevelopmentSourceRootAsPresentUser<T>(
+    params: PresentUserDecisionTransport<T> & Readonly<{
+        confirmPresentUser: () => Promise<boolean>;
+    }>,
+): Promise<T>;

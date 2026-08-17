@@ -2,9 +2,16 @@ import * as React from 'react';
 
 import { getAuthProvider } from '@/auth/providers/registry';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import {
+    getCachedServerFeaturesSnapshot,
+    getServerFeaturesSnapshot,
+    subscribeServerFeaturesSnapshot,
+    type ServerFeaturesSnapshot,
+} from '@/sync/api/capabilities/serverFeaturesClient';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
+import { getServerRetentionPolicy } from '@/sync/api/capabilities/serverRetentionPolicyClient';
+import { formatServerRetentionDisclosure } from '@/sync/domains/server/retention/formatServerRetentionPolicy';
 
 type AuthEntryServerAvailability = 'loading' | 'ready' | 'legacy' | 'unavailable' | 'incompatible';
 
@@ -21,6 +28,11 @@ type AuthMethod = Readonly<{
     actions?: readonly AuthMethodAction[];
 }>;
 
+export type AuthEntryPrimaryAction = Readonly<{
+    kind: 'anonymous' | 'provider-keyed' | 'mtls' | 'keyless';
+    title: string;
+}>;
+
 export type AuthEntryOptions = Readonly<{
     serverAvailability: AuthEntryServerAvailability;
     serverUrlForCopy: string;
@@ -35,9 +47,10 @@ export type AuthEntryOptions = Readonly<{
     providerKeylessTitle: string;
     anonymousSignupTitle: string;
     mtlsTitle: string;
-    primarySignupTitle: string;
+    primaryAction: AuthEntryPrimaryAction | null;
     mtlsPrimary: boolean;
     keylessPrimary: boolean;
+    retentionSummary?: string | null;
     autoRedirect: Readonly<{
         enabled: boolean;
         providerId: string | null;
@@ -89,9 +102,16 @@ function resolveMethodById(methods: readonly AuthMethod[], providerId: string): 
 
 export function useAuthEntryOptions(): AuthEntryOptions {
     const activeServerSnapshot = useActiveServerSnapshot();
+    const cachedServerFeaturesSnapshot = React.useSyncExternalStore(
+        subscribeServerFeaturesSnapshot,
+        getCachedServerFeaturesSnapshot,
+        getCachedServerFeaturesSnapshot,
+    );
     const [serverAvailability, setServerAvailability] = React.useState<AuthEntryServerAvailability>('loading');
     const [serverCheckNonce, setServerCheckNonce] = React.useState(0);
+    const [serverFeaturesRecoveryNonce, setServerFeaturesRecoveryNonce] = React.useState(0);
     const consumedForcedServerCheckNonceRef = React.useRef(0);
+    const consumedRecoveredServerFeaturesSnapshotRef = React.useRef<ServerFeaturesSnapshot | null>(null);
     const [options, setOptions] = React.useState<Pick<
         AuthEntryOptions,
         | 'showAuthActions'
@@ -105,9 +125,10 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         | 'providerKeylessTitle'
         | 'anonymousSignupTitle'
         | 'mtlsTitle'
-        | 'primarySignupTitle'
+        | 'primaryAction'
         | 'mtlsPrimary'
         | 'keylessPrimary'
+        | 'retentionSummary'
         | 'autoRedirect'
     >>({
         showAuthActions: false,
@@ -121,9 +142,10 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         providerKeylessTitle: '',
         anonymousSignupTitle: t('welcome.createAccount'),
         mtlsTitle: t('welcome.signInWithCertificate'),
-        primarySignupTitle: '',
+        primaryAction: null,
         mtlsPrimary: false,
         keylessPrimary: false,
+        retentionSummary: null,
         autoRedirect: {
             enabled: false,
             providerId: null,
@@ -144,6 +166,15 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         [activeServerSnapshot?.serverUrl],
     );
     const activeServerGeneration = activeServerSnapshot?.generation ?? 0;
+
+    React.useEffect(() => {
+        if (serverAvailability !== 'unavailable') return;
+        if (!cachedServerFeaturesSnapshot || cachedServerFeaturesSnapshot.status === 'error') return;
+        if (consumedRecoveredServerFeaturesSnapshotRef.current === cachedServerFeaturesSnapshot) return;
+
+        consumedRecoveredServerFeaturesSnapshotRef.current = cachedServerFeaturesSnapshot;
+        setServerFeaturesRecoveryNonce((value) => value + 1);
+    }, [cachedServerFeaturesSnapshot, serverAvailability]);
 
     React.useEffect(() => {
         let mounted = true;
@@ -253,7 +284,10 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                             providerKeylessTitle: '',
                             anonymousSignupTitle: t('welcome.createAccount'),
                             mtlsTitle: t('welcome.signInWithCertificate'),
-                            primarySignupTitle: t('welcome.createAccount'),
+                            primaryAction: {
+                                kind: 'anonymous',
+                                title: t('welcome.createAccount'),
+                            },
                             mtlsPrimary: false,
                             keylessPrimary: false,
                             autoRedirect: {
@@ -293,13 +327,15 @@ export function useAuthEntryOptions(): AuthEntryOptions {
 
                 const mtlsPrimary = mtlsEnabled && !preferredProviderId && !anonymousEnabled;
                 const keylessPrimary = Boolean(preferredKeylessProviderId) && preferredKeylessProviderId !== preferredProviderId && !anonymousEnabled && !mtlsEnabled;
-                const primarySignupTitle = mtlsPrimary
-                    ? mtlsTitle
+                const primaryAction: AuthEntryPrimaryAction | null = mtlsPrimary
+                    ? { kind: 'mtls', title: mtlsTitle }
                     : keylessPrimary
-                        ? providerKeylessTitle
+                        ? { kind: 'keyless', title: providerKeylessTitle }
                         : preferredProviderId
-                            ? providerSignupTitle
-                            : anonymousSignupTitle;
+                            ? { kind: 'provider-keyed', title: providerSignupTitle }
+                            : anonymousEnabled
+                                ? { kind: 'anonymous', title: anonymousSignupTitle }
+                                : null;
 
                 const autoRedirect = features?.capabilities?.auth?.ui?.autoRedirect ?? null;
                 const autoRedirectProviderId = normalizeProviderId(autoRedirect?.providerId);
@@ -325,9 +361,10 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                         providerKeylessTitle,
                         anonymousSignupTitle,
                         mtlsTitle,
-                        primarySignupTitle,
+                        primaryAction,
                         mtlsPrimary,
                         keylessPrimary,
+                        retentionSummary: null,
                         autoRedirect: {
                             enabled: autoRedirect?.enabled === true && Boolean(autoRedirectProviderId),
                             providerId: autoRedirectProviderId || null,
@@ -338,6 +375,13 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                         },
                     });
                     setServerAvailability('ready');
+                    void getServerRetentionPolicy({ serverId: activeServerSnapshot.serverId }).then((retentionPolicy) => {
+                        if (!mounted) return;
+                        const retentionSummary = formatServerRetentionDisclosure(retentionPolicy);
+                        setOptions((current) => current.retentionSummary === retentionSummary
+                            ? current
+                            : { ...current, retentionSummary });
+                    });
                 }
             } catch {
                 if (scheduleInitialServerCheckRetry()) return;
@@ -359,7 +403,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
     // snapshot for that server. URL equality alone would retain the previous
     // unavailable result forever. The active-server owner increments generation
     // for that lifecycle transition, so re-run the canonical feature probe.
-    }, [activeServerComparableKey, activeServerGeneration, serverCheckNonce]);
+    }, [activeServerComparableKey, activeServerGeneration, serverCheckNonce, serverFeaturesRecoveryNonce]);
 
     return {
         serverAvailability,

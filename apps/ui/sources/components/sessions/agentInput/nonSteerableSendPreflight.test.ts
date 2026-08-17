@@ -116,6 +116,91 @@ describe('resolveNonSteerableSendPlan (G4 busy-send preflight)', () => {
         expect(alertAsyncMock).not.toHaveBeenCalled();
     });
 
+    it('requires an explicit busy-input choice when fallback catalog state lacks exact transition authority', async () => {
+        const plan = await resolvePlanWithChoice(
+            {
+                session: busyModeChangeSession({
+                    permissionMode: 'default',
+                    permissionModeUpdatedAt: now - 10,
+                    metadata: {
+                        flavor: 'claude',
+                        modelSelectionIntentV1: {
+                            v: 1,
+                            updatedAt: 10,
+                            selection: {
+                                agentTargetKey: 'backend:claude',
+                                providerConnectionId: null,
+                                modelId: 'claude-opus-4-7',
+                            },
+                        },
+                        sessionModelsV1: {
+                            v: 1,
+                            agentId: 'claude',
+                            updatedAt: 20,
+                            currentModelId: 'claude-opus-4-7',
+                            availableModels: [
+                                { id: 'claude-opus-4-7', name: 'Fallback Opus 4.7' },
+                            ],
+                        },
+                    },
+                }),
+                currentRunnerProcessIdentity: null,
+            },
+            'agentInput.nonSteerableSend.queueForAfterTurn',
+        );
+
+        expect(plan).toEqual({ kind: 'proceed' });
+        expect(alertAsyncMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('admits steer when exact active selection matches the proposal on the current process', async () => {
+        const currentRunnerProcessIdentity = {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        };
+        const plan = await resolvePlan({
+            session: busyModeChangeSession({
+                permissionMode: 'default',
+                permissionModeUpdatedAt: now - 10,
+                metadata: {
+                    flavor: 'claude',
+                    modelSelectionIntentV1: {
+                        v: 1,
+                        updatedAt: 20,
+                        selection: {
+                            agentTargetKey: 'backend:claude',
+                            providerConnectionId: null,
+                            modelId: 'claude-opus-4-7',
+                        },
+                    },
+                    sessionModelsV1: {
+                        v: 1,
+                        agentId: 'claude',
+                        updatedAt: 10,
+                        currentModelId: 'claude-opus-4-7',
+                        activeSelectionV1: {
+                            v: 1,
+                            selection: {
+                                agentTargetKey: 'backend:claude',
+                                providerConnectionId: null,
+                                modelId: 'claude-opus-4-7',
+                            },
+                            source: 'runtime_apply',
+                            runner: currentRunnerProcessIdentity,
+                        },
+                        availableModels: [
+                            { id: 'claude-opus-4-7', name: 'Opus 4.7' },
+                        ],
+                    },
+                },
+            }),
+            currentRunnerProcessIdentity,
+        });
+
+        expect(plan).toEqual({ kind: 'proceed' });
+        expect(alertAsyncMock).not.toHaveBeenCalled();
+    });
+
     it('queue choice proceeds with no flags (decision layer queues honestly)', async () => {
         const plan = await resolvePlanWithChoice(undefined, 'agentInput.nonSteerableSend.queueForAfterTurn');
         expect(plan).toEqual({ kind: 'proceed' });

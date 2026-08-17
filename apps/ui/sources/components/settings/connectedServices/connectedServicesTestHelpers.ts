@@ -24,18 +24,6 @@ const connectedServicesModuleState = vi.hoisted(() => ({
     },
 }));
 
-export function resetConnectedServicesCommonModuleMockState() {
-    connectedServicesModuleState.routerBackSpy.mockClear();
-    connectedServicesModuleState.routerPushSpy.mockClear();
-    connectedServicesModuleState.searchParams = {};
-    connectedServicesModuleState.options = {
-        modal: undefined,
-        reactNative: undefined,
-        router: undefined,
-        text: undefined,
-    };
-}
-
 export function installConnectedServicesCommonModuleMocks(
     options: InstallConnectedServicesCommonModuleMocksOptions = {},
 ) {

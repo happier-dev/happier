@@ -18,7 +18,7 @@ vi.mock('@/updates/useAppUpdateStatus', () => ({
                 visible: true,
                 kind: 'ota',
                 tone: 'accent',
-                iconName: 'download-outline',
+                iconName: 'download',
                 label: 'Update available',
                 message: 'Press to apply the update',
                 actionLabel: 'Press to apply the update',

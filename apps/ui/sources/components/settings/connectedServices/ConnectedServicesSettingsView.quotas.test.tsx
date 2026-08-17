@@ -97,6 +97,17 @@ const useProfileSpy = vi.fn(() => ({
     },
   ],
 }));
+const connectedServicesRegistryState = vi.hoisted(() => ({
+  entries: [{
+    serviceId: 'anthropic',
+    legacyServiceId: 'anthropic',
+    service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+    connectCommand: 'happier connect anthropic',
+    supportsOauth: true,
+    executable: true,
+    projectedTitle: 'Anthropic',
+  }] as Array<Record<string, unknown>>,
+}));
 const { setSettingMutableSpy } = vi.hoisted(() => ({
   setSettingMutableSpy: vi.fn(),
 }));
@@ -139,6 +150,20 @@ vi.mock('@/sync/store/hooks', () => ({
   ],
 }));
 
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+  useProjectedConnectedServicesRegistry: () => ({
+    scopeKey: 'server-a', status: 'ready', errorReason: null,
+    entries: connectedServicesRegistryState.entries,
+  }),
+}));
+
+vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
+  getLegacyConnectedServiceRegistryEntry: (serviceId: string) => (
+    connectedServicesRegistryState.entries.find((entry) => entry.legacyServiceId === serviceId)
+      ?? { serviceId, connectCommand: `happier connect ${serviceId}`, executable: false }
+  ),
+}));
+
 const {
   fetchAccountEncryptionModeSpy,
   getConnectedServiceQuotaSnapshotPlainSpy,
@@ -174,6 +199,15 @@ describe('ConnectedServicesSettingsView quotas', () => {
     modalAlertSpy.mockClear();
     modalConfirmSpy.mockClear();
     connectedServicesModuleState.routerPushSpy.mockClear();
+    connectedServicesRegistryState.entries = [{
+      serviceId: 'anthropic',
+      legacyServiceId: 'anthropic',
+      service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+      connectCommand: 'happier connect anthropic',
+      supportsOauth: true,
+      executable: true,
+      projectedTitle: 'Anthropic',
+    }];
     useProfileSpy.mockReset();
     useProfileSpy.mockReturnValue({
       connectedAccountsV4: [],
@@ -299,6 +333,7 @@ describe('ConnectedServicesSettingsView quotas', () => {
       connectedServicesQuotaPinnedMeterIdsByKey: { 'anthropic/work': [] },
       connectedServicesQuotaSummaryStrategyByKey: {},
     });
+    connectedServicesRegistryState.entries = [];
     useProfileSpy.mockReturnValue({
       connectedAccountsV4: [],
       connectedServicesV2: [

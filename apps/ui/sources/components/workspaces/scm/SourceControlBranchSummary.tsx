@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type SourceControlBranchSummaryProps = {
     theme: any;
@@ -63,6 +63,76 @@ function areSourceControlBranchSummaryPropsEqual(
         && areScmStatusFileSummariesEqual(previous.scmStatusFiles, next.scmStatusFiles);
 }
 
+/**
+ * Module scope, not render-body components: declared inside the summary they would be new component
+ * types on every SCM status update, so React would remount every pill and stat instead of updating
+ * them. This surface re-renders on each status push, which is exactly when that cost lands.
+ */
+function StatPill(props: Readonly<{
+    label: string;
+    value: number;
+    iconName: string;
+    theme: SourceControlBranchSummaryProps['theme'];
+}>) {
+    const { theme } = props;
+    return (
+        <View
+            style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: theme.colors.border.default,
+                backgroundColor: theme.colors.surface.inset ?? theme.colors.input.background,
+            }}
+        >
+            <Icon name={props.iconName as any} size={14} color={theme.colors.text.secondary} />
+            <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
+                {props.label}
+            </Text>
+            <Text style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.mono('semiBold') }}>
+                {String(props.value)}
+            </Text>
+        </View>
+    );
+}
+
+function InlineStat(props: Readonly<{
+    value: number;
+    iconName: string;
+    theme: SourceControlBranchSummaryProps['theme'];
+}>) {
+    const { theme } = props;
+    return (
+        <View
+            style={{
+                minWidth: 16,
+                minHeight: 30,
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 1,
+                flexShrink: 0,
+            }}
+        >
+            <Text
+                numberOfLines={1}
+                style={{
+                    fontSize: 11,
+                    lineHeight: 13,
+                    color: theme.colors.text.primary,
+                    ...Typography.mono('semiBold'),
+                }}
+            >
+                {String(props.value)}
+            </Text>
+            <Icon name={props.iconName as any} size={14} color={theme.colors.text.secondary} />
+        </View>
+    );
+}
+
 function SourceControlBranchSummaryImpl({
     theme,
     scmStatusFiles,
@@ -79,60 +149,6 @@ function SourceControlBranchSummaryImpl({
     const usesWorkingCopyModel = scmStatusFiles.changeSetModel === 'working-copy';
     const includedLabel = usesWorkingCopyModel ? t('files.branchSummary.included') : t('files.branchSummary.staged');
     const pendingLabel = usesWorkingCopyModel ? t('files.branchSummary.pending') : t('files.branchSummary.unstaged');
-
-    const StatPill = ({ label, value, iconName }: { label: string; value: number; iconName: string }) => {
-        return (
-            <View
-                style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 6,
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border.default,
-                    backgroundColor: theme.colors.surface.inset ?? theme.colors.input.background,
-                }}
-            >
-                <Octicons name={iconName as any} size={14} color={theme.colors.text.secondary} />
-                <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                    {label}
-                </Text>
-                <Text style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.mono('semiBold') }}>
-                    {String(value)}
-                </Text>
-            </View>
-        );
-    };
-
-    const InlineStat = ({ value, iconName }: { value: number; iconName: string }) => {
-        return (
-            <View
-                style={{
-                    minWidth: 16,
-                    minHeight: 30,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 1,
-                    flexShrink: 0,
-                }}
-            >
-                <Text
-                    numberOfLines={1}
-                    style={{
-                        fontSize: 11,
-                        lineHeight: 13,
-                        color: theme.colors.text.primary,
-                        ...Typography.mono('semiBold'),
-                    }}
-                >
-                    {String(value)}
-                </Text>
-                <Octicons name={iconName as any} size={14} color={theme.colors.text.secondary} />
-            </View>
-        );
-    };
 
     const isRail = variant === 'rail';
     if (variant === 'rail') {
@@ -151,9 +167,9 @@ function SourceControlBranchSummaryImpl({
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
                     <View style={{ minWidth: 0, flex: 1, gap: 4 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                            <Octicons
+                            <Icon
                                 name="git-branch"
-                                size={15}
+                                size={14}
                                 color={theme.colors.text.secondary}
                                 style={{ flexShrink: 0 }}
                             />
@@ -206,10 +222,10 @@ function SourceControlBranchSummaryImpl({
 
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 5, flexShrink: 0 }}>
                         {actionSlot}
-                        <InlineStat value={staged} iconName="diff-added" />
-                        <InlineStat value={unstaged} iconName="diff-modified" />
-                        {showTracking ? <InlineStat value={ahead} iconName="arrow-up" /> : null}
-                        {showTracking ? <InlineStat value={behind} iconName="arrow-down" /> : null}
+                        <InlineStat value={staged} iconName="plus-square" theme={theme} />
+                        <InlineStat value={unstaged} iconName="pencil-simple" theme={theme} />
+                        {showTracking ? <InlineStat value={ahead} iconName="arrow-up" theme={theme} /> : null}
+                        {showTracking ? <InlineStat value={behind} iconName="arrow-down" theme={theme} /> : null}
                     </View>
                 </View>
 
@@ -232,7 +248,7 @@ function SourceControlBranchSummaryImpl({
                     marginBottom: 8,
                 }}
             >
-                <Octicons name="git-branch" size={16} color={theme.colors.text.secondary} style={{ marginRight: 6 }} />
+                <Icon name="git-branch" size={16} color={theme.colors.text.secondary} style={{ marginRight: 6 }} />
                 <Text
                     style={{
                         fontSize: 16,
@@ -259,13 +275,13 @@ function SourceControlBranchSummaryImpl({
                 ) : null}
             </View>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                <StatPill label={includedLabel} value={staged} iconName="diff-added" />
-                <StatPill label={pendingLabel} value={unstaged} iconName="diff-modified" />
+                <StatPill label={includedLabel} value={staged} iconName="plus-square" theme={theme} />
+                <StatPill label={pendingLabel} value={unstaged} iconName="pencil-simple" theme={theme} />
                 {showTracking && (
-                    <StatPill label={t('files.branchSummary.ahead')} value={ahead} iconName="arrow-up" />
+                    <StatPill label={t('files.branchSummary.ahead')} value={ahead} iconName="arrow-up" theme={theme} />
                 )}
                 {showTracking && (
-                    <StatPill label={t('files.branchSummary.behind')} value={behind} iconName="arrow-down" />
+                    <StatPill label={t('files.branchSummary.behind')} value={behind} iconName="arrow-down" theme={theme} />
                 )}
             </View>
 

@@ -7,7 +7,6 @@ import { Text } from '@/components/ui/text/Text';
 import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBarSurface';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
-import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { useInboxHasContent } from '@/hooks/inbox/useInboxHasContent';
 import { useInboxAvailable } from '@/hooks/inbox/useInboxAvailable';
@@ -17,6 +16,7 @@ import { useFriendRequests, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveTabBarTabs } from '@/components/ui/navigation/resolveTabBarTabs';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type { TabType };
 
@@ -176,17 +176,17 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     );
 });
 
-// Match the app's cockpit-bar line icons (all Ionicons outline, same weight):
+// Match the app's cockpit-bar line icons (all same weight):
 // tray for Inbox, chat for Sessions, gear for Settings, people for Friends.
 function renderMainTabIcon(key: TabType, size: number, color: string): React.ReactNode {
     const name = key === 'inbox'
-        ? 'file-tray-outline'
+        ? 'tray'
         : key === 'settings'
-            ? 'cog-outline'
+            ? 'gear'
             : key === 'friends'
-                ? 'people-outline'
+                ? 'users'
                 : key === 'projects'
-                    ? 'folder-outline'
-                    : 'chatbubbles-outline';
-    return <Ionicons name={name} size={size} color={color} />;
+                    ? 'folder'
+                    : 'chats-circle';
+    return <Icon name={name} size={size} color={color} />;
 }

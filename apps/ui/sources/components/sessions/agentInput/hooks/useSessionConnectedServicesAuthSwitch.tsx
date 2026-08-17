@@ -120,7 +120,7 @@ function presentAuthSwitchDiagnosticAlert(params: Readonly<{
 }>): void {
     Modal.alert(
         t(params.presentation.titleKey),
-        translateAuthSwitchDiagnosticBody(params.presentation),
+        t(params.presentation.bodyKey),
         buildConnectedServiceUxDiagnosticAlertButtons({
             actions: params.presentation.actions,
             handlers: {
@@ -250,19 +250,6 @@ function resolveSessionConnectedServiceAuthSwitchActionableState(
             };
         default:
             return null;
-    }
-}
-
-function translateAuthSwitchDiagnosticBody(
-    presentation: ConnectedServiceUxDiagnosticPresentation,
-): string {
-    if (!presentation.bodyParams) return t(presentation.bodyKey);
-    switch (presentation.bodyKey) {
-        case 'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume':
-        case 'connectedServices.diagnostics.body.resume_reachability_inputs_missing':
-            return t(presentation.bodyKey, presentation.bodyParams);
-        default:
-            return t(presentation.bodyKey);
     }
 }
 

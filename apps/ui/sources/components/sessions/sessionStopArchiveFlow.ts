@@ -2,12 +2,13 @@ import { HappyError } from '@/utils/errors/errors';
 import { storage } from '@/sync/domains/state/storage';
 import { delay } from '@/utils/timing/time';
 import { t } from '@/text';
+import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
 
 type SessionMutationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
-    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
+    recovery?: SessionStopRecovery;
 }>;
 
 export type StopSessionAndMaybeArchiveParams = Readonly<{
@@ -53,8 +54,8 @@ export function resolveSessionStopFailureMessage(
     result: SessionMutationResult,
     fallbackMessage: string,
 ): string {
-    if (result.recovery === 'upgrade_runtime') {
-        return t('sessionInfo.stopSessionUpgradeRequired');
+    if (result.recovery === 'retry_when_runtime_available') {
+        return t('sessionInfo.stopSessionControlUnavailable');
     }
     return result.message || fallbackMessage;
 }

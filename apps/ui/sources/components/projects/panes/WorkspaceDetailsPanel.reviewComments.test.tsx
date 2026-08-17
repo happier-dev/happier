@@ -51,6 +51,18 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'desktop',
 }));
 
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
+    useScopedPluginUiProjection: () => ({
+        pluginUiProjection: null,
+        pluginBrowserProjection: null,
+        phase: 'unavailable',
+        interactionEnabled: false,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+        platform: 'web',
+    }),
+}));
+
 vi.mock('@/components/appShell/panes/details/workspace/DetailsSplitWorkspace', () => ({
     DetailsSplitWorkspace: (props: any) => detailsSplitWorkspaceSpy(props),
 }));

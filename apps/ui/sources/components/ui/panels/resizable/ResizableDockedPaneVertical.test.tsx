@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { findFirstByType, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '../panelTestHelpers';
 
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installPanelCommonModuleMocks();

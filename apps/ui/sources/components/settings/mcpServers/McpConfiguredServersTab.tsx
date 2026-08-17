@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { McpServerBindingV1, McpServerCatalogEntryV1, McpServersSettingsV1 } from '@happier-dev/protocol';
@@ -14,6 +13,7 @@ import { listMcpQuickInstallPresets, type McpQuickInstallPresetId } from '@/sync
 
 import { McpServerBadgePills } from './McpServerBadgePills';
 import { describeConfiguredServerEndpoint, resolveBindingBadgeLabels, resolveTransportIconName } from './mcpServerUi';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const McpConfiguredServersTab = React.memo(function McpConfiguredServersTab(props: Readonly<{
     settings: McpServersSettingsV1;
@@ -36,7 +36,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                     testID="settings.mcpServers.empty"
                     title={t('settings.mcpServersEmptyTitle')}
                     subtitle={t('settings.mcpServersConfiguredEmptySubtitle')}
-                    icon={<Ionicons name="extension-puzzle-outline" size={29} color={theme.colors.accent.purple} />}
+                    icon={<Icon name="puzzle-piece" size={29} color={theme.colors.accent.purple} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -57,7 +57,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                                     }))}
                                 />
                             )}
-                            icon={<Ionicons name={resolveTransportIconName(server.transport)} size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name={resolveTransportIconName(server.transport)} size={29} color={theme.colors.accent.blue} />}
                             rightElement={(
                                 <ItemRowActions
                                     title={server.title || server.name || t('settings.mcpServersUnnamed')}
@@ -66,13 +66,13 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                                         {
                                             id: 'edit',
                                             title: t('settings.mcpServersEditAction'),
-                                            icon: 'pencil-outline',
+                                            icon: 'pencil',
                                             onPress: () => props.onEditServer(server.id),
                                         },
                                         {
                                             id: 'delete',
                                             title: t('settings.mcpServersDeleteAction'),
-                                            icon: 'trash-outline',
+                                            icon: 'trash',
                                             destructive: true,
                                             onPress: () => { void props.onDeleteServer(server.id); },
                                         },
@@ -90,7 +90,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                     testID="settings.mcpServers.addServer"
                     title={t('settings.mcpServersAddServer')}
                     subtitle={t('settings.mcpServersAddServerSubtitle')}
-                    icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
+                    icon={<Icon name="plus-circle" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={props.onAddServer}
                 />
             </ItemGroup>
@@ -102,7 +102,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                         testID={`settings.mcpServers.quickInstall.${preset.id}`}
                         title={preset.title}
                         subtitle={preset.description}
-                        icon={<Ionicons name="flash-outline" size={29} color={theme.colors.state.success.foreground} />}
+                        icon={<Icon name="lightning" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => props.onOpenQuickInstall(preset.id)}
                     />
                 ))}
@@ -113,7 +113,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                     testID="settings.mcpServers.strictMode"
                     title={t('settings.mcpServersStrictMode')}
                     subtitle={t('settings.mcpServersStrictModeSubtitle')}
-                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.accent.purple} />}
+                    icon={<Icon name="shield-check" size={29} color={theme.colors.accent.purple} />}
                     rightElement={<Switch value={Boolean(props.settings.strictMode)} onValueChange={props.onToggleStrictMode} />}
                     onPress={props.onToggleStrictMode}
                     showChevron={false}

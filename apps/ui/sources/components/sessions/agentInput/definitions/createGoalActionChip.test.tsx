@@ -80,9 +80,8 @@ describe('createGoalActionChip', () => {
         expect(pressable?.props.accessibilityState).toEqual({ disabled: false });
         // The empty-state label uses the "Set goal" key.
         expect(pressable?.props.accessibilityLabel).toBe('session.workState.goal.set');
-        expect(screen.findAllByType('Ionicons')).toHaveLength(0);
-        const path = screen.findAllByType('Path')[0];
-        expect(path?.props.d).toContain('M20.172 6.75');
+        // The bullseye stands in for the goal.
+        expect(screen.findAllByType('Icon')[0]?.props.name).toBe('target');
         expect(screen.findAllByType('AgentInputChipLabel')).toHaveLength(0);
     });
 

@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { Octicons } from '@expo/vector-icons';
 import type { UnistylesThemes } from 'react-native-unistyles';
 
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
-type OcticonsName = React.ComponentProps<typeof Octicons>['name'];
+type OcticonsName = IconName;
 
 export function ChangedFileIcon(props: { file: ScmFileStatus; size?: number }): React.ReactElement {
     return <FileIcon fileName={props.file.fileName} size={props.size ?? 32} />;
@@ -24,15 +24,15 @@ export function ChangedFileStatusIcon(props: {
     switch (file.status) {
         case 'modified':
             statusColor = theme.colors.state.neutral.foreground;
-            statusIcon = 'diff-modified';
+            statusIcon = 'file-dashed';
             break;
         case 'added':
             statusColor = theme.colors.state.success.foreground;
-            statusIcon = 'diff-added';
+            statusIcon = 'file-plus';
             break;
         case 'deleted':
             statusColor = theme.colors.state.danger.foreground;
-            statusIcon = 'diff-removed';
+            statusIcon = 'file-minus';
             break;
         case 'renamed':
             statusColor = theme.colors.text.link;
@@ -44,7 +44,7 @@ export function ChangedFileStatusIcon(props: {
             break;
         case 'conflicted':
             statusColor = theme.colors.state.danger.foreground;
-            statusIcon = 'alert';
+            statusIcon = 'warning';
             break;
         case 'untracked':
             statusColor = theme.colors.text.secondary;
@@ -54,5 +54,5 @@ export function ChangedFileStatusIcon(props: {
             return null;
     }
 
-    return <Octicons name={statusIcon} size={16} color={statusColor} />;
+    return <Icon name={statusIcon} size={16} color={statusColor} />;
 }

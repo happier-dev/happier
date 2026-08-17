@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { getActionSpec, type ActionId } from '@happier-dev/protocol';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -12,6 +11,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { formatPathRelativeToHome, getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const ApprovalInboxCard = React.memo((props: Readonly<{
   artifact: DecryptedArtifact;
@@ -63,12 +63,12 @@ export const ApprovalInboxCard = React.memo((props: Readonly<{
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
       <View style={styles.headerRow}>
-        <Ionicons name="alert-circle-outline" size={18} color={theme.colors.status.error} />
+        <Icon name="warning-circle" size={16} color={theme.colors.status.error} />
         <View style={styles.headerText}>
           <Text style={styles.title}>{title}</Text>
           {actionTitle || qualifiedActionId ? <Text style={styles.subtitle}>{actionTitle ?? qualifiedActionId}</Text> : null}
         </View>
-        <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
+        <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
       </View>
 
       {sessionTitle ? <Text style={styles.meta}>{sessionTitle}</Text> : null}

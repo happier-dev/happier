@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import {
     Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -7,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const noDragProps = {
     'data-pet-no-drag': 'true',
@@ -52,7 +52,7 @@ export function DesktopPetOverlayContextActions(props: Readonly<{
         {
             id: 'tuck',
             title: t('settingsPets.overlayClosePetAction'),
-            icon: <Ionicons name="close" size={18} color={theme.colors.text.secondary} />,
+            icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
         },
     ], [theme.colors.text.secondary]);
     const openContextMenu = React.useCallback((event?: DesktopPetOverlayContextMenuEvent) => {
@@ -111,7 +111,7 @@ export function DesktopPetOverlayContextActions(props: Readonly<{
                         {Math.min(props.trayCount, 99)}
                     </Text>
                 ) : (
-                    <Ionicons name="chevron-down" size={14} color={bubbleTheme.textSecondary} />
+                    <Icon name="caret-down" size={14} color={bubbleTheme.textSecondary} />
                 )}
             </Pressable>
             <ContextMenu

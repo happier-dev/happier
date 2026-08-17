@@ -35,6 +35,23 @@ describe('command autocomplete suggestions', () => {
                     allowArgs: false,
                 },
             },
+            {
+                key: 'plugin-action:acme.review/run',
+                command: 'acme.review/run',
+                description: 'Run the external review',
+                pluginContributedAction: {
+                    identity: { pluginId: 'acme.review', localId: 'run' },
+                    qualifiedActionId: 'acme.review/run',
+                    title: 'Run the external review',
+                    description: null,
+                    placement: 'primary',
+                    slash: { tokens: ['/review'] },
+                    scope: 'session',
+                    scopes: ['session'],
+                    inputHints: null,
+                    kind: 'direct',
+                },
+            },
         ]);
 
         const { getCommandSuggestions } = await import('./commandSuggestions');
@@ -47,6 +64,7 @@ describe('command autocomplete suggestions', () => {
         expect(suggestions).toEqual([
             {
                 key: 'cmd-goal',
+                kind: 'slashCommand',
                 text: '/goal',
                 label: '/goal',
                 description: 'Set or inspect the session goal',
@@ -54,6 +72,7 @@ describe('command autocomplete suggestions', () => {
             },
             {
                 key: 'cmd-qa',
+                kind: 'slashCommand',
                 text: '/qa',
                 label: '/qa',
                 description: 'QA prompt',
@@ -64,6 +83,26 @@ describe('command autocomplete suggestions', () => {
                     targetArtifactId: 'artifact_prompt_1',
                     behavior: 'insert',
                     allowArgs: false,
+                },
+            },
+            {
+                key: 'cmd-plugin-action:acme.review/run',
+                kind: 'slashCommand',
+                text: '/acme.review/run',
+                label: '/acme.review/run',
+                description: 'Run the external review',
+                rowHeight: 52,
+                pluginContributedAction: {
+                    identity: { pluginId: 'acme.review', localId: 'run' },
+                    qualifiedActionId: 'acme.review/run',
+                    title: 'Run the external review',
+                    description: null,
+                    placement: 'primary',
+                    slash: { tokens: ['/review'] },
+                    scope: 'session',
+                    scopes: ['session'],
+                    inputHints: null,
+                    kind: 'direct',
                 },
             },
         ]);

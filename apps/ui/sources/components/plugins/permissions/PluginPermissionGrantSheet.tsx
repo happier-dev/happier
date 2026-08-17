@@ -1,7 +1,9 @@
 import React from 'react';
 import { I18nManager, Platform, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { HappierBrandMark } from '@happier-dev/plugin-ui/presentation';
 
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Text } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import type { PluginPermissionPendingGrantRequest } from '@/sync/domains/plugins/permissions/types';
@@ -20,6 +22,8 @@ export type PluginPermissionGrantSheetProps = Readonly<{
     labels: PluginPermissionGrantSheetLabels;
     onGrant: (input: Readonly<{ requestId: string }>) => void;
     onDismiss: (input: Readonly<{ requestId: string }>) => void;
+    /** Consumer-owned, already localized facts that belong to this exact grant subject. */
+    detailRows?: readonly Readonly<{ key: string; label?: string; value: string }>[];
     disabled?: boolean;
     testID?: string;
 }>;
@@ -87,12 +91,13 @@ function describeTimestamp(value: number): string | null {
     }
 }
 
-function describeField(label: string, value: string): string {
-    return `${label}: ${value}`;
+function describeField(label: string | undefined, value: string): string {
+    return label ? `${label}: ${value}` : value;
 }
 
 export function PluginPermissionGrantSheet(props: PluginPermissionGrantSheetProps) {
     const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const pluginName = resolvePluginName(props.pendingRequest);
     const scope = describeScope(props.pendingRequest);
     const requester = describeRequester(props.pendingRequest);
@@ -126,7 +131,8 @@ export function PluginPermissionGrantSheet(props: PluginPermissionGrantSheetProp
         requestedAt
             ? { key: 'requested-at', label: t('pluginPermissions.fields.requestedAt'), value: requestedAt }
             : null,
-    ].filter((row): row is Readonly<{ key: string; label: string; value: string }> => row !== null);
+        ...(props.detailRows ?? []).map((row) => ({ ...row })),
+    ].filter((row): row is Readonly<{ key: string; label?: string; value: string }> => row !== null);
     const detailsAccessibilityLabel = t('pluginPermissions.accessibilitySummary', {
         details: detailRows.map((row) => describeField(row.label, row.value)).join('. '),
     });
@@ -157,6 +163,14 @@ export function PluginPermissionGrantSheet(props: PluginPermissionGrantSheetProp
             <Text style={{ color: theme.colors.text.secondary }}>
                 {props.labels.body({ pluginName, pluginId: props.pendingRequest.pluginId })}
             </Text>
+            <HappierBrandMark
+                displayName={pluginName}
+                size="small"
+                externallyLabelled
+                theme={presentationTheme}
+                colorScheme={theme.dark ? 'dark' : 'light'}
+                testID={props.testID ? `${props.testID}-brand` : undefined}
+            />
             <View
                 testID={props.testID ? `${props.testID}-details` : undefined}
                 accessible

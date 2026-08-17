@@ -1,5 +1,5 @@
 import type { PluginReactNativeBundleCache } from './bundleCache';
-import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import type {
     PluginReactNativeLoaderBackend,
     RepackInstalledArtifactModuleReference,

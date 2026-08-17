@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -11,6 +10,7 @@ import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol'
 import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpdateAvailable';
 import { useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type InstallableDepData = {
     installed: boolean;
@@ -36,7 +36,7 @@ export type InstallableDepInstallerProps = {
     groupTitle: string;
     depId: Extract<CapabilityId, `dep.${string}`>;
     depTitle: string;
-    depIconName: React.ComponentProps<typeof Ionicons>['name'];
+    depIconName: IconName;
     depStatus: InstallableDepData | null;
     capabilitiesStatus: 'idle' | 'loading' | 'loaded' | 'error' | 'not-supported';
     extraItems?: React.ReactNode;
@@ -115,7 +115,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
             <Item
                 title={props.depTitle}
                 subtitle={subtitle}
-                icon={<Ionicons name={props.depIconName} size={22} color={theme.colors.text.secondary} />}
+                icon={<Icon name={props.depIconName} size={20} color={theme.colors.text.secondary} />}
                 showChevron={false}
                 onPress={() => props.refreshLatestVersion?.()}
             />
@@ -129,7 +129,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                         version: props.depStatus.latestVersionCheck.latestVersion,
                         tag: props.depStatus.latestVersionCheck.label ?? props.depStatus.sourceKind,
                     })}
-                    icon={<Ionicons name="cloud-download-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="cloud-arrow-down" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             )}
@@ -138,7 +138,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 <Item
                     title={t('deps.ui.registryCheck')}
                     subtitle={t('deps.ui.registryCheckFailed', { error: props.depStatus.latestVersionCheck.errorMessage })}
-                    icon={<Ionicons name="cloud-offline-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="cloud-slash" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             )}
@@ -146,7 +146,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
             <Item
                 title={installButtonLabel}
                 subtitle={props.installModal.description}
-                icon={<Ionicons name="download-outline" size={22} color={theme.colors.text.secondary} />}
+                icon={<Icon name="download" size={20} color={theme.colors.text.secondary} />}
                 disabled={installActionDisabled}
                 onPress={async () => {
                     if (installActionDisabled) return;
@@ -169,7 +169,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 <Item
                     title={t('deps.ui.lastInstallLog')}
                     subtitle={props.depStatus.lastInstallLogPath}
-                    icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="file-text" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     onPress={() => Modal.alert(t('deps.ui.installLogTitle'), props.depStatus?.lastInstallLogPath ?? '')}
                 />
@@ -179,7 +179,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 <Item
                     title={t('settingsAgents.authentication.lastCheckedTitle')}
                     subtitle={formatTimestamp(props.depStatus.lastBackgroundUpdateCheckAtMs)}
-                    icon={<Ionicons name="time-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="clock" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             )}

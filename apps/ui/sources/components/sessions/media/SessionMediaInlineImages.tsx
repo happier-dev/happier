@@ -1,14 +1,13 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Image, type ImageLoadEventData } from 'expo-image';
-import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     AttachmentImagePreviewModal,
     type AttachmentImagePreviewModalImage,
@@ -18,6 +17,7 @@ import {
     resolveSessionMediaInlineImageLayout,
     type SessionMediaInlineImageDimensions,
 } from '@/components/sessions/media/resolveSessionMediaInlineImageLayout';
+import { SessionMediaVideoPreview } from '@/components/sessions/media/SessionMediaVideoPreview';
 import type {
     SessionMediaInlineImageAvailableSummary,
     SessionMediaInlineMediaSummary,
@@ -104,40 +104,6 @@ function resolveInlineVideoAccessibilityLabel(media: SessionMediaInlineVideoAvai
     return t('files.sessionMedia.generatedVideoA11y', { name: media.name });
 }
 
-function SessionMediaInlineVideoPreview(props: Readonly<{
-    uri: string;
-    accessibilityLabel: string;
-}>): React.ReactElement {
-    const player = useVideoPlayer(props.uri, (instance: VideoPlayer) => {
-        instance.loop = false;
-        instance.muted = true;
-        instance.allowsExternalPlayback = false;
-        instance.timeUpdateEventInterval = 0;
-    });
-
-    React.useEffect(() => {
-        player.loop = false;
-        player.muted = true;
-        player.allowsExternalPlayback = false;
-        player.timeUpdateEventInterval = 0;
-    }, [player]);
-
-    React.useEffect(() => () => {
-        try { player.pause(); } catch {}
-    }, [player]);
-
-    return (
-        <VideoView
-            player={player}
-            style={{ width: '100%', height: '100%' }}
-            contentFit="contain"
-            nativeControls={false}
-            allowsPictureInPicture={false}
-            accessibilityLabel={props.accessibilityLabel}
-        />
-    );
-}
-
 function SessionMediaInlineVideoTile(props: Readonly<{
     sessionId: string;
     media: SessionMediaInlineVideoAvailableSummary;
@@ -169,14 +135,14 @@ function SessionMediaInlineVideoTile(props: Readonly<{
             style={[styles.tile, { width: 168, height: 104 }]}
         >
             {preview.status === 'loaded' ? (
-                <SessionMediaInlineVideoPreview
+                <SessionMediaVideoPreview
                     uri={preview.uri}
                     accessibilityLabel={accessibilityLabel}
                 />
             ) : (
                 <View style={styles.placeholder}>
-                    <Ionicons
-                        name={preview.status === 'error' ? 'alert-circle-outline' : 'videocam-outline'}
+                    <Icon
+                        name={preview.status === 'error' ? 'warning-circle' : 'video-camera'}
                         size={24}
                         color={theme.colors.text.secondary}
                     />
@@ -259,9 +225,9 @@ function SessionMediaInlineImageTile(props: Readonly<{
                 />
             ) : (
                 <View style={styles.placeholder}>
-                    <Ionicons
-                        name={preview.status === 'error' ? 'alert-circle-outline' : 'image-outline'}
-                        size={22}
+                    <Icon
+                        name={preview.status === 'error' ? 'warning-circle' : 'image'}
+                        size={20}
                         color={theme.colors.text.secondary}
                     />
                 </View>
@@ -294,8 +260,8 @@ function SessionMediaInlineInertTile(props: Readonly<{
             style={[styles.tile, size]}
         >
             <View style={styles.placeholder}>
-                <Ionicons
-                    name={video ? 'videocam-outline' : 'image-outline'}
+                <Icon
+                    name={video ? 'video-camera' : 'image'}
                     size={video ? 24 : 22}
                     color={theme.colors.text.secondary}
                 />
@@ -322,9 +288,9 @@ function SessionMediaUnavailableInlineImageTile(props: Readonly<{
             accessibilityLabel={t('files.sessionMedia.unavailableImageA11y', { name: props.media.name })}
             style={[styles.tile, styles.placeholder, { width: 84, height: 84 }]}
         >
-            <Ionicons
-                name="alert-circle-outline"
-                size={22}
+            <Icon
+                name="warning-circle"
+                size={20}
                 color={theme.colors.text.secondary}
             />
             <Text style={styles.unavailableText} numberOfLines={2}>

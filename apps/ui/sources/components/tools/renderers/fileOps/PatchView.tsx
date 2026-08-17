@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Octicons } from '@expo/vector-icons';
 import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -11,6 +10,7 @@ import { t } from '@/text';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { buildDiffFileEntries, type DiffBlockInput, type DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { ToolFileDiffListView } from './ToolFileDiffListView';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -161,7 +161,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
             <ToolSectionView>
                 {errorMessage ? <ToolError message={errorMessage} /> : null}
                 <View style={styles.fileContainer}>
-                    <Octicons name="file-diff" size={16} color={theme.colors.text.secondary} />
+                    <Icon name="git-diff" size={16} color={theme.colors.text.secondary} />
                     <Text style={styles.fileName}>{fileName}</Text>
                     {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
                     {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}
@@ -182,7 +182,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
 
                     return (
                         <View key={index} style={styles.fileRow}>
-                            <Octicons name="file-diff" size={14} color={theme.colors.text.secondary} />
+                            <Icon name="git-diff" size={14} color={theme.colors.text.secondary} />
                             <Text style={styles.fileNameMulti}>{fileName}</Text>
                         </View>
                     );

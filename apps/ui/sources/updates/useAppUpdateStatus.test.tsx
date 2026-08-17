@@ -41,6 +41,10 @@ const linkingState = vi.hoisted(() => ({
 const reactNativeState = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios' | 'android',
 }));
+const webUiDeploymentState = vi.hoisted(() => ({
+    updateAvailable: false,
+    reload: vi.fn(),
+}));
 
 const expoRouterMock = createExpoRouterMock({
     router: {
@@ -103,6 +107,10 @@ vi.mock('@/hooks/ui/useNativeUpdate', () => ({
     useNativeUpdate: () => nativeUpdateState.updateUrl,
 }));
 
+vi.mock('./useWebUiDeploymentFreshness', () => ({
+    useWebUiDeploymentFreshness: () => webUiDeploymentState,
+}));
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
@@ -145,6 +153,8 @@ describe('useAppUpdateStatus', () => {
         linkingState.canOpenURL.mockReset();
         linkingState.canOpenURL.mockResolvedValue(true);
         linkingState.openURL.mockReset();
+        webUiDeploymentState.updateAvailable = false;
+        webUiDeploymentState.reload.mockReset();
         vi.useRealTimers();
     });
 
@@ -164,6 +174,18 @@ describe('useAppUpdateStatus', () => {
         }
         return model;
     }
+
+    it('reloads the web application when its serving origin reports a new UI deployment', async () => {
+        webUiDeploymentState.updateAvailable = true;
+        const { useAppUpdateStatus } = await import('./useAppUpdateStatus');
+        const hook = await renderHook(() => useAppUpdateStatus());
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(expectVisibleModel(hook.getCurrent().model).kind).toBe('web-ui');
+        await hook.getCurrent().runPrimaryAction();
+        expect(webUiDeploymentState.reload).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+    });
 
     it('starts the desktop install action and supports dismissal', async () => {
         desktopUpdateState.status = 'available';

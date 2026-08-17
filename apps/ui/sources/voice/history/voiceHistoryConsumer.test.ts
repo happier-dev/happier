@@ -17,6 +17,14 @@ const XAI_SOURCE = Object.freeze({
   pluginId: 'happier.voice.xai',
   contributionId: 'realtime-grok',
 });
+const ELEVENLABS_SOURCE = Object.freeze({
+  pluginId: 'happier.voice.elevenlabs',
+  contributionId: 'realtime-elevenlabs',
+});
+const HISTORICAL_ELEVENLABS_SOURCE = Object.freeze({
+  pluginId: 'happier.voice.elevenlabs',
+  contributionId: 'realtime_elevenlabs',
+});
 
 function voiceMessage(input: Readonly<{
   id: string;
@@ -78,6 +86,7 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
     deleteSession: vi.fn(async () => ({ success: true })),
     canDeleteSession: () => true,
     retireLocalSession: vi.fn(),
+    runCarrierOperation: async (operation) => await operation(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
     ...overrides,
   };
@@ -114,7 +123,7 @@ describe('projectVoiceHistoryRows', () => {
         role: 'user',
         text: 'First question',
         createdAt: 100,
-        source: OPENAI_SOURCE,
+        source: HISTORICAL_ELEVENLABS_SOURCE,
       }),
       voiceMessage({
         id: 'assistant-1',
@@ -125,13 +134,18 @@ describe('projectVoiceHistoryRows', () => {
       }),
     ];
     const resolveProviderLabel = (source: VoiceHistoryProviderSource | null) =>
-      source?.pluginId === XAI_SOURCE.pluginId ? 'Grok Realtime' : 'OpenAI Realtime';
+      source?.pluginId === XAI_SOURCE.pluginId
+        ? 'Grok Realtime'
+        : source?.pluginId === ELEVENLABS_SOURCE.pluginId
+          ? 'ElevenLabs Realtime'
+          : 'OpenAI Realtime';
 
     expect(projectVoiceHistoryRows(messages, resolveProviderLabel)).toEqual([
       expect.objectContaining({
         id: 'user-1',
         role: 'user',
-        providerLabel: 'OpenAI Realtime',
+        providerLabel: 'ElevenLabs Realtime',
+        source: ELEVENLABS_SOURCE,
       }),
       expect.objectContaining({
         id: 'assistant-1',
@@ -154,6 +168,72 @@ describe('projectVoiceHistoryRows', () => {
 });
 
 describe('createVoiceHistoryConsumer', () => {
+  it('projects loaded messages once when applying a local search query', async () => {
+    const resolveProviderLabel = vi.fn(() => 'OpenAI Realtime');
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => [
+        voiceMessage({
+          id: 'question',
+          role: 'user',
+          text: 'First question',
+          createdAt: 100,
+          source: OPENAI_SOURCE,
+        }),
+        voiceMessage({
+          id: 'answer',
+          role: 'assistant',
+          text: 'Matching answer',
+          createdAt: 200,
+          source: OPENAI_SOURCE,
+        }),
+      ],
+      resolveProviderLabel,
+    }));
+
+    await expect(consumer.open('matching')).resolves.toMatchObject({
+      rows: [expect.objectContaining({ id: 'answer' })],
+      loadedRowCount: 2,
+    });
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses the chronological projection while only the local search query changes', async () => {
+    const messages = [
+      voiceMessage({
+        id: 'question',
+        role: 'user',
+        text: 'First question',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+      voiceMessage({
+        id: 'answer',
+        role: 'assistant',
+        text: 'Matching answer',
+        createdAt: 200,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    let projectionRevision = 1;
+    const resolveProviderLabel = vi.fn(() => 'OpenAI Realtime');
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      readMessages: () => messages,
+      readProjectionRevision: () => projectionRevision,
+      resolveProviderLabel,
+    }));
+
+    await consumer.open('question');
+    expect(consumer.read('answer').rows).toEqual([
+      expect.objectContaining({ id: 'answer' }),
+    ]);
+    expect(consumer.read('openai').rows).toHaveLength(2);
+
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(2);
+    projectionRevision += 1;
+    consumer.read();
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(4);
+  });
+
   it('rejects a stale discovery instead of replacing a newer session binding', async () => {
     let resolveFirstDiscovery!: (sessionId: string | null) => void;
     const firstDiscovery = new Promise<string | null>((resolve) => {
@@ -311,16 +391,23 @@ describe('createVoiceHistoryConsumer', () => {
         status: pages.length > 0 ? 'loaded' as const : 'no_more' as const,
       };
     });
+    const resolveProviderLabel = vi.fn((source: VoiceHistoryProviderSource | null) =>
+      source?.pluginId === XAI_SOURCE.pluginId ? 'Grok Realtime' : 'OpenAI Realtime');
     const consumer = createVoiceHistoryConsumer(createDeps({
       readMessages: () => loaded,
       loadOlderMessages,
+      resolveProviderLabel,
     }));
 
     await consumer.open();
+    resolveProviderLabel.mockClear();
     const artifact = await consumer.exportHistory({ range: 'all' });
     const payload = JSON.parse(artifact.content);
 
     expect(loadOlderMessages).toHaveBeenCalledTimes(2);
+    // The initial export snapshot reuses the projection produced by open();
+    // each newly loaded page invalidates and projects the enlarged slice once.
+    expect(resolveProviderLabel).toHaveBeenCalledTimes(5);
     expect(artifact).toMatchObject({
       mimeType: 'application/json',
       rowCount: 3,
@@ -475,6 +562,26 @@ describe('createVoiceHistoryConsumer', () => {
       code: 'voice_history_clear_active_call',
     });
     expect(deleteSession).not.toHaveBeenCalled();
+    expect(retireLocalSession).not.toHaveBeenCalled();
+    expect(consumer.read()).toMatchObject({
+      sessionId: 'voice-history-session',
+    });
+  });
+
+  it('retains the local binding when the server reports the carrier missing or not owned', async () => {
+    const retireLocalSession = vi.fn();
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      deleteSession: vi.fn(async () => ({
+        success: false,
+        message: 'Session not found or not owned by user',
+      })),
+      retireLocalSession,
+    }));
+    await consumer.open();
+
+    await expect(consumer.clear()).rejects.toThrow(
+      'Session not found or not owned by user',
+    );
     expect(retireLocalSession).not.toHaveBeenCalled();
     expect(consumer.read()).toMatchObject({
       sessionId: 'voice-history-session',

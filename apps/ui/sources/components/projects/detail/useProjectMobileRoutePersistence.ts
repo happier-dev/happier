@@ -1,6 +1,11 @@
 import * as React from 'react';
 
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import {
+    useLocalSetting,
+    useLocalSettingMutable,
+    usePersistProjectLastMobileSurface,
+    useProjectLastMobileSurface,
+} from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
@@ -40,10 +45,10 @@ export function useProjectMobileRoutePersistence(params: Readonly<{
     resolveRouteHrefRef.current = resolveRouteHref;
 
     const routerRef = useProjectRouteRouterRef();
-    const lastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
+    const lastMobileSurface = useProjectLastMobileSurface(workspaceRef.id);
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const [, setLastMobileSurfaceByWorkspaceRefId] = useLocalSettingMutable('projectLastMobileSurfaceByWorkspaceRefId');
+    const persistProjectLastMobileSurface = usePersistProjectLastMobileSurface();
     const [, setLastActiveRootPathByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveRootPathByWorkspaceRefId');
     const [, setLastActiveWorktreeIdByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveWorktreeIdByWorkspaceRefId');
 
@@ -107,16 +112,13 @@ export function useProjectMobileRoutePersistence(params: Readonly<{
 
     React.useEffect(() => {
         if (!isFocused) return;
-        if (lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === persistedSurface) return;
-        setLastMobileSurfaceByWorkspaceRefId({
-            ...(lastMobileSurfaceByWorkspaceRefId ?? {}),
-            [workspaceRefId]: persistedSurface,
-        });
+        if (lastMobileSurface === persistedSurface) return;
+        persistProjectLastMobileSurface(workspaceRefId, persistedSurface);
     }, [
         isFocused,
-        lastMobileSurfaceByWorkspaceRefId,
+        lastMobileSurface,
+        persistProjectLastMobileSurface,
         persistedSurface,
-        setLastMobileSurfaceByWorkspaceRefId,
         workspaceRefId,
     ]);
 

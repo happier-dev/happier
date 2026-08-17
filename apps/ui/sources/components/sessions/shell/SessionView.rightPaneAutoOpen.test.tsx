@@ -279,22 +279,26 @@ vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
 }));
-vi.mock('@/sync/sync', () => ({
+vi.mock('@/sync/sync', async () => {
+    const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
+    return {
         sync: {
+            ...createAcceptedExternalSessionTailCursorSyncBoundary(),
             markSessionViewed: async () => {},
             fetchPendingMessages: (sessionId: string) => fetchPendingMessagesSpy(sessionId),
             publishSessionPermissionModeToMetadata: async () => {},
             publishSessionAcpSessionModeOverrideToMetadata: async () => {},
             publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-        publishSessionModelOverrideToMetadata: async () => {},
-        refreshSessions: async () => {},
-        onSessionVisible: () => () => {},
-        sendMessage: async () => {},
-        enqueuePendingMessage: async () => {},
-        submitMessage: async () => {},
-        encryption: { getMachineEncryption: () => null },
-    },
-}));
+            publishSessionModelOverrideToMetadata: async () => {},
+            refreshSessions: async () => {},
+            onSessionVisible: () => () => {},
+            sendMessage: async () => {},
+            enqueuePendingMessage: async () => {},
+            submitMessage: async () => {},
+            encryption: { getMachineEncryption: () => null },
+        },
+    };
+});
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
     return createSyncOpsModuleMock({

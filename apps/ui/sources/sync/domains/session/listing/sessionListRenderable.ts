@@ -585,7 +585,8 @@ export function preserveSessionListRenderableStaleFields(
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
     const preserveMetadata =
-        next.metadata == null
+        next.metadataUnavailable !== true
+        && next.metadata == null
         && previous?.metadata != null
         && (next.metadataLayoutVersion ?? 0) === (previous.metadataLayoutVersion ?? 0);
     const preserveMetadataUnavailable =

@@ -1,10 +1,14 @@
 import React from 'react';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { Platform, Pressable } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import {
+    useCurrentSecretBindingsByProfileIdMutable,
+    useSetting,
+    useSettingMutable,
+    useSettings,
+} from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -15,8 +19,7 @@ import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSec
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
 import {
-    projectAiLaunchProfileForLegacyUi,
-    readUiAiLaunchProfiles,
+    readUiAiLaunchProfilesForLegacyUi,
     removeAiLaunchProfile,
 } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
@@ -35,6 +38,7 @@ import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCat
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export default React.memo(function ProfilePickerScreen() {
     const { theme } = useUnistyles();
@@ -53,12 +57,9 @@ export default React.memo(function ProfilePickerScreen() {
     }>();
     const useProfiles = useSetting('useProfiles');
     const [secrets, setSecrets] = useSavedSecretsMutable();
-    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
-    const profiles = React.useMemo(
-        () => readUiAiLaunchProfiles(rawProfiles).map(projectAiLaunchProfileForLegacyUi),
-        [rawProfiles],
-    );
+    const profiles = React.useMemo(() => readUiAiLaunchProfilesForLegacyUi(rawProfiles), [rawProfiles]);
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
     const settings = useSettings() ?? settingsDefaults;
 
@@ -435,7 +436,7 @@ export default React.memo(function ProfilePickerScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={t('common.back')}
             >
-                <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
+                <Icon name="caret-left" size={20} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }, [handleBackPress, theme.colors.chrome.header.foreground]);
@@ -464,13 +465,13 @@ export default React.memo(function ProfilePickerScreen() {
                         <Item
                             title={t('settingsFeatures.profiles')}
                             subtitle={t('settingsFeatures.profilesDisabled')}
-                            icon={<Ionicons name="person-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="person" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                         />
                         <Item
                             title={t('settings.featuresTitle')}
                             subtitle={t('settings.featuresSubtitle')}
-                            icon={<Ionicons name="flask-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="flask" size={29} color={theme.colors.text.secondary} />}
                             onPress={() => router.push('/settings/features')}
                         />
                     </ItemGroup>

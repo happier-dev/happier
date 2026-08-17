@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import type { ArtifactDataKeyCache } from './syncArtifacts';
 
 vi.mock('@/sync/api/artifacts/apiArtifacts', () => ({
   createArtifact: vi.fn(),
@@ -15,12 +16,46 @@ vi.mock('@/sync/api/artifacts/apiArtifacts', () => ({
 }));
 
 describe('updateArtifactWithHeaderViaApi', () => {
+  it('refuses to rewrite a retained encrypted artifact while its content is locked', async () => {
+    const updateArtifact = vi.fn();
+    const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+
+    await expect(updateArtifactWithHeaderViaApi({
+      credentials: { token: 't', secret: 's' },
+      artifactId: 'locked-artifact',
+      header: { title: 'Replacement title' },
+      body: 'replacement body',
+      encryption: null,
+      artifactDataKeys: new Map(),
+      getArtifact: () => ({
+        id: 'locked-artifact',
+        title: null,
+        header: null,
+        body: undefined,
+        headerVersion: 3,
+        bodyVersion: 4,
+        seq: 5,
+        createdAt: 1,
+        updatedAt: 2,
+        isDecrypted: false,
+        storageMode: 'e2ee',
+        availability: {
+          kind: 'locked',
+          reason: 'encryption_material_unavailable',
+        },
+      }),
+      updateArtifact,
+    })).rejects.toThrow('Artifact locked-artifact is locked');
+
+    expect(updateArtifact).not.toHaveBeenCalled();
+  });
+
   it('updates passthrough header metadata in local decrypted artifacts', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-    const artifactDataKeys = new Map<string, Uint8Array>();
+    const artifactDataKeys: ArtifactDataKeyCache = new Map();
     const artifactId = 'a1';
     const dataEncryptionKey = ArtifactEncryption.generateDataEncryptionKey();
-    artifactDataKeys.set(artifactId, dataEncryptionKey);
+    artifactDataKeys.set(artifactId, { envelope: 'envelope-a1', dataKey: dataEncryptionKey });
 
     const current = {
       id: artifactId,
@@ -57,4 +92,3 @@ describe('updateArtifactWithHeaderViaApi', () => {
     expect(updated[0]?.bodyVersion).toBe(2);
   });
 });
-

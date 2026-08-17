@@ -1,7 +1,7 @@
 import {
-    SessionSystemRecordLookupResponseSchema,
-    SessionSystemRecordPageResponseSchema,
-    type SessionSystemRecord,
+    LegacyHostSessionSystemRecordLookupResponseSchema,
+    LegacyHostSessionSystemRecordPageResponseSchema as SessionSystemRecordPageResponseSchema,
+    type LegacyHostSessionSystemRecord as SessionSystemRecord,
     type SessionSystemRecordKind,
     type SessionSystemRecordNamespace,
 } from '@happier-dev/protocol';
@@ -148,7 +148,7 @@ export async function fetchSessionSystemRecord(params: Readonly<{
         });
         if (!response.ok) return null;
         const json = await response.json().catch(() => null);
-        const parsed = SessionSystemRecordLookupResponseSchema.safeParse(json);
+        const parsed = LegacyHostSessionSystemRecordLookupResponseSchema.safeParse(json);
         if (!parsed.success) return null;
         return parsed.data.record ?? null;
     } catch {

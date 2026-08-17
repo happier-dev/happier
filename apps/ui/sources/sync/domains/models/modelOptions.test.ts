@@ -7,6 +7,7 @@ import {
     getSelectableModelIdsForSession,
     hasDynamicModelListForSession,
     isModelSelectableForSession,
+    resolveCanonicalNativeModelSelectionRef,
 } from './modelOptions';
 import { findModelOptionForEffectiveModelId } from './modelOptions';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -169,6 +170,33 @@ describe('modelOptions', () => {
         expect(out.find((option) => option.value === 'claude-sonnet-4-6')).toMatchObject({
             label: 'Sonnet 4.6',
         });
+    });
+
+    it('names the model id on in-session rows a duplicate label would otherwise make indistinguishable', () => {
+        const out = getModelOptionsForSession(
+            'claude',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    updatedAt: 1,
+                    currentModelId: 'claude-opus-4-5-20251101',
+                    availableModels: [
+                        { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5' },
+                        { id: 'claude-opus-4-6', name: 'Opus 4.6' },
+                    ],
+                },
+            } as unknown as Partial<Metadata>),
+        );
+
+        const pinned = out.find((option) => option.value === 'claude-opus-4-5-20251101');
+        const alias = out.find((option) => option.value === 'claude-opus-4-5');
+        expect(pinned?.label).toBe('Opus 4.5');
+        expect(alias?.label).toBe('Opus 4.5');
+        expect(pinned?.description).toBe('claude-opus-4-5-20251101');
+        expect(alias?.description).toBe('claude-opus-4-5');
+        expect(out.find((option) => option.value === 'claude-opus-4-6')?.description)
+            .not.toBe('claude-opus-4-6');
     });
 
     it('treats ACP session models as selectable', () => {
@@ -401,12 +429,61 @@ describe('findModelOptionForEffectiveModelId', () => {
         expect(findModelOptionForEffectiveModelId(options, 'claude-fable-5')?.value).toBe('claude-fable-5');
     });
 
-    it('matches a bracket variant id ([1m]) to its base model option', () => {
+    it('matches an explicitly declared extended-context id to its base model option', () => {
         expect(findModelOptionForEffectiveModelId(options, 'claude-sonnet-4-6[1m]')?.value).toBe('claude-sonnet-4-6');
+    });
+
+    it('does not infer undeclared bracket variants', () => {
+        expect(findModelOptionForEffectiveModelId(options, 'claude-fable-5[preview]')).toBeNull();
+    });
+
+    it('matches an unqualified model id only when one provider-qualified option owns it', () => {
+        const qualifiedOptions = [
+            ...options,
+            { value: 'openai-codex/gpt-5.6-luna', label: 'Luna', description: 'Codex' },
+        ];
+
+        expect(findModelOptionForEffectiveModelId(qualifiedOptions, 'gpt-5.6-luna')?.value)
+            .toBe('openai-codex/gpt-5.6-luna');
+
+        const ambiguous = [
+            ...qualifiedOptions,
+            { value: 'openai/gpt-5.6-luna', label: 'Luna', description: 'OpenAI' },
+        ];
+        expect(findModelOptionForEffectiveModelId(ambiguous, 'gpt-5.6-luna')).toBeNull();
     });
 
     it('returns null when nothing matches', () => {
         expect(findModelOptionForEffectiveModelId(options, 'gpt-5')).toBeNull();
+        expect(findModelOptionForEffectiveModelId(options, 'private-custom-model')).toBeNull();
         expect(findModelOptionForEffectiveModelId(options, '')).toBeNull();
+    });
+});
+
+describe('resolveCanonicalNativeModelSelectionRef', () => {
+    it('projects only a unique native alias and preserves ambiguous and Provider-bound identities', () => {
+        const options = [
+            { value: 'openai-codex/gpt-5.6-luna' },
+            { value: 'openai/gpt-shared' },
+            { value: 'openai-codex/gpt-shared' },
+        ];
+        const nativeAlias = {
+            agentTargetKey: 'backend:pi',
+            providerConnectionId: null,
+            modelId: 'gpt-5.6-luna',
+        };
+        expect(resolveCanonicalNativeModelSelectionRef(options, nativeAlias)).toEqual({
+            ...nativeAlias,
+            modelId: 'openai-codex/gpt-5.6-luna',
+        });
+
+        const ambiguous = { ...nativeAlias, modelId: 'gpt-shared' };
+        expect(resolveCanonicalNativeModelSelectionRef(options, ambiguous)).toBe(ambiguous);
+
+        const providerBound = {
+            ...nativeAlias,
+            providerConnectionId: 'pc_openai',
+        };
+        expect(resolveCanonicalNativeModelSelectionRef(options, providerBound)).toBe(providerBound);
     });
 });

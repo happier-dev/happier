@@ -34,14 +34,6 @@ vi.mock('@/sync/domains/sessionFork/completeSessionForkNavigation', () => ({
   completeSessionForkNavigation: (params: unknown) => completeSessionForkNavigationMock(params),
 }));
 
-vi.mock('@/voice/tools/actionImpl/spawnSession', () => ({
-  spawnSessionForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/spawnSessionPicker', () => ({
-  spawnSessionWithPickerForVoiceTool: vi.fn(),
-}));
-
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
   sessionRpcWithServerScope: vi.fn(),
 }));
@@ -91,6 +83,7 @@ vi.mock('@/voice/tools/actionImpl/sessionActivity', () => ({
 
 vi.mock('@/voice/tools/actionImpl/sessionRecentMessages', () => ({
   getSessionRecentMessagesForVoiceTool: vi.fn(),
+  getSessionTranscriptForVoiceTool: vi.fn(),
 }));
 
 vi.mock('@/voice/tools/actionImpl/pathsListRecent', () => ({
@@ -319,6 +312,38 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     });
     expect(openSessionForVoiceToolMock).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess_child',
+    }));
+  }, 60_000);
+
+  it('clamps an out-of-range replay seed budget to what the fork wire accepts', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    openSessionForVoiceToolMock.mockResolvedValueOnce({});
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          presence: 0,
+          metadata: { machineId: 'machine_1' },
+        },
+      },
+      // The stored account setting permits a wider range than the fork wire schema, so an
+      // unclamped forward would be rejected as invalid rather than bounded.
+      settings: { sessionReplayMaxSeedChars: 500_000 },
+    });
+
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(forkSessionOpMock).toHaveBeenCalledWith(expect.objectContaining({
+      replayMaxSeedChars: 200_000,
     }));
   }, 60_000);
 

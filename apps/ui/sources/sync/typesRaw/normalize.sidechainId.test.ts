@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { normalizeRawMessage } from './normalize';
 
 describe('typesRaw.normalizeRawMessage', () => {
@@ -296,5 +296,27 @@ describe('typesRaw.normalizeRawMessage', () => {
     expect(normalized).not.toBeNull();
     expect((normalized as any).isSidechain).toBe(true);
     expect((normalized as any).sidechainId).toBe('tool_task_meta_acp_1');
+  });
+
+  it('keeps an invalid agent fallback sidechain-scoped when the public carrier supplies its id', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const normalized = normalizeRawMessage(
+        'invalid-agent-child',
+        null,
+        1009,
+        { role: 'agent', content: {} },
+        { sidechainId: 'public-child-1' },
+      );
+
+      expect(normalized).toMatchObject({
+        role: 'agent',
+        sidechainId: 'public-child-1',
+        isSidechain: true,
+        content: [{ type: 'text', text: '[Unparsed agent message]' }],
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

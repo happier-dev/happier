@@ -16,6 +16,14 @@ const PLUGIN_UI_FEATURE_IDS = [
 ] as const;
 
 describe('UI plugin feature registry', () => {
+    it('does not advertise the retired structured-message feature', () => {
+        expect(getUiFeatureDefinition('plugins.ui.structuredMessages' as never)).toBeUndefined();
+    });
+
+    it('projects plugin webhooks as a server-owned runtime feature', () => {
+        expect(getUiFeatureDefinition('plugins.webhooks').settingsToggle).toBeUndefined();
+    });
+
     it('registers plugin UI tier feature ids as runtime-only UI features', () => {
         for (const featureId of PLUGIN_UI_FEATURE_IDS) {
             expect(getUiFeatureDefinition(featureId).settingsToggle).toBeUndefined();

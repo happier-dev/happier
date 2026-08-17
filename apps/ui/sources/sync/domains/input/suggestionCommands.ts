@@ -11,16 +11,25 @@ import { t } from '@/text';
 import { BUILT_IN_PROMPTS } from './slashCommands/builtInPrompts';
 import type { PromptInvocationSuggestionMetadata } from './slashCommands/promptInvocationSuggestion';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { PluginContributedActionDescriptor } from '@/components/plugins/actions/pluginContributedActionController';
 
 export interface CommandItem {
+    /** Stable source-local row identity; command text alone is not unique for qualified Action aliases. */
+    key?: string;
     command: string;        // The command without slash (e.g., "compact")
     description?: string;   // Optional description of what the command does
+    /** Search-only aliases that must not change a collision row's displayed spelling. */
+    searchTerms?: readonly string[];
     promptInvocation?: PromptInvocationSuggestionMetadata;
+    /** Controller-admitted Action carried through the incumbent slash picker. */
+    pluginContributedAction?: PluginContributedActionDescriptor;
 }
 
-interface SearchOptions {
+export interface SearchOptions {
     limit?: number;
     threshold?: number;
+    /** Current session composer Action descriptors, owned and filtered by its controller. */
+    contributedActions?: readonly PluginContributedActionDescriptor[];
 }
 
 // Commands to ignore/filter out
@@ -152,6 +161,90 @@ function buildBuiltInPromptSlashCommands(): CommandItem[] {
     })).filter((command) => command.command.trim().length > 0);
 }
 
+function compareStrings(left: string, right: string): number {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
+ * Adds controller-admitted external Actions to the incumbent multi-source slash
+ * catalog. Native and prompt commands retain their raw token and behavior; an
+ * Action never wins a registration-order collision, so its row uses the stable
+ * qualified Action spelling instead.
+ */
+function buildContributedActionSlashCommands(
+    existingCommands: readonly CommandItem[],
+    contributedActions: readonly PluginContributedActionDescriptor[],
+): CommandItem[] {
+    const nativeCommands = new Set(existingCommands.map((command) => command.command));
+    const candidates: Array<Readonly<{
+        action: PluginContributedActionDescriptor;
+        token: string;
+        rawCommand: string;
+    }>> = [];
+    for (const action of contributedActions) {
+        for (const token of action.slash?.tokens ?? []) {
+            if (!token.startsWith('/') || token.length <= 1) continue;
+            candidates.push({ action, token, rawCommand: token.slice(1) });
+        }
+    }
+    candidates.sort((left, right) => (
+        compareStrings(left.action.qualifiedActionId, right.action.qualifiedActionId)
+        || compareStrings(left.token, right.token)
+    ));
+    const candidateCounts = new Map<string, number>();
+    for (const candidate of candidates) {
+        candidateCounts.set(
+            candidate.rawCommand,
+            (candidateCounts.get(candidate.rawCommand) ?? 0) + 1,
+        );
+    }
+    const collidingActionIdentities = new Set<string>();
+    for (const candidate of candidates) {
+        const actionIdentity = `${candidate.action.identity.pluginId}\u0000${candidate.action.identity.localId}`;
+        if (
+            nativeCommands.has(candidate.rawCommand)
+            || (candidateCounts.get(candidate.rawCommand) ?? 0) > 1
+        ) {
+            collidingActionIdentities.add(actionIdentity);
+        }
+    }
+
+    const rowsByActionIdentity = new Map<string, {
+        action: PluginContributedActionDescriptor;
+        command: string;
+        rawCommands: string[];
+    }>();
+    for (const candidate of candidates) {
+        const actionIdentity = `${candidate.action.identity.pluginId}\u0000${candidate.action.identity.localId}`;
+        const command = collidingActionIdentities.has(actionIdentity)
+            ? candidate.action.qualifiedActionId
+            : candidate.rawCommand;
+        const existing = rowsByActionIdentity.get(actionIdentity);
+        if (existing) {
+            if (!existing.rawCommands.includes(candidate.rawCommand)) {
+                existing.rawCommands.push(candidate.rawCommand);
+            }
+            continue;
+        }
+        rowsByActionIdentity.set(actionIdentity, {
+            action: candidate.action,
+            command,
+            rawCommands: [candidate.rawCommand],
+        });
+    }
+
+    return [...rowsByActionIdentity.values()].map((row) => {
+        const baseDescription = row.action.description ?? row.action.title;
+        return {
+            key: `plugin-action:${row.action.qualifiedActionId}`,
+            command: row.command,
+            ...(baseDescription ? { description: baseDescription } : {}),
+            searchTerms: [...row.rawCommands, row.action.qualifiedActionId],
+            pluginContributedAction: row.action,
+        };
+    });
+}
+
 // Command descriptions for known tools/commands
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
     // Default commands
@@ -171,10 +264,16 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
     // Add more descriptions as needed
 };
 
-// Get commands from session metadata
-function getCommandsFromSession(sessionId: string): CommandItem[] {
+// Get commands from session metadata.
+// `sessionId` is null before a session exists (the new-session composer): action, built-in and
+// default commands plus prompt templates are all still available, and only the session-published
+// commands are absent — which is the truth, not a degraded case.
+function getCommandsFromSession(
+    sessionId: string | null,
+    contributedActions: readonly PluginContributedActionDescriptor[] = [],
+): CommandItem[] {
     const state = storage.getState();
-    const session = state.sessions?.[sessionId];
+    const session = sessionId ? state.sessions?.[sessionId] : undefined;
     const commands: CommandItem[] = [
         ...buildActionSlashCommands(state),
         ...buildBuiltInPromptSlashCommands(),
@@ -187,53 +286,48 @@ function getCommandsFromSession(sessionId: string): CommandItem[] {
         commands.push(invocation);
     }
     const metadata = session ? readSessionOwnerMetadataView(session) : null;
-    if (!metadata) {
-        return commands;
-    }
-
-    // Prefer richer metadata when available
-    const details = (metadata as any).slashCommandDetails as Array<{ command?: unknown; description?: unknown }> | undefined;
-    if (Array.isArray(details) && details.length > 0) {
-        for (const d of details) {
-            const cmd = typeof d.command === 'string' ? d.command : null;
-            if (!cmd) continue;
-            if (IGNORED_COMMANDS.includes(cmd)) continue;
-            if (commands.find(c => c.command === cmd)) continue;
-            commands.push({
-                command: cmd,
-                description: typeof d.description === 'string' && d.description.trim().length > 0
-                    ? d.description
-                    : COMMAND_DESCRIPTIONS[cmd]
-            });
-        }
-        return commands;
-    }
-
-    // Fallback: commands from metadata.slashCommands (filter with ignore list)
-    if (metadata.slashCommands) {
-        for (const cmd of metadata.slashCommands) {
-            if (IGNORED_COMMANDS.includes(cmd)) continue;
-            if (commands.find(c => c.command === cmd)) continue;
-            commands.push({
-                command: cmd,
-                description: COMMAND_DESCRIPTIONS[cmd]
-            });
+    if (metadata) {
+        // Prefer richer metadata when available.
+        const details = (metadata as any).slashCommandDetails as Array<{ command?: unknown; description?: unknown }> | undefined;
+        if (Array.isArray(details) && details.length > 0) {
+            for (const d of details) {
+                const cmd = typeof d.command === 'string' ? d.command : null;
+                if (!cmd) continue;
+                if (IGNORED_COMMANDS.includes(cmd)) continue;
+                if (commands.find(c => c.command === cmd)) continue;
+                commands.push({
+                    command: cmd,
+                    description: typeof d.description === 'string' && d.description.trim().length > 0
+                        ? d.description
+                        : COMMAND_DESCRIPTIONS[cmd]
+                });
+            }
+        } else if (metadata.slashCommands) {
+            // Fallback: commands from metadata.slashCommands (filter with ignore list).
+            for (const cmd of metadata.slashCommands) {
+                if (IGNORED_COMMANDS.includes(cmd)) continue;
+                if (commands.find(c => c.command === cmd)) continue;
+                commands.push({
+                    command: cmd,
+                    description: COMMAND_DESCRIPTIONS[cmd]
+                });
+            }
         }
     }
-    
-    return commands;
+
+    return [...commands, ...buildContributedActionSlashCommands(commands, contributedActions)];
 }
 
 // Main export: search commands with fuzzy matching
 export async function searchCommands(
-    sessionId: string,
+    sessionId: string | null,
     query: string,
     options: SearchOptions = {}
 ): Promise<CommandItem[]> {
-    const { limit = 10, threshold = 0.3 } = options;
+    const { limit = 10, threshold = 0.3, contributedActions = [] } = options;
     
     // Get commands from session metadata (no caching)
-    const commands = getCommandsFromSession(sessionId);
+    const commands = getCommandsFromSession(sessionId, contributedActions);
     
     // If query is empty, return all commands
     if (!query || query.trim().length === 0) {
@@ -243,8 +337,9 @@ export async function searchCommands(
     // Setup Fuse for fuzzy search
     const fuseOptions = {
         keys: [
-            { name: 'command', weight: 0.7 },
-            { name: 'description', weight: 0.3 }
+            { name: 'command', weight: 0.6 },
+            { name: 'description', weight: 0.2 },
+            { name: 'searchTerms', weight: 0.2 },
         ],
         threshold,
         includeScore: true,
@@ -261,6 +356,6 @@ export async function searchCommands(
 }
 
 // Get all available commands for a session
-export function getAllCommands(sessionId: string): CommandItem[] {
-    return getCommandsFromSession(sessionId);
+export function getAllCommands(sessionId: string | null, options: Pick<SearchOptions, 'contributedActions'> = {}): CommandItem[] {
+    return getCommandsFromSession(sessionId, options.contributedActions);
 }

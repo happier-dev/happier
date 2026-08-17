@@ -99,6 +99,16 @@ describe('VirtualizedList backend selection', () => {
         expect(mocks.legend?.state.props?.showsVerticalScrollIndicator).toBe(false);
     });
 
+    it('keeps horizontal scrolling inside the selected virtualized backend', async () => {
+        await renderList({
+            horizontal: true,
+            showsHorizontalScrollIndicator: false,
+        });
+
+        expect(mocks.legend?.state.props?.horizontal).toBe(true);
+        expect(mocks.legend?.state.props?.showsHorizontalScrollIndicator).toBe(false);
+    });
+
     it('preserves native scroll lifecycle handlers without leaking them to the web DOM owner', async () => {
         const onContentSizeChange = vi.fn();
         const onMomentumScrollEnd = vi.fn();

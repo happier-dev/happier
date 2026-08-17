@@ -40,6 +40,26 @@ export const pluginPermissionTranslations = {
         },
         accessibilitySummary: ({ details }) => `Permission request details. ${details}`,
     },
+    fr: {
+        fields: {
+            pluginId: 'ID du plugin',
+            capability: 'Capacité',
+            scope: 'Portée',
+            requester: 'Demandeur',
+            authority: 'Autorité',
+            requestedAt: 'Heure de la demande',
+        },
+        scope: { account: 'Compte', project: 'Projet', workspace: 'Workspace' },
+        requester: { user: 'Utilisateur', host: 'Hôte', plugin: 'Plugin' },
+        authority: { bundled: 'Intégré', machineInstallation: 'Installation sur la machine' },
+        identifiers: {
+            session: 'Session',
+            request: 'Demande',
+            machine: 'Machine',
+            installation: 'Installation',
+        },
+        accessibilitySummary: ({ details }) => `Détails de la demande de permission. ${details}`,
+    },
     ru: {
         fields: {
             pluginId: 'Идентификатор плагина',

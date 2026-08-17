@@ -138,35 +138,40 @@ async function probeServerReadiness(params: Readonly<{ endpoint: string; token: 
             errorMessage: 'Network disabled while app is backgrounded',
         };
     }
-    try {
-        const healthResponse = await runtimeFetchWithTimeout(
-            `${endpoint}/health`,
-            {
-                method: 'GET',
-                headers: { Accept: 'application/json' },
-            },
-            readServerReachabilityProbeTimeoutMs(),
-        );
-        if (healthResponse.status === 429) {
-            return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
-        }
-        if (healthResponse.status >= 500) {
-            return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
-        }
-        if (!healthResponse.ok) {
+    // The authenticated ping subsumes the unauthenticated health check: it proves the same reachability and
+    // additionally proves the token is accepted, with the same retry_later/server_restarting classification.
+    // Running both sequentially cost every cold boot and every resume a second full round trip before the socket
+    // transport was even constructed, without producing evidence the ping does not already carry. `/health`
+    // remains the probe for the tokenless case, where no authenticated route can be used.
+    if (!params.token) {
+        try {
+            const healthResponse = await runtimeFetchWithTimeout(
+                `${endpoint}/health`,
+                {
+                    method: 'GET',
+                    headers: { Accept: 'application/json' },
+                },
+                readServerReachabilityProbeTimeoutMs(),
+            );
+            if (healthResponse.status === 429) {
+                return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
+            }
+            if (healthResponse.status >= 500) {
+                return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
+            }
+            if (!healthResponse.ok) {
+                return {
+                    status: 'server_unreachable',
+                    errorMessage: `Health check returned ${healthResponse.status}`,
+                };
+            }
+        } catch (error) {
             return {
                 status: 'server_unreachable',
-                errorMessage: `Health check returned ${healthResponse.status}`,
+                errorMessage: error instanceof Error ? error.message : String(error),
             };
         }
-    } catch (error) {
-        return {
-            status: 'server_unreachable',
-            errorMessage: error instanceof Error ? error.message : String(error),
-        };
-    }
 
-    if (!params.token) {
         return { status: 'ready' };
     }
 

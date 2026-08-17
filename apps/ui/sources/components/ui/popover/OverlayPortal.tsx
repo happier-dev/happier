@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
+import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 
 type OverlayPortalDispatch = Readonly<{
     setPortalNode: (id: string, node: React.ReactNode) => void;
@@ -65,14 +66,15 @@ export function OverlayPortalHost(props: {
     if (!nodes || nodes.size === 0) return null;
 
     const zIndex = props.zIndex ?? 999999;
+    const pointerEvents = resolveOverlayPointerEvents(props.pointerEvents ?? 'box-none');
 
     return (
         <View
             // Required on native: Popover measures the portal root to derive anchor-relative coordinates.
             // Collapsable views can be optimized away, producing invalid measurements (e.g. y=0 in contained modals).
             collapsable={false}
-            pointerEvents={props.pointerEvents ?? 'box-none'}
-            style={[StyleSheet.absoluteFill, { zIndex, elevation: zIndex }]}
+            pointerEvents={pointerEvents.nativePointerEvents}
+            style={[StyleSheet.absoluteFill, { zIndex, elevation: zIndex }, pointerEvents.webStyle]}
         >
             {Array.from(nodes.entries()).map(([id, node]) => (
                 <React.Fragment key={id}>

@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+    MENTION_KIND_V1,
+    buildMentionRefForKindV1,
+} from '@happier-dev/protocol';
+
 const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn((_sessionId: string) => 'server-a'));
 const searchFilesMock = vi.hoisted(() => vi.fn(async () => []));
-const suggestionFileModuleImportCount = vi.hoisted(() => ({ value: 0 }));
 const storageStateMock = vi.hoisted(() => ({
     sessions: {
         s1: {
@@ -37,12 +41,9 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
-vi.mock('@/sync/domains/input/suggestionFile', () => {
-    suggestionFileModuleImportCount.value += 1;
-    return {
-        searchFiles: searchFilesMock,
-    };
-});
+vi.mock('@/sync/domains/input/suggestionFile', () => ({
+    searchFiles: searchFilesMock,
+}));
 
 vi.mock('@/sync/domains/input/suggestionCommands', () => ({
     searchCommands: vi.fn(async () => [
@@ -93,37 +94,36 @@ describe('structured input autocomplete suggestions', () => {
         };
     });
 
-    it('loads file search only for file mention queries', async () => {
-        vi.resetModules();
-        suggestionFileModuleImportCount.value = 0;
-
+    // Scoping is about which kinds a trigger RESOLVES, not about when their modules
+    // load: the registry imports its dependencies eagerly on purpose, because on
+    // native a deferred first-party import never completes in a dev client
+    // (`composerSuggestionKinds.moduleLoad.native.test.ts` owns that contract).
+    it('searches files for mention queries only, never for other triggers', async () => {
         const { getCommandSuggestions } = await import('./commandSuggestions');
         const { getSuggestions } = await import('./suggestions');
 
-        expect(suggestionFileModuleImportCount.value).toBe(0);
-
         await getCommandSuggestions('s1', '/go');
         await getSuggestions('s1', '$rev', {
-            skills: [{ name: 'review' }],
-        });
-        await getSuggestions('s1', '@gmail', {
-            vendorPlugins: [
-                {
-                    name: 'gmail',
-                    displayName: 'Gmail',
-                    vendorPluginRef: 'plugin://gmail@openai-curated',
-                    installed: true,
-                    enabled: true,
-                },
-            ],
+            catalogs: {
+                skills: [{ name: 'review' }],
+            },
         });
 
-        expect(suggestionFileModuleImportCount.value).toBe(0);
+        // A trigger the file kind does not serve never reaches the file search.
+        expect(searchFilesMock).not.toHaveBeenCalled();
 
-        await getSuggestions('s1', '@/src');
+        // `@gmail` deliberately DOES reach file search now: a bare-word `@` query used to be
+        // classified as "not path-like" and had its whole Files section suppressed whenever a
+        // plugin matched (INV-2).
+        // Addressed by the host's machine + folder, forwarded unchanged: asserting `null`
+        // here would pass just as well with the scope dropped.
+        const workspace = { serverId: 'server-a', machineId: 'm1', rootPath: '/repo' } as const;
+        await getSuggestions('s1', '@/src', { workspace });
 
-        expect(suggestionFileModuleImportCount.value).toBe(1);
-        expect(searchFilesMock).toHaveBeenCalledWith('s1', '/src', { limit: 12 });
+        expect(searchFilesMock).toHaveBeenCalledWith(workspace, '/src', expect.objectContaining({
+            limit: 12,
+            signal: expect.any(AbortSignal),
+        }));
     });
 
     it('uses a taller row height for slash commands with descriptions', async () => {
@@ -162,17 +162,19 @@ describe('structured input autocomplete suggestions', () => {
         const { getSuggestions } = await import('./suggestions');
 
         const suggestions = await getSuggestions('s1', '@plugin:gmail', {
-            vendorPlugins: [
-                {
-                    name: 'gmail',
-                    displayName: 'Gmail',
-                    description: 'Mail and calendar',
-                    vendorPluginRef: 'plugin://gmail@openai-curated',
-                    marketplace: 'openai-curated',
-                    installed: true,
-                    enabled: true,
-                },
-            ],
+            catalogs: {
+                vendorPlugins: [
+                    {
+                        name: 'gmail',
+                        displayName: 'Gmail',
+                        description: 'Mail and calendar',
+                        vendorPluginRef: 'plugin://gmail@openai-curated',
+                        marketplace: 'openai-curated',
+                        installed: true,
+                        enabled: true,
+                    },
+                ],
+        },
         } as never);
 
         expect(suggestions).toHaveLength(1);
@@ -190,19 +192,55 @@ describe('structured input autocomplete suggestions', () => {
         const { getSuggestions } = await import('./suggestions');
 
         const suggestions = await getSuggestions('s1', '@plugin:gmail', {
-            vendorPlugins: [
-                {
-                    name: 'gmail',
-                    displayName: 'Gmail',
-                    vendorPluginRef: 'plugin://gmail@openai-curated',
-                    installed: true,
-                    enabled: true,
-                    mentionable: false,
-                },
-            ],
+            catalogs: {
+                vendorPlugins: [
+                    {
+                        name: 'gmail',
+                        displayName: 'Gmail',
+                        vendorPluginRef: 'plugin://gmail@openai-curated',
+                        installed: true,
+                        enabled: true,
+                        mentionable: false,
+                    },
+                ],
+        },
         } as never);
 
         expect(suggestions).toEqual([]);
+    });
+
+    it('hides a vendor plugin that is neither explicitly mentionable nor installed-and-enabled', async () => {
+        // `mentionable` WINS when present; absent, the fallback demands `installed === true`
+        // AND `enabled === true`. A snapshot that states neither is not mentionable — a
+        // weaker "not explicitly false" rule would leak uninstalled plugins into the picker.
+        const { getSuggestions } = await import('./suggestions');
+
+        await expect(getSuggestions('s1', '@plugin:gmail', {
+            catalogs: {
+                vendorPlugins: [
+                    {
+                        name: 'gmail',
+                        displayName: 'Gmail',
+                        vendorPluginRef: 'plugin://gmail@openai-curated',
+                    },
+                ],
+            },
+        })).resolves.toEqual([]);
+
+        const mentionable = await getSuggestions('s1', '@plugin:gmail', {
+            catalogs: {
+                vendorPlugins: [
+                    {
+                        name: 'gmail',
+                        displayName: 'Gmail',
+                        vendorPluginRef: 'plugin://gmail@openai-curated',
+                        mentionable: true,
+                    },
+                ],
+            },
+        });
+        expect(mentionable.map((suggestion) => suggestion.key))
+            .toEqual(['vendor-plugin-plugin://gmail@openai-curated']);
     });
 
     it('populates selected vendor plugin suggestions from the session catalog RPC', async () => {
@@ -241,7 +279,7 @@ describe('structured input autocomplete suggestions', () => {
 
         const suggestions = await getSuggestions('s1', '@plugin:gmail');
         const mention = suggestions[0]
-            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0], start: 0 })
+            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0] })
             : null;
         const meta = buildStructuredInputMetaOverrides({
             mentions: mention ? [mention] : [],
@@ -283,6 +321,15 @@ describe('structured input autocomplete suggestions', () => {
         expect(meta).toMatchObject({
             happierStructuredInputV1: {
                 v: 1,
+                mentions: [{
+                    kind: MENTION_KIND_V1.vendorPlugin,
+                    ref: buildMentionRefForKindV1(
+                        MENTION_KIND_V1.vendorPlugin,
+                        'plugin://gmail@openai-curated',
+                    ),
+                    token: '@gmail',
+                    label: 'Gmail',
+                }],
                 vendorPluginMentions: [
                     {
                         vendorPluginRef: 'plugin://gmail@openai-curated',
@@ -327,25 +374,30 @@ describe('structured input autocomplete suggestions', () => {
 
     it('keeps path-like at queries file-first', async () => {
         const { getSuggestions } = await import('./suggestions');
+        const { createStructuredInputMentionFromSuggestion, buildStructuredInputMetaOverrides } = await import(
+            '@/components/sessions/agentInput/structuredInputMentions'
+        );
 
         const suggestions = await getSuggestions('s1', '@/src', {
-            files: [
-                {
-                    fileName: 'index.ts',
-                    filePath: 'src/',
-                    fullPath: 'src/index.ts',
-                    fileType: 'file',
-                },
-            ],
-            vendorPlugins: [
-                {
-                    name: 'src',
-                    displayName: 'Source Plugin',
-                    vendorPluginRef: 'plugin://src@openai-curated',
-                    installed: true,
-                    enabled: true,
-                },
-            ],
+            catalogs: {
+                files: [
+                    {
+                        fileName: 'index.ts',
+                        filePath: 'src/',
+                        fullPath: 'src/index.ts',
+                        fileType: 'file',
+                    },
+                ],
+                vendorPlugins: [
+                    {
+                        name: 'src',
+                        displayName: 'Source Plugin',
+                        vendorPluginRef: 'plugin://src@openai-curated',
+                        installed: true,
+                        enabled: true,
+                    },
+                ],
+        },
         } as never);
 
         expect(suggestions).toHaveLength(1);
@@ -353,7 +405,29 @@ describe('structured input autocomplete suggestions', () => {
             key: 'file-src/index.ts',
             text: '@src/index.ts',
         });
-        expect(suggestions[0]?.structuredInput).toBeUndefined();
+        expect(suggestions[0]?.structuredInput).toEqual({
+            kind: MENTION_KIND_V1.file,
+            ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, 'src/index.ts'),
+            label: 'index.ts',
+        });
+
+        const mention = suggestions[0]
+            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0] })
+            : null;
+        expect(buildStructuredInputMetaOverrides({
+            mentions: mention ? [mention] : [],
+            text: '@src/index.ts',
+        })).toEqual({
+            happierStructuredInputV1: {
+                v: 1,
+                mentions: [{
+                    kind: MENTION_KIND_V1.file,
+                    ref: buildMentionRefForKindV1(MENTION_KIND_V1.file, 'src/index.ts'),
+                    label: 'index.ts',
+                    token: '@src/index.ts',
+                }],
+            },
+        });
     });
 
     it('populates selected skill suggestions from the session catalog RPC', async () => {
@@ -395,14 +469,14 @@ describe('structured input autocomplete suggestions', () => {
 
         const suggestions = await getSuggestions('s1', '$rev');
         const mention = suggestions[0]
-            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0], start: 0 })
+            ? createStructuredInputMentionFromSuggestion({ suggestion: suggestions[0] })
             : null;
         const fileMention = createStructuredInputMentionFromSuggestion({
             suggestion: {
+                kind: 'file',
                 key: 'file-src/index.ts',
                 text: '@src/index.ts',
             },
-            start: 0,
         });
         const meta = buildStructuredInputMetaOverrides({
             mentions: mention ? [mention] : [],
@@ -451,6 +525,12 @@ describe('structured input autocomplete suggestions', () => {
         expect(meta).toMatchObject({
             happierStructuredInputV1: {
                 v: 1,
+                mentions: [{
+                    kind: MENTION_KIND_V1.skill,
+                    ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'codex:review'),
+                    token: '$review',
+                    label: 'Review',
+                }],
                 skillMentions: [
                     {
                         name: 'review',
@@ -559,16 +639,18 @@ describe('structured input autocomplete suggestions', () => {
         const { getSuggestions } = await import('./suggestions');
 
         const suggestions = await getSuggestions('s1', '$rev', {
-            skills: [
-                {
-                    name: 'review',
-                    displayName: 'Review',
-                    description: 'Review code',
-                    path: '/skills/review/SKILL.md',
-                    enabled: true,
-                    projectionKind: 'codex_native',
-                },
-            ],
+            catalogs: {
+                skills: [
+                    {
+                        name: 'review',
+                        displayName: 'Review',
+                        description: 'Review code',
+                        path: '/skills/review/SKILL.md',
+                        enabled: true,
+                        projectionKind: 'codex_native',
+                    },
+                ],
+        },
         } as never);
 
         expect(suggestions).toHaveLength(1);
@@ -587,25 +669,27 @@ describe('structured input autocomplete suggestions', () => {
         const { getSuggestions } = await import('./suggestions');
 
         const suggestions = await getSuggestions('s1', '$rev', {
-            skills: [
-                {
-                    id: 'vendor-review',
-                    name: 'review',
-                    displayName: 'Review',
-                    enabled: true,
-                    origin: 'vendor',
-                    backendId: 'cursor',
-                    projectionRef: 'cursor/review',
-                },
-                {
-                    id: 'happier-review',
-                    name: 'review',
-                    displayName: 'Review',
-                    enabled: true,
-                    origin: 'happier',
-                    projectionRef: 'happier/review',
-                },
-            ],
+            catalogs: {
+                skills: [
+                    {
+                        id: 'vendor-review',
+                        name: 'review',
+                        displayName: 'Review',
+                        enabled: true,
+                        origin: 'vendor',
+                        backendId: 'cursor',
+                        projectionRef: 'cursor/review',
+                    },
+                    {
+                        id: 'happier-review',
+                        name: 'review',
+                        displayName: 'Review',
+                        enabled: true,
+                        origin: 'happier',
+                        projectionRef: 'happier/review',
+                    },
+                ],
+        },
         } as never);
 
         expect(suggestions).toHaveLength(2);
@@ -636,23 +720,25 @@ describe('structured input autocomplete suggestions', () => {
         const { getSuggestions } = await import('./suggestions');
 
         const suggestions = await getSuggestions('s1', '$rev', {
-            skills: [
-                {
-                    name: 'review',
-                    displayName: 'Review',
-                    enabled: true,
-                    origin: 'vendor',
-                    backendId: 'cursor',
-                    projectionRef: 'cursor/review',
-                },
-                {
-                    name: 'review',
-                    displayName: 'Review',
-                    enabled: true,
-                    origin: 'happier',
-                    projectionRef: 'happier/review',
-                },
-            ],
+            catalogs: {
+                skills: [
+                    {
+                        name: 'review',
+                        displayName: 'Review',
+                        enabled: true,
+                        origin: 'vendor',
+                        backendId: 'cursor',
+                        projectionRef: 'cursor/review',
+                    },
+                    {
+                        name: 'review',
+                        displayName: 'Review',
+                        enabled: true,
+                        origin: 'happier',
+                        projectionRef: 'happier/review',
+                    },
+                ],
+        },
         } as never);
 
         expect(suggestions).toHaveLength(2);

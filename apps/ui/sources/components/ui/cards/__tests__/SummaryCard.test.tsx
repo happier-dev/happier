@@ -23,14 +23,14 @@ describe('SummaryCard', () => {
         expect(screen.getTextContent()).toContain('Font : 16px');
     });
 
-    it('wraps in Pressable when onPress is provided', async () => {
+    it('invokes onPress when the card is pressed', async () => {
         const { SummaryCard } = await import('../SummaryCard');
         const onPress = vi.fn();
         const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} onPress={onPress} testID="summary-card" />);
 
-        const card = screen.findByTestId('summary-card');
-        expect(card).toBeTruthy();
-        expect(card?.props.onPress).toBe(onPress);
+        await screen.pressByTestIdAsync('summary-card');
+
+        expect(onPress).toHaveBeenCalledOnce();
     });
 
     it('renders as View (not Pressable) when onPress is omitted', async () => {
@@ -46,13 +46,13 @@ describe('SummaryCard', () => {
         const { SummaryCard } = await import('../SummaryCard');
         const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} onPress={() => {}} testID="summary-card" />);
 
-        expect(screen.findByProps({ name: 'chevron-forward' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'caret-right' })).toBeTruthy();
     });
 
     it('does not show chevron without onPress', async () => {
         const { SummaryCard } = await import('../SummaryCard');
         const screen = await renderScreen(<SummaryCard entries={SAMPLE_ENTRIES} testID="summary-card" />);
 
-        expect(() => screen.findByProps({ name: 'chevron-forward' })).toThrow();
+        expect(() => screen.findByProps({ name: 'caret-right' })).toThrow();
     });
 });

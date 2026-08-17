@@ -5,10 +5,10 @@ import { useUnistyles } from 'react-native-unistyles';
 import { View } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { presentProviderError, presentProviderRecoveryAction } from '@/providers/connection/errorPresentation';
 import { dispatchProviderRecoveryAction } from '@/providers/connection/recovery';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: Readonly<{
     error: unknown;
@@ -36,10 +36,10 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
         enableOnMachine: props.enableOnMachine !== undefined,
     });
     const iconName = presentation.severity === 'danger'
-        ? 'alert-circle-outline'
+        ? 'warning-circle'
         : presentation.severity === 'warning'
-            ? 'warning-outline'
-            : 'information-circle-outline';
+            ? 'warning'
+            : 'info';
     const iconColor = presentation.severity === 'danger'
         ? theme.colors.state.danger.foreground
         : presentation.severity === 'warning'
@@ -77,7 +77,7 @@ export const ProviderErrorItems = React.memo(function ProviderErrorItems(props: 
                     mode="info"
                     title={t(presentation.titleKey)}
                     subtitle={t(presentation.descriptionKey)}
-                    icon={<SafeIonicons name={iconName} size={29} color={iconColor} />}
+                    icon={<Icon name={iconName} size={29} color={iconColor} />}
                 />
             </View>
             {actionPresentation && typedError.success ? (

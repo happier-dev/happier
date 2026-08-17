@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { Pressable, View, type ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export function TranscriptSeparatorRow(props: Readonly<{
   testID?: string;
-  iconName: React.ComponentProps<typeof Ionicons>['name'];
+  iconName: IconName;
   title: string;
   titleTestID?: string;
   subtitle?: string | null;
@@ -24,7 +24,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
   const chipChrome = props.chipChrome === 'minimal' ? 'minimal' : 'default';
   const chipContent = (
     <>
-      <Ionicons name={props.iconName} size={14} color={theme.colors.text.secondary} />
+      <Icon name={props.iconName} size={14} color={theme.colors.text.secondary} />
       <View style={styles.textStack}>
         <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
           {props.title}

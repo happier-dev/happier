@@ -62,4 +62,17 @@ describe('EmptyMessages', () => {
 
         expect(screen.findByTestId('session-empty-messages')).not.toBeNull();
     });
+
+    it('does not project empty metadata fields as raw text children of the native View', async () => {
+        const { EmptyMessages } = await import('./EmptyMessages');
+        const session = {
+            ...buildSession(),
+            metadata: { host: 'leeroy-mbp', path: '' },
+        } satisfies Session;
+
+        const screen = await renderScreen(<EmptyMessages session={session} />);
+        const children = screen.findByTestId('session-empty-messages')?.props.children;
+
+        expect(React.Children.toArray(children)).not.toContain('');
+    });
 });

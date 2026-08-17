@@ -2,6 +2,9 @@ import type {
   ExecutionRunUserTranscriptDirective,
   ExecutionRunReplaySeedRequest,
   ExecutionRunResumeHandle,
+  AcpConfigOptionOverridesV1,
+  ProviderBoundModelRef,
+  VoiceAgentOutputEffectV1,
   VoiceAgentOutputEventV1,
   VoiceAssistantAction,
 } from '@happier-dev/protocol';
@@ -11,8 +14,15 @@ export type VoiceAgentAgentSource = 'session' | 'agent';
 export type VoiceAgentVerbosity = 'short' | 'balanced';
 export type VoiceAgentTranscriptPersistenceMode = 'ephemeral' | 'persistent';
 
+export type VoiceAgentAcceptedOutputV1 = Readonly<{
+  event: VoiceAgentOutputEventV1;
+  effects: readonly VoiceAgentOutputEffectV1[];
+}>;
+
 export type VoiceAgentSendTurnOptions = Readonly<{
-  onOutputEvent?: (event: VoiceAgentOutputEventV1) => void | Promise<void>;
+  onOutputEvent?: (output: VoiceAgentAcceptedOutputV1) => void | Promise<void>;
+  /** Called after the daemon has accepted the user transcript, before response streaming. */
+  onUserTranscriptAccepted?: () => void | Promise<void>;
   signal?: AbortSignal;
   userTranscript?: ExecutionRunUserTranscriptDirective;
 }>;
@@ -25,6 +35,9 @@ export type VoiceAgentStartParams = Readonly<{
   verbosity?: VoiceAgentVerbosity;
   chatModelId: string;
   commitModelId: string;
+  chatModelSelection?: ProviderBoundModelRef;
+  commitModelSelection?: ProviderBoundModelRef;
+  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   /**
    * Daemon-only: forces commits to use a separate vendor session even when commitModelId matches chatModelId.
    */
@@ -126,7 +139,7 @@ export function readVoiceAgentActionEffectId(action: unknown): string | null {
 export type VoiceAgentHandle = Readonly<{
   client: VoiceAgentClient;
   voiceAgentId: string;
-  backend: 'daemon' | 'openai_compat';
+  backend: 'daemon';
   rpcSessionId: string;
   agentBackendId: string | null;
 }>;
@@ -145,6 +158,7 @@ export interface VoiceAgentClient {
        */
       signal?: AbortSignal;
       userTranscript?: ExecutionRunUserTranscriptDirective;
+      onUserTranscriptAccepted?: () => void | Promise<void>;
     }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }>;
   welcome(

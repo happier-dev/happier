@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -8,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { AttentionDeviceOverridesV1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { t } from '@/text';
 import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const NIGHTLY_QUIET_HOURS_WINDOW = {
     startLocalTime: '22:00',
@@ -97,7 +97,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-account-off"
                 title={t('settingsNotifications.quietHours.accountOffTitle')}
                 subtitle={t('settingsNotifications.quietHours.accountOffSubtitle')}
-                icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="bell" size={29} color={theme.colors.accent.blue} />}
                 selected={!accountEnabled}
                 onPress={setAccountOff}
                 showChevron={false}
@@ -106,7 +106,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-account-nightly"
                 title={t('settingsNotifications.quietHours.accountNightlyTitle')}
                 subtitle={t('settingsNotifications.quietHours.accountNightlySubtitle')}
-                icon={<Ionicons name="moon-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="moon" size={29} color={theme.colors.text.secondary} />}
                 selected={accountNightlySelected}
                 onPress={setAccountNightly}
                 showChevron={false}
@@ -115,7 +115,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-device-account"
                 title={t('settingsNotifications.quietHours.deviceAccountTitle')}
                 subtitle={t('settingsNotifications.quietHours.deviceAccountSubtitle')}
-                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="device-mobile" size={29} color={theme.colors.text.secondary} />}
                 selected={deviceOverride.mode === 'account'}
                 onPress={() => setDeviceQuietHoursOverride({ mode: 'account' })}
                 showChevron={false}
@@ -124,7 +124,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-device-disabled"
                 title={t('settingsNotifications.quietHours.deviceDisabledTitle')}
                 subtitle={t('settingsNotifications.quietHours.deviceDisabledSubtitle')}
-                icon={<Ionicons name="notifications-off-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="bell-slash" size={29} color={theme.colors.text.secondary} />}
                 selected={deviceOverride.mode === 'disabled'}
                 onPress={() => setDeviceQuietHoursOverride({ mode: 'disabled' })}
                 showChevron={false}
@@ -133,7 +133,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-device-custom-nightly"
                 title={t('settingsNotifications.quietHours.deviceCustomNightlyTitle')}
                 subtitle={t('settingsNotifications.quietHours.deviceCustomNightlySubtitle')}
-                icon={<Ionicons name="moon-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="moon" size={29} color={theme.colors.text.secondary} />}
                 selected={deviceOverride.mode === 'custom'}
                 onPress={setDeviceCustomNightly}
                 showChevron={false}

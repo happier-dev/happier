@@ -339,6 +339,70 @@ describe('runNativeRemoteSshBootstrapTask', () => {
         }))).toThrow('native_ssh_missing_credentials');
     });
 
+    it('reports a typed upgrade requirement without posting when local credentials are token-only', async () => {
+        vi.resetModules();
+        const authApprove = vi.fn();
+        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+            return {
+                ...actual,
+                TokenStorage: {
+                    getCredentials: vi.fn(async () => ({ token: 'plain-token' })),
+                },
+            };
+        });
+        vi.doMock('@/auth/flows/approve', () => ({ authApprove }));
+
+        try {
+            const loaded = await import('./nativeTask');
+            const nativeModule = {
+                getAvailability: () => ({
+                    available: true,
+                    platform: 'android',
+                    engine: 'russh',
+                    moduleVersion: '0.0.0',
+                    supportsLoopbackTunnel: true,
+                    supportsPersistentHostKeyStorage: false,
+                } as const),
+                exec: vi.fn(async () => ({
+                    exitCode: 0,
+                    stdout: JSON.stringify({ ok: true, data: {} }),
+                    stderr: '',
+                })),
+                cancelRequest: vi.fn(async () => undefined),
+            } satisfies NativeSshModule;
+            const publicKey = Buffer.alloc(32, 3).toString('base64url');
+            const commandRunner = {
+                runJsonCommand: vi.fn(async ({ command }: { command: string }) => {
+                    if (command.includes('auth status')) {
+                        return { ok: false, data: { code: 'not_authenticated' } };
+                    }
+                    if (command.includes('auth request')) {
+                        return { ok: true, data: { publicKey } };
+                    }
+                    return { ok: true, data: {} };
+                }),
+                runTextCommand: vi.fn(async () => ({ status: 0, stdout: '', stderr: '' })),
+            };
+
+            await expect(loaded.runNativeRemoteSshBootstrapTask({
+                taskId: 'task-token-only',
+                nativeModule,
+                spec: createRemoteBootstrapSpec(),
+                commandRunner,
+                prompt: async () => ({ approved: true }),
+            })).rejects.toMatchObject({
+                name: 'SystemTaskExecutionError',
+                code: 'native_ssh_token_only_terminal_approval_upgrade_required',
+            });
+            expect(authApprove).not.toHaveBeenCalled();
+        } finally {
+            vi.doUnmock('@/auth/storage/tokenStorage');
+            vi.doUnmock('@/auth/flows/approve');
+            vi.resetModules();
+        }
+    });
+
     it('passes encrypted private keys to native SSH so the shared passphrase prompt can unlock them', async () => {
         const loaded = await import('./nativeTask').catch(() => null);
         expect(loaded).not.toBeNull();

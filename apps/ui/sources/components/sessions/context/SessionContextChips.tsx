@@ -1,8 +1,8 @@
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function SessionContextChips(props: Readonly<{
     machineLabel: string | null;
@@ -16,13 +16,13 @@ export function SessionContextChips(props: Readonly<{
         <View style={styles.row}>
             {props.machineLabel ? (
                 <View style={styles.chip}>
-                    <Ionicons name="desktop-outline" size={12} color={theme.colors.text.secondary} />
+                    <Icon name="desktop" size={14} color={theme.colors.text.secondary} />
                     <Text style={styles.text} numberOfLines={1}>{props.machineLabel}</Text>
                 </View>
             ) : null}
             {props.pathLabel ? (
                 <View style={styles.chip}>
-                    <Ionicons name="folder-open-outline" size={12} color={theme.colors.text.secondary} />
+                    <Icon name="folder-open" size={14} color={theme.colors.text.secondary} />
                     <Text style={styles.text} numberOfLines={1}>{props.pathLabel}</Text>
                 </View>
             ) : null}

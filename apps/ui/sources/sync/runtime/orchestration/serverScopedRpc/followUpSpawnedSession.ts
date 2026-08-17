@@ -1,4 +1,8 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import {
+    hasAdmittedComposerAttachmentSelectionV1,
+    readHappierStructuredInputV1FromMeta,
+} from '@happier-dev/protocol';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
@@ -28,14 +32,18 @@ type RecoverableFollowUpError = Error & {
     recoverableFollowUpPayload?: RecoverableFollowUpPayload;
 };
 
+function hasAdmittedComposerAttachmentSelection(metaOverrides: Record<string, unknown> | null | undefined): boolean {
+    return hasAdmittedComposerAttachmentSelectionV1(readHappierStructuredInputV1FromMeta(metaOverrides));
+}
+
 function buildRecoverableFollowUpPayload(params: Readonly<{
     initialMessageText?: string | null;
     displayText?: string | null;
     metaOverrides?: Record<string, unknown> | null;
     profileId?: string | null;
 }>): RecoverableFollowUpPayload | null {
-    const draftText = String(params.initialMessageText ?? '').trim();
-    if (!draftText) {
+    const draftText = String(params.initialMessageText ?? '');
+    if (!draftText.trim() && !hasAdmittedComposerAttachmentSelection(params.metaOverrides)) {
         return null;
     }
 
@@ -84,7 +92,7 @@ export function readRecoverableFollowUpPayload(error: unknown): RecoverableFollo
     }
 
     const payload = (error as RecoverableFollowUpError).recoverableFollowUpPayload;
-    return payload?.draftText ? payload : null;
+    return typeof payload?.draftText === 'string' ? payload : null;
 }
 
 function getDefaultActiveSync() {
@@ -187,9 +195,11 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                     getSession: getStoredSession,
                 }).sendSessionMessageWithServerScope;
             const trimmedInitialMessage = String(params.initialMessageText ?? '').trim();
+            const hasInitialInput = trimmedInitialMessage.length > 0
+                || hasAdmittedComposerAttachmentSelection(params.metaOverrides);
 
             if (context.scope === 'active') {
-                if (trimmedInitialMessage.length > 0) {
+                if (hasInitialInput) {
                     await requireLocalSessionVisibleForRoute({
                         sessionId,
                         serverId: params.targetServerId ?? null,
@@ -237,7 +247,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
             });
             throwForFailedScopedHydration(hydrationResult);
 
-            if (trimmedInitialMessage.length > 0) {
+            if (hasInitialInput) {
                 const result = await sendScopedMessage({
                     sessionId,
                     message: trimmedInitialMessage,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getActionSpec } from '@happier-dev/protocol/actions';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -6,6 +7,12 @@ import { createReducer } from '@/sync/reducer/reducer';
 import { storage } from '@/sync/domains/state/storage';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import type { SessionMessages } from '@/sync/store/domains/messages';
+
+function isCanonicalSessionTranscriptActionOutput(value: unknown): boolean {
+    const spec = getActionSpec('session.transcript.get');
+    if (!spec?.outputSchema) throw new Error('session.transcript.get output schema is unavailable');
+    return spec.outputSchema.safeParse(value).success;
+}
 
 function createTestSessionMessages(messages: ReadonlyArray<Message>): SessionMessages {
     const messagesById = Object.fromEntries(messages.map((message) => [message.id, message]));
@@ -186,5 +193,64 @@ describe('getSessionRecentMessagesForVoiceTool', () => {
                 { id: 'm2', text: 'same-ts-a', createdAt: 2 },
             ],
         });
+    });
+
+    it('projects the local semantic transcript through the canonical Action result contract', async () => {
+        const { getSessionTranscriptForVoiceTool } = await import('./sessionRecentMessages');
+
+        const result = await getSessionTranscriptForVoiceTool({
+            sessionId: 's1',
+            defaultSessionId: 's1',
+            limit: 10,
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            sessionId: 's1',
+            items: [
+                {
+                    id: 'm1',
+                    createdAt: 1,
+                    semanticRole: 'user',
+                    role: 'user',
+                    kind: 'message',
+                    text: 'hello',
+                },
+                {
+                    id: 'm2',
+                    createdAt: 2,
+                    semanticRole: 'assistant',
+                    role: 'assistant',
+                    kind: 'message',
+                    text: 'assistant reply',
+                },
+            ],
+            nextCursor: '1:m1',
+            hasMore: true,
+            diagnostics: {
+                rawRowsScanned: 2,
+                pagesFetched: 0,
+                scanLimitReached: false,
+                payloadTruncations: 0,
+            },
+        });
+        expect(isCanonicalSessionTranscriptActionOutput(result)).toBe(true);
+    });
+
+    it('fails closed when the local projection is asked for an external shareable transcript', async () => {
+        const { getSessionTranscriptForVoiceTool } = await import('./sessionRecentMessages');
+
+        const result = await getSessionTranscriptForVoiceTool({
+            sessionId: 's1',
+            defaultSessionId: 's1',
+            projection: 'externalShareableV1',
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            errorCode: 'external_shareable_projection_unavailable',
+            errorMessage: 'external_shareable_projection_unavailable',
+        });
+        expect(isCanonicalSessionTranscriptActionOutput(result)).toBe(true);
     });
 });

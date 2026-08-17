@@ -14,17 +14,18 @@ describe('agent UI behavior provider leaf ownership', () => {
         expect(registryUiBehaviorSource).not.toMatch(/agentUiBehavior\/(?:claude|codex|pi)/u);
         expect(registryUiBehaviorSource).not.toContain('FIRST_PARTY_AGENT_UI_BEHAVIOR_OVERRIDE_CONTRIBUTIONS');
         expect(registryUiBehaviorSource).not.toContain('resolveFirstPartyAgentUiBehaviorOverride');
+        expect(registryUiBehaviorSource).not.toContain('resolveProviderSessionArtifactPath');
     });
 
     it('uses plugin-owned UI behavior overrides through the generated contribution map', () => {
         expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-auggie\/ui/u);
         expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-claude\/ui/u);
         expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-codex\/ui/u);
-        expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-pi\/ui/u);
+        expect(generatedOverridesSource).not.toMatch(/@happier-dev\/plugins-pi\/ui\/behavior/u);
         expect(generatedOverridesSource).toMatch(/auggie:\s*AUGGIE_UI_BEHAVIOR_OVERRIDE/u);
         expect(generatedOverridesSource).toMatch(/claude:\s*CLAUDE_UI_BEHAVIOR_OVERRIDE/u);
         expect(generatedOverridesSource).toMatch(/codex:\s*CODEX_UI_BEHAVIOR_OVERRIDE/u);
-        expect(generatedOverridesSource).toMatch(/pi:\s*PI_UI_BEHAVIOR_OVERRIDE/u);
+        expect(generatedOverridesSource).not.toContain('PI_UI_BEHAVIOR_OVERRIDE');
     });
 
     it('does not special-case provider descriptor ids in the generic descriptor adapter', () => {

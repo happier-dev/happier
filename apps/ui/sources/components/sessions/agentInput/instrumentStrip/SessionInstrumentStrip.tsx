@@ -8,6 +8,7 @@ import { INSTRUMENT_DURATIONS, staggerDelayForIndex, useMotionPreferences } from
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { t } from '@/text';
@@ -49,7 +50,10 @@ export type SessionInstrumentStripQuota = Readonly<{
 export type SessionInstrumentStripProps = Readonly<{
     sessionId?: string;
     agentId?: AgentId | null;
+    agentTargetKey?: string | null;
     metadata?: Metadata | null;
+    sessionActive?: boolean;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     connectionStatus?: SessionInstrumentStripConnectionStatus | null;
     permission?: SessionInstrumentStripPermission | null;
     quota?: SessionInstrumentStripQuota | null;
@@ -73,7 +77,10 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
     const model = useInstrumentStripModel({
         sessionId: props.sessionId,
         agentId: props.agentId,
+        agentTargetKey: props.agentTargetKey,
         metadata: props.metadata,
+        sessionActive: props.sessionActive,
+        currentRunnerProcessIdentity: props.currentRunnerProcessIdentity,
     });
 
     // Measured available width drives the overflow modes (never guessed).
@@ -111,7 +118,10 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
         if (contextGaugeStyle !== 'text' || !props.agentId) return null;
         const windowTokens = resolveContextWarningWindowTokens({
             agentId: props.agentId,
+            agentTargetKey: props.agentTargetKey,
             metadata: props.metadata ?? null,
+            sessionActive: props.sessionActive,
+            currentRunnerProcessIdentity: props.currentRunnerProcessIdentity,
             usageData: model.context
                 ? {
                     contextSize: model.context.usedTokens,
@@ -128,7 +138,17 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
             alwaysShow: alwaysShowContextSize,
             theme,
         });
-    }, [contextGaugeStyle, props.agentId, props.metadata, model.context, alwaysShowContextSize, theme]);
+    }, [
+        alwaysShowContextSize,
+        contextGaugeStyle,
+        model.context,
+        props.agentId,
+        props.agentTargetKey,
+        props.metadata,
+        props.currentRunnerProcessIdentity,
+        props.sessionActive,
+        theme,
+    ]);
 
     const showContextGauge = contextGaugeStyle === 'gauge' && model.context !== null;
     // T3.1 gate: visible whenever the session is a repo (useHasMeaningfulScmStatus

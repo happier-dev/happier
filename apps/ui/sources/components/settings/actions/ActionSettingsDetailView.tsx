@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Platform, View } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -39,6 +38,7 @@ import { normalizeActionsSettings } from './normalizeActionsSettings';
 import { listActionSettingsTargetDefinitions } from './actionSettingsTargetDefinitions';
 import { useActionSettingsNarrowLayout } from './useActionSettingsNarrowLayout';
 import { SessionAgentSpawnPolicyControls } from './SessionAgentSpawnPolicyControls';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const categoryOrder: readonly ActionSettingsTargetCategory[] = ['app', 'voice', 'integrations'];
 
@@ -235,7 +235,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                     <Item
                         title={t('settingsActions.invalidActionTitle')}
                         subtitle={t('settingsActions.invalidActionSubtitle')}
-                        icon={<Ionicons name="warning-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="warning" size={29} color={theme.colors.text.secondary} />}
                         mode="info"
                         showChevron={false}
                     />
@@ -260,8 +260,8 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                         subtitle={entry.description ?? t('settingsActions.noDescription')}
                         detail={entry.enabled ? t('common.enabled') : t('common.disabled')}
                         icon={(
-                            <Ionicons
-                                name={entry.enabled ? 'flash-outline' : 'flash-off-outline'}
+                            <Icon
+                                name={entry.enabled ? 'lightning' : 'minus-circle'}
                                 size={29}
                                 color={entry.enabled ? theme.colors.state.success.foreground : theme.colors.state.danger.foreground}
                             />
@@ -322,7 +322,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                     testID={targetTestIDPrefix}
                                     title={t(target.titleKey)}
                                     subtitle={getTargetSubtitle(target)}
-                                    icon={<Ionicons name={target.icon as React.ComponentProps<typeof Ionicons>['name']} size={29} color={theme.colors.text.secondary} />}
+                                    icon={<Icon name={target.icon as IconName} size={29} color={theme.colors.text.secondary} />}
                                     mode={available ? 'interactive' : 'info'}
                                     disabled={!entry.enabled || !available}
                                     showChevron={false}

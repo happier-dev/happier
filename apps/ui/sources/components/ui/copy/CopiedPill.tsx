@@ -6,6 +6,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type CopiedPillProps = Readonly<{
     visible: boolean;
@@ -27,7 +28,7 @@ export function CopiedPill(props: CopiedPillProps) {
             accessibilityLiveRegion="polite"
             style={[styles.container, props.style]}
         >
-            <SafeIonicons name="checkmark-outline" size={14} color={styles.icon.color} />
+            <Icon name="check" size={14} color={styles.icon.color} />
             <Text style={styles.label}>{label}</Text>
         </View>
     );

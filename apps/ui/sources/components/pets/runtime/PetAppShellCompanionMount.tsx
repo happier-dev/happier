@@ -3,15 +3,20 @@ import { Platform, View, type ViewStyle } from 'react-native';
 
 import { DEFAULT_BUILT_IN_PET_ID } from '@/components/pets/builtIns/builtInPetRegistry';
 import {
-    type PetPointerDragMove,
-    usePetPointerDragSession,
-} from '@/components/pets/interaction/usePetPointerDragSession';
+    type CompanionPointerDragMove,
+    useCompanionPointerDragSession,
+} from '@/components/companion/interaction/useCompanionPointerDragSession';
+import { PET_POINTER_DRAG_SELECTORS } from '@/components/pets/interaction/petPointerDragBindings';
+import { resolvePetDragAnimationState } from '@/components/pets/interaction/resolvePetDragAnimationState';
+import type { PetAnimationStateV1 } from '@happier-dev/protocol';
 import type { PetCompanionTrayItem } from '@/components/pets/activity';
 import {
     usePetCompanionActivityModel,
     usePetCompanionTrayDismissals,
 } from '@/components/pets/activity';
 import { PetCompanionSurface } from '@/components/pets/render/PetCompanionSurface';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useRuntimeActive } from '@/hooks/runtime/useRuntimeActive';
 import {
     resolvePetCompanionOverlayMetrics,
     type PetCompanionOverlayMetrics,
@@ -55,10 +60,10 @@ function clampDragOffset(offset: PetDragOffset, metrics: PetCompanionOverlayMetr
 function useAppShellPetDrag(): {
     offset: PetDragOffset;
     metrics: PetCompanionOverlayMetrics;
-    dragState: ReturnType<typeof usePetPointerDragSession>['dragState'];
-    dragTargetRef: ReturnType<typeof usePetPointerDragSession>['dragTargetRef'];
-    pointerHandlers: ReturnType<typeof usePetPointerDragSession>['pointerHandlers'];
-    shouldSuppressPress: ReturnType<typeof usePetPointerDragSession>['shouldSuppressPress'];
+    dragState: PetAnimationStateV1 | null;
+    dragTargetRef: ReturnType<typeof useCompanionPointerDragSession<PetAnimationStateV1>>['dragTargetRef'];
+    pointerHandlers: ReturnType<typeof useCompanionPointerDragSession<PetAnimationStateV1>>['pointerHandlers'];
+    shouldSuppressPress: ReturnType<typeof useCompanionPointerDragSession<PetAnimationStateV1>>['shouldSuppressPress'];
 } {
     const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
     const metrics = React.useMemo(
@@ -66,15 +71,17 @@ function useAppShellPetDrag(): {
         [petsCompanionSizeScale],
     );
     const [offset, setOffset] = React.useState<PetDragOffset>({ x: 0, y: 0 });
-    const handleMove = React.useCallback((move: PetPointerDragMove) => {
+    const handleMove = React.useCallback((move: CompanionPointerDragMove) => {
         if (move.coordinateSpace !== 'client') return;
         setOffset((current) => clampDragOffset({
             x: current.x + move.deltaX,
             y: current.y + move.deltaY,
         }, metrics));
     }, [metrics]);
-    const drag = usePetPointerDragSession({
+    const drag = useCompanionPointerDragSession<PetAnimationStateV1>({
         coordinateSpace: 'client',
+        selectors: PET_POINTER_DRAG_SELECTORS,
+        resolveDragState: resolvePetDragAnimationState,
         onDragMove: handleMove,
     });
     return {
@@ -105,6 +112,11 @@ function PetAppShellCompanionRuntime({
     const activity = usePetCompanionActivityModel({ dismissedTrayItemKeys });
     const spritesheetSource = usePetSpritesheetSource(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
     const drag = useAppShellPetDrag();
+    // The companion's ambient motion exists only for a user who is looking at it. The native mount
+    // already resolved both facts; without them here the web/desktop pet ran its frame ticker and
+    // its ambient action chain through an OS reduced-motion preference and behind a hidden tab.
+    const reducedMotion = useReducedMotionPreference();
+    const runtimeActive = useRuntimeActive();
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
     const hasTrayItems = activity.trayItems.length > 0;
     const handleOpenTrayItem = React.useCallback(async (item: PetCompanionTrayItem) => {
@@ -148,6 +160,8 @@ function PetAppShellCompanionRuntime({
             testID="pet-app-shell-companion-root"
         >
             <PetCompanionSurface
+                reducedMotion={reducedMotion}
+                active={runtimeActive}
                 state={drag.dragState ?? activity.state}
                 stateStyle={[
                     styles.pet,

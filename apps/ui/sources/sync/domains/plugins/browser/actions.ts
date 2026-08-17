@@ -15,7 +15,6 @@ export {
     executePluginBrowserAction,
     selectPluginBrowserActionsForPlacement,
     selectPluginBrowserToolbarActions,
-    type ExecutePluginBrowserActionResult,
     type PluginBrowserActionPlacement,
     type PluginBrowserActionTransport,
 } from './execute';

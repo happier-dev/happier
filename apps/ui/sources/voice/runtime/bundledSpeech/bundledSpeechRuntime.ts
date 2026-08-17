@@ -1,4 +1,8 @@
 import { Platform } from 'react-native';
+import {
+  resolveVoiceSpeechSettingsCorrespondence,
+  type VoiceProviderSettingsJsonValueV1,
+} from '@happier-dev/protocol';
 
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';
@@ -6,7 +10,6 @@ import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStop
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { bundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
-import { readBundledSpeechSettingsDescriptorFromEntry } from '@/voice/settings/panels/bundledSpeech/descriptor';
 
 type BundledSpeechClient = Pick<typeof bundledSpeechDaemonClient, 'transcribe' | 'synthesize'>;
 
@@ -25,6 +28,12 @@ function asTrimmedString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function isVoiceProviderSettingsJsonObject(
+  value: VoiceProviderSettingsJsonValueV1,
+): value is Readonly<Record<string, VoiceProviderSettingsJsonValueV1>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function createBundledSpeechRuntime(input: Readonly<{
   registry: VoiceProviderRegistry;
   client?: BundledSpeechClient;
@@ -34,7 +43,7 @@ export function createBundledSpeechRuntime(input: Readonly<{
 }>) {
   const client = input.client ?? bundledSpeechDaemonClient;
   const entries = input.registry.list().flatMap((entry) =>
-    entry.source.kind === 'bundled' && entry.kind === 'voice.speech-engine.v1' ? [entry] : [],
+    entry.kind === 'voice.speech-engine.v1' && entry.declaration?.kind === 'speech' ? [entry] : [],
   );
   const providerIdsForRole = (role: 'stt' | 'tts') => Object.freeze(entries
     .filter((entry) => entry.role === role || entry.role === 'both')
@@ -43,12 +52,15 @@ export function createBundledSpeechRuntime(input: Readonly<{
   const ttsIds = providerIdsForRole('tts');
   const readDescriptor = (providerId: string, role: 'stt' | 'tts') => {
     const contribution = input.registry.get(providerId);
-    const descriptor = readBundledSpeechSettingsDescriptorFromEntry(providerId, contribution);
-    if (!contribution || contribution.source.kind !== 'bundled'
-      || contribution.kind !== 'voice.speech-engine.v1'
+    if (!contribution || contribution.kind !== 'voice.speech-engine.v1'
       || (contribution.role !== role && contribution.role !== 'both')
-      || descriptor?.role !== role) throw createRuntimeError('provider_unavailable');
-    return Object.freeze({ contribution, descriptor });
+      || contribution.declaration?.kind !== 'speech'
+      || !contribution.providerSettings) throw createRuntimeError('provider_unavailable');
+    return Object.freeze({
+      contribution,
+      declaration: contribution.declaration,
+      settings: contribution.providerSettings,
+    });
   };
 
   return Object.freeze({
@@ -60,13 +72,19 @@ export function createBundledSpeechRuntime(input: Readonly<{
       fallbackLanguage: string | null;
       signal?: AbortSignal | null;
     }>): Promise<string | null> {
-      const { contribution, descriptor } = readDescriptor(providerId, 'stt');
-      const config = descriptor.parseConfig(params.providerConfig);
-      if (!config) throw createRuntimeError('provider_settings_invalid');
-      const model = asTrimmedString(config[descriptor.runtime.modelKey ?? 'model'])
-        ?? asTrimmedString(descriptor.runtime.defaultModel);
-      if (!model) throw createRuntimeError('provider_settings_invalid');
-      const language = asTrimmedString(config[descriptor.runtime.languageKey ?? 'language']) ?? params.fallbackLanguage;
+      const { contribution, declaration, settings } = readDescriptor(providerId, 'stt');
+      const config = settings.parseConfig(params.providerConfig);
+      if (!config || !isVoiceProviderSettingsJsonObject(config)) {
+        throw createRuntimeError('provider_settings_invalid');
+      }
+      let correspondence: ReturnType<typeof resolveVoiceSpeechSettingsCorrespondence>;
+      try {
+        correspondence = resolveVoiceSpeechSettingsCorrespondence({ contribution: declaration, settings: config });
+      } catch {
+        throw createRuntimeError('provider_settings_invalid');
+      }
+      if (!correspondence.transcribe) throw createRuntimeError('provider_settings_invalid');
+      const language = asTrimmedString(config.language) ?? params.fallbackLanguage;
 
       let source: { kind: 'native'; uri: string } | { kind: 'memory'; bytes: Uint8Array };
       let mimeType: ReturnType<typeof normalizeMimeType>;
@@ -83,7 +101,7 @@ export function createBundledSpeechRuntime(input: Readonly<{
         source,
         mimeType,
         fileName: `recording.${mimeType === 'audio/wav' ? 'wav' : mimeType.split('/')[1]}`,
-        model,
+        model: correspondence.transcribe.model,
         language,
         signal: params.signal,
       });
@@ -96,33 +114,70 @@ export function createBundledSpeechRuntime(input: Readonly<{
       onPlaybackStarted?: () => void;
       signal?: AbortSignal | null;
     }>): Promise<void> {
-      const { contribution, descriptor } = readDescriptor(providerId, 'tts');
-      const config = descriptor.parseConfig(params.providerConfig);
-      if (!config) throw createRuntimeError('provider_settings_invalid');
-      const voiceName = asTrimmedString(config[descriptor.runtime.voiceKey ?? 'voiceName']);
-      if (!voiceName) throw createRuntimeError('provider_settings_invalid');
-      const format = config[descriptor.runtime.formatKey ?? 'format'] === 'wav' ? 'wav' : 'mp3';
-      const result = await client.synthesize({
-        entry: contribution,
-        input: params.text,
-        voiceName,
-        languageCode: asTrimmedString(config[descriptor.runtime.languageKey ?? 'languageCode']),
-        format,
-        speakingRate: typeof config[descriptor.runtime.rateKey ?? 'speakingRate'] === 'number'
-          ? config[descriptor.runtime.rateKey ?? 'speakingRate'] as number : null,
-        pitch: typeof config[descriptor.runtime.pitchKey ?? 'pitch'] === 'number'
-          ? config[descriptor.runtime.pitchKey ?? 'pitch'] as number : null,
-        signal: params.signal,
-      });
-      await (input.play ?? playAudioBytesWithStopper)({
-        bytes: result.bytes.buffer.slice(
-          result.bytes.byteOffset,
-          result.bytes.byteOffset + result.bytes.byteLength,
-        ) as ArrayBuffer,
-        format,
-        registerPlaybackStopper: params.registerPlaybackStopper,
-        onPlaybackStarted: params.onPlaybackStarted,
-      });
+      const { contribution, declaration, settings } = readDescriptor(providerId, 'tts');
+      const config = settings.parseConfig(params.providerConfig);
+      if (!config || !isVoiceProviderSettingsJsonObject(config)) {
+        throw createRuntimeError('provider_settings_invalid');
+      }
+      let correspondence: ReturnType<typeof resolveVoiceSpeechSettingsCorrespondence>;
+      try {
+        correspondence = resolveVoiceSpeechSettingsCorrespondence({ contribution: declaration, settings: config });
+      } catch {
+        throw createRuntimeError('provider_settings_invalid');
+      }
+      if (!correspondence.synthesize) throw createRuntimeError('provider_settings_invalid');
+      const format = config.format === 'wav' ? 'wav' : 'mp3';
+      const abortController = new AbortController();
+      let stopPlayback: (() => void) | null = null;
+      const stop = () => {
+        abortController.abort();
+        const stopper = stopPlayback;
+        stopPlayback = null;
+        try {
+          stopper?.();
+        } catch {
+          // Playback teardown is best-effort; synthesis cancellation remains authoritative.
+        }
+      };
+      const abortFromSignal = () => stop();
+      if (params.signal?.aborted) stop();
+      else params.signal?.addEventListener('abort', abortFromSignal, { once: true });
+
+      let clearStopper = () => {};
+      try {
+        clearStopper = params.registerPlaybackStopper(stop);
+        if (abortController.signal.aborted) return;
+        const result = await client.synthesize({
+          entry: contribution,
+          input: params.text,
+          model: correspondence.synthesize.model,
+          voiceName: correspondence.synthesize.voiceName,
+          languageCode: asTrimmedString(config.languageCode),
+          format,
+          speakingRate: typeof config.speakingRate === 'number' ? config.speakingRate : null,
+          pitch: typeof config.pitch === 'number' ? config.pitch : null,
+          signal: abortController.signal,
+        });
+        if (abortController.signal.aborted) return;
+        const registerPlaybackOnly: VoicePlaybackStopperRegistrar = (stopper) => {
+          stopPlayback = stopper;
+          return () => {
+            if (stopPlayback === stopper) stopPlayback = null;
+          };
+        };
+        await (input.play ?? playAudioBytesWithStopper)({
+          bytes: result.bytes.buffer.slice(
+            result.bytes.byteOffset,
+            result.bytes.byteOffset + result.bytes.byteLength,
+          ) as ArrayBuffer,
+          format,
+          registerPlaybackStopper: registerPlaybackOnly,
+          onPlaybackStarted: params.onPlaybackStarted,
+        });
+      } finally {
+        params.signal?.removeEventListener('abort', abortFromSignal);
+        clearStopper();
+      }
     },
   });
 }

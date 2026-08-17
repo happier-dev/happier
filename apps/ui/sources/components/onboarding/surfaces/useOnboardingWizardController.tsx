@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -20,6 +19,7 @@ import { getActiveServerSnapshot, upsertServerProfileOnly } from '@/sync/domains
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 import { listServerProfiles, removeServerProfile } from '@/sync/domains/server/serverProfiles';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
+import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
@@ -70,6 +70,7 @@ import { useWizardChromeOverrides } from '../hooks/useWizardChromeOverrides';
 import type { WizardChoice, WizardProfileChoice } from './relaySelection/relaySelectionTypes';
 import { buildRelayChoices } from './relaySelection/buildRelayChoices';
 import { buildRelayProfileChoices } from './relaySelection/buildRelayProfileChoices';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type OnboardingWizardSurfaceProps = Readonly<{
     testID?: string;
@@ -474,23 +475,31 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
         const serverUrl = profileChoices.find((profile) => profile.id === id)?.serverUrl ?? '';
         try {
-            await removeServerProfileUiAction({ profileId: id, serverUrl });
-        } catch {
-            // ignore: profile may have been removed elsewhere
-        }
-
-        if (state.context.relaySelection.relayProfileId === id) {
-            setRelayAccessTarget(null);
-            setRelayAccessShareUrl(null);
-            dispatch({
-                type: 'wizard/setRelaySelection',
-                relaySelection: {
-                    choiceId: null,
-                    serverUrl: null,
-                    relayProfileId: null,
-                    locked: state.context.relaySelection.locked,
+            await presentFirstKeyCredentialLifecycle({
+                run: async () =>
+                    await removeServerProfileUiAction({
+                        profileId: id,
+                        serverUrl,
+                    }),
+                onCompleted: () => {
+                    if (state.context.relaySelection.relayProfileId !== id) {
+                        return;
+                    }
+                    setRelayAccessTarget(null);
+                    setRelayAccessShareUrl(null);
+                    dispatch({
+                        type: 'wizard/setRelaySelection',
+                        relaySelection: {
+                            choiceId: null,
+                            serverUrl: null,
+                            relayProfileId: null,
+                            locked: state.context.relaySelection.locked,
+                        },
+                    });
                 },
             });
+        } catch {
+            // ignore: profile may have been removed elsewhere
         }
     }, [profileChoices, state.context.relaySelection.locked, state.context.relaySelection.relayProfileId]);
 
@@ -538,7 +547,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 disabled,
                 dimmed: unavailable || blocked,
                 onPress: () => selectProfileRelay(profile),
-                icon: 'link-outline',
+                icon: 'link',
                 title: profile.name,
                 subtitle: toServerUrlDisplay(profile.serverUrl),
                 badge: blocked ? t('common.blocked') : unavailable ? t('common.unreachable') : undefined,
@@ -622,7 +631,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                     },
                 });
             },
-            icon: 'link-outline',
+            icon: 'link',
             title: t('setupOnboarding.relayCustomUrlTitle'),
             subtitle: t('setupOnboarding.relayCustomUrlSubtitle'),
         };
@@ -850,7 +859,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         relayLine: string;
     }>) => (
         <View testID={params.testID} style={styles.relayHintBlock}>
-            <Ionicons name="cloud-outline" size={12} style={styles.relayHintIcon} color={theme.colors.text.secondary} />
+            <Icon name="cloud" size={14} color={theme.colors.text.secondary} />
             <Text testID={`${params.testID}-line`} style={styles.relayHintLine}>{params.relayLine}</Text>
         </View>
     ), [styles]);
@@ -1083,23 +1092,13 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         router.push('/setup');
     }, []);
 
-    const handleOpenLostAccess = React.useCallback(async () => {
-        const relayUrl = welcomeRelayUrl;
-        if (relayUrl) {
-            setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
-        }
-        await ensureActiveServerForAuth();
+    const handleOpenLostAccess = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_lost_access' });
-    }, [ensureActiveServerForAuth, welcomeRelayUrl]);
+    }, []);
 
-    const handleOpenSecretKeyLogin = React.useCallback(async () => {
-        const relayUrl = welcomeRelayUrl;
-        if (relayUrl) {
-            setOnboardingWizardAwaitingAuthResumeIntent(relayUrl);
-        }
-        await ensureActiveServerForAuth();
+    const handleOpenSecretKeyLogin = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_secret_key' });
-    }, [ensureActiveServerForAuth, welcomeRelayUrl]);
+    }, []);
 
     const handleRelaySelectAdvance = React.useCallback(async () => {
         const isManualRelayEntry =
@@ -1316,6 +1315,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         relayAccessTarget,
     });
     const relaySelectBody = renderWizardChoiceList({
+        accessibilityLabel: t('setupOnboarding.preAuthTitle'),
         items: [
             ...profileChoices.map(buildRelayChoiceItem),
             ...relayChoices.map(buildRelayChoiceItem),

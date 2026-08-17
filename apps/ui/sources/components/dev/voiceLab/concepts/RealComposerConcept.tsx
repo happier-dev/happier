@@ -1,18 +1,25 @@
 import * as React from 'react';
+import { VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
 import { View } from 'react-native';
 
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import { AgentInput } from '@/components/sessions/agentInput/AgentInput';
+import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { TactilePressable } from '../ConceptControls';
-import { PlanetOrb, VoiceWaveform } from '../VoiceLight';
-import { TranscriptStream } from '../TranscriptStream';
-import { light, onPlanetInk, useVoiceLabTokens } from '../voiceLabTokens';
+import { TactilePressable } from '@/components/voice/controls/VoiceControls';
+import { PlanetOrb, VoiceWaveform } from '@/components/voice/light/VoiceLight';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { light, onPlanetInk, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /** The composer's action button is 32pt; the Voice planet matches it exactly. */
 const PLANET = 26;
+
+/** A design fixture, not a session: it offers no suggestion kinds and so detects no triggers. */
+const REAL_COMPOSER_CONCEPT_SUGGESTION_KINDS: readonly ComposerSuggestionKindId[] = [];
 
 /**
  * REAL COMPOSER — the proposal mounted on the actual `AgentInput`.
@@ -39,7 +46,7 @@ const PLANET = 26;
  * in the fixture. Omitted props preserve the existing composer behavior.
  */
 export function RealComposerConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     const { state } = props;
     const dormant = state.id === 'ready' || state.id === 'unavailable';
     const live = !dormant && state.id !== 'error' && state.id !== 'ended';
@@ -50,12 +57,42 @@ export function RealComposerConcept(props: VoiceConceptProps) {
     const [value, setValue] = React.useState('');
     // Dictation is a momentary capture, not a session — local to the demo.
     const [dictating, setDictating] = React.useState(false);
-
+    /*
+     * The two-row case, on demand.
+     *
+     * `showSecondaryControlsRow` is true whenever the composer has machine, path
+     * or resume *handlers* — which the in-session composer never has, and the New
+     * Session composer always does. Without this switch the stacked trailing
+     * cluster (Voice below Send) is unreachable in the lab, and the decision it
+     * demonstrates could not be judged.
+     */
+    const [twoRow, setTwoRow] = React.useState(false);
+    const noopPopoverHandler = React.useCallback(() => undefined, []);
 
     return (
         <View style={{ flex: 1, alignSelf: 'stretch' }}>
             <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 8 }}>
-                <TranscriptStream />
+                <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} />
+            </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 20, paddingBottom: 6 }}>
+                <TactilePressable
+                    accessibilityLabel={twoRow ? 'Show the in-session composer' : 'Show the New Session composer'}
+                    accessibilityHint="Switches between the one-row and two-row action bar"
+                    onPress={() => setTwoRow((v) => !v)}
+                    style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        borderColor: tokens.rule,
+                        backgroundColor: twoRow ? light('violet', 0.14, tokens) : 'transparent',
+                    }}
+                >
+                    <Text style={{ ...Typography.default(), fontSize: 11, color: tokens.inkMuted }}>
+                        {twoRow ? 'New session · 2 rows' : 'In session · 1 row'}
+                    </Text>
+                </TactilePressable>
             </View>
 
             {/* The live partial rides above the composer rather than replacing
@@ -93,7 +130,11 @@ export function RealComposerConcept(props: VoiceConceptProps) {
                 agentLabel="Codex"
                 machineName="leeroy-mbp"
                 currentPath="happier/dev"
-                autocompletePrefixes={[]}
+                // Handlers — not the labels — are what promote the action bar to
+                // two rows, so this is the switch the New Session composer flips.
+                onMachineClick={twoRow ? noopPopoverHandler : undefined}
+                onPathClick={twoRow ? noopPopoverHandler : undefined}
+                autocompleteKinds={REAL_COMPOSER_CONCEPT_SUGGESTION_KINDS}
                 autocompleteSuggestions={async () => []}
                 // The submit button means exactly one thing — send, or stop.
                 // Speech has its own control, so it no longer shadows the stop.
@@ -133,7 +174,7 @@ export function RealComposerConcept(props: VoiceConceptProps) {
                         }}
                     />
                     <Text numberOfLines={1} style={{ ...Typography.default(), fontSize: 11, color: tokens.inkFaint }}>
-                        {props.provider.id === 'realtime_codex'
+                        {props.provider.id === 'happier.agent.codex/realtime-codex'
                             ? 'Speaking directly into this session'
                             : 'Global voice · bound to this session'}
                     </Text>
@@ -173,12 +214,18 @@ const VoiceControl = React.memo(function VoiceControl(props: Readonly<{
     label: string;
     onPress: () => void;
 }>) {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     const SLOT = 32;
-    // The planet is drawn a little under its slot so a deep breath has somewhere
-    // to go. Sized to the slot it would clip at the top of every inhale — which
-    // is exactly why the composer planet looked static.
-    const BODY = Math.round(SLOT * 0.82);
+    /*
+     * The planet fills its slot, matching the send button's weight exactly —
+     * drawn under-size it reads as a smaller, weaker sibling of the submit
+     * rather than its peer.
+     *
+     * The breath has somewhere to go because the slot does **not** clip: a 12%
+     * inhale overshoots by ~2pt per edge, which the row's 8pt gap absorbs.
+     * Clipping is what made this planet look static, not its size.
+     */
+    const BODY = SLOT;
 
     return (
         <TactilePressable
@@ -246,7 +293,7 @@ const DictationMark = React.memo(function DictationMark(props: Readonly<{
     active: boolean;
     onPress: () => void;
 }>) {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     return (
         <TactilePressable
             accessibilityLabel={props.active ? 'Stop dictating and insert' : 'Dictate into the message'}
@@ -265,32 +312,12 @@ const DictationMark = React.memo(function DictationMark(props: Readonly<{
                     style={{ width: 9, height: 9, borderRadius: 2.5, backgroundColor: light('warm', 1, tokens) }}
                 />
             ) : (
-                <MicMark color={tokens.inkMuted} />
+                <Icon name="microphone" size={16} color={tokens.inkMuted} />
             )}
         </TactilePressable>
     );
 });
 
-/** A mic drawn from primitives so it scales cleanly at 16pt. */
-const MicMark = React.memo(function MicMark(props: Readonly<{ color: string }>) {
-    return (
-        <View style={{ width: 15, height: 15, alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 5.5, height: 8, borderRadius: 3, backgroundColor: props.color, marginTop: -2 }} />
-            <View
-                style={{
-                    width: 9.5,
-                    height: 4.5,
-                    borderBottomLeftRadius: 6,
-                    borderBottomRightRadius: 6,
-                    borderWidth: 1.3,
-                    borderTopWidth: 0,
-                    borderColor: props.color,
-                    marginTop: 1,
-                }}
-            />
-        </View>
-    );
-});
 
 /** The resting Voice glyph: the meter's silhouette, not a play triangle. */
 const MiniWave = React.memo(function MiniWave(props: Readonly<{ color: string }>) {

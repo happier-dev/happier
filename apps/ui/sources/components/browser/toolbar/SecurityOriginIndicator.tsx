@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -7,6 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { selectBrowserSecurityOriginModel, type BrowserSecurityLevel } from '@/sync/domains/browser/shell';
 import { t } from '@/text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     chip: {
@@ -29,22 +29,24 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 type SecurityVisual = Readonly<{
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
     tone: 'secure' | 'local' | 'insecure' | 'neutral';
 }>;
 
 function visualForLevel(level: BrowserSecurityLevel): SecurityVisual {
     switch (level) {
         case 'secure':
-            return { iconName: 'lock-closed', tone: 'secure' };
+            return { iconName: 'lock', tone: 'secure' };
         case 'local':
-            return { iconName: 'home', tone: 'local' };
+            return { iconName: 'house', tone: 'local' };
         case 'insecure':
-            return { iconName: 'lock-open', tone: 'insecure' };
+            // No open-lock glyph is registered (see `unresolved`); reuse 'lock' — the
+            // warning-tone color still distinguishes this from the secure state.
+            return { iconName: 'lock', tone: 'insecure' };
         case 'internal':
-            return { iconName: 'cube-outline', tone: 'neutral' };
+            return { iconName: 'cube', tone: 'neutral' };
         case 'unknown':
-            return { iconName: 'help-circle-outline', tone: 'neutral' };
+            return { iconName: 'question', tone: 'neutral' };
     }
 }
 
@@ -83,7 +85,7 @@ export function SecurityOriginIndicator(props: Readonly<{
                 ? `${accessibilityLabel}: ${model.originLabel}`
                 : accessibilityLabel}
         >
-            <Ionicons name={visual.iconName} size={14} color={iconColor} />
+            <Icon name={visual.iconName} size={14} color={iconColor} />
             <Text numberOfLines={1} style={stylesheet.text}>
                 {model.originLabel ?? accessibilityLabel}
             </Text>

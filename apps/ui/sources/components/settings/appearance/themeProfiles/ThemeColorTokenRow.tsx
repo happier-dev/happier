@@ -32,7 +32,7 @@ export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: 
         id: resetActionId,
         title: t('settingsAppearance.themeProfiles.resetToken'),
         subtitle: props.token.id,
-        icon: 'refresh-outline',
+        icon: 'arrow-clockwise',
         inlineTestID: `settings-theme-color-reset-${props.mode}-${props.token.id}`,
         onPress: () => props.onReset(props.token.id),
     }] : [];

@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -8,10 +7,13 @@ import { Modal } from '@/modal';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type AgentCliInstallItemProps = Readonly<{
     machineId: string | null;
     serverId?: string | null;
+    /** Re-checks the owner-scoped target immediately before a confirmed install. */
+    resolveExecutionTarget?: () => Readonly<{ machineId: string; serverId?: string | null }> | null;
     capabilityId: Extract<CapabilityId, `cli.${string}`>;
     providerTitle: string;
     installed: boolean | null;
@@ -21,6 +23,13 @@ export type AgentCliInstallItemProps = Readonly<{
     onManagedUpdateConfirmed?: () => void;
     onInstalled?: () => void;
 }>;
+
+function executionTargetsEqual(
+    left: Readonly<{ machineId: string; serverId?: string | null }>,
+    right: Readonly<{ machineId: string; serverId?: string | null }>,
+): boolean {
+    return left.machineId === right.machineId && (left.serverId ?? null) === (right.serverId ?? null);
+}
 
 export function AgentCliInstallItem(props: AgentCliInstallItemProps) {
     const { theme } = useUnistyles();
@@ -43,7 +52,7 @@ export function AgentCliInstallItem(props: AgentCliInstallItemProps) {
         <Item
             title={title}
             subtitle={subtitle}
-            icon={<Ionicons name="download-outline" size={29} color={theme.colors.text.secondary} />}
+            icon={<Icon name="download" size={29} color={theme.colors.text.secondary} />}
             showChevron={false}
             disabled={isInstalling || !props.machineId || !autoInstallAvailable || installabilityKind === 'checking'}
             rightElement={isInstalling ? <ActivitySpinner size="small" color={theme.colors.text.secondary} /> : undefined}
@@ -72,12 +81,23 @@ export function AgentCliInstallItem(props: AgentCliInstallItemProps) {
                 if (!confirmed) {
                     return;
                 }
+
+                const initialExecutionTarget = {
+                    machineId: props.machineId,
+                    serverId: props.serverId ?? null,
+                };
+                const executionTarget = props.resolveExecutionTarget
+                    ? props.resolveExecutionTarget()
+                    : initialExecutionTarget;
+                if (!executionTarget || !executionTargetsEqual(initialExecutionTarget, executionTarget)) {
+                    return;
+                }
                 if (isExplicitUpdate) {
                     props.onManagedUpdateConfirmed?.();
                 }
 
                 const result = await invokeWithAlerts({
-                    machineId: props.machineId,
+                    machineId: executionTarget.machineId,
                     request: {
                         id: props.capabilityId,
                         method: 'install',
@@ -88,7 +108,7 @@ export function AgentCliInstallItem(props: AgentCliInstallItemProps) {
                         },
                     },
                     timeoutMs: 5 * 60_000,
-                    serverId: props.serverId,
+                    serverId: executionTarget.serverId,
                     alerts: {
                         errorTitle: t('common.error'),
                         successTitle: t('common.success'),

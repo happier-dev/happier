@@ -6,21 +6,39 @@ export const stageVisualTokens = {
         dark: {
             skyGradient: 'linear-gradient(180deg, #050508 0%, #0A0A10 100%)',
             backgroundColor: '#050508',
+            backgroundColorTransparent: 'rgba(5,5,8,0)',
             atmosphereColor: 'rgba(109,148,255,.28)',
             bloomColor: 'rgba(255,177,74,.18)',
         },
         light: {
             skyGradient: 'linear-gradient(180deg, #FAF9F7 0%, #F3EDE6 100%)',
             backgroundColor: '#FAF9F7',
+            backgroundColorTransparent: 'rgba(250,249,247,0)',
             atmosphereColor: 'rgba(255,177,74,.24)',
             bloomColor: 'rgba(255,177,74,.20)',
         },
-        planetVisibleDiscRatio: {
-            min: 0.55,
-            max: 0.65,
-        },
-        planetBackgroundSize: '142% auto',
-        planetBackgroundPosition: 'center 86%',
+        /**
+         * The journey and the pre-auth welcome screen share ONE planet framing
+         * recipe (spec §1): full-bleed cover anchored at `80% 50%`, which reads
+         * as a LOW HORIZON cropped by the bottom/right of the section. The
+         * earlier journey-only `142% auto` / `center 86%` pair overflowed the
+         * pane horizontally and anchored the disc centred, so it read as a
+         * floating ball cut off at the narration divider.
+         *
+         * `StagePane` now renders the canonical `PlanetBackground variant="desktop"`
+         * call the brand pane makes, so nothing selects the `horizon`
+         * composition any more; these values keep that composition on the
+         * canonical framing for as long as `PlanetBackground` still carries it.
+         */
+        planetBackgroundSize: 'cover',
+        planetBackgroundPosition: '80% 50%',
+        /**
+         * Bottom fade over the stage canvas: transparent -> the pane's own
+         * background over the lower 55%, the same R1 recipe `BrandPanel` draws
+         * over the brand pane (spec §1). It grounds the planet and keeps the
+         * bottom edge of the pane from reading as a hard cut.
+         */
+        bottomFadeHeight: '55%',
         accentTransitionMs: 800,
         idleBreath: {
             durationMs: 20_000,
@@ -85,11 +103,18 @@ export const stageVisualTokens = {
         locatorFontSize: 11,
         locatorLetterSpacing: 0.88,
         locatorRuleWidth: 24,
-        eyebrowFontSize: 13,
-        eyebrowLetterSpacing: 0.78,
-        titleFontSize: 40,
-        titleLineHeight: 43.2,
-        titleLetterSpacing: -0.8,
+        /**
+         * The beat headline is the same display type as the welcome screen's
+         * `BrandTagline` (48 / 48 / -1.8) — beat A1's copy is literally the
+         * brand tagline, and every beat is written as a lead + closing sentence
+         * pair for the same two-tone treatment. Leading equals the font size so
+         * the two tones stack as one block, exactly like the brand pane.
+         */
+        titleFontSize: 48,
+        titleLineHeight: 48,
+        titleLetterSpacing: -1.8,
+        /** Display headline -> body gap; mirrors the brand pane's tagline block. */
+        titleBodyGap: 22,
         bodyFontSize: 17,
         bodyLineHeight: 27.2,
         bodyMaxWidth: 578,

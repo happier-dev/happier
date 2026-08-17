@@ -1,3 +1,7 @@
+import {
+  ConnectedAccountPurposeIdSchema,
+} from '@happier-dev/protocol';
+
 const FIELD_KINDS = new Set([
   'welcome',
   'text',
@@ -5,7 +9,6 @@ const FIELD_KINDS = new Set([
   'select',
   'nullable_boolean',
   'number',
-  'autoprovision',
   'model',
   'voice',
   'voice_catalog',
@@ -18,7 +21,6 @@ const FIELD_KINDS = new Set([
   'keyterms',
   'server_vad',
   'privacy_opt_in',
-  'authentication_source',
   'connected_services_binding',
 ] as const);
 
@@ -107,6 +109,7 @@ export type RealtimeSettingsDescriptor = Readonly<{
   credential: Readonly<Record<string, unknown> & {
     kind: 'api_key' | 'none';
     catalog: 'voices' | null;
+    credentialPurpose?: string;
   }>;
   links: Readonly<Record<string, unknown>>;
   fields: readonly RealtimeSettingsFieldDescriptor[];
@@ -120,6 +123,14 @@ export type RealtimeProviderSettingsOwner = Readonly<{
   migrateLegacy?(value: unknown): Readonly<{ config: Readonly<Record<string, unknown>>; root?: unknown }> | null;
 }>;
 
+export function readRealtimeSavedSecretCredentialPurpose(
+  descriptor: RealtimeSettingsDescriptor | null | undefined,
+): string | null {
+  const purpose = descriptor?.credential.credentialPurpose;
+  const parsed = ConnectedAccountPurposeIdSchema.safeParse(purpose);
+  return parsed.success ? parsed.data : null;
+}
+
 export function parseRealtimeSettingsDescriptor(
   providerId: string,
   value: unknown,
@@ -129,6 +140,8 @@ export function parseRealtimeSettingsDescriptor(
     && value.kind !== 'voice.internal.conversation-settings.v1') return null;
   if (value.providerId !== providerId || !isRecord(value.credential)) return null;
   if (value.credential.kind !== 'api_key' && value.credential.kind !== 'none') return null;
+  if (value.credential.credentialPurpose !== undefined
+    && !ConnectedAccountPurposeIdSchema.safeParse(value.credential.credentialPurpose).success) return null;
   if (value.credential.catalog !== null && value.credential.catalog !== 'voices') return null;
   if (value.credential.kind === 'none' && value.credential.catalog !== null) return null;
   if (!isRecord(value.links) || !hasValidLinks(value.links)
@@ -157,10 +170,9 @@ export function parseRealtimeSettingsDescriptor(
     if (existingKinds.has(raw.kind)) return null;
     const combinedKinds = new Set(existingKinds);
     combinedKinds.add(raw.kind);
-    if (combinedKinds.size > 1
-      && !(combinedKinds.size === 2 && combinedKinds.has('text') && combinedKinds.has('autoprovision'))) return null;
+    if (combinedKinds.size > 1) return null;
     fieldKindsByPath.set(path, combinedKinds);
-    if (raw.kind !== 'autoprovision' && raw.kind !== 'server_vad') {
+    if (raw.kind !== 'server_vad') {
       if (concreteFieldPaths.has(path)) return null;
       concreteFieldPaths.add(path);
     }

@@ -2,25 +2,27 @@ import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     PluginCancellationOptions,
     PluginReference,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    type PluginJsonValueV2,
-} from '@happier-dev/protocol';
+    PLUGIN_UI_HOST_API_VERSION_V1,
+    PluginUiExecuteActionRequestV1Schema,
+} from '@happier-dev/protocol/plugins/ui';
 
 import {
-    machinePluginStructuredMessageActionExecute,
-    type MachinePluginStructuredMessageActionResult,
-} from '@/sync/ops/machineContributionRegistryProjection';
+    dispatchPluginSurfaceAction,
+    type PluginSurfaceContributedActionTransport,
+} from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import type { machinePluginStructuredMessageActionExecute } from '@/sync/ops/machineContributionRegistryProjection';
 
 export type AppShellPluginUiActionExecute = (
     machineId: string,
     opts: Parameters<typeof machinePluginStructuredMessageActionExecute>[1],
-) => Promise<MachinePluginStructuredMessageActionResult>;
+) => Promise<Awaited<ReturnType<typeof machinePluginStructuredMessageActionExecute>>>;
 
-const DEFAULT_INVOCATION_TIMEOUT_MS = 30_000;
+/** The app-shell owner bounds every present-user plugin invocation to this lifetime. */
+export const DEFAULT_INVOCATION_TIMEOUT_MS = 30_000;
 
 function invocationError(
     code: string,
@@ -36,14 +38,7 @@ function invocationError(
     });
 }
 
-function qualifyAction(pluginId: string, action: PluginReference): string {
-    const identity = typeof action === 'string'
-        ? createPluginContributionIdentity({ pluginId, localId: action })
-        : createPluginContributionIdentity(action);
-    return buildQualifiedPluginContributionKey(identity);
-}
-
-function composeOperationSignal(
+export function composeAppShellInvocationSignal(
     invocationSignal: AbortSignal,
     operationSignal: AbortSignal | undefined,
 ): Readonly<{ signal: AbortSignal; dispose(): void }> {
@@ -67,12 +62,14 @@ function composeOperationSignal(
 }
 
 /**
- * AppShell-owned producer for non-mounted plugin UI operations.
+ * AppShell-owned producer for non-mounted plugin UI operations (Voice).
  *
- * It deliberately delegates executable work to the daemon action front door,
- * where the canonical invocation context, policy evaluator, and service factory
- * remain the only owners. All other UI methods fail closed because there is no
- * mounted surface or presentation target in this lifecycle.
+ * It is a **thin adapter over the canonical dispatcher** (plan §3.5): it owns
+ * only transport plumbing — composing the caller's cancellation signal with the
+ * invocation signal and shaping the failure as a public `PluginError`. It
+ * contains no independent action parsing, policy evaluation, currentness
+ * decision or result interpretation. All other UI methods fail closed because
+ * there is no mounted surface or presentation target in this lifecycle.
  */
 export function createAppShellPluginUiInvocationHost(input: Readonly<{
     pluginId: string;
@@ -80,6 +77,8 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
     generation: string;
     machineId: string;
     serverId?: string | null;
+    /** Exact projection-origin binding for this mounted Voice contribution. */
+    executionOrigin?: PluginMachineExecutionOriginV1 | null;
     signal: AbortSignal;
     timeoutMs?: number;
     isCurrent(): boolean;
@@ -93,58 +92,82 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
     const unavailable = (): never => {
         throw invocationError('plugin_ui_method_unavailable', identity);
     };
-    const execute = input.execute ?? machinePluginStructuredMessageActionExecute;
+    const executeAction = async (
+        action: PluginReference,
+        actionInput: JsonValue,
+        options?: PluginCancellationOptions,
+    ): Promise<JsonValue> => {
+        const operation = composeAppShellInvocationSignal(input.signal, options?.signal);
+        try {
+            const materialization = input.executionOrigin?.materializationRef;
+            const mountedBinding = materialization
+                && materialization.pluginId === input.pluginId
+                && materialization.machineId === input.machineId
+                ? Object.freeze({
+                    contributionLocalId: input.contributionId,
+                    materializationRef: materialization,
+                })
+                : null;
+            const actionRequest = PluginUiExecuteActionRequestV1Schema.safeParse({
+                action,
+                input: actionInput,
+            });
+            if (!actionRequest.success) {
+                throw invocationError('plugin_surface_action_reference_invalid', identity);
+            }
+            const outcome = await dispatchPluginSurfaceAction({
+                callerPluginId: input.pluginId,
+                callerContributionLocalId: input.contributionId,
+                ...(mountedBinding ? { callerBinding: mountedBinding } : {}),
+                action: actionRequest.data.action,
+                input: actionRequest.data.input ?? null,
+                contributedAction: {
+                    machineId: input.machineId,
+                    serverId: input.serverId ?? null,
+                    expectedGeneration: input.generation,
+                    timeoutMs: input.timeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS,
+                    ...(input.execute
+                        ? { execute: input.execute as PluginSurfaceContributedActionTransport }
+                        : {}),
+                },
+                signal: operation.signal,
+                isCurrent: input.isCurrent,
+            });
+            if (!outcome.ok) throw invocationError(outcome.reason, identity);
+            return outcome.result as JsonValue;
+        } finally {
+            operation.dispose();
+        }
+    };
 
     return Object.freeze({
         version: () => Object.freeze({
-            apiVersion: '1.0.0',
+            apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: 1,
             methods: Object.freeze(['executeAction'] as const),
         }),
         context: async () => unavailable(),
         watchContext: unavailable,
-        async executeAction(
-            action: PluginReference,
-            actionInput: JsonValue,
-            options?: PluginCancellationOptions,
-        ) {
-            const operation = composeOperationSignal(input.signal, options?.signal);
-            try {
-                if (operation.signal.aborted) throw invocationError('plugin_ui_invocation_aborted', identity);
-                if (!input.isCurrent()) throw invocationError('plugin_ui_generation_retired', identity);
-                const result = await execute(input.machineId, {
-                    serverId: input.serverId ?? null,
-                    expectedGeneration: input.generation,
-                    qualifiedActionId: qualifyAction(input.pluginId, action),
-                    // The SDK makes JSON containers readonly for authors while
-                    // Protocol's equivalent recursive JSON type is mutable.
-                    // The RPC owner immediately schema-parses this same value.
-                    input: actionInput as PluginJsonValueV2,
-                    executionSurface: 'ui',
-                    timeoutMs: input.timeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS,
-                    signal: operation.signal,
-                });
-                let errorCode: string;
-                if (!result.supported) {
-                    errorCode = 'plugin_ui_action_host_unavailable';
-                } else if (!result.result.ok) {
-                    errorCode = result.result.code;
-                } else {
-                    // The daemon response is the canonical action settlement. Once
-                    // it reports success, a later local abort or generation
-                    // observation must not hide an outward result already known.
-                    return result.result.result as JsonValue;
-                }
-                if (operation.signal.aborted) throw invocationError('plugin_ui_invocation_aborted', identity);
-                if (!input.isCurrent()) throw invocationError('plugin_ui_generation_retired', identity);
-                throw invocationError(errorCode, identity);
-            } finally {
-                operation.dispose();
-            }
-        },
+        watchResource: async () => unavailable(),
+        activeComposer: async () => unavailable(),
+        readComposer: async () => unavailable(),
+        watchComposer: async () => unavailable(),
+        applyComposer: async () => unavailable(),
+        focusComposer: async () => unavailable(),
+        setComposerDecorations: async () => unavailable(),
+        acquireComposerInputLock: async () => unavailable(),
+        pickComposerMedia: async () => unavailable(),
+        inspectComposerContent: async () => unavailable(),
+        releaseComposerContent: async () => unavailable(),
+        selectActionInput: async () => unavailable(),
+        executeAction: executeAction as PluginUiHostApi['executeAction'],
         readResource: async () => unavailable(),
-        watchResource: unavailable,
+        statOpenableContent: async () => unavailable(),
+        readOpenableContent: async () => unavailable(),
         openSurface: async () => unavailable(),
+        replacePageLocation: async () => unavailable(),
+        notify: async () => unavailable(),
+        confirm: async () => unavailable(),
         diagnostic: () => {},
         readClipboard: async () => unavailable(),
         writeClipboard: async () => unavailable(),

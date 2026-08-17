@@ -1,7 +1,10 @@
 import {
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
     buildBackendTargetKeyV2,
     buildSystemSessionMetadataV1,
     AgentSessionStartupInstructionsV1Schema,
+    isConnectedServiceUxDiagnosticSpawnErrorDetail,
     readBackendTargetRefV2,
     renderPromptPlanV1,
     type AgentSessionStartupInstructionsV1,
@@ -60,6 +63,7 @@ import { persistVoiceAutoTargetMachineId } from './voiceAutoTargetMachineSetting
 import {
     findPreferredVoiceConversationSystemSession,
     findReusableVoiceConversationRuntimeSessionId,
+    isReusableVoiceConversationRuntimeSession,
     listVoiceConversationSystemSessions,
     VOICE_CONVERSATION_RETIRED_SYSTEM_SESSION_KEY,
     VOICE_CONVERSATION_SYSTEM_SESSION_KEY,
@@ -74,6 +78,7 @@ export {
 
 const VOICE_HOME_SPAWN_TARGET_WAIT_TIMEOUT_MS = 5_000;
 const VOICE_HOME_SPAWN_TARGET_WAIT_INTERVAL_MS = 100;
+const VOICE_HOME_STALE_CUSTODY_REPLAY_RETRY_LIMIT = 1;
 const VOICE_CONVERSATION_METADATA_COMMIT_FAILED =
     'VOICE_CONVERSATION_METADATA_COMMIT_FAILED';
 const VOICE_CONVERSATION_CUSTODY_COMPLETION_FAILED =
@@ -81,14 +86,31 @@ const VOICE_CONVERSATION_CUSTODY_COMPLETION_FAILED =
 const VOICE_CONVERSATION_RETIREMENT_FAILED =
     'VOICE_CONVERSATION_RETIREMENT_FAILED';
 
+/**
+ * Structural discriminator for the finalization step that failed. Callers and
+ * logs need the distinct cause; the underlying provider/transport text stays
+ * private and is never carried on the error.
+ */
+export type VoiceConversationSessionMetadataCommitReason =
+    /** `sync.refreshSessions()` rejected before the spawned session could be observed. */
+    | 'session_refresh_failed'
+    /** The spawned session never published owner metadata within the wait budget. */
+    | 'session_metadata_wait_timed_out'
+    /** The metadata commit write itself was rejected. */
+    | 'metadata_write_rejected'
+    /** No step could be attributed; the cause stays honestly unknown. */
+    | 'unknown';
+
 export class VoiceConversationSessionMetadataCommitError extends Error {
     readonly code = VOICE_CONVERSATION_METADATA_COMMIT_FAILED;
     readonly sessionId: string;
+    readonly reason: VoiceConversationSessionMetadataCommitReason;
 
-    constructor(sessionId: string) {
+    constructor(sessionId: string, reason: VoiceConversationSessionMetadataCommitReason) {
         super('Voice conversation session metadata could not be committed');
         this.name = 'VoiceConversationSessionMetadataCommitError';
         this.sessionId = sessionId;
+        this.reason = reason;
     }
 
     get compensationFailureCode(): typeof VOICE_CONVERSATION_RETIREMENT_FAILED | undefined {
@@ -401,14 +423,30 @@ async function waitForVoiceHomeSpawnTarget(timeoutMs: number): Promise<{ machine
 }
 
 function toVoiceConversationSpawnError(spawned: unknown): Error {
-    const errorCode = normalizeNonEmptyString((spawned as any)?.errorCode);
-    const errorMessage = normalizeNonEmptyString((spawned as any)?.errorMessage);
+    const spawnRecord = spawned && typeof spawned === 'object' && !Array.isArray(spawned)
+        ? spawned as Readonly<Record<string, unknown>>
+        : {};
+    const errorCode = normalizeNonEmptyString(spawnRecord.errorCode);
+    const errorMessage = normalizeNonEmptyString(spawnRecord.errorMessage);
+    const rawErrorDetail = spawnRecord.errorDetail;
+    const errorDetail = isConnectedServiceUxDiagnosticSpawnErrorDetail(rawErrorDetail)
+        ? rawErrorDetail
+        : null;
+    const uxDiagnostic = errorDetail?.uxDiagnostic ?? null;
+    const isRetryableCredentialRefresh =
+        uxDiagnostic?.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable
+        && uxDiagnostic.retryable === true
+        && uxDiagnostic.suggestedActions.includes(CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry);
+    const safeMessage = uxDiagnostic?.code ?? errorMessage ?? 'voice_conversation_spawn_failed';
     return Object.assign(
-        new Error(errorMessage ?? 'voice_conversation_spawn_failed'),
+        new Error(safeMessage),
         {
-            code: errorCode ?? 'VOICE_CONVERSATION_SPAWN_FAILED',
-            ...((spawned as any)?.spawnAttemptCustody
-                ? { spawnAttemptCustody: (spawned as any).spawnAttemptCustody }
+            code: isRetryableCredentialRefresh
+                ? 'service_temporarily_unavailable'
+                : errorCode ?? 'VOICE_CONVERSATION_SPAWN_FAILED',
+            ...(errorDetail ? { errorDetail } : {}),
+            ...(spawnRecord.spawnAttemptCustody
+                ? { spawnAttemptCustody: spawnRecord.spawnAttemptCustody }
                 : {}),
         },
     );
@@ -437,7 +475,10 @@ async function waitForSessionMetadata(sessionId: string, timeoutMs: number): Pro
         if (metadata) return;
         await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    throw new Error('voice_conversation_session_not_ready');
+    throw new VoiceConversationSessionMetadataCommitError(
+        sessionId,
+        'session_metadata_wait_timed_out',
+    );
 }
 
 async function resolveSessionRootTarget(sessionId: string): Promise<Readonly<{ machineId: string; directory: string }> | null> {
@@ -485,7 +526,10 @@ async function touchVoiceConversationSessionWithScope(
             },
         });
     } catch {
-        throw new VoiceConversationSessionMetadataCommitError(sessionId);
+        throw new VoiceConversationSessionMetadataCommitError(
+            sessionId,
+            'metadata_write_rejected',
+        );
     }
 }
 
@@ -544,7 +588,14 @@ async function finalizeSpawnedVoiceConversationSession(params: Readonly<{
     startupInstructionsMarker?: AgentSessionStartupInstructionsMarkerV1;
 }>): Promise<void> {
     try {
-        await sync.refreshSessions();
+        try {
+            await sync.refreshSessions();
+        } catch {
+            throw new VoiceConversationSessionMetadataCommitError(
+                params.sessionId,
+                'session_refresh_failed',
+            );
+        }
         await waitForSessionMetadata(params.sessionId, 15_000);
         await touchVoiceConversationSessionWithScope(
             params.sessionId,
@@ -555,7 +606,10 @@ async function finalizeSpawnedVoiceConversationSession(params: Readonly<{
         const primaryFailure =
             cause instanceof VoiceConversationSessionMetadataCommitError
                 ? cause
-                : new VoiceConversationSessionMetadataCommitError(params.sessionId);
+                : new VoiceConversationSessionMetadataCommitError(
+                    params.sessionId,
+                    'unknown',
+                );
         try {
             await retireVoiceConversationSession(params.sessionId);
         } catch {
@@ -679,6 +733,21 @@ async function findExactVoiceHomeConversationSession(params: Readonly<{
     return null;
 }
 
+async function isReplayedVoiceHomeSpawnReusable(params: Readonly<{
+    sessionId: string;
+    requirements: ResolvedVoiceHomeConversationSessionRequirements | null;
+}>): Promise<boolean> {
+    const state = storage.getState();
+    const session = state?.sessions?.[params.sessionId];
+    if (!isReusableVoiceConversationRuntimeSession(session)) return false;
+    if (!params.requirements) return true;
+
+    return await params.requirements.isReusableSession({
+        sessionId: params.sessionId,
+        metadata: readVoiceSessionOwnerMetadataFromState(state, params.sessionId),
+    });
+}
+
 function projectionSupportsStartupInstructionsV1(params: Readonly<{
     projectionInputs: Awaited<ReturnType<typeof loadDaemonMergedProjectionInputs>>;
     backendTarget: BackendTargetRefV2;
@@ -770,8 +839,7 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
     }
 
     const serverId = getActiveServerSnapshot().serverId;
-    const spawnNonce = createUiSessionSpawnNonce();
-    const spawnOptions = {
+    const spawnOptionsWithoutNonce = {
         machineId: target.machineId,
         directory: target.directory,
         transcriptStorage: 'persisted',
@@ -783,7 +851,6 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
             ? { connectedServices: resolvedRequirements.connectedServices }
             : {}),
         serverId,
-        spawnNonce,
         userAttemptId: buildVoiceSpawnUserAttemptId({
             surface: 'voice_home',
             serverId,
@@ -797,15 +864,52 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
             requirements: resolvedRequirements,
         }),
     } as const;
-    const spawned = startupInstructions
-        ? await machineSpawnTrustedHiddenSystemSession(
-            spawnOptions,
-            startupInstructions,
-        )
-        : await machineSpawnNewSession(spawnOptions);
 
-    if (!spawned || spawned.type !== 'success' || typeof spawned.sessionId !== 'string') {
-        throw toVoiceConversationSpawnError(spawned);
+    let requestedSpawnNonce = createUiSessionSpawnNonce();
+    let staleCustodyReplayRetries = 0;
+    let spawned: Awaited<ReturnType<typeof machineSpawnNewSession>>;
+    while (true) {
+        const spawnOptions = {
+            ...spawnOptionsWithoutNonce,
+            spawnNonce: requestedSpawnNonce,
+        } as const;
+        spawned = startupInstructions
+            ? await machineSpawnTrustedHiddenSystemSession(
+                spawnOptions,
+                startupInstructions,
+            )
+            : await machineSpawnNewSession(spawnOptions);
+
+        if (!spawned || spawned.type !== 'success' || typeof spawned.sessionId !== 'string') {
+            throw toVoiceConversationSpawnError(spawned);
+        }
+
+        const custody = spawned.spawnAttemptCustody;
+        const isCustodyReplay = custody?.status === 'completed'
+            && custody.spawnNonce !== requestedSpawnNonce;
+        if (!isCustodyReplay) break;
+        if (await isReplayedVoiceHomeSpawnReusable({
+            sessionId: spawned.sessionId,
+            requirements: resolvedRequirements,
+        })) {
+            break;
+        }
+
+        const cleared = await completeMachineSpawnAttemptCustody(custody);
+        if (!cleared) {
+            await failVoiceConversationCustodyCompletion({
+                sessionId: spawned.sessionId,
+                message: 'Stale Voice home session custody could not be cleared',
+            });
+        }
+        if (staleCustodyReplayRetries >= VOICE_HOME_STALE_CUSTODY_REPLAY_RETRY_LIMIT) {
+            await failVoiceConversationCustodyCompletion({
+                sessionId: spawned.sessionId,
+                message: 'Voice home session custody replay remained unavailable',
+            });
+        }
+        staleCustodyReplayRetries += 1;
+        requestedSpawnNonce = createUiSessionSpawnNonce();
     }
 
     persistVoiceAutoTargetMachineId(target.machineId);

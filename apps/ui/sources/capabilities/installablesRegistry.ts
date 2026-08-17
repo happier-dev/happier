@@ -141,7 +141,7 @@ function buildGenericInstallableUi(
     return {
         enabledWhen: () => true,
         title: projected.display.name,
-        iconName: 'terminal-outline',
+        iconName: 'terminal',
         groupTitleKey: 'machine.tools.installablesTitle',
         supportsManagedOverrideInstall: false,
         installLabels: {
@@ -247,7 +247,7 @@ export function getInstallablesRegistryEntries(
         [INSTALLABLE_KEYS.CODEX_ACP]: {
             enabledWhen: () => true,
             title: t('deps.installable.codexAcp.title'),
-            iconName: 'swap-horizontal-outline',
+            iconName: 'arrows-left-right',
             groupTitleKey: 'newSession.codexAcpBanner.title',
             supportsManagedOverrideInstall: false,
             installLabels: {
@@ -274,7 +274,7 @@ export function getInstallablesRegistryEntries(
         [INSTALLABLE_KEYS.GH]: {
             enabledWhen: () => true,
             title: t('deps.installable.gh.title'),
-            iconName: 'logo-github',
+            iconName: 'github-logo',
             groupTitleKey: 'newSession.ghCliBanner.title',
             supportsManagedOverrideInstall: true,
             installLabels: {

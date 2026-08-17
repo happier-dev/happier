@@ -15,6 +15,7 @@ describe('SelectionListKeyboardInput (R14 extracted)', () => {
     function makeKeyboardStub(consumed: boolean): SelectionListKeyboardNavApi {
         return {
             focusedIndex: 0,
+            focusedOptionId: null,
             setFocusedIndex: vi.fn(),
             handleKey: vi.fn(() => consumed),
             handleEscape: vi.fn(() => 'close' as const),

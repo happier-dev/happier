@@ -1,18 +1,25 @@
 import type {
-  VoiceConversationController,
-  VoiceConversationControllerDeps,
-  VoiceConversationControllerMachinePort,
-  VoiceConversationControllerStartResult,
-  VoiceConversationToolBarrier,
+  VoiceRealtimeCanonicalEvent,
+  VoiceRealtimeConnection,
+  VoiceRealtimePreparation,
+} from '@happier-dev/plugin-sdk/voice/client';
+import type {
+  VoiceRealtimeJsonValue,
+  VoiceRealtimeToolCallV1,
+  VoiceTranscriptCanonicalEventV1,
+} from '@happier-dev/protocol';
+import type {
+  VoiceConnectionCloseReason,
+  VoiceRealtimeTransportEvent,
+} from '@/voice/runtime/connection/VoiceRealtimeConnection';
+import type {
   VoicePlaybackInterruptionMode,
   VoicePlaybackInterruptionResolution,
-  VoiceConnectionCloseReason,
-  VoiceRealtimeConnection,
-  VoiceRealtimeTransportEvent,
-  VoiceRealtimeCanonicalEvent,
-  VoiceRealtimePreparation,
-} from '@happier-dev/bundled-voice-runtime-contract';
-import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+} from '@/voice/runtime/playback/VoicePlaybackController';
+import type {
+  VoiceRealtimePreparedSession,
+  VoiceRealtimeProtocolAdapter,
+} from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
 import {
   resolveVoiceTurnControlAction,
   type VoiceTurnControlAction,
@@ -21,15 +28,146 @@ import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfi
 import {
   normalizeVoiceRuntimeFailureCode,
   readSafeVoiceRuntimeFailureCode,
+  readSafeVoiceRuntimeFailureDiagnosticReason,
+  type VoiceRuntimeFailureDiagnosticReason,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 
-export type {
-  VoiceConversationController,
-  VoiceConversationControllerDeps,
-  VoiceConversationControllerMachinePort,
-  VoiceConversationControllerStartResult,
-  VoiceConversationToolBarrier,
-} from '@happier-dev/bundled-voice-runtime-contract';
+export type VoiceConversationToolBarrier = Readonly<{
+  run(input: Readonly<{
+    responseId: string;
+    calls: readonly VoiceRealtimeToolCallV1[];
+    signal?: AbortSignal | null;
+  }>): Promise<Readonly<{ status: 'submitted' | 'cancelled' | 'failed' }>>;
+  cancel(responseId: string): void;
+  dispose(): void;
+}>;
+
+export type VoiceConversationControllerStartResult =
+  | Readonly<{ status: 'connected' }>
+  | Readonly<{ status: 'declined'; code: string }>
+  | Readonly<{ status: 'aborted' }>
+  | Readonly<{ status: 'failed'; code: string }>;
+
+export type VoiceConversationControllerMachinePort = Readonly<{
+  connecting(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
+  reconnecting?(input: Readonly<{
+    controlSessionId: string;
+    attemptId: number;
+    active: boolean;
+  }>): void;
+  connected(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
+  ending(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
+  disconnected(input: Readonly<{ controlSessionId: string; attemptId: number; code?: string }>): void;
+  failed(input: Readonly<{
+    controlSessionId: string;
+    attemptId: number;
+    code: string;
+    diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
+  }>): void;
+}>;
+
+export type VoiceConversationControllerDeps = Readonly<{
+  adapter: VoiceRealtimeProtocolAdapter;
+  machine: VoiceConversationControllerMachinePort;
+  createConnection(
+    session: VoiceRealtimePreparedSession,
+    attemptId: number,
+    signal: AbortSignal,
+  ): Promise<VoiceRealtimeConnection>;
+  isSelectionCurrent(): boolean;
+  onCanonicalEvent(event: VoiceRealtimeCanonicalEvent, signal: AbortSignal): Promise<void>;
+  /** Observes one validated provider control envelope before provider decoding. */
+  onInboundControlEvent?(): void;
+  projectTranscript?(input: Readonly<{
+    controlSessionId: string;
+    attemptId: number;
+    connectionId: number;
+    event: VoiceTranscriptCanonicalEventV1;
+  }>): void;
+  onTransportEvent?(event: VoiceRealtimeTransportEvent, signal: AbortSignal): Promise<void>;
+  onConnectionReady?(input: Readonly<{
+    controlSessionId: string;
+    attemptId: number;
+    reason: 'initial' | 'reconnect' | 'auth_refresh';
+    request: VoiceRealtimeJsonValue;
+    connection: VoiceRealtimeConnection;
+    signal: AbortSignal;
+  }>): Promise<void>;
+  createToolBarrier?(input: Readonly<{
+    controlSessionId: string;
+    attemptId: number;
+  }>): VoiceConversationToolBarrier;
+  resources?: Readonly<{
+    preflight?(input: Readonly<{
+      controlSessionId: string;
+      attemptId: number;
+      request: VoiceRealtimeJsonValue;
+      signal: AbortSignal;
+    }>): Promise<void>;
+    prepare(input: Readonly<{
+      controlSessionId: string;
+      attemptId: number;
+      request: VoiceRealtimeJsonValue;
+      signal: AbortSignal;
+    }>): Promise<void | Readonly<{ kind: 'declined'; code: string }>>;
+    release(input: Readonly<{
+      controlSessionId: string;
+      attemptId: number;
+      reason: VoiceConnectionCloseReason;
+    }>): Promise<void>;
+  }>;
+  sessionLifecycle?: Readonly<{
+    connected(input: Readonly<{
+      controlSessionId: string;
+      attemptId: number;
+      providerSessionId: string;
+    }>): Promise<void>;
+    ended(input: Readonly<{
+      controlSessionId: string;
+      attemptId: number;
+      providerSessionId: string;
+      reason: VoiceConnectionCloseReason['code'] | 'reconnect';
+    }>): Promise<void>;
+  }>;
+  waitBeforeReconnect?(attempt: number, signal: AbortSignal): Promise<void>;
+  maxReconnectAttempts?: number;
+  connectionReadyTimeoutMs?: number;
+}>;
+
+export type VoiceConversationController = Readonly<{
+  start(input: Readonly<{
+    controlSessionId: string;
+    request?: VoiceRealtimeJsonValue;
+  }>): Promise<VoiceConversationControllerStartResult>;
+  stop(): Promise<void>;
+  fail(code: string): Promise<void>;
+  performTurnControl(
+    action: VoiceTurnControlAction,
+    payload?: VoiceRealtimeJsonValue,
+  ): Promise<
+    | Readonly<{ status: 'sent' }>
+    | Readonly<{
+        status: 'unavailable';
+        code: 'voice_turn_action_unsupported' | 'voice_connection_not_open';
+      }>
+  >;
+  sendClientControl(event: VoiceRealtimeJsonValue): Promise<
+    | Readonly<{ status: 'sent' }>
+    | Readonly<{ status: 'unavailable'; code: 'voice_connection_not_open' }>
+  >;
+  getActiveControlSessionId(): string | null;
+  getOwnedControlSessionId(): string | null;
+  /** Existing attempt identity for a current owner-scoped side effect. */
+  getOwnedAttemptId(): number | null;
+  requestReconnect(): Promise<boolean>;
+  playbackCursorMs(): number | null;
+  beginOutputInterruptionCandidate(): VoicePlaybackInterruptionMode;
+  resolveOutputInterruptionCandidate(resolution: VoicePlaybackInterruptionResolution): void;
+}>;
+
+export type CreateVoiceConversationController = (
+  input: VoiceConversationControllerDeps,
+) => VoiceConversationController;
 
 type Attempt = {
   id: number;
@@ -412,10 +550,23 @@ export function createVoiceConversationController(
     if (!connection) return;
     try {
       for await (const control of connection.controlEvents(attempt.abortController.signal)) {
-        if (!owns(attempt) || attempt.connection !== connection || !deps.isSelectionCurrent()) return;
+        if (!owns(attempt) || attempt.connection !== connection) return;
+        // A still-owned attempt whose selection went stale must end, not be
+        // abandoned. Returning here used to leave a WebRTC conversation alive on
+        // its media tracks — still heard, still hearing — while transcripts,
+        // tool calls, and turn edges stopped forever with nothing recorded.
+        if (!deps.isSelectionCurrent()) {
+          await settleSelectionInvalidated(attempt);
+          return;
+        }
+        deps.onInboundControlEvent?.();
         const events = deps.adapter.decodeControl(control);
         for (const event of events) {
-          if (!owns(attempt) || attempt.connection !== connection || !deps.isSelectionCurrent()) return;
+          if (!owns(attempt) || attempt.connection !== connection) return;
+          if (!deps.isSelectionCurrent()) {
+            await settleSelectionInvalidated(attempt);
+            return;
+          }
           if (event.type === 'auth_expired') {
             await reconnect(attempt, 'auth_refresh');
             return;
@@ -495,9 +646,17 @@ export function createVoiceConversationController(
     if (!connection) return;
     try {
       for await (const event of connection.transportEvents(attempt.abortController.signal)) {
-        if (!owns(attempt) || !deps.isSelectionCurrent() || attempt.connection !== connection) return;
+        if (!owns(attempt) || attempt.connection !== connection) return;
+        if (!deps.isSelectionCurrent()) {
+          await settleSelectionInvalidated(attempt);
+          return;
+        }
         await deps.onTransportEvent?.(event, attempt.abortController.signal);
-        if (!owns(attempt) || !deps.isSelectionCurrent() || attempt.connection !== connection) return;
+        if (!owns(attempt) || attempt.connection !== connection) return;
+        if (!deps.isSelectionCurrent()) {
+          await settleSelectionInvalidated(attempt);
+          return;
+        }
         if (event.type === 'session_identity') {
           await bindProviderSessionIdentity(attempt, connection, event.sessionId);
           if (!owns(attempt) || attempt.connection !== connection) return;
@@ -601,30 +760,13 @@ export function createVoiceConversationController(
         settleDisconnected(attempt);
         return { status: 'aborted' };
       }
-      if (deps.resources) {
-        attempt.resourcesPrepared = true;
-        const resourcePreparation = await deps.resources.prepare({
-          controlSessionId: attempt.controlSessionId,
-          attemptId: attempt.id,
-          request: attempt.request,
-          signal: attempt.abortController.signal,
-        });
-        if (!owns(attempt) || !deps.isSelectionCurrent()) {
-          await closeAttempt(attempt, { code: 'aborted' });
-          settleDisconnected(attempt);
-          return { status: 'aborted' };
-        }
-        if (resourcePreparation?.kind === 'declined') {
-          const failureCode = normalizeVoiceRuntimeFailureCode(resourcePreparation.code);
-          await closeAttempt(attempt, { code: 'error', detail: failureCode });
-          settleDisconnected(attempt, failureCode);
-          return { status: 'declined', code: failureCode };
-        }
-        // Resource owners may project an acquiring-mic state while preparing;
-        // restore connecting before opening the provider transport.
-        deps.machine.connecting({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
-      }
 
+      // Provider preparation is deliberately pre-media. A selected-source
+      // switch, deletion, or revocation before short-lived auth issuance fails
+      // here without acquiring the microphone. Successful issuance admits that
+      // exact attempt; later source changes apply to the next attempt. Public
+      // provider preparation has no media capability; the host supplies
+      // microphone/media only to createConnection.
       const preparation = await deps.adapter.prepare({
         controlSessionId: attempt.controlSessionId,
         attemptId: attempt.id,
@@ -647,6 +789,30 @@ export function createVoiceConversationController(
         await closeAttempt(attempt, { code: 'error', detail: failureCode });
         settleDisconnected(attempt, failureCode);
         return { status: 'declined', code: failureCode };
+      }
+
+      if (deps.resources) {
+        attempt.resourcesPrepared = true;
+        const resourcePreparation = await deps.resources.prepare({
+          controlSessionId: attempt.controlSessionId,
+          attemptId: attempt.id,
+          request: attempt.request,
+          signal: attempt.abortController.signal,
+        });
+        if (!owns(attempt) || !deps.isSelectionCurrent()) {
+          await closeAttempt(attempt, { code: 'aborted' });
+          settleDisconnected(attempt);
+          return { status: 'aborted' };
+        }
+        if (resourcePreparation?.kind === 'declined') {
+          const failureCode = normalizeVoiceRuntimeFailureCode(resourcePreparation.code);
+          await closeAttempt(attempt, { code: 'error', detail: failureCode });
+          settleDisconnected(attempt, failureCode);
+          return { status: 'declined', code: failureCode };
+        }
+        // Resource owners may project an acquiring-mic state while preparing;
+        // restore connecting before opening the provider transport.
+        deps.machine.connecting({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
       }
 
       const connection = await deps.createConnection(
@@ -725,6 +891,7 @@ export function createVoiceConversationController(
           controlSessionId: attempt.controlSessionId,
           attemptId: attempt.id,
           code: failureCode,
+          diagnosticReason: readSafeVoiceRuntimeFailureDiagnosticReason(error),
         });
       }
       return { status: 'failed', code: failureCode };
@@ -806,6 +973,11 @@ export function createVoiceConversationController(
     return attempt && owns(attempt) ? attempt.controlSessionId : null;
   };
 
+  const getOwnedAttemptId = (): number | null => {
+    const attempt = current;
+    return attempt && owns(attempt) ? attempt.id : null;
+  };
+
   const requestReconnect = async (): Promise<boolean> => {
     const attempt = current;
     if (!attempt || !owns(attempt) || attempt.terminalSettled) return false;
@@ -843,6 +1015,7 @@ export function createVoiceConversationController(
     sendClientControl,
     getActiveControlSessionId,
     getOwnedControlSessionId,
+    getOwnedAttemptId,
     requestReconnect,
     playbackCursorMs,
     beginOutputInterruptionCandidate,

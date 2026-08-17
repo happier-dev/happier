@@ -5,6 +5,10 @@ import type {
     DetailsSurfaceRenderInputV1,
 } from '@/components/appShell/panes/details/surfaces';
 import {
+    createPluginDetailsDestinationLaunchScopeFacts,
+    createPluginDetailsDestinationSurfaceRenderer,
+} from '@/components/appShell/panes/details/surfaces/pluginDetailsDestination';
+import {
     createBrowserViewDetailsSurfaceRenderer,
     createOpenBrowserTargetInWorkspace,
     resolveBrowserSurfacePlatform,
@@ -17,7 +21,10 @@ import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/detai
 import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { readTerminalDetailsCwd, readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
+import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { PluginUiDestinationRuntimeFormFactorV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 
 type WorkspaceDetailsOpenFile = (path: string, intent?: 'default' | 'pinned') => void;
 
@@ -31,6 +38,8 @@ export type WorkspaceDetailsSurfaceRendererOptions = Readonly<{
     rootPath: string;
     activeRootPath: string;
     presentation: 'screen' | 'panel';
+    formFactor?: PluginUiDestinationRuntimeFormFactorV1;
+    pluginUiProjectionPhase?: PluginUiProjectionPhase;
     sessionIdForAugmentation?: string | null;
     pinDetailsTab: (tabKey: string) => void;
     openDetailsTab?: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
@@ -98,6 +107,19 @@ export function createWorkspaceDetailsSurfaceRenderers(
             localServicePreviewState: options.localServicePreviewState,
         })
         : undefined;
+    const pluginDetailsDestinationMount = {
+        machineId: options.machineId,
+        serverId: options.serverId,
+        projectId: options.workspaceRefId,
+        platform: options.platform,
+        formFactor: options.formFactor,
+        projectionPhase: options.pluginUiProjectionPhase ?? 'unavailable',
+        projectionInteractionEnabled: options.pluginUiInteractionEnabled,
+    };
+    const pluginDetailsDestinationLaunchScopeFacts = createPluginDetailsDestinationLaunchScopeFacts({
+        projection: options.pluginUiProjection,
+        mount: pluginDetailsDestinationMount,
+    });
     return [
         {
             id: 'workspace-info',
@@ -106,6 +128,11 @@ export function createWorkspaceDetailsSurfaceRenderers(
             canRender: (input) => input.tab.kind === 'workspaceInfo' || readResourceKind(input) === 'workspaceInfo',
             render: () => options.renderWorkspaceInfo(),
         },
+        createPluginDetailsDestinationSurfaceRenderer({
+            targetKind: 'project',
+            projection: options.pluginUiProjection,
+            mount: pluginDetailsDestinationMount,
+        }),
         createBrowserViewDetailsSurfaceRenderer({
             localServicePreviewState: options.localServicePreviewState,
             localServicePreviewServerId: options.localServicePreviewServerId,
@@ -140,6 +167,13 @@ export function createWorkspaceDetailsSurfaceRenderers(
                         deepLinkAnchor={readDeepLinkAnchor(input.tab.resource)}
                         presentation={options.presentation}
                         sessionIdForAugmentation={options.sessionIdForAugmentation ?? null}
+                        openableContentViewer={{
+                            targetKind: 'project',
+                            projection: options.pluginUiProjection,
+                            platform: resolveLocalServicePreviewPlatform(options.platform),
+                            details: input,
+                            scopedLaunchFacts: pluginDetailsDestinationLaunchScopeFacts,
+                        }}
                         onStartEditingFile={() => {
                             if (input.tab.isPreview) {
                                 options.pinDetailsTab(input.tab.key);

@@ -9,8 +9,9 @@ import {
     type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
 
-import type {
-    ConnectedServiceRegistryEntry,
+import {
+    getGeneratedLegacyConnectedServiceRegistryFallback,
+    type ConnectedServiceRegistryEntry,
 } from './connectedServiceRegistry';
 
 export const CONNECTED_ACCOUNT_SETTINGS_ROUTE =
@@ -20,17 +21,11 @@ export type ConnectedAccountSettingsRouteFocus =
     | Readonly<{ kind: 'account'; accountId: string }>
     | Readonly<{ kind: 'group'; groupId: string }>;
 
-export type ConnectedAccountSettingsRouteExecutionTarget = Readonly<{
-    serverId: string;
-    machineId: string;
-}>;
-
 export type ConnectedAccountSettingsRouteResolution = Readonly<{
     service: PluginContributionIdentityV1;
     entry: ConnectedServiceRegistryEntry;
     legacyServiceId: ConnectedServiceId | null;
     focus: ConnectedAccountSettingsRouteFocus | null;
-    executionTarget?: ConnectedAccountSettingsRouteExecutionTarget;
 }>;
 
 function readSingleRouteParam(value: unknown): string | null {
@@ -55,11 +50,22 @@ function findExactEntry(
     }) ?? null;
 }
 
+function resolvePublishedServiceEntry(
+    entries: readonly ConnectedServiceRegistryEntry[],
+    service: PluginContributionIdentityV1,
+): ConnectedServiceRegistryEntry | null {
+    const projectedEntry = findExactEntry(entries, service);
+    if (projectedEntry) {
+        return projectedEntry.executable === false ? null : projectedEntry;
+    }
+    return getGeneratedLegacyConnectedServiceRegistryFallback(service);
+}
+
 function resolveMatchingLegacyServiceId(
     entry: ConnectedServiceRegistryEntry,
     service: PluginContributionIdentityV1,
 ): ConnectedServiceId | null {
-    const legacyServiceId = ConnectedServiceIdSchema.safeParse(entry.serviceId);
+    const legacyServiceId = ConnectedServiceIdSchema.safeParse(entry.legacyServiceId);
     if (!legacyServiceId.success) return null;
     const expected =
         BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
@@ -100,41 +106,9 @@ function resolveRouteFocus(params: Readonly<{
     return { valid: true, focus: null };
 }
 
-function resolveRouteExecutionTarget(params: Readonly<{
-    serverId?: unknown;
-    machineId?: unknown;
-}>): Readonly<{
-    valid: boolean;
-    executionTarget: ConnectedAccountSettingsRouteExecutionTarget | null;
-}> {
-    const serverPresent = params.serverId !== undefined;
-    const machinePresent = params.machineId !== undefined;
-    if (!serverPresent && !machinePresent) {
-        return { valid: true, executionTarget: null };
-    }
-    if (!serverPresent || !machinePresent) {
-        return { valid: false, executionTarget: null };
-    }
-    const serverId = readSingleRouteParam(params.serverId);
-    const machineId = readSingleRouteParam(params.machineId);
-    if (
-        serverId === null
-        || machineId === null
-        || serverId.length > 256
-        || machineId.length > 256
-    ) {
-        return { valid: false, executionTarget: null };
-    }
-    return {
-        valid: true,
-        executionTarget: { serverId, machineId },
-    };
-}
-
 export function buildConnectedAccountSettingsRoute(
     service: PluginContributionIdentityV1,
     focus: ConnectedAccountSettingsRouteFocus | null = null,
-    executionTarget: ConnectedAccountSettingsRouteExecutionTarget | null = null,
 ) {
     const parsed = PluginContributionIdentityV1Schema.parse(service);
     const parsedFocus = focus === null
@@ -148,12 +122,6 @@ export function buildConnectedAccountSettingsRoute(
                 kind: 'group' as const,
                 groupId: ConnectedServiceAuthGroupIdSchema.parse(focus.groupId),
             };
-    const parsedExecutionTarget = executionTarget === null
-        ? null
-        : resolveRouteExecutionTarget(executionTarget).executionTarget;
-    if (executionTarget !== null && parsedExecutionTarget === null) {
-        throw new Error('Invalid connected account settings execution target');
-    }
     return {
         pathname: CONNECTED_ACCOUNT_SETTINGS_ROUTE,
         params: {
@@ -164,12 +132,6 @@ export function buildConnectedAccountSettingsRoute(
                 : {}),
             ...(parsedFocus?.kind === 'group'
                 ? { groupId: parsedFocus.groupId }
-                : {}),
-            ...(parsedExecutionTarget
-                ? {
-                    serverId: parsedExecutionTarget.serverId,
-                    machineId: parsedExecutionTarget.machineId,
-                }
                 : {}),
         },
     } as const;
@@ -194,17 +156,14 @@ export function resolveQualifiedConnectedAccountSettingsRoute(
         accountId: params.accountId,
         groupId: params.groupId,
     });
-    const executionTarget = resolveRouteExecutionTarget({
-        serverId: params.serverId,
-        machineId: params.machineId,
-    });
     if (
         pluginId === null
         || localId === null
         || params.serviceId !== undefined
         || params.profileId !== undefined
         || !focus.valid
-        || !executionTarget.valid
+        || params.serverId !== undefined
+        || params.machineId !== undefined
     ) {
         return null;
     }
@@ -213,16 +172,13 @@ export function resolveQualifiedConnectedAccountSettingsRoute(
         localId,
     });
     if (!parsed.success) return null;
-    const entry = findExactEntry(entries, parsed.data);
-    if (!entry || entry.executable === false) return null;
+    const entry = resolvePublishedServiceEntry(entries, parsed.data);
+    if (!entry) return null;
     return {
         service: parsed.data,
         entry,
         legacyServiceId: resolveMatchingLegacyServiceId(entry, parsed.data),
         focus: focus.focus,
-        ...(executionTarget.executionTarget
-            ? { executionTarget: executionTarget.executionTarget }
-            : {}),
     };
 }
 
@@ -271,11 +227,10 @@ export function resolveConnectedAccountSettingsRoute(
         compatibility.service,
     );
     if (!service.success) return null;
-    const entry = findExactEntry(entries, service.data);
+    const entry = resolvePublishedServiceEntry(entries, service.data);
     if (
         !entry
-        || entry.serviceId !== legacyServiceId.data
-        || entry.executable === false
+        || entry.legacyServiceId !== legacyServiceId.data
     ) {
         return null;
     }
@@ -285,40 +240,4 @@ export function resolveConnectedAccountSettingsRoute(
         legacyServiceId: legacyServiceId.data,
         focus: focus.focus,
     };
-}
-
-export function resolveConnectedAccountOperationTarget(params: Readonly<{
-    activeServerId: unknown;
-    executionTarget: ConnectedAccountSettingsRouteExecutionTarget | null;
-    machines: readonly Readonly<{
-        id: string;
-        active?: boolean | null;
-    }>[];
-}>): ConnectedAccountSettingsRouteExecutionTarget | null {
-    const activeServerId = readSingleRouteParam(params.activeServerId);
-    if (activeServerId === null) return null;
-    if (params.executionTarget) {
-        const requestedMachineId = params.executionTarget.machineId;
-        const exactMachine = params.machines.find(
-            (candidate) => (
-                candidate.id === requestedMachineId
-                && candidate.active === true
-            ),
-        );
-        return exactMachine
-            ? {
-                serverId: params.executionTarget.serverId,
-                machineId: exactMachine.id,
-            }
-            : null;
-    }
-    const defaultMachine = params.machines.find(
-        (candidate) => candidate.active === true,
-    ) ?? params.machines[0] ?? null;
-    return defaultMachine
-        ? {
-            serverId: activeServerId,
-            machineId: defaultMachine.id,
-        }
-        : null;
 }

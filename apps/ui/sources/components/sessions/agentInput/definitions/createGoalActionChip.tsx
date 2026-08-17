@@ -13,6 +13,8 @@ import type { SessionWorkStateSnapshot } from '@/sync/domains/session/workState/
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 
 const GOAL_CHIP_KEY = 'session-goal';
 const PRIMER_GOAL_ICON_PATHS = [
@@ -21,16 +23,6 @@ const PRIMER_GOAL_ICON_PATHS = [
     'M7.125 12a4.874 4.874 0 1 0 9.717-.569.748.748 0 0 1 1.047-.798c.251.112.42.351.442.625a6.373 6.373 0 0 1-10.836 5.253 6.376 6.376 0 0 1 5.236-10.844.75.75 0 1 1-.17 1.49A4.876 4.876 0 0 0 7.125 12Z',
 ] as const;
 
-function PrimerGoalIcon(props: Readonly<{ color: string; size?: number }>): React.ReactElement {
-    const size = props.size ?? 18;
-    return (
-        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-            {PRIMER_GOAL_ICON_PATHS.map((d) => (
-                <Path key={d} d={d} fill={props.color} />
-            ))}
-        </Svg>
-    );
-}
 
 /**
  * AgentInput chip that surfaces the session goal and opens the SHARED work-state goal popover content
@@ -66,7 +58,7 @@ export function createGoalActionChip(params: Readonly<{
         collapsedContentPopover: {
             title: t('session.workState.goal.title'),
             label,
-            icon: (tint: string) => normalizeNodeForView(<PrimerGoalIcon color={tint} size={16} />),
+            icon: (tint: string) => normalizeNodeForView(<Icon name="target" color={tint} size={AGENT_INPUT_MENU_ICON_SIZE_PX} />),
             maxWidthCap: 420,
             maxHeightCap: 520,
             renderContent: ({ requestClose }) => (
@@ -95,7 +87,7 @@ export function createGoalActionChip(params: Readonly<{
                 hitSlop={{ top: 8, bottom: 10, left: 4, right: 4 }}
                 style={(state) => chipStyle(state.pressed)}
             >
-                {normalizeNodeForView(<PrimerGoalIcon color={iconColor} />)}
+                {normalizeNodeForView(<Icon name="target" color={iconColor} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
             </Pressable>
         ),
     };

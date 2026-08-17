@@ -1,5 +1,5 @@
 import {
-    ConnectedServiceProfileIdSchema,
+    materializeExternalSessionSourceInstances,
     parseExternalSessionsSourceForDeclaration,
     resolveExternalSessionsSourceKeyForDeclaration,
     type AccountProfile,
@@ -35,9 +35,6 @@ function resolveProjectedExternalSessionsAgent(params: Readonly<{
         || agent.id !== params.providerId
         || !externalSessions
         || externalSessions.generation !== projection.generation
-        || externalSessions.operations.listCandidates !== true
-        || externalSessions.operations.resolveLinkIdentity !== true
-        || externalSessions.sources.length === 0
     ) {
         return null;
     }
@@ -52,56 +49,76 @@ function resolveProjectedExternalSessionsAgent(params: Readonly<{
     return { agent, externalSessions };
 }
 
+function resolveProjectedExternalSessionBrowseAgent(params: Readonly<{
+    providerId: string;
+    projection: PluginProjectionV2 | null | undefined;
+}>): Readonly<{
+    agent: PluginProjectedAgentV2;
+    externalSessions: NonNullable<PluginProjectedAgentV2['externalSessions']>;
+}> | null {
+    const projected = resolveProjectedExternalSessionsAgent(params);
+    if (
+        !projected
+        || projected.externalSessions.operations.listCandidates !== true
+        || projected.externalSessions.operations.resolveLinkIdentity !== true
+        || projected.externalSessions.sources.length === 0
+    ) {
+        return null;
+    }
+    return projected;
+}
+
 function materializeProjectedSourceOptions(params: Readonly<{
     providerId: string;
     agent: PluginProjectedAgentV2;
     declarations: readonly PluginBackendExternalSessionSourceDeclarationV1[];
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    activeServerId?: string | null;
 }>): ExternalSessionBrowseSourceOption[] {
     const options: ExternalSessionBrowseSourceOption[] = [];
     const label = params.agent.title ?? resolveAgentCatalogProjection(params.providerId, {
         enabledAgentIds: [params.providerId],
     }).title;
     for (const declaration of params.declarations) {
-        for (const instance of declaration.instances ?? []) {
-            if (instance.kind === 'default') {
-                const source = parseExternalSessionsSourceForDeclaration(declaration, {
-                    ...instance.constants,
-                    kind: declaration.sourceKind,
-                });
-                if (!source) continue;
+        // The daemon admits exactly what this owner materializes; a browsable
+        // option that the daemon would reject is a defect, not a presentation
+        // difference, so both sides share one materializer.
+        const materialized = materializeExternalSessionSourceInstances({
+            declaration,
+            ...(params.profile ? { connectedServices: params.profile.connectedServicesV2 } : {}),
+            agentSettings: params.settings,
+            activeServerId: params.activeServerId ?? null,
+        });
+        for (const instance of materialized.instances) {
+            const source = parseExternalSessionsSourceForDeclaration(declaration, instance.source);
+            if (!source) continue;
+            if (instance.origin.kind === 'connectedServiceProfile') {
+                const { serviceId, profileId } = instance.origin;
                 options.push({
-                    key: `${params.providerId}:${declaration.sourceKind}`,
+                    key: `${params.providerId}:${declaration.sourceKind}:${serviceId}:${profileId}`,
                     label,
+                    detail: params.settings.connectedServicesProfileLabelByKey[
+                        `${serviceId}/${profileId}`
+                    ] ?? profileId,
                     source,
                 });
                 continue;
             }
-            const service = params.profile?.connectedServicesV2.find(
-                (candidate) => candidate.serviceId === instance.serviceId,
-            );
-            if (!service) continue;
-            for (const profile of service.profiles) {
-                if (profile.status !== 'connected') continue;
-                const profileId = ConnectedServiceProfileIdSchema.safeParse(profile.profileId);
-                if (!profileId.success) continue;
-                const source = parseExternalSessionsSourceForDeclaration(declaration, {
-                    ...instance.constants,
-                    kind: declaration.sourceKind,
-                    [instance.fields.serviceId]: instance.serviceId,
-                    [instance.fields.profileId]: profileId.data,
-                });
-                if (!source) continue;
+            if (instance.origin.kind === 'agentSetting') {
                 options.push({
-                    key: `${params.providerId}:${declaration.sourceKind}:${instance.serviceId}:${profileId.data}`,
+                    key: `${params.providerId}:${declaration.sourceKind}:setting:${instance.origin.settingId}`,
                     label,
-                    detail: params.settings.connectedServicesProfileLabelByKey[
-                        `${instance.serviceId}/${profileId.data}`
-                    ] ?? profileId.data,
+                    detail: instance.origin.value,
                     source,
                 });
+                continue;
             }
+            options.push({
+                key: `${params.providerId}:${declaration.sourceKind}`,
+                label,
+                source,
+            });
         }
     }
     return options;
@@ -143,8 +160,9 @@ export function resolveExternalSessionBrowseSourceOptions(params: Readonly<{
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
     projection: PluginProjectionV2 | null | undefined;
+    activeServerId?: string | null;
 }>): ExternalSessionBrowseSourceOption[] {
-    const projected = resolveProjectedExternalSessionsAgent(params);
+    const projected = resolveProjectedExternalSessionBrowseAgent(params);
     if (!projected) return [];
     return enrichProjectedSourceOptions({
         ...params,
@@ -163,8 +181,9 @@ export function resolveExternalSessionBrowseSourceOption(params: Readonly<{
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
     projection: PluginProjectionV2 | null | undefined;
     source: ExternalSessionsSource;
+    activeServerId?: string | null;
 }>): ExternalSessionBrowseSourceOption | null {
-    const projected = resolveProjectedExternalSessionsAgent(params);
+    const projected = resolveProjectedExternalSessionBrowseAgent(params);
     const declaration = projected?.externalSessions.sources.find(
         (candidate) => candidate.sourceKind === params.source.kind,
     );
@@ -185,7 +204,7 @@ export function listExternalSessionBrowseProviderIds(params: Readonly<{
     const projection = params.projection;
     if (!projection) return [];
     return Object.keys(projection.agentsById)
-        .filter((providerId) => resolveProjectedExternalSessionsAgent({ providerId, projection }) !== null)
+        .filter((providerId) => resolveProjectedExternalSessionBrowseAgent({ providerId, projection }) !== null)
         .sort((a, b) => {
             const orderA = resolveAgentUiBehavior(a).externalSessions?.browse?.order ?? Number.MAX_SAFE_INTEGER;
             const orderB = resolveAgentUiBehavior(b).externalSessions?.browse?.order ?? Number.MAX_SAFE_INTEGER;
@@ -194,6 +213,21 @@ export function listExternalSessionBrowseProviderIds(params: Readonly<{
             const titleB = projection.agentsById[b]?.title ?? b;
             return titleA.localeCompare(titleB);
         });
+}
+
+export function supportsExternalSessionBackgroundFollow(params: Readonly<{
+    providerId: string;
+    source: ExternalSessionsSource;
+    projection: PluginProjectionV2 | null | undefined;
+}>): boolean {
+    const projected = resolveProjectedExternalSessionsAgent(params);
+    const declaration = projected?.externalSessions.sources.find(
+        (candidate) => candidate.sourceKind === params.source.kind,
+    );
+    if (declaration?.terminalFollow?.userRowClassification !== 'explicitV1') {
+        return false;
+    }
+    return parseExternalSessionsSourceForDeclaration(declaration, params.source) !== null;
 }
 
 export function resolveExternalSessionBrowseLinkEnsureRequestExtras(params: Readonly<{

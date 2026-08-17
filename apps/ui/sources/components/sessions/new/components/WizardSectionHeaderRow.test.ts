@@ -15,11 +15,11 @@ describe('WizardSectionHeaderRow', () => {
         const onPress = vi.fn();
 
         const screen = await renderScreen(React.createElement(WizardSectionHeaderRow, {
-                    iconName: 'desktop-outline',
+                    iconName: 'desktop',
                     title: 'Select Machine',
                     action: {
                         accessibilityLabel: 'Refresh machines',
-                        iconName: 'refresh-outline',
+                        iconName: 'arrow-clockwise',
                         onPress,
                     },
                 }));

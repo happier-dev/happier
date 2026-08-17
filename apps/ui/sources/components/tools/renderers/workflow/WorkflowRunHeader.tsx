@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -15,6 +14,7 @@ import type { WorkflowPhaseRollup } from '@/components/sessions/workState/sessio
 import type { SessionWorkflowRunStatusV1 } from '@happier-dev/protocol';
 
 import { WorkflowStatusIcon } from './workflowStatusIcon';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Run header shared by the transcript card (UIW4) and popover run panel (UIW3): workflow icon,
@@ -43,7 +43,7 @@ export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
     return (
         <View style={styles.container}>
             <View style={styles.headerRow}>
-                <Ionicons name="git-network-outline" size={16} color={theme.colors.text.secondary} />
+                <Icon name="graph" size={16} color={theme.colors.text.secondary} />
                 <Text style={styles.title} numberOfLines={1}>
                     {props.title}
                 </Text>
@@ -54,8 +54,8 @@ export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
                     </Text>
                 </View>
                 {typeof props.expanded === 'boolean' ? (
-                    <Ionicons
-                        name={props.expanded ? 'chevron-up' : 'chevron-down'}
+                    <Icon
+                        name={props.expanded ? 'caret-up' : 'caret-down'}
                         size={14}
                         color={theme.colors.text.secondary}
                     />

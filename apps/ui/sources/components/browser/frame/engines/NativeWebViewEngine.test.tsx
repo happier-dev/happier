@@ -11,6 +11,7 @@ import {
 
 let lastWebViewProps: Readonly<Record<string, unknown>> | null = null;
 let injectJavaScriptSpy: ReturnType<typeof vi.fn>;
+let clearWebViewRefOnUnmount = false;
 
 vi.mock('react-native-webview', () => ({
     WebView: React.forwardRef((props: Readonly<Record<string, unknown>>, ref: React.ForwardedRef<unknown>) => {
@@ -20,6 +21,11 @@ vi.mock('react-native-webview', () => ({
         } else if (ref) {
             ref.current = { injectJavaScript: injectJavaScriptSpy };
         }
+        React.useLayoutEffect(() => () => {
+            if (!clearWebViewRefOnUnmount) return;
+            if (typeof ref === 'function') ref(null);
+            else if (ref) ref.current = null;
+        }, [ref]);
         return React.createElement('WebView', props);
     }),
 }));
@@ -28,6 +34,7 @@ describe('NativeWebViewEngine', () => {
     beforeEach(() => {
         lastWebViewProps = null;
         injectJavaScriptSpy = vi.fn();
+        clearWebViewRefOnUnmount = false;
     });
 
     it('applies an origin allowlist and blocks navigation outside the allowlist', async () => {
@@ -93,6 +100,33 @@ describe('NativeWebViewEngine', () => {
 
         expect(injectJavaScriptSpy).toHaveBeenCalledWith(expect.stringContaining('\\\"kind\\\":\\\"ack\\\"'));
         expect(injectJavaScriptSpy).toHaveBeenCalledWith(expect.stringContaining('\\\"accepted\\\":true'));
+    });
+
+    it('keeps the host-message attachment live through native view teardown', async () => {
+        const { NativeWebViewEngine } = await import('./NativeWebViewEngine');
+        const attachHostMessages = vi.fn<(send: (message: unknown) => void) => () => void>();
+        attachHostMessages.mockImplementation((send) => () => {
+            send({ kind: 'hostApi', payload: { kind: 'disconnected' } });
+        });
+        clearWebViewRefOnUnmount = true;
+
+        const screen = await renderScreen(
+            <NativeWebViewEngine
+                title="Preview"
+                url="https://preview.example.test/app"
+                testID="browser-native-frame"
+                originWhitelist={['https://preview.example.test']}
+                nativeMessageBridge={{
+                    onMessage: () => undefined,
+                    attachHostMessages,
+                }}
+            />,
+        );
+
+        await screen.unmount();
+
+        expect(attachHostMessages).toHaveBeenCalledTimes(1);
+        expect(injectJavaScriptSpy).toHaveBeenCalledWith(expect.stringContaining('\\\"disconnected\\\"'));
     });
 
     it('wires injected diagnostics messages into the shared browser diagnostics store only for the current collector', async () => {

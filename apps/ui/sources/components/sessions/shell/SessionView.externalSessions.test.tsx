@@ -1,4 +1,3 @@
-import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,7 +12,8 @@ import {
   computeExistingSessionComposerInputMaxHeight,
   computeExistingSessionComposerPanelMaxHeight,
 } from '@/components/sessions/agentInput/inputMaxHeight';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { readComposerPresentationSnapshot } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import type { StorageState } from '@/sync/store/types';
@@ -46,6 +46,7 @@ const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
 const syncRefreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
 const syncRefreshSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const syncSubmitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
+const sessionExecutionRunSendSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 const clearWorkspaceReviewCommentDraftsSpy = vi.hoisted(() => vi.fn());
 const setWorkspaceReviewCommentDraftIncludedSpy = vi.hoisted(() => vi.fn());
@@ -57,7 +58,10 @@ const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
 const voiceSurfacePropsSpy = vi.hoisted(() => vi.fn());
 const warningActionBannerPropsSpy = vi.hoisted(() => vi.fn());
 const showExternalSessionTakeoverDialogSpy = vi.hoisted(() =>
-  vi.fn<() => Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
+  vi.fn<() => Promise<{
+    action: 'direct' | 'persisted' | 'recheck' | null;
+    targetDirectory?: string;
+  }>>(async () => ({ action: null })),
 );
 const resolveSessionViewRuntimeDisplayStateSpy = vi.hoisted(() =>
   vi.fn((_input: any) => ({
@@ -80,7 +84,12 @@ const sendVoiceSessionComposerTextSpy = vi.hoisted(() =>
   >(async (_params: unknown) => ({ ok: false as const, reason: 'not_voice_session' as const })),
 );
 const resolveVoiceSessionComposerRoutingSpy = vi.hoisted(() => vi.fn((_params: any): any => null));
-const featureEnabledState = vi.hoisted(() => ({ voice: false, 'files.reviewComments': false }));
+const featureEnabledState = vi.hoisted(() => ({
+  voice: false,
+  'execution.runs': false,
+  'files.reviewComments': false,
+}));
+const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ current: false }));
 const settingsState = vi.hoisted(() => ({ current: {} as any }));
 const settingByKeyState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 const connectedServiceQuotaSnapshotsState = vi.hoisted(() => ({
@@ -133,6 +142,9 @@ vi.mock('./view/WarningActionBanner', () => ({
 const participantTargetsState = vi.hoisted(() => ({ current: [] as any[] }));
 const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
 const sessionMessagesState = vi.hoisted(() => ({ current: [] as any[] }));
+const sessionTranscriptRenderState = vi.hoisted(() => ({
+  current: { ids: ['m1'] as string[], isLoaded: true },
+}));
 const focusState = vi.hoisted(() => ({ current: true }));
 const machineReachabilityState = vi.hoisted(() => ({
   current: {
@@ -182,6 +194,7 @@ const storageState = vi.hoisted(() => ({
   sessionPending: {} as Record<string, unknown>,
   sessionListRenderables: {} as Record<string, unknown>,
   sessionTailContiguousFloorSeq: {} as Record<string, unknown>,
+  sessionTranscriptLoadIssues: {} as Record<string, unknown>,
   artifacts: {} as Record<string, any>,
   profile: {
     connectedServicesV2: [],
@@ -210,9 +223,18 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
   Octicons: 'Octicons',
 }));
-vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
+vi.mock('react-native-safe-area-context', () => {
+  const insets = { top: 0, bottom: 0, left: 0, right: 0 };
+  return {
+    initialWindowMetrics: {
+      frame: { x: 0, y: 0, width: 0, height: 0 },
+      insets,
+    },
+    SafeAreaInsetsContext: React.createContext(null),
+    SafeAreaProvider: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
+    useSafeAreaInsets: () => insets,
+  };
+});
 
 const themeColors = vi.hoisted(() => ({
   text: '#000',
@@ -274,7 +296,7 @@ installSessionShellCommonModuleMocks({
   text: async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
-      translate: (key: string) => key,
+      translate: (key: string) => key === 'agentInput.agent.codex' ? 'Codex' : key,
     });
   },
   modal: async () => {
@@ -316,9 +338,8 @@ installSessionShellCommonModuleMocks({
         useActiveServerAccountScope: () => null,
         useSession: () => storageState.sessions.s1,
         useIsDataReady: () => true,
-        useRealtimeStatus: () => 'connected',
         useSessionMessages: () => ({ messages: sessionMessagesState.current, isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
+        useSessionTranscriptIds: () => sessionTranscriptRenderState.current,
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
         useArtifacts: () => Object.values(storageState.artifacts),
         useOpenApprovalArtifactsForSession: (sessionId: string | null | undefined) =>
@@ -415,6 +436,9 @@ vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
 }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => featureEnabledState[featureId as keyof typeof featureEnabledState] ?? false,
+}));
+vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
+  useSessionExecutionRunsSupported: () => sessionExecutionRunsSupportedState.current,
 }));
 vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots', () => ({
   useConnectedServiceQuotaSnapshots: (profiles: unknown) => {
@@ -522,8 +546,12 @@ vi.mock('@/sync/ops/machineExternalSessions', () => ({
   machineExternalSessionStatusGet: machineExternalSessionStatusGetSpy,
   machineExternalSessionAttach: machineExternalSessionAttachSpy,
   machineExternalSessionDetach: machineExternalSessionDetachSpy,
-  machineExternalSessionTakeover: machineExternalSessionTakeoverSpy,
+  machineExternalSessionTakeoverStart: machineExternalSessionTakeoverSpy,
   machineExternalSessionTakeoverPersist: machineExternalSessionTakeoverPersistSpy,
+}));
+vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+  isExecutionRunNotRunningSendError: () => false,
+  sessionExecutionRunSend: sessionExecutionRunSendSpy,
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: (...args: unknown[]) => createDefaultActionExecutorMock(...args),
@@ -645,7 +673,9 @@ describe('SessionView (direct sessions)', () => {
     voiceSurfacePropsSpy.mockReset();
     warningActionBannerPropsSpy.mockClear();
     featureEnabledState.voice = false;
+    featureEnabledState['execution.runs'] = false;
     featureEnabledState['files.reviewComments'] = false;
+    sessionExecutionRunsSupportedState.current = false;
     delete (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'];
     settingsState.current = {};
     settingByKeyState.current = {};
@@ -675,11 +705,15 @@ describe('SessionView (direct sessions)', () => {
         | undefined;
       options?.onLocalPendingProjectionCreated?.({ localId: 'direct-local-id' });
     });
+    sessionExecutionRunSendSpy.mockReset();
+    sessionExecutionRunSendSpy.mockResolvedValue({ ok: true });
     deleteWorkspaceReviewCommentDraftSpy.mockReset();
     clearWorkspaceReviewCommentDraftsSpy.mockReset();
     setWorkspaceReviewCommentDraftIncludedSpy.mockReset();
     machineExternalSessionTakeoverSpy.mockReset();
     machineExternalSessionTakeoverPersistSpy.mockReset();
+    machineExternalSessionTakeoverSpy.mockResolvedValue({ ok: true });
+    machineExternalSessionTakeoverPersistSpy.mockResolvedValue({ ok: true, converted: true });
     machineExternalSessionStatusGetSpy.mockReset();
     machineExternalSessionAttachSpy.mockClear();
     machineExternalSessionDetachSpy.mockClear();
@@ -692,6 +726,8 @@ describe('SessionView (direct sessions)', () => {
     resolveSessionViewRuntimeDisplayStateSpy.mockReset();
     participantTargetsState.current = [];
     sessionMessagesState.current = [];
+    sessionTranscriptRenderState.current = { ids: ['m1'], isLoaded: true };
+    storageState.sessionTranscriptLoadIssues = {};
     windowDimensionsState.current = { width: 1200, height: 800 };
     reviewCommentDraftsState.current = [];
     focusState.current = true;
@@ -751,7 +787,7 @@ describe('SessionView (direct sessions)', () => {
       setExecutionRunDelivery: vi.fn(),
     };
     resetSessionDraftValueCachesForTests();
-    showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: null, forceStop: false });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: null });
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
       machineOnline: true,
@@ -808,12 +844,47 @@ describe('SessionView (direct sessions)', () => {
     });
 
     expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
-    expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
+    expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith(expect.objectContaining({
       canTakeOverDirect: true,
       canTakeOverPersist: true,
-      canForceStop: false,
-    });
+      target: expect.objectContaining({
+        machineId: 'machine-1',
+        machineHomeDir: '/tmp',
+        initialDirectory: '/tmp',
+      }),
+    }));
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the external control footer reference stable across unrelated shell renders', async () => {
+    const { SessionView } = await import('./SessionView');
+    let forceShellRender: (() => void) | null = null;
+    function ShellRenderHarness() {
+      const [renderSequence, setRenderSequence] = React.useState(0);
+      forceShellRender = () => setRenderSequence((current) => current + 1);
+      return (
+        <AppPaneProvider>
+          <SessionView
+            id="s1"
+            paneUrlState={renderSequence === 0
+              ? null
+              : { key: `unrelated-shell-render-${renderSequence}` } as any}
+          />
+        </AppPaneProvider>
+      );
+    }
+    await renderScreen(<ShellRenderHarness />);
+    await settleExternalSessionView();
+    const initialFooter = chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter;
+    const initialRenderCount = chatListPropsSpy.mock.calls.length;
+
+    await act(async () => {
+      forceShellRender?.();
+    });
+    await settleExternalSessionView();
+
+    expect(chatListPropsSpy.mock.calls.length).toBeGreaterThan(initialRenderCount);
+    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter).toBe(initialFooter);
   });
 
   it('passes only generic progress presentation to the mounted transcript owner', async () => {
@@ -851,6 +922,52 @@ describe('SessionView (direct sessions)', () => {
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
   });
 
+  it('gives a recoverable external operation exclusive composer admission', async () => {
+    const session = storageState.sessions.s1 as any;
+    session.metadata = {
+      ...session.metadata,
+      externalSessionOperationPresentationV1:
+        ExternalSessionOperationSharedPresentationV1Schema.parse({
+          v: 1,
+          operationId: 'operation-1',
+          revision: 4,
+          kind: 'materialize',
+          status: 'awaiting_user_resume',
+          phase: 'importing',
+        }),
+    };
+
+    const screen = await renderSessionViewAndSettle();
+    const agentInput = findAgentInput(screen);
+    expect(agentInput.props.isSendDisabled).toBe(true);
+    expect(agentInput.props.disabled).toBe(true);
+    expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: 's1' })?.state)
+      .toMatchObject({ editable: false, submittable: false });
+
+    machineExternalSessionStatusGetSpy.mockClear();
+    machineExternalSessionTakeoverSpy.mockClear();
+    showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: 'direct' });
+    await act(async () => {
+      agentInput.props.onSend({ inputTextOverride: 'do not start another operation' });
+      await Promise.resolve();
+    });
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+
+    const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+    const previousDraft = findAgentInput(screen).props.value;
+    await act(async () => {
+      chatListProps?.onEditPendingMessage?.({
+        id: 'pending-1',
+        text: 'queued text',
+        displayText: 'queued text',
+        message: { id: 'pending-1', localId: 'pending-1' },
+      });
+    });
+    expect(findAgentInput(screen).props.value).toBe(previousDraft);
+  });
+
   it('renders the persistent published-snapshot banner while a linked Agent is offline', async () => {
     const session = storageState.sessions.s1 as any;
     session.currentStorageState = 'snapshot_complete';
@@ -863,12 +980,63 @@ describe('SessionView (direct sessions)', () => {
       machineReachability: 'unreachable',
     };
 
-    await renderSessionViewAndSettle();
+    const screen = await renderSessionViewAndSettle();
 
-    expect(findWarningActionBannerProps('session.externalTranscript.snapshot')).toEqual(expect.objectContaining({
-      actionLabel: 'externalSessions.sharingUpdateSharedCopy',
-      disabled: true,
-    }));
+    const banner = findWarningActionBannerProps('session.externalTranscript.snapshot');
+    expect(banner).toBeDefined();
+    expect(banner).toMatchObject({ tone: 'neutral' });
+    expect(banner).not.toHaveProperty('body');
+    expect(banner).not.toHaveProperty('actionLabel');
+    expect(banner).not.toHaveProperty('actionTestID');
+    expect(banner).not.toHaveProperty('onActionPress');
+  });
+
+  it('renders a retryable typed transcript-load issue instead of an authoritative empty state', async () => {
+    const session = storageState.sessions.s1 as any;
+    session.seq = 0;
+    sessionTranscriptRenderState.current = { ids: [], isLoaded: false };
+
+    const screen = await renderSessionViewAndSettle();
+
+    const shellStorageStore = shellStorageStoreState.current;
+    if (!shellStorageStore) throw new Error('Expected SessionView test storage to be mounted');
+    await act(async () => {
+      shellStorageStore.setState((state) => ({
+        ...state,
+        sessionTranscriptLoadIssues: {
+          ...state.sessionTranscriptLoadIssues,
+          s1: { kind: 'read_failed', errorCode: 'agent_unavailable' },
+        },
+      }));
+    });
+    await settleExternalSessionView();
+
+    const banners = warningActionBannerPropsSpy.mock.calls
+      .map(([props]) => props)
+      .filter((props) => props?.testID === 'session.externalTranscript.loadIssue');
+    expect(banners).toHaveLength(1);
+    const banner = banners[0];
+    expect(banner).toMatchObject({
+      title: 'externalSessions.sharingTranscriptUnavailableTitle',
+      body: 'externalSessions.browseAgentUnavailable',
+      actionLabel: 'common.retry',
+      actionTestID: 'session.externalTranscript.loadIssue.retry',
+    });
+
+    const refresh = createDeferred<void>();
+    syncRefreshSessionMessagesSpy.mockClear();
+    syncRefreshSessionMessagesSpy.mockImplementationOnce(() => refresh.promise);
+    await act(async () => {
+      void banner.onActionPress();
+      void banner.onActionPress();
+      await Promise.resolve();
+    });
+    expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledTimes(1);
+    expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
+    refresh.resolve();
+    await act(async () => {
+      await refresh.promise;
+    });
   });
 
   it('updates the published-snapshot banner when the mounted session gains server authority', async () => {
@@ -895,10 +1063,13 @@ describe('SessionView (direct sessions)', () => {
     });
     await settleExternalSessionView();
 
-    expect(findWarningActionBannerProps('session.externalTranscript.snapshot')).toEqual(expect.objectContaining({
-      actionLabel: 'externalSessions.sharingUpdateSharedCopy',
-      disabled: true,
-    }));
+    const banner = findWarningActionBannerProps('session.externalTranscript.snapshot');
+    expect(banner).toBeDefined();
+    expect(banner).toMatchObject({ tone: 'neutral' });
+    expect(banner).not.toHaveProperty('body');
+    expect(banner).not.toHaveProperty('actionLabel');
+    expect(banner).not.toHaveProperty('actionTestID');
+    expect(banner).not.toHaveProperty('onActionPress');
   });
 
   it('does not reinterpret unknown machine reachability as published-snapshot authority', async () => {
@@ -2063,6 +2234,8 @@ describe('SessionView (direct sessions)', () => {
 
   it('removes only sent workspace review comment drafts after submitting them', async () => {
     featureEnabledState['files.reviewComments'] = true;
+    settingByKeyState.current.sessionMessageSendMode = 'agent_queue';
+    (storageState.sessions.s1 as any).pendingVersion = 2;
     reviewCommentDraftsState.current = [
       {
         id: 'included-draft',
@@ -2100,7 +2273,15 @@ describe('SessionView (direct sessions)', () => {
         metadata: { host: 'happy-host' },
       },
     };
-    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+    machineExternalSessionStatusGetSpy.mockResolvedValue({
+      ok: true,
+      machineOnline: true,
+      runnerActive: true,
+      activity: 'running',
+      canTakeOverDirect: false,
+      canTakeOverPersist: false,
+      canForceStop: false,
+    });
 
     const screen = await renderSessionView();
 
@@ -2216,7 +2397,7 @@ describe('SessionView (direct sessions)', () => {
     await renderSessionViewAndSettle();
 
     expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
-      badges: ['sessionsList.storageExternalFilter', 'agentInput.agent.codex · happy-host'],
+      badges: ['sessionsList.storageExternalFilter', 'Codex'],
     }));
   });
 
@@ -2272,6 +2453,8 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('locally expires pushed external-Agent footer status without a status RPC', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
     await import('./SessionView');
     (storageState.sessions.s1 as any).metadata.externalAgentObservationV1 = {
       v: 1,
@@ -2288,8 +2471,8 @@ describe('SessionView (direct sessions)', () => {
       },
       linkGeneration: 'link-generation-1',
       status: 'waiting',
-      observedAtMs: Date.now(),
-      expiresAtMs: Date.now() + 500,
+      observedAtMs: 1_000,
+      expiresAtMs: 1_500,
     };
 
     await renderSessionViewAndSettle();
@@ -2303,10 +2486,7 @@ describe('SessionView (direct sessions)', () => {
       }));
     expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
 
-    await act(async () => {
-      await sleep(550);
-    });
-    await flushHookEffects({ cycles: 1, turns: 2 });
+    await flushHookEffects({ advanceTimersMs: 500, cycles: 1, turns: 2 });
 
     expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter)
       .toEqual(expect.objectContaining({
@@ -2370,8 +2550,25 @@ describe('SessionView (direct sessions)', () => {
     expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
   });
 
-  it('prompts for takeover on send and submits after taking over the direct session', async () => {
-    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+  it('starts takeover on the selected fixed-machine path, never the remote source path', async () => {
+    const remoteProviderDirectory = '/remote/provider/workspace';
+    const localMachineHomeDirectory = '/local/linked-machine-home';
+    const selectedLocalDirectory = '/local/selected/workspace';
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({
+      action: 'direct',
+      targetDirectory: selectedLocalDirectory,
+    });
+    (storageState.sessions.s1 as any).metadata.path = remoteProviderDirectory;
+    (storageState.sessions.s1 as any).metadata.homeDir = localMachineHomeDirectory;
+    (storageState.sessions.s1 as any).metadata.externalSessionV1 = {
+      ...(storageState.sessions.s1 as any).metadata.externalSessionV1,
+      linkedAtMs: 1_000,
+      qualifiedIdentity: {
+        v: 1,
+        agent: { pluginId: 'happier.codex', localId: 'codex' },
+        source: { kind: 'codexHome', contractVersion: 1 },
+      },
+    };
     writeSessionDraftValue(null, 's1', 'routing.recipient', { kind: 'execution_run', runId: 'run-1' });
     writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
     flushSessionDraftValues(null);
@@ -2384,8 +2581,6 @@ describe('SessionView (direct sessions)', () => {
       agentInput.props.onStructuredInputMentionsChange?.([{
         kind: 'skill',
         tokenText: 'continue',
-        start: 0,
-        end: 8,
         name: 'continue',
       }]);
     });
@@ -2399,27 +2594,185 @@ describe('SessionView (direct sessions)', () => {
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: true,
       canTakeOverPersist: true,
-      canForceStop: false,
+      target: {
+        machineId: 'machine-1',
+        machineHomeDir: localMachineHomeDirectory,
+        initialDirectory: localMachineHomeDirectory,
+        serverId: 'server-canonical',
+      },
     });
     expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
-      sessionId: 's1',
+      request: {
+        v: 1,
+        idempotencyKey: expect.any(String),
+        sessionId: 's1',
+        source: {
+          machineId: 'machine-1',
+          remoteSessionId: 'vendor-session-1',
+          qualifiedIdentity: {
+            v: 1,
+            agent: { pluginId: 'happier.codex', localId: 'codex' },
+            source: { kind: 'codexHome', contractVersion: 1 },
+          },
+          linkGeneration: '1000',
+        },
+        plan: 'takeover',
+        targetStorageMode: 'external-linked',
+        targetDirectory: selectedLocalDirectory,
+        targetRuntimeMode: 'terminal',
+      },
     }, { serverId: 'server-canonical' });
-    expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
-      's1',
-      'continue this session',
-      undefined,
-      undefined,
-      expectDirectSendProjectionOptions(),
-    );
-    expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toBeUndefined();
-    expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBeUndefined();
-    expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toBeUndefined();
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    expect(findAgentInput(screen).props.value).toBe('continue this session');
+    expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual({ kind: 'execution_run', runId: 'run-1' });
+    expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('interrupt');
+    expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([{
+      kind: 'skill',
+      tokenText: 'continue',
+      name: 'continue',
+    }]);
 
   });
 
+  it('keeps the composer draft and emits no input when fresh external status is unavailable', async () => {
+    machineExternalSessionStatusGetSpy.mockRejectedValueOnce(new Error('Failed to fetch'));
+    const screen = await renderSessionView();
+
+    const agentInput = findAgentInput(screen);
+    await act(async () => {
+      agentInput.props.onChangeText('draft survives unavailable status');
+    });
+
+    await act(async () => {
+      await agentInput.props.onSend();
+    });
+    await settleExternalSessionView();
+
+    expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    expect(findAgentInput(screen).props.value).toBe('draft survives unavailable status');
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.error',
+      'chatFooter.externalSessionStatusUnavailable',
+    );
+  });
+
+  it('does not submit a late send after SessionView unmounts during external-status admission', async () => {
+    const statusRead = createDeferred<unknown>();
+    machineExternalSessionStatusGetSpy.mockReturnValueOnce(statusRead.promise);
+    const screen = await renderSessionView();
+
+    const agentInput = findAgentInput(screen);
+    await act(async () => {
+      agentInput.props.onChangeText('do not send after unmount');
+      agentInput.props.onSend();
+      await Promise.resolve();
+    });
+
+    expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await screen.unmount();
+    });
+
+    await act(async () => {
+      statusRead.resolve({
+        ok: true,
+        machineOnline: true,
+        runnerActive: true,
+        activity: 'running',
+        canTakeOverDirect: false,
+        canTakeOverPersist: false,
+        canForceStop: false,
+      });
+      await Promise.resolve();
+    });
+    await settleExternalSessionView();
+
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(sessionExecutionRunSendSpy).not.toHaveBeenCalled();
+    expect(sendVoiceSessionComposerTextSpy).not.toHaveBeenCalled();
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('admits one pending execution action at a time and releases admission for retry', async () => {
+    featureEnabledState['execution.runs'] = true;
+    sessionExecutionRunsSupportedState.current = true;
+    const actionExecution = createDeferred<{ ok: true; result: { runId: string } }>();
+    const executeAction = vi.fn(() => actionExecution.promise);
+    createDefaultActionExecutorMock.mockReturnValue({ execute: executeAction });
+    const screen = await renderSessionView();
+    const agentInput = findAgentInput(screen);
+    const sendOptions = { inputTextOverride: '/review review this external session' };
+
+    await act(async () => {
+      agentInput.props.onSend(sendOptions);
+      agentInput.props.onSend(sendOptions);
+      await Promise.resolve();
+    });
+
+    try {
+      expect(executeAction).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => {
+        actionExecution.resolve({ ok: true, result: { runId: 'run-1' } });
+        await actionExecution.promise;
+      });
+    }
+    await settleExternalSessionView();
+
+    await act(async () => {
+      agentInput.props.onSend(sendOptions);
+      await Promise.resolve();
+    });
+
+    expect(executeAction).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps execution-run dispatch behind external takeover admission', async () => {
+    recipientStateState.current = {
+      recipient: { kind: 'execution_run', runId: 'run-1' },
+      setManualRecipient: vi.fn(),
+      clearPersistedManualRecipient: vi.fn(),
+      executionRunDelivery: 'interrupt',
+      setExecutionRunDelivery: vi.fn(),
+    };
+    const screen = await renderSessionView();
+
+    let agentInput = findAgentInput(screen);
+    await act(async () => {
+      agentInput.props.onChangeText('keep this execution draft');
+    });
+
+    await act(async () => {
+      await agentInput.props.onSend();
+    });
+    await settleExternalSessionView();
+
+    expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith(expect.objectContaining({
+      canTakeOverDirect: true,
+      canTakeOverPersist: true,
+      target: expect.objectContaining({
+        machineId: 'machine-1',
+        machineHomeDir: '/tmp',
+        initialDirectory: '/tmp',
+      }),
+    }));
+    expect(sessionExecutionRunSendSpy).not.toHaveBeenCalled();
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    agentInput = findAgentInput(screen);
+    expect(agentInput.props.value).toBe('keep this execution draft');
+  });
+
   it('keeps the composer text when direct takeover is cancelled from the send prompt', async () => {
-    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null, forceStop: false });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null });
     writeSessionDraftValue(null, 's1', 'routing.recipient', { kind: 'execution_run', runId: 'run-1' });
     writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
     flushSessionDraftValues(null);
@@ -2431,8 +2784,6 @@ describe('SessionView (direct sessions)', () => {
       agentInput.props.onStructuredInputMentionsChange?.([{
         kind: 'skill',
         tokenText: 'draft',
-        start: 0,
-        end: 5,
         name: 'draft',
       }]);
     });
@@ -2452,28 +2803,24 @@ describe('SessionView (direct sessions)', () => {
     expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([{
       kind: 'skill',
       tokenText: 'draft',
-      start: 0,
-      end: 5,
       name: 'draft',
     }]);
 
   });
 
-  it('does not restore old semantic choices over a newer draft after direct handoff failure', async () => {
+  it('does not restore an old composer snapshot over a newer draft after direct handoff failure', async () => {
+    settingByKeyState.current.sessionMessageSendMode = 'agent_queue';
+    (storageState.sessions.s1 as any).pendingVersion = 2;
     const oldRecipient = { kind: 'execution_run' as const, runId: 'run-old' };
     const newRecipient = { kind: 'execution_run' as const, runId: 'run-new' };
     const oldMention = {
       kind: 'skill' as const,
       tokenText: '$old',
-      start: 8,
-      end: 12,
       name: 'old',
     };
     const newMention = {
       kind: 'skill' as const,
       tokenText: '$new',
-      start: 8,
-      end: 12,
       name: 'new',
     };
     let rejectSubmit!: (error: Error) => void;
@@ -2493,7 +2840,15 @@ describe('SessionView (direct sessions)', () => {
         rejectSubmit = reject;
       });
     });
-    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+    machineExternalSessionStatusGetSpy.mockResolvedValue({
+      ok: true,
+      machineOnline: true,
+      runnerActive: true,
+      activity: 'running',
+      canTakeOverDirect: false,
+      canTakeOverPersist: false,
+      canForceStop: false,
+    });
 
     try {
       const screen = await renderSessionView();
@@ -2512,9 +2867,17 @@ describe('SessionView (direct sessions)', () => {
       expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBeUndefined();
       expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toBeUndefined();
 
-      writeSessionDraftValue(null, 's1', 'routing.recipient', newRecipient);
-      writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'prompt');
-      writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [newMention]);
+      agentInput = findAgentInput(screen);
+      const onStructuredInputMentionsChange = agentInput.props.onStructuredInputMentionsChange;
+      if (typeof onStructuredInputMentionsChange !== 'function') {
+        throw new Error('Expected SessionView to expose the structured-mention owner');
+      }
+      await act(async () => {
+        agentInput.props.onChangeText('send to $new target');
+        writeSessionDraftValue(null, 's1', 'routing.recipient', newRecipient);
+        writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'prompt');
+        onStructuredInputMentionsChange([newMention]);
+      });
 
       await act(async () => {
         rejectSubmit(new Error('direct send rejected'));
@@ -2523,7 +2886,7 @@ describe('SessionView (direct sessions)', () => {
       await settleExternalSessionView();
 
       agentInput = findAgentInput(screen);
-      expect(agentInput.props.value).toBe('');
+      expect(agentInput.props.value).toBe('send to $new target');
       expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual(newRecipient);
       expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('prompt');
       expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([newMention]);
@@ -2537,7 +2900,10 @@ describe('SessionView (direct sessions)', () => {
 
   it('keeps the composer text while a direct takeover send prompt is still pending', async () => {
     showExternalSessionTakeoverDialogSpy.mockImplementationOnce(
-      () => new Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>(() => {}),
+      () => new Promise<{
+        action: 'direct' | 'persisted' | 'recheck' | null;
+        targetDirectory?: string;
+      }>(() => {}),
     );
     const screen = await renderSessionView();
 
@@ -2556,8 +2922,11 @@ describe('SessionView (direct sessions)', () => {
 
   });
 
-  it('uses canonical public intent when persisting takeover from the send prompt', async () => {
-    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'persisted', forceStop: true });
+  it('uses canonical public intent without emitting input when persisting takeover from the send prompt', async () => {
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({
+      action: 'persisted',
+      targetDirectory: '/tmp',
+    });
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
       machineOnline: true,
@@ -2607,25 +2976,71 @@ describe('SessionView (direct sessions)', () => {
         },
         plan: 'takeover',
         targetStorageMode: 'persisted',
+        targetDirectory: '/tmp',
         targetRuntimeMode: 'terminal',
       },
     }, { serverId: 'server-canonical' });
-    expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
-      's1',
-      'persist this',
-      undefined,
-      undefined,
-      expectDirectSendProjectionOptions(),
-    );
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    expect(findAgentInput(screen).props.value).toBe('persist this');
 
   });
 
-  it('routes hidden voice conversation sends through the voice session binding helper', async () => {
+  it('keeps an external-linked Voice composer draft while takeover admission is declined', async () => {
+    sendVoiceSessionComposerTextSpy.mockResolvedValueOnce({ ok: true });
+    resolveVoiceSessionComposerRoutingSpy.mockReturnValue({
+      kind: 'adapter_text',
+      binding: {
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+        controlSessionId: 'voice-global',
+        conversationSessionId: 's1',
+        transcriptMode: 'synthetic',
+        targetSessionId: null,
+        updatedAt: 1,
+      },
+    });
+    const screen = await renderSessionView();
+
+    let agentInput = findAgentInput(screen);
+    await act(async () => {
+      agentInput.props.onChangeText('keep this Voice draft');
+    });
+
+    await act(async () => {
+      await agentInput.props.onSend();
+    });
+    await settleExternalSessionView();
+
+    expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith(expect.objectContaining({
+      canTakeOverDirect: true,
+      canTakeOverPersist: true,
+      target: expect.objectContaining({
+        machineId: 'machine-1',
+        machineHomeDir: '/tmp',
+        initialDirectory: '/tmp',
+      }),
+    }));
+    expect(sendVoiceSessionComposerTextSpy).not.toHaveBeenCalled();
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    agentInput = findAgentInput(screen);
+    expect(agentInput.props.value).toBe('keep this Voice draft');
+  });
+
+  it('routes hidden Voice conversation sends after external runner admission is verified', async () => {
+    machineExternalSessionStatusGetSpy.mockResolvedValueOnce({
+      ok: true,
+      machineOnline: true,
+      runnerActive: true,
+      activity: 'running',
+      canTakeOverDirect: false,
+      canTakeOverPersist: false,
+      canForceStop: false,
+    });
     sendVoiceSessionComposerTextSpy.mockImplementationOnce(() => new Promise(() => {}) as any);
     resolveVoiceSessionComposerRoutingSpy.mockReturnValue({
       kind: 'adapter_text',
       binding: {
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         controlSessionId: 'voice-global',
         conversationSessionId: 's1',
         transcriptMode: 'synthetic',
@@ -2650,11 +3065,60 @@ describe('SessionView (direct sessions)', () => {
         text: 'continue the voice conversation',
       }),
     );
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
   });
 
+  it('routes hidden Voice conversation sends without external admission', async () => {
+    const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
+    const metadata = { ...session.metadata };
+    delete metadata.externalSessionV1;
+    session.metadata = metadata;
+    sendVoiceSessionComposerTextSpy.mockImplementationOnce(() => new Promise(() => {}) as any);
+    resolveVoiceSessionComposerRoutingSpy.mockReturnValue({
+      kind: 'adapter_text',
+      binding: {
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+        controlSessionId: 'voice-global',
+        conversationSessionId: 's1',
+        transcriptMode: 'synthetic',
+        targetSessionId: null,
+        updatedAt: 1,
+      },
+    });
+    const screen = await renderSessionView();
+
+    const agentInput = findAgentInput(screen);
+    await act(async () => {
+      agentInput.props.onChangeText('ordinary voice conversation');
+    });
+
+    await act(async () => {
+      await agentInput.props.onSend();
+    });
+
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+    expect(sendVoiceSessionComposerTextSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationSessionId: 's1',
+        text: 'ordinary voice conversation',
+      }),
+    );
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+  });
+
   it('shows the adapter send error when a hidden voice conversation send fails', async () => {
+    machineExternalSessionStatusGetSpy.mockResolvedValueOnce({
+      ok: true,
+      machineOnline: true,
+      runnerActive: true,
+      activity: 'running',
+      canTakeOverDirect: false,
+      canTakeOverPersist: false,
+      canForceStop: false,
+    });
     sendVoiceSessionComposerTextSpy.mockResolvedValueOnce({
       ok: false,
       reason: 'send_failed',

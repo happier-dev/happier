@@ -219,12 +219,28 @@ statusMessage: ({ files, online, syncing }: {
 }
 ```
 
-## Future Expansion
+## Adding a language
 
-To add more languages:
-1. Create new translation files (e.g., `translations/es.ts`)
-2. Update types to include new locales
-3. Add locale switching logic
-4. All existing type safety is preserved
+Locale files are ~13k lines of TypeScript containing typechecked functions and `${...}`
+interpolations, and part of the copy lives in shared modules rather than in the locale file itself,
+so languages are generated rather than hand-written. The full procedure, the tooling and the
+per-language style rules live in **[`translations/README.md`](./translations/README.md)**.
 
-This implementation provides a solid foundation that can scale while maintaining perfect type safety and developer experience.
+In short:
+
+```bash
+cd apps/ui
+yarn i18n:locale:extract -- --locale <code> --out /tmp/<code>.todo.json
+yarn i18n:locale:verify  -- --translations /tmp/<code>.json
+yarn i18n:locale:build   -- --locale <code> --translations /tmp/<code>.json
+```
+
+Then register the locale in three places: `_all.ts` (the code and its `nativeName`), `i18n.ts` (a
+thunk in the translation tree map, so only the active language is materialised) and
+`i18n.integrity.test.ts` (**every** locale list — each asserts a different completeness property).
+The language picker is data-driven off `SUPPORTED_LANGUAGES` and needs no change.
+
+**The trap worth knowing about**: several domains delegate to shared `*Translations.ts` modules that
+carry one block per locale. A language added only to `<locale>.ts` renders English for those whole
+domains, silently, because `en.ts` delegates to the same modules. The tooling handles this and
+`tools/i18n/localeLiterals.test.ts` asserts it stays handled.

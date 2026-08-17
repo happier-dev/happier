@@ -36,6 +36,15 @@ function normalizePostMessageOrigin(origin: string | undefined): string | null {
     }
 }
 
+function isPermittedPostMessageTargetOrigin(
+    origin: string | undefined,
+    allowWildcard: boolean | undefined,
+): origin is string {
+    return origin === '*'
+        ? allowWildcard === true
+        : normalizePostMessageOrigin(origin) !== null;
+}
+
 function applyWebIframeNavigationCommand(
     iframe: HTMLIFrameElement | null,
     command: BrowserFrameNavigationCommand | undefined,
@@ -75,11 +84,18 @@ export function WebIframeEngine(props: Readonly<{
     csp?: string;
     onLoad?: () => void;
     onError?: () => void;
+    revokeOnUnexpectedNavigation?: boolean;
+    onUnexpectedNavigation?: () => void;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     automation?: BrowserAutomationEngineBridgeConfig;
     webMessageBridge?: BrowserWebFrameMessageBridgeConfig;
 }>): React.ReactElement {
     const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
+    const hasLoadedCurrentNavigationRef = React.useRef(false);
+
+    React.useLayoutEffect(() => {
+        hasLoadedCurrentNavigationRef.current = false;
+    }, [props.navigationKey, props.url]);
 
     React.useEffect(() => {
         const diagnostics = props.diagnostics;
@@ -310,7 +326,9 @@ export function WebIframeEngine(props: Readonly<{
             if (!expectedSource || event.source !== expectedSource) return;
             Promise.resolve(bridge.onMessage(event)).then((response) => {
                 if (response === undefined || response === null) return;
-                expectedSource.postMessage(response, event.origin);
+                const targetOrigin = bridge.targetOrigin ?? event.origin;
+                if (!isPermittedPostMessageTargetOrigin(targetOrigin, bridge.allowWildcardTargetOrigin)) return;
+                expectedSource.postMessage(response, targetOrigin);
             }).catch(() => undefined);
         };
 
@@ -320,9 +338,37 @@ export function WebIframeEngine(props: Readonly<{
         };
     }, [props.webMessageBridge]);
 
+    // EU-8: the host->frame push direction. The engine owns only the delivery
+    // primitive — an exact-origin post into THIS iframe's window — and lends it
+    // to the bridge owner while the frame is mounted. A wildcard target origin
+    // is deliberately impossible: without an explicit one nothing is attached,
+    // so a missing origin fails closed instead of broadcasting host facts.
+    // This attachment must retire in the layout phase: on an iframe remount,
+    // passive cleanup happens after React has cleared `iframeRef`, which is too
+    // late for the bridge owner to deliver its one terminal message to the
+    // incumbent guest before surrendering the frame-owned primitive.
+    React.useLayoutEffect(() => {
+        const bridge = props.webMessageBridge;
+        const attach = bridge?.attachHostMessages;
+        const targetOrigin = bridge?.targetOrigin;
+        if (!bridge || !attach || !isPermittedPostMessageTargetOrigin(targetOrigin, bridge.allowWildcardTargetOrigin)) return;
+        return attach((message: unknown) => {
+            iframeRef.current?.contentWindow?.postMessage(message, targetOrigin);
+        });
+    }, [props.webMessageBridge]);
+
     React.useEffect(() => {
         applyWebIframeNavigationCommand(iframeRef.current, props.navigationCommand);
     }, [props.navigationCommand?.commandId, props.navigationCommand?.kind]);
+
+    const handleLoad = React.useCallback(() => {
+        if (props.revokeOnUnexpectedNavigation && hasLoadedCurrentNavigationRef.current) {
+            props.onUnexpectedNavigation?.();
+            return;
+        }
+        hasLoadedCurrentNavigationRef.current = true;
+        props.onLoad?.();
+    }, [props.onLoad, props.onUnexpectedNavigation, props.revokeOnUnexpectedNavigation]);
 
     return (
         <View testID={`${props.testID}-container`} style={browserFrameStyles.root}>
@@ -331,7 +377,7 @@ export function WebIframeEngine(props: Readonly<{
                 'data-testid': props.testID,
                 key: props.navigationKey,
                 onError: props.onError,
-                onLoad: props.onLoad,
+                onLoad: handleLoad,
                 ref: iframeRef,
                 referrerPolicy: props.referrerPolicy ?? 'no-referrer',
                 ...(props.csp ? { csp: props.csp } : {}),

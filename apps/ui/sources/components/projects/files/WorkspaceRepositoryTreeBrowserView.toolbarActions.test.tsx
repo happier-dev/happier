@@ -15,6 +15,7 @@ const alertSpy = vi.fn((..._args: any[]) => {});
 const workspaceWriteFileSpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
 const workspaceCreateDirectorySpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
 const clearWorkspaceFileSearchCacheSpy = vi.fn();
+const searchWorkspaceFilesSpy = vi.fn(async (..._args: any[]) => [] as any[]);
 const clearWorkspaceRepositoryDirectoryEntriesSpy = vi.fn();
 const startUploadsSpy = vi.fn(async (..._args: any[]) => ({ ok: true } as const));
 let latestTransferOptions: any = null;
@@ -139,7 +140,7 @@ vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
     workspaceFileSearchCache: {
         clearCache: (workspaceCacheKey: string) => clearWorkspaceFileSearchCacheSpy(workspaceCacheKey),
     },
-    searchWorkspaceFiles: vi.fn(async () => []),
+    searchWorkspaceFiles: (...args: any[]) => searchWorkspaceFilesSpy(...args),
 }));
 
 vi.mock('@/sync/domains/workspaces/files/workspaceRepositoryDirectory', () => ({
@@ -199,6 +200,7 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
         onOpenFilePinnedSpy.mockClear();
         storageSpies.setWorkspaceRepositoryTreeExpandedPaths.mockClear();
         clearWorkspaceFileSearchCacheSpy.mockClear();
+        searchWorkspaceFilesSpy.mockClear();
         clearWorkspaceRepositoryDirectoryEntriesSpy.mockClear();
         startUploadsSpy.mockClear();
         latestTransferOptions = null;
@@ -220,16 +222,95 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
         const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
         return await renderScreen(
             <WorkspaceRepositoryTreeBrowserView
-                workspaceCacheKey="server:m1:/repo"
-                serverId="server"
-                machineId="m1"
-                rootPath="/repo"
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
                 onOpenFile={onOpenFileSpy}
                 onOpenFilePinned={onOpenFilePinnedSpy}
                 {...overrides}
             />,
         );
     }
+
+    /**
+     * A workspace is addressed by `{ serverId, machineId, rootPath }` — all three, because a
+     * machine id is only unique within the server that reaches it.
+     *
+     * This view is where that came apart: it passed the server-scoped cache key while calling
+     * the search WITHOUT the server, so the index was read through whichever server
+     * `machineRpcWithServerScope` falls back to and then stored under the correctly-scoped
+     * key, where the composer's own (correctly addressed) search read it back. The view now
+     * forwards the one `scope` it was given, and the owner derives the key from it — so this
+     * asserts the whole address reaches the search, on the wire rather than on rendered rows,
+     * because rows look identical either way. That is what made the omission survive.
+     */
+    it('addresses the file search at the server the workspace is on', async () => {
+        const screen = await renderView({
+            scope: { serverId: 'server-b', machineId: 'm1', rootPath: '/repo' },
+            searchQuery: 'needle',
+        });
+
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            await settle();
+        });
+
+        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
+        expect(searchWorkspaceFilesSpy.mock.calls[0]?.[0]).toMatchObject({
+            scope: { serverId: 'server-b', machineId: 'm1', rootPath: '/repo' },
+            query: 'needle',
+        });
+        expect(screen).toBeTruthy();
+    });
+
+    /**
+     * Contracting the address into one `scope` OBJECT moved the search effect's dependency from
+     * three primitive strings to an object identity. Several hosts build that prop inline, and
+     * `useSessionWorkspaceTarget` rebuilds its result whenever the machine/session collections
+     * change identity — so an unstabilized scope re-runs the search on EVERY render.
+     *
+     * That is not theoretical: it was reproduced here as an unbounded render loop that
+     * exhausted the test runner's heap. The view therefore memoizes the scope on its three
+     * FIELDS, and this pins it: a host that hands over a brand-new (but equal) literal on every
+     * render must still produce exactly one search.
+     */
+    it('does not re-search when a host passes a new but equal scope object on every render', async () => {
+        const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
+        let bumpHostState: () => void = () => {};
+
+        function UnstableScopeHost() {
+            const [, setTick] = React.useState(0);
+            bumpHostState = () => setTick((n) => n + 1);
+            return (
+                <WorkspaceRepositoryTreeBrowserView
+                    // Deliberately a fresh object literal on every render.
+                    scope={{ serverId: 'server-b', machineId: 'm1', rootPath: '/repo' }}
+                    searchQuery="needle"
+                    onOpenFile={onOpenFileSpy}
+                    onOpenFilePinned={onOpenFilePinnedSpy}
+                />
+            );
+        }
+
+        await renderScreen(<UnstableScopeHost />);
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            await settle();
+        });
+        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
+
+        // Three more host renders, three more fresh-but-equal scope literals.
+        for (let i = 0; i < 3; i++) {
+            await act(async () => {
+                bumpHostState();
+                await settle();
+            });
+        }
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            await settle();
+        });
+
+        expect(searchWorkspaceFilesSpy).toHaveBeenCalledTimes(1);
+    });
 
     it('toggles between full tree and changed-only tree', async () => {
         const screen = await renderView();
@@ -332,7 +413,14 @@ describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
             await settle();
         });
 
-        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith('server:m1:/repo');
+        // The search cache is cleared BY SCOPE (it derives the key itself) while the directory
+        // cache is still key-addressed. Both must name the same entry the tree filled, so the
+        // key asserted below is the one `buildWorkspaceCacheKey` produces for that same scope.
+        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith({
+            serverId: 'server',
+            machineId: 'm1',
+            rootPath: '/repo',
+        });
         expect(clearWorkspaceRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
         expect(workspaceScmControllerState.refresh).toHaveBeenCalled();
     });

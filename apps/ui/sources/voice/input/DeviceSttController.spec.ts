@@ -244,6 +244,27 @@ describe('createDeviceSttController', () => {
     expect(sink.onFinal).toHaveBeenCalledWith('hello world');
   });
 
+  it('suppresses recognizer transcripts and endpointing while the canonical mic session is muted', async () => {
+    const sink = createSink();
+    const micSession = createMicSession();
+    vi.mocked(micSession.isMuted).mockReturnValue(true);
+    const onEndpointSignal = vi.fn();
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({
+      getSettings: () => baseSettings(true),
+      onEndpointSignal,
+    });
+
+    await controller.start({ micSession, sink });
+    listeners.result?.({ results: [{ transcript: 'muted partial' }], isFinal: false });
+    listeners.result?.({ results: [{ transcript: 'muted final' }], isFinal: true });
+
+    expect(sink.onPartial).not.toHaveBeenCalled();
+    expect(sink.onFinal).not.toHaveBeenCalled();
+    expect(sink.onEndpoint).not.toHaveBeenCalled();
+    expect(onEndpointSignal).not.toHaveBeenCalled();
+  });
+
   it('emits runtime-owned heuristic endpoint signals for finalized device transcripts', async () => {
     const onEndpointSignal = vi.fn();
     const { createDeviceSttController } = await import('./DeviceSttController');
@@ -558,33 +579,41 @@ describe('createDeviceSttController', () => {
     }));
   });
 
-  it('surfaces an unavailable recognizer before any microphone permission or capture', async () => {
-    isRecognitionAvailable.mockClear();
-    isRecognitionAvailable.mockReturnValueOnce(false);
-    requestMicrophonePermission.mockClear();
-    requestPermissionsAsync.mockClear();
-    acquireAudioSession.mockClear();
-    const micSession = createMicSession();
-    const sink = createSink();
-    const { createDeviceSttController } = await import('./DeviceSttController');
-    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
+  it.each(['web', 'ios'] as const)(
+    'surfaces an unavailable %s recognizer before provider or microphone work',
+    async (platformOs) => {
+      platformOsMock.value = platformOs;
+      isRecognitionAvailable.mockClear();
+      isRecognitionAvailable.mockReturnValueOnce(false);
+      requestMicrophonePermission.mockClear();
+      requestPermissionsAsync.mockClear();
+      acquireAudioSession.mockClear();
+      addListener.mockClear();
+      start.mockClear();
+      const micSession = createMicSession();
+      const sink = createSink();
+      const { createDeviceSttController } = await import('./DeviceSttController');
+      const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
 
-    await controller.start({ micSession, sink });
+      await controller.start({ micSession, sink });
 
-    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'provider_error',
-      reason: 'device_stt_unavailable',
-    }));
-    expect(isRecognitionAvailable).toHaveBeenCalledTimes(1);
-    expect(requestMicrophonePermission).not.toHaveBeenCalled();
-    expect(requestPermissionsAsync).not.toHaveBeenCalled();
-    expect(micSession.ensureActive).not.toHaveBeenCalled();
-    expect(acquireAudioSession).not.toHaveBeenCalled();
-    const reportedFailure = sink.onError.mock.calls[0]?.[0];
-    const stopResult = await controller.stop();
+      expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'provider_error',
+        reason: 'device_stt_unavailable',
+      }));
+      expect(isRecognitionAvailable).toHaveBeenCalledTimes(1);
+      expect(requestMicrophonePermission).not.toHaveBeenCalled();
+      expect(requestPermissionsAsync).not.toHaveBeenCalled();
+      expect(micSession.ensureActive).not.toHaveBeenCalled();
+      expect(acquireAudioSession).not.toHaveBeenCalled();
+      expect(addListener).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
+      const reportedFailure = sink.onError.mock.calls[0]?.[0];
+      const stopResult = await controller.stop();
 
-    expect(stopResult).toEqual({ error: reportedFailure });
-  });
+      expect(stopResult).toEqual({ error: reportedFailure });
+    },
+  );
 
   it('surfaces device STT startup failures through a typed sink error and rethrows', async () => {
     start.mockImplementationOnce(() => {
@@ -700,6 +729,72 @@ describe('createDeviceSttController', () => {
     expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
       reason: 'network',
     }));
+  });
+
+  it('settles an unsolicited end once when exclusive audio-session release rejects', async () => {
+    const releaseFailure = new Error('native_audio_session_release_failed');
+    const releaseSettled = createDeferred<void>();
+    const publicationOrder: string[] = [];
+    const unhandledRejections: unknown[] = [];
+    let stopSettlementCount = 0;
+    const captureUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    releaseAudioSession.mockImplementation(() => {
+      publicationOrder.push('release_attempted');
+      return releaseSettled.promise;
+    });
+    const sink = createSink();
+    sink.onError.mockImplementation(() => {
+      publicationOrder.push('terminal_published');
+    });
+    process.on('unhandledRejection', captureUnhandledRejection);
+
+    try {
+      const { createDeviceSttController } = await import('./DeviceSttController');
+      const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
+      await controller.start({ micSession: createMicSession(), sink });
+
+      listeners.end?.({});
+      const stopping = controller.stop().finally(() => {
+        stopSettlementCount += 1;
+      });
+      const stopExpectation = expect(stopping).resolves.toEqual({
+        error: expect.objectContaining({
+          kind: 'provider_error',
+          reason: 'device_stt_error',
+          recoverable: true,
+          recoveryAction: 'retry',
+        }),
+      });
+      await flushMicrotasks();
+      expect(sink.onError).not.toHaveBeenCalled();
+
+      releaseSettled.reject(releaseFailure);
+      await stopExpectation;
+      const terminalResult = await stopping;
+      await vi.waitFor(() => expect(sink.onError).toHaveBeenCalledTimes(1));
+      const terminalError = sink.onError.mock.calls[0]?.[0];
+      listeners.end?.({});
+      listeners.error?.({ error: 'network' });
+      await flushMicrotasks();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      expect(releaseAudioSession).toHaveBeenCalledTimes(1);
+      expect(publicationOrder).toEqual(['release_attempted', 'terminal_published']);
+      expect(stopSettlementCount).toBe(1);
+      expect(terminalResult).toEqual({ error: terminalError });
+      expect(terminalError).toMatchObject({
+        kind: 'provider_error',
+        reason: 'device_stt_error',
+        recoverable: true,
+        recoveryAction: 'retry',
+      });
+      expect(sink.onError).toHaveBeenCalledTimes(1);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', captureUnhandledRejection);
+    }
   });
 
   it('does not promote the last partial when the recognizer ends naturally without an authoritative final', async () => {
@@ -832,8 +927,9 @@ describe('createDeviceSttController', () => {
     await flushMicrotasks();
     await flushMicrotasks();
 
+    const stoppingSecondCapture = controller.stop();
     secondEnd?.({});
-    await controller.stop();
+    await stoppingSecondCapture;
 
     expect(firstSink.onAudioStarted).not.toHaveBeenCalled();
     expect(firstSink.onPartial).not.toHaveBeenCalled();
@@ -846,7 +942,7 @@ describe('createDeviceSttController', () => {
     expect(secondSink.onError).not.toHaveBeenCalled();
   });
 
-  it('normalizes no-speech, speech-timeout, and no-match to one empty terminal outcome', async () => {
+  it('normalizes no-speech, speech-timeout, and no-match after an explicit stop to one empty terminal outcome', async () => {
     const { createDeviceSttController } = await import('./DeviceSttController');
 
     for (const outcome of ['no-speech', 'speech-timeout', 'nomatch'] as const) {
@@ -856,6 +952,7 @@ describe('createDeviceSttController', () => {
       });
 
       await controller.start({ micSession: createMicSession(), sink });
+      const stopping = controller.stop();
       if (outcome === 'nomatch') {
         listeners.nomatch?.({});
         listeners.end?.({});
@@ -863,9 +960,59 @@ describe('createDeviceSttController', () => {
         listeners.error?.({ error: outcome });
       }
 
-      await expect(controller.stop()).resolves.toEqual({ finalText: '' });
+      await expect(stopping).resolves.toEqual({ finalText: '' });
       expect(sink.onError).not.toHaveBeenCalled();
     }
+  });
+
+  it('surfaces a spontaneous no-speech termination instead of silently ending the active capture', async () => {
+    const sink = createSink();
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({
+      getSettings: () => baseSettings(false),
+    });
+
+    await controller.start({ micSession: createMicSession(), sink });
+    listeners.audiostart?.({});
+    listeners.error?.({ error: 'no-speech' });
+    listeners.end?.({});
+    const terminalResult = await controller.stop();
+
+    expect(sink.onError).toHaveBeenCalledTimes(1);
+    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'provider_error',
+      reason: 'no-speech',
+    }));
+    expect(terminalResult).toEqual({
+      error: expect.objectContaining({
+        kind: 'provider_error',
+        reason: 'no-speech',
+      }),
+    });
+  });
+
+  it('surfaces a spontaneous end-only termination instead of publishing an empty success', async () => {
+    const sink = createSink();
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({
+      getSettings: () => baseSettings(false),
+    });
+
+    await controller.start({ micSession: createMicSession(), sink });
+    listeners.end?.({});
+    const terminalResult = await controller.stop();
+
+    expect(sink.onError).toHaveBeenCalledTimes(1);
+    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'provider_error',
+      reason: 'device_stt_error',
+    }));
+    expect(terminalResult).toEqual({
+      error: expect.objectContaining({
+        kind: 'provider_error',
+        reason: 'device_stt_error',
+      }),
+    });
   });
 
   it('uses the same typed provider failure for the error sink and terminal stop result', async () => {

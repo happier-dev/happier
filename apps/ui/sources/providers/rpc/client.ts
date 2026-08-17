@@ -27,6 +27,7 @@ import {
     type DaemonProviderProbeResponseV1,
     type DaemonProviderModelProjectionResponseV1,
     type DaemonProviderModelSettingsMutationResponseV1,
+    type DaemonProviderBindingStatusRequestV1,
     type DaemonProviderBindingStatusResponseV1,
     type DaemonProviderModelsResponseV1,
     type DaemonProviderModelLoadResponseV1,
@@ -311,7 +312,9 @@ export async function mutateProviderModelSettings(input: Readonly<{
 
 export async function describeProviderBindingStatus(input: Readonly<{
     serverId: string | null;
-    request: z.input<typeof DaemonProviderBindingStatusRequestV1Schema>;
+    request:
+        | z.input<typeof DaemonProviderBindingStatusRequestV1Schema>
+        | DaemonProviderBindingStatusRequestV1;
 }>): Promise<DaemonProviderBindingStatusResponseV1> {
     const payload = DaemonProviderBindingStatusRequestV1Schema.parse(input.request);
     return await requestProviderRpcResponse(DaemonProviderBindingStatusResponseV1Schema, 'read', {

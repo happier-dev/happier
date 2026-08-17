@@ -7,7 +7,6 @@ import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
-const appPluginSurfacePlacementStackSpy = vi.hoisted(() => vi.fn());
 
 installSettingsViewCommonModuleMocks({
     reactNative: async () => {
@@ -137,10 +136,9 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    AppPluginSurfacePlacementStack: (props: unknown) => {
-        appPluginSurfacePlacementStackSpy(props);
-        return React.createElement('AppPluginSurfacePlacementStackMock', { props });
-    },
+    useAppShellPluginUiProjection: () => ({
+        pluginUiProjection: null,
+    }),
 }));
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
@@ -170,6 +168,8 @@ vi.mock('@/hooks/ui/useMultiClick', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
+    useLayoutMaxWidth: () => 1000,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
@@ -236,7 +236,6 @@ vi.mock('@/utils/system/requestReview', () => ({
 afterEach(() => {
     standardCleanup();
     routerPushSpy.mockClear();
-    appPluginSurfacePlacementStackSpy.mockClear();
     vi.useRealTimers();
 });
 
@@ -256,18 +255,5 @@ describe('SettingsView plugin marketplace entry', () => {
         marketplaceItem?.props.onPress?.();
 
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/plugins');
-    });
-
-    it('mounts app settings plugin placements through the app-shell placement stack', async () => {
-        vi.useFakeTimers();
-        const { SettingsView } = await import('./SettingsView');
-        await renderSettingsView(React.createElement(SettingsView));
-
-        await flushHookEffects({ cycles: 4, runAllTimers: true });
-
-        expect(appPluginSurfacePlacementStackSpy).toHaveBeenCalledWith(expect.objectContaining({
-            placement: 'app.settingsPage',
-            testID: 'settings-plugin-surface-placement-stack',
-        }));
     });
 });

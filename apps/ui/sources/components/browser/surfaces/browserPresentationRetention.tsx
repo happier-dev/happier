@@ -2,6 +2,8 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 import { View, type LayoutChangeEvent } from 'react-native';
 
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+
 import {
     reconcileBrowserPresentationSlots,
     type BrowserSurfaceLifecycleSnapshot,
@@ -367,17 +369,22 @@ export function BrowserKeepAliveBinder(props: BrowserKeepAliveBinderProps): Reac
         // `onLayout` x/y are parent-relative; re-measure in window coordinates for the absolute overlay.
         measure();
     }, [measure]);
+    const focusEligibleChildren = (
+        <PluginSurfaceFocusEligibilityProvider active={props.visible ?? true}>
+            {props.children}
+        </PluginSurfaceFocusEligibilityProvider>
+    );
 
     const { portalActive } = useBrowserPresentationPortalSlot({
         slotId: props.slotId,
-        node: props.children,
+        node: focusEligibleChildren,
         geometry,
         visible: props.visible ?? true,
         enabled: props.enabled,
     });
 
     if (!portalActive) {
-        return <>{props.children}</>;
+        return <>{focusEligibleChildren}</>;
     }
     return (
         <View

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -9,6 +8,7 @@ import { TextInput } from '@/components/ui/text/Text';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type ContextBarMode = 'machine_only' | 'workspace_only' | 'machine_and_workspace';
 
@@ -91,7 +91,7 @@ export const ContextBar = React.memo(function ContextBar(props: ContextBarProps)
                     itemTrigger={{
                         title: props.machine.title ?? t('promptLibrary.externalAssetsMachine'),
                         subtitle: props.machine.subtitle,
-                        icon: <Ionicons name="laptop-outline" size={29} color={theme.colors.accent.blue} />,
+                        icon: <Icon name="laptop" size={29} color={theme.colors.accent.blue} />,
                     }}
                     rowKind="item"
                     connectToTrigger
@@ -121,7 +121,7 @@ export const ContextBar = React.memo(function ContextBar(props: ContextBarProps)
                         </View>
                     )}
                     subtitleLines={0}
-                    icon={<Ionicons name="folder-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="folder" size={29} color={theme.colors.accent.indigo} />}
                     mode="info"
                     showChevron={false}
                 />

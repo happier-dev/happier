@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 
-import { createExpoAudioRecordingMicSession } from './NativeMicSession';
+import { createExpoAudioRecordingMicSession, createNativeMicSession } from './NativeMicSession';
 
 describe('NativeMicSession', () => {
+    const originalPlatformOs = Platform.OS;
     const requestPermission = vi.fn(async () => ({ granted: true, canAskAgain: true }));
     const showPermissionDenied = vi.fn();
     const stopRecorder = vi.fn(async () => {});
@@ -26,6 +28,96 @@ describe('NativeMicSession', () => {
         acquireAudioMode.mockResolvedValue({ release: releaseAudioMode });
     });
 
+    it('owns one native WebRTC microphone stream through mute, teardown, and reacquisition', async () => {
+        const releaseFirst = vi.fn();
+        const releaseSecond = vi.fn();
+        const firstTrack = { enabled: true };
+        const secondTrack = { enabled: true };
+        const firstStream = {
+            getAudioTracks: () => [firstTrack],
+            getTracks: () => [firstTrack],
+        } as unknown as MediaStream;
+        const secondStream = {
+            getAudioTracks: () => [secondTrack],
+            getTracks: () => [secondTrack],
+        } as unknown as MediaStream;
+        const acquireStream = vi.fn()
+            .mockResolvedValueOnce(firstStream)
+            .mockResolvedValueOnce(secondStream);
+        const session = createNativeMicSession({
+            acquireStream,
+            releaseStream: (stream) => {
+                if (stream === firstStream) releaseFirst();
+                if (stream === secondStream) releaseSecond();
+            },
+        });
+
+        await session.ensureActive();
+        expect(session.getStream()).toBe(firstStream);
+        await session.ensureActive();
+        expect(acquireStream).toHaveBeenCalledTimes(1);
+
+        session.setMuted(true);
+        expect(firstTrack.enabled).toBe(false);
+        session.setMuted(false);
+        expect(firstTrack.enabled).toBe(true);
+
+        await session.teardown();
+        expect(releaseFirst).toHaveBeenCalledTimes(1);
+        expect(session.getStream()).toBeNull();
+
+        await session.ensureActive();
+        expect(session.getStream()).toBe(secondStream);
+        expect(acquireStream).toHaveBeenCalledTimes(2);
+        await session.teardown();
+        expect(releaseSecond).toHaveBeenCalledTimes(1);
+    });
+
+    it('checks native PCM permission without allocating a WebRTC microphone stream', async () => {
+        const ensurePermission = vi.fn(async () => undefined);
+        const acquireStream = vi.fn(async () => ({
+            getAudioTracks: () => [],
+            getTracks: () => [],
+        }) as unknown as MediaStream);
+        const session = createNativeMicSession({ ensurePermission, acquireStream });
+
+        await (session as unknown as Readonly<{ ensurePermission(): Promise<void> }>).ensurePermission();
+
+        expect(ensurePermission).toHaveBeenCalledTimes(1);
+        expect(acquireStream).not.toHaveBeenCalled();
+        expect(session.getStream()).toBeNull();
+    });
+
+    it('deduplicates concurrent acquisition and releases a stream that arrives after teardown', async () => {
+        let resolveStream!: (stream: MediaStream) => void;
+        const releaseStream = vi.fn();
+        const acquiredStream = {
+            getAudioTracks: () => [],
+            getTracks: () => [],
+        } as unknown as MediaStream;
+        const acquireStream = vi.fn(() => new Promise<MediaStream>((resolve) => {
+            resolveStream = resolve;
+        }));
+        const session = createNativeMicSession({ acquireStream, releaseStream });
+
+        const first = session.ensureActive();
+        const second = session.ensureActive();
+        await Promise.resolve();
+        expect(acquireStream).toHaveBeenCalledTimes(1);
+
+        await session.teardown();
+        resolveStream(acquiredStream);
+        await Promise.all([first, second]);
+
+        expect(session.getStream()).toBeNull();
+        expect(releaseStream).toHaveBeenCalledTimes(1);
+        expect(releaseStream).toHaveBeenCalledWith(acquiredStream);
+    });
+
+    afterEach(() => {
+        (Platform as { OS: string }).OS = originalPlatformOs;
+    });
+
     it('owns permission and recorder start for recording flows', async () => {
         const session = createExpoAudioRecordingMicSession({
             createRecorder,
@@ -41,6 +133,41 @@ describe('NativeMicSession', () => {
         expect(prepareToRecordAsync).toHaveBeenCalledTimes(1);
         expect(record).toHaveBeenCalledTimes(1);
         expect(acquireAudioMode).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets the web recorder own its single microphone acquisition without a permission-probe stream', async () => {
+        (Platform as { OS: string }).OS = 'web';
+        const session = createExpoAudioRecordingMicSession({
+            createRecorder,
+            requestPermission,
+            showPermissionDenied,
+            acquireAudioMode,
+        });
+
+        await session.beginRecording();
+
+        expect(requestPermission).not.toHaveBeenCalled();
+        expect(prepareToRecordAsync).toHaveBeenCalledTimes(1);
+        expect(record).toHaveBeenCalledTimes(1);
+    });
+
+    it('maps a web recorder permission rejection back to the recording permission contract', async () => {
+        (Platform as { OS: string }).OS = 'web';
+        prepareToRecordAsync.mockRejectedValueOnce(
+            Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' }),
+        );
+        const session = createExpoAudioRecordingMicSession({
+            createRecorder,
+            requestPermission,
+            showPermissionDenied,
+            acquireAudioMode,
+        });
+
+        await expect(session.beginRecording()).rejects.toThrow('mic_permission_denied');
+
+        expect(requestPermission).not.toHaveBeenCalled();
+        expect(showPermissionDenied).toHaveBeenCalledWith(false);
+        expect(releaseAudioMode).toHaveBeenCalledTimes(1);
     });
 
     it('does not acquire or publish a recorder after permission resolves for an aborted start, and permits retry', async () => {

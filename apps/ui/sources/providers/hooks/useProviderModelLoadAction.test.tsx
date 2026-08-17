@@ -183,4 +183,56 @@ describe('useProviderModelLoadAction', () => {
         await act(async () => { result = await value.current?.load('pc_a', 'model-a'); });
         expect(result).toEqual({ status: 'loaded', source: 'requested' });
     });
+
+    it('does not start a model load when the canonical execution target changed', async () => {
+        const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
+        function Harness() {
+            value.current = useProviderModelLoadAction({
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                refresh: async () => true,
+                resolveExecutionTarget: () => ({ machineId: 'machine-b', serverId: 'server-b' }),
+            });
+            return React.createElement('View');
+        }
+        await renderScreen(<Harness />);
+
+        let result: unknown;
+        await act(async () => { result = await value.current?.load('pc_a', 'model-a'); });
+
+        expect(result).toEqual({
+            status: 'error',
+            error: createProviderErrorV1('provider_endpoint_unavailable', {
+                connectionId: 'pc_a',
+                machineId: 'machine-a',
+            }),
+        });
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+    });
+
+    it('does not fall back to the rendered target when the canonical execution target is unavailable', async () => {
+        const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
+        function Harness() {
+            value.current = useProviderModelLoadAction({
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                refresh: async () => true,
+                resolveExecutionTarget: () => null,
+            });
+            return React.createElement('View');
+        }
+        await renderScreen(<Harness />);
+
+        let result: unknown;
+        await act(async () => { result = await value.current?.load('pc_a', 'model-a'); });
+
+        expect(result).toEqual({
+            status: 'error',
+            error: createProviderErrorV1('provider_endpoint_unavailable', {
+                connectionId: 'pc_a',
+                machineId: 'machine-a',
+            }),
+        });
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+    });
 });

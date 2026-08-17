@@ -18,11 +18,11 @@ let deviceTypeMock: 'phone' | 'tablet' | 'desktop' = 'phone';
 let rightPaneStateMock: { isOpen: boolean; activeTabId: string | null } = { isOpen: true, activeTabId: 'git' };
 let isFocusedMock = true;
 let localSettingsMock: Record<string, unknown> = {};
+let projectLastMobileSurfaceByWorkspaceRefIdMock: Record<string, string> = {};
 let accountSettingsMock: Record<string, unknown> = {};
 const projectDetailScreenSpy = vi.hoisted(() => vi.fn());
 const projectCockpitShellSpy = vi.hoisted(() => vi.fn());
 const setLocalSettingSpies = vi.hoisted(() => ({
-    projectLastMobileSurfaceByWorkspaceRefId: vi.fn(),
     projectLastActiveRootPathByWorkspaceRefId: vi.fn(),
     projectLastActiveWorktreeIdByWorkspaceRefId: vi.fn(),
 }));
@@ -111,6 +111,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
             localSettingsMock[key],
             setLocalSettingSpies[key as keyof typeof setLocalSettingSpies] ?? vi.fn(),
         ],
+        useProjectLastMobileSurface: (workspaceRefId: string | null) => (
+            workspaceRefId ? projectLastMobileSurfaceByWorkspaceRefIdMock[workspaceRefId] ?? null : null
+        ),
+        usePersistProjectLastMobileSurface: () => vi.fn(),
     });
 });
 
@@ -120,6 +124,7 @@ describe('project index redirect', () => {
         isFocusedMock = true;
         rightPaneStateMock = { isOpen: true, activeTabId: 'git' };
         localSettingsMock = {};
+        projectLastMobileSurfaceByWorkspaceRefIdMock = {};
         accountSettingsMock = {};
         projectDetailScreenSpy.mockClear();
         projectCockpitShellSpy.mockClear();
@@ -160,9 +165,7 @@ describe('project index redirect', () => {
     it('renders the project cockpit shell on phone when the overview cockpit surface is enabled', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
-        localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
-        };
+        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'overview' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
@@ -182,9 +185,9 @@ describe('project index redirect', () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'services' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/packages/ui' },
         };
+        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'services' };
         workspaceScmSnapshotMock = {
             repo: {
                 isRepo: false,
@@ -210,10 +213,10 @@ describe('project index redirect', () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/deleted-worktree' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_deleted' },
         };
+        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'terminal' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
@@ -236,10 +239,10 @@ describe('project index redirect', () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/deleted-worktree' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_deleted' },
         };
+        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'terminal' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
@@ -251,7 +254,6 @@ describe('project index redirect', () => {
 
         expect(screen.tree.findAllByType('Redirect' as never)).toHaveLength(0);
         expect(screen.tree.findByType('ProjectCockpitShellStub' as never)).toBeTruthy();
-        expect(setLocalSettingSpies.projectLastMobileSurfaceByWorkspaceRefId).not.toHaveBeenCalled();
         expect(setLocalSettingSpies.projectLastActiveRootPathByWorkspaceRefId).not.toHaveBeenCalled();
         expect(setLocalSettingSpies.projectLastActiveWorktreeIdByWorkspaceRefId).not.toHaveBeenCalled();
     });
@@ -315,10 +317,10 @@ describe('project index redirect', () => {
     it('falls back to persisted cockpit-era mobile surface state when url state is absent', async () => {
         rightPaneStateMock = { isOpen: false, activeTabId: null };
         localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'browse' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
         };
+        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'browse' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: undefined,
@@ -385,9 +387,7 @@ describe('project index redirect', () => {
     it('preserves persisted cockpit-only surfaces before the workspace ref has loaded', async () => {
         workspaceRefMock = null;
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
-        localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
-        };
+        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'terminal' };
         routerMock.state.router.setParams({
             workspaceRefId: 'wr_1',
             worktreeId: 'gitwt_feature',

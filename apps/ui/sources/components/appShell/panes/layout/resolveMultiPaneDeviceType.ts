@@ -2,10 +2,19 @@ export function resolveMultiPaneDeviceType(input: Readonly<{
     platform: string;
     deviceType: 'phone' | 'tablet';
 }>): 'phone' | 'tablet' {
-    // On web, window sizing shouldn't force us into "phone" mode, because we
-    // still want multi-pane overlays (right/details) on narrow desktop/tablet
-    // viewports. This keeps the feature accessible while still allowing the
-    // layout engine to choose overlay vs docked.
+    // Multi-pane layout keeps phone-sized web in its established overlay mode.
+    // Plugin destination admission has a separate form-factor adapter below.
     if (input.platform === 'web') return 'tablet';
+    return input.deviceType;
+}
+
+/**
+ * Plugin destination admission uses the responsive host observation directly.
+ * Layout may choose a web-specific overlay mode without turning a phone-sized
+ * web host into a tablet for the protocol registry.
+ */
+export function resolvePluginUiRuntimeFormFactor(input: Readonly<{
+    deviceType: 'phone' | 'tablet';
+}>): 'phone' | 'tablet' {
     return input.deviceType;
 }

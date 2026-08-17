@@ -159,6 +159,11 @@ describe('SelectionListBody single virtualized-list multi-section restructure (R
         // entries from BOTH sections.)
         expect(legendListState.props).not.toBeNull();
         expect(legendListState.props?.recycleItems).toBe(false);
+        for (const sectionId of ['first', 'second']) {
+            const section = screen.findByTestId(`sl:section:${sectionId}`);
+            expect(section?.props.role).toBe('group');
+            expect(section?.props['aria-label']).toBe(sectionId.toUpperCase());
+        }
         const data = legendListState.props?.data as ReadonlyArray<{ kind: string; option?: { id: string } }>;
         expect(Array.isArray(data)).toBe(true);
         // Two section-headers + 60 + 60 option rows = 122 entries.

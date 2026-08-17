@@ -60,6 +60,19 @@ describe('toolViewRegistry', () => {
         expect(getToolViewComponent('remove')).toBe(toolViewRegistry.Delete);
     });
 
+    it('keeps background-task control tools off the subagent card', async () => {
+        const [{ getToolViewComponent, SubAgentView, TaskOutputView, TaskStopView }] = await Promise.all([import('./_registry')]);
+
+        for (const name of ['TaskOutput', 'task_output']) {
+            expect(getToolViewComponent(name)).toBe(TaskOutputView);
+            expect(getToolViewComponent(name)).not.toBe(SubAgentView);
+        }
+        for (const name of ['TaskStop', 'task_stop']) {
+            expect(getToolViewComponent(name)).toBe(TaskStopView);
+            expect(getToolViewComponent(name)).not.toBe(SubAgentView);
+        }
+    });
+
     it('maps Claude task helper tools to SubAgentView (TaskCreate/TaskList/TaskUpdate)', async () => {
         const [{ getToolViewComponent }, { SubAgentView }] = await Promise.all([import('./_registry'), import('./_registry')]);
 

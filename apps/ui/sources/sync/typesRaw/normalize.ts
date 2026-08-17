@@ -3,6 +3,7 @@ import {
     isCanonicalTurnDiffPayload,
     readEmptyCanonicalTurnDiffToolCallId,
     shouldSuppressEmptyCanonicalTurnDiffToolCall,
+    type MessageStructuredPresentationV1,
     type SessionMessageRole,
 } from '@happier-dev/protocol';
 
@@ -93,16 +94,33 @@ export type NormalizedMessage = ({
     sidechainId?: string,
     meta?: MessageMeta,
     usage?: UsageData,
+    /** Validated persisted transcript snapshot; never re-resolved against the current daemon. */
+    structuredPresentation?: MessageStructuredPresentationV1,
+    /** Set only by canonical ACK and socket readers for a server-declared durable row update. */
+    isAuthoritativeUpdate?: true,
 } & TranscriptObservationMetadata;
 
 export type RawMessageNormalizationInput = Readonly<{
     id: string;
     localId?: string | null;
+    sidechainId?: string | null;
     createdAt: number;
     raw: unknown;
     seq?: number | null;
     messageRole?: SessionMessageRole | null;
 }>;
+
+type RawMessageNormalizationOptions = Readonly<{
+    seq?: number;
+    messageRole?: SessionMessageRole | null;
+    sidechainId?: string | null;
+}>;
+
+function normalizeExplicitSidechainId(sidechainId: string | null | undefined): string | undefined {
+    return typeof sidechainId === 'string' && sidechainId.trim().length > 0
+        ? sidechainId.trim()
+        : undefined;
+}
 
 export type RawMessageNormalizationSequenceState = {
     suppressedEmptyCanonicalTurnDiffCallIds: Set<string>;
@@ -235,6 +253,7 @@ export function normalizeRawMessageInSequence(
         {
             seq: typeof input.seq === 'number' ? input.seq : undefined,
             messageRole: input.messageRole ?? undefined,
+            sidechainId: input.sidechainId ?? undefined,
         },
     );
     if (!normalized) {
@@ -260,14 +279,15 @@ export function normalizeRawMessages(items: ReadonlyArray<RawMessageNormalizatio
     return out;
 }
 
-export function normalizeRawMessage(
+function normalizeRawMessageFromRaw(
     id: string,
     localId: string | null,
     createdAt: number,
     rawInput: unknown,
-    opts?: Readonly<{ seq?: number; messageRole?: SessionMessageRole | null }>,
+    opts?: RawMessageNormalizationOptions,
 ): NormalizedMessage | null {
     const seq = typeof opts?.seq === 'number' && Number.isFinite(opts.seq) ? Math.trunc(opts.seq) : undefined;
+    const sidechainId = normalizeExplicitSidechainId(opts?.sidechainId);
 
     // Zod transform handles normalization during validation
     const parsed = rawRecordSchema.safeParse(rawInput);
@@ -315,7 +335,8 @@ export function normalizeRawMessage(
                 localId,
                 createdAt,
                 role: 'user',
-                isSidechain: false,
+                ...(sidechainId ? { sidechainId } : {}),
+                isSidechain: Boolean(sidechainId),
                 content: { type: 'text', text },
                 meta: markUnsupportedContentMeta((rawInput as any)?.meta as MessageMeta | undefined, 'unparsed-user-message'),
             }
@@ -415,7 +436,8 @@ export function normalizeRawMessage(
             createdAt,
             role: 'user',
             content: raw.content,
-            isSidechain: false,
+            ...(sidechainId ? { sidechainId } : {}),
+            isSidechain: Boolean(sidechainId),
             meta: raw.meta,
         };
     }
@@ -533,7 +555,7 @@ export function normalizeRawMessage(
             }
 
             // Progress records are transport-level status updates and are not rendered in transcript.
-            if (raw.content.data.type === 'progress') {
+            if (raw.content.data.type === 'progress' || raw.content.data.type === 'tool_progress') {
                 return null;
             }
 
@@ -733,6 +755,7 @@ export function normalizeRawMessage(
             };
         }
         if (raw.content.type === 'codex') {
+            const codexDataRecord = raw.content.data as unknown as Record<string, unknown>;
             const structuredSidechain = resolveStructuredContentSidechain(raw.content.data);
               if (raw.content.data.type === 'message') {
                   // Cast codex messages to agent text messages
@@ -815,7 +838,7 @@ export function normalizeRawMessage(
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
                         content: toolResultContentToText(raw.content.data.output),
-                        is_error: false,
+                        is_error: typeof codexDataRecord.isError === 'boolean' ? codexDataRecord.isError : false,
                         uuid: raw.content.data.id,
                         parentUUID: null
                     }],
@@ -1165,5 +1188,25 @@ export function normalizeRawMessage(
             parentUUID: null,
         }],
         meta: markUnsupportedContentMeta((raw as any)?.meta, 'unsupported-transcript-record'),
+    };
+}
+
+export function normalizeRawMessage(
+    id: string,
+    localId: string | null,
+    createdAt: number,
+    rawInput: unknown,
+    opts?: RawMessageNormalizationOptions,
+): NormalizedMessage | null {
+    const normalized = normalizeRawMessageFromRaw(id, localId, createdAt, rawInput, opts);
+    const explicitSidechainId = normalizeExplicitSidechainId(opts?.sidechainId);
+
+    // The public external item owns its validated sidechain identity. Provider raw data remains
+    // a legacy fallback only when that explicit carrier is absent.
+    if (!explicitSidechainId || !normalized) return normalized;
+    return {
+        ...normalized,
+        sidechainId: explicitSidechainId,
+        isSidechain: true,
     };
 }

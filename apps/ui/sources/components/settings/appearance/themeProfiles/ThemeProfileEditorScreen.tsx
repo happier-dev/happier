@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Appearance, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -31,6 +30,7 @@ import { ThemeColorTokenRow } from './ThemeColorTokenRow';
 import { ThemeProfilePresetDropdown } from './ThemeProfilePresetDropdown';
 import { ThemeProfilePreviewPane } from './ThemeProfilePreviewPane';
 import { buildThemeProfileTokenGroups, getThemeProfileRecentColors } from './themeProfileEditorModel';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     buildThemePresetSourceOptions,
     replaceThemeProfileDraftFromPresetSource,
@@ -171,13 +171,13 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             id: 'light',
             title: t('settingsAppearance.themeOptions.light'),
             subtitle: t('settingsAppearance.themeDescriptions.light'),
-            icon: <Ionicons name="sunny-outline" size={22} color={theme.colors.accent.blue} />,
+            icon: <Icon name="sun" size={20} color={theme.colors.accent.blue} />,
         },
         {
             id: 'dark',
             title: t('settingsAppearance.themeOptions.dark'),
             subtitle: t('settingsAppearance.themeDescriptions.dark'),
-            icon: <Ionicons name="moon-outline" size={22} color={theme.colors.accent.blue} />,
+            icon: <Icon name="moon" size={20} color={theme.colors.accent.blue} />,
         },
     ]), [theme.colors.accent.blue]);
     const groups = React.useMemo(() => buildThemeProfileTokenGroups(), []);
@@ -355,7 +355,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                         </View>
                     )}
                     mode="info"
-                    icon={<Ionicons name="color-palette-outline" size={28} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="palette" size={29} color={theme.colors.accent.indigo} />}
                     detail={readonly ? profileDisplayName : undefined}
                 />
                 {hasInvalidProfileName ? (
@@ -405,7 +405,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                         itemTrigger={{
                             title: t('settingsAppearance.themeProfiles.assetAppearance'),
                             subtitle: t('settingsAppearance.themeProfiles.assetAppearanceSubtitle'),
-                            icon: <Ionicons name="image-outline" size={28} color={theme.colors.accent.indigo} />,
+                            icon: <Icon name="image" size={29} color={theme.colors.accent.indigo} />,
                             showSelectedSubtitle: false,
                             itemProps: { testID: 'settings-theme-profile-asset-appearance' },
                         }}
@@ -417,7 +417,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                     testID={`settings-theme-profile-clone-${draft.id}`}
                     title={t('settingsAppearance.themeProfiles.cloneProfile')}
                     subtitle={profileDisplayName ?? draft.name}
-                    icon={<Ionicons name="copy-outline" size={28} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="copy" size={29} color={theme.colors.accent.blue} />}
                     onPress={cloneProfile}
                     disabled={themeProfiles.profiles.length >= THEME_PROFILE_MAX_PROFILES}
                 />
@@ -425,7 +425,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                     testID={`settings-theme-profile-export-${draft.id}`}
                     title={t('settingsAppearance.themeProfiles.exportProfile')}
                     subtitle={t('settingsAppearance.themeProfiles.exportProfileSubtitle')}
-                    icon={<Ionicons name="download-outline" size={28} color={theme.colors.accent.green} />}
+                    icon={<Icon name="download" size={29} color={theme.colors.accent.green} />}
                     onPress={exportProfile}
                 />
             </ItemGroup>
@@ -456,7 +456,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                     <Item
                         testID={`settings-theme-profile-reset-${mode}`}
                         title={t('settingsAppearance.themeProfiles.resetMode')}
-                        icon={<Ionicons name="refresh-outline" size={28} color={theme.colors.accent.orange} />}
+                        icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.orange} />}
                         onPress={resetMode}
                     />
                     {persisted && isThemeProfileActive(themeProfiles, draft.id) ? (
@@ -465,7 +465,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                                 testID="settings-theme-profile-deactivate"
                                 title={t('settingsAppearance.themeProfiles.deactivateProfile')}
                                 subtitle={t('settingsAppearance.themeProfiles.deactivateProfileSubtitle')}
-                                icon={<Ionicons name="contrast-outline" size={28} color={theme.colors.status.connecting} />}
+                                icon={<Icon name="circle-half" size={29} color={theme.colors.status.connecting} />}
                                 onPress={() => { void deactivate(); }}
                             />
                             <Item
@@ -473,7 +473,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                                 title={t('settingsAppearance.themeProfiles.deleteProfile')}
                                 subtitle={t('settingsAppearance.themeProfiles.deleteProfileSubtitle')}
                                 destructive
-                                icon={<Ionicons name="trash-outline" size={28} color={theme.colors.state.danger.foreground} />}
+                                icon={<Icon name="trash" size={29} color={theme.colors.state.danger.foreground} />}
                                 onPress={() => { void deleteProfile(); }}
                             />
                         </>

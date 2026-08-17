@@ -1,11 +1,11 @@
 import type * as React from 'react';
-import type { Ionicons } from '@expo/vector-icons';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 export type WizardChoice = Readonly<{
     id: 'cloud' | 'thisComputer' | 'remoteComputer' | 'customUrl';
     title: string;
     subtitle: string;
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    icon: IconName;
     badge?: string;
     disabled?: boolean;
 }>;

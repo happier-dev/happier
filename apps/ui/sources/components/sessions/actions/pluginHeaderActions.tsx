@@ -1,44 +1,92 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
-
-import {
-    PluginUiActionDescriptorV1Schema,
-    type PluginUiActionDescriptorV1,
-} from '@happier-dev/protocol/plugins/ui';
-import {
-    PluginJsonValueV2Schema,
-    type ActionExecutorContext,
-} from '@happier-dev/protocol';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
-import { evaluatePluginUiPolicy } from '@/sync/domains/plugins/ui/policy';
 import {
-    executePluginUiAction,
-    type ExecutePluginUiActionResult,
-    type PluginUiActionExecutorRunner,
-    type PluginUiActionHostHandlers,
-} from '@/components/plugins/surfaces/executePluginUiAction';
-import { resolvePluginUiIoniconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
+    evaluatePluginUiPolicy,
+    type PluginUiPolicyEvaluationContext,
+} from '@/sync/domains/plugins/ui/policy';
+import { comparePluginContributionOrder } from '@/sync/domains/plugins/contributionOrder';
+import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
+import {
+    dispatchPluginSurfaceAction,
+    type PluginSurfaceActionDispatchOutcome,
+    type PluginSurfaceContributedActionTransport,
+} from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import type {
+    PluginSurfaceOpenHandler,
+    PluginSurfaceOpenOutcome,
+} from '@/components/plugins/surfaces/openPluginSurface';
+import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import type {
     PluginUiProjectionModel,
     PluginUiSessionHeaderActionProjection,
-    PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
-import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
-import {
-    machinePluginStructuredMessageActionExecute,
-} from '@/sync/ops/machineContributionRegistryProjection';
+import { Icon } from '@/components/ui/icons/Icon';
 
+/**
+ * The session-header contribution family (EU-5c).
+ *
+ * A declaration supplies identity, label, applicability and a compiled semantic
+ * command — nothing else. Everything downstream of "which contribution did the
+ * user pick" belongs to owners this module only calls:
+ *
+ *  - command admission and local-id qualification: the Registry/CLI projection
+ *    owner, which publishes only its resolved command shape;
+ *  - applicability: `evaluatePluginUiPolicy` against the placement's own host
+ *    facts (platform/channel/features), never an empty context;
+ *  - ordering: `comparePluginContributionOrder`, shared with every other
+ *    projected contribution family;
+ *  - execution: `dispatchPluginSurfaceAction`, the canonical §3.5 dispatcher,
+ *    which owns identity qualification, the `executionSurface: 'ui'` stamp and
+ *    the typed failure vocabulary.
+ *  - navigation: the existing SessionView-supplied `PluginSurfaceOpenHandler`,
+ *    which owns surface currentness and exact target/container selection.
+ *
+ * This module routes that admitted command only. It does not recreate a local
+ * command parser, a destination resolver, or a header-local executor.
+ */
 export const PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX = 'plugin-ui:';
 
-export type PluginSessionHeaderActionTransport =
-    typeof machinePluginStructuredMessageActionExecute;
+/**
+ * The one normalized presentation record consumed by both responsive Session
+ * header placements. It carries the already-admitted command descriptor but
+ * deliberately not any execution or navigation authority: selection still
+ * re-resolves against the current projection in `dispatchPluginSessionHeaderAction`.
+ */
+export type PluginSessionHeaderActionPresentation = Readonly<{
+    action: PluginUiSessionHeaderActionProjection;
+    menuActionId: string;
+    title: string;
+    iconName: ReturnType<typeof resolvePluginUiIconName>;
+    enabled: boolean;
+}>;
 
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Readonly<Record<string, unknown>>
-        : null;
+const EMPTY_PLUGIN_SESSION_HEADER_ACTION_PRESENTATIONS: readonly PluginSessionHeaderActionPresentation[] = Object.freeze([]);
+
+/**
+ * Session header Actions are semantic commands, not a second scope resolver.
+ * The registered Session scope already owns whether its retained projection is
+ * current and exactly which machine/server/generation admitted it. Keep a
+ * retained descriptor displayable, but do not treat it as interaction
+ * authority after that owner revokes the scope.
+ */
+function resolveCurrentSessionHeaderActionScope(
+    projection: PluginUiProjectionModel,
+    scopedLaunchFacts: PluginSurfaceScopedLaunchFacts | null | undefined,
+): PluginSurfaceScopedLaunchFacts | null {
+    if (
+        !scopedLaunchFacts
+        || scopedLaunchFacts.interactionEnabled !== true
+        || !scopedLaunchFacts.machineId
+        || scopedLaunchFacts.machineId.trim().length === 0
+        || scopedLaunchFacts.generation === null
+        || !Number.isFinite(scopedLaunchFacts.generation)
+        || projection.generation !== scopedLaunchFacts.generation
+    ) {
+        return null;
+    }
+    return scopedLaunchFacts;
 }
 
 function readTitle(action: PluginUiSessionHeaderActionProjection): Readonly<{
@@ -54,137 +102,45 @@ function readTitle(action: PluginUiSessionHeaderActionProjection): Readonly<{
     };
 }
 
-/**
- * Adapt the already-resolved contribution reference into the existing UI
- * executeAction descriptor. The UI projection owner only publishes a header
- * entry when its reference resolves to a current, UI-surfaced action.
- */
-function parseHeaderActionDescriptor(
-    action: PluginUiSessionHeaderActionProjection,
-): PluginUiActionDescriptorV1 | null {
-    const title = readTitle(action);
-    const parsed = PluginUiActionDescriptorV1Schema.safeParse({
-        id: action.descriptorId,
-        kind: 'executeAction',
-        labelKey: title.key ?? action.descriptorId,
-        target: {
-            actionId: action.qualifiedActionId,
-        },
-    });
-    return parsed.success ? parsed.data : null;
-}
-
-function isSurfaceableHeaderAction(action: PluginUiSessionHeaderActionProjection): boolean {
-    return parseHeaderActionDescriptor(action) !== null;
-}
-
-/**
- * Adapts the current projected header-action catalog to the daemon's canonical
- * generation-leased action RPC. The projection is presentation state only:
- * currentness, policy, and handler execution remain daemon-owned.
- */
-export function createPluginSessionHeaderActionExecutor(params: Readonly<{
-    projection: PluginUiProjectionModel | null | undefined;
-    machineId: string | null | undefined;
-    serverId?: string | null;
-    execute?: PluginSessionHeaderActionTransport;
-}>): PluginUiActionExecutorRunner {
-    const generation = params.projection?.generation ?? null;
-    const machineId = params.machineId?.trim() ?? '';
-    const qualifiedActionIds = new Set(
-        Object.values(params.projection?.sessionHeaderActionsById ?? {})
-            .map((entry) => entry.qualifiedActionId),
-    );
-    const execute = params.execute ?? machinePluginStructuredMessageActionExecute;
-    return Object.freeze({
-        execute: async (actionId, input, context) => {
-            if (
-                generation === null
-                || machineId.length === 0
-                || !qualifiedActionIds.has(actionId)
-            ) {
-                return {
-                    ok: false,
-                    errorCode: 'plugin_ui_action_unavailable',
-                    error: 'plugin_ui_action_unavailable',
-                };
-            }
-            const parsedInput = PluginJsonValueV2Schema.safeParse(input);
-            if (!parsedInput.success) {
-                return {
-                    ok: false,
-                    errorCode: 'plugin_ui_action_invalid_input',
-                    error: 'plugin_ui_action_invalid_input',
-                };
-            }
-            try {
-                const result = await execute(machineId, {
-                    ...(params.serverId ? { serverId: params.serverId } : {}),
-                    expectedGeneration: String(generation),
-                    qualifiedActionId: actionId,
-                    input: parsedInput.data,
-                    ...(context?.defaultSessionId
-                        ? { sessionId: context.defaultSessionId }
-                        : {}),
-                    executionSurface: 'ui',
-                });
-                if (!result.supported) {
-                    return {
-                        ok: false,
-                        errorCode: 'plugin_ui_action_runtime_unavailable',
-                        error: 'plugin_ui_action_runtime_unavailable',
-                    };
-                }
-                return result.result.ok
-                    ? {
-                        ok: true,
-                        result: result.result.result,
-                    }
-                    : {
-                        ok: false,
-                        errorCode: result.result.code,
-                        error: result.result.code,
-                    };
-            } catch {
-                return {
-                    ok: false,
-                    errorCode: 'plugin_ui_action_runtime_unavailable',
-                    error: 'plugin_ui_action_runtime_unavailable',
-                };
-            }
-        },
-    });
-}
-
 export function createPluginSessionHeaderActionMenuId(action: PluginUiSessionHeaderActionProjection): string {
     return `${PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX}${action.id}`;
 }
 
-export function createPluginSessionHeaderActionDropdownItems(params: Readonly<{
+/**
+ * The projected header contributions this host placement may show, in catalog
+ * order. Both direct and overflow controls consume this same result; responsive
+ * placement is decided by the Session header owner, not this normalizer.
+ *
+ * `policyContext` is REQUIRED: applicability is evaluated against the exact host
+ * facts the placement owns. Passing an empty context (the previous behaviour)
+ * silently hid every contribution that declared `compatibility.platforms` and
+ * disabled every contribution whose `disabledWhen` referenced `host.platform`,
+ * because a missing fact fails closed.
+ */
+export function resolvePluginSessionHeaderActionPresentations(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
-    iconColor: string;
     locale?: string | null;
-}>): readonly DropdownMenuItem[] {
+    policyContext: PluginUiPolicyEvaluationContext;
+    scopedLaunchFacts: PluginSurfaceScopedLaunchFacts | null | undefined;
+}>): readonly PluginSessionHeaderActionPresentation[] {
     const projection = params.projection;
     if (!projection) {
-        return [];
+        return EMPTY_PLUGIN_SESSION_HEADER_ACTION_PRESENTATIONS;
     }
+    const scopedAuthority = resolveCurrentSessionHeaderActionScope(projection, params.scopedLaunchFacts);
 
-    return Object.values(projection.sessionHeaderActionsById)
+    const presentations = Object.values(projection.sessionHeaderActionsById)
         .map((action) => ({
             action,
-            policy: evaluatePluginUiPolicy(action, {}),
+            policy: evaluatePluginUiPolicy(action, params.policyContext),
         }))
-        .filter(({ action, policy }) => policy.visible && isSurfaceableHeaderAction(action))
-        .sort((left, right) => {
-            const leftOrder = typeof left.action.order === 'number' ? left.action.order : 0;
-            const rightOrder = typeof right.action.order === 'number' ? right.action.order : 0;
-            return leftOrder - rightOrder || left.action.id.localeCompare(right.action.id);
-        })
-        .map(({ action, policy }): DropdownMenuItem => {
+        .filter(({ policy }) => policy.visible)
+        .sort((left, right) => comparePluginContributionOrder(left.action, right.action))
+        .map(({ action, policy }): PluginSessionHeaderActionPresentation => {
             const title = readTitle(action);
-            return {
-                id: createPluginSessionHeaderActionMenuId(action),
+            return Object.freeze({
+                action,
+                menuActionId: createPluginSessionHeaderActionMenuId(action),
                 title: resolvePluginUiText({
                     projection,
                     pluginId: action.pluginId,
@@ -192,86 +148,116 @@ export function createPluginSessionHeaderActionDropdownItems(params: Readonly<{
                     locale: params.locale,
                     fallback: title.fallback,
                 }),
-                icon: <Ionicons name={resolvePluginUiIoniconName(null)} size={16} color={params.iconColor} />,
-                ...(policy.enabled ? {} : { disabled: true }),
-            };
+                iconName: resolvePluginUiIconName(action.icon),
+                enabled: policy.enabled && scopedAuthority !== null,
+            });
         });
-}
-
-function readRightSidebarTabSlug(placement: PluginUiSurfacePlacementProjection): string {
-    const rightSidebar = readRecord(placement.rightSidebar);
-    const tabId = rightSidebar?.tabId;
-    const slug = (typeof tabId === 'string' && tabId.trim().length > 0 ? tabId : placement.descriptorId).trim();
-    return slug.length > 0 ? slug : 'tab';
+    return presentations.length > 0 ? Object.freeze(presentations) : EMPTY_PLUGIN_SESSION_HEADER_ACTION_PRESENTATIONS;
 }
 
 /**
- * Resolve the session right-sidebar tab id that an `openSurface` header action
- * should activate. A header action's `surfaceId` references a session
- * right-sidebar placement by its descriptor id; this maps it to the
- * `plugin:<pluginId>:<tabSlug>` tab id the pane right-sidebar uses (matching
- * `resolveRightSidebarPluginTabs`). Returns `null` when no session right-sidebar
- * placement matches the surface id.
+ * Overflow is a thin host-control adapter over the shared normalized records.
+ * It does not decide visibility, order, availability, or responsive placement.
  */
-export function resolveSessionPluginSurfaceRightTabId(params: Readonly<{
+export function createPluginSessionHeaderActionDropdownItems(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
-    surfaceId: string;
-}>): string | null {
-    const projection = params.projection;
-    const surfaceId = params.surfaceId.trim();
-    if (!projection || surfaceId.length === 0) {
-        return null;
-    }
-    for (const placement of selectPluginRightSidebarTabPlacements(projection, 'session')) {
-        if (placement.descriptorId === surfaceId || placement.id === surfaceId) {
-            return `plugin:${placement.pluginId}:${readRightSidebarTabSlug(placement)}`;
-        }
-    }
-    return null;
+    iconColor: string;
+    locale?: string | null;
+    policyContext: PluginUiPolicyEvaluationContext;
+    scopedLaunchFacts: PluginSurfaceScopedLaunchFacts | null | undefined;
+}>): readonly DropdownMenuItem[] {
+    return resolvePluginSessionHeaderActionPresentations(params).map((presentation): DropdownMenuItem => ({
+        id: presentation.menuActionId,
+        title: presentation.title,
+        icon: <Icon name={presentation.iconName} size={16} color={params.iconColor} />,
+        ...(presentation.enabled ? {} : { disabled: true }),
+    }));
 }
 
 /**
- * Resolve the full canonical action descriptor a plugin session header-action
- * menu id refers to. Returns `null` for non-plugin menu ids or unresolved /
- * malformed descriptors (fail-closed).
+ * Resolve the projected header contribution a menu id refers to. Returns `null`
+ * for non-plugin menu ids and for ids no longer in the current projection
+ * (fail-closed).
  */
-export function resolvePluginSessionHeaderActionDescriptor(params: Readonly<{
+export function resolvePluginSessionHeaderAction(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
     menuActionId: string;
-}>): PluginUiActionDescriptorV1 | null {
+}>): PluginUiSessionHeaderActionProjection | null {
     if (!params.menuActionId.startsWith(PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX)) {
         return null;
     }
     const descriptorId = params.menuActionId.slice(PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX.length);
-    const action = params.projection?.sessionHeaderActionsById[descriptorId];
-    return action ? parseHeaderActionDescriptor(action) : null;
+    return params.projection?.sessionHeaderActionsById[descriptorId] ?? null;
 }
 
 /**
- * Dispatch a selected plugin session-header contribution through the existing
- * plugin-UI action executor. Session-header declarations reference an action
- * contribution; they do not author the broader six-kind UI action union.
+ * Dispatch a selected session-header contribution through its canonical owner:
+ * `executeAction` through the plugin-surface action dispatcher and `openSurface`
+ * through the existing SessionView surface handler.
+ *
+ * For `executeAction`, the target is passed STRUCTURED (`{ pluginId, localId }`),
+ * never as the qualified string: a bare string would be offered to the
+ * dispatcher's host ActionSpec branch first, so a plugin whose local action id
+ * happened to match a `surfaces.plugin` ActionSpec id could be routed to the
+ * wrong executor.
+ *
+ * Returns `null` when the menu id is not a current plugin header contribution,
+ * so the caller can fall through to its own menu handling.
  */
 export async function dispatchPluginSessionHeaderAction(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
     menuActionId: string;
-    data?: unknown;
-    executor?: PluginUiActionExecutorRunner;
-    context?: ActionExecutorContext;
-    host?: PluginUiActionHostHandlers;
-}>): Promise<ExecutePluginUiActionResult | null> {
-    const action = resolvePluginSessionHeaderActionDescriptor({
-        projection: params.projection,
+    /** Required for executeAction; openSurface remains delegated unchanged. */
+    scopedLaunchFacts?: PluginSurfaceScopedLaunchFacts | null;
+    /** Existing Session Account-lifetime predicate; never reconstructed by this adapter. */
+    scopeIsCurrent?: (() => boolean) | null;
+    sessionId?: string | null;
+    execute?: PluginSurfaceContributedActionTransport;
+    openSurface?: PluginSurfaceOpenHandler;
+}>): Promise<PluginSurfaceActionDispatchOutcome | PluginSurfaceOpenOutcome | null> {
+    const projection = params.projection;
+    const action = resolvePluginSessionHeaderAction({
+        projection,
         menuActionId: params.menuActionId,
     });
-    if (!action) {
+    if (!action || !projection) {
         return null;
     }
-    return executePluginUiAction({
-        action,
-        data: params.data,
-        executor: params.executor,
-        context: params.context,
-        host: params.host,
+
+    if (action.command.kind === 'openSurface') {
+        if (!params.openSurface) {
+            return { ok: false, code: 'unavailable', reason: 'plugin_ui_surface_open_unavailable' };
+        }
+        return await params.openSurface({
+            destination: action.command.destination,
+            ...(action.command.input === undefined ? {} : { input: action.command.input }),
+            ...(action.command.subPath === undefined ? {} : { subPath: action.command.subPath }),
+            ...(action.command.instanceKey === undefined ? {} : { instanceKey: action.command.instanceKey }),
+        });
+    }
+
+    const scopedAuthority = resolveCurrentSessionHeaderActionScope(
+        projection,
+        params.scopedLaunchFacts,
+    );
+    const scopedMachineId = scopedAuthority?.machineId;
+    const scopedGeneration = scopedAuthority?.generation;
+    if (!scopedAuthority || !scopedMachineId || typeof scopedGeneration !== 'number') {
+        return { ok: false, code: 'unavailable', reason: 'plugin_ui_action_unavailable' };
+    }
+    return await dispatchPluginSurfaceAction({
+        callerPluginId: action.pluginId,
+        action: action.command.action,
+        // `null` is the RPC owner's canonical no-input sentinel. The compiled
+        // command itself retains absence so `openSurface` can distinguish it.
+        input: action.command.input ?? null,
+        contributedAction: {
+            machineId: scopedMachineId,
+            serverId: scopedAuthority.serverId,
+            expectedGeneration: String(scopedGeneration),
+            ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+            ...(params.execute ? { execute: params.execute } : {}),
+        },
+        ...(params.scopeIsCurrent ? { isCurrent: params.scopeIsCurrent } : {}),
     });
 }

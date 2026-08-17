@@ -4,13 +4,22 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
-import type { ViewportClass } from '@/utils/platform/viewportClass';
+
+/**
+ * Narrowest an `ItemSection` cell may become before a column is given up.
+ *
+ * A section cell is a compact readout — a labelled meter, a small stat — not a
+ * title+subtitle list row, so it stays readable well below the 320px list-row
+ * floor. Below roughly this width the single-line label starts truncating.
+ */
+export const ITEM_SECTION_COLUMN_MIN_WIDTH_PX = 240;
 
 export interface ItemSectionProps {
     caption?: string;
     children: React.ReactNode;
     columns?: 1 | 2 | 3;
-    collapseBelow?: ViewportClass;
+    /** Override the cell floor when a section hosts unusually wide content. */
+    minColumnWidthPx?: number;
     tone?: 'tint' | 'plain';
     style?: StyleProp<ViewStyle>;
     testID?: string;
@@ -51,10 +60,16 @@ export const ItemSection = React.memo<ItemSectionProps>((props) => {
             {props.caption != null ? (
                 <Eyebrow style={styles.caption}>{props.caption}</Eyebrow>
             ) : null}
+            {/*
+              * No `activeColumns`: a section is a thin wrapper with nothing to
+              * decide before rendering, so it delegates the count to the grid,
+              * which measures the box the cells actually share. Resolving it
+              * here as well would be a second owner of the same number.
+              */}
             <ItemGroupColumns
                 style={styles.body}
                 columns={props.columns ?? 2}
-                collapseBelow={props.collapseBelow ?? 'medium'}
+                minColumnWidthPx={props.minColumnWidthPx ?? ITEM_SECTION_COLUMN_MIN_WIDTH_PX}
             >
                 {props.children}
             </ItemGroupColumns>

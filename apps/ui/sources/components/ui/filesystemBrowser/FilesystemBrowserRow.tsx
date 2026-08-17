@@ -1,11 +1,11 @@
 import * as React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import type { FilesystemBrowserNode, FilesystemBrowserWrapContentInput } from './filesystemBrowserTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type FilesystemBrowserRowProps = Readonly<{
     node: FilesystemBrowserNode;
@@ -41,7 +41,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
             <Item
                 title={props.errorTitle ?? t('common.error')}
                 subtitle={props.errorSubtitle}
-                icon={<Ionicons name="alert-circle-outline" size={18} color={theme.colors.text.secondary} />}
+                icon={<Icon name="warning-circle" size={16} color={theme.colors.text.secondary} />}
                 density={props.density}
                 showChevron={false}
                 onPress={() => {
@@ -62,7 +62,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                     testID={props.testID}
                     title={props.title}
                     subtitle={props.subtitle}
-                    icon={<Ionicons name="information-circle-outline" size={18} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="info" size={16} color={theme.colors.text.secondary} />}
                     density={props.density}
                     showChevron={false}
                     showDivider={showDivider}

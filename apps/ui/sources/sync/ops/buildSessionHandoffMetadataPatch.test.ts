@@ -1,10 +1,39 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexBackendMode } from '@happier-dev/protocol';
+
+const buildProviderPatchInputMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        getAgentBehavior: (agentId: Parameters<typeof actual.getAgentBehavior>[0]) => {
+            const behavior = actual.getAgentBehavior(agentId);
+            const buildProviderPatch = behavior.sessionHandoff?.buildProviderPatch;
+            return {
+                ...behavior,
+                sessionHandoff: {
+                    ...behavior.sessionHandoff,
+                    buildProviderPatch: buildProviderPatch
+                        ? (input: Parameters<typeof buildProviderPatch>[0]) => {
+                            buildProviderPatchInputMock(input);
+                            return buildProviderPatch(input);
+                        }
+                        : undefined,
+                },
+            };
+        },
+    };
+});
 
 import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataPatch';
 
 describe('buildSessionHandoffMetadataPatch', () => {
     const legacyCodexBackendMode = '  mcp_resume  ' as unknown as CodexBackendMode;
+
+    beforeEach(() => {
+        buildProviderPatchInputMock.mockReset();
+    });
 
     it('stores source/target workspace roots in handoffV1 for handoff-back planning', () => {
         const updated = buildSessionHandoffMetadataPatch({
@@ -30,6 +59,33 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated.handoffV1).toMatchObject({
             sourceWorkspaceRootPath: '/Users/leeroy/wsrepl-large',
             targetWorkspaceRootPath: '/home/guest/wsrepl-large-replication-9',
+        });
+    });
+
+    it('preserves a Windows source workspace root as opaque handoff-back state', () => {
+        const updated = buildSessionHandoffMetadataPatch({
+            metadata: {
+                flavor: 'claude',
+                path: 'C:\\Users\\alice\\projects\\demo',
+                host: 'windows-source',
+                machineId: 'machine_windows_source',
+                claudeSessionId: 'claude_old',
+            },
+            agentId: 'claude',
+            sourceMachineId: 'machine_windows_source',
+            targetMachineId: 'machine_linux_target',
+            sessionStorageBefore: 'persisted',
+            sessionStorageAfter: 'persisted',
+            targetPath: '/home/guest/projects/demo-replication-9',
+            transportStrategy: 'server_routed_stream',
+            completedAtMs: 123,
+            targetRemoteSessionId: 'claude_new',
+            targetDirectSource: { kind: 'claudeConfig', configDir: null, projectId: null },
+        });
+
+        expect(updated.handoffV1).toMatchObject({
+            sourceWorkspaceRootPath: 'C:\\Users\\alice\\projects\\demo',
+            targetWorkspaceRootPath: '/home/guest/projects/demo-replication-9',
         });
     });
 
@@ -220,6 +276,34 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 opencodeBackendMode: 'server',
                 opencodeServerBaseUrl: 'http://old.example',
                 opencodeServerBaseUrlExplicit: true,
+                externalSessionOperationV1: {
+                    v: 1,
+                    progress: { operationId: 'target-owner-operation-private' },
+                },
+                externalSessionOperationPresentationV1: {
+                    v: 1,
+                    operationId: 'target-shared-operation-private',
+                },
+                unrelatedOwnerOnlySentinel: 'target-must-not-reach-agent-code',
+            },
+            sourceMetadataForHandoff: {
+                flavor: 'opencode',
+                path: '/repo/source',
+                host: 'source-host',
+                machineId: 'machine_source',
+                opencodeSessionId: 'sess_old',
+                opencodeBackendMode: 'server',
+                opencodeServerBaseUrl: 'http://old.example',
+                opencodeServerBaseUrlExplicit: true,
+                externalSessionOperationV1: {
+                    v: 1,
+                    progress: { operationId: 'source-owner-operation-private' },
+                },
+                externalSessionOperationPresentationV1: {
+                    v: 1,
+                    operationId: 'source-shared-operation-private',
+                },
+                unrelatedOwnerOnlySentinel: 'source-must-not-reach-agent-code',
             },
             agentId: 'opencode',
             sourceMachineId: 'machine_source',
@@ -253,6 +337,26 @@ describe('buildSessionHandoffMetadataPatch', () => {
             },
         });
         expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
+        expect(updated.externalSessionOperationV1).toEqual({
+            v: 1,
+            progress: { operationId: 'target-owner-operation-private' },
+        });
+        expect(buildProviderPatchInputMock).toHaveBeenCalledWith(expect.objectContaining({
+            metadata: {
+                path: '/repo/target',
+                opencodeSessionId: 'sess_new',
+                opencodeBackendMode: 'server',
+                opencodeServerBaseUrl: 'http://old.example',
+                opencodeServerBaseUrlExplicit: true,
+            },
+            sourceMetadataForHandoff: {
+                path: '/repo/source',
+                opencodeSessionId: 'sess_old',
+                opencodeBackendMode: 'server',
+                opencodeServerBaseUrl: 'http://old.example',
+                opencodeServerBaseUrlExplicit: true,
+            },
+        }));
     });
 
     it('preserves the imported OpenCode runtime descriptor when provided', () => {

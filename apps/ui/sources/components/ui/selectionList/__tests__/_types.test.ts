@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     SELECTION_LIST_STATUS_VARIANTS,
     type SelectionListAccessory,
+    type SelectionListColumnsLayout,
     type SelectionListDynamicSection,
     type SelectionListInputBehavior,
     type SelectionListKeyboardHint,
@@ -124,6 +125,21 @@ describe('selectionList/_types', () => {
         expect(full.getFilterQueryFromInput?.('abc')).toBe('abc');
         expect(full.onBackspaceAtEnd?.('x')).toBe('');
         expect(full.onBackspaceAtEnd?.('')).toBeNull();
+    });
+
+    it('accepts a columns layout on SelectionListProps with only `max` required (Lane G)', () => {
+        const minimal: SelectionListColumnsLayout = { max: 2 };
+        expect(minimal.minColumnWidthPx).toBeUndefined();
+        expect(minimal.columnGapPx).toBeUndefined();
+        const props: SelectionListProps = {
+            rootStep: { id: 'r', sections: [] },
+            onSelect: () => {},
+            onRequestClose: () => {},
+            columns: { max: 3, minColumnWidthPx: 250, columnGapPx: 8 },
+        };
+        expect(props.columns?.max).toBe(3);
+        expect(props.columns?.minColumnWidthPx).toBe(250);
+        expect(props.columns?.columnGapPx).toBe(8);
     });
 
     it('accepts inputMode, inputBehavior, inputPrefix, inputSuffix on SelectionListProps (Phase 2.1)', () => {

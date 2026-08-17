@@ -1,9 +1,11 @@
+import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { digest } from '@/platform/digest';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import {
+    callDaemonWorkspaceStatFileRpc,
     callDaemonWorkspaceWriteFileRpc,
     downloadDaemonWorkspaceFileToBase64,
     uploadDaemonWorkspaceFileFromReader,
@@ -17,10 +19,8 @@ import type { WorkspaceFileUploadFinalizeResponse } from '@/sync/domains/transfe
 
 const WORKSPACE_FILE_INLINE_MAX_BYTES_ENV_KEY = 'EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES';
 const DEFAULT_WORKSPACE_FILE_INLINE_MAX_BYTES = 256 * 1024;
-// Inline base64 file read/write is intentionally small-only to avoid OOM and to keep the
-// canonical transfer runtime (`transferRuntime/**` for large payloads).
-const WORKSPACE_FILE_INLINE_HARD_MAX_BYTES = 10_000_000;
-const WORKSPACE_READ_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file read size limit';
+// Unqualified inline reads keep a small default; callers with an explicit bounded
+// ceiling retain it up to the canonical public hard limit.
 export const WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file write size limit';
 
 function resolveWorkspaceFileInlineMaxBytes(): number {
@@ -34,7 +34,7 @@ function resolveWorkspaceFileInlineMaxBytes(): number {
         return DEFAULT_WORKSPACE_FILE_INLINE_MAX_BYTES;
     }
 
-    return Math.min(parsed, WORKSPACE_FILE_INLINE_HARD_MAX_BYTES);
+    return Math.min(parsed, HARD_OPENABLE_CONTENT_MAX_BYTES_V1);
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -47,29 +47,60 @@ export type WorkspaceReadFileResponse =
   | Readonly<{ success: true; content: string }>
   | Readonly<{ success: false; error: string }>;
 
+/**
+ * The workspace file-details owner exposes this narrow stat alongside its
+ * bounded read. Callers retain the private workspace target and path; public
+ * plugin surfaces receive only owner-derived metadata through their opaque
+ * openable-content binding.
+ */
+export type WorkspaceStatFileResponse =
+  | Readonly<{
+      success: true;
+      exists: boolean;
+      kind?: 'file' | 'directory' | 'other';
+      sizeBytes?: number;
+      modifiedMs?: number;
+    }>
+  | Readonly<{ success: false; error: string; errorCode?: string }>;
+
+export async function workspaceStatFile(
+    target: WorkspaceFileSystemTarget,
+    path: string,
+    options?: Readonly<{ signal?: AbortSignal | null }>,
+): Promise<WorkspaceStatFileResponse> {
+    return await callDaemonWorkspaceStatFileRpc({
+        machineId: target.machineId,
+        serverId: target.serverId,
+        rootPath: target.rootPath,
+        agentRootPath: target.agentRootPath,
+        request: { path },
+        ...(options?.signal ? { signal: options.signal } : {}),
+    });
+}
+
 export async function workspaceReadFile(
     target: WorkspaceFileSystemTarget,
     path: string,
-    options?: Readonly<{ maxBytes?: number | null }>,
+    options?: Readonly<{ maxBytes?: number | null; signal?: AbortSignal | null }>,
 ): Promise<WorkspaceReadFileResponse> {
     const inlineMaxBytes = resolveWorkspaceFileInlineMaxBytes();
-    const requestedMaxBytes =
+    const maxBytes =
         typeof options?.maxBytes === 'number' && Number.isFinite(options.maxBytes)
-            ? Math.max(0, Math.floor(options.maxBytes))
+            ? Math.min(Math.max(0, Math.floor(options.maxBytes)), HARD_OPENABLE_CONTENT_MAX_BYTES_V1)
             : inlineMaxBytes;
     const download = await downloadDaemonWorkspaceFileToBase64({
         machineId: target.machineId,
         serverId: target.serverId,
         rootPath: target.rootPath,
+        agentRootPath: target.agentRootPath,
         path,
-        maxBytes: Math.min(requestedMaxBytes, inlineMaxBytes),
+        maxBytes,
+        ...(options?.signal ? { signal: options.signal } : {}),
     });
     if (!download.ok) {
         return {
             success: false,
-            error: download.error === WORKSPACE_READ_FILE_TOO_LARGE_ERROR
-                ? WORKSPACE_READ_FILE_TOO_LARGE_ERROR
-                : download.error,
+            error: download.error,
         };
     }
 
@@ -125,6 +156,7 @@ export async function workspaceWriteFile(
             machineId: target.machineId,
             serverId: target.serverId,
             rootPath: target.rootPath,
+            agentRootPath: target.agentRootPath,
             request,
         });
         if (response.success !== true) {
@@ -143,6 +175,7 @@ export async function workspaceWriteFile(
             machineId: target.machineId,
             serverId: target.serverId,
             rootPath: target.rootPath,
+            agentRootPath: target.agentRootPath,
             fileReader: {
                 sizeBytes: contentBytes.byteLength,
                 readBytes: async (offset, length) => contentBytes.slice(offset, offset + length),

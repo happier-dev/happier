@@ -121,6 +121,12 @@ export type TranscriptPhysicalWriteCensus =
     }>;
 
 export type TranscriptHeldIntentDiagnosticEntry = Readonly<{
+    /**
+     * The hold's own reason (`entry-restore`, `restore-anchor`, a jump landing). It names
+     * which placement armed the transaction, which is what a `residual-write` has to be
+     * attributed to.
+     */
+    anchorReason?: string | null;
     atMs: number;
     basis?: 'legend-state' | 'native-physical' | 'web-dom';
     currentOffset?: number;
@@ -142,7 +148,44 @@ export type TranscriptHeldIntentDiagnosticEntry = Readonly<{
 }>;
 
 const RING_LIMIT = 64;
+
+/**
+ * The held-intent ring is deeper than the others AND evicts by class, because its two event
+ * populations differ by two orders of magnitude in rate and by everything in value.
+ *
+ * `landing-read` is emitted on EVERY settle frame — at 60Hz, once per animation frame — while
+ * `residual-write` fires only when a correction is actually spent (fastest measured burst: 11
+ * writes in 3.4s, UNIT M 2026-08-01). Under one flat 64-entry ring the reads buried the write
+ * inside ~1s: a live census over 79 trials retained 2 140 `landing-read` (plus as many
+ * adoption-probe reads, since retired with the stabilization corrector) and ZERO
+ * `residual-write`, while the DOM instrument was recording those same writes (B2 §4.1,
+ * 2026-08-06). The probe existed to attribute a write and could no longer hold one, which is
+ * the same failure mode as an unarmed observer: an instrument that cannot see reports exactly
+ * like a corridor that was quiet.
+ *
+ * So eviction is ordered by class, not by age alone: the oldest READ goes first, and a record
+ * (write or lifecycle transition) is only dropped once the ring holds nothing else. One ordered
+ * array is kept rather than parallel channels so a write stays interleaved with the reads that
+ * explain it and no consumer has to merge two rings by timestamp.
+ *
+ * RETENTION at 512. Reads: bounded at 512 entries minus the resident records, so ~4.3s of
+ * corrector activity at the 60Hz ceiling and longer whenever the settle cadence is not
+ * saturated. Records: a write is now unevictable by any volume of reads, and 512 records is the
+ * only bound — 160s at the fastest measured write rate if writes were the only record, less in
+ * proportion to whatever `settle-request` traffic shares the budget (its live rate is not
+ * measured; the census that would have shown it is the one this fix restores).
+ */
+const HELD_INTENT_RING_LIMIT = 512;
 const LARGE_WRITE_DELTA_WARN_PX = 24;
+
+/**
+ * Per-settle-frame reads. Everything else is a state TRANSITION of the held intent (a write, an
+ * arm/release, a materialization boundary, a settle request) and is retained ahead of these.
+ */
+const HELD_INTENT_READ_EVENTS: ReadonlySet<TranscriptHeldIntentDiagnosticEntry['event']> = new Set([
+    'landing-missing',
+    'landing-read',
+]);
 
 type DiagnosticsSink = {
     heldIntents: TranscriptHeldIntentDiagnosticEntry[];
@@ -304,6 +347,24 @@ function pushBounded<T>(list: T[], entry: T): void {
     if (list.length > RING_LIMIT) list.splice(0, list.length - RING_LIMIT);
 }
 
+/**
+ * Bounded push for the held-intent ring: over capacity, drop the oldest per-frame READ so a
+ * corrector read can never evict the write it exists to explain (see
+ * {@link HELD_INTENT_RING_LIMIT}). Only when no read remains does the oldest record go.
+ *
+ * On a busy transcript reads dominate, so the scan below almost always terminates at index 0.
+ */
+function pushBoundedHeldIntent(
+    list: TranscriptHeldIntentDiagnosticEntry[],
+    entry: TranscriptHeldIntentDiagnosticEntry,
+): void {
+    list.push(entry);
+    while (list.length > HELD_INTENT_RING_LIMIT) {
+        const oldestRead = list.findIndex((candidate) => HELD_INTENT_READ_EVENTS.has(candidate.event));
+        list.splice(oldestRead >= 0 ? oldestRead : 0, 1);
+    }
+}
+
 export function recordTranscriptHeldIntentLifecycle(
     params: Omit<TranscriptHeldIntentDiagnosticEntry, 'atMs'>,
 ): void {
@@ -312,6 +373,7 @@ export function recordTranscriptHeldIntentLifecycle(
     const previous = entries.at(-1);
     if (
         previous != null
+        && previous.anchorReason === params.anchorReason
         && previous.basis === params.basis
         && previous.currentOffset === params.currentOffset
         && previous.estimateBasis === params.estimateBasis
@@ -323,7 +385,7 @@ export function recordTranscriptHeldIntentLifecycle(
     ) {
         return;
     }
-    pushBounded(entries, {
+    pushBoundedHeldIntent(entries, {
         ...params,
         atMs: Date.now(),
     });

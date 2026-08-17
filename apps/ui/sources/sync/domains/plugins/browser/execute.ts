@@ -1,10 +1,13 @@
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy/evaluate';
+import { comparePluginContributionOrder } from '@/sync/domains/plugins/contributionOrder';
 import {
-    machinePluginStructuredMessageActionExecute,
-    type MachinePluginStructuredMessageActionResult,
-} from '@/sync/ops/machineContributionRegistryProjection';
+    dispatchPluginSurfaceAction,
+    type PluginSurfaceActionDispatchOutcome,
+    type PluginSurfaceContributedActionTransport,
+} from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 
 import {
     canUsePluginBrowserProjectionEntry,
@@ -12,12 +15,7 @@ import {
 } from './policy';
 import type { PluginBrowserActionProjection, PluginBrowserProjectionModel } from './targets';
 
-export type PluginBrowserActionTransport = typeof machinePluginStructuredMessageActionExecute;
-
-export type ExecutePluginBrowserActionResult = Readonly<
-    | { ok: true; result: unknown }
-    | { ok: false; code: 'action_unavailable' | 'invalid_input' | 'runtime_unavailable' | 'execution_failed' }
->;
+export type PluginBrowserActionTransport = PluginSurfaceContributedActionTransport;
 
 export type PluginBrowserActionPlacement = PluginBrowserActionProjection['placement'];
 
@@ -36,7 +34,7 @@ export function selectPluginBrowserActionsForPlacement(params: Readonly<{
             && action.targetId === params.targetId
             && resolvePluginBrowserPolicyDecision(action, params.policyContext).visible
         ))
-        .sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || left.id.localeCompare(right.id));
+        .sort(comparePluginContributionOrder);
 }
 
 export function selectPluginBrowserToolbarActions(
@@ -50,21 +48,16 @@ function normalizeMachineId(value: string | null | undefined): string | null {
     return normalized && normalized.length > 0 ? normalized : null;
 }
 
-function resultFromTransport(
-    result: MachinePluginStructuredMessageActionResult,
-): ExecutePluginBrowserActionResult {
-    if (!result.supported) {
-        return { ok: false, code: 'runtime_unavailable' };
-    }
-    return result.result.ok
-        ? { ok: true, result: result.result.result }
-        : { ok: false, code: 'execution_failed' };
-}
-
 /**
- * Presentation-only browser adapter for the F03 action front door. Browser code never resolves,
- * activates, or invokes a plugin handler itself: it forwards the projection's qualified action id
- * and generation to the daemon, where `executePluginActionIfAvailable` remains the sole executor.
+ * Presentation-only browser adapter for the contributed-action front door
+ * (EU-5c). Browser code never resolves, activates or invokes a plugin handler:
+ * it decides only whether this browser placement may show the contribution, then
+ * hands the resolved identity to `dispatchPluginSurfaceAction`.
+ *
+ * The daemon request, the `executionSurface: 'ui'` stamp and the typed failure
+ * vocabulary previously lived here as a fourth private copy. They are the
+ * canonical dispatcher's, so a browser action and a mounted plugin surface can
+ * no longer disagree about what a contributed action invocation is.
  */
 export async function executePluginBrowserAction(params: Readonly<{
     action: PluginBrowserActionProjection | null | undefined;
@@ -75,7 +68,7 @@ export async function executePluginBrowserAction(params: Readonly<{
     input: unknown;
     policyContext?: PluginUiPolicyEvaluationContext;
     execute?: PluginBrowserActionTransport;
-}>): Promise<ExecutePluginBrowserActionResult> {
+}>): Promise<PluginSurfaceActionDispatchOutcome> {
     const machineId = normalizeMachineId(params.machineId);
     if (
         !params.action
@@ -83,20 +76,23 @@ export async function executePluginBrowserAction(params: Readonly<{
         || !machineId
         || !canUsePluginBrowserProjectionEntry(params.action, params.policyContext)
     ) {
-        return { ok: false, code: 'action_unavailable' };
+        return { ok: false, code: 'unavailable', reason: 'plugin_browser_action_unavailable' };
     }
     const input = PluginJsonValueV2Schema.safeParse(params.input);
     if (!input.success) {
-        return { ok: false, code: 'invalid_input' };
+        return { ok: false, code: 'invalid_payload', reason: 'plugin_browser_action_input_invalid' };
     }
 
-    const result = await (params.execute ?? machinePluginStructuredMessageActionExecute)(machineId, {
-        serverId: params.serverId,
-        expectedGeneration: String(params.generation),
-        qualifiedActionId: params.action.qualifiedActionId,
-        input: input.data,
-        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-        executionSurface: 'ui',
+    return await dispatchPluginSurfaceAction({
+        callerPluginId: params.action.pluginId,
+        action: params.action.actionIdentity,
+        input: input.data as PluginUiJsonValueV1,
+        contributedAction: {
+            machineId,
+            serverId: params.serverId ?? null,
+            expectedGeneration: String(params.generation),
+            ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+            ...(params.execute ? { execute: params.execute } : {}),
+        },
     });
-    return resultFromTransport(result);
 }

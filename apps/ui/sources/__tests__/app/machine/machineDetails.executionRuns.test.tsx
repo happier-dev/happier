@@ -223,7 +223,7 @@ describe('MachineDetailScreen (execution runs section)', () => {
             callId: 'call-1',
             sidechainId: 'side-1',
             intent: 'review',
-            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             runClass: 'bounded',
             ioMode: 'request_response',
             retentionPolicy: 'ephemeral',
@@ -379,6 +379,28 @@ describe('MachineDetailScreen (execution runs section)', () => {
         await screen.pressByTestIdAsync('execution-run-row:run-1');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/sess-1/runs/run-1');
+    });
+
+    it('keeps detached daemon runs unlinked and without Session stop controls', async () => {
+        machineExecutionRunsListSpy.mockResolvedValueOnce({
+            ok: true,
+            runs: [createExecutionRun({ runId: 'run-detached', happySessionId: null })],
+        });
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+        await flushHookEffects();
+
+        const row = screen.findByTestId('execution-run-row:run-detached');
+        expect(row).toBeTruthy();
+        if (!row) {
+            throw new Error('Expected the detached execution run row to render.');
+        }
+        expect(screen.findByTestId('item:runs.sessionTitle')).toBeNull();
+        expect(row.props.onPress).toBeUndefined();
+        expect(screen.findByTestId('execution-run-stop:run-detached')).toBeNull();
+        expect(stopRunSpy).not.toHaveBeenCalled();
+        expect(stopSessionSpy).not.toHaveBeenCalled();
     });
 
     it('can stop a run and falls back to stopping the whole session process when session RPC stop is unavailable', async () => {

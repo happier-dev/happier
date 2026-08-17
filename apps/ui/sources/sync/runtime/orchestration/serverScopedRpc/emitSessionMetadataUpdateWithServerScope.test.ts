@@ -51,17 +51,19 @@ const sharedEditorPatch: SessionMetadataTuplePatchV1 = {
 
 const ownerMetadataCiphertext =
     'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
+const ownerMetadataEnvelope = {
+    t: 'encrypted' as const,
+    c: ownerMetadataCiphertext,
+};
 const ownerPatch: SessionMetadataTuplePatchV1 = {
     mode: 'owner',
     metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
-    expectedOwnerMetadataCiphertext: ownerMetadataCiphertext,
+    expectedOwnerMetadata: ownerMetadataEnvelope,
     sharedMetadata: {
         ciphertext: 'shared-ciphertext',
         expectedVersion: 3,
     },
-    ownerMetadata: {
-        ciphertext: ownerMetadataCiphertext,
-    },
+    ownerMetadata: ownerMetadataEnvelope,
     agentState: {
         ciphertext: null,
         expectedVersion: 5,
@@ -87,7 +89,7 @@ const migrationPatch: SessionMetadataTuplePatchV1 = {
     target: {
         metadataLayoutVersion: 1,
         sharedMetadata: { ciphertext: 'shared-target' },
-        ownerMetadata: { ciphertext: ownerMetadataCiphertext },
+        ownerMetadata: ownerMetadataEnvelope,
         agentState: { ciphertext: null },
     },
 };
@@ -591,34 +593,17 @@ describe('emitSessionMetadataUpdateWithServerScope', () => {
             '/v2/sessions/session-1',
             expect.objectContaining({
                 method: 'PATCH',
-                body: JSON.stringify(migrationPatch),
+                body: expect.any(String),
             }),
         );
+        expect(JSON.parse(
+            resolvedRequestSpy.mock.calls[0]?.[1]?.body as string,
+        )).toEqual(migrationPatch);
         expect(emitWithAckSpy).not.toHaveBeenCalled();
         expect(createSocketSpy).not.toHaveBeenCalled();
     });
 
     it.each([
-        {
-            name: 'positive success',
-            status: 200,
-            body: {
-                success: true,
-                metadataLayoutVersion: 1,
-                sharedMetadata: { version: 4 },
-                agentState: { version: 6 },
-            },
-        },
-        {
-            name: 'migration conflict',
-            status: 409,
-            body: {
-                code: 'session_metadata_version_conflict',
-                metadataLayoutVersion: 1,
-                sharedMetadata: { version: 4 },
-                agentState: { version: 6 },
-            },
-        },
         {
             name: 'privacy refusal with a private extra',
             status: 409,
@@ -657,5 +642,57 @@ describe('emitSessionMetadataUpdateWithServerScope', () => {
             result: 'error',
             message: 'Invalid Session metadata tuple response',
         });
+    });
+
+    it.each([
+        {
+            status: 200,
+            body: {
+                success: true,
+                metadataLayoutVersion: 1,
+                sharedMetadata: { version: 4 },
+                agentState: { version: 6 },
+            },
+            expected: {
+                result: 'success',
+                metadataLayoutVersion: 1,
+                version: 4,
+                agentStateVersion: 6,
+            },
+        },
+        {
+            status: 409,
+            body: {
+                code: 'session_metadata_version_conflict',
+                metadataLayoutVersion: 1,
+                sharedMetadata: { version: 4 },
+                agentState: { version: 6 },
+            },
+            expected: {
+                result: 'version-mismatch',
+                metadataLayoutVersion: 1,
+                version: 4,
+                agentStateVersion: 6,
+            },
+        },
+    ])('accepts strict owner-migration response status $status', async ({
+        status,
+        body,
+        expected,
+    }) => {
+        resolveContextSpy.mockResolvedValue({
+            scope: 'active',
+            timeoutMs: 4000,
+        });
+        createResolvedRequestSpy.mockReturnValue(resolvedRequestSpy);
+        resolvedRequestSpy.mockResolvedValue(jsonResponse(body, status));
+        const { emitSessionMetadataUpdateWithServerScope } =
+            await import('./emitSessionMetadataUpdateWithServerScope');
+
+        await expect(emitSessionMetadataUpdateWithServerScope({
+            sessionId: 'session-1',
+            patch: migrationPatch,
+            timeoutMs: 4000,
+        })).resolves.toEqual(expected);
     });
 });

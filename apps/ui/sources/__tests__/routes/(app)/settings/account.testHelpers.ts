@@ -38,6 +38,13 @@ export function createAccountFeaturesResponse(
         },
         capabilities: {
             ...base.capabilities,
+            accountStoredContentCompatibility: {
+                v: 1,
+                minimumProtocolVersion: 2,
+                currentProtocolVersion: 3,
+                declarationTransport:
+                    'http-header-and-socket-auth-v1',
+            },
             encryption: {
                 ...base.capabilities.encryption,
                 storagePolicy: (overrides.encryptionPlaintextStorageEnabled ?? (overrides.encryptionAccountOptOutEnabled ?? false))

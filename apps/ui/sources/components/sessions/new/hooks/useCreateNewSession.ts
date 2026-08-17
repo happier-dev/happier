@@ -3,13 +3,12 @@ import * as React from 'react';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
+import { readLegacyScheduleAutomationDefinition } from '@/sync/domains/automations/automationLegacyScheduleDefinition';
+import {
+    isAutomationTemplateEncryptionMaterialUnavailableError,
+} from '@/sync/domains/automations/automationTemplateAvailability';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { storage } from '@/sync/domains/state/storage';
-import {
-    completeMachineSpawnAttemptCustody,
-    machineBash,
-    machineSpawnNewSession,
-} from '@/sync/ops';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR } from '@/sync/runtime/sessionMessageDeliveryErrors';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -34,16 +33,17 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvP
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
-    SPAWN_SESSION_ERROR_DETAIL_KINDS,
-    SPAWN_SESSION_ERROR_CODES,
+    ConnectedServiceBindingsV1Schema,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
+    type ExecutionRunDetachedStartRequestV1,
     type ProviderErrorV1,
+    type SessionServerStartSpawnDraftV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import type { CodexBackendMode } from '@happier-dev/protocol';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
 import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
@@ -60,24 +60,18 @@ import {
 import {
     classifyLaunchRetryFailure,
     promptDaemonUnavailableRetry,
-    showDaemonUnavailableAlert,
 } from '@/utils/errors/daemonUnavailableAlert';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-import { materializeNewSessionCheckout } from '@/components/sessions/new/modules/materializeNewSessionCheckout';
-import { rollbackNewSessionArtifacts } from '@/components/sessions/new/modules/rollbackNewSessionArtifacts';
-import { resolveConnectedServiceSwitchUnavailablePresentation } from '@/components/sessions/new/modules/connectedServiceSwitchUnavailable';
 import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
 import {
     buildNewSessionLaunchScopeKey,
     normalizeLaunchScopePart,
 } from '@/components/sessions/new/modules/newSessionLaunchScope';
-import {
-    followUpSpawnedSessionWithServerScope,
-} from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import {
     isCreatedSessionUnavailableLocally,
     requireLocalSessionVisibleForRoute,
@@ -86,26 +80,45 @@ import {
     buildOutgoingUserTextRecord,
     projectLocalOutboundUserMessage,
 } from '@/sync/domains/messages/outgoingUserMessage';
-import { resolveSpawnedFirstPromptFollowUp } from '@/sync/domains/session/spawn/spawnedFirstPromptFollowUp';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import {
     buildAutomationTemplateFromSessionAuthoringDraft,
     buildNewSessionAuthoringDraftFromResolvedInputs,
-    buildSpawnSessionOptionsFromAuthoringDraft,
+    buildSessionServerStartSpawnDraftV1FromAuthoringDraft,
+    buildSessionSpawnNewInputV2FromAuthoringDraft,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import {
-    adoptNewSessionLaunchAttemptCustody,
+    buildPluginEventAutomationDetachedExecutionRunRequest,
+    type PluginEventAutomationCreateDraft,
+    type PluginEventAutomationEditTarget,
+} from '@/components/automations/editor/pluginEventAutomationDraft';
+import {
+    submitPluginEventAutomation,
+} from '@/components/automations/editor/pluginEventAutomationSubmit';
+import type {
+    PluginEventAutomationResolvedTarget,
+    PluginEventAutomationTargetKind,
+} from '@/components/automations/editor/pluginEventAutomationTarget';
+import { isAutomationApiErrorCode } from '@/sync/api/automations/apiAutomations';
+import {
     createNewSessionLaunchAttempt,
     isNewSessionLaunchAttemptInScope,
     markNewSessionLaunchAttemptComplete,
     markNewSessionLaunchAttemptCreated,
     markNewSessionLaunchAttemptFailed,
-    markNewSessionLaunchAttemptSendingFirstTurn,
     markNewSessionLaunchAttemptSpawning,
     shouldSpawnForNewSessionLaunchAttempt,
     type NewSessionLaunchAttempt,
 } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
+import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
+import {
+    executeSessionSpawnNewAction,
+    resolveSessionSpawnNewActionFailureMessageKey,
+    resolveSessionSpawnNewResultFailureMessageKey,
+} from '@/sync/ops/actions/sessionSpawnNewAction';
 
 function getActiveNewSessionDraftScope() {
     return storage.getState().profileScope ?? null;
@@ -141,20 +154,6 @@ function preserveCreatedSessionDraft(params: Readonly<{
     }
 }
 
-function readRecoverableCreatedSessionDraftText(error: unknown): string | null {
-    if (!(error instanceof Error)) {
-        return null;
-    }
-    const payload = (error as Error & {
-        recoverableFollowUpPayload?: {
-            draftText?: unknown;
-        };
-    }).recoverableFollowUpPayload;
-    return typeof payload?.draftText === 'string' && payload.draftText.trim()
-        ? payload.draftText
-        : null;
-}
-
 type MutableSettingsDelta = {
     -readonly [TKey in keyof Settings]?: Settings[TKey];
 };
@@ -165,10 +164,31 @@ export type CreatedSessionFollowUpContext = Readonly<{
     launchAttempt: NewSessionLaunchAttempt;
 }>;
 
+export type NewSessionAfterCreatedSettlement =
+    | Readonly<{ status: 'accepted'; sessionId: string }>
+    | Readonly<{ status: 'rejected' }>;
+
 export type HandleCreateSessionOptions = Readonly<{
     initialMessage?: 'send' | 'skip';
     inputTextOverride?: string;
     afterCreated?: (context: CreatedSessionFollowUpContext) => void | Promise<void>;
+    /**
+     * Optional projection of this call's incumbent post-create follow-up terminal result.
+     * It never changes create, retry, navigation, or persistence behavior.
+     */
+    onAfterCreatedSettled?: (settlement: NewSessionAfterCreatedSettlement) => void;
+    /**
+     * A semantic document coordinator will exact-snapshot clear after accepted
+     * create. The incumbent whole-draft clear must stay inactive so a newer
+     * document revision remains persistable.
+     */
+    deferAcceptedDraftClearToDocument?: boolean;
+    /**
+     * This detached semantic submission includes generic Composer attachments.
+     * Automation authoring has no attachment owner, so its writer branches
+     * reject this attempt before they can clear the New Session document.
+     */
+    hasComposerAttachments?: boolean;
     /**
      * D2: relaunch under the newly-selected connected-service account WITHOUT resume continuity, after
      * the "switch unavailable" dialog offered "start fresh". Drops the vendor resume reference so the
@@ -277,13 +297,24 @@ export function useCreateNewSession(params: Readonly<{
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
 
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     setSessionPrompt?: (prompt: string) => void;
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
     authoringDraft?: SessionAuthoringDraft | null;
     authoringCommitPending?: boolean;
     automationEditId?: string | null;
+    eventAutomationDraft?: PluginEventAutomationCreateDraft | null;
+    eventAutomationEdit?: PluginEventAutomationEditTarget | null;
+    eventAutomationTargetKind?: PluginEventAutomationTargetKind | null;
+    resolveEventAutomationTarget?: (input: Readonly<{
+        newSessionSpawn?: SessionServerStartSpawnDraftV1 | null;
+        executionRun?: Readonly<{
+            machineId: string | null;
+            request: ExecutionRunDetachedStartRequestV1 | null;
+        }> | null;
+    }>) => PluginEventAutomationResolvedTarget | null;
+    eventAutomationExecutionPermissionMode?: 'no_tools' | 'read_only';
     mcpSelection?: SessionMcpSelectionV1 | null;
     windowsRemoteSessionLaunchModeOverride?: WindowsRemoteSessionLaunchMode | null;
 
@@ -296,12 +327,23 @@ export function useCreateNewSession(params: Readonly<{
     selectedMachineCapabilities: any;
     targetServerId?: string | null;
     allowedTargetServerIds?: ReadonlyArray<string>;
+    daemonMergedProjectionInputs?: Pick<
+        DaemonMergedProjectionInputs,
+        'mergedBackendProjectionById' | 'mergedProviderProjectionById'
+    > | null;
     draftScope?: ServerAccountScope | null;
     disableDraftPersistence?: () => void;
     onLaunchAttemptChange?: (attempt: NewSessionLaunchAttempt | null) => void;
     launchIntentSignature: string;
     launchUserAttemptId?: string | null;
     onLaunchUserAttemptIdChange?: (userAttemptId: string | null) => void;
+    /**
+     * Continuation recipe when this draft was seeded from another Session. It is
+     * required semantics: the target daemon resolves the source transcript
+     * before creating the child, and the authoring draft/chip survives failure.
+     * The UI never retries without it.
+     */
+    sourceContext?: SessionSpawnSourceContextV1 | null;
 }>): Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     providerLaunchError: ProviderErrorV1 | null;
@@ -353,25 +395,49 @@ export function useCreateNewSession(params: Readonly<{
     }, [mountedRef]);
 
     const handleCreateSession = React.useCallback(async (opts?: HandleCreateSessionOptions) => {
-        if (createInFlightRef.current) return;
+        let afterCreatedSettlementReported = false;
+        const reportAfterCreatedSettlement = (settlement: NewSessionAfterCreatedSettlement): void => {
+            if (afterCreatedSettlementReported) {
+                return;
+            }
+            afterCreatedSettlementReported = true;
+            try {
+                opts?.onAfterCreatedSettled?.(settlement);
+            } catch {
+                // This optional observer must not alter the incumbent creation path.
+            }
+        };
+
+        if (createInFlightRef.current) {
+            reportAfterCreatedSettlement({ status: 'rejected' });
+            return;
+        }
         const current = latestParamsRef.current;
-        if (current.authoringCommitPending === true) return;
+        const selectedMachineId = current.selectedMachineId;
+        if (current.authoringCommitPending === true) {
+            reportAfterCreatedSettlement({ status: 'rejected' });
+            return;
+        }
         const requestedPath = typeof current.getRequestedPath === 'function'
             ? current.getRequestedPath()
             : current.selectedPath;
         const effectiveSelectedPath = (typeof requestedPath === 'string'
             ? requestedPath
             : current.selectedPath).trim();
-        let rollbackActualPath: string | null = null;
-        let rollbackServerId: string | null = current.targetServerId ?? null;
-        const isRepoNativeWorktreeLaunch = current.checkoutCreationDraft?.kind === 'git_worktree';
-
-        if (!current.selectedMachineId) {
+        const eventAutomationDraft = current.eventAutomationDraft ?? null;
+        const eventAutomationEdit = current.eventAutomationEdit ?? null;
+        const eventTargetKind = current.eventAutomationTargetKind ?? 'newSession';
+        const hasEventAutomationSubmission = eventAutomationDraft !== null || eventAutomationEdit !== null;
+        const eventTargetDoesNotRequireNewSessionInputs = hasEventAutomationSubmission
+            && eventTargetKind !== 'newSession';
+        if (!eventTargetDoesNotRequireNewSessionInputs && !selectedMachineId) {
             Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
+            reportAfterCreatedSettlement({ status: 'rejected' });
             return;
         }
-        if (effectiveSelectedPath.length === 0) {
+        if (!eventTargetDoesNotRequireNewSessionInputs && effectiveSelectedPath.length === 0) {
             Modal.alert(t('common.error'), t('newSession.noPathSelected'));
+            reportAfterCreatedSettlement({ status: 'rejected' });
             return;
         }
 
@@ -382,9 +448,8 @@ export function useCreateNewSession(params: Readonly<{
 
         try {
             const resolvedTargetServerId = resolveNewSessionLaunchTargetServerId(current);
-            rollbackServerId = resolvedTargetServerId;
             const launchScopeKey = buildNewSessionLaunchScopeKey({
-                machineId: current.selectedMachineId,
+                machineId: selectedMachineId,
                 serverId: resolvedTargetServerId,
                 selectedPath: effectiveSelectedPath,
                 selectedMachineMetadata: current.selectedMachine?.metadata,
@@ -411,7 +476,7 @@ export function useCreateNewSession(params: Readonly<{
             };
             const isLaunchScopeStillActive = (): boolean => resolveCurrentLaunchScopeKey() === launchScopeKey;
 
-            const sessionPrompt = opts?.inputTextOverride ?? current.sessionPrompt;
+            const sessionPrompt = opts?.inputTextOverride ?? current.promptStore.getPrompt();
             const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
             const shouldPrepareInitialMessage = shouldSendInitialMessage && sessionPrompt.trim();
             const resolvedInitialMessage = shouldPrepareInitialMessage
@@ -434,10 +499,105 @@ export function useCreateNewSession(params: Readonly<{
                 return;
             }
 
+            if (hasEventAutomationSubmission && eventTargetKind !== 'newSession') {
+                if (opts?.hasComposerAttachments === true || !eventAutomationDraft || !current.resolveEventAutomationTarget) {
+                    Modal.alert(t('common.error'), eventAutomationEdit
+                        ? t('automations.edit.updateFailed')
+                        : t('newSession.failedToStart'));
+                    current.setIsCreating(false);
+                    return;
+                }
+                if (eventTargetKind === 'executionRun' && !selectedMachineId) {
+                    Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
+                    current.setIsCreating(false);
+                    return;
+                }
+                const eventAuthoringDraft = current.authoringDraft ?? null;
+                // Detached Event execution is not a session launcher. It can
+                // consume only the strict backend and service selections the
+                // authoring draft already owns; legacy launcher inputs would
+                // make a second target-normalization path.
+                const eventBackendTarget = eventAuthoringDraft?.backendTarget
+                    ?? current.backendTarget
+                    ?? null;
+                const eventConnectedServicesResult = eventAuthoringDraft?.connectedServices == null
+                    ? null
+                    : ConnectedServiceBindingsV1Schema.safeParse(eventAuthoringDraft.connectedServices);
+                if (eventConnectedServicesResult && !eventConnectedServicesResult.success) {
+                    Modal.alert(t('common.error'), t('newSession.failedToStart'));
+                    current.setIsCreating(false);
+                    return;
+                }
+                const eventConnectedServices = eventConnectedServicesResult?.success
+                    ? eventConnectedServicesResult.data
+                    : null;
+                const eventSubmission = await submitPluginEventAutomation({
+                    draft: eventAutomationDraft,
+                    editTarget: eventAutomationEdit,
+                    automationEditId: current.automationEditId,
+                    metadata: eventAuthoringDraft?.automation
+                        ? {
+                            name: eventAuthoringDraft.automation.name,
+                            description: eventAuthoringDraft.automation.description,
+                            enabled: eventAuthoringDraft.automation.enabled,
+                        }
+                        : null,
+                    prompt: sessionPrompt.trim(),
+                    targetKind: eventTargetKind,
+                    executionTargetServerId: resolvedTargetServerId,
+                    buildNewSessionSpawn: () => null,
+                    buildExecutionRun: () => {
+                        if (eventTargetKind !== 'executionRun' || !selectedMachineId) return null;
+                        return {
+                            machineId: selectedMachineId,
+                            request: buildPluginEventAutomationDetachedExecutionRunRequest({
+                                backendTarget: eventBackendTarget,
+                                permissionMode: current.eventAutomationExecutionPermissionMode ?? 'read_only',
+                                modelSelection: eventAuthoringDraft?.modelSelection ?? null,
+                                sessionConfigOptionOverrides: eventAuthoringDraft?.sessionConfigOptionOverrides ?? null,
+                                connectedServices: eventConnectedServices,
+                                profileId: eventAuthoringDraft?.profileId ?? null,
+                            }),
+                        };
+                    },
+                    resolveTarget: current.resolveEventAutomationTarget,
+                    isCurrent: isLaunchScopeStillActive,
+                });
+                if (eventSubmission.kind === 'unavailable') {
+                    if (eventSubmission.reason === 'account') {
+                        Modal.alert(
+                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle'),
+                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableBody'),
+                        );
+                    } else {
+                        Modal.alert(t('common.error'), eventAutomationEdit
+                            ? t('automations.edit.updateFailed')
+                            : t('newSession.failedToStart'));
+                    }
+                    current.setIsCreating(false);
+                    return;
+                }
+                current.disableDraftPersistence?.();
+                clearNewSessionDraftForLaunchParams(current);
+                current.router.replace((eventSubmission.kind === 'updated'
+                    ? `/automations/${eventSubmission.automationId}`
+                    : '/automations') as any);
+                return;
+            }
+
+            // Non-session Event arms return above. Every remaining legacy
+            // schedule or session-start path still has one exact machine.
+            if (!selectedMachineId) {
+                Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
+                reportAfterCreatedSettlement({ status: 'rejected' });
+                current.setIsCreating(false);
+                return;
+            }
+
             const updatedPaths = [
-                { machineId: current.selectedMachineId, path: effectiveSelectedPath },
+                { machineId: selectedMachineId, path: effectiveSelectedPath },
                 ...current.recentMachinePaths.filter((rp) => (
-                    rp.machineId !== current.selectedMachineId || rp.path !== effectiveSelectedPath
+                    rp.machineId !== selectedMachineId || rp.path !== effectiveSelectedPath
                 )),
             ].slice(0, 10);
             const profilesActive = current.useProfiles;
@@ -545,10 +705,10 @@ export function useCreateNewSession(params: Readonly<{
 
             const terminal = resolveTerminalSpawnOptions({
                 settings: storage.getState().settings,
-                machineId: current.selectedMachineId,
+                machineId: selectedMachineId,
             });
 
-            const machineCapsSnapshot = getMachineCapabilitiesSnapshot(current.selectedMachineId, resolvedTargetServerId);
+            const machineCapsSnapshot = getMachineCapabilitiesSnapshot(selectedMachineId, resolvedTargetServerId);
             const machineCapsResults = machineCapsSnapshot?.response.results as any;
             const experiments = getAgentResumeExperimentsFromSettings(canonicalAgentId, current.settings);
             const preflightIssues = getNewSessionPreflightIssues({
@@ -565,7 +725,7 @@ export function useCreateNewSession(params: Readonly<{
                     { confirmText: t(blockingIssue.confirmTextKey) }
                 );
                 if (openMachine && blockingIssue.action === 'openMachine') {
-                    current.router.push(`/machine/${current.selectedMachineId}` as any);
+                    current.router.push(`/machine/${selectedMachineId}` as any);
                 }
                 current.setIsCreating(false);
                 return;
@@ -603,20 +763,6 @@ export function useCreateNewSession(params: Readonly<{
                         },
                     }
                     : null;
-            const initialMessageMetaOverrides = (() => {
-                const agentCore = getAgentCore(canonicalAgentId);
-                const selectedModelId = spawnModelSelection?.ref.modelId ?? null;
-                if (
-                    selectedModelId
-                    && agentCore.model.nonAcpApplyScope === 'next_prompt'
-                ) {
-                    // Some providers only apply model overrides when processing a user prompt.
-                    // Keep those first turns on the message-send path so the override is attached.
-                    return { model: selectedModelId };
-                }
-
-                return null;
-            })();
             const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
                 machineMetadata: current.selectedMachine?.metadata,
                 settings: current.settings,
@@ -665,8 +811,119 @@ export function useCreateNewSession(params: Readonly<{
                 automation: current.authoringDraft?.automation ?? null,
             });
             const activeAutomationDraft = authoringDraft.automation ?? null;
+            const rejectComposerAttachmentsForAutomation = (): boolean => {
+                if (opts?.hasComposerAttachments !== true) return false;
+                Modal.alert(t('common.error'), t('newSession.failedToStart'));
+                reportAfterCreatedSettlement({ status: 'rejected' });
+                current.setIsCreating(false);
+                return true;
+            };
+
+            if (eventAutomationDraft || eventAutomationEdit) {
+                if (rejectComposerAttachmentsForAutomation()) {
+                    return;
+                }
+                if (!eventAutomationDraft || !current.resolveEventAutomationTarget || eventTargetKind !== 'newSession') {
+                    Modal.alert(t('common.error'), eventAutomationEdit
+                        ? t('automations.edit.updateFailed')
+                        : t('newSession.failedToStart'));
+                    current.setIsCreating(false);
+                    return;
+                }
+                const eventAuthoringDraft = eventAutomationEdit
+                    ? current.authoringDraft ?? null
+                    : authoringDraft;
+                if (!eventAuthoringDraft) {
+                    Modal.alert(t('common.error'), t('automations.edit.updateFailed'));
+                    current.setIsCreating(false);
+                    return;
+                }
+                const eventBackendTarget = eventAutomationEdit
+                    ? eventAuthoringDraft.backendTarget
+                    : current.spawnBackendTarget ?? backendTarget;
+                const eventPermissionMode = eventAutomationEdit
+                    ? parsePermissionIntentAlias(eventAuthoringDraft.permissionMode ?? '')
+                    : spawnPermissionMode;
+                const eventPermissionModeUpdatedAt = eventAutomationEdit
+                    ? eventAuthoringDraft.permissionModeUpdatedAt
+                    : spawnPermissionModeUpdatedAt;
+                const eventSubmission = await submitPluginEventAutomation({
+                    draft: eventAutomationDraft,
+                    editTarget: eventAutomationEdit,
+                    automationEditId: current.automationEditId,
+                    metadata: activeAutomationDraft
+                        ? {
+                            name: activeAutomationDraft.name,
+                            description: activeAutomationDraft.description,
+                            enabled: activeAutomationDraft.enabled,
+                        }
+                        : null,
+                    prompt: normalizedSessionPrompt,
+                    targetKind: eventTargetKind,
+                    executionTargetServerId: resolvedTargetServerId,
+                    buildNewSessionSpawn: (currentSpawn) => {
+                        if (!selectedMachineId || !eventPermissionMode || eventPermissionModeUpdatedAt === null) {
+                            return null;
+                        }
+                        const agentTarget = eventBackendTarget
+                            ? resolveAgentExecutionTargetForBackendTarget({
+                                backendTarget: eventBackendTarget,
+                                daemonMergedProjectionInputs: current.daemonMergedProjectionInputs,
+                            })
+                            : null;
+                        if (!agentTarget) return null;
+                        try {
+                            return buildSessionServerStartSpawnDraftV1FromAuthoringDraft({
+                                draft: {
+                                    ...eventAuthoringDraft,
+                                    prompt: normalizedSessionPrompt,
+                                    displayText: normalizedSessionPrompt,
+                                },
+                                executionTarget: currentSpawn?.executionTarget ?? {
+                                    serverId: resolvedTargetServerId,
+                                    machineId: selectedMachineId,
+                                },
+                                ...(currentSpawn?.organizationPlacement
+                                    ? { organizationPlacement: currentSpawn.organizationPlacement }
+                                    : {}),
+                                agentTarget,
+                                permissionMode: eventPermissionMode,
+                                configurationUpdatedAtMs: eventPermissionModeUpdatedAt,
+                            });
+                        } catch {
+                            return null;
+                        }
+                    },
+                    buildExecutionRun: () => null,
+                    resolveTarget: current.resolveEventAutomationTarget,
+                    isCurrent: isLaunchScopeStillActive,
+                });
+                if (eventSubmission.kind === 'unavailable') {
+                    if (eventSubmission.reason === 'account') {
+                        Modal.alert(
+                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle'),
+                            t('settingsPlugins.eventAutomationComposer.storedContentUnavailableBody'),
+                        );
+                    } else {
+                        Modal.alert(t('common.error'), eventAutomationEdit
+                            ? t('automations.edit.updateFailed')
+                            : t('newSession.failedToStart'));
+                    }
+                    current.setIsCreating(false);
+                    return;
+                }
+                current.disableDraftPersistence?.();
+                clearNewSessionDraftForLaunchParams(current);
+                current.router.replace((eventSubmission.kind === 'updated'
+                    ? `/automations/${eventSubmission.automationId}`
+                    : '/automations') as any);
+                return;
+            }
 
             if (activeAutomationDraft?.enabled === true) {
+                if (rejectComposerAttachmentsForAutomation()) {
+                    return;
+                }
                 const schedule = buildAutomationScheduleFromDraft(activeAutomationDraft);
                 const template = buildAutomationTemplateFromSessionAuthoringDraft({
                     ...authoringDraft,
@@ -679,7 +936,11 @@ export function useCreateNewSession(params: Readonly<{
                 const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
                     credentials: sync.getCredentials(),
                     template,
-                    encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
+                    ...(sync.encryption
+                        ? {
+                            encryptRaw: (value) => sync.encryption!.encryptAutomationTemplateRaw(value),
+                        }
+                        : {}),
                 });
 
                 const normalizedAutomationInput = {
@@ -694,6 +955,13 @@ export function useCreateNewSession(params: Readonly<{
                     : '';
 
                 if (automationEditId.length > 0) {
+                    const definition = await sync.refreshAutomationDefinitionDetail(automationEditId);
+                    const legacyAutomation = readLegacyScheduleAutomationDefinition(definition);
+                    if (legacyAutomation?.id !== automationEditId) {
+                        Modal.alert(t('common.error'), t('automations.edit.updateFailed'));
+                        current.setIsCreating(false);
+                        return;
+                    }
                     await sync.updateAutomation(automationEditId, normalizedAutomationInput);
                     current.disableDraftPersistence?.();
                     clearNewSessionDraftForLaunchParams(current);
@@ -705,12 +973,31 @@ export function useCreateNewSession(params: Readonly<{
                 await sync.createAutomation({
                     ...normalizedAutomationInput,
                     targetType: 'new_session',
-                    assignments: [{ machineId: current.selectedMachineId, enabled: true, priority: 100 }],
+                    assignments: [{ machineId: selectedMachineId, enabled: true, priority: 100 }],
                 });
                 current.disableDraftPersistence?.();
                 clearNewSessionDraftForLaunchParams(current);
                 await sync.refreshAutomations();
                 current.router.replace('/automations' as any);
+                return;
+            }
+
+            const strictV2ConfigurationOptionKeys = new Set(
+                Object.keys(spawnSessionExtras.sessionConfigOptionOverrides?.overrides ?? {}),
+            );
+            const legacyOnlySpawnExtras = Object.keys(spawnSessionExtras).filter(
+                (key) => key !== 'sessionConfigOptionOverrides' && !strictV2ConfigurationOptionKeys.has(key),
+            );
+            const hasLegacyOnlyEnvironment = Object.keys(environmentVariables ?? {}).length > 0;
+            if (
+                hasLegacyOnlyEnvironment
+                || legacyOnlySpawnExtras.length > 0
+            ) {
+                // Environment overrides and Agent-specific extras have no
+                // strict-V2 owner yet. Park them rather than silently dropping
+                // one or falling back to the private machine-spawn path.
+                Modal.alert(t('common.error'), t('newSession.failedToStart'));
+                current.setIsCreating(false);
                 return;
             }
 
@@ -729,100 +1016,116 @@ export function useCreateNewSession(params: Readonly<{
                 current.onLaunchUserAttemptIdChange?.(launchAttempt.attemptId);
             }
             publishLaunchAttempt(launchAttempt);
-            let actualPath = effectiveSelectedPath;
-            let result: Awaited<ReturnType<typeof machineSpawnNewSession>> | null = null;
-            let shouldPreserveLaunchAttemptForSpawnRetry = false;
+            let createdSessionId = launchAttempt.createdSessionId;
+            let initialInputLocalId: string | null = null;
+            let initialMessageText = '';
+            let initialInputWasNotAccepted = false;
 
-            if (!result && shouldSpawnForNewSessionLaunchAttempt(launchAttempt)) {
+            if (resolvedInitialMessage?.kind === 'template') {
+                initialMessageText = await expandPromptTemplateInvocation({
+                    targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                    argsText: resolvedInitialMessage.rest,
+                });
+            } else if (resolvedInitialMessage?.kind === 'send') {
+                initialMessageText = resolvedInitialMessage.text.trim();
+            }
+
+            if (shouldSpawnForNewSessionLaunchAttempt(launchAttempt)) {
                 launchAttempt = markNewSessionLaunchAttemptSpawning(launchAttempt);
                 publishLaunchAttempt(launchAttempt);
-                const checkoutResult = await materializeNewSessionCheckout({
-                    machineId: current.selectedMachineId,
-                    selectedPath: effectiveSelectedPath,
-                    checkoutCreationDraft: current.checkoutCreationDraft,
-                    serverId: resolvedTargetServerId,
+                const agentTarget = resolveAgentExecutionTargetForBackendTarget({
+                    backendTarget: current.spawnBackendTarget ?? backendTarget,
+                    daemonMergedProjectionInputs: current.daemonMergedProjectionInputs,
                 });
-
-                if (!checkoutResult.success) {
+                if (!agentTarget) {
+                    launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
+                        phase: 'spawning',
+                        error: new Error('The selected Agent is unavailable on this machine.'),
+                        retryable: false,
+                    });
                     publishLaunchAttempt(null);
-                    if (checkoutResult.error === 'Not a Git repository') {
-                        Modal.alert(t('common.error'), t('newSession.worktree.notGitRepo'));
-                    } else {
-                        Modal.alert(t('common.error'), t('newSession.worktree.failed', { error: checkoutResult.error || 'Unknown error' }));
-                    }
+                    Modal.alert(t('common.error'), t('newSession.failedToStart'));
                     current.setIsCreating(false);
                     return;
                 }
-                actualPath = checkoutResult.path;
-                const sessionPath = checkoutResult.sessionPath.trim() || effectiveSelectedPath;
-                rollbackActualPath = actualPath;
 
-                const spawnOptions = {
-                    ...buildSpawnSessionOptionsFromAuthoringDraft({
-                        draft: {
-                            ...authoringDraft,
-                            directory: sessionPath,
+                const actionResult = await executeSessionSpawnNewAction(
+                    buildSessionSpawnNewInputV2FromAuthoringDraft({
+                        draft: authoringDraft,
+                        creationKey: launchAttempt.attemptId,
+                        executionTarget: {
+                            serverId: resolvedTargetServerId,
+                            machineId: selectedMachineId,
                         },
-                        machineId: current.selectedMachineId,
-                        serverId: resolvedTargetServerId,
-                        approvedNewDirectoryCreation: true,
-                        agentModeUpdatedAt: normalizedAcpModeId ? spawnPermissionModeUpdatedAt : null,
-                        spawnBackendTarget: current.spawnBackendTarget,
+                        organizationPlacement: { folderId: null, tagIds: [] },
+                        agentTarget,
+                        permissionMode: spawnPermissionMode,
+                        configurationUpdatedAtMs: spawnPermissionModeUpdatedAt,
+                        initialMessage: initialMessageText || null,
+                        sourceContext: current.sourceContext ?? null,
                     }),
-                    ...spawnSessionExtras,
-                    spawnNonce: launchAttempt.spawnNonce,
-                    userAttemptId: launchAttempt.attemptId,
-                };
-                result = await machineSpawnNewSession(spawnOptions);
-                const operationCustody = result.spawnAttemptCustody;
-                if (operationCustody?.status === 'unresolved' || operationCustody?.status === 'completed') {
-                    if (current.launchUserAttemptId !== operationCustody.userAttemptId) {
-                        current.onLaunchUserAttemptIdChange?.(operationCustody.userAttemptId);
-                    }
-                    launchAttempt = adoptNewSessionLaunchAttemptCustody(launchAttempt, {
-                        userAttemptId: operationCustody.userAttemptId,
-                        spawnNonce: operationCustody.spawnNonce,
-                        createdSessionId: operationCustody.createdSessionId,
-                        firstTurnLocalId: operationCustody.firstTurnLocalId,
-                        attachmentMessageLocalId: operationCustody.attachmentMessageLocalId,
+                    { surface: 'ui' },
+                );
+                if (!actionResult.ok) {
+                    launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
+                        phase: 'spawning',
+                        error: new Error(actionResult.error),
+                        retryable: false,
+                    });
+                    publishLaunchAttempt(null);
+                    // An older CLI returning method-unavailable remains a typed
+                    // Action failure; ordinary UI creation never falls back.
+                    Modal.alert(
+                        t('common.error'),
+                        t(resolveSessionSpawnNewActionFailureMessageKey(actionResult)),
+                    );
+                    current.setIsCreating(false);
+                    return;
+                }
+                if (actionResult.result.type === 'pending') {
+                    launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
+                        phase: 'spawning',
+                        error: new Error('Session creation is pending.'),
+                        retryable: true,
                     });
                     publishLaunchAttempt(launchAttempt);
+                    Modal.alert(
+                        t('common.error'),
+                        t(resolveSessionSpawnNewResultFailureMessageKey(actionResult.result)),
+                    );
+                    current.setIsCreating(false);
+                    return;
                 }
-                if (result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT) {
-                    shouldPreserveLaunchAttemptForSpawnRetry = true;
+                if (actionResult.result.type === 'error') {
+                    launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
+                        phase: 'spawning',
+                        error: new Error(actionResult.result.code),
+                        retryable: actionResult.result.retryable,
+                    });
+                    publishLaunchAttempt(actionResult.result.retryable ? launchAttempt : null);
+                    Modal.alert(
+                        t('common.error'),
+                        t(resolveSessionSpawnNewResultFailureMessageKey(actionResult.result)),
+                    );
+                    current.setIsCreating(false);
+                    return;
                 }
-            } else if (!result) {
-                const createdSessionId = launchAttempt.createdSessionId;
-                if (!createdSessionId) {
-                    throw new Error('Created session ID is required to retry launch follow-up.');
+
+                createdSessionId = actionResult.result.sessionId;
+                initialInputLocalId = (
+                    actionResult.result.initialInput.status === 'accepted'
+                    || actionResult.result.initialInput.status === 'alreadyAccepted'
+                )
+                    ? actionResult.result.initialInput.localId
+                    : null;
+                initialInputWasNotAccepted = initialMessageText.length > 0 && initialInputLocalId === null;
+                if (launchAttempt.createdSessionId !== createdSessionId) {
+                    launchAttempt = markNewSessionLaunchAttemptCreated(launchAttempt, { createdSessionId });
+                    publishLaunchAttempt(launchAttempt);
                 }
-                result = {
-                    type: 'success',
-                    sessionId: createdSessionId,
-                };
             }
 
-            const rollbackSpawnArtifacts = async (): Promise<string | null> => {
-                try {
-                    await rollbackNewSessionArtifacts({
-                        machineId: current.selectedMachineId!,
-                        selectedPath: effectiveSelectedPath,
-                        actualPath,
-                        checkoutCreationDraft: current.checkoutCreationDraft,
-                        serverId: resolvedTargetServerId,
-                        machineBash,
-                    });
-                    return null;
-                } catch (error) {
-                    return error instanceof Error ? error.message : 'Failed to clean up created worktree artifacts';
-                }
-            };
-
-            if (result.type === 'success' && result.sessionId) {
-                if (launchAttempt.createdSessionId !== result.sessionId) {
-                    launchAttempt = markNewSessionLaunchAttemptCreated(launchAttempt, { createdSessionId: result.sessionId });
-                    publishLaunchAttempt(launchAttempt);
-                }
+            if (createdSessionId) {
                 if (!isLaunchScopeStillActive()) {
                     publishLaunchAttempt(null);
                     current.setIsCreating(false);
@@ -831,11 +1134,9 @@ export function useCreateNewSession(params: Readonly<{
                 let postSpawnFollowUpError: unknown = null;
                 const postSpawnFollowUpRetryRef: { current: (() => Promise<void>) | null } = { current: null };
                 let suppressPostSpawnFollowUpAlert = false;
-                let postSpawnFailurePhase: 'sending_first_turn' | 'uploading_attachments' = 'sending_first_turn';
-                let initialMessageText = '';
+                let postSpawnFailurePhase: 'created' | 'uploading_attachments' = 'created';
                 let postSpawnSessionRouteSuffix = '';
                 let postSpawnReplacementHref: string | null = null;
-                const createdSessionId = result.sessionId;
                 let createdSessionRouteOpened = false;
 
                 const buildCreatedSessionRoute = () => buildScopedSessionRouteHref({
@@ -864,45 +1165,33 @@ export function useCreateNewSession(params: Readonly<{
                 };
 
                 const projectCreatedSessionFirstTurnForRoute = (): void => {
-                    if (resolvedInitialMessage?.kind !== 'send') {
+                    if (!initialMessageText || !initialInputLocalId) {
                         return;
                     }
-                    const firstTurnText = resolvedInitialMessage.text.trim();
-                    if (!firstTurnText) {
-                        return;
-                    }
-                    const followUp = resolveSpawnedFirstPromptFollowUp({
-                        sessionId: createdSessionId,
-                        fallbackLocalId: launchAttempt.firstTurnLocalId,
-                        initialMessageText: firstTurnText,
-                        metaOverrides: initialMessageMetaOverrides,
-                    });
-                    const localId = followUp.messageLocalId ?? launchAttempt.firstTurnLocalId;
                     const state = storage.getState();
                     const session = state.sessions[createdSessionId] ?? null;
                     const agentCore = getAgentCore(canonicalAgentId);
                     const modelMode = session?.modelMode || current.modelMode || agentCore.model.defaultMode;
                     const permissionMode = session?.permissionMode || current.permissionMode || 'default';
                     const rawRecord = buildOutgoingUserTextRecord({
-                        text: followUp.initialMessageText,
-                        displayText: followUp.initialMessageText,
+                        text: initialMessageText,
+                        displayText: initialMessageText,
                         agentId: canonicalAgentId,
                         permissionMode,
                         modelMode,
                         settings: state.settings,
                         session,
-                        metaOverrides: followUp.metaOverrides,
                     });
                     if (session) {
                         storage.getState().markSessionOptimisticThinking(createdSessionId);
                     }
                     projectLocalOutboundUserMessage({
                         sessionId: createdSessionId,
-                        localId,
-                        text: followUp.initialMessageText,
-                        displayText: followUp.initialMessageText,
+                        localId: initialInputLocalId,
+                        text: initialMessageText,
+                        displayText: initialMessageText,
                         rawRecord,
-                        deliveryStatus: followUp.optimisticDeliveryStatus,
+                        deliveryStatus: 'queued',
                     });
                 };
 
@@ -914,7 +1203,7 @@ export function useCreateNewSession(params: Readonly<{
                     if (!isLaunchScopeStillActive()) {
                         return false;
                     }
-                    if (options?.projectFirstTurn === true || resolvedInitialMessage?.kind === 'send') {
+                    if (options?.projectFirstTurn === true || initialInputLocalId !== null) {
                         projectCreatedSessionFirstTurnForRoute();
                     }
                     current.router.replace(postSpawnReplacementHref ?? buildCreatedSessionRoute(), {
@@ -961,45 +1250,6 @@ export function useCreateNewSession(params: Readonly<{
                 };
 
                 const runBuiltInPostSpawnFollowUp = async (): Promise<void> => {
-                    launchAttempt = markNewSessionLaunchAttemptSendingFirstTurn(launchAttempt);
-                    publishLaunchAttempt(launchAttempt);
-                    let followUpMessageLocalId: string | null = launchAttempt.firstTurnLocalId;
-                    let followUpMetaOverrides: Record<string, unknown> | null | undefined = initialMessageMetaOverrides;
-                    if (resolvedInitialMessage) {
-                        if (resolvedInitialMessage.kind === 'template') {
-                            initialMessageText = await expandPromptTemplateInvocation({
-                                targetArtifactId: resolvedInitialMessage.targetArtifactId,
-                                argsText: resolvedInitialMessage.rest,
-                            });
-                        } else if (resolvedInitialMessage.kind === 'send') {
-                            initialMessageText = resolvedInitialMessage.text;
-                        } else if (resolvedInitialMessage.kind === 'noop') {
-                            initialMessageText = '';
-                        } else {
-                            initialMessageText = '';
-                        }
-                        if (resolvedInitialMessage.kind === 'send') {
-                            const followUp = resolveSpawnedFirstPromptFollowUp({
-                                sessionId: createdSessionId,
-                                fallbackLocalId: launchAttempt.firstTurnLocalId,
-                                initialMessageText,
-                                metaOverrides: initialMessageMetaOverrides,
-                            });
-                            initialMessageText = followUp.initialMessageText;
-                            followUpMessageLocalId = followUp.messageLocalId;
-                            followUpMetaOverrides = followUp.metaOverrides;
-                        }
-                    }
-
-                    await followUpSpawnedSessionWithServerScope({
-                        sessionId: createdSessionId,
-                        targetServerId: resolvedTargetServerId,
-                        initialMessageText,
-                        messageLocalId: followUpMessageLocalId,
-                        metaOverrides: followUpMetaOverrides,
-                        profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
-                    });
-
                     if (resolvedInitialMessage?.kind === 'action') {
                         const actionExecutor = createDefaultActionExecutor({
                             resolveServerIdForSessionId: (sessionId) => {
@@ -1046,7 +1296,7 @@ export function useCreateNewSession(params: Readonly<{
                     try {
                         await runBuiltInPostSpawnFollowUp();
                     } catch (error) {
-                        postSpawnFailurePhase = 'sending_first_turn';
+                        postSpawnFailurePhase = 'created';
                         postSpawnFollowUpError = error;
                         postSpawnFollowUpRetryRef.current = async () => {
                             await runBuiltInPostSpawnFollowUp();
@@ -1055,9 +1305,9 @@ export function useCreateNewSession(params: Readonly<{
                     }
                 }
 
-                storage.getState().updateSessionPermissionMode(result.sessionId, current.permissionMode);
+                storage.getState().updateSessionPermissionMode(createdSessionId, current.permissionMode);
                 if (getAgentCore(canonicalAgentId).model.supportsSelection && current.modelMode && current.modelMode !== 'default') {
-                    storage.getState().updateSessionModelMode(result.sessionId, current.modelMode);
+                    storage.getState().updateSessionModelMode(createdSessionId, current.modelMode);
                 }
 
                 if (!postSpawnFollowUpError && opts?.afterCreated) {
@@ -1134,11 +1384,10 @@ export function useCreateNewSession(params: Readonly<{
                             postSpawnFollowUpError instanceof Error ? postSpawnFollowUpError.message : t('common.error'),
                         );
                     }
-                    if (postSpawnFailurePhase === 'sending_first_turn') {
+                    if (initialInputWasNotAccepted) {
                         preserveCreatedSessionDraft({
                             sessionId: createdSessionId,
-                            draftText: readRecoverableCreatedSessionDraftText(postSpawnFollowUpError)
-                                ?? (initialMessageText || sessionPrompt),
+                            draftText: initialMessageText || sessionPrompt,
                         });
                     }
                     if (createdSessionRouteOpened && isSessionHydratedForDraftRestore(createdSessionId)) {
@@ -1150,6 +1399,16 @@ export function useCreateNewSession(params: Readonly<{
                     return;
                 } else {
                     launchAttempt = markNewSessionLaunchAttemptComplete(launchAttempt);
+                    if (opts?.afterCreated && mountedRef.current && isLaunchScopeStillActive()) {
+                        reportAfterCreatedSettlement({ status: 'accepted', sessionId: createdSessionId });
+                    }
+                }
+
+                if (initialInputWasNotAccepted) {
+                    preserveCreatedSessionDraft({
+                        sessionId: createdSessionId,
+                        draftText: initialMessageText || sessionPrompt,
+                    });
                 }
 
                 if (!createdSessionRouteOpened) {
@@ -1163,148 +1422,15 @@ export function useCreateNewSession(params: Readonly<{
                         throw new Error(CREATED_SESSION_NOT_AVAILABLE_LOCALLY_ERROR);
                     }
                 }
-                const completedCustody = result.spawnAttemptCustody?.status === 'completed'
-                    ? result.spawnAttemptCustody
-                    : null;
-                if (completedCustody) {
-                    const completed = await completeMachineSpawnAttemptCustody(completedCustody);
-                    if (!completed) {
-                        throw new Error('Created session custody could not be completed.');
-                    }
-                }
                 publishLaunchAttempt(null);
-                current.disableDraftPersistence?.();
-                clearNewSessionDraftForLaunchParams(current);
-            } else if (result.type === 'requestToApproveDirectoryCreation') {
-                publishLaunchAttempt(null);
-                const rollbackErrorMessage = await rollbackSpawnArtifacts();
-                const rollbackDetail = rollbackErrorMessage ? `\n\n${t('common.details')}: ${rollbackErrorMessage}` : '';
-                Modal.alert(t('common.error'), `${t('newSession.failedToStart')}${rollbackDetail}`);
-                current.setIsCreating(false);
-            } else if (result.type === 'error') {
-                if (shouldPreserveLaunchAttemptForSpawnRetry && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT) {
-                    launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
-                        phase: 'spawning',
-                        error: new Error(result.errorMessage),
-                        retryable: true,
-                    });
-                    publishLaunchAttempt(launchAttempt);
-                    current.setIsCreating(false);
-                    showDaemonUnavailableAlert({
-                        titleKey: 'newSession.launchStillPendingTitle',
-                        bodyKey: 'newSession.launchStillPendingBody',
-                        machine: current.selectedMachine,
-                        onRetry: () => {
-                            void handleCreateSession(opts);
-                        },
-                        shouldContinue: () => mountedRef.current,
-                    });
-                    return;
+                if (!opts?.deferAcceptedDraftClearToDocument) {
+                    current.disableDraftPersistence?.();
+                    clearNewSessionDraftForLaunchParams(current);
                 }
-                publishLaunchAttempt(null);
-                const rollbackErrorMessage = await rollbackSpawnArtifacts();
-                const structuredProviderError = result.errorDetail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR
-                    ? result.errorDetail.providerError
-                    : null;
-                if (structuredProviderError) {
-                    setProviderLaunchFailure({
-                        error: structuredProviderError,
-                        scopeKey: buildProviderLaunchErrorScopeKey(current, resolvedTargetServerId),
-                    });
-                    if (rollbackErrorMessage) {
-                        Modal.alert(
-                            t('common.error'),
-                            `${t('newSession.failedToStart')}\n\n${t('common.details')}: ${rollbackErrorMessage}`,
-                        );
-                    }
-                    current.setIsCreating(false);
-                    return;
-                }
-                // D2: a connected-service auth switch fail-closed because the resumed session could not
-                // be carried over under the new account. Recognize the STRUCTURED detail (never parse
-                // the message), explain WHY, and offer "start fresh under the new account".
-                const switchUnavailable = resolveConnectedServiceSwitchUnavailablePresentation(result);
-                if (switchUnavailable) {
-                    current.setIsCreating(false);
-                    const startFreshAction = switchUnavailable.actions.find((action) => action.kind === 'start_fresh');
-                    Modal.alert(
-                        t(switchUnavailable.titleKey),
-                        t(switchUnavailable.bodyKey, switchUnavailable.bodyParams),
-                        [
-                            ...(startFreshAction
-                                ? [{
-                                    text: t(startFreshAction.labelKey),
-                                    onPress: () => {
-                                        if (!mountedRef.current) return;
-                                        // Start fresh under the new account: relaunch the session WITHOUT
-                                        // resume continuity so the new account begins a clean conversation.
-                                        void handleCreateSession({ ...opts, startFreshUnderNewAccount: true });
-                                    },
-                                }]
-                                : []),
-                            { text: t('common.cancel'), style: 'cancel' as const },
-                        ],
-                    );
-                    return;
-                }
-                if (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
-                    current.setIsCreating(false);
-                    showDaemonUnavailableAlert({
-                        titleKey: 'newSession.daemonRpcUnavailableTitle',
-                        bodyKey: 'newSession.daemonRpcUnavailableBody',
-                        machine: current.selectedMachine,
-                        onRetry: () => {
-                            void handleCreateSession(opts);
-                        },
-                        shouldContinue: () => mountedRef.current,
-                    });
-                    return;
-                }
-                const extraDetail = (() => {
-                    switch (result.errorCode) {
-                        case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
-                            return 'Resume is not supported for this agent on this machine.';
-                        case SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK:
-                            return 'The agent process exited before it could connect. Check that the agent CLI is installed and available to the daemon (PATH).';
-                        case SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT:
-                            return 'Session startup timed out. The machine may be slow or the agent CLI may be stuck starting.';
-                        default:
-                            return null;
-                    }
-                })();
-                const detail = extraDetail ? `\n\n${t('common.details')}: ${extraDetail}` : '';
-                const rollbackDetail = rollbackErrorMessage ? `\n\n${t('common.details')}: ${rollbackErrorMessage}` : '';
-                Modal.alert(t('common.error'), `${result.errorMessage}${detail}${rollbackDetail}`);
-                current.setIsCreating(false);
             } else {
-                throw new Error('Session spawning failed - no session ID returned.');
+                throw new Error('Created session ID is required to complete launch.');
             }
         } catch (error) {
-            if (rollbackActualPath) {
-                try {
-                    await rollbackNewSessionArtifacts({
-                        machineId: current.selectedMachineId,
-                        selectedPath: effectiveSelectedPath,
-                        actualPath: rollbackActualPath,
-                        checkoutCreationDraft: current.checkoutCreationDraft,
-                        serverId: rollbackServerId,
-                        machineBash,
-                    });
-                } catch (rollbackError) {
-                    captureExceptionIfEnabled(rollbackError, {
-                        tags: {
-                            area: 'new_session',
-                            action: 'rollback_artifacts',
-                        },
-                        extra: {
-                            phase: 'rollback_artifacts',
-                            machineId: current.selectedMachineId,
-                            selectedPath: effectiveSelectedPath,
-                            actualPath: rollbackActualPath,
-                        },
-                    });
-                }
-            }
             captureExceptionIfEnabled(error, {
                 tags: {
                     area: 'new_session',
@@ -1314,12 +1440,32 @@ export function useCreateNewSession(params: Readonly<{
                     phase: 'create_session',
                     machineId: current.selectedMachineId,
                     selectedPath: effectiveSelectedPath,
-                    hadRollbackPath: rollbackActualPath !== null,
                 },
             });
+            if (isAutomationTemplateEncryptionMaterialUnavailableError(error)) {
+                Modal.alert(
+                    t('settingsAccount.restoreRequiredTitle'),
+                    t('settingsAccount.secretKeyMissing'),
+                );
+                latestParamsRef.current.setIsCreating(false);
+                return;
+            }
+            if (isAutomationApiErrorCode(error, 'automation_stored_content_unavailable')) {
+                Modal.alert(
+                    t('settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle'),
+                    t('settingsPlugins.eventAutomationComposer.storedContentUnavailableBody'),
+                );
+                latestParamsRef.current.setIsCreating(false);
+                return;
+            }
+            if (isAutomationApiErrorCode(error, 'automation_template_version_conflict')) {
+                Modal.alert(t('common.error'), t('automations.edit.updateFailed'));
+                latestParamsRef.current.setIsCreating(false);
+                return;
+            }
             let errorMessage = error instanceof Error
                 ? error.message
-                : 'Failed to start session. Make sure the daemon is running on the target machine.';
+                : t('newSession.failedToStart');
             if (error instanceof Error) {
                 if (error.message.includes('timeout')) {
                     errorMessage = 'Session startup timed out. The machine may be slow or the daemon may not be responding.';
@@ -1330,6 +1476,7 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), errorMessage);
             latestParamsRef.current.setIsCreating(false);
         } finally {
+            reportAfterCreatedSettlement({ status: 'rejected' });
             createInFlightRef.current = false;
         }
     }, [applySettings, mountedRef, publishLaunchAttempt]);

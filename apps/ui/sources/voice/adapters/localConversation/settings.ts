@@ -3,12 +3,36 @@ import {
   PERMISSION_INTENTS,
   parsePermissionIntentAlias,
 } from '@happier-dev/agents';
+import { ProviderBoundModelRefSchema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-import { SecretStringSchema } from '@/sync/encryption/secretSettings';
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { VoiceLocalTtsSchema } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { VoiceHandsFreeSchema } from '@/voice/adapters/local/settings';
+
+const VoiceLocalConversationProviderChatConfigurationSchema = z.object({
+  temperature: z.number().min(0).max(2).nullable().default(null),
+}).strict().default({ temperature: null });
+
+export const VoiceLocalConversationProviderChatSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('configured'),
+    chat: ProviderBoundModelRefSchema,
+    commit: ProviderBoundModelRefSchema,
+    configuration: VoiceLocalConversationProviderChatConfigurationSchema,
+  }).strict(),
+  z.object({
+    status: z.literal('needs_selection'),
+    providerConnectionId: ProviderConnectionIdSchema,
+    chatModelId: z.string().trim().min(1).max(512),
+    commitModelId: z.string().trim().min(1).max(512),
+    configuration: VoiceLocalConversationProviderChatConfigurationSchema,
+  }).strict(),
+  z.object({
+    status: z.literal('migration_required'),
+    reason: z.literal('invalid_legacy_configuration'),
+  }).strict(),
+]);
 
 export const VoiceLocalConversationSchema = z.object({
   conversationMode: z.enum(['direct_session', 'agent']).default('direct_session'),
@@ -18,7 +42,6 @@ export const VoiceLocalConversationSchema = z.object({
   handsFree: VoiceHandsFreeSchema.prefault({}),
   agent: z
     .object({
-      backend: z.enum(['daemon', 'openai_compat']).default('daemon'),
       agentSource: z.enum(['session', 'agent']).default('session'),
       agentId: z.string().default(DEFAULT_AGENT_ID),
       // Read-only legacy migration inputs. Canonical machine selection is root-owned.
@@ -63,18 +86,7 @@ export const VoiceLocalConversationSchema = z.object({
       chatModelId: z.string().default('default'),
       commitModelSource: z.enum(['chat', 'session', 'custom']).default('chat'),
       commitModelId: z.string().default('default'),
-      openaiCompat: z
-        .object({
-          chatBaseUrl: z.string().nullable().default(null),
-          insecureLocalOriginConsent: z.string().url().nullable().default(null),
-          insecureLocalConsentMachineId: z.string().min(1).max(256).nullable().default(null),
-          chatApiKey: SecretStringSchema.nullable().default(null),
-          chatModel: z.string().default('default'),
-          commitModel: z.string().default('default'),
-          temperature: z.number().min(0).max(2).default(0.4),
-          maxTokens: z.number().int().min(1).nullable().default(null),
-        })
-        .prefault({}),
+      providerChat: VoiceLocalConversationProviderChatSchema.nullable().default(null),
       verbosity: z.enum(['short', 'balanced']).default('short'),
     })
     .prefault({}),
@@ -119,9 +131,6 @@ export function normalizeLegacyLocalConversationInput(input: unknown): unknown {
   const agent = value.agent && typeof value.agent === 'object' && !Array.isArray(value.agent)
     ? value.agent as Record<string, unknown>
     : null;
-  const openaiCompat = agent?.openaiCompat && typeof agent.openaiCompat === 'object' && !Array.isArray(agent.openaiCompat)
-    ? agent.openaiCompat as Record<string, unknown>
-    : null;
   const normalizeString = (candidate: unknown): unknown => typeof candidate === 'string' ? candidate.trim() : candidate;
   const networkTimeout = Number(value.networkTimeoutMs);
   const legacyPermissionIntent = typeof agent?.permissionPolicy === 'string'
@@ -143,7 +152,6 @@ export function normalizeLegacyLocalConversationInput(input: unknown): unknown {
       ? {
           agent: {
             ...agentWithoutLegacyPermissionPolicy,
-            backend: normalizeString(agent.backend),
             agentSource: normalizeString(agent.agentSource),
             agentId: normalizeString(agent.agentId),
             machineTargetMode: normalizeString(agent.machineTargetMode),
@@ -154,18 +162,6 @@ export function normalizeLegacyLocalConversationInput(input: unknown): unknown {
             chatModelSource: normalizeString(agent.chatModelSource),
             commitModelSource: normalizeString(agent.commitModelSource),
             verbosity: normalizeString(agent.verbosity),
-            ...(openaiCompat
-              ? {
-                  openaiCompat: {
-                    ...openaiCompat,
-                    ...(typeof openaiCompat.maxTokens === 'number'
-                      && Number.isFinite(openaiCompat.maxTokens)
-                      && openaiCompat.maxTokens <= 0
-                      ? { maxTokens: null }
-                      : {}),
-                  },
-                }
-              : {}),
           },
         }
       : {}),

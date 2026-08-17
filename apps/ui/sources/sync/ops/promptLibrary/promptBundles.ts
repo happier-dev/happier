@@ -1,5 +1,6 @@
 import {
   PromptBundleBodyV1Schema,
+  updatePromptBundleInLibrary,
   validatePromptBundleBodyV1AgainstSchemaId,
   type PromptBundleBodyV1,
   type PromptBundleEntryV1,
@@ -11,6 +12,7 @@ import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { normalizePromptTags } from './promptFolders';
+import { uiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 
 export const DEFAULT_SKILL_PROMPT_MARKDOWN = `---
 name: skill
@@ -167,47 +169,10 @@ export async function updateSkillPromptBundle(params: Readonly<{
 }>): Promise<void> {
   const artifactId = String(params.artifactId ?? '').trim();
   if (!artifactId) throw new Error('invalid_artifact_id');
-
-  const existing = storage.getState().artifacts[artifactId] ?? null;
-  const ensureBody = async (): Promise<string> => {
-    if (existing?.body === undefined) {
-      const full = await sync.fetchArtifactWithBody(artifactId);
-      if (full) storage.getState().updateArtifact(full);
-      const next = storage.getState().artifacts[artifactId] ?? null;
-      if (typeof next?.body === 'string') return next.body;
-      throw new Error('prompt_bundle_missing_body');
-    }
-    if (typeof existing?.body === 'string') return existing.body;
-    throw new Error('prompt_bundle_missing_body');
-  };
-
-  const bodyRaw = await ensureBody();
-  const parsed = PromptBundleBodyV1Schema.safeParse(JSON.parse(bodyRaw));
-  if (!parsed.success) throw new Error('prompt_bundle_invalid_body');
-
-  const now = Date.now();
-  const nextBody: PromptBundleBodyV1 = {
-    ...parsed.data,
-    entries: upsertSkillMdEntry(parsed.data.entries, params.skillMarkdown),
-    updatedAtMs: now,
-  };
-  PromptBundleBodyV1Schema.parse(nextBody);
-
-  const validation = validatePromptBundleBodyV1AgainstSchemaId({ bundleSchemaId: 'skills.skill_md_v1', body: nextBody });
-  if (!validation.ok) throw new Error(validation.errorCode);
-
-  const baseHeader = existing?.header ?? { v: 1, kind: 'prompt_bundle.v2', title: existing?.title ?? null };
-  const header: ArtifactHeader = {
-    ...baseHeader,
-    v: 1,
-    kind: 'prompt_bundle.v2',
-    title: params.title,
-    bundleSchemaId: 'skills.skill_md_v1',
-    folderId: params.folderId ?? null,
-    tags: normalizePromptTags(params.tags ?? (Array.isArray((baseHeader as any).tags) ? (baseHeader as any).tags : [])),
-  };
-
-  await sync.updateArtifactWithHeader(artifactId, header, JSON.stringify(nextBody));
+  await updatePromptBundleInLibrary({
+    store: uiPromptLibraryArtifactStore,
+    request: { ...params, artifactId },
+  });
 }
 
 export async function duplicatePromptBundle(artifactId: string): Promise<string> {

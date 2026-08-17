@@ -1,24 +1,30 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import type {
     DaemonNpmRegistryProfileMutationRequestV1,
     DaemonNpmRegistryProfileSnapshotV1,
 } from '@happier-dev/protocol/rpc';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol';
 import { NpmRegistryOriginV1Schema, NpmRegistryProfileInputV1Schema } from '@happier-dev/protocol/rpc';
-import type { MarketplaceSourceV1 } from '@happier-dev/protocol';
+import type { MarketplaceSourceV1 } from '@happier-dev/protocol/marketplace';
 
-import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import {
+    machineAdministrationTargetsEqual,
+} from '@/sync/domains/machines/administration/targetSelection';
+import type {
+    FreshMachineAdministrationExecutionTargetV1,
+    MachineAdministrationTargetSelectionV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
 import {
     machineNpmRegistryProfilesGet,
     machineNpmRegistryProfilesMutate,
 } from '@/sync/ops/machineNpmRegistryProfiles';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type LocalRegistryMutation = DaemonNpmRegistryProfileMutationRequestV1 extends infer TMutation
     ? TMutation extends DaemonNpmRegistryProfileMutationRequestV1
@@ -32,23 +38,33 @@ type LoadedSnapshot = Readonly<{
     snapshot: DaemonNpmRegistryProfileSnapshotV1;
 }>;
 
-type NpmRegistryProfilesSectionProps = Readonly<{
+type NpmRegistryProfilesTargetSelection = Pick<
+    MachineAdministrationTargetSelectionV1,
+    'selectedTarget' | 'canExecute' | 'resolveExecutionTarget'
+>;
+
+export type NpmRegistryProfilesSectionProps = Readonly<{
     daemonOperationsAvailable: boolean;
+    targetSelection: NpmRegistryProfilesTargetSelection;
     marketplaceSources?: readonly MarketplaceSourceV1[];
     onSetMarketplaceSourceProfile?: (sourceId: string, profileId: string | null) => Promise<void>;
 }>;
 
 export function NpmRegistryProfilesSection({
     daemonOperationsAvailable,
+    targetSelection,
     marketplaceSources = [],
     onSetMarketplaceSourceProfile,
 }: NpmRegistryProfilesSectionProps): React.ReactElement {
     const { theme } = useUnistyles();
-    const machineId = usePrimaryMachineFromActiveSelection();
-    const serverId = getActiveServerId();
-    const selectionKey = `${serverId ?? ''}\0${machineId ?? ''}`;
+    const selectedTarget = targetSelection.selectedTarget;
+    const selectionKey = selectedTarget
+        ? `${selectedTarget.serverIdentityId}\0${selectedTarget.machineId}`
+        : '';
     const selectionKeyRef = React.useRef(selectionKey);
     selectionKeyRef.current = selectionKey;
+    const resolveExecutionTargetRef = React.useRef(targetSelection.resolveExecutionTarget);
+    resolveExecutionTargetRef.current = targetSelection.resolveExecutionTarget;
     const daemonOperationsAvailableRef = React.useRef(daemonOperationsAvailable);
     daemonOperationsAvailableRef.current = daemonOperationsAvailable;
     const refreshGenerationRef = React.useRef(0);
@@ -63,11 +79,40 @@ export function NpmRegistryProfilesSection({
     const [busyBindingSourceId, setBusyBindingSourceId] = React.useState<string | null>(null);
     const snapshot = loaded?.selectionKey === selectionKey ? loaded.snapshot : null;
 
+    const resolveExactExecutionTarget = React.useCallback((
+        expectedTarget: MachineAdministrationTargetV1 | null,
+    ): FreshMachineAdministrationExecutionTargetV1 | null => {
+        const resolved = resolveExecutionTargetRef.current();
+        return expectedTarget !== null
+            && resolved !== null
+            && machineAdministrationTargetsEqual(expectedTarget, resolved.target)
+            ? resolved
+            : null;
+    }, []);
+
+    const isExecutionTargetCurrent = React.useCallback((
+        requestedSelection: string,
+        executionTarget: FreshMachineAdministrationExecutionTargetV1,
+    ): boolean => {
+        if (selectionKeyRef.current !== requestedSelection) return false;
+        const currentTarget = resolveExactExecutionTarget(executionTarget.target);
+        return currentTarget !== null
+            && currentTarget.serverId === executionTarget.serverId
+            && currentTarget.machine.id === executionTarget.machine.id;
+    }, [resolveExactExecutionTarget]);
+
     const refresh = React.useCallback(async () => {
         const generation = ++refreshGenerationRef.current;
         const requestedSelection = selectionKey;
-        if (!machineId || !daemonOperationsAvailable) {
-            if (!machineId) setLoaded(null);
+        const requestedTarget = selectedTarget;
+        if (!requestedTarget || !daemonOperationsAvailable) {
+            if (!requestedTarget) setLoaded(null);
+            setLoadError(false);
+            setLoading(false);
+            return;
+        }
+        const executionTarget = resolveExactExecutionTarget(requestedTarget);
+        if (!executionTarget) {
             setLoadError(false);
             setLoading(false);
             return;
@@ -75,23 +120,34 @@ export function NpmRegistryProfilesSection({
         setLoading(true);
         setLoadError(false);
         try {
-            const result = await machineNpmRegistryProfilesGet(machineId, { serverId });
-            if (generation !== refreshGenerationRef.current || selectionKeyRef.current !== requestedSelection) return;
+            const result = await machineNpmRegistryProfilesGet(executionTarget.machine.id, {
+                serverId: executionTarget.serverId,
+            });
+            if (
+                generation !== refreshGenerationRef.current
+                || !isExecutionTargetCurrent(requestedSelection, executionTarget)
+            ) return;
             if (result.status === 'success') {
                 setLoaded({ selectionKey: requestedSelection, snapshot: result.snapshot });
             } else {
                 setLoadError(true);
             }
         } catch {
-            if (generation === refreshGenerationRef.current && selectionKeyRef.current === requestedSelection) {
+            if (
+                generation === refreshGenerationRef.current
+                && isExecutionTargetCurrent(requestedSelection, executionTarget)
+            ) {
                 setLoadError(true);
             }
         } finally {
-            if (generation === refreshGenerationRef.current && selectionKeyRef.current === requestedSelection) {
+            if (
+                generation === refreshGenerationRef.current
+                && isExecutionTargetCurrent(requestedSelection, executionTarget)
+            ) {
                 setLoading(false);
             }
         }
-    }, [daemonOperationsAvailable, machineId, selectionKey, serverId]);
+    }, [daemonOperationsAvailable, isExecutionTargetCurrent, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
     React.useEffect(() => { void refresh(); }, [refresh]);
 
@@ -107,23 +163,31 @@ export function NpmRegistryProfilesSection({
     const mutate = React.useCallback(async (
         request: LocalRegistryMutation,
     ) => {
-        if (!daemonOperationsAvailableRef.current || !machineId || !snapshot || mutationInFlightRef.current) return;
+        if (
+            !daemonOperationsAvailableRef.current
+            || !selectedTarget
+            || !targetSelection.canExecute
+            || !snapshot
+            || mutationInFlightRef.current
+        ) return;
         const requestedSelection = selectionKey;
+        const executionTarget = resolveExactExecutionTarget(selectedTarget);
+        if (!executionTarget) return;
         const requestId = ++mutationRequestIdRef.current;
         const profileId = 'profileId' in request ? request.profileId : 'registry';
         mutationInFlightRef.current = true;
         setBusyProfileId(profileId);
         try {
-            const result = await machineNpmRegistryProfilesMutate(machineId, {
+            const result = await machineNpmRegistryProfilesMutate(executionTarget.machine.id, {
                 ...request,
-                machineId,
+                machineId: executionTarget.machine.id,
                 expectedRevision: snapshot.revision,
                 mutationId: `registry-${request.action}-${randomUUID()}`,
-            } as DaemonNpmRegistryProfileMutationRequestV1, { serverId });
+            } as DaemonNpmRegistryProfileMutationRequestV1, { serverId: executionTarget.serverId });
             if (
                 requestId !== mutationRequestIdRef.current
                 || !daemonOperationsAvailableRef.current
-                || selectionKeyRef.current !== requestedSelection
+                || !isExecutionTargetCurrent(requestedSelection, executionTarget)
             ) return;
             if (result.status === 'success') {
                 setLoaded({ selectionKey: requestedSelection, snapshot: result.snapshot });
@@ -135,7 +199,7 @@ export function NpmRegistryProfilesSection({
             if (
                 requestId === mutationRequestIdRef.current
                 && daemonOperationsAvailableRef.current
-                && selectionKeyRef.current === requestedSelection
+                && isExecutionTargetCurrent(requestedSelection, executionTarget)
             ) {
                 await Modal.alert(t('settingsPlugins.registriesErrorTitle'), t('settingsPlugins.registriesErrorBody'));
             }
@@ -145,7 +209,7 @@ export function NpmRegistryProfilesSection({
                 setBusyProfileId(null);
             }
         }
-    }, [machineId, refresh, selectionKey, serverId, snapshot]);
+    }, [isExecutionTargetCurrent, refresh, resolveExactExecutionTarget, selectedTarget, selectionKey, snapshot, targetSelection.canExecute]);
 
     const add = React.useCallback(async () => {
         if (!daemonOperationsAvailableRef.current) return;
@@ -260,9 +324,13 @@ export function NpmRegistryProfilesSection({
     const setMarketplaceBinding = React.useCallback(async (sourceId: string, profileId: string | null) => {
         if (
             !daemonOperationsAvailableRef.current
+            || !selectedTarget
+            || !targetSelection.canExecute
             || !onSetMarketplaceSourceProfile
             || bindingInFlightRef.current
         ) return;
+        const executionTarget = resolveExactExecutionTarget(selectedTarget);
+        if (!executionTarget) return;
         const requestId = ++bindingRequestIdRef.current;
         const requestedSelection = selectionKey;
         bindingInFlightRef.current = true;
@@ -273,30 +341,27 @@ export function NpmRegistryProfilesSection({
             if (
                 requestId !== bindingRequestIdRef.current
                 || !daemonOperationsAvailableRef.current
-                || selectionKeyRef.current !== requestedSelection
+                || !isExecutionTargetCurrent(requestedSelection, executionTarget)
             ) return;
             await Modal.alert(t('settingsPlugins.registriesErrorTitle'), t('settingsPlugins.registriesErrorBody'));
         } finally {
-            if (
-                requestId !== bindingRequestIdRef.current
-                || selectionKeyRef.current !== requestedSelection
-            ) return;
+            if (requestId !== bindingRequestIdRef.current) return;
             bindingInFlightRef.current = false;
             setBusyBindingSourceId(null);
         }
-    }, [onSetMarketplaceSourceProfile, selectionKey]);
+    }, [isExecutionTargetCurrent, onSetMarketplaceSourceProfile, resolveExactExecutionTarget, selectedTarget, selectionKey, targetSelection.canExecute]);
 
     return (
         <ItemGroup title={t('settingsPlugins.registriesTitle')} footer={t('settingsPlugins.registriesFooter')}>
             <Item
                 testID="settings.plugins.registries.add"
                 title={t('settingsPlugins.registriesAdd')}
-                icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="plus-circle" size={29} color={theme.colors.accent.blue} />}
                 onPress={() => { void add(); }}
-                disabled={!daemonOperationsAvailable || !machineId || loading || busyProfileId !== null}
+                disabled={!daemonOperationsAvailable || !targetSelection.canExecute || loading || busyProfileId !== null}
                 showChevron={false}
             />
-            {!machineId ? (
+            {!selectedTarget ? (
                 <Item testID="settings.plugins.registries.noMachine" title={t('settingsPlugins.registriesNoMachine')} mode="info" showChevron={false} />
             ) : null}
             {loading && !snapshot ? <Item title={t('common.loading')} mode="info" showChevron={false} /> : null}
@@ -307,7 +372,7 @@ export function NpmRegistryProfilesSection({
                         testID="settings.plugins.registries.retry"
                         title={t('common.retry')}
                         onPress={() => { void refresh(); }}
-                        disabled={!daemonOperationsAvailable || loading || busyProfileId !== null}
+                        disabled={!daemonOperationsAvailable || !targetSelection.canExecute || loading || busyProfileId !== null}
                         loading={loading}
                         showChevron={false}
                     />
@@ -318,7 +383,7 @@ export function NpmRegistryProfilesSection({
             ) : null}
             {snapshot?.profiles.map((profile) => {
                 const busy = busyProfileId === profile.profileId;
-                const mutationsDisabled = !daemonOperationsAvailable || busyProfileId !== null;
+                const mutationsDisabled = !daemonOperationsAvailable || !targetSelection.canExecute || busyProfileId !== null;
                 const status = t(`settingsPlugins.registriesAvailability.${profile.availability}`);
                 return (
                     <React.Fragment key={profile.profileId}>
@@ -387,7 +452,7 @@ export function NpmRegistryProfilesSection({
                     ? snapshot.profiles.find((profile) => profile.profileId === source.registryProfileId) ?? null
                     : null;
                 const bindingDisabled = !daemonOperationsAvailable
-                    || !machineId
+                    || !targetSelection.canExecute
                     || !onSetMarketplaceSourceProfile
                     || busyProfileId !== null
                     || busyBindingSourceId !== null;

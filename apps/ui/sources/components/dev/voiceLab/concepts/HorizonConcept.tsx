@@ -6,12 +6,12 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from '
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { ControlRow, TactilePressable, VoiceTransport } from '../ConceptControls';
-import { Bloom, Grain, PlanetLimb, VoiceWaveform } from '../VoiceLight';
-import { TranscriptStream } from '../TranscriptStream';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
-import { controlsForState } from '../voiceLabModel';
-import { VOICE_MOTION, light, useVoiceLabTokens } from '../voiceLabTokens';
+import { ControlRow, TactilePressable, VoiceTransport } from '@/components/voice/controls/VoiceControls';
+import { Bloom, Grain, PlanetLimb, VoiceWaveform } from '@/components/voice/light/VoiceLight';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
+import { controlsForState, VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
+import { VOICE_MOTION, light, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, number, number, number]));
@@ -30,8 +30,8 @@ const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, n
  * first round was missing.
  */
 export function HorizonConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const { state } = props;
     const [width, setWidth] = React.useState(296);
     const onLayout = React.useCallback((e: LayoutChangeEvent) => {
@@ -175,6 +175,16 @@ export function HorizonConcept(props: VoiceConceptProps) {
                             ) : null}
                         </TactilePressable>
                         <VoiceTransport
+                            labels={{
+                                start: 'Start Voice',
+                                end: 'End Voice',
+                                startHint: 'Starts a spoken conversation',
+                                endHint: 'Stops the spoken conversation. Coding work already started keeps running.',
+                                startText: 'Start Voice',
+                                endText: 'End',
+                                mute: 'Microphone open. Mute',
+                                unmute: 'Microphone muted. Unmute',
+                            }}
                             live={live}
                             canStart={state.id !== 'unavailable'}
                             muted={props.muted}
@@ -188,7 +198,7 @@ export function HorizonConcept(props: VoiceConceptProps) {
 
                     {conversational ? (
                         <View style={{ flex: 1, marginTop: 10 }}>
-                            <TranscriptStream compact />
+                            <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} compact />
                         </View>
                     ) : null}
 

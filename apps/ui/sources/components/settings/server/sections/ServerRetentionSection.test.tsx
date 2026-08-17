@@ -63,6 +63,9 @@ describe('ServerRetentionSection', () => {
         const items = tree!.findAllByType('Item' as any);
         expect(items.length).toBeGreaterThan(0);
         expect(items[0]?.props.testID).toBe('server-retention-summary');
+        expect(items[0]?.props.title).toBe('server.retention.sessionNotice');
+        expect(items[0]?.props.mode).toBe('info');
+        expect(items[0]?.props.icon.props.name).toBe('clock-counter-clockwise');
         expect(items.some((item) => item.props.testID === 'server-retention-row-accountChanges')).toBe(true);
         expect(items.some((item) => item.props.testID === 'server-retention-row-publicShareAccessLogs')).toBe(true);
         expect(items.some((item) => item.props.testID === 'server-retention-row-terminalAuthRequests')).toBe(true);
@@ -71,5 +74,32 @@ describe('ServerRetentionSection', () => {
         expect(items.some((item) => item.props.testID === 'server-retention-row-repeatKeys')).toBe(true);
         expect(items.some((item) => item.props.testID === 'server-retention-row-globalLocks')).toBe(true);
         expect(items.some((item) => item.props.testID === 'server-retention-row-automationRunEvents')).toBe(true);
+    });
+
+    it('does not claim there is no automatic deletion when a legacy payload is incomplete', async () => {
+        useServerRetentionPolicy.mockReturnValue({
+            policyVersion: 1,
+            enabled: true,
+            sessions: { mode: 'keep_forever' },
+            accountChanges: { mode: 'keep_forever' },
+            voiceSessionLeases: { mode: 'keep_forever' },
+            userFeedItems: { mode: 'keep_forever' },
+            sessionShareAccessLogs: { mode: 'keep_forever' },
+            publicShareAccessLogs: { mode: 'keep_forever' },
+            terminalAuthRequests: { mode: 'keep_forever' },
+            accountAuthRequests: { mode: 'keep_forever' },
+            authPairingSessions: { mode: 'keep_forever' },
+            repeatKeys: { mode: 'keep_forever' },
+            globalLocks: { mode: 'keep_forever' },
+            automationRuns: { mode: 'keep_forever' },
+            automationRunEvents: { mode: 'keep_forever' },
+        });
+        const { ServerRetentionSection } = await import('./ServerRetentionSection');
+
+        const screen = await renderScreen(React.createElement(ServerRetentionSection, { serverId: 'server-a' }));
+        const summary = screen.findByTestId('server-retention-summary');
+
+        expect(summary?.props.title).toBe('server.retention.detailsUnavailable');
+        expect(summary?.props.title).not.toBe('server.retention.keepForever');
     });
 });

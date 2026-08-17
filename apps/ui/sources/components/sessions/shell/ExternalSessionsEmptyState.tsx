@@ -1,12 +1,14 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
-import { layout } from '@/components/ui/layout/layout';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ExternalSessionsEmptyStateProps = Readonly<{
     surface?: 'default' | 'sidebar' | 'primaryPane';
@@ -15,7 +17,6 @@ type ExternalSessionsEmptyStateProps = Readonly<{
 const stylesheet = StyleSheet.create(() => ({
     sidebarContainer: {
         width: '100%',
-        maxWidth: layout.maxWidth,
         alignItems: 'center',
         paddingHorizontal: 20,
         paddingTop: 12,
@@ -28,32 +29,46 @@ const stylesheet = StyleSheet.create(() => ({
 }));
 
 export function ExternalSessionsEmptyState(props: ExternalSessionsEmptyStateProps) {
+    const router = useRouter();
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
+    const sidebarMaxWidthStyle = useLayoutMaxWidthStyle();
     const primaryPaneMaxWidth = typeof sidebarWidthPx === 'number' && sidebarWidthPx > 0 ? sidebarWidthPx : 320;
     const containerStyle = props.surface === 'sidebar'
-        ? styles.sidebarContainer
+        ? [styles.sidebarContainer, sidebarMaxWidthStyle]
         : props.surface === 'primaryPane'
             ? [styles.primaryPaneContainer, { maxWidth: primaryPaneMaxWidth }]
             : undefined;
+    const handleBrowse = React.useCallback(() => {
+        router.push('/external/browse');
+    }, [router]);
 
     return (
         <View testID="direct-sessions-empty-state" style={containerStyle}>
-            <CenteredInfoTile
+            <EmptyState
                 titleTestID="direct-sessions-empty-state-title"
-                descriptionTestID="direct-sessions-empty-state-description"
+                subtitleTestID="direct-sessions-empty-state-description"
                 paddingHorizontal={props.surface === 'default' ? 16 : 0}
                 icon={(
-                    <Ionicons
-                        name="folder-open-outline"
+                    <Icon
+                        name="folder-open"
                         size={48}
                         color={theme.colors.text.secondary}
                         style={{ marginBottom: 12 }}
                     />
                 )}
                 title={t('externalSessions.emptyStateTitle')}
-                description={t('externalSessions.emptyStateDescription')}
+                subtitle={t('externalSessions.emptyStateDescription')}
+                action={(
+                    <RoundButton
+                        testID="direct-sessions-empty-state-browse"
+                        size="normal"
+                        title={t('externalSessions.browseOpenExisting')}
+                        accessibilityLabel={t('externalSessions.browseOpenExisting')}
+                        onPress={handleBrowse}
+                    />
+                )}
             />
         </View>
     );

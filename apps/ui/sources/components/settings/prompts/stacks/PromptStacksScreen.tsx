@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -9,6 +8,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { layout } from '@/components/ui/layout/layout';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -32,21 +32,21 @@ export const PromptStacksScreen = React.memo(() => {
             testID="promptStacks.coding"
             title={t('promptLibrary.codingStack')}
             subtitle={t('promptLibrary.codingStackSubtitle')}
-            icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.blue} />}
+            icon={<Icon name="terminal" size={29} color={theme.colors.accent.blue} />}
             onPress={() => router.push('/settings/prompts/stacks/coding')}
           />
           <Item
             testID="promptStacks.voice"
             title={t('promptLibrary.voiceStack')}
             subtitle={t('promptLibrary.voiceStackSubtitle')}
-            icon={<Ionicons name="mic-outline" size={29} color={theme.colors.accent.indigo} />}
+            icon={<Icon name="microphone" size={29} color={theme.colors.accent.indigo} />}
             onPress={() => router.push('/settings/prompts/stacks/voice')}
           />
           <Item
             testID="promptStacks.profiles"
             title={t('promptLibrary.profileStacks')}
             subtitle={t('promptLibrary.profileStacksSubtitle', { count: profileCount })}
-            icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.text.secondary} />}
+            icon={<Icon name="user-circle" size={29} color={theme.colors.text.secondary} />}
             onPress={() => router.push('/settings/prompts/stacks/profiles')}
           />
         </ItemGroup>

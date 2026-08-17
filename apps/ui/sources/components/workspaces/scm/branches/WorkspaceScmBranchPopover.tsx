@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Popover } from '@/components/ui/popover';
@@ -11,6 +10,7 @@ import { CREATE_ITEM_ID, useSelectableMenu } from '@/components/ui/forms/dropdow
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type WorkspaceScmBranchPopoverTabId = 'branches' | 'worktrees';
 
@@ -63,6 +63,7 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
     const { searchQuery, selectedIndex, filteredCategories, inputRef, handleSearchChange, handleKeyPress, setSelectedIndex } = useSelectableMenu({
         items,
         onRequestClose: () => props.onOpenChange(false),
+        open: props.open,
         initialSelectedId: activeTabId === 'branches' && props.currentBranch ? `branch:${props.currentBranch}` : null,
         onCreateItem: allowCreateBranch
             ? (query) => {
@@ -110,7 +111,7 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                     <Text numberOfLines={1} style={{ fontSize: 14, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                         {props.currentBranch || t('files.detachedHead')}
                     </Text>
-                    <Octicons name={props.open ? 'chevron-up' : 'chevron-down'} size={14} color={theme.colors.text.secondary} />
+                    <Icon name={props.open ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
             <Popover

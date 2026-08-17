@@ -2,6 +2,7 @@ import React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
 
 
@@ -38,12 +39,12 @@ vi.mock('@/components/ui/forms/Switch', () => ({
 }));
 
 vi.mock('@/voice/settings/panels/localTts/providers/registry', () => ({
-  localTtsProviderSpecs: [{ id: 'local_neural', title: 'Local neural', subtitle: '', iconName: 'sparkles-outline' }],
+  useLocalTtsProviderSpecs: () => [{ id: 'local_neural', title: 'Local neural', subtitle: '', iconName: 'sparkle' }],
   getLocalTtsProviderSpec: () => ({
     id: 'local_neural',
     title: 'Local neural',
     subtitle: '',
-    iconName: 'sparkles-outline',
+    iconName: 'sparkle',
     Settings: () => null,
     test: (...args: any[]) => providerTestSpy(...args),
   }),
@@ -75,6 +76,8 @@ describe('LocalVoiceTtsGroup', () => {
         googleCloud: null,
       } as any,
       setTts: vi.fn(),
+      voice: voiceSettingsDefaults,
+      setVoice: vi.fn(),
       networkTimeoutMs: 15000,
       popoverBoundaryRef: null,
     }));
@@ -113,6 +116,8 @@ describe('LocalVoiceTtsGroup', () => {
             googleCloud: null,
           } as any,
           setTts: vi.fn(),
+          voice: voiceSettingsDefaults,
+          setVoice: vi.fn(),
           networkTimeoutMs: 15000,
           popoverBoundaryRef: null,
         }))).tree;

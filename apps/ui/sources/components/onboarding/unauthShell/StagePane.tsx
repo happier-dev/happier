@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -40,6 +41,7 @@ export const StagePane = React.memo(function StagePane(props: StagePaneProps) {
     const planetOpacity = props.planetOpacity ?? 1;
     const planetScale = props.planetScale ?? 1;
     const isWeb = Platform.OS === 'web';
+    const stageFadeColors = [horizon.backgroundColorTransparent, horizon.backgroundColor] as const;
 
     if (props.mode === 'stage') {
         return (
@@ -80,7 +82,10 @@ export const StagePane = React.memo(function StagePane(props: StagePaneProps) {
                             } as React.ComponentProps<typeof View>['style'],
                         ]}
                     />
-                    <PlanetBackground variant="desktop" desktopComposition="horizon" />
+                    {/* ONE planet framing recipe: the same call the brand pane
+                        makes, so the journey and the welcome screen crop the
+                        disc identically (full-bleed cover, low-right anchor). */}
+                    <PlanetBackground variant="desktop" />
                     <View
                         testID="unauth-shell-stage-bloom"
                         pointerEvents="none"
@@ -105,6 +110,17 @@ export const StagePane = React.memo(function StagePane(props: StagePaneProps) {
                         ]}
                     />
                 </Animated.View>
+                {/* Bottom fade, matching the brand pane's: transparent -> the
+                    pane canvas over the lower 55%. It sits OUTSIDE the wallpaper
+                    host so it grounds the pane at full strength even while the
+                    planet recedes behind a demo stage. */}
+                <LinearGradient
+                    testID="unauth-shell-stage-bottom-fade"
+                    pointerEvents="none"
+                    colors={stageFadeColors}
+                    locations={[0, 1]}
+                    style={styles.stageBottomFade}
+                />
                 <Animated.View
                     testID="unauth-shell-stage-content-host"
                     style={styles.stageContentHost}
@@ -184,6 +200,13 @@ const stylesheet = StyleSheet.create(() => ({
         position: 'absolute',
         right: 0,
         top: 0,
+    },
+    stageBottomFade: {
+        bottom: 0,
+        height: stageVisualTokens.horizon.bottomFadeHeight,
+        left: 0,
+        position: 'absolute',
+        right: 0,
     },
     stageContentHost: {
         flex: 1,

@@ -1,3 +1,4 @@
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 type RuntimeLocalMetadataShape = {
@@ -9,6 +10,7 @@ type RuntimeLocalMetadataShape = {
     machineId?: unknown;
     flavor?: unknown;
     externalSessionV1?: unknown;
+    directSessionV1?: unknown;
     externalHistoryImportV1?: unknown;
     claudeSessionId?: unknown;
     codexSessionId?: unknown;
@@ -20,12 +22,10 @@ function readRuntimeLocalMachineId(metadata: RuntimeLocalMetadataShape): unknown
         return metadata.machineId;
     }
 
-    const externalSession = metadata.externalSessionV1;
-    if (!externalSession || typeof externalSession !== 'object') {
-        return undefined;
-    }
-
-    return 'machineId' in externalSession ? externalSession.machineId : undefined;
+    const linkedSessionResolution = resolveLinkedExternalSessionMetadataV1(metadata);
+    return linkedSessionResolution.ok
+        ? linkedSessionResolution.linkedSession.machineId
+        : undefined;
 }
 
 export function preserveSessionRuntimeLocalMetadata(

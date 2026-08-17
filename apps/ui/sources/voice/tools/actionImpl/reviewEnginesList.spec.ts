@@ -48,6 +48,9 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
   machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -115,9 +118,9 @@ describe('review engine voice tool', () => {
       supported: true,
       projection: {
         v: 1,
-        providersById: {
+        agentsById: {
           'plugin:coderabbit': {
-            providerId: 'plugin:coderabbit',
+            id: 'plugin:coderabbit',
             title: 'CodeRabbit Plugin',
             subtitle: null,
             channel: 'plugin',
@@ -126,8 +129,8 @@ describe('review engine voice tool', () => {
         },
         backendsById: {
           coderabbit: {
-            backendId: 'coderabbit',
-            providerId: 'plugin:coderabbit',
+            id: 'coderabbit',
+            agentId: 'plugin:coderabbit',
             title: 'CodeRabbit (plugin)',
             subtitle: null,
             catalogAgentId: null,
@@ -153,9 +156,9 @@ describe('review engine voice tool', () => {
       supported: true,
       projection: {
         v: 1,
-        providersById: {
+        agentsById: {
           'plugin:coderabbit': {
-            providerId: 'plugin:coderabbit',
+            id: 'plugin:coderabbit',
             title: 'CodeRabbit Plugin',
             subtitle: null,
             channel: 'plugin',
@@ -164,8 +167,8 @@ describe('review engine voice tool', () => {
         },
         backendsById: {
           coderabbit: {
-            backendId: 'coderabbit',
-            providerId: 'plugin:coderabbit',
+            id: 'coderabbit',
+            agentId: 'plugin:coderabbit',
             title: 'CodeRabbit (plugin)',
             subtitle: null,
             catalogAgentId: null,

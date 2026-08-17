@@ -53,8 +53,15 @@ export function resolveVoiceDictationSttCapturePlan(settings: any): Readonly<{
   runtimeSettings: any;
 }> {
   const runtimeSettings = createVoiceDictationRuntimeSettingsSnapshot(settings);
+  const plan = resolveVoiceSttCapturePlan(runtimeSettings);
   return {
-    plan: resolveVoiceSttCapturePlan(runtimeSettings),
+    // Dictation is one bounded utterance. Daemon local-neural execution uses
+    // the retained single-shot upload/transcribe path after local recording;
+    // the binary live-speech tunnel belongs to continuous conversation
+    // capture and is not a prerequisite for Dictation.
+    plan: plan.provider === 'local_neural' && plan.localNeuralExecution === 'daemon'
+      ? { provider: 'recorded_audio' }
+      : plan,
     runtimeSettings,
   };
 }

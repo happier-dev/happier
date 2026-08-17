@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     appendAiLaunchProfile,
     projectAiLaunchProfileForLegacyUi,
+    readUiAiLaunchProfilesForLegacyUi,
     readUiAiLaunchProfiles,
     removeAiLaunchProfile,
     replaceAiLaunchProfile,
@@ -26,6 +27,16 @@ const malformed = { v: 2, id: '', malformed: true };
 describe('AI launch profile UI collection', () => {
     it('returns only executable legacy and slim rows', () => {
         expect(readUiAiLaunchProfiles([legacy, slim, future, malformed]).map((profile) => profile.id)).toEqual(['legacy', 'slim']);
+    });
+
+    it('projects only current profile rows for legacy UI consumers', () => {
+        expect(readUiAiLaunchProfilesForLegacyUi([legacy, slim, future, malformed]).map((profile) => ({
+            id: profile.id,
+            name: profile.name,
+        }))).toEqual([
+            { id: 'legacy', name: 'Legacy' },
+            { id: 'slim', name: 'Slim' },
+        ]);
     });
 
     it('projects slim rows for the existing list without reintroducing secret/routing ownership', () => {

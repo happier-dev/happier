@@ -1,10 +1,15 @@
 import {
+    AccountProfileSchema,
+    isConnectedServiceCredentialHealthStatusUsable,
     readLinkedExternalSessionV1FromMetadata,
     readServerEnabledBit,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { coerceExecutionRunsGuidanceEntries } from '@/sync/domains/settings/executionRunsGuidance';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
+import { ThemeProfilesLocalStateSchema } from '@/theme/profiles/themeProfilePersistence';
 import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
 import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import {
@@ -145,7 +150,7 @@ describe('buildDemoWorld', () => {
         });
         expect(world.settings).toMatchObject({
             featureToggles: {
-                'execution.runs': false,
+                'execution.runs': true,
                 'sessions.direct': true,
             },
             hideInactiveSessions: false,
@@ -165,5 +170,78 @@ describe('buildDemoWorld', () => {
             expect(machine.active).toBe(false);
             expect(machine.metadata).not.toHaveProperty('workspacePath');
         }
+    });
+
+    it('seeds every feature the dream beats claim on their own stage', () => {
+        const world = buildDemoWorld();
+
+        // A5 "One session. A whole team of agents." — the sub-agent screen renders
+        // the disabled stub unless the execution-runs substrate is on AND guidance
+        // rules exist, so the seed owns both.
+        expect(world.settings.executionRunsGuidanceEnabled).toBe(true);
+        const guidanceEntries = coerceExecutionRunsGuidanceEntries(world.settings.executionRunsGuidanceEntries);
+        expect(guidanceEntries.length).toBeGreaterThanOrEqual(3);
+        for (const entry of guidanceEntries) {
+            expect(entry.enabled).not.toBe(false);
+            expect(entry.title?.trim()).toBeTruthy();
+            expect(entry.suggestedBackendTarget?.backendId).toBeTruthy();
+        }
+
+        // A12 "Pool your accounts." — connected accounts plus at least one
+        // multi-member pool, bound as an agent default so the screen shows the
+        // pool rather than "No connected services yet".
+        const connectedServices = world.profile.connectedServicesV2;
+        expect(connectedServices.length).toBeGreaterThanOrEqual(2);
+        for (const service of connectedServices) {
+            expect(service.profiles.some((entry) =>
+                isConnectedServiceCredentialHealthStatusUsable(entry.status))).toBe(true);
+        }
+        const pools = connectedServices.flatMap((service) => service.groups);
+        expect(pools.length).toBeGreaterThanOrEqual(1);
+        expect(pools.every((pool) => pool.memberProfileIds.length >= 2)).toBe(true);
+        const agentBindings = world.settings.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId;
+        const boundSelections = Object.values(agentBindings)
+            .flatMap((binding) => Object.values(binding.bindingsByServiceId));
+        expect(boundSelections.some((selection) =>
+            selection.source === 'connected' && selection.selection === 'group')).toBe(true);
+        // Quota meters need an authenticated relay, so the pre-auth stage could only
+        // render an empty "no usage data" card under a headline about usage.
+        expect(readServerEnabledBit(world.serverFeatures, 'connectedServices.quotas')).toBe(false);
+
+        // A13 "Configure (almost) everything." — custom theme profiles so the
+        // customization stage is not an empty grey list.
+        // Exact count: each demo theme is a clone of a named built-in preset, so a
+        // preset that stops resolving must fail here instead of quietly shrinking
+        // the customization stage back toward empty.
+        const themeProfiles = world.localSettings.themeProfiles.profiles;
+        expect(themeProfiles).toHaveLength(4);
+        for (const profile of themeProfiles) {
+            expect(profile.name.trim()).toBeTruthy();
+            const overrideCount = Object.keys(profile.overrides.light).length
+                + Object.keys(profile.overrides.dark).length;
+            expect(overrideCount).toBeGreaterThan(0);
+        }
+
+        // A9 "Build it. Ship it." — the source-control stage reads as a configured
+        // workspace instead of untouched defaults.
+        expect(world.settings.scmCommitMessageGeneratorEnabled).toBe(true);
+        expect(world.settings.scmCommitMessageGeneratorInstructions.trim()).toBeTruthy();
+        expect(world.settings.scmIncludeCoAuthoredBy).toBe(true);
+    });
+
+    it('keeps the seeded account and theme state valid for the owners that re-parse it', () => {
+        // The seed writes these slices straight into the store, so nothing parses
+        // them on the way in — but both owners re-parse on their next real write or
+        // load, and both drop invalid entries silently rather than failing. An
+        // invalid demo shape would put A12/A13 back in their empty states.
+        const world = buildDemoWorld();
+
+        expect(AccountProfileSchema.parse({ ...profileDefaults, ...world.profile }).connectedServicesV2)
+            .toEqual(world.profile.connectedServicesV2);
+        // Identity only: the V1 trust-boundary sanitizer is written for imported
+        // profiles and may normalize token values. What must hold is that no demo
+        // profile is rejected outright.
+        expect(ThemeProfilesLocalStateSchema.parse(world.localSettings.themeProfiles).profiles.map((p) => p.id))
+            .toEqual(world.localSettings.themeProfiles.profiles.map((p) => p.id));
     });
 });

@@ -85,6 +85,7 @@ export function createLocalVoiceAdapter(
             localId: opts.localId,
             deliveryCommand: opts.deliveryCommand,
           },
+          onAccepted: opts.onAccepted,
         });
       }
     : undefined;

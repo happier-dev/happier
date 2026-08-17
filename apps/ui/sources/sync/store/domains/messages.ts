@@ -98,7 +98,16 @@ export type MessagesDomain = {
     applyMessages: (
         sessionId: string,
         messages: NormalizedMessage[],
+        options?: Readonly<{
+            replaceExisting?: boolean;
+        }>,
     ) => {
+        changed: string[];
+        hasReadyEvent: boolean;
+        latestReadyEventSeq?: number;
+        latestReadyEventAt?: number;
+    };
+    replaceSessionMessages: (sessionId: string, messages: NormalizedMessage[]) => {
         changed: string[];
         hasReadyEvent: boolean;
         latestReadyEventSeq?: number;
@@ -524,7 +533,13 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             }
             return toolCallMessage.tool?.name ? isToolPotentiallyMutableForScm(toolCallMessage.tool?.name) : true;
         },
-        applyMessages: (sessionId: string, messages: NormalizedMessage[]) => {
+        applyMessages: (
+            sessionId: string,
+            messages: NormalizedMessage[],
+            options?: Readonly<{
+                replaceExisting?: boolean;
+            }>,
+        ) => {
             const telemetryFields: Record<string, number> = { messages: messages.length };
             return syncPerformanceTelemetry.measure(
                 'sync.store.messages.apply',
@@ -543,7 +558,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     );
 
                 // Resolve session messages state
-                const existingSession = coerceSessionMessages(state.sessionMessages[sessionId]);
+                const existingSession = options?.replaceExisting === true
+                    ? createEmptySessionMessages()
+                    : coerceSessionMessages(state.sessionMessages[sessionId]);
 
                 // Get the session's agentState if available
                 const session = state.sessions[sessionId];
@@ -558,7 +575,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     || existingSession.lastAppliedAgentStateVersion !== agentStateVersion
                 );
                 telemetryFields.agentStateApplied = shouldApplyAgentState ? 1 : 0;
-                if (messages.length === 0 && !shouldApplyAgentState) {
+                if (messages.length === 0 && !shouldApplyAgentState && options?.replaceExisting !== true) {
                     telemetryFields.processed = 0;
                     telemetryFields.changed = 0;
                     telemetryFields.noop = 1;
@@ -959,7 +976,8 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 }
 
                 const didSessionMessagesChange =
-                    processedMessages.length > 0
+                    options?.replaceExisting === true
+                    || processedMessages.length > 0
                     || reducerResult.reducerStateChanged === true
                     || didThinkingMetadataChange
                     || didReadyMetadataChange
@@ -1006,7 +1024,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             lastAppliedAgentStateVersion: shouldApplyAgentState
                                 ? agentStateVersion
                                 : existingSession.lastAppliedAgentStateVersion,
-                            isLoaded: existingSession.isLoaded
+                            isLoaded: options?.replaceExisting === true || existingSession.isLoaded
                         }
                     },
                     sessionPending: updatedSessionPending
@@ -1039,8 +1057,16 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 },
             );
         },
+        replaceSessionMessages: (sessionId: string, messages: NormalizedMessage[]) => (
+            get().applyMessages(sessionId, messages, {
+                replaceExisting: true,
+            })
+        ),
         applyMessagesLoaded: (sessionId: string) => set((state) => {
             const rawExistingSession = state.sessionMessages[sessionId];
+            if (rawExistingSession?.isLoaded === true) {
+                return state;
+            }
             const existingSession = rawExistingSession ? coerceSessionMessages(rawExistingSession) : null;
 
             if (!existingSession) {

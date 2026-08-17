@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Stack } from 'expo-router';
 import { ShimmerView } from '@/components/ui/feedback/ShimmerView';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Ionicons } from '@expo/vector-icons';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export default function ShimmerDemoScreen() {
     const screenOptions = React.useMemo(() => {
@@ -50,7 +50,7 @@ export default function ShimmerDemoScreen() {
                         <View style={styles.example}>
                             <ShimmerView style={styles.iconShimmerContainer} duration={1000}>
                                 <View style={styles.iconContainer}>
-                                    <Ionicons name="logo-react" size={80} color="#61DAFB" />
+                                    <Icon name="atom" size={80} color="#61DAFB" />
                                 </View>
                             </ShimmerView>
                         </View>

@@ -30,7 +30,7 @@ vi.mock('@/hooks/server/useDaemonScopedMachineCapabilitiesCache', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
-    useMachine: () => ({ daemonStateVersion: 1 }),
+    useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({

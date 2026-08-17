@@ -22,7 +22,14 @@ installUiListsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            View: 'View',
+            View: (props: Record<string, unknown> & { children?: React.ReactNode }) => {
+                React.Children.toArray(props.children).forEach((child) => {
+                    if (typeof child === 'string') {
+                        console.error(`Unexpected text node: ${child}. A text node cannot be a child of a <View>.`);
+                    }
+                });
+                return React.createElement('View', props, props.children);
+            },
             Text: 'Text',
             Pressable: 'Pressable',
             ActivityIndicator: 'ActivityIndicator',
@@ -106,7 +113,7 @@ describe('Item', () => {
         // Non-interactive rows should not be pressable on web.
         expect(findTestInstanceByTypeWithProps(screen, 'Pressable' as any, { accessibilityRole: 'button' })).toBeUndefined();
 
-        expect(findTestInstanceByTypeWithProps(screen, 'Ionicons' as any, { name: 'chevron-forward' })).toBeUndefined();
+        expect(findTestInstanceByTypeWithProps(screen, 'Icon' as any, { name: 'caret-right' })).toBeUndefined();
     });
 
     it('renders a chevron only when onPress is provided', async () => {
@@ -121,7 +128,7 @@ describe('Item', () => {
         expect(pressable?.props.accessibilityLabel).toBe('Title');
         expect(pressable?.props.tabIndex).toBe(0);
 
-        expect(findTestInstanceByTypeWithProps(screen, 'Ionicons' as any, { name: 'chevron-forward' })).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(screen, 'Icon' as any, { name: 'caret-right' })).toBeTruthy();
     });
 
     it('wires onContextMenu on web for interactive rows', async () => {
@@ -154,6 +161,27 @@ describe('Item', () => {
         );
 
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
+    });
+
+    it('does not pass an empty subtitle through as a raw View child', async () => {
+        const { Item } = await import('./Item');
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+            await renderScreen(
+                <Item
+                    title="Use CLI settings"
+                    subtitle=""
+                    showChevron={false}
+                />,
+            );
+
+            expect(consoleError).not.toHaveBeenCalledWith(
+                expect.stringContaining('Unexpected text node:'),
+            );
+        } finally {
+            consoleError.mockRestore();
+        }
     });
 
     it('renders detail even when rightElement is provided', async () => {

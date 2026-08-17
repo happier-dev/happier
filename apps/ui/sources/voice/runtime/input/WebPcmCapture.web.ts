@@ -70,15 +70,15 @@ type AudioTrackLike = Readonly<{
 }>;
 
 export type WebPcmCaptureError =
-  | 'web_pcm_capture_backpressure'
-  | 'web_pcm_capture_chunk_failed'
-  | 'web_pcm_capture_device_lost'
-  | 'web_pcm_capture_invalid_chunk'
-  | 'web_pcm_capture_media_source_failed'
-  | 'web_pcm_capture_mic_acquisition_failed'
-  | 'web_pcm_capture_mic_state_unavailable'
-  | 'web_pcm_capture_resume_failed'
-  | 'web_pcm_capture_unavailable';
+  | 'pcm_capture_backpressure'
+  | 'pcm_capture_chunk_failed'
+  | 'pcm_capture_device_lost'
+  | 'pcm_capture_invalid_chunk'
+  | 'pcm_capture_media_source_failed'
+  | 'pcm_capture_mic_acquisition_failed'
+  | 'pcm_capture_mic_state_unavailable'
+  | 'pcm_capture_resume_failed'
+  | 'pcm_capture_unavailable';
 
 export type WebPcmCaptureChunk = Readonly<{
   bytes: Uint8Array;
@@ -436,14 +436,14 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     if (!active || options.mic.isMuted?.() === true) return;
     latestLevel = normalizeLevel(chunk.level);
     if (queuedChunks >= maxQueuedChunks) {
-      fail('web_pcm_capture_backpressure');
+      fail('pcm_capture_backpressure');
       return;
     }
     queuedChunks += 1;
     drainTail = drainTail
       .catch(() => undefined)
       .then(async () => options.onChunk(chunk))
-      .catch(() => fail('web_pcm_capture_chunk_failed'))
+      .catch(() => fail('pcm_capture_chunk_failed'))
       .finally(() => {
         queuedChunks = Math.max(0, queuedChunks - 1);
       });
@@ -473,7 +473,7 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     const onVisibilityChange = (): void => {
       if (active && documentLike.visibilityState === 'visible') {
         void resumeAudioContextIfNeeded(context).catch(() => {
-          fail('web_pcm_capture_resume_failed');
+          fail('pcm_capture_resume_failed');
         });
       }
     };
@@ -485,7 +485,7 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     const tracks = typeof stream.getAudioTracks === 'function'
       ? stream.getAudioTracks() as readonly AudioTrackLike[]
       : [];
-    const onEnded = (): void => fail('web_pcm_capture_device_lost');
+    const onEnded = (): void => fail('pcm_capture_device_lost');
     for (const track of tracks) track.addEventListener?.('ended', onEnded);
     unlinkDeviceLoss = () => {
       for (const track of tracks) track.removeEventListener?.('ended', onEnded);
@@ -496,10 +496,10 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     context: AudioContextLike,
     version: number,
   ): Promise<boolean> => {
-    const addModule = context.audioWorklet?.addModule;
+    const audioWorklet = context.audioWorklet;
     const WorkletNode = getAudioWorkletNodeConstructor();
     const urlLike = getUrlLike();
-    if (typeof addModule !== 'function'
+    if (typeof audioWorklet?.addModule !== 'function'
       || !WorkletNode
       || typeof Blob !== 'function'
       || typeof urlLike?.createObjectURL !== 'function') return false;
@@ -509,7 +509,7 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
       buildAudioWorkletSource({ processorName, targetSampleRate, targetSamplesPerChunk }),
     ], { type: 'application/javascript' }));
     try {
-      await addModule(workletModuleUrl);
+      await audioWorklet.addModule(workletModuleUrl);
       if (version !== lifecycleVersion || options.signal?.aborted) return true;
       workletNode = new WorkletNode(context, processorName, {
         numberOfInputs: 1,
@@ -520,7 +520,7 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
         if (!active || options.mic.isMuted?.() === true) return;
         const chunk = readWorkletChunk(event.data, targetSamplesPerChunk * 2);
         if (!chunk) {
-          fail('web_pcm_capture_invalid_chunk');
+          fail('pcm_capture_invalid_chunk');
           return;
         }
         enqueueChunk(chunk);
@@ -570,7 +570,7 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     try {
       await options.mic.ensureActive?.();
     } catch {
-      fail('web_pcm_capture_mic_acquisition_failed');
+      fail('pcm_capture_mic_acquisition_failed');
       return;
     }
     if (options.signal?.aborted || version !== lifecycleVersion) {
@@ -580,13 +580,13 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     const stream = options.mic.getStream();
     const context = options.mic.getAudioContext?.() as AudioContextLike | null | undefined;
     if (!stream || !context) {
-      fail('web_pcm_capture_mic_state_unavailable');
+      fail('pcm_capture_mic_state_unavailable');
       return;
     }
     try {
       await resumeAudioContextIfNeeded(context);
     } catch {
-      fail('web_pcm_capture_resume_failed');
+      fail('pcm_capture_resume_failed');
       return;
     }
     if (options.signal?.aborted || version !== lifecycleVersion) {
@@ -599,7 +599,7 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     try {
       sourceNode = context.createMediaStreamSource(stream);
     } catch {
-      fail('web_pcm_capture_media_source_failed');
+      fail('pcm_capture_media_source_failed');
       return;
     }
     const workletStarted = await tryStartWorklet(context, version);
@@ -610,11 +610,11 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     if (!workletStarted) {
       try {
         if (!startFallback(context)) {
-          fail('web_pcm_capture_unavailable');
+          fail('pcm_capture_unavailable');
           return;
         }
       } catch {
-        fail('web_pcm_capture_unavailable');
+        fail('pcm_capture_unavailable');
         return;
       }
     }

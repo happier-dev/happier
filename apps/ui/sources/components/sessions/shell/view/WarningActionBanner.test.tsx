@@ -29,45 +29,13 @@ vi.mock('react-native', () => ({
     },
 }));
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                state: {
-                    warning: {
-                        background: '#fff4cc',
-                        border: '#f0d98a',
-                        foreground: '#111',
-                    },
-                },
-                text: {
-                    primary: '#111',
-                    secondary: '#666',
-                },
-                border: {
-                    surface: 'transparent',
-                },
-                shadowLevels: [
-                    { boxShadow: 'none', shadowColor: '#000', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0, shadowRadius: 0, elevation: 0 },
-                    { boxShadow: '0 1px 2px rgba(0,0,0,0.06)', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 2, elevation: 1 },
-                ],
-                button: {
-                    primary: {
-                        background: '#111',
-                        tint: '#fff',
-                    },
-                    secondary: {
-                        background: 'transparent',
-                        tint: '#666',
-                    },
-                },
-            },
-        },
-    }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
+vi.mock('@hugeicons/react-native', () => ({
+    HugeiconsIcon: (props: Record<string, unknown>) => React.createElement('HugeiconsIcon', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({

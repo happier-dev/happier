@@ -43,7 +43,7 @@ describe('voiceQaRecordedAudioController target selection', () => {
     expect(resolvers.resolveVoiceHomeDaemonMachineId()).toBe('qa-machine');
   });
 
-  it('runs the real explicit controller branch on only the requested target without consulting ambient routing or mutating settings', async () => {
+  it('runs the real explicit controller branch on only the requested target without mutating canonical Session or Machine projections', async () => {
     const originalState = storage.getState();
     const sharedMetadata: Metadata = {
       path: '',
@@ -84,16 +84,13 @@ describe('voiceQaRecordedAudioController target selection', () => {
           ...currentConversation,
           stt: {
             ...currentConversation.stt,
-            provider: 'openai_compat',
-            openaiCompat: {
-              ...currentConversation.stt.openaiCompat,
-              baseUrl: null,
-            },
+            provider: 'happier.voice.openai-compat/stt',
           },
         },
       ),
     });
     storage.setState((state) => ({ ...state, settings: ambientOnlySettings }));
+    const sessionBeforeTranscription = storage.getState().sessions['explicit-session'];
     const ambientDaemonResolver = vi.fn(() => 'ambient-machine');
     const machineRpcWithServerScope = vi.fn(async (input: { method: string; payload: Record<string, unknown> }) => {
       if (input.method === 'daemon.voiceInference.stt.upload.init') {
@@ -159,16 +156,8 @@ describe('voiceQaRecordedAudioController target selection', () => {
         method: 'daemon.voiceInference.stt.transcribe',
         payload: expect.objectContaining({ packId: 'explicit-pack' }),
       }));
-      expect(storage.getState().sessions['explicit-session']).toMatchObject({
-        metadataLayoutVersion: 1,
-        metadata: sharedMetadata,
-        ownerMetadataView: {
-          path: '/explicit/repo',
-          host: 'voice-qa',
-          machineId: 'explicit-machine',
-          name: 'Recorded audio daemon STT target',
-        },
-      });
+      expect(storage.getState().sessions['explicit-session']).toEqual(sessionBeforeTranscription);
+      expect(storage.getState().machines['explicit-machine']).toBeUndefined();
       expect(storage.getState().settings).toEqual(ambientOnlySettings);
     } finally {
       storage.setState(originalState, true);

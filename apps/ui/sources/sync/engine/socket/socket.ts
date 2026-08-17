@@ -50,6 +50,11 @@ import {
 } from '@/sync/engine/sessions/sessionApplyCoalescer';
 import { createSessionListRenderableProjectionPatchCoalescer } from '@/sync/engine/sessions/sessionListRenderableProjectionPatchCoalescer';
 import { createSessionMessageApplyCoalescer } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
+import {
+    setReceivedSessionMessageApplier,
+    settleReceivedSessionMessages,
+    trackSessionMessageMaterialization,
+} from '@/sync/engine/sessions/sessionMessageMaterializationBarrier';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
@@ -62,6 +67,7 @@ import {
     handleMessageUpdatedSocketUpdate,
     handleNewMessageSocketUpdate,
 } from '@/sync/engine/sessions/syncSessions';
+import type { SessionReceivedMessages } from '@/sync/engine/sessions/sessionMessageCurrentness';
 import {
     buildSessionRuntimeActivityProjectionPatch,
     hasSessionRuntimeActivityProjectionFields,
@@ -81,6 +87,7 @@ import {
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
+    type ArtifactDataKeyCache,
 } from '@/sync/engine/artifacts/syncArtifacts';
 import {
     handleNewFeedPostUpdate,
@@ -342,6 +349,25 @@ const socketMessageApplyCoalescer = createSessionMessageApplyCoalescer({
     },
 });
 
+/**
+ * The socket delivers a materialization as TWO bodies, in order: the committed `new-message`, then
+ * the `pending-changed` that reports the queue empty
+ * (`apps/server/sources/app/session/pending/acceptedPendingSettlementCoordinator.ts` emits them in
+ * exactly that sequence from one settlement transaction).
+ *
+ * This client discards that order. Socket events are dispatched to `handleSocketUpdate` WITHOUT
+ * awaiting the previous one (`sync/api/session/apiSocket.ts#installSocketEventHandlers`), the
+ * `new-message` path always yields at least once (it awaits `readStoredSessionMessage`, plus the
+ * decrypt for an e2ee session) and may then hand its message to the apply coalescer, while
+ * `pending-changed` runs to completion synchronously. So the prune can retire the pending row
+ * BEFORE the committed twin it is the receipt for has been applied.
+ *
+ * `sync/engine/sessions/sessionMessageMaterializationBarrier.ts` owns that question for every writer
+ * that retires pending rows; this module owns the two halves it can see — which messages are in
+ * flight, and how to apply the ones still queued in its coalescer.
+ */
+setReceivedSessionMessageApplier((sessionId) => socketMessageApplyCoalescer.flush(sessionId));
+
 const SOCKET_RAW_MESSAGE_NORMALIZATION_STATE_MAX_SESSIONS = 500;
 const SOCKET_RAW_MESSAGE_NORMALIZATION_STATE_KEY_SEPARATOR = '\u0000';
 const socketRawMessageNormalizationStatesBySessionId = new Map<string, RawMessageNormalizationSequenceState>();
@@ -414,6 +440,26 @@ const transcriptStreamSegmentSocketQueueController = createTranscriptStreamSegme
         syncPerformanceTelemetry.count('sync.socket.transcriptStreamSegment.deferredRaw.droppedHidden', fields);
     },
 });
+
+/**
+ * Canonical teardown for all socket-owned per-session queued/coalesced state.
+ * Sync injects this into its common deletion owner so local retirement has the
+ * same delete-wins fence as an eventual delete/share-revoke socket echo.
+ */
+export function dropSocketSessionWork(sessionId: string, sourceServerId?: string | null): void {
+    const normalizedSessionId = String(sessionId ?? '').trim();
+    if (!normalizedSessionId) return;
+
+    const sessionIds = [normalizedSessionId];
+    socketSessionApplyCoalescer.dropSessionIds(sessionIds);
+    socketMessageApplyCoalescer.dropSessionIds(sessionIds);
+    dropSocketRawMessageNormalizationState(normalizedSessionId, sourceServerId);
+    durableMessageProjectionPatchCoalescer.dropSessionIds(sessionIds);
+    cacheOnlySessionUpdateProjectionPatchCoalescer.dropSessionIds(sessionIds);
+    activityRenderableProjectionPatchCoalescer.dropSessionIds(sessionIds);
+    cacheOnlySessionUpdateSeqBySession.delete(normalizedSessionId);
+    transcriptStreamSegmentSocketQueueController.drop(normalizedSessionId);
+}
 
 function normalizeProjectionSeq(value: unknown): number | null {
     if (typeof value !== 'number' || !Number.isFinite(value)) return null;
@@ -941,15 +987,21 @@ function shouldHydrateEncryptedAgentStateForHiddenSession(params: Readonly<{
 
 export async function handleSocketUpdate(params: {
     update: unknown;
-    encryption: Encryption;
+    encryption: Encryption | null;
+    settingsSecretsKey?: Uint8Array | null;
+    settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
     settingsScope?: AccountSettingsScope | null;
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
-    artifactDataKeys: Map<string, Uint8Array>;
+    onAccountChangeWake?: () => void;
+    artifactDataKeys: ArtifactDataKeyCache;
     applySessions: ApplySessions;
     fetchSessions: () => void;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
+    invalidateSessionHydration?: (sessionId: string) => void;
+    resetSessionTranscriptState?: (sessionId: string) => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    sessionReceivedMessages?: SessionReceivedMessages;
     onSessionVisible: (sessionId: string) => void;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
@@ -980,11 +1032,15 @@ export async function handleSocketUpdate(params: {
         settingsScope,
         sourceServerId,
         shouldContinue = () => true,
+        onAccountChangeWake,
         artifactDataKeys,
         applySessions,
         fetchSessions,
         hydrateSessionById,
+        invalidateSessionHydration,
+        resetSessionTranscriptState,
         applyMessages,
+        sessionReceivedMessages,
         onSessionVisible,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
@@ -1017,14 +1073,20 @@ export async function handleSocketUpdate(params: {
     await handleUpdateContainer({
         updateData,
         encryption,
+        settingsSecretsKey: params.settingsSecretsKey,
+        settingsSecretsReadKeys: params.settingsSecretsReadKeys,
         settingsScope,
         sourceServerId,
         shouldContinue,
+        onAccountChangeWake,
         artifactDataKeys,
         applySessions,
         fetchSessions,
         hydrateSessionById,
+        invalidateSessionHydration,
+        resetSessionTranscriptState,
         applyMessages,
+        sessionReceivedMessages,
         onSessionVisible,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
@@ -1053,15 +1115,21 @@ export async function handleSocketUpdate(params: {
 
 export async function handleUpdateContainer(params: {
     updateData: ApiUpdateContainer;
-    encryption: Encryption;
+    encryption: Encryption | null;
+    settingsSecretsKey?: Uint8Array | null;
+    settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
     settingsScope?: AccountSettingsScope | null;
     sourceServerId?: string | null;
     shouldContinue?: () => boolean;
-    artifactDataKeys: Map<string, Uint8Array>;
+    onAccountChangeWake?: () => void;
+    artifactDataKeys: ArtifactDataKeyCache;
     applySessions: ApplySessions;
     fetchSessions: () => void;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
+    invalidateSessionHydration?: (sessionId: string) => void;
+    resetSessionTranscriptState?: (sessionId: string) => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    sessionReceivedMessages?: SessionReceivedMessages;
     onSessionVisible: (sessionId: string) => void;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
@@ -1092,11 +1160,15 @@ export async function handleUpdateContainer(params: {
         settingsScope,
         sourceServerId,
         shouldContinue = () => true,
+        onAccountChangeWake,
         artifactDataKeys,
         applySessions,
         fetchSessions,
         hydrateSessionById,
+        invalidateSessionHydration,
+        resetSessionTranscriptState,
         applyMessages,
+        sessionReceivedMessages,
         onSessionVisible,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
@@ -1124,6 +1196,11 @@ export async function handleUpdateContainer(params: {
 
     if (!shouldContinue()) return;
 
+    if (updateData.body.t === 'account-change') {
+        onAccountChangeWake?.();
+        return;
+    }
+
     if (updateData.body.t === 'new-message') {
         const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
             Math.max(
@@ -1136,9 +1213,10 @@ export async function handleUpdateContainer(params: {
             onNormalizedMessagesApplied: ingestWorkspaceMutationMessages,
             markSessionMaterializedMaxSeq,
         };
-        await handleNewMessageSocketUpdate({
+        await trackSessionMessageMaterialization(updateData.body.sid, handleNewMessageSocketUpdate({
             updateData,
-            getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
+            shouldContinue,
+            getSessionEncryption: (sessionId) => encryption?.getSessionEncryption(sessionId) ?? null,
             getSession: getSocketSessionApplyBase,
             getSessionProjection: (sessionId) => storage.getState().sessionListRenderables[sessionId],
             applySessions: (sessions) => {
@@ -1194,7 +1272,7 @@ export async function handleUpdateContainer(params: {
                 void deliverHiddenSessionScmMutationSignal({
                     sessionId,
                     rawMessage,
-                    getSessionEncryption: (targetSessionId) => encryption.getSessionEncryption(targetSessionId),
+                    getSessionEncryption: (targetSessionId) => encryption?.getSessionEncryption(targetSessionId) ?? null,
                 });
             },
             onMessageGapDetected,
@@ -1204,7 +1282,7 @@ export async function handleUpdateContainer(params: {
                     onTaskLifecycleEvent(sessionId, event);
                 }
                 : undefined,
-        });
+        }));
     } else if (updateData.body.t === 'message-updated') {
         const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
             Math.max(
@@ -1214,9 +1292,10 @@ export async function handleUpdateContainer(params: {
 
         socketMessageApplyCoalescer.dropQueuedMessageIds(updateData.body.sid, [updateData.body.message.id]);
 
-        await handleMessageUpdatedSocketUpdate({
+        await trackSessionMessageMaterialization(updateData.body.sid, handleMessageUpdatedSocketUpdate({
             updateData,
-            getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
+            shouldContinue,
+            getSessionEncryption: (sessionId) => encryption?.getSessionEncryption(sessionId) ?? null,
             getSession: getSocketSessionApplyBase,
             getSessionProjection: (sessionId) => storage.getState().sessionListRenderables[sessionId],
             applySessions: (sessions) => {
@@ -1262,6 +1341,7 @@ export async function handleUpdateContainer(params: {
                 if (!shouldContinue()) return;
                 applyMessages(sessionId, messages);
             },
+            sessionReceivedMessages,
             onNormalizedMessagesApplied: ingestWorkspaceMutationMessages,
             rawMessageNormalizationState: getSocketRawMessageNormalizationState(updateData.body.sid, sourceServerId),
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
@@ -1280,7 +1360,7 @@ export async function handleUpdateContainer(params: {
                 void deliverHiddenSessionScmMutationSignal({
                     sessionId,
                     rawMessage,
-                    getSessionEncryption: (targetSessionId) => encryption.getSessionEncryption(targetSessionId),
+                    getSessionEncryption: (targetSessionId) => encryption?.getSessionEncryption(targetSessionId) ?? null,
                 });
             },
             onMessageGapDetected,
@@ -1290,7 +1370,7 @@ export async function handleUpdateContainer(params: {
                     onTaskLifecycleEvent(sessionId, event);
                 }
                 : undefined,
-        });
+        }));
     } else if (updateData.body.t === 'new-session') {
         log.log('🆕 New session update received');
         if (!shouldContinue()) return;
@@ -1319,30 +1399,27 @@ export async function handleUpdateContainer(params: {
         });
     } else if (updateData.body.t === 'delete-session') {
         log.log('🗑️ Delete session update received');
-        socketSessionApplyCoalescer.dropSessionIds([updateData.body.sid]);
-        socketMessageApplyCoalescer.dropSessionIds([updateData.body.sid]);
-        dropSocketRawMessageNormalizationState(updateData.body.sid, sourceServerId);
-        durableMessageProjectionPatchCoalescer.dropSessionIds([updateData.body.sid]);
-        cacheOnlySessionUpdateProjectionPatchCoalescer.dropSessionIds([updateData.body.sid]);
-        activityRenderableProjectionPatchCoalescer.dropSessionIds([updateData.body.sid]);
-        cacheOnlySessionUpdateSeqBySession.delete(updateData.body.sid);
-        transcriptStreamSegmentSocketQueueController.drop(updateData.body.sid);
         handleDeleteSessionSocketUpdate({
             sessionId: updateData.body.sid,
+            dropSocketSessionWork: (sessionId) => dropSocketSessionWork(sessionId, sourceServerId),
+            invalidateSessionHydration,
+            resetSessionTranscriptState,
             deleteSession: (sessionId) => storage.getState().deleteSession(sessionId),
-            removeSessionEncryption: (sessionId) => encryption.removeSessionEncryption(sessionId),
+            removeSessionEncryption: (sessionId) => encryption?.removeSessionEncryption(sessionId),
             removeProjectManagerSession: (sessionId) => projectManager.removeSession(sessionId),
             clearScmStatusForSession: (sessionId) => scmStatusSync.clearForSession(sessionId),
             log,
         });
     } else if (updateData.body.t === 'pending-changed') {
         const sessionId = updateData.body.sid;
+        const pendingPatch = buildPendingChangedSessionPatch(updateData.body);
+        // The SESSION-LEVEL count is applied in ARRIVAL ORDER, before the barrier below can yield.
+        // It is a whole-session write through `socketSessionApplyCoalescer` and the next body builds
+        // on the queued session (`getSocketSessionApplyBase`), so deferring it would let a newer
+        // `pending-changed` apply first and then be overwritten by this older, smaller count.
+        // Only the ROW RETIREMENT has to wait for the messages it is the receipt for.
         const state = storage.getState();
         const session = getSocketSessionApplyBase(sessionId);
-        const pendingPatch = buildPendingChangedSessionPatch(updateData.body);
-        if (pendingPatch.pendingCount === 0) {
-            state.pruneServerPendingMessages(sessionId);
-        }
         if (!session) {
             const cachedRenderable = state.sessionListRenderables[sessionId];
             if (cachedRenderable) {
@@ -1358,23 +1435,29 @@ export async function handleUpdateContainer(params: {
                     hydrateSessionById,
                     invalidateSessions,
                 });
-                return;
+            } else if (shouldContinue()) {
+                requestTargetedSessionHydration({
+                    sessionId,
+                    reason: 'socket-update-missing-session',
+                    hydrateSessionById,
+                    invalidateSessions,
+                });
             }
-
-            if (!shouldContinue()) return;
-            requestTargetedSessionHydration({
-                sessionId,
-                reason: 'socket-update-missing-session',
-                hydrateSessionById,
-                invalidateSessions,
-            });
-            return;
+        } else {
+            enqueueSocketSessionApplyGuarded(applySessions, [{
+                ...session,
+                ...pendingPatch,
+            }], shouldContinue);
         }
 
-        enqueueSocketSessionApplyGuarded(applySessions, [{
-            ...session,
-            ...pendingPatch,
-        }], shouldContinue);
+        if (pendingPatch.pendingCount === 0) {
+            // An empty queue is the RECEIPT for messages this client may still be materializing.
+            // Retiring the pending rows first publishes a transcript frame carrying neither the
+            // pending row nor its committed twin. See the barrier's contract above.
+            await settleReceivedSessionMessages(sessionId);
+            if (!shouldContinue()) return;
+            storage.getState().pruneServerPendingMessages(sessionId);
+        }
     } else if (updateData.body.t === 'update-session') {
         const state = storage.getState();
         const session = getSocketSessionApplyBase(updateData.body.id);
@@ -1402,7 +1485,7 @@ export async function handleUpdateContainer(params: {
             }
 
             const hasStatePayload = Boolean(updateData.body.metadata || updateData.body.agentState);
-            const sessionEncryption = encryption.getSessionEncryption(updateData.body.id);
+            const sessionEncryption = encryption?.getSessionEncryption(updateData.body.id) ?? null;
             if (hasStatePayload && sessionEncryption && updateData.body.metadata == null) {
                 if (!shouldContinue()) return;
                 requestTargetedSessionHydration({
@@ -1463,7 +1546,7 @@ export async function handleUpdateContainer(params: {
         const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
         const sessionEncryption = sessionEncryptionMode === 'plain'
             ? null
-            : encryption.getSessionEncryption(updateData.body.id);
+            : encryption?.getSessionEncryption(updateData.body.id) ?? null;
         const shouldHydrateMetadata =
             updateData.body.metadata != null
             && (
@@ -1600,6 +1683,8 @@ export async function handleUpdateContainer(params: {
             updateCreatedAt: updateData.createdAt,
             currentProfile,
             encryption,
+            settingsSecretsKey: params.settingsSecretsKey,
+            settingsSecretsReadKeys: params.settingsSecretsReadKeys,
             settingsScope,
             applyProfile: (profile) => {
                 if (!shouldContinue()) return;
@@ -1630,7 +1715,7 @@ export async function handleUpdateContainer(params: {
         // NOTE: When the dataEncryptionKey is null, we still initialize with null so
         // the machine has a fallback encryptor available (legacy path).
         let decryptedDataKey: Uint8Array | null = null;
-        if (typeof (machineUpdate as any).dataEncryptionKey === 'string' && (machineUpdate as any).dataEncryptionKey.length > 0) {
+        if (encryption && typeof (machineUpdate as any).dataEncryptionKey === 'string' && (machineUpdate as any).dataEncryptionKey.length > 0) {
             try {
                 decryptedDataKey = await encryption.decryptEncryptionKey((machineUpdate as any).dataEncryptionKey);
             } catch (error) {
@@ -1638,7 +1723,9 @@ export async function handleUpdateContainer(params: {
             }
         }
         if (!shouldContinue()) return;
-        await encryption.initializeMachines(new Map([[machineId, decryptedDataKey]]));
+        if (encryption) {
+            await encryption.initializeMachines(new Map([[machineId, decryptedDataKey]]));
+        }
         if (!shouldContinue()) return;
 
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
@@ -1669,7 +1756,7 @@ export async function handleUpdateContainer(params: {
             updateSeq: updateData.seq,
             updateCreatedAt: updateData.createdAt,
             existingMachine: machine,
-            getMachineEncryption: (id) => encryption.getMachineEncryption(id),
+            getMachineEncryption: (id) => encryption?.getMachineEncryption(id) ?? null,
         });
         if (!updatedMachine) {
             invalidateMachines();
@@ -1680,7 +1767,7 @@ export async function handleUpdateContainer(params: {
         // Update storage via applyMachines, which may rebuild the active-server session list index if
         // the machine update affects project-group headers (but should stay stable for activity-only changes).
         storage.getState().applyMachines([updatedMachine], false, { sourceServerId });
-        if (!encryption.getMachineEncryption(machineId)) {
+        if (!encryption?.getMachineEncryption(machineId)) {
             invalidateMachines();
         }
     } else if (updateData.body.t === 'relationship-updated') {
@@ -1842,18 +1929,13 @@ export async function handleUpdateContainer(params: {
             invalidateSessions();
             return;
         }
-        socketSessionApplyCoalescer.dropSessionIds([sessionId]);
-        socketMessageApplyCoalescer.dropSessionIds([sessionId]);
-        dropSocketRawMessageNormalizationState(sessionId, sourceServerId);
-        durableMessageProjectionPatchCoalescer.dropSessionIds([sessionId]);
-        cacheOnlySessionUpdateProjectionPatchCoalescer.dropSessionIds([sessionId]);
-        activityRenderableProjectionPatchCoalescer.dropSessionIds([sessionId]);
-        cacheOnlySessionUpdateSeqBySession.delete(sessionId);
-        transcriptStreamSegmentSocketQueueController.drop(sessionId);
         handleDeleteSessionSocketUpdate({
             sessionId,
+            dropSocketSessionWork: (targetSessionId) => dropSocketSessionWork(targetSessionId, sourceServerId),
+            invalidateSessionHydration,
+            resetSessionTranscriptState,
             deleteSession: (targetSessionId) => storage.getState().deleteSession(targetSessionId),
-            removeSessionEncryption: (targetSessionId) => encryption.removeSessionEncryption(targetSessionId),
+            removeSessionEncryption: (targetSessionId) => encryption?.removeSessionEncryption(targetSessionId),
             removeProjectManagerSession: (targetSessionId) => projectManager.removeSession(targetSessionId),
             clearScmStatusForSession: (targetSessionId) => scmStatusSync.clearForSession(targetSessionId),
             log,

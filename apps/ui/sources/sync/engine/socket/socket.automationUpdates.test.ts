@@ -10,7 +10,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
             getMachineEncryption: () => null,
             removeSessionEncryption: () => {},
         } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-        artifactDataKeys: new Map<string, Uint8Array>(),
+        artifactDataKeys: new Map(),
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: vi.fn(),
@@ -88,5 +88,27 @@ describe('socket automation updates', () => {
 
         expect(params.invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
         expect(params.invalidateAutomations).not.toHaveBeenCalled();
+    });
+
+    it('uses the built-in Automation refetch for a content-free source-status update', async () => {
+        const params = buildBaseParams();
+        const updateData: ApiUpdateContainer = {
+            id: 'u_automation_source_status',
+            seq: 1,
+            createdAt: 1,
+            body: {
+                t: 'automation-source-status-updated',
+            },
+        } as ApiUpdateContainer;
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect(params.invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
+        expect(params.invalidateAutomations).not.toHaveBeenCalled();
+        expect(params.invalidateSessions).not.toHaveBeenCalled();
+        expect(params.invalidateTodos).not.toHaveBeenCalled();
     });
 });

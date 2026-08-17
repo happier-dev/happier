@@ -3,11 +3,14 @@ import { Pressable, View } from 'react-native';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { StyleSheet as RNStyleSheet } from 'react-native';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 
 export type SourceControlUpdateTheme = Readonly<{
     colors: Readonly<{
         border: Readonly<{
             default: string;
+            subtle: string;
         }>;
         text: Readonly<{
             primary: string;
@@ -103,6 +106,11 @@ export function SourceControlUpdateInput(props: Readonly<{
     );
 }
 
+/**
+ * Kept as a named export because the update tab's call sites pass the narrowed `theme` prop, but it
+ * is no longer a second implementation: the same small labelled button as every other toolbar,
+ * through the canonical owner, with the injected theme still winning where it differs.
+ */
 export function SourceControlUpdateButton(props: Readonly<{
     theme: SourceControlUpdateTheme;
     label: string;
@@ -112,52 +120,29 @@ export function SourceControlUpdateButton(props: Readonly<{
     kind?: 'primary' | 'secondary' | 'danger';
 }>) {
     const kind = props.kind ?? 'secondary';
-    const primaryBackground =
-        props.theme.colors.button?.primary?.background
-        ?? props.theme.colors.state.success.foreground
-        ?? props.theme.colors.surface.inset
-        ?? props.theme.colors.surface.base;
-    const foreground =
-        kind === 'primary'
-            ? props.theme.colors.button?.primary?.tint ?? props.theme.colors.surface.base
-            : kind === 'danger'
-                ? props.theme.colors.state.danger.foreground
-                    ?? props.theme.colors.text.primary
-                : props.theme.colors.text.primary;
-    const background =
-        kind === 'primary'
-            ? primaryBackground
-            : props.theme.colors.surface.inset ?? props.theme.colors.surface.base;
+    // Undefined here simply lets the shared button fall back to its own primary token.
+    const injectedPrimaryBackground = kind === 'primary'
+        ? props.theme.colors.button?.primary?.background
+        : undefined;
+    const injectedPrimary = injectedPrimaryBackground
+        ? { backgroundColor: injectedPrimaryBackground, borderWidth: 0 }
+        : undefined;
+    const injectedLabelColor = kind === 'primary'
+        ? props.theme.colors.button?.primary?.tint
+        : kind === 'danger'
+            ? props.theme.colors.state.danger.foreground
+            : props.theme.colors.text.primary;
 
     return (
-        <Pressable
+        <ToolbarButton
+            size="md"
             testID={props.testID}
-            accessibilityRole="button"
-            accessibilityLabel={props.label}
-            disabled={props.disabled}
+            label={props.label}
             onPress={props.onPress}
-            hitSlop={8}
-            style={({ pressed }) => ({
-                minHeight: 34,
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: props.theme.colors.border.default,
-                backgroundColor: background,
-                paddingHorizontal: 10,
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: props.disabled ? 0.45 : pressed ? 0.78 : 1,
-            })}
-        >
-            <Text
-                style={{
-                    fontSize: 12,
-                    color: foreground,
-                    ...Typography.default('semiBold'),
-                }}
-            >
-                {props.label}
-            </Text>
-        </Pressable>
+            disabled={props.disabled}
+            tone={kind === 'primary' ? 'primary' : kind === 'danger' ? 'danger' : 'default'}
+            labelColor={injectedLabelColor}
+            style={injectedPrimary}
+        />
     );
 }

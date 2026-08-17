@@ -144,6 +144,15 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
         });
     }, [config.chrome]);
 
+    // Card chrome is derived from the modal content's own render output, so applying it must not
+    // feed back into that render. Holding the content element identity stable lets React skip the
+    // content subtree whenever only chrome state changed; without that, a consumer whose chrome
+    // dependencies are not referentially stable republishes on every applied chrome and the
+    // publish cycle never closes.
+    const content = React.useMemo(() => (
+        <Component {...config.props} onClose={handleComponentClose} setChrome={setChrome} />
+    ), [Component, config.props, handleComponentClose, setChrome]);
+
     return (
         <BaseModal
             visible={visible}
@@ -170,10 +179,10 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
                     dimensions={chrome.dimensions}
                     onClose={dismissible ? handleSharedDismiss : undefined}
                 >
-                    <Component {...config.props} onClose={handleComponentClose} setChrome={setChrome} />
+                    {content}
                 </ModalCardFrame>
             ) : (
-                <Component {...config.props} onClose={handleComponentClose} setChrome={setChrome} />
+                content
             )}
         </BaseModal>
     );

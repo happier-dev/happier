@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
+import { resetScopedMachineTransportCacheForTests } from './serverScopedRpcPool';
 
-type MachineRpcSpy = (machineId: string, method: string, params: unknown, options?: { timeoutMs?: number }) => Promise<unknown>;
+type MachineRpcSpy = (machineId: string, method: string, params: unknown, options?: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+}) => Promise<unknown>;
 
 const machineRpcSpy = vi.hoisted(() => vi.fn<MachineRpcSpy>());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
@@ -64,7 +67,7 @@ describe('machineRpcWithServerScope signal', () => {
         createEphemeralSocketSpy.mockReset();
         getActiveServerSnapshotSpy.mockReset();
         machineRpcWithPeerMediationRouteSpy.mockReset();
-        resetScopedMachineDataKeyCacheForTests();
+        resetScopedMachineTransportCacheForTests();
     });
 
     it('rejects with an abort error when the signal fires during an in-flight attempt', async () => {
@@ -79,6 +82,11 @@ describe('machineRpcWithServerScope signal', () => {
             signal: controller.signal,
         });
         const captured = rpcPromise.catch((error: unknown) => error);
+
+        await vi.waitFor(() => expect(machineRpcSpy).toHaveBeenCalledTimes(1));
+        expect(machineRpcSpy.mock.calls[0]?.[3]).toEqual(expect.objectContaining({
+            signal: controller.signal,
+        }));
 
         controller.abort();
 

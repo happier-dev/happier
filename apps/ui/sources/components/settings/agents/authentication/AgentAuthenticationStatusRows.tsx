@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import type { CliAuthStatusData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function resolveAuthStateSubtitle(authStatus: CliAuthStatusData | null): string {
     if (!authStatus) return t('settingsAgents.authentication.stateUnknown');
@@ -62,7 +62,7 @@ export const AgentAuthenticationStatusRows = React.memo(function AgentAuthentica
                 testID="settings-provider-auth-status"
                 title={t('settingsAgents.authentication.statusTitle')}
                 subtitle={resolveAuthStateSubtitle(props.authStatus)}
-                icon={<Ionicons name="shield-checkmark-outline" size={22} color={theme.colors.text.secondary} />}
+                icon={<Icon name="shield-check" size={20} color={theme.colors.text.secondary} />}
                 mode="info"
             />
             {props.authStatus?.accountLabel ? (
@@ -70,7 +70,7 @@ export const AgentAuthenticationStatusRows = React.memo(function AgentAuthentica
                     testID="settings-provider-auth-account"
                     title={t('settingsAgents.authentication.loggedInAsTitle')}
                     subtitle={props.authStatus.accountLabel}
-                    icon={<Ionicons name="person-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="person" size={20} color={theme.colors.text.secondary} />}
                     mode="info"
                     copy={props.authStatus.accountLabel}
                 />
@@ -80,7 +80,7 @@ export const AgentAuthenticationStatusRows = React.memo(function AgentAuthentica
                     testID="settings-provider-auth-method"
                     title={t('settingsAgents.authentication.methodTitle')}
                     subtitle={methodSubtitle}
-                    icon={<Ionicons name="key-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="key" size={20} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}
@@ -89,7 +89,7 @@ export const AgentAuthenticationStatusRows = React.memo(function AgentAuthentica
                     testID="settings-provider-auth-source"
                     title={t('settingsAgents.authentication.sourceTitle')}
                     subtitle={sourceSubtitle}
-                    icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="file-text" size={20} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}
@@ -98,7 +98,7 @@ export const AgentAuthenticationStatusRows = React.memo(function AgentAuthentica
                     testID="settings-provider-auth-reason"
                     title={t('settingsAgents.authentication.reasonTitle')}
                     subtitle={reasonSubtitle}
-                    icon={<Ionicons name="alert-circle-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="warning-circle" size={20} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}
@@ -107,7 +107,7 @@ export const AgentAuthenticationStatusRows = React.memo(function AgentAuthentica
                     testID="settings-provider-auth-last-checked"
                     title={t('settingsAgents.authentication.lastCheckedTitle')}
                     subtitle={checkedAtSubtitle}
-                    icon={<Ionicons name="time-outline" size={22} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="clock" size={20} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}

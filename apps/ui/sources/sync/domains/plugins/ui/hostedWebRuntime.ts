@@ -3,12 +3,8 @@ import type { PluginUiHostedWebProjection } from './projection';
 export type HostedWebRuntimeDiagnosticCode =
     | 'hosted_web_bridge_policy_absent'
     | 'hosted_web_fallback_rendering'
-    | 'hosted_web_managed_service_starting'
-    | 'hosted_web_managed_service_unavailable'
-    | 'hosted_web_managed_service_unhealthy'
     | 'hosted_web_preview_expired'
-    | 'hosted_web_preview_unavailable'
-    | 'hosted_web_static_asset_unavailable';
+    | 'hosted_web_preview_unavailable';
 
 export type HostedWebRuntimeDiagnosticState =
     | Readonly<{
@@ -18,16 +14,9 @@ export type HostedWebRuntimeDiagnosticState =
     }>
     | Readonly<{
         state: 'fallback';
-        reason: 'static_asset_unavailable' | 'managed_service_starting' | 'managed_service_unavailable' | 'managed_service_unhealthy' | 'preview_expired' | 'preview_unavailable';
+        reason: 'preview_expired' | 'preview_unavailable';
         diagnostics: readonly string[];
     }>;
-
-type LocalServiceDiagnostic = Readonly<{ code: string }>;
-type LocalServiceSnapshot = Readonly<{
-    id: string;
-    phase: string;
-    diagnostics: readonly LocalServiceDiagnostic[];
-}>;
 
 const EMPTY_HOSTED_WEB_RUNTIME_DIAGNOSTICS: readonly HostedWebRuntimeDiagnosticCode[] = Object.freeze([]);
 const BRIDGE_POLICY_ABSENT_DIAGNOSTICS: readonly HostedWebRuntimeDiagnosticCode[] = Object.freeze([
@@ -38,12 +27,6 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? value as Readonly<Record<string, unknown>>
         : null;
-}
-
-function readServiceKind(hostedWeb: PluginUiHostedWebProjection): string | null {
-    const service = readRecord(hostedWeb.service);
-    const kind = service?.kind;
-    return typeof kind === 'string' ? kind : null;
 }
 
 function hasBridgePolicy(hostedWeb: PluginUiHostedWebProjection): boolean {
@@ -80,47 +63,10 @@ function readEndpointUrl(endpointUrl: string | null | undefined): string | null 
     }
 }
 
-function managedServiceDiagnostic(
-    hostedWeb: PluginUiHostedWebProjection,
-    localService: LocalServiceSnapshot | null | undefined,
-): HostedWebRuntimeDiagnosticState {
-    if (!localService) {
-        return Object.freeze({
-            state: 'fallback',
-            reason: 'managed_service_unavailable',
-            diagnostics: withFallbackDiagnostic(hostedWeb, ['hosted_web_managed_service_unavailable']),
-        });
-    }
-
-    const serviceDiagnostics = localService.diagnostics
-        .map((diagnostic) => diagnostic.code)
-        .filter((code) => code.trim().length > 0);
-    if (localService.phase === 'starting' || localService.phase === 'detecting' || localService.phase === 'stopped') {
-        return Object.freeze({
-            state: 'fallback',
-            reason: 'managed_service_starting',
-            diagnostics: withFallbackDiagnostic(hostedWeb, ['hosted_web_managed_service_starting', ...serviceDiagnostics]),
-        });
-    }
-    if (localService.phase === 'unhealthy' || localService.phase === 'failed') {
-        return Object.freeze({
-            state: 'fallback',
-            reason: 'managed_service_unhealthy',
-            diagnostics: withFallbackDiagnostic(hostedWeb, ['hosted_web_managed_service_unhealthy', ...serviceDiagnostics]),
-        });
-    }
-    return Object.freeze({
-        state: 'fallback',
-        reason: 'preview_unavailable',
-        diagnostics: withFallbackDiagnostic(hostedWeb, ['hosted_web_preview_unavailable']),
-    });
-}
-
 export function resolveHostedWebRuntimeDiagnostics(input: Readonly<{
     hostedWeb: PluginUiHostedWebProjection;
     endpointUrl?: string | null;
     expiresAt?: number | null;
-    localService?: LocalServiceSnapshot | null;
     nowMs: number;
 }>): HostedWebRuntimeDiagnosticState {
     if (typeof input.expiresAt === 'number' && input.expiresAt <= input.nowMs) {
@@ -142,17 +88,10 @@ export function resolveHostedWebRuntimeDiagnostics(input: Readonly<{
         });
     }
 
-    const serviceKind = readServiceKind(input.hostedWeb);
-    if (serviceKind === 'managedService') {
-        return managedServiceDiagnostic(input.hostedWeb, input.localService);
-    }
-    if (serviceKind === 'staticAssets') {
-        return Object.freeze({
-            state: 'fallback',
-            reason: 'static_asset_unavailable',
-            diagnostics: withFallbackDiagnostic(input.hostedWeb, ['hosted_web_static_asset_unavailable']),
-        });
-    }
+    // Frame-adapter readiness is projected by the daemon from the UI's exact
+    // host fact. This endpoint consumer must not recreate a competing
+    // platform-based adapter decision: an admitted frame can still lack an
+    // Artifact/preview endpoint, which is a separate runtime failure.
     return Object.freeze({
         state: 'fallback',
         reason: 'preview_unavailable',

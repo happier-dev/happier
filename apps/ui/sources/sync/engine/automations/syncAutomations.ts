@@ -1,15 +1,19 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { Automation, AutomationRun } from '@/sync/domains/automations/automationTypes';
-import { listAutomations } from '@/sync/api/automations/apiAutomations';
-import { listAutomationRuns } from '@/sync/api/automations/apiAutomationRuns';
+import type {
+    AutomationDefinition,
+    AutomationDefinitionRun,
+} from '@/sync/domains/automations/automationTypes';
+import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
+import { listAutomationDefinitionsV3 } from '@/sync/api/automations/apiAutomations';
+import { listAutomationDefinitionRunsV3 } from '@/sync/api/automations/apiAutomationRuns';
 import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 export async function fetchAndApplyAutomations(params: {
     credentials: AuthCredentials | null | undefined;
-    applyAutomations: (automations: Automation[]) => void;
+    applyAutomations: (automations: AutomationDefinition[]) => void;
     loadedAutomationRunIds?: readonly string[];
-    setAutomationRuns?: (automationId: string, runs: AutomationRun[]) => void;
+    setAutomationRuns?: (automationId: string, runs: AutomationDefinitionRun[], nextCursor: string | null) => void;
     runsLimit?: number;
     shouldContinue?: () => boolean;
 }): Promise<void> {
@@ -30,9 +34,11 @@ export async function fetchAndApplyAutomations(params: {
     }
     if (!shouldContinue()) return;
 
-    const rows = await listAutomations(params.credentials);
+    const rows = await listAutomationDefinitionsV3(params.credentials);
     if (!shouldContinue()) return;
-    params.applyAutomations(rows);
+    const automations = rows.map(createAutomationDefinitionSummary);
+    if (!shouldContinue()) return;
+    params.applyAutomations(automations);
 
     if (!params.setAutomationRuns) {
         return;
@@ -43,7 +49,7 @@ export async function fetchAndApplyAutomations(params: {
         return;
     }
 
-    const rowIds = new Set(rows.map((row) => row.id));
+    const rowIds = new Set(automations.map((automation) => automation.id));
     const idsToRefresh = loadedAutomationRunIds.filter((automationId) => rowIds.has(automationId));
     if (idsToRefresh.length === 0) {
         return;
@@ -52,13 +58,13 @@ export async function fetchAndApplyAutomations(params: {
     const limit = params.runsLimit ?? 20;
     await Promise.all(idsToRefresh.map(async (automationId) => {
         if (!shouldContinue()) return;
-        const result = await listAutomationRuns({
+        const result = await listAutomationDefinitionRunsV3({
             credentials: params.credentials!,
             automationId,
             limit,
         });
         if (!shouldContinue()) return;
-        params.setAutomationRuns?.(automationId, result.runs);
+        params.setAutomationRuns?.(automationId, result.runs, result.nextCursor);
     }));
 }
 
@@ -66,7 +72,14 @@ export async function fetchAndApplyAutomationRuns(params: {
     credentials: AuthCredentials | null | undefined;
     automationId: string;
     limit?: number;
-    setAutomationRuns: (automationId: string, runs: AutomationRun[]) => void;
+    cursor?: string;
+    setAutomationRuns: (automationId: string, runs: AutomationDefinitionRun[], nextCursor: string | null) => void;
+    appendAutomationRuns: (
+        automationId: string,
+        expectedCursor: string,
+        runs: AutomationDefinitionRun[],
+        nextCursor: string | null,
+    ) => void;
     shouldContinue?: () => boolean;
 }): Promise<{ nextCursor: string | null }> {
     const shouldContinue = params.shouldContinue ?? (() => true);
@@ -86,12 +99,17 @@ export async function fetchAndApplyAutomationRuns(params: {
     }
     if (!shouldContinue()) return { nextCursor: null };
 
-    const result = await listAutomationRuns({
+    const result = await listAutomationDefinitionRunsV3({
         credentials: params.credentials,
         automationId: params.automationId,
         limit: params.limit,
+        cursor: params.cursor,
     });
     if (!shouldContinue()) return { nextCursor: null };
-    params.setAutomationRuns(params.automationId, result.runs);
+    if (params.cursor) {
+        params.appendAutomationRuns(params.automationId, params.cursor, result.runs, result.nextCursor);
+    } else {
+        params.setAutomationRuns(params.automationId, result.runs, result.nextCursor);
+    }
     return { nextCursor: result.nextCursor };
 }

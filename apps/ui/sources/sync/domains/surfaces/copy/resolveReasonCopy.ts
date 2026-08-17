@@ -32,6 +32,114 @@ export type ResolvedReasonCopy = Readonly<{
 }>;
 
 /**
+ * Factual surface state stays with its Resource, renderer, or route owner.
+ * This is only the one presentation projection shared by plugin-surface
+ * adapters: it decides whether a state replaces content, retains last-known
+ * good content, or leaves current content alone, and localizes any shared
+ * state-card chrome without ever exposing a machine reason as product copy.
+ */
+export type PluginSurfacePresentationState =
+    | 'loading'
+    | 'available'
+    | 'refreshing'
+    | 'stale'
+    | 'offline'
+    | 'unavailable'
+    | 'failedRetry';
+
+/** Renderer facts may choose one of these centralized localized recovery variants. */
+export type PluginSurfacePresentationCopyVariant =
+    | 'pluginReactNativeResetRequested'
+    | 'pluginReactNativeResetAwaitingProjection'
+    | 'pluginReactNativeResetFailed'
+    | 'pluginReactNativeResetComplete';
+
+export type PluginSurfaceStatePresentation = Readonly<{
+    state: PluginSurfacePresentationState;
+    /** Whether the caller replaces, retains, or continues its current content. */
+    disposition: 'replace' | 'retain' | 'content';
+    /** Raw diagnostic remains diagnostics-only even when no card is rendered. */
+    diagnosticCode: string | null;
+    /** Shared card chrome for a replacement state; renderer-specific cards may retain their own title. */
+    card: Readonly<{
+        kind: 'loading' | 'error' | 'unavailable';
+        title: string;
+        reason?: string;
+        accessibilitySemantics: 'status' | 'alert';
+    }> | null;
+    /** A bounded status notice that accompanies retained, available content. */
+    contentNotice: Readonly<{
+        title: string;
+        reason: string;
+        accessibilitySemantics: 'status';
+    }> | null;
+}>;
+
+function resolvePluginSurfacePresentationCopy(input: Readonly<{
+    state: PluginSurfacePresentationState;
+    copyVariant?: PluginSurfacePresentationCopyVariant;
+    title?: string;
+    reason: ResolvedReasonCopy;
+}>): Readonly<{
+    title?: string;
+    reason: string;
+}> {
+    switch (input.copyVariant) {
+        case 'pluginReactNativeResetRequested':
+            return Object.freeze({
+                title: t('pluginReactNative.reset.requested.title'),
+                reason: t('pluginReactNative.reset.requested.reason'),
+            });
+        case 'pluginReactNativeResetAwaitingProjection':
+            return Object.freeze({
+                title: t('pluginReactNative.reset.awaitingProjection.title'),
+                reason: t('pluginReactNative.reset.awaitingProjection.reason'),
+            });
+        case 'pluginReactNativeResetFailed':
+            return Object.freeze({
+                title: t('pluginReactNative.reset.failed.title'),
+                reason: t('pluginReactNative.reset.failed.reason'),
+            });
+        case 'pluginReactNativeResetComplete':
+            return Object.freeze({
+                title: t('pluginReactNative.reset.complete.title'),
+                reason: t('pluginReactNative.reset.complete.reason'),
+            });
+        case undefined:
+            switch (input.state) {
+                case 'loading':
+                    return Object.freeze({
+                        title: t('pluginSurfaces.state.loading.title'),
+                        reason: t('pluginSurfaces.state.loading.reason'),
+                    });
+                case 'refreshing':
+                    return Object.freeze({
+                        title: t('pluginSurfaces.state.refreshing.title'),
+                        reason: t('pluginSurfaces.state.refreshing.reason'),
+                    });
+                case 'stale':
+                    return Object.freeze({
+                        title: t('pluginSurfaces.state.stale.title'),
+                        reason: t('pluginSurfaces.state.stale.reason'),
+                    });
+                case 'offline':
+                    return Object.freeze({
+                        title: t('pluginSurfaces.state.offline.title'),
+                        reason: t('pluginSurfaces.state.offline.reason'),
+                    });
+                case 'available':
+                case 'unavailable':
+                case 'failedRetry':
+                    break;
+            }
+            return Object.freeze({
+                title: input.title,
+                reason: input.reason.body,
+            });
+    }
+}
+
+/**
  * Known browser frame / status reason codes → a localized message key.
  *
  * The full `BrowserAdapterUnavailableReasonCode` enum is covered, plus the
@@ -125,9 +233,9 @@ const STREAM_PLAYER_KEYS = {
 } as const satisfies Record<string, StreamPlayerMessageKey>;
 
 /**
- * Plugin runtime load/fallback diagnostics grouped into three user-meaningful
- * families: crash-looped, disabled by policy/compatibility, and a missing
- * requirement on this device. The raw per-code distinction stays on
+ * Plugin runtime load/fallback diagnostics grouped into user-meaningful
+ * families. Hosted-web terminal facts that have different recovery guidance
+ * remain distinct here; the raw per-code distinction also stays on
  * `diagnosticCode` for QA channels.
  */
 const PLUGIN_RUNTIME_KEYS = {
@@ -143,11 +251,24 @@ const PLUGIN_RUNTIME_KEYS = {
     compatibility_channel_unsupported: 'pluginRuntime.disabledByPolicy',
     compatibility_feature_disabled: 'pluginRuntime.disabledByPolicy',
     profile_mode_unsupported: 'pluginRuntime.disabledByPolicy',
+    hosted_web_policy_denied: 'pluginRuntime.hostedWebPolicyDenied',
+    hosted_web_sandbox_unavailable: 'pluginRuntime.hostedWebSandboxUnavailable',
+    hosted_web_security_unavailable: 'pluginRuntime.hostedWebSecurityUnavailable',
+    hosted_web_frame_origin_unavailable: 'pluginRuntime.hostedWebFrameOriginUnavailable',
+    hosted_web_bridge_nonce_unavailable: 'pluginRuntime.hostedWebBridgeNonceUnavailable',
+    hosted_web_bridge_timeout: 'pluginRuntime.hostedWebBridgeTimeout',
+    hosted_web_endpoint_policy_denied: 'pluginRuntime.hostedWebEndpointPolicyDenied',
+    e2ee_unavailable: 'pluginRuntime.missingRequirement',
+    artifact_hosting_not_opted_in: 'pluginRuntime.disabledByPolicy',
+    artifact_hosting_unsupported: 'pluginRuntime.missingRequirement',
+    hosted_web_static_artifact_missing: 'pluginRuntime.missingRequirement',
+    hosted_web_frame_adapter_unavailable: 'pluginRuntime.missingRequirement',
     missing_native_capability: 'pluginRuntime.missingRequirement',
     required_permission_missing: 'pluginRuntime.missingRequirement',
     entry_missing: 'pluginRuntime.missingRequirement',
     runtime_mismatch: 'pluginRuntime.missingRequirement',
     repack_script_manager_unavailable: 'pluginRuntime.missingRequirement',
+    transport_unavailable: 'pluginRuntime.unavailableGeneric',
 } as const satisfies Record<string, PluginRuntimeMessageKey>;
 
 type SimulatorPreviewMessageKey =
@@ -166,7 +287,15 @@ type StreamPlayerMessageKey =
 type PluginRuntimeMessageKey =
     | 'pluginRuntime.crashLoop'
     | 'pluginRuntime.disabledByPolicy'
-    | 'pluginRuntime.missingRequirement';
+    | 'pluginRuntime.hostedWebPolicyDenied'
+    | 'pluginRuntime.hostedWebSandboxUnavailable'
+    | 'pluginRuntime.hostedWebSecurityUnavailable'
+    | 'pluginRuntime.hostedWebFrameOriginUnavailable'
+    | 'pluginRuntime.hostedWebBridgeNonceUnavailable'
+    | 'pluginRuntime.hostedWebBridgeTimeout'
+    | 'pluginRuntime.hostedWebEndpointPolicyDenied'
+    | 'pluginRuntime.missingRequirement'
+    | 'pluginRuntime.unavailableGeneric';
 
 type LocalServiceLauncherMessageKey =
     | 'localServices.launcher.unavailableReason.launchUnavailable'
@@ -286,4 +415,127 @@ export function resolveReasonCopy(input: Readonly<{
         message: body,
         diagnosticCode: rawCode,
     };
+}
+
+/**
+ * Projects already-owned plugin-surface facts into shared state-card chrome.
+ * It has no lifecycle, cache, retry, or currentness authority: callers supply
+ * the factual state and whether they still hold a valid retained snapshot.
+ */
+export function resolvePluginSurfaceStatePresentation(input: Readonly<{
+    state: PluginSurfacePresentationState;
+    reasonCode?: string | null;
+    /** A renderer may retain its established localized title without owning copy selection. */
+    title?: string;
+    /** Renderer-local facts select only a centralized, localized recovery variant. */
+    copyVariant?: PluginSurfacePresentationCopyVariant;
+    /** Only the factual content owner may assert that its last-known-good content is retained. */
+    hasRetainedContent?: boolean;
+}>): PluginSurfaceStatePresentation {
+    const reason = resolveReasonCopy({
+        reasonCode: input.reasonCode,
+        kind: 'pluginRuntime',
+    });
+    const copy = resolvePluginSurfacePresentationCopy({
+        state: input.state,
+        copyVariant: input.copyVariant,
+        title: input.title,
+        reason,
+    });
+    const unavailableCard = (): PluginSurfaceStatePresentation['card'] => Object.freeze({
+        kind: 'unavailable',
+        title: copy.title ?? reason.title,
+        reason: copy.reason,
+        accessibilitySemantics: 'status',
+    });
+    const loadingCard = (): PluginSurfaceStatePresentation['card'] => Object.freeze({
+        kind: 'loading',
+        title: copy.title ?? t('common.loading'),
+        reason: copy.reason,
+        accessibilitySemantics: 'status',
+    });
+    const failedRetryCard = (): PluginSurfaceStatePresentation['card'] => Object.freeze({
+        kind: 'error',
+        title: copy.title ?? t('common.error'),
+        reason: copy.reason,
+        accessibilitySemantics: 'alert',
+    });
+    const contentNotice = input.state === 'available'
+        ? input.copyVariant === 'pluginReactNativeResetComplete'
+            ? Object.freeze({
+                title: copy.title ?? t('pluginReactNative.reset.complete.title'),
+                reason: copy.reason,
+                accessibilitySemantics: 'status' as const,
+            })
+            : null
+        : input.hasRetainedContent
+            ? Object.freeze({
+                title: copy.title
+                    ?? (input.state === 'failedRetry' ? t('common.error') : reason.title),
+                reason: copy.reason,
+                accessibilitySemantics: 'status' as const,
+            })
+            : null;
+
+    if (input.state !== 'available' && input.hasRetainedContent) {
+        return Object.freeze({
+            state: input.state,
+            disposition: 'retain',
+            diagnosticCode: reason.diagnosticCode,
+            card: null,
+            contentNotice: contentNotice!,
+        });
+    }
+
+    switch (input.state) {
+        case 'available':
+            return Object.freeze({
+                state: input.state,
+                disposition: 'content',
+                diagnosticCode: reason.diagnosticCode,
+                card: null,
+                contentNotice,
+            });
+        case 'refreshing':
+            return Object.freeze({
+                state: input.state,
+                disposition: 'replace',
+                diagnosticCode: reason.diagnosticCode,
+                card: loadingCard(),
+                contentNotice: null,
+            });
+        case 'stale':
+        case 'offline':
+            return Object.freeze({
+                state: input.state,
+                disposition: 'replace',
+                diagnosticCode: reason.diagnosticCode,
+                card: unavailableCard(),
+                contentNotice: null,
+            });
+        case 'failedRetry':
+            return Object.freeze({
+                state: input.state,
+                disposition: 'replace',
+                diagnosticCode: reason.diagnosticCode,
+                card: failedRetryCard(),
+                contentNotice: null,
+            });
+        case 'loading':
+            return Object.freeze({
+                state: input.state,
+                disposition: 'replace',
+                diagnosticCode: reason.diagnosticCode,
+                card: loadingCard(),
+                contentNotice: null,
+            });
+        case 'unavailable':
+            return Object.freeze({
+                state: input.state,
+                disposition: 'replace',
+                diagnosticCode: reason.diagnosticCode,
+                card: unavailableCard(),
+                contentNotice: null,
+            });
+    }
 }

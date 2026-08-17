@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const executionRunStart = vi.fn(async () => ({ ok: true, runId: 'run_1' }));
 const executionRunList = vi.fn(async () => []);
@@ -47,14 +48,6 @@ vi.mock('@/voice/tools/actionImpl/openSession', () => ({
   openSessionForVoiceTool: vi.fn(),
 }));
 
-vi.mock('@/voice/tools/actionImpl/spawnSession', () => ({
-  spawnSessionForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/spawnSessionPicker', () => ({
-  spawnSessionWithPickerForVoiceTool: vi.fn(),
-}));
-
 vi.mock('@/voice/tools/actionImpl/sessionTargets', () => ({
   setPrimaryActionSessionId: vi.fn(),
   setTrackedSessionIds: vi.fn(),
@@ -70,6 +63,7 @@ vi.mock('@/voice/tools/actionImpl/sessionActivity', () => ({
 
 vi.mock('@/voice/tools/actionImpl/sessionRecentMessages', () => ({
   getSessionRecentMessagesForVoiceTool: vi.fn(),
+  getSessionTranscriptForVoiceTool: vi.fn(),
 }));
 
 vi.mock('@/voice/tools/actionImpl/pathsListRecent', () => ({
@@ -201,56 +195,74 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     }));
   });
 
-  it('forwards backendTargetKey to session.spawn_new voice-tool routing', async () => {
+  it('forwards only the strict V2 session spawn contract through the server-scoped machine RPC', async () => {
     const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-    const { spawnSessionForVoiceTool } = await import('@/voice/tools/actionImpl/spawnSession');
+    const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+    const signal = new AbortController().signal;
+    const spawnResult = {
+      type: 'success' as const,
+      disposition: 'created' as const,
+      sessionId: 'session-new',
+      executionTarget: {
+        serverId: 'server-b',
+        machineId: 'machine-explicit',
+      },
+      organizationPlacement: {
+        folderId: null,
+        tagIds: [],
+      },
+      initialInput: {
+        status: 'notRequested' as const,
+      },
+    };
+    vi.mocked(machineRpcWithServerScope).mockResolvedValueOnce(spawnResult);
 
     const executor = createDefaultActionExecutor();
     const result = await executor.execute(
       'session.spawn_new',
       {
-        backendTargetKey: 'acpBackend:review-bot',
-        machineId: 'machine-explicit',
-        path: '/tmp/project',
-        modelId: 'model-a',
-        providerConnectionId: 'pc_openrouter',
-        serverId: 'server-b',
+        creationKey: 'manual:voice-v2-contract',
+        executionTarget: {
+          serverId: 'server-b',
+          machineId: 'machine-explicit',
+        },
+        directory: '/tmp/project',
+        agentTarget: {
+          kind: 'agent',
+          identity: {
+            pluginId: 'happier.agent.codex',
+            localId: 'codex',
+          },
+        },
+        initialMessage: 'Inspect this project.',
       },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel', signal },
     );
 
-    expect(result.ok).toBe(true);
-    expect(spawnSessionForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
-      backendTargetKey: 'acpBackend:review-bot',
-      machineId: 'machine-explicit',
-      path: '/tmp/project',
-      modelId: 'model-a',
-      providerConnectionId: 'pc_openrouter',
+    expect(result).toEqual({ ok: true, result: spawnResult });
+    expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+    expect(machineRpcWithServerScope).toHaveBeenCalledWith({
       serverId: 'server-b',
-    }));
-  });
-
-  it('forwards backendTargetKey to session.spawn_picker voice-tool routing', async () => {
-    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-    const { spawnSessionWithPickerForVoiceTool } = await import('@/voice/tools/actionImpl/spawnSessionPicker');
-
-    const executor = createDefaultActionExecutor();
-    const result = await executor.execute(
-      'session.spawn_picker',
-      {
-        backendTargetKey: 'acpBackend:review-bot',
-        modelId: 'model-a',
-        providerConnectionId: 'pc_openrouter',
+      machineId: 'machine-explicit',
+      method: RPC_METHODS.SESSION_SPAWN_NEW,
+      payload: {
+      creationKey: 'manual:voice-v2-contract',
+      executionTarget: {
+        serverId: 'server-b',
+        machineId: 'machine-explicit',
       },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(spawnSessionWithPickerForVoiceTool).toHaveBeenCalledWith(expect.objectContaining({
-      backendTargetKey: 'acpBackend:review-bot',
-      modelId: 'model-a',
-      providerConnectionId: 'pc_openrouter',
-    }));
+      directory: '/tmp/project',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
+        },
+      },
+      initialMessage: 'Inspect this project.',
+      },
+      signal,
+    });
   });
 
   it('routes terminal composer clear through the scoped session RPC with expected state', async () => {

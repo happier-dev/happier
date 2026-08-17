@@ -5,10 +5,18 @@ import { renderHook } from '@/dev/testkit';
 
 import {
     TRANSCRIPT_NAVIGATION_RAIL_SOFT_EXIT_MS,
+    resolveTranscriptNavigationRailSoftFadeStyle,
     useTranscriptNavigationRailSoftPresence,
 } from './useTranscriptNavigationRailSoftPresence';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// The fade resolver only emits CSS transitions on web, which is the only
+// platform the rail renders on.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
 
 type PresenceProps = Readonly<{ open: boolean; reducedMotion: boolean }>;
 
@@ -57,6 +65,25 @@ describe('useTranscriptNavigationRailSoftPresence', () => {
 
         await presence.rerender({ open: false, reducedMotion: true });
         expect(presence.getCurrent()).toEqual({ mounted: false, shown: false });
+    });
+
+    it('travels an offset element to rest as it appears, and cross-fades only under reduced motion', () => {
+        const hidden = resolveTranscriptNavigationRailSoftFadeStyle(false, false, { hiddenTranslateYPx: 4 });
+        expect(hidden.opacity).toBe(0);
+        expect(hidden.transform).toEqual([{ translateY: 4 }]);
+
+        const shown = resolveTranscriptNavigationRailSoftFadeStyle(true, false, { hiddenTranslateYPx: 4 });
+        expect(shown.opacity).toBe(1);
+        expect(shown.transform).toEqual([{ translateY: 0 }]);
+
+        // Reduced motion drops the travel entirely rather than shortening it.
+        const reduced = resolveTranscriptNavigationRailSoftFadeStyle(false, true, { hiddenTranslateYPx: 4 });
+        expect(reduced.opacity).toBe(0);
+        expect(reduced.transform).toBeUndefined();
+
+        // An offset-free caller keeps the original opacity-only transition, so
+        // the glass preview never gains a transform that would kill its blur.
+        expect(resolveTranscriptNavigationRailSoftFadeStyle(true, false).transform).toBeUndefined();
     });
 
     it('cancels a pending exit when reopened during the fade-out', async () => {

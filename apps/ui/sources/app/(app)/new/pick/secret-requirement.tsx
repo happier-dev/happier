@@ -1,9 +1,14 @@
 import React from 'react';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
-import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
-import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import {
+    useCurrentSecretBindingsByProfileIdMutable,
+    useSetting,
+    useSettingMutable,
+    useSettings,
+} from '@/sync/domains/state/storage';
+import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
+import { readUiAiLaunchProfilesForLegacyUi } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
@@ -64,14 +69,16 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const machineId = typeof params.machineId === 'string' ? params.machineId : null;
     const revertOnCancel = params.revertOnCancel === '1';
 
-    const profiles = useSetting('profiles');
+    const rawProfiles = useSetting('profiles');
+    const profiles = React.useMemo(
+        () => readUiAiLaunchProfilesForLegacyUi(rawProfiles),
+        [rawProfiles],
+    );
     const [secrets, setSecrets] = useSavedSecretsMutable();
-    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const settings = useSettings() ?? settingsDefaults;
 
-    const profile =
-        profiles.find((p: AIBackendProfile) => p.id === profileId) ??
-        (profileId ? getBuiltInProfile(profileId) : null);
+    const profile = profileId ? resolveProfileById(profileId, profiles) : null;
 
     const secretEnvVarName = typeof params.secretEnvVarName === 'string'
         ? params.secretEnvVarName.trim().toUpperCase()

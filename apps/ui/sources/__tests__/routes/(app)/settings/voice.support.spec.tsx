@@ -5,14 +5,29 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import {
     getVoiceSettingsRouteModalMockRef,
     getVoiceSettingsRouteParamsRef,
     getVoiceSettingsRouteScrollToMockRef,
     installVoiceSettingsRouteModuleMocks,
 } from './voiceSettingsRouteTestHelpers';
+import { VoiceAdvancedSettingsScreen } from '@/voice/settings/screens/VoiceAdvancedSettingsScreen';
+import { VoiceConversationsSettingsScreen } from '@/voice/settings/screens/VoiceConversationsSettingsScreen';
+import { VoiceDictationSettingsScreen } from '@/voice/settings/screens/VoiceDictationSettingsScreen';
+import { VoicePrivacySettingsScreen } from '@/voice/settings/screens/VoicePrivacySettingsScreen';
+import type { VoiceSettingsIntent } from '@/voice/settings/voiceSettingsIntents';
+
+function VoiceSettingsIntentDetailsScreen(props: Readonly<{ intent: VoiceSettingsIntent }>) {
+    switch (props.intent) {
+        case 'dictation': return <VoiceDictationSettingsScreen />;
+        case 'conversations': return <VoiceConversationsSettingsScreen />;
+        case 'privacy': return <VoicePrivacySettingsScreen />;
+        case 'advanced': return <VoiceAdvancedSettingsScreen />;
+    }
+}
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -74,131 +89,31 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
     }),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
+    ...(await importOriginal()),
     useAllMachines: () => [],
-    useProfile: () => null,
+    useActiveServerAccountScope: () => null,
+    useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
+    useProfile: () => profileDefaults,
+    useSettings: () => settingsParse({ voice: voiceState }),
+    useSettingsVersion: () => 0,
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
+    subscribeActiveServer: () => () => {},
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({ credentials: null }),
 }));
 
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canAgentResume: (agentId: string | null | undefined) => canAgentResumeSpy(agentId),
 }));
 
-const createVoiceState = (): any => ({
-    providerId: 'realtime_elevenlabs',
-    assistantLanguage: null,
-    ui: {
-        scopeDefault: 'global',
-        surfaceLocation: 'auto',
-        activityFeedEnabled: false,
-        activityFeedAutoExpandOnStart: false,
-        updates: {
-            activeSession: 'summaries',
-            otherSessions: 'activity',
-            snippetsMaxMessages: 3,
-            includeUserMessagesInSnippets: false,
-            otherSessionsSnippetsMode: 'on_demand_only',
-        },
-    },
-    privacy: {
-        shareSessionSummary: true,
-        shareRecentMessages: true,
-        recentMessagesCount: 3,
-        shareToolNames: true,
-        sharePermissionRequests: true,
-        shareFilePaths: false,
-        shareToolArgs: false,
-    },
-    providers: {
-        realtime_elevenlabs: { schemaVersion: 2, config: {
-            mode: 'default',
-            billingMode: 'happier',
-            tts: {
-                voiceId: 'EST9Ui6982FZPSi7gCHi',
-                modelId: null,
-                voiceSettings: {
-                    stability: null,
-                    similarityBoost: null,
-                    style: null,
-                    useSpeakerBoost: null,
-                    speed: null,
-                },
-            },
-            byo: { agentId: null },
-        } },
-	        local_direct: { schemaVersion: 1, config: {
-            stt: { baseUrl: null, apiKey: null, model: 'whisper-1', useDeviceStt: false },
-            tts: {
-                provider: 'openai_compat',
-                openaiCompat: {
-                    baseUrl: null,
-                    insecureLocalOriginConsent: null,
-                    insecureLocalConsentMachineId: null,
-                    apiKey: null,
-                    model: 'tts-1',
-                    voice: 'alloy',
-                    format: 'mp3',
-                },
-                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
-                providers: {},
-                autoSpeakReplies: true,
-                bargeInEnabled: true
-            },
-	            networkTimeoutMs: 15000,
-	            handsFree: {
-	                enabled: false,
-	                endpointing: {
-	                    silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
-	                    minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
-	                },
-	            },
-	        } },
-        local_conversation: { schemaVersion: 1, config: {
-            conversationMode: 'direct_session',
-            stt: { baseUrl: null, apiKey: null, model: 'whisper-1', useDeviceStt: false },
-            tts: {
-                provider: 'openai_compat',
-                openaiCompat: {
-                    baseUrl: null,
-                    insecureLocalOriginConsent: null,
-                    insecureLocalConsentMachineId: null,
-                    apiKey: null,
-                    model: 'tts-1',
-                    voice: 'alloy',
-                    format: 'mp3',
-                },
-                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
-                providers: {},
-                autoSpeakReplies: true,
-                bargeInEnabled: true
-	            },
-	            networkTimeoutMs: 15000,
-	            handsFree: {
-	                enabled: false,
-	                endpointing: {
-	                    silenceMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
-	                    minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
-	                },
-	            },
-	            agent: {
-                backend: 'daemon',
-                agentSource: 'session',
-                agentId: 'claude',
-                permissionPolicy: 'read_only',
-                idleTtlSeconds: 300,
-                chatModelSource: 'custom',
-                chatModelId: 'default',
-                commitModelSource: 'chat',
-                commitModelId: 'default',
-                openaiCompat: { chatBaseUrl: null, chatApiKey: null, chatModel: 'default', commitModel: 'default', temperature: 0.4, maxTokens: null },
-                verbosity: 'short',
-            },
-            streaming: { enabled: false, ttsEnabled: false, ttsChunkChars: 200 },
-        } },
-    },
+const createVoiceState = (): any => voiceSettingsParse({
+    providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
 });
 
 let voiceState: any = createVoiceState();
@@ -217,9 +132,9 @@ beforeEach(() => {
     decryptSecretValue.mockReturnValue(null);
     canAgentResumeSpy.mockReset();
     canAgentResumeSpy.mockReturnValue(true);
-    voiceState.providerId = 'realtime_elevenlabs';
+    voiceState.providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
     voiceState.assistantLanguage = null;
-    voiceState.providers.realtime_elevenlabs.config.billingMode = 'happier';
+    voiceState.providers['happier.voice.elevenlabs/realtime-elevenlabs'].config.billingMode = 'happier';
     voiceState.ui.scopeDefault = 'global';
     voiceState.ui.surfaceLocation = 'auto';
     voiceState.ui.updates.activeSession = 'summaries';
@@ -247,10 +162,9 @@ afterEach(() => {
 
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
     it('keeps Happier Voice visible but disabled without destroying the unavailable hosted selection', async () => {
-        voiceState.providerId = ' realtime_elevenlabs ';
+        voiceState.providerId = ' happier.voice.elevenlabs/realtime-elevenlabs ';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
         expect(screen.findRowByTitle('settingsVoice.mode.off')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.mode.local')).toBeTruthy();
@@ -266,8 +180,7 @@ describe('VoiceSettingsScreen (server voice unsupported)', () => {
 describe('VoiceSettingsScreen (voice settings UX)', () => {
     it('scrolls the stable Privacy section into view once for the validated route focus', async () => {
         routeParamsRef.current = { focus: 'privacy' };
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
         const list = screen.tree.root.findByType('ItemList' as any);
         const privacySection = screen.findByTestId('settings.voice.section.privacy');
 
@@ -305,8 +218,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         [['unknown', 'privacy']],
     ])('ignores unsupported or malformed Voice settings focus %j', async (focus) => {
         routeParamsRef.current = { focus };
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
         const list = screen.tree.root.findByType('ItemList' as any);
         const privacySection = screen.findByTestId('settings.voice.section.privacy');
 
@@ -327,8 +239,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = ' local_conversation ';
         voiceState.providers.local_conversation.config.conversationMode = 'direct_session';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
         expect(screen.findRowByTitle('settingsVoice.local.conversationMode')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.local.ttsProvider')).toBeTruthy();
@@ -338,8 +249,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'local_conversation';
         voiceState.providers.local_conversation.config.conversationMode = 'direct_session';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
         expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.ttsProvider')).toBeTruthy();
         expect(screen.findRowByTitle('settingsVoice.local.autoSpeak')).toBeTruthy();
@@ -363,8 +273,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
             },
         };
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
         expect(findDropdownByItemTriggerTitle(screen, 'settingsVoice.local.daemonInference.execution.title')).toBeTruthy();
         expect(screen.findByTestId('voice-model-row-kokoro-82m-v1.0-onnx-q8-wasm')).toBeTruthy();
@@ -373,11 +282,10 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('uses screen-level popover boundaries for dropdowns', async () => {
-        voiceState.providerId = 'realtime_elevenlabs';
-        voiceState.providers.realtime_elevenlabs.config.billingMode = 'byo';
+        voiceState.providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+        voiceState.providers['happier.voice.elevenlabs/realtime-elevenlabs'].config.billingMode = 'byo';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
         expect(dropdowns.length).toBeGreaterThan(0);
 
@@ -392,8 +300,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('does not show navigation chevrons for voice mode selection rows', async () => {
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         const modeItems = [
             screen.findRowByTitle('settingsVoice.mode.off'),
             screen.findRowByTitle('settingsVoice.mode.byo'),
@@ -407,11 +314,80 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('does not render ineffective privacy toggles (file paths/tool args) as interactive settings', async () => {
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
 
         expect(screen.findRowByTitle('settingsVoice.privacy.shareFilePaths')).toBeNull();
         expect(screen.findRowByTitle('settingsVoice.privacy.shareToolArgs')).toBeNull();
+    });
+
+    it('renders only the selected intent detail on each destination', async () => {
+        const dictation = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="dictation" />);
+        expect(dictation.findByTestId('settings.voice.section.dictation')).toBeTruthy();
+        expect(dictation.findRowByTitle('settingsVoice.mode.off')).toBeNull();
+        standardCleanup();
+
+        const conversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(conversations.findRowByTitle('settingsVoice.mode.off')).toBeTruthy();
+        expect(conversations.findByTestId('settings.voice.section.dictation')).toBeNull();
+        expect(conversations.findRowByTitle('settingsVoice.ui.orbEnabled')).toBeNull();
+        standardCleanup();
+
+        const advanced = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="advanced" />);
+        expect(advanced.findRowByTitle('settingsVoice.ui.orbEnabled')).toBeTruthy();
+        expect(advanced.findRowByTitle('settingsVoice.mode.off')).toBeNull();
+    });
+
+    it('shows the shared execution-machine selector on exactly the intent that requires it', async () => {
+        voiceState.providerId = 'happier.voice.openai/realtime-openai';
+        voiceState.dictation = {
+            ...voiceState.dictation,
+            sttBinding: 'explicit',
+            stt: {
+                ...voiceState.dictation.stt,
+                provider: 'local_neural',
+                localNeural: {
+                    ...voiceState.dictation.stt.localNeural,
+                    execution: 'daemon',
+                },
+            },
+        };
+
+        const dictation = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="dictation" />);
+        expect(findDropdownByItemTriggerTitle(
+            dictation,
+            'settingsVoice.local.executionMachine.title',
+        )).toBeTruthy();
+        standardCleanup();
+
+        const conversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(findDropdownByItemTriggerTitle(
+            conversations,
+            'settingsVoice.local.executionMachine.title',
+        )).toBeNull();
+        standardCleanup();
+
+        voiceState.providerId = 'local_direct';
+        const localConversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(findDropdownByItemTriggerTitle(
+            localConversations,
+            'settingsVoice.local.executionMachine.title',
+        )).toBeTruthy();
+    });
+
+    it('keeps the selected provider disclosure in Privacy & data and the policy entry last', async () => {
+        const conversations = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(conversations.findByTestId('settings.voice.provider.disclosure.happier.voice.elevenlabs%2Frealtime-elevenlabs')).toBeNull();
+        standardCleanup();
+
+        const privacy = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="privacy" />);
+        const disclosure = privacy.findByTestId('settings.voice.provider.disclosure.happier.voice.elevenlabs%2Frealtime-elevenlabs');
+        const policy = privacy.findByTestId('settings.voice.privacyPolicy');
+        expect(disclosure).toBeTruthy();
+        expect(policy).toBeTruthy();
+
+        const itemRows = privacy.tree.root.findAllByType('Item' as any);
+        expect(itemRows[itemRows.length - 1]?.props.testID).toBe('settings.voice.privacyPolicy');
+        expect(itemRows.indexOf(disclosure!)).toBeLessThan(itemRows.indexOf(policy!));
     });
 
     it('does not use confirm modals for local conversation mode selection', async () => {
@@ -420,8 +396,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         // Enable local conversation so the section renders.
         voiceState.providerId = 'local_conversation';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         expect(screen.findRowByTitle('settingsVoice.local.conversationMode')).toBeTruthy();
 
         await act(async () => {
@@ -431,18 +406,18 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
     });
 
-    it('does not use confirm modals for local voice agent backend selection', async () => {
+    it('does not use confirm modals for fixed local voice Agent selection', async () => {
         await import('@/modal');
 
         voiceState.providerId = 'local_conversation';
         voiceState.providers.local_conversation.config.conversationMode = 'agent';
+        voiceState.providers.local_conversation.config.agent.agentSource = 'agent';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
-        expect(screen.findRowByTitle('settingsVoice.local.mediatorBackend')).toBeTruthy();
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(screen.findRowByTitle('settingsVoice.local.mediatorAgentId')).toBeTruthy();
 
         await act(async () => {
-            await screen.pressRowByTitle('settingsVoice.local.mediatorBackend');
+            await screen.pressRowByTitle('settingsVoice.local.mediatorAgentId');
         });
 
         expect(modalMockRef.current.spies.confirm).not.toHaveBeenCalled();
@@ -454,8 +429,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'local_conversation';
         voiceState.providers.local_conversation.config.conversationMode = 'agent';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
 
         const pressByTitle = async (title: string) => {
             expect(screen.findRowByTitle(title)).toBeTruthy();
@@ -481,8 +455,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providers.local_conversation.config.agent.agentId = 'unknown-agent';
         voiceState.providers.local_conversation.config.agent.transcript = { persistenceMode: 'persistent', epoch: 1 };
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
         const resumabilityDropdown = dropdowns.find((d: any) => Array.isArray(d.props?.items) && d.props.items.some((i: any) => i?.id === 'provider_resume'));
         expect(resumabilityDropdown).toBeTruthy();
@@ -494,11 +467,9 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     it('can toggle voice agent commit isolation', async () => {
         voiceState.providerId = 'local_conversation';
         voiceState.providers.local_conversation.config.conversationMode = 'agent';
-        voiceState.providers.local_conversation.config.agent.backend = 'daemon';
         voiceState.providers.local_conversation.config.agent.commitIsolation = false;
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         expect(screen.findRowByTitle('settingsVoice.local.conversation.commitIsolation.title')).toBeTruthy();
 
         await act(async () => {
@@ -530,8 +501,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         resetGlobalVoiceAgentPersistenceSpy.mockClear();
         modalMockRef.current.spies.confirm.mockResolvedValueOnce(true);
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         expect(screen.findRowByTitle('settingsVoice.local.conversation.resetVoiceAgent.title')).toBeTruthy();
 
         await act(async () => {
@@ -550,8 +520,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         modalMockRef.current.spies.prompt.mockResolvedValueOnce('999999');
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         expect(screen.findRowByTitle('settingsVoice.local.mediatorIdleTtl')).toBeTruthy();
 
         await act(async () => {
@@ -576,8 +545,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         voiceState.providerId = 'local_direct';
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         expect(screen.findRowByTitle('settingsVoice.local.ttsFormat')).toBeTruthy();
 
         await act(async () => {
@@ -593,8 +561,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         voiceState.providerId = 'off';
         voiceState.assistantLanguage = null;
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         expect(screen.findRowByTitle('settingsVoice.preferredLanguage')).toBeTruthy();
 
         await act(async () => {
@@ -605,12 +572,11 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('wires ElevenLabs voice dropdown selection into settings (BYO)', async () => {
-        voiceState.providerId = 'realtime_elevenlabs';
-        voiceState.providers.realtime_elevenlabs.config.billingMode = 'byo';
+        voiceState.providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+        voiceState.providers['happier.voice.elevenlabs/realtime-elevenlabs'].config.billingMode = 'byo';
         decryptSecretValue.mockReturnValue('xi-test');
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
         const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
         const voiceDropdown = dropdowns.find((d: any) => d.props?.search === true && d.props?.searchPlaceholder === 'settingsVoice.byo.voiceSearchPlaceholder');
         expect(voiceDropdown).toBeTruthy();
@@ -621,7 +587,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
 
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
             providers: expect.objectContaining({
-                realtime_elevenlabs: expect.objectContaining({
+                'happier.voice.elevenlabs/realtime-elevenlabs': expect.objectContaining({
                     config: expect.objectContaining({
                         tts: expect.objectContaining({ voiceId: 'voice_test' }),
                     }),
@@ -630,35 +596,33 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         }));
     });
 
-    it('wires ElevenLabs speaker boost tri-state into settings (BYO)', async () => {
-        voiceState.providerId = 'realtime_elevenlabs';
-        voiceState.providers.realtime_elevenlabs.config.billingMode = 'byo';
+    it('wires supported ElevenLabs similarity boost into settings and omits speaker boost (BYO)', async () => {
+        await import('@/modal');
 
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-        const screen = await renderSettingsView(<VoiceSettingsScreen />);
-        const dropdowns = screen.findAll((node) => String(node.type) === 'DropdownMenu');
-        const boostDropdown = dropdowns.find((d: any) => {
-            const items = d.props?.items;
-            if (!Array.isArray(items)) return false;
-            const ids = items.map((i: any) => i?.id);
-            return ids.includes('') && ids.includes('true') && ids.includes('false');
-        });
-        expect(boostDropdown).toBeTruthy();
+        voiceState.providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+        voiceState.providers['happier.voice.elevenlabs/realtime-elevenlabs'].config.billingMode = 'byo';
+        modalMockRef.current.spies.prompt.mockResolvedValueOnce('0.65');
+
+        const screen = await renderSettingsView(<VoiceSettingsIntentDetailsScreen intent="conversations" />);
+        expect(screen.findByTestId('voice-realtime-field-tts-voiceSettings-similarityBoost')).toBeTruthy();
+        expect(screen.findByTestId('voice-realtime-field-tts-voiceSettings-useSpeakerBoost')).toBeNull();
 
         await act(async () => {
-            boostDropdown!.props.onSelect?.('false');
+            await screen.pressRowByTitle('settingsVoice.byo.realtime.voiceSettings.similarityBoost.title');
         });
 
-        expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
-            providers: expect.objectContaining({
-                realtime_elevenlabs: expect.objectContaining({
-                    config: expect.objectContaining({
-                        tts: expect.objectContaining({
-                            voiceSettings: expect.objectContaining({ useSpeakerBoost: false }),
+        await vi.waitFor(() => {
+            expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
+                providers: expect.objectContaining({
+                    'happier.voice.elevenlabs/realtime-elevenlabs': expect.objectContaining({
+                        config: expect.objectContaining({
+                            tts: expect.objectContaining({
+                                voiceSettings: expect.objectContaining({ similarityBoost: 0.65 }),
+                            }),
                         }),
                     }),
                 }),
-            }),
-        }));
+            }));
+        });
     });
 });

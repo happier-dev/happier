@@ -119,7 +119,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             <ComposerAuxiliaryFrame>
                 <WarningActionBanner
                     testID="session-chatFooter-localControl"
-                    iconName="information-circle"
+                    iconName="info"
                     body={t(textKey)}
                     actionTestID={actionTestID}
                     actionLabel={actionLabelKey ? t(actionLabelKey) : undefined}
@@ -149,7 +149,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                 <WarningActionBanner
                     testID="session-chatFooter-materialize"
                     tone="neutral"
-                    iconName="cloud-upload-outline"
+                    iconName="cloud-arrow-up"
                     body={t(textKey)}
                     actionTestID="session-chatFooter-importIntoHappier"
                     actionLabel={t('externalSessions.operationTitleMaterialize')}
@@ -207,7 +207,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             <ComposerAuxiliaryFrame>
                 <WarningActionBanner
                     testID="session-chatFooter-externalControl"
-                    iconName="information-circle"
+                    iconName="info"
                     body={body}
                     actionTestID={showTakeoverAction ? 'session-chatFooter-takeOverDirect' : undefined}
                     actionLabel={showTakeoverAction ? actionLabel : undefined}

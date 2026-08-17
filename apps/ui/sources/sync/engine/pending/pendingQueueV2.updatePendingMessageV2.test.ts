@@ -144,6 +144,437 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         }));
     });
 
+    it('serializes an edited contentless composer attachment selection in the pending PATCH', async () => {
+        const sessionId = 's_test_pending_edit_composer_attachment';
+        const mention = {
+            kind: 'happier.file',
+            ref: 'file:src/index.ts',
+            token: '@src/index.ts',
+            start: 0,
+            end: 13,
+        } as const;
+        const originalAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const editedAttachment = {
+            ...originalAttachment,
+            value: { issueId: 43 },
+            presentation: { label: 'Issue #43', typeLabel: 'Issue' },
+        } as const;
+        const rawRecord = {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: '@src/index.ts old text' },
+            meta: {
+                otherMetadata: 'preserved',
+                happierStructuredInputV1: {
+                    v: 1,
+                    mentions: [mention],
+                    composerAttachments: [originalAttachment],
+                },
+            },
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: '@src/index.ts old text', rawRecord,
+        });
+
+        let body: unknown = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: '@src/index.ts edited text',
+            structuredInput: {
+                v: 1,
+                mentions: [mention],
+                composerAttachments: [editedAttachment],
+            },
+            encryption: null,
+            request: async (_path, init) => {
+                body = JSON.parse(String(init?.body ?? 'null'));
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(body).toEqual({
+            content: {
+                t: 'plain',
+                v: expect.objectContaining({
+                    content: { type: 'text', text: '@src/index.ts edited text' },
+                    meta: {
+                        otherMetadata: 'preserved',
+                        happierStructuredInputV1: {
+                            v: 1,
+                            mentions: [mention],
+                            composerAttachments: [editedAttachment],
+                        },
+                    },
+                }),
+            },
+            messageRole: 'user',
+        });
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                text: '@src/index.ts edited text',
+                rawRecord: expect.objectContaining({
+                    meta: expect.objectContaining({
+                        happierStructuredInputV1: {
+                            v: 1,
+                            mentions: [mention],
+                            composerAttachments: [editedAttachment],
+                        },
+                    }),
+                }),
+            }),
+        ]);
+    });
+
+    it('atomically replaces pending structured references with the current composer snapshot', async () => {
+        const sessionId = 's_test_pending_edit_structured_references';
+        const previousMention = {
+            kind: 'happier.file',
+            ref: 'file:src/old.ts',
+            token: '@src/old.ts',
+            start: 0,
+            end: 11,
+        } as const;
+        const currentMention = {
+            kind: 'happier.file',
+            ref: 'file:src/current.ts',
+            token: '@src/current.ts',
+            start: 0,
+            end: 15,
+        } as const;
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const text = '@src/current.ts edited text';
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: '@src/old.ts old text',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: '@src/old.ts old text' },
+                meta: {
+                    happierStructuredInputV1: {
+                        v: 1,
+                        mentions: [previousMention],
+                        composerAttachments: [attachment],
+                    },
+                },
+            },
+        });
+
+        let body: unknown = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text,
+            structuredInput: {
+                v: 1,
+                mentions: [currentMention],
+                composerAttachments: [attachment],
+            },
+            encryption: null,
+            request: async (_path, init) => {
+                body = JSON.parse(String(init?.body ?? 'null'));
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(body).toEqual(expect.objectContaining({
+            content: expect.objectContaining({
+                t: 'plain',
+                v: expect.objectContaining({
+                    content: { type: 'text', text },
+                    meta: {
+                        happierStructuredInputV1: {
+                            v: 1,
+                            mentions: [currentMention],
+                            composerAttachments: [attachment],
+                        },
+                    },
+                }),
+            }),
+        }));
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                rawRecord: expect.objectContaining({
+                    meta: {
+                        happierStructuredInputV1: {
+                            v: 1,
+                            mentions: [currentMention],
+                            composerAttachments: [attachment],
+                        },
+                    },
+                }),
+            }),
+        ]);
+    });
+
+    it('removes pending structured references when the current composer snapshot removes them', async () => {
+        const sessionId = 's_test_pending_edit_structured_references_remove';
+        const mention = {
+            kind: 'happier.file',
+            ref: 'file:src/index.ts',
+            token: '@src/index.ts',
+            start: 0,
+            end: 13,
+        } as const;
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: '@src/index.ts old text',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: '@src/index.ts old text' },
+                meta: {
+                    otherMetadata: 'preserved',
+                    happierStructuredInputV1: { v: 1, mentions: [mention] },
+                },
+            },
+        });
+
+        let body: unknown = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'plain edited text',
+            structuredInput: { v: 1 },
+            encryption: null,
+            request: async (_path, init) => {
+                body = JSON.parse(String(init?.body ?? 'null'));
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(body).toEqual(expect.objectContaining({
+            content: expect.objectContaining({
+                t: 'plain',
+                v: expect.objectContaining({
+                    content: { type: 'text', text: 'plain edited text' },
+                    meta: { otherMetadata: 'preserved' },
+                }),
+            }),
+        }));
+        expect((body as { content: { v: { meta: Record<string, unknown> } } }).content.v.meta)
+            .not.toHaveProperty('happierStructuredInputV1');
+    });
+
+    it('carries an edited contentless attachment selection through the existing encrypted content envelope', async () => {
+        const sessionId = 's_test_pending_edit_composer_attachment_encrypted';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-43',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '43',
+            value: { issueId: 43 },
+            presentation: { label: 'Issue #43', typeLabel: 'Issue' },
+        } as const;
+        storage.getState().applySessions([buildSession({ sessionId })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'old text',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'old text' },
+                meta: {},
+            },
+        });
+
+        let ciphertext: string | null = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            structuredInput: { v: 1, composerAttachments: [attachment] },
+            encryption,
+            request: async (_path, init) => {
+                const body = JSON.parse(String(init?.body ?? 'null'));
+                ciphertext = typeof body?.ciphertext === 'string' ? body.ciphertext : null;
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(ciphertext).toEqual(expect.any(String));
+        await expect(getSessionEncryptionOrThrow({ encryption, sessionId }).decryptRaw(ciphertext!))
+            .resolves.toMatchObject({
+                content: { type: 'text', text: 'edited text' },
+                meta: {
+                    happierStructuredInputV1: { v: 1, composerAttachments: [attachment] },
+                },
+            });
+    });
+
+    it('removes only the deleted composer attachment when PATCHing a pending edit', async () => {
+        const sessionId = 's_test_pending_edit_composer_attachment_delete';
+        const removedAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const retainedAttachment = {
+            v: 1,
+            instanceId: 'issue-43',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '43',
+            value: { issueId: 43 },
+            presentation: { label: 'Issue #43', typeLabel: 'Issue' },
+        } as const;
+        const rawRecord = {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: 'old text' },
+            meta: {
+                otherMetadata: 'preserved',
+                happierStructuredInputV1: {
+                    v: 1,
+                    composerAttachments: [removedAttachment, retainedAttachment],
+                },
+            },
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'old text', rawRecord,
+        });
+
+        let body: unknown = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            structuredInput: { v: 1, composerAttachments: [retainedAttachment] },
+            encryption: null,
+            request: async (_path, init) => {
+                body = JSON.parse(String(init?.body ?? 'null'));
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(body).toEqual(expect.objectContaining({
+            content: expect.objectContaining({
+                t: 'plain',
+                v: expect.objectContaining({
+                    meta: {
+                        otherMetadata: 'preserved',
+                        happierStructuredInputV1: {
+                            v: 1,
+                            composerAttachments: [retainedAttachment],
+                        },
+                    },
+                }),
+            }),
+        }));
+    });
+
+    it('removes the structured envelope when a pending edit deletes its last composer attachment', async () => {
+        const sessionId = 's_test_pending_edit_composer_attachment_delete_last';
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'old text',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'old text' },
+                meta: {
+                    otherMetadata: 'preserved',
+                    happierStructuredInputV1: { v: 1, composerAttachments: [attachment] },
+                },
+            },
+        });
+
+        let body: unknown = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            structuredInput: { v: 1 },
+            encryption: null,
+            request: async (_path, init) => {
+                body = JSON.parse(String(init?.body ?? 'null'));
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(body).toEqual(expect.objectContaining({
+            content: expect.objectContaining({
+                t: 'plain',
+                v: expect.objectContaining({
+                    content: { type: 'text', text: 'edited text' },
+                    meta: { otherMetadata: 'preserved' },
+                }),
+            }),
+        }));
+        expect((body as { content: { v: { meta: Record<string, unknown> } } }).content.v.meta)
+            .not.toHaveProperty('happierStructuredInputV1');
+    });
+
+    it('keeps the existing structured attachment selection for an ordinary text-only pending update', async () => {
+        const sessionId = 's_test_pending_edit_text_only';
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const rawRecord = {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: 'old text' },
+            meta: { happierStructuredInputV1: { v: 1, composerAttachments: [attachment] } },
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'old text', rawRecord,
+        });
+
+        let body: unknown = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            encryption: null,
+            request: async (_path, init) => {
+                body = JSON.parse(String(init?.body ?? 'null'));
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(body).toEqual(expect.objectContaining({
+            content: expect.objectContaining({
+                t: 'plain',
+                v: expect.objectContaining({
+                    meta: { happierStructuredInputV1: { v: 1, composerAttachments: [attachment] } },
+                }),
+            }),
+        }));
+    });
+
     it('rebuilds rawRecord when existing.rawRecord is not a RawRecord (decrypt-failed placeholder)', async () => {
         const sessionId = 's_test_decrypt_failed_update';
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 4 });
@@ -492,6 +923,155 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(pending[0]?.pendingDecryptFailure).toBeUndefined();
     });
 
+    it('rotates one canonical Pending projection only after the server confirms its replacement localId', async () => {
+        const sessionId = 's_test_pending_local_id_rotation';
+        const localId = 'pending-local-id-original';
+        const replacementLocalId = 'pending-local-id-replacement';
+        const rawRecord = {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: 'original' },
+            meta: {},
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'server-row-id',
+            localId,
+            createdAt: 1,
+            updatedAt: 1,
+            source: 'server_pending',
+            deliveryStatus: 'accepted',
+            text: 'original',
+            rawRecord,
+        });
+
+        let requestBody: Record<string, unknown> | null = null;
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'server-row-id',
+            text: 'prepared edit',
+            replacementLocalId,
+            encryption: await createPendingQueueEncryption({ sessionId }),
+            request: async (_path, init) => {
+                requestBody = JSON.parse(String(init?.body ?? 'null')) as Record<string, unknown>;
+                return Response.json({ ok: true, localId: replacementLocalId });
+            },
+        });
+
+        expect(requestBody).toMatchObject({
+            replacementLocalId,
+            replacementMutationFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+        });
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                id: 'server-row-id',
+                localId: replacementLocalId,
+                text: 'prepared edit',
+            }),
+        ]);
+    });
+
+    it('reuses the admitted mutation fingerprint when an exact localId-rotation response is lost', async () => {
+        const sessionId = 's_test_pending_local_id_rotation_response_lost';
+        const localId = 'pending-local-id-original';
+        const replacementLocalId = 'pending-local-id-replacement';
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'server-row-id',
+            localId,
+            createdAt: 1,
+            updatedAt: 1,
+            source: 'server_pending',
+            deliveryStatus: 'accepted',
+            text: 'original',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'original' },
+                meta: {},
+            },
+        });
+
+        const requestBodies: Record<string, unknown>[] = [];
+        const request = async (_path: string, init?: RequestInit) => {
+            requestBodies.push(JSON.parse(String(init?.body ?? 'null')) as Record<string, unknown>);
+            if (requestBodies.length === 1) throw new Error('response lost after server admission');
+            return Response.json({ ok: true, localId: replacementLocalId });
+        };
+
+        await expect(updatePendingMessageV2({
+            sessionId,
+            pendingId: 'server-row-id',
+            text: 'prepared edit',
+            replacementLocalId,
+            encryption: null,
+            request,
+        })).rejects.toThrow('response lost after server admission');
+
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'server-row-id',
+            text: 'prepared edit',
+            replacementLocalId,
+            encryption: null,
+            request,
+        });
+
+        expect(requestBodies).toHaveLength(2);
+        expect(requestBodies[0]).toMatchObject({
+            replacementLocalId,
+            replacementMutationFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+        });
+        expect(requestBodies[1]?.replacementMutationFingerprint)
+            .toBe(requestBodies[0]?.replacementMutationFingerprint);
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                id: 'server-row-id',
+                localId: replacementLocalId,
+                text: 'prepared edit',
+            }),
+        ]);
+    });
+
+    it('leaves the canonical Pending projection unchanged when a replacement PATCH lacks confirmation', async () => {
+        const sessionId = 's_test_pending_local_id_rotation_unconfirmed';
+        const localId = 'pending-local-id-original';
+        const replacementLocalId = 'pending-local-id-replacement';
+        const rawRecord = {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: 'original' },
+            meta: {},
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'server-row-id',
+            localId,
+            createdAt: 1,
+            updatedAt: 1,
+            source: 'server_pending',
+            deliveryStatus: 'accepted',
+            text: 'original',
+            rawRecord,
+        });
+
+        await expect(updatePendingMessageV2({
+            sessionId,
+            pendingId: 'server-row-id',
+            text: 'prepared edit',
+            replacementLocalId,
+            encryption: await createPendingQueueEncryption({ sessionId }),
+            request: async () => Response.json({ ok: true }),
+        })).rejects.toMatchObject({
+            code: 'pending_message_mutation_protocol_unsupported',
+        });
+
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                id: 'server-row-id',
+                localId,
+                text: 'original',
+            }),
+        ]);
+    });
+
     it('does not let an older held-decrypt snapshot overwrite a successful edit', async () => {
         const sessionId = 's_test_held_decrypt_edit';
         const baseEncryption = await createPendingQueueEncryption({ sessionId, seedByte: 13 });
@@ -716,6 +1296,20 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         })).resolves.toBeUndefined();
         expect(deleteRequests).toBe(2);
         expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
+    });
+
+    it('preserves the server action-conflict code when a requested-action mutation loses its race', async () => {
+        const sessionId = 's_test_action_patch_conflict';
+        const localId = 'action-patch-conflict';
+
+        await expect(updatePendingRequestedActionV2({
+            sessionId,
+            localId,
+            requestedAction: { v: 1, kind: 'steer_now' },
+            request: async () => Response.json({ error: 'action-conflict' }, { status: 409 }),
+        })).rejects.toMatchObject({
+            code: 'action-conflict',
+        });
     });
 
     it('does not leave an action-ack projection delivering when zero-count pruning precedes exact transcript commit', async () => {

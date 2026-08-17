@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { Pressable, View, type AccessibilityState } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 
 export type WizardSectionHeaderRowAction = {
     accessibilityLabel: string;
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
     iconColor?: string;
     onPress?: () => void;
     disabled?: boolean;
@@ -19,7 +19,7 @@ export type WizardSectionHeaderRowAction = {
 
 export type WizardSectionHeaderRowProps = {
     rowStyle?: any;
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
     iconColor?: string;
     title: string;
     titleStyle?: any;
@@ -28,14 +28,14 @@ export type WizardSectionHeaderRowProps = {
 
 export const WizardSectionHeaderRow = React.memo((props: WizardSectionHeaderRowProps) => {
     const leadingIcon = normalizeNodeForView(
-        <Ionicons name={props.iconName} size={18} color={props.iconColor} />,
+        <Icon name={props.iconName} size={16} color={props.iconColor} />,
     );
     const actionDisabled = props.action?.disabled === true || props.action?.loading === true || typeof props.action?.onPress !== 'function';
     const actionIcon = props.action && !props.action.loading
         ? normalizeNodeForView(
-            <Ionicons
+            <Icon
                 name={props.action.iconName}
-                size={18}
+                size={16}
                 color={props.action.iconColor}
             />,
         )

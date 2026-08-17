@@ -1,12 +1,13 @@
 import * as React from 'react';
-import type {
-    BrowserContextCapabilities,
-    BrowserRecordingCapabilities,
-    BrowserTargetPolicyDecisionV1,
-    FeatureDecision,
+import {
+    type BrowserContextCapabilities,
+    type BrowserRecordingCapabilities,
+    type BrowserTargetPolicyDecisionV1,
+    type FeatureDecision,
 } from '@happier-dev/protocol';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AnnotationCaptureSurface } from '@/components/browser/annotation';
 import { renderScreen } from '@/dev/testkit';
@@ -33,6 +34,48 @@ vi.mock('@/components/browser/frame/engines/DesktopWebViewEngine', () => ({
         testID: props.testID ?? 'desktop-webview',
     }),
 }));
+
+const pluginSurfaceAccountLifetime = vi.hoisted(() => Object.freeze({
+    scope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }),
+    isCurrent: () => true,
+    onRetire: () => Object.freeze({ dispose: () => {} }),
+}));
+const accountEncryptionModeCredentials = vi.hoisted(() => ({
+    value: { token: 'browser-host-account-mode-test-token' } as Readonly<{ token: string }> | null,
+}));
+const accountEncryptionModeFetch = vi.hoisted(() => vi.fn<
+    typeof import('@/sync/api/account/apiAccountEncryptionMode').fetchAccountEncryptionMode
+>());
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => pluginSurfaceAccountLifetime,
+}));
+
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>();
+    return {
+        ...original,
+        fetchAccountEncryptionMode: (...args: Parameters<typeof original.fetchAccountEncryptionMode>) => (
+            accountEncryptionModeFetch(...args)
+        ),
+    };
+});
+
+vi.mock('@/sync/sync', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/sync')>();
+    return {
+        ...original,
+        sync: new Proxy(original.sync, {
+            get(target, property) {
+                if (property === 'getCredentials') {
+                    return () => accountEncryptionModeCredentials.value;
+                }
+                const value = Reflect.get(target, property, target);
+                return typeof value === 'function' ? value.bind(target) : value;
+            },
+        }),
+    };
+});
 
 const target = {
     kind: 'localServicePreview',
@@ -175,12 +218,21 @@ const recordingCapabilities = {
     policyDeniedReasons: [],
 } satisfies BrowserRecordingCapabilities;
 
+const browserPanelBinding = normalizePluginUiDestinationBindingV1({
+    pluginId: 'acme.browser',
+    destinationId: 'panel',
+    rendererId: 'panel',
+    container: 'browserPanel',
+    target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
+});
+if (!browserPanelBinding) throw new Error('Browser panel binding fixture is required');
+
 const browserPanelPlacement = {
     id: 'surfacePlacement:acme.browser:panel',
     pluginId: 'acme.browser',
     contributionKind: 'surfacePlacement',
     descriptorId: 'panel',
-    placement: 'browser.panel',
+    binding: browserPanelBinding,
     target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
     renderer: { kind: 'hostedWeb', contributionId: 'panel' },
     display: { label: 'Browser panel' },
@@ -189,6 +241,7 @@ const browserPanelPlacement = {
         reason: 'available',
         diagnostics: [],
     },
+    headerActions: [],
     order: 10,
 } as const;
 
@@ -219,10 +272,17 @@ const hostedWebBrowserPanelProjection: PluginUiProjectionModel = {
     surfacePlacementsById: {
         [browserPanelPlacement.id]: browserPanelPlacement,
     },
-    surfacePlacementsByPlacement: {
-        'browser.panel': [browserPanelPlacement],
-    },
 };
+
+beforeEach(async () => {
+    accountEncryptionModeCredentials.value = { token: 'browser-host-account-mode-test-token' };
+    accountEncryptionModeFetch.mockReset();
+    accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 1 });
+    const { invalidateAccountEncryptionModeCache } = await import(
+        '@/sync/api/account/apiAccountEncryptionMode'
+    );
+    invalidateAccountEncryptionModeCache();
+});
 
 describe('BrowserSurfaceHost', () => {
     it('renders a typed unavailable state before mounting shell chrome when browser policy is disabled', async () => {

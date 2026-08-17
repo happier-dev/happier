@@ -1,6 +1,7 @@
 import {
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
+    type PluginContributionIdentityV1,
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
 import type {
@@ -43,6 +44,14 @@ export type PluginBrowserActionProjection = UnknownRecord & Readonly<{
     pluginId: string;
     contributionKind: 'browserAction';
     contributionId: string;
+    /**
+     * The resolved target-action identity, carried beside the qualified key so
+     * the browser placement dispatches a STRUCTURED reference. A qualified key
+     * cannot be split back safely (`localId` may contain `/`), and a bare string
+     * would be offered to the host-ActionSpec branch of the canonical dispatcher
+     * first.
+     */
+    actionIdentity: PluginContributionIdentityV1;
     qualifiedActionId: string;
     targetId: string;
     placement: 'toolbar' | 'detailsPanel' | 'contextMenu';
@@ -97,11 +106,16 @@ function isBrowserTarget(entry: UnknownRecord): entry is PluginBrowserTargetProj
         && (entry.profileMode === 'ephemeral' || entry.profileMode === 'session' || entry.profileMode === 'user' || entry.profileMode === 'plugin');
 }
 
-function isBrowserAction(
+/**
+ * Resolve a projected browser action against the SAME projection generation's
+ * action catalog, returning the entry with its target-action identity attached.
+ * Fail-closed `null` when the declaration does not cross-check.
+ */
+function resolveBrowserAction(
     entry: UnknownRecord,
     projection: PluginProjectionV2,
     targetsById: Readonly<Record<string, PluginBrowserTargetProjection>>,
-): entry is PluginBrowserActionProjection {
+): PluginBrowserActionProjection | null {
     const id = readString(entry.id);
     const pluginId = readString(entry.pluginId);
     const contributionId = readString(entry.contributionId);
@@ -110,13 +124,16 @@ function isBrowserAction(
     const declaredAction = qualifiedActionId
         ? projection.actionsById[qualifiedActionId]
         : undefined;
-    const declaredQualifiedActionId = declaredAction
-        ? buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+    const actionIdentity = declaredAction
+        ? createPluginContributionIdentity({
             pluginId: declaredAction.pluginId,
             localId: declaredAction.id,
-        }))
+        })
         : null;
-    return entry.contributionKind === 'browserAction'
+    const declaredQualifiedActionId = actionIdentity
+        ? buildQualifiedPluginContributionKey(actionIdentity)
+        : null;
+    const valid = entry.contributionKind === 'browserAction'
         && id !== null
         && pluginId !== null
         && contributionId !== null
@@ -128,6 +145,12 @@ function isBrowserAction(
         && (entry.placement === 'toolbar' || entry.placement === 'detailsPanel' || entry.placement === 'contextMenu')
         && asRecord(entry.display) !== null
         && readString(asRecord(entry.display)?.title) !== null;
+    return valid && actionIdentity
+        ? Object.freeze({
+            ...entry,
+            actionIdentity: Object.freeze({ ...actionIdentity }),
+        }) as PluginBrowserActionProjection
+        : null;
 }
 
 export function normalizePluginBrowserProjection(
@@ -163,8 +186,11 @@ export function normalizePluginBrowserProjection(
     }
 
     for (const { entryKey, entry } of nonTargetEntries) {
-        if (entryKey === entry.id && isBrowserAction(entry, projection, targetsById)) {
-            actionsById[entry.id] = Object.freeze(entry);
+        const action = entryKey === entry.id
+            ? resolveBrowserAction(entry, projection, targetsById)
+            : null;
+        if (action) {
+            actionsById[action.id] = action;
         } else {
             const id = readString(entry.id);
             if (id !== null) {

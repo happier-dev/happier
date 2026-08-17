@@ -11,8 +11,8 @@ import { formatSavedServerRetentionSummary } from '@/sync/domains/server/retenti
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type SavedServersSectionProps = Readonly<{
     servers: ReadonlyArray<ServerProfile>;
@@ -43,19 +43,19 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                     {
                         id: 'switch',
                         title: t('server.switchToServer'),
-                        icon: 'swap-horizontal-outline',
+                        icon: 'arrows-left-right',
                         onPress: () => props.onSwitchGroup?.(group),
                     },
                     {
                         id: 'rename',
                         title: t('common.rename'),
-                        icon: 'pencil-outline',
+                        icon: 'pencil',
                         onPress: () => props.onRenameGroup?.(group),
                     },
                     {
                         id: 'remove',
                         title: t('common.remove'),
-                        icon: 'trash-outline',
+                        icon: 'trash',
                         destructive: true,
                         onPress: () => props.onRemoveGroup?.(group),
                     },
@@ -65,7 +65,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                           key={targetKey}
                           title={group.name}
                           subtitle={t('server.serverCount', { count: group.serverIds.length })}
-                          icon={<Ionicons name="albums-outline" size={18} color={theme.colors.text.secondary} />}
+                          icon={<Icon name="stack" size={16} color={theme.colors.text.secondary} />}
                           selected={isSelected}
                           showChevron={false}
                           detail={isSelected ? t('server.active') : undefined}
@@ -113,20 +113,20 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         {
                             id: 'switch-device',
                             title: t('server.makeDefaultOnDevice'),
-                            icon: 'phone-portrait-outline',
+                            icon: 'device-mobile',
                             inlineTestID: `saved-server-switch-${profile.id}`,
                             onPress: () => props.onSwitch(profile, 'device'),
                         },
                         {
                             id: 'rename',
                             title: t('common.rename'),
-                            icon: 'pencil-outline',
+                            icon: 'pencil',
                             onPress: () => props.onRename(profile),
                         },
                         {
                             id: 'remove',
                             title: t('common.remove'),
-                            icon: 'trash-outline',
+                            icon: 'trash',
                             destructive: true,
                             onPress: () => props.onRemove(profile),
                         },
@@ -135,20 +135,20 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         {
                             id: 'switch',
                             title: t('server.switchToServer'),
-                            icon: 'swap-horizontal-outline',
+                            icon: 'arrows-left-right',
                             inlineTestID: `saved-server-switch-${profile.id}`,
                             onPress: () => props.onSwitch(profile, 'device'),
                         },
                         {
                             id: 'rename',
                             title: t('common.rename'),
-                            icon: 'pencil-outline',
+                            icon: 'pencil',
                             onPress: () => props.onRename(profile),
                         },
                         {
                             id: 'remove',
                             title: t('common.remove'),
-                            icon: 'trash-outline',
+                            icon: 'trash',
                             destructive: true,
                             onPress: () => props.onRemove(profile),
                         },
@@ -161,7 +161,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         title={profile.name}
                         subtitle={subtitle}
                         subtitleLines={0}
-                        icon={<Ionicons name="server-outline" size={18} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />}
                         selected={isActive}
                         showChevron={false}
                         detail={isActive ? t('server.active') : isDeviceDefault ? t('server.default') : undefined}

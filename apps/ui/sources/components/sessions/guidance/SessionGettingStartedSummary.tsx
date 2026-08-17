@@ -1,11 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
 import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { resolveCliInvokerNameForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
@@ -13,6 +12,7 @@ import { t } from '@/text';
 
 import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
 import { getSessionGettingStartedSubtitle, getSessionGettingStartedTitle } from './sessionGettingStartedText';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type SessionGettingStartedSummaryKind = Extract<
     SessionGettingStartedDecisionKind,
@@ -31,7 +31,6 @@ type SessionGettingStartedSummaryProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     sidebarContainer: {
         width: '100%',
-        maxWidth: layout.maxWidth,
         alignItems: 'center',
         paddingHorizontal: 20,
         paddingTop: 12,
@@ -57,9 +56,10 @@ export const SessionGettingStartedSummary = React.memo((props: SessionGettingSta
     const styles = stylesheet;
     const cliInvoker = resolveCliInvokerNameForCurrentApp();
     const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
+    const sidebarMaxWidthStyle = useLayoutMaxWidthStyle();
     const primaryPaneMaxWidth = typeof sidebarWidthPx === 'number' && sidebarWidthPx > 0 ? sidebarWidthPx : 320;
     const containerStyle = props.surface === 'sidebar'
-        ? styles.sidebarContainer
+        ? [styles.sidebarContainer, sidebarMaxWidthStyle]
         : props.surface === 'primaryPane'
             ? [styles.primaryPaneContainer, { maxWidth: primaryPaneMaxWidth }]
             : undefined;
@@ -80,13 +80,13 @@ export const SessionGettingStartedSummary = React.memo((props: SessionGettingSta
                 titleTestID={props.titleTestID}
                 descriptionTestID={props.descriptionTestID}
                 icon={(
-                    <Ionicons
+                    <Icon
                         name={
                             props.kind === 'create_session'
-                                ? 'terminal-outline'
+                                ? 'terminal'
                                 : props.kind === 'select_session'
-                                    ? 'chatbubbles-outline'
-                                    : 'desktop-outline'
+                                    ? 'chats-circle'
+                                    : 'desktop'
                         }
                         size={48}
                         color={theme.colors.text.secondary}

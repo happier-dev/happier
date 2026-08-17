@@ -52,4 +52,37 @@ describe('showPathConflictResolutionDialog', () => {
         await expect(promise).resolves.toBe('skip');
         expect(onClose).toHaveBeenCalledTimes(1);
     });
+
+    it('hides its exact modal and resolves cancellation once when the caller aborts', async () => {
+        showSpy.mockReset();
+        hideSpy.mockReset();
+        showSpy.mockReturnValue('modal-abort');
+
+        const { showPathConflictResolutionDialog } = await import('./showPathConflictResolutionDialog');
+        const controller = new AbortController();
+        const removeAbortListenerSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+        const promise = showPathConflictResolutionDialog({
+            title: 'Conflict',
+            body: 'Choose a strategy',
+            allowSkip: true,
+            testIdPrefix: 'upload-conflicts',
+            signal: controller.signal,
+        });
+
+        const modalConfig = showSpy.mock.calls[0]?.[0];
+        expect(modalConfig).toBeDefined();
+
+        controller.abort();
+        await Promise.resolve();
+
+        expect(hideSpy).toHaveBeenCalledTimes(1);
+        expect(hideSpy).toHaveBeenCalledWith('modal-abort');
+        expect(removeAbortListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+        await expect(promise).resolves.toBe('cancel');
+
+        modalConfig.props.onResolve('replace');
+        await expect(promise).resolves.toBe('cancel');
+        expect(hideSpy).toHaveBeenCalledTimes(1);
+    });
 });

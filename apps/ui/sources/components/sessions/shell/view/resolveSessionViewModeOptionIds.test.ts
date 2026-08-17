@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveSessionViewModeOptionIds } from './resolveSessionViewModeOptionIds';
 
+// Fixtures use `agentId` because that is the only key the canonical owner metadata can
+// carry: `sessionModesV1` is strict on the wire, the nested store schema strips unknown
+// keys, and the read-side normalizer renames the legacy `provider` alias to `agentId`
+// before it ever reaches this resolver.
 describe('resolveSessionViewModeOptionIds', () => {
     it('reuses the same empty array when no mode options are available', () => {
         const first = resolveSessionViewModeOptionIds('codex', null, { kind: 'none' });
@@ -11,9 +15,9 @@ describe('resolveSessionViewModeOptionIds', () => {
         expect(first).toEqual([]);
     });
 
-    it('reuses the same non-empty array for identical dynamic provider mode inputs', () => {
+    it('reuses the same non-empty array for identical dynamic agent mode inputs', () => {
         const input = {
-            provider: 'codex',
+            agentId: 'codex',
             availableModes: [
                 { id: 'default' },
                 { id: 'plan' },
@@ -28,15 +32,34 @@ describe('resolveSessionViewModeOptionIds', () => {
         expect(first).toEqual(['default', 'plan']);
     });
 
-    it('returns dynamic provider mode ids when the session metadata matches the active agent', () => {
+    it('returns dynamic agent mode ids when the session metadata matches the active agent', () => {
         expect(resolveSessionViewModeOptionIds('codex', {
-            provider: 'codex',
+            agentId: 'codex',
             availableModes: [
                 { id: 'default' },
                 { id: 'plan' },
                 { id: ' ' },
             ],
         }, { kind: 'none' })).toEqual(['default', 'plan']);
+    });
+
+    it('ignores dynamic modes published by a different agent', () => {
+        expect(resolveSessionViewModeOptionIds('claude', {
+            agentId: 'codex',
+            availableModes: [
+                { id: 'default' },
+                { id: 'plan' },
+            ],
+        }, { kind: 'none' })).toEqual([]);
+    });
+
+    it('keeps distinct results for the same agent when the publishing agent differs', () => {
+        const availableModes = [{ id: 'default' }, { id: 'plan' }] as const;
+
+        expect(resolveSessionViewModeOptionIds('codex', { agentId: 'codex', availableModes }, { kind: 'none' }))
+            .toEqual(['default', 'plan']);
+        expect(resolveSessionViewModeOptionIds('codex', { agentId: 'claude', availableModes }, { kind: 'none' }))
+            .toEqual([]);
     });
 
     it('falls back to static agent modes when no dynamic session state is available', () => {

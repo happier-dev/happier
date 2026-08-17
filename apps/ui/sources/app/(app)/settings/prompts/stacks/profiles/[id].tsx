@@ -4,6 +4,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { PromptStacksScreen } from '@/components/settings/prompts/stacks/PromptStacksScreen';
 import { PromptStackEditorScreen } from '@/components/settings/prompts/stacks/PromptStackEditorScreen';
 import { useSetting } from '@/sync/domains/state/storage';
+import { readUiAiLaunchProfilesForLegacyUi } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 
 function firstParam(value: string | string[] | undefined): string | null {
   if (!value) return null;
@@ -12,7 +13,11 @@ function firstParam(value: string | string[] | undefined): string | null {
 export default function PromptProfileStackEditorRoute() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const profileId = firstParam(params.id);
-  const profiles = useSetting('profiles');
+  const rawProfiles = useSetting('profiles');
+  const profiles = React.useMemo(
+    () => readUiAiLaunchProfilesForLegacyUi(rawProfiles),
+    [rawProfiles],
+  );
 
   if (!profileId) return <PromptStacksScreen />;
 

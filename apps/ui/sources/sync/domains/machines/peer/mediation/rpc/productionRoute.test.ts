@@ -564,4 +564,35 @@ describe('production peer mediation machine RPC route adapter', () => {
         // An aborted direct request degrades to a server-fallback response.
         expect(result).toMatchObject({ ok: false, requestId: 'request_1' });
     });
+
+    it('aborts the direct loopback request when its timeout elapses', async () => {
+        vi.useFakeTimers();
+        try {
+            let capturedSignal: AbortSignal | undefined;
+            vi.stubGlobal('fetch', vi.fn((_url: RequestInfo | URL, init?: RequestInit) => (
+                new Promise<Response>((_resolve, reject) => {
+                    capturedSignal = init?.signal ?? undefined;
+                    capturedSignal?.addEventListener('abort', () => {
+                        reject(Object.assign(new Error('timed out'), { name: 'AbortError' }));
+                    }, { once: true });
+                })
+            )));
+
+            const module = await importProductionRoute();
+            expect(module).toHaveProperty('postProductionMachineRpcDirect');
+            if ('importError' in module) throw module.importError;
+
+            const resultPromise = module.postProductionMachineRpcDirect({
+                url: 'http://127.0.0.1:46021/peer-mediation/v1/machine-rpc',
+                request: createDirectRequest(),
+                timeoutMs: 5,
+            });
+            await vi.advanceTimersByTimeAsync(5);
+
+            expect(capturedSignal?.aborted).toBe(true);
+            await expect(resultPromise).resolves.toMatchObject({ ok: false, requestId: 'request_1' });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

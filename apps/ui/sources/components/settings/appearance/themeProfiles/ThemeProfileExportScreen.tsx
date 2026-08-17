@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Platform, View } from 'react-native';
@@ -21,6 +20,7 @@ import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExp
 import { BUILT_IN_THEME_PROFILES, getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { resolveThemePresetSourcePreferredMode } from './themeProfilePresetOptions';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const getProfileIdParam = (value: string | string[] | undefined): string | null => {
     if (Array.isArray(value)) return value[0] ?? null;
@@ -94,7 +94,7 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
                     title={profile ? profile.name : t('settingsAppearance.themeProfiles.noProfiles')}
                     subtitle={profile ? t('settingsAppearance.themeProfiles.exportProfileSubtitle') : t('settingsAppearance.themeProfiles.createProfileSubtitle')}
                     mode="info"
-                    icon={<Ionicons name="share-outline" size={28} color={theme.colors.accent.orange} />}
+                    icon={<Icon name="share" size={29} color={theme.colors.accent.orange} />}
                 />
                 <Item
                     title={t('settingsAppearance.themeProfiles.exportJson')}

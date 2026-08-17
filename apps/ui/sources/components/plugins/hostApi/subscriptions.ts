@@ -38,6 +38,15 @@ function createSurfaceKey(surface: PluginUiSurfaceContextV1): string {
 
 export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
     deliverSubscriptionEvent?: (event: PluginUiResourceSubscriptionEventV1) => void;
+    /**
+     * Composer snapshots use the same acknowledged subscription lifecycle but
+     * are snapshots rather than Resource invalidation envelopes. The mounted
+     * transport remains the schema owner for this value.
+     */
+    deliverSubscriptionValue?: (input: Readonly<{
+        subscriptionId: string;
+        value: unknown;
+    }>) => void;
     audit?: (event: PluginUiHostSubscriptionAuditEvent) => void;
 }> = {}) {
     const activeSubscriptionKeys = new Map<string, PluginUiSurfaceContextV1>();
@@ -79,6 +88,31 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         return hadActiveSubscription;
     }
 
+    function publishKnown(
+        surface: PluginUiSurfaceContextV1,
+        subscriptionId: string,
+        value: unknown,
+    ): boolean {
+        const key = createSubscriptionKey(surface, subscriptionId);
+        if (!activeSubscriptionKeys.has(key)) {
+            options.audit?.({
+                type: 'subscriptionEventSuppressed',
+                subscriptionId,
+                surface,
+                reason: disposedSubscriptionKeys.has(key) ? 'disposed' : 'unknown',
+            });
+            return false;
+        }
+
+        options.deliverSubscriptionValue?.({ subscriptionId, value });
+        options.audit?.({
+            type: 'subscriptionEventDelivered',
+            subscriptionId,
+            surface,
+        });
+        return true;
+    }
+
     function publish(
         surface: PluginUiSurfaceContextV1,
         event: unknown,
@@ -95,28 +129,33 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         }
 
         const subscriptionEvent = parsed.data;
-        const key = createSubscriptionKey(surface, subscriptionEvent.subscriptionId);
-        if (!activeSubscriptionKeys.has(key)) {
-            options.audit?.({
-                type: 'subscriptionEventSuppressed',
-                subscriptionId: subscriptionEvent.subscriptionId,
-                surface,
-                reason: disposedSubscriptionKeys.has(key) ? 'disposed' : 'unknown',
-            });
-            return false;
-        }
+        const published = publishKnown(surface, subscriptionEvent.subscriptionId, subscriptionEvent);
+        if (!published) return false;
 
         options.deliverSubscriptionEvent?.(subscriptionEvent);
-        options.audit?.({
-            type: 'subscriptionEventDelivered',
-            subscriptionId: subscriptionEvent.subscriptionId,
-            surface,
-        });
         if (subscriptionEvent.kind === 'complete' || subscriptionEvent.kind === 'error') {
+            const key = createSubscriptionKey(surface, subscriptionEvent.subscriptionId);
             activeSubscriptionKeys.delete(key);
             disposedSubscriptionKeys.add(key);
         }
         return true;
+    }
+
+    function publishValue(
+        surface: PluginUiSurfaceContextV1,
+        input: Readonly<{ subscriptionId: string; value: unknown }>,
+    ): boolean {
+        const subscriptionId = input.subscriptionId.trim();
+        if (!subscriptionId) {
+            options.audit?.({
+                type: 'subscriptionEventSuppressed',
+                subscriptionId: '',
+                surface,
+                reason: 'invalid_event',
+            });
+            return false;
+        }
+        return publishKnown(surface, subscriptionId, input.value);
     }
 
     function disposeSurface(surface: PluginUiSurfaceContextV1): void {
@@ -133,6 +172,7 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         register,
         dispose,
         publish,
+        publishValue,
         disposeSurface,
     });
 }

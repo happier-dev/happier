@@ -1,6 +1,8 @@
-import type { Ionicons } from '@expo/vector-icons';
 import type { TranslationKey } from '@/text';
+import type { PluginUiDestinationGroupHintV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginSurfaceDestinationBadge } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type RightSidebarScope = 'session' | 'project' | 'app';
 export type RightSidebarPresentation = 'desktop' | 'mobile';
@@ -21,7 +23,7 @@ export type RightSidebarTabOwner = 'builtin' | 'plugin';
 export type RightSidebarTabBase = Readonly<{
     id: string;
     owner: RightSidebarTabOwner;
-    icon: keyof typeof Ionicons.glyphMap;
+    icon: IconName;
     order: number;
     scopes: readonly RightSidebarScope[];
     mobileSurfaces?: Partial<Record<RightSidebarScope, RightSidebarMobileSurface>>;
@@ -39,6 +41,10 @@ export type RightSidebarPluginTabDefinition = RightSidebarTabBase & Readonly<{
     id: `plugin:${string}`;
     owner: 'plugin';
     label: string;
+    /** Static presentation hints carried to host catalogs; they do not rank this sidebar. */
+    badge?: PluginSurfaceDestinationBadge;
+    groupHint?: PluginUiDestinationGroupHintV1;
+    rankHint?: number;
     placement: PluginUiSurfacePlacementProjection;
     plugin: Readonly<{
         pluginId: string;
@@ -69,7 +75,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         id: 'git',
         owner: 'builtin',
         labelKey: 'session.rightPanel.tabs.git',
-        icon: 'git-branch-outline',
+        icon: 'git-branch',
         order: 10,
         scopes: ['session', 'project'],
         mobileSurfaces: {
@@ -81,7 +87,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         id: 'files',
         owner: 'builtin',
         labelKey: 'common.files',
-        icon: 'folder-outline',
+        icon: 'folder',
         order: 20,
         scopes: ['session', 'project'],
         mobileSurfaces: {
@@ -93,7 +99,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         id: 'agents',
         owner: 'builtin',
         labelKey: 'session.subagents.panel.title',
-        icon: 'people-outline',
+        icon: 'robot',
         order: 30,
         scopes: ['session'],
     },
@@ -101,7 +107,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         id: 'navigation',
         owner: 'builtin',
         labelKey: 'session.transcriptNavigation.title',
-        icon: 'list-outline',
+        icon: 'list',
         order: 35,
         scopes: ['session'],
         // Session-only: the timeline is derived from one session's transcript, so there is
@@ -114,7 +120,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         id: 'terminal',
         owner: 'builtin',
         labelKey: 'settings.terminal',
-        icon: 'terminal-outline',
+        icon: 'terminal',
         order: 40,
         scopes: ['session'],
         mobileSurfaces: {
@@ -126,7 +132,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         id: 'browser',
         owner: 'builtin',
         labelKey: 'browserSurface.title',
-        icon: 'globe-outline',
+        icon: 'globe',
         order: 50,
         scopes: ['session', 'project'],
         mobileSurfaces: {
@@ -142,7 +148,7 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         id: 'services',
         owner: 'builtin',
         labelKey: 'localServices.inventory.title',
-        icon: 'server-outline',
+        icon: 'hard-drives',
         order: 60,
         scopes: ['session', 'project'],
         mobileSurfaces: {

@@ -1,5 +1,4 @@
 import Color from 'color';
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, Pressable, View, type LayoutChangeEvent, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -11,6 +10,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { isRunningOnMac } from '@/utils/platform/platform';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     resolveSessionViewContentBottomSpacing,
     SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX,
@@ -74,11 +74,11 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                         ...shadowLevelStyle(theme.colors.shadowLevels[3]),
                     }}
                 >
-                    <Ionicons name="warning-outline" size={14} color={theme.colors.state.warning.foreground} style={{ marginRight: 6 }} />
+                    <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} style={{ marginRight: 6 }} />
                     <Text style={{ fontSize: 12, color: theme.colors.state.warning.foreground, fontWeight: '600' }}>
                         {t('sessionInfo.cliVersionOutdated')}
                     </Text>
-                    <Ionicons name="close" size={14} color={theme.colors.state.warning.foreground} style={{ marginLeft: 8 }} />
+                    <Icon name="x" size={14} color={theme.colors.state.warning.foreground} style={{ marginLeft: 8 }} />
                 </Pressable>
             )}
 
@@ -112,8 +112,8 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                     }}
                     hitSlop={15}
                 >
-                    <Ionicons
-                        name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+                    <Icon
+                        name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                         size={24}
                         color={theme.colors.text.primary}
                     />

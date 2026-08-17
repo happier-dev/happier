@@ -44,7 +44,10 @@ describe('default realtime tool barrier integration', () => {
     });
 
     const result = await barrier.run({ responseId: 'response-1', calls: [call()] });
-    expect(handler).toHaveBeenCalledWith({ limit: 50 });
+    expect(handler).toHaveBeenCalledWith(
+      { limit: 50 },
+      expect.objectContaining({ callId: 'call-1', signal: expect.any(AbortSignal) }),
+    );
     expect(result.results).toEqual([
       expect.objectContaining({
         status: 'success',
@@ -53,6 +56,32 @@ describe('default realtime tool barrier integration', () => {
     ]);
     expect(JSON.stringify(submitResults.mock.calls)).not.toContain('private session summary');
     expect(JSON.stringify(submitResults.mock.calls)).not.toContain('/Users/alice');
+  });
+
+  it('passes the realtime call identity and cancellation signal only through the invocation context', async () => {
+    const handler = vi.fn(async () => JSON.stringify({ ok: true }));
+    const barrier = createRealtimeToolBarrierForVoiceHandlers({
+      handlers: { listMachines: handler },
+      readRedactionPrefs: () => ({
+        shareFilePaths: true,
+        shareSessionSummary: true,
+        sharePermissionRequests: true,
+        shareDeviceInventory: true,
+        shareRecentMessages: true,
+      }),
+      submitResults: async () => undefined,
+      continueResponse: async () => undefined,
+    });
+
+    await barrier.run({ responseId: 'response-1', calls: [call()] });
+
+    expect(handler).toHaveBeenCalledWith(
+      { limit: 50 },
+      expect.objectContaining({
+        callId: 'call-1',
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it('turns canonical handler failures into safe typed results without leaking messages', async () => {

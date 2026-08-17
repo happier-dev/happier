@@ -8,11 +8,13 @@ import type {
 } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import {
     applyCloseDetails,
+    applyCloseDetailsOverlay,
     applyCloseDetailsGroup,
     applyCloseDetailsTab,
     applyFocusDetailsGroup,
     applyMoveDetailsTabToGroup,
     applyOpenDetailsTab,
+    applyOpenDetailsOverlay,
     applyPinDetailsTab,
     applyReplaceDetailsTab,
     applySetActiveDetailsTab,
@@ -24,9 +26,19 @@ import {
     arePaneDetailsStatesEqual,
     createEmptyPaneDetailsState,
 } from '@/components/appShell/panes/details/workspace/detailsWorkspaceReducer';
+import type {
+    PluginUiDestinationReferenceV1,
+    PluginUiInstanceKeyV1,
+} from '@happier-dev/protocol/plugins/ui';
 import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
+import {
+    areSelectedPaneDestinationsEqual,
+    createBuiltinPaneDestination,
+    type SelectedPaneDestinationV1,
+} from './selectedPaneDestination';
 
 export type { DetailsTab, DetailsTabOpenMode, DetailsTabState, PaneDetailsState };
+export type { SelectedPaneDestinationV1 } from './selectedPaneDestination';
 
 export type PaneId = 'right' | 'details' | 'bottom';
 
@@ -34,12 +46,14 @@ export type PaneScopeState = Readonly<{
     right: {
         isOpen: boolean;
         activeTabId: string | null;
+        selectedDestination: SelectedPaneDestinationV1 | null;
         tabState: Readonly<Record<string, unknown>>;
     };
     details: PaneDetailsState;
     bottom: {
         isOpen: boolean;
         activeTabId: string | null;
+        selectedDestination: SelectedPaneDestinationV1 | null;
         tabState: Readonly<Record<string, unknown>>;
     };
 }>;
@@ -66,17 +80,33 @@ export type AppPaneAction =
     | { type: 'openRight'; scopeId: string; tabId?: string }
     | { type: 'closeRight'; scopeId: string }
     | { type: 'setRightTab'; scopeId: string; tabId: string }
+    | { type: 'selectRightDestination'; scopeId: string; destination: SelectedPaneDestinationV1 }
     | { type: 'setRightTabState'; scopeId: string; tabId: string; nextState: unknown }
     | { type: 'openBottom'; scopeId: string; tabId?: string }
     | { type: 'closeBottom'; scopeId: string }
     | { type: 'setBottomTab'; scopeId: string; tabId: string }
+    | { type: 'selectBottomDestination'; scopeId: string; destination: SelectedPaneDestinationV1 }
     | { type: 'setBottomTabState'; scopeId: string; tabId: string; nextState: unknown }
     | { type: 'openDetailsTab'; scopeId: string; tab: DetailsTab; openAs: DetailsTabOpenMode }
-    | { type: 'replaceDetailsTab'; scopeId: string; tabKey: string; tab: DetailsTab; openAs?: DetailsTabOpenMode }
+    | Readonly<{
+        type: 'replaceDetailsTab';
+        scopeId: string;
+        tabKey: string;
+        tab: DetailsTab;
+        openAs?: DetailsTabOpenMode;
+        restoreSourceOnRehydrate?: boolean;
+    }>
     | { type: 'setDetailsTabState'; scopeId: string; tabKey: string; nextState: unknown }
     | { type: 'pinDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'unpinDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'closeDetails'; scopeId: string }
+    | Readonly<{
+        type: 'openDetailsOverlay';
+        scopeId: string;
+        destination: PluginUiDestinationReferenceV1;
+        instanceKey?: PluginUiInstanceKeyV1;
+    }>
+    | { type: 'closeDetailsOverlay'; scopeId: string }
     | { type: 'closeDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'setActiveDetailsTab'; scopeId: string; tabKey: string }
     | {
@@ -108,9 +138,9 @@ export function createAppPaneState(options: Readonly<{
 
 function createEmptyScopeState(): PaneScopeState {
     return {
-        right: { isOpen: false, activeTabId: null, tabState: {} },
+        right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
         details: createEmptyPaneDetailsState(),
-        bottom: { isOpen: false, activeTabId: null, tabState: {} },
+        bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
     };
 }
 
@@ -118,12 +148,14 @@ function isEmptyScopeState(scope: PaneScopeState): boolean {
     return (
         scope.right.isOpen === false
         && scope.right.activeTabId == null
+        && scope.right.selectedDestination == null
         && Object.keys(scope.right.tabState).length === 0
         && scope.details.isOpen === false
         && Object.keys(scope.details.tabsByKey).length === 0
         && Object.keys(scope.details.tabState).length === 0
         && scope.bottom.isOpen === false
         && scope.bottom.activeTabId == null
+        && scope.bottom.selectedDestination == null
         && Object.keys(scope.bottom.tabState).length === 0
     );
 }
@@ -142,14 +174,23 @@ function areTabStateRecordsEqual(
     return true;
 }
 
+function getOwnPaneTabStateEntry(
+    record: Readonly<Record<string, unknown>>,
+    tabId: string,
+): unknown {
+    return Object.prototype.hasOwnProperty.call(record, tabId) ? record[tabId] : undefined;
+}
+
 function arePaneScopeStatesEqual(left: PaneScopeState, right: PaneScopeState): boolean {
     return (
         left.right.isOpen === right.right.isOpen
         && left.right.activeTabId === right.right.activeTabId
+        && areSelectedPaneDestinationsEqual(left.right.selectedDestination, right.right.selectedDestination)
         && areTabStateRecordsEqual(left.right.tabState, right.right.tabState)
         && arePaneDetailsStatesEqual(left.details, right.details)
         && left.bottom.isOpen === right.bottom.isOpen
         && left.bottom.activeTabId === right.bottom.activeTabId
+        && areSelectedPaneDestinationsEqual(left.bottom.selectedDestination, right.bottom.selectedDestination)
         && areTabStateRecordsEqual(left.bottom.tabState, right.bottom.tabState)
     );
 }
@@ -261,7 +302,14 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         case 'openRight': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
             const nextTabId = action.tabId ?? prev.right.activeTabId;
-            if (prev.right.isOpen === true && prev.right.activeTabId === nextTabId) {
+            const nextDestination = action.tabId === undefined
+                ? prev.right.selectedDestination
+                : createBuiltinPaneDestination(action.tabId);
+            if (
+                prev.right.isOpen === true
+                && prev.right.activeTabId === nextTabId
+                && areSelectedPaneDestinationsEqual(prev.right.selectedDestination, nextDestination)
+            ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
@@ -270,6 +318,7 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     ...prev.right,
                     isOpen: true,
                     activeTabId: nextTabId,
+                    selectedDestination: nextDestination,
                 },
             }));
         }
@@ -285,17 +334,47 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         }
         case 'setRightTab': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
-            if (prev.right.activeTabId === action.tabId) {
+            const nextDestination = createBuiltinPaneDestination(action.tabId);
+            if (
+                prev.right.activeTabId === action.tabId
+                && areSelectedPaneDestinationsEqual(prev.right.selectedDestination, nextDestination)
+            ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
                 ...prev,
-                right: { ...prev.right, activeTabId: action.tabId },
+                right: {
+                    ...prev.right,
+                    activeTabId: action.tabId,
+                    selectedDestination: nextDestination,
+                },
+            }));
+        }
+        case 'selectRightDestination': {
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            const nextActiveTabId = action.destination.kind === 'builtin'
+                ? action.destination.id
+                : prev.right.activeTabId;
+            if (
+                prev.right.isOpen === true
+                && prev.right.activeTabId === nextActiveTabId
+                && areSelectedPaneDestinationsEqual(prev.right.selectedDestination, action.destination)
+            ) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
+                ...prev,
+                right: {
+                    ...prev.right,
+                    isOpen: true,
+                    activeTabId: nextActiveTabId,
+                    selectedDestination: action.destination,
+                },
             }));
         }
         case 'setRightTabState': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
-            if (arePaneStateJsonValuesEqual(prev.right.tabState[action.tabId], action.nextState)) {
+            if (arePaneStateJsonValuesEqual(getOwnPaneTabStateEntry(prev.right.tabState, action.tabId), action.nextState)) {
                 return state;
             }
             return upsertScope(state, action.scopeId, (prev) => ({
@@ -312,7 +391,14 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         case 'openBottom': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
             const nextTabId = action.tabId ?? prev.bottom.activeTabId;
-            if (prev.bottom.isOpen === true && prev.bottom.activeTabId === nextTabId) {
+            const nextDestination = action.tabId === undefined
+                ? prev.bottom.selectedDestination
+                : createBuiltinPaneDestination(action.tabId);
+            if (
+                prev.bottom.isOpen === true
+                && prev.bottom.activeTabId === nextTabId
+                && areSelectedPaneDestinationsEqual(prev.bottom.selectedDestination, nextDestination)
+            ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
@@ -321,6 +407,7 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     ...prev.bottom,
                     isOpen: true,
                     activeTabId: nextTabId,
+                    selectedDestination: nextDestination,
                 },
             }));
         }
@@ -336,17 +423,47 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         }
         case 'setBottomTab': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
-            if (prev.bottom.activeTabId === action.tabId) {
+            const nextDestination = createBuiltinPaneDestination(action.tabId);
+            if (
+                prev.bottom.activeTabId === action.tabId
+                && areSelectedPaneDestinationsEqual(prev.bottom.selectedDestination, nextDestination)
+            ) {
                 return state;
             }
             return upsertScope(state, action.scopeId, () => ({
                 ...prev,
-                bottom: { ...prev.bottom, activeTabId: action.tabId },
+                bottom: {
+                    ...prev.bottom,
+                    activeTabId: action.tabId,
+                    selectedDestination: nextDestination,
+                },
+            }));
+        }
+        case 'selectBottomDestination': {
+            const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
+            const nextActiveTabId = action.destination.kind === 'builtin'
+                ? action.destination.id
+                : prev.bottom.activeTabId;
+            if (
+                prev.bottom.isOpen === true
+                && prev.bottom.activeTabId === nextActiveTabId
+                && areSelectedPaneDestinationsEqual(prev.bottom.selectedDestination, action.destination)
+            ) {
+                return state;
+            }
+            return upsertScope(state, action.scopeId, () => ({
+                ...prev,
+                bottom: {
+                    ...prev.bottom,
+                    isOpen: true,
+                    activeTabId: nextActiveTabId,
+                    selectedDestination: action.destination,
+                },
             }));
         }
         case 'setBottomTabState': {
             const prev = state.scopes[action.scopeId] ?? createEmptyScopeState();
-            if (arePaneStateJsonValuesEqual(prev.bottom.tabState[action.tabId], action.nextState)) {
+            if (arePaneStateJsonValuesEqual(getOwnPaneTabStateEntry(prev.bottom.tabState, action.tabId), action.nextState)) {
                 return state;
             }
             return upsertScope(state, action.scopeId, (prev) => ({
@@ -370,6 +487,7 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     tabKey: action.tabKey,
                     tab: action.tab,
                     openAs: action.openAs,
+                    restoreSourceOnRehydrate: action.restoreSourceOnRehydrate,
                 })
             ));
         case 'setDetailsTabState':
@@ -386,6 +504,19 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
             ));
         case 'closeDetails':
             return clearFocusModeIfScopeCannotFocus(updateScopeDetails(state, action.scopeId, applyCloseDetails), action.scopeId);
+        case 'openDetailsOverlay':
+            return updateScopeDetails(state, action.scopeId, (details) => (
+                applyOpenDetailsOverlay(details, {
+                    destination: action.destination,
+                    ...(action.instanceKey === undefined ? {} : { instanceKey: action.instanceKey }),
+                })
+            ));
+        case 'closeDetailsOverlay':
+            return clearFocusModeIfScopeCannotFocus(updateScopeDetails(
+                state,
+                action.scopeId,
+                applyCloseDetailsOverlay,
+            ), action.scopeId);
         case 'closeDetailsTab':
             return clearFocusModeIfScopeCannotFocus(updateScopeDetails(state, action.scopeId, (details) => (
                 applyCloseDetailsTab(details, action.tabKey)

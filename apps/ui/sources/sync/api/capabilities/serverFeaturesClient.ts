@@ -1,7 +1,11 @@
 import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 
-import { ServerFetchAbortedForServerSwitchError, serverFetch } from '@/sync/http/client';
+import {
+    ServerFetchAbortedForServerSwitchError,
+    serverFetch,
+    StaleServerGenerationError,
+} from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
     areServerProfileIdentifiersEquivalent,
@@ -12,6 +16,7 @@ import {
 import { parseServerFeatures } from './serverFeaturesParse';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { normalizeBaseUrl } from './probeAuthenticatedServerAuthPingEndpoint';
+import { recordAccountStoredContentServerRequirements } from '@/sync/http/accountStoredContentCompatibility';
 
 const TTL_READY_MS = 10 * 60 * 1000;
 const TTL_UNSUPPORTED_ENDPOINT_MISSING_MS = 60 * 60 * 1000;
@@ -31,6 +36,31 @@ const cache = new AsyncTtlCache<ServerFeaturesSnapshot>({
     successTtlMs: TTL_READY_MS,
     errorTtlMs: TTL_ERROR_NETWORK_MS,
 });
+const snapshotListeners = new Set<() => void>();
+
+function notifyServerFeaturesSnapshotChanged(): void {
+    for (const listener of snapshotListeners) {
+        listener();
+    }
+}
+
+function writeServerFeaturesSnapshot(
+    cacheKey: string,
+    snapshot: ServerFeaturesSnapshot,
+    ttlMs: number,
+): void {
+    cache.setSuccess(cacheKey, snapshot, { ttlMs });
+    notifyServerFeaturesSnapshotChanged();
+}
+
+export function subscribeServerFeaturesSnapshot(
+    listener: () => void,
+): () => void {
+    snapshotListeners.add(listener);
+    return () => {
+        snapshotListeners.delete(listener);
+    };
+}
 
 function isEndpointMissing(status: number): boolean {
     return status === 404 || status === 405 || status === 501;
@@ -94,7 +124,7 @@ async function getServerFeaturesSnapshotWithRetry(
     const timeoutMs = params?.timeoutMs ?? 800;
     const cacheKey = getCacheKey(params?.serverId);
     const requestedServerId = String(params?.serverId ?? '').trim();
-    const activeSnapshot = getActiveServerSnapshot();
+    let activeSnapshot = getActiveServerSnapshot();
     const isExplicitServerRequest = requestedServerId.length > 0
         && !areServerProfileIdentifiersEquivalent(requestedServerId, activeSnapshot.serverId);
     const explicitServerId = isExplicitServerRequest ? resolveServerProfileScopeIdForIdentifier(requestedServerId) : '';
@@ -132,13 +162,13 @@ async function getServerFeaturesSnapshotWithRetry(
 
         if (isExplicitServerRequest && !explicitServerUrl) {
             const value: ServerFeaturesSnapshot = { status: 'error', reason: 'network' };
-            cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+            writeServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
             return value;
         }
 
         let remainingRetries = remainingSwitchAbortRetries;
-        // If a server switch is in-flight, it can cancel multiple feature probes in a row. Treat those aborts as
-        // transient and retry a couple times so the UI doesn't get stuck behind a manual "Retry".
+        // If a server switch is in-flight, it can cancel a feature probe or make its completed response stale.
+        // Treat both as transient and retry a couple times so the UI doesn't get stuck behind a manual "Retry".
         // This is separate from network timeouts (which should still be cached briefly).
         // eslint-disable-next-line no-constant-condition
         while (true) {
@@ -148,6 +178,13 @@ async function getServerFeaturesSnapshotWithRetry(
             try {
                 let response: Response;
                 try {
+                    const probedServerUrl = isExplicitServerRequest
+                        ? explicitServerUrl!
+                        : activeSnapshot.serverUrl;
+                    recordAccountStoredContentServerRequirements({
+                        serverUrl: probedServerUrl,
+                        requirements: undefined,
+                    });
                     response = isExplicitServerRequest
                         ? await runtimeFetchWithServerReachability({
                             serverUrl: explicitServerUrl!,
@@ -174,9 +211,11 @@ async function getServerFeaturesSnapshotWithRetry(
                 } catch (error) {
                     const timedOut = controller.signal.aborted;
                     const aborted = isAbortErrorLike(error);
-                    const serverSwitchAbort = error instanceof ServerFetchAbortedForServerSwitchError;
+                    const serverSwitchFailure =
+                        error instanceof ServerFetchAbortedForServerSwitchError
+                        || error instanceof StaleServerGenerationError;
 
-                    if (!isExplicitServerRequest && serverSwitchAbort && remainingRetries > 0) {
+                    if (!isExplicitServerRequest && serverSwitchFailure && remainingRetries > 0) {
                         const current = getActiveServerSnapshot();
                         const activeChanged =
                             current.serverId !== activeSnapshot.serverId || current.generation !== activeSnapshot.generation;
@@ -185,7 +224,13 @@ async function getServerFeaturesSnapshotWithRetry(
                         // the new server's key. Otherwise, the abort was likely caused by the switch itself racing
                         // with a follow-up probe against the already-selected server.
                         if (activeChanged) {
-                            return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                            if (getCacheKey(params?.serverId) !== cacheKey) {
+                                return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                            }
+                            // A generation-only change keeps this cache key. Re-entering its active dedupe
+                            // invocation would await the current probe, so retry with the current snapshot here.
+                            activeSnapshot = current;
+                            continue;
                         }
                         await new Promise<void>((resolve) => setTimeout(resolve, 0));
                         continue;
@@ -197,14 +242,18 @@ async function getServerFeaturesSnapshotWithRetry(
                             current.serverId !== activeSnapshot.serverId || current.generation !== activeSnapshot.generation;
                         if (!isExplicitServerRequest && activeChanged && remainingRetries > 0) {
                             remainingRetries -= 1;
-                            return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                            if (getCacheKey(params?.serverId) !== cacheKey) {
+                                return await getServerFeaturesSnapshotWithRetry(params, remainingRetries);
+                            }
+                            activeSnapshot = current;
+                            continue;
                         }
                         // Likely cancelled upstream (e.g. unmount). Do not cache.
                         return { status: 'error', reason: 'network' };
                     }
 
                     const value: ServerFeaturesSnapshot = { status: 'error', reason: timedOut ? 'timeout' : 'network' };
-                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    writeServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
                     return value;
                 }
 
@@ -212,14 +261,14 @@ async function getServerFeaturesSnapshotWithRetry(
                     const value: ServerFeaturesSnapshot = isEndpointMissing(response.status)
                         ? { status: 'unsupported', reason: 'endpoint_missing' }
                         : { status: 'error', reason: 'response_status' };
-                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    writeServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
                     return value;
                 }
 
                 const contentType = String(response.headers?.get?.('content-type') ?? '').toLowerCase();
                 if (contentType && !contentType.includes('application/json') && !contentType.includes('+json')) {
                     const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    writeServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
                     return value;
                 }
 
@@ -228,14 +277,14 @@ async function getServerFeaturesSnapshotWithRetry(
                     payload = await response.json();
                 } catch {
                     const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    writeServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
                     return value;
                 }
 
                 const parsed = parseServerFeatures(payload);
                 if (!parsed) {
                     const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
-                    cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
+                    writeServerFeaturesSnapshot(cacheKey, value, getCacheTtlMs(value));
                     return value;
                 }
 
@@ -248,8 +297,15 @@ async function getServerFeaturesSnapshotWithRetry(
                 }
 
                 const value: ServerFeaturesSnapshot = { status: 'ready', features: parsed };
+                recordAccountStoredContentServerRequirements({
+                    serverUrl: isExplicitServerRequest
+                        ? explicitServerUrl!
+                        : activeSnapshot.serverUrl,
+                    requirements:
+                        parsed.capabilities.accountStoredContentCompatibility,
+                });
                 const ttlMs = getCacheTtlMs(value);
-                cache.setSuccess(cacheKey, value, { ttlMs });
+                writeServerFeaturesSnapshot(cacheKey, value, ttlMs);
                 // Learning a stable server identity can synchronously change
                 // the active/profile scope key. Publish the same observed
                 // snapshot under that canonical key before returning so an
@@ -259,7 +315,7 @@ async function getServerFeaturesSnapshotWithRetry(
                 // here would also remove this still-running dedupe entry.
                 const canonicalCacheKey = getCacheKey(params?.serverId);
                 if (canonicalCacheKey !== cacheKey) {
-                    cache.setSuccess(canonicalCacheKey, value, { ttlMs });
+                    writeServerFeaturesSnapshot(canonicalCacheKey, value, ttlMs);
                 }
                 return value;
             } finally {
@@ -300,15 +356,19 @@ export function primeServerFeaturesSnapshot(params: {
     snapshot: ServerFeaturesSnapshot;
     ttlMs?: number;
 }): void {
-    cache.setSuccess(getCacheKey(params.serverId), params.snapshot, {
-        ttlMs: params.ttlMs ?? getCacheTtlMs(params.snapshot),
-    });
+    writeServerFeaturesSnapshot(
+        getCacheKey(params.serverId),
+        params.snapshot,
+        params.ttlMs ?? getCacheTtlMs(params.snapshot),
+    );
 }
 
 export function deleteServerFeaturesSnapshot(params?: { serverId?: string }): void {
     cache.delete(getCacheKey(params?.serverId));
+    notifyServerFeaturesSnapshotChanged();
 }
 
 export function resetServerFeaturesClientForTests(): void {
     cache.clear();
+    notifyServerFeaturesSnapshotChanged();
 }

@@ -2,6 +2,7 @@ import * as React from 'react';
 import {
     useSessionActionDrafts,
     useSessionPendingMessages,
+    useSessionReferenceTarget,
     useSetting,
 } from '@/sync/domains/state/storage';
 import { buildSessionMetadataStabilitySignatureValue, buildStableJsonSignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
@@ -35,6 +36,22 @@ import { resolveSessionMachineId } from '@/sync/domains/session/external/resolve
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { usePluginTranscriptActivities } from '@/components/sessions/transcript/items/usePluginTranscriptActivities';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import {
+    openPluginContributedActionSessionReference,
+} from '@/components/plugins/actions/openPluginContributedAction';
+import {
+    createPluginMessageActionHost,
+    type PluginMessageActionHost,
+} from '@/components/sessions/transcript/messageActions/PluginMessageActions';
+import {
+    createPluginContributedActionController,
+    type PluginContributedActionCurrentSnapshot,
+} from '@/components/plugins/actions/pluginContributedActionController';
 
 export function resolveLatestCommittedActivityKey(params: Readonly<{
     messageIdsOldestFirst: readonly string[];
@@ -132,6 +149,33 @@ export function useChatListRootState(props: ChatListProps) {
         operationMachineSubscriptionTarget !== null,
     );
     const sessionServerId = usePreferredServerIdForSession(props.session.id);
+    // Only this store-owned server-backed deletion fact means the target is
+    // permanently gone. Session cache eviction and archiving intentionally do
+    // not retire its contextual Resource LKG.
+    const sessionReferenceTarget = useSessionReferenceTarget(props.session.id);
+    // A transcript activity is local, live Resource state. Bind it through the
+    // same session machine/server authority as the existing session operation;
+    // shared/read-only viewers do not probe a local plugin Resource.
+    const pluginActivityProjection = usePluginUiProjectionCurrentness({
+        machineId: operationMachineId,
+        serverId: sessionServerId,
+        enabled: isExactOwner,
+    });
+    const pluginActivityLifetime = captureActiveServerAccountScopeLifetime();
+    const {
+        activities: pluginTranscriptActivities,
+        dismissedActivityIds: dismissedPluginTranscriptActivityIds,
+        onDismissActivity: onDismissPluginTranscriptActivity,
+    } = usePluginTranscriptActivities({
+        accountLifetime: pluginActivityLifetime,
+        interactionEnabled: pluginActivityProjection.interactionEnabled,
+        machineId: pluginActivityProjection.machineId,
+        platform: pluginActivityProjection.platform,
+        pluginUiProjection: pluginActivityProjection.pluginUiProjection,
+        serverId: pluginActivityProjection.serverId,
+        sessionId: props.session.id,
+        sessionRemoved: sessionReferenceTarget.deleted,
+    });
     const externalSessionOperationOwnerTarget = React.useMemo(() => (
         operationMachineSubscriptionTarget === null
             ? null
@@ -153,6 +197,9 @@ export function useChatListRootState(props: ChatListProps) {
             machineId: operationMachineId,
             machineOnline:
                 operationMachine !== null && isMachineOnline(operationMachine),
+            ownerScopeKey: activeServerAccountScope
+                ? serverAccountScopeKeySuffix(activeServerAccountScope)
+                : null,
             presentation: externalSessionOperationPresentation,
             serverId: sessionServerId,
             sessionId: props.session.id,
@@ -162,7 +209,7 @@ export function useChatListRootState(props: ChatListProps) {
         onDismiss: onDismissExternalSessionOperation,
     } = useExternalSessionOperationTranscriptDismissal({
         sessionId: props.session.id,
-        progress: externalSessionOperationOwnerHydration.progress,
+        presentation: externalSessionOperationPresentation,
     });
 
     const groupingMode = transcriptGroupingMode === 'turns' ? 'turns' : 'linear';
@@ -171,26 +218,6 @@ export function useChatListRootState(props: ChatListProps) {
         toolViewTimelineChromeMode === 'activity_feed';
     const toolCallsGroupStrategy =
         transcriptTurnToolCallsGroupStrategy === 'all_tools_in_turn' ? 'all_tools_in_turn' : 'consecutive_tools';
-
-    const { groupedItems, transcriptMaxTurnEntriesPerListItem } = useTranscriptRootDerivedItems({
-        actionDrafts,
-        discardedPendingMessages,
-        fork,
-        forkAwareMessageDescriptors,
-        forkedTranscriptEnabled,
-        groupToolCalls,
-        groupingMode,
-        messageIdsOldestFirst,
-        messagesById,
-        pendingMessages,
-        pendingUserActionRequests,
-        externalSessionOperationDismissal,
-        externalSessionOperationPresentation,
-        externalSessionOperationProgress:
-            externalSessionOperationOwnerHydration.progress,
-        sessionId: props.session.id,
-        toolCallsGroupStrategy,
-    });
 
     const latestCommittedActivityKey = resolveLatestCommittedActivityKey({
         messageIdsOldestFirst,
@@ -224,6 +251,141 @@ export function useChatListRootState(props: ChatListProps) {
             presence: props.session.presence,
         });
     }, [props.session.accessLevel, props.session.canApprovePermissions, props.session.active, props.session.presence]);
+    // Whole-message Actions consume the generic normalized daemon projection,
+    // but only while this transcript's existing local-owner projection remains
+    // current. The generation agreement prevents an Action catalog refresh from
+    // borrowing a now-stale transcript lifecycle snapshot.
+    const pluginMessageActionProjection = useDaemonMergedProjectionInputs({
+        machineId: pluginActivityProjection.machineId,
+        serverId: pluginActivityProjection.serverId,
+        enabled: isExactOwner && pluginActivityProjection.interactionEnabled,
+        staleMs: 60_000,
+    });
+    const pluginMessageActionSnapshotRef = React.useRef<PluginContributedActionCurrentSnapshot | null>(null);
+    const pluginMessageActionScope = React.useMemo(
+        () => new AbortController(),
+        [
+            isExactOwner,
+            interaction.canSendMessages,
+            pluginActivityLifetime,
+            pluginActivityProjection.interactionEnabled,
+            pluginActivityProjection.machineId,
+            pluginActivityProjection.serverId,
+            pluginActivityProjection.pluginUiProjection?.generation,
+            pluginMessageActionProjection.inputs?.pluginProjectionById,
+            pluginMessageActionProjection.inputs?.pluginProjectionV2?.generation,
+            pluginMessageActionProjection.phase,
+            props.session.id,
+        ],
+    );
+    React.useEffect(() => () => pluginMessageActionScope.abort(), [pluginMessageActionScope]);
+    const pluginMessageActionSnapshot = React.useMemo<PluginContributedActionCurrentSnapshot | null>(() => {
+        const inputs = pluginMessageActionProjection.inputs;
+        const lifecycleGeneration = pluginActivityProjection.pluginUiProjection?.generation;
+        const actionGeneration = inputs?.pluginProjectionV2?.generation;
+        if (
+            !isExactOwner
+            || interaction.canSendMessages !== true
+            || pluginActivityProjection.interactionEnabled !== true
+            || pluginMessageActionProjection.phase !== 'ready'
+            || !inputs
+            || lifecycleGeneration == null
+            || actionGeneration == null
+            || String(lifecycleGeneration) !== String(actionGeneration)
+        ) {
+            return null;
+        }
+        let snapshot!: PluginContributedActionCurrentSnapshot;
+        snapshot = {
+            pluginProjectionById: inputs.pluginProjectionById,
+            host: {
+                machineId: pluginActivityProjection.machineId,
+                serverId: pluginActivityProjection.serverId,
+                expectedGeneration: actionGeneration,
+                sessionId: props.session.id,
+                signal: pluginMessageActionScope.signal,
+                accountLifetime: pluginActivityLifetime,
+                isCurrent: () => pluginMessageActionSnapshotRef.current === snapshot,
+            },
+        };
+        return snapshot;
+    }, [
+        interaction.canSendMessages,
+        isExactOwner,
+        pluginActivityLifetime,
+        pluginActivityProjection.interactionEnabled,
+        pluginActivityProjection.machineId,
+        pluginActivityProjection.pluginUiProjection?.generation,
+        pluginActivityProjection.serverId,
+        pluginMessageActionProjection.inputs,
+        pluginMessageActionProjection.phase,
+        pluginMessageActionScope,
+        props.session.id,
+    ]);
+    pluginMessageActionSnapshotRef.current = pluginMessageActionSnapshot;
+    // Transcript Activity rows retain only opaque Action capability references.
+    // Re-resolve each one through the same current Session controller that owns
+    // catalog Actions; the row neither caches a descriptor nor creates a local
+    // input/dispatch path.
+    const pluginTranscriptActivityActionController = React.useMemo(() => (
+        pluginMessageActionSnapshot
+            ? createPluginContributedActionController({
+                resolveCurrent: () => pluginMessageActionSnapshotRef.current,
+            })
+            : null
+    ), [pluginMessageActionSnapshot]);
+    const isPluginTranscriptActivityActionAvailable = React.useCallback((action: Readonly<{
+        pluginId: string;
+        localId: string;
+    }>): boolean => (
+        pluginTranscriptActivityActionController?.isSessionReferenceAvailable(action) === true
+    ), [pluginTranscriptActivityActionController]);
+    // Action admission is resolved before the synthetic transcript item is
+    // built. That final item is the shared input to both the card and its
+    // measurement signature, so an offline Action cannot leave a hidden row's
+    // reservation behind in the virtualizer.
+    const { groupedItems, transcriptMaxTurnEntriesPerListItem } = useTranscriptRootDerivedItems({
+        actionDrafts,
+        discardedPendingMessages,
+        fork,
+        forkAwareMessageDescriptors,
+        forkedTranscriptEnabled,
+        groupToolCalls,
+        groupingMode,
+        messageIdsOldestFirst,
+        messagesById,
+        pendingMessages,
+        pendingUserActionRequests,
+        externalSessionOperationDismissal,
+        externalSessionOperationPresentation,
+        externalSessionOperationProgress:
+            externalSessionOperationOwnerHydration.progress,
+        pluginTranscriptActivities,
+        dismissedPluginTranscriptActivityIds,
+        isPluginTranscriptActivityActionAvailable,
+        sessionId: props.session.id,
+        toolCallsGroupStrategy,
+    });
+    const onOpenPluginTranscriptActivityAction = React.useCallback((action: Readonly<{
+        pluginId: string;
+        localId: string;
+    }>): void => {
+        if (!pluginTranscriptActivityActionController) return;
+        fireAndForget(openPluginContributedActionSessionReference({
+            controller: pluginTranscriptActivityActionController,
+            action,
+            signal: pluginMessageActionScope.signal,
+        }), { tag: 'PluginTranscriptActivity.openAction' });
+    }, [pluginMessageActionScope, pluginTranscriptActivityActionController]);
+    const pluginMessageActionHost = React.useMemo<PluginMessageActionHost | null>(() => (
+        pluginMessageActionSnapshot
+            ? createPluginMessageActionHost({
+                resolveCurrent: () => pluginMessageActionSnapshotRef.current,
+                sessionId: props.session.id,
+                signal: pluginMessageActionScope.signal,
+            })
+            : null
+    ), [pluginMessageActionScope, pluginMessageActionSnapshot, props.session.id]);
     const internalMessagesById = forkedTranscriptEnabled ? messagesById : EMPTY_MESSAGES_BY_ID;
 
     return {
@@ -233,6 +395,7 @@ export function useChatListRootState(props: ChatListProps) {
             sessionId: props.session.id,
             selectionEnabled: transcriptSessionCommon.messageDisplay.transcriptMessageSelectionEnabled === true,
         },
+        pluginMessageActionHost,
         internalProps: {
             metadata: stableSessionMetadata,
             sessionId: props.session.id,
@@ -267,6 +430,8 @@ export function useChatListRootState(props: ChatListProps) {
             onViewportChange: props.onViewportChange,
             onEditPendingMessage: props.onEditPendingMessage,
             onDismissExternalSessionOperation,
+            onDismissPluginTranscriptActivity,
+            onOpenPluginTranscriptActivityAction,
             onExternalSessionOperationActionResult:
                 externalSessionOperationOwnerHydration.onActionResult,
             externalSessionOperationOwnerTarget,

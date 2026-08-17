@@ -13,6 +13,23 @@ import {
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 
 import { buildAccountEncryptionMigrateToPlainRequest } from './buildAccountEncryptionMigrateToPlainRequest';
+
+const EMPTY_STORAGE_DIRECTIVES = {
+  machines: { action: 'assert_empty' as const },
+  todos: { action: 'assert_empty' as const },
+  artifacts: { action: 'assert_empty' as const },
+  sessions: { action: 'assert_empty' as const },
+  reviewComments: { action: 'assert_empty' as const },
+  sessionOrganization: { action: 'assert_empty' as const },
+  pets: { action: 'assert_empty' as const },
+};
+const CREDENTIAL_REVISION =
+  'csr_0123456789ABCDEFGHJKMNPQRS';
+const CURRENTNESS = {
+  expectedAccountVersion: 4,
+  expectedSigningKeyFingerprint: 'aemk1_signing',
+  expectedContentKeyFingerprint: 'aemk1_content',
+} as const;
 import { encodeAutomationTemplateForTransport } from '@/sync/domains/automations/automationTemplateTransport';
 import { settingsParse } from '@/sync/domains/settings/settings';
 
@@ -40,6 +57,8 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     const credentials = createLegacyCredentials();
 
     const request = await buildAccountEncryptionMigrateToPlainRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
@@ -58,7 +77,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.settingsContent?.t).toBe('plain');
     expect(request.connectedServices).toEqual({ action: 'assert_empty' });
     expect(request.automations).toEqual({ action: 'assert_empty' });
-    expect(request).not.toHaveProperty('sessions');
+    expect(request.sessions).toEqual({ action: 'assert_empty' });
   });
 
   it('includes the released legacy Voice adapter projection in plain full-settings migrations', async () => {
@@ -67,12 +86,15 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     const settingsSecretsKey = deriveSettingsSecretsKeyV1(
       deriveAccountMachineKeyFromRecoverySecret(recoverySecret),
     );
-    const elevenLabsDefaults = settingsParse({}).voice.providers.realtime_elevenlabs;
+    const elevenLabsDefaults = settingsParse({}).voice.providers[
+      'happier.voice.elevenlabs/realtime-elevenlabs'
+    ];
     if (!elevenLabsDefaults) throw new Error('expected ElevenLabs defaults');
     assertObject(elevenLabsDefaults.config, 'ElevenLabs default config');
-    assertObject(elevenLabsDefaults.config.byo, 'ElevenLabs default BYO config');
 
     const request = await buildAccountEncryptionMigrateToPlainRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       expectedSettingsVersion: 7,
       settings: settingsParse({
@@ -98,12 +120,12 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
             credentialBindings: { account: { api_key: 'voice-elevenlabs-secret' } },
           }],
           providers: {
-            realtime_elevenlabs: {
+            'happier.voice.elevenlabs/realtime-elevenlabs': {
               schemaVersion: 2,
               config: {
                 ...elevenLabsDefaults.config,
                 billingMode: 'byo',
-                byo: { ...elevenLabsDefaults.config.byo, agentId: 'agent_1' },
+                agentId: 'agent_1',
               },
             },
           },
@@ -136,7 +158,9 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     );
 
     expect(request.settingsContent.v.voiceSettingsV1).toEqual(
-      expect.objectContaining({ providerId: 'realtime_elevenlabs' }),
+      expect.objectContaining({
+        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+      }),
     );
     expect(request.settingsContent.v.voice.adapters.realtime_elevenlabs.byo.apiKey).toEqual({
       _isSecretValue: true,
@@ -200,15 +224,19 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     });
 
     const request = await buildAccountEncryptionMigrateToPlainRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
       connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
       automations: [
-        { id: 'auto_sensitive', templateCiphertext: sensitiveTemplateCiphertext },
-        { id: 'auto_safe', templateCiphertext: safeTemplateCiphertext },
+        { id: 'auto_sensitive', templateVersion: 3, templateCiphertext: sensitiveTemplateCiphertext },
+        { id: 'auto_safe', templateVersion: 5, templateCiphertext: safeTemplateCiphertext },
       ],
       fetchConnectedServiceCredentialSealed: async () => ({
+        revisionSemantics: 'revisioned',
+        credentialRevision: CREDENTIAL_REVISION,
         sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
         metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct-1', expiresAt: 123 },
       }),
@@ -227,6 +255,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.connectedServices.credentials[0]).toEqual(expect.objectContaining({
       serviceId: 'openai-codex',
       profileId: 'work',
+      expectedCredentialRevision: CREDENTIAL_REVISION,
       kind: 'plain',
       record: expect.objectContaining({ kind: 'oauth' }),
     }));
@@ -238,11 +267,13 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     const sensitive = request.automations.templates[0];
     assertObject(sensitive, 'sensitive automation template');
     expect(sensitive.automationId).toBe('auto_sensitive');
+    expect(sensitive.expectedTemplateVersion).toBe(3);
     expect(sensitive.templateCiphertext).toBe(sensitiveTemplateCiphertext);
 
     const safe = request.automations.templates[1];
     assertObject(safe, 'safe automation template');
     expect(safe.automationId).toBe('auto_safe');
+    expect(safe.expectedTemplateVersion).toBe(5);
     assertString(safe.templateCiphertext, 'safe automation templateCiphertext');
     const plainEnvelope = JSON.parse(safe.templateCiphertext);
     expect(plainEnvelope.kind).toBe('happier_automation_template_plain_v1');
@@ -265,12 +296,16 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     });
 
     await expect(buildAccountEncryptionMigrateToPlainRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       expectedSettingsVersion: 7,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
       connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
       automations: [],
       fetchConnectedServiceCredentialSealed: async () => ({
+        revisionSemantics: 'revisioned',
+        credentialRevision: CREDENTIAL_REVISION,
         sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
         metadata: { kind: 'token', providerEmail: null, providerAccountId: 'acct-1', expiresAt: null },
       }),
@@ -285,6 +320,8 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     const canonicalSettingsKey = deriveSettingsSecretsKeyV1(machineKey);
 
     const request = await buildAccountEncryptionMigrateToPlainRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       expectedSettingsVersion: 9,
       settings: {

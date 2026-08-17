@@ -515,52 +515,6 @@ describe('DaemonSpeechStreamSender', () => {
     expect(cancel).not.toHaveBeenCalled();
   });
 
-  it('buffers chunks before start and replays unacked chunks after restart', async () => {
-    const streamIds = ['stream-1', 'stream-2'];
-    const generations = [1, 2];
-    const start = vi.fn(async () => startResponse({
-      streamId: streamIds.shift()!,
-      generation: generations.shift()!,
-    }));
-    const chunk = vi.fn(async ({ streamId, generation, seq }: DaemonSpeechStreamTransportChunkRequest) => ({
-      ok: true as const,
-      streamId,
-      generation,
-      ackSeq: streamId === 'stream-2' ? seq : seq === 0 ? 0 : -1,
-      events: [],
-    }));
-    const finish = vi.fn();
-    const cancel = vi.fn(async () => ({ ok: true as const, streamId: 'stream-1', generation: 1 }));
-    const sender = createDaemonSpeechStreamSender({
-      requestId: 'request-1',
-      maxBufferedChunks: 4,
-      transport: { start, chunk, finish, cancel },
-    });
-
-    const buffered = sender.pushChunk(new Uint8Array([0, 0]));
-    await settleWithin(sender.start(), 'first_start');
-    await settleWithin(buffered, 'first_buffered_chunk');
-    const unacked = sender.pushChunk(new Uint8Array([1, 1]));
-    await vi.waitFor(() => expect(chunk).toHaveBeenCalledTimes(2));
-    await settleWithin(sender.restart(), 'restart');
-    await settleWithin(unacked, 'replayed_chunk');
-    await settleWithin(sender.waitForDrain(), 'drain');
-
-    expect(chunk.mock.calls.map(([input]) => [
-      input.streamId,
-      input.generation,
-      input.seq,
-      input.carrierFrame.kind,
-      input.carrierFrame.kind === 'json_base64_v1_fallback'
-        ? input.carrierFrame.jsonBase64Envelope.pcm16Base64
-        : null,
-    ])).toEqual([
-      ['stream-1', 1, 0, 'json_base64_v1_fallback', 'AAA='],
-      ['stream-1', 1, 1, 'json_base64_v1_fallback', 'AQE='],
-      ['stream-2', 2, 1, 'json_base64_v1_fallback', 'AQE='],
-    ]);
-  });
-
   it('sends binary-capable direct voice PCM chunks as carrier bytes instead of base64 payloads', async () => {
     const chunk = vi.fn(async ({ seq }: DaemonSpeechStreamTransportChunkRequest) => ({
       ok: true as const,
@@ -649,41 +603,6 @@ describe('DaemonSpeechStreamSender', () => {
     });
     await sender.cancel();
     await expect(firstChunk).resolves.toBe('daemon_speech_stream_closed');
-  });
-
-  it('rejects stale start completions after a newer restart wins ownership', async () => {
-    const firstStart = deferred<any>();
-    const secondStart = deferred<any>();
-    const start = vi
-      .fn()
-      .mockReturnValueOnce(firstStart.promise)
-      .mockReturnValueOnce(secondStart.promise);
-    const chunk = vi.fn(async ({ streamId, generation, seq }: DaemonSpeechStreamTransportChunkRequest) => ({
-      ok: true as const,
-      streamId,
-      generation,
-      ackSeq: seq,
-      events: [],
-    }));
-    const sender = createDaemonSpeechStreamSender({
-      requestId: 'request-1',
-      transport: {
-        start,
-        chunk,
-        finish: vi.fn(),
-        cancel: vi.fn(),
-      },
-    });
-
-    const staleStart = sender.start();
-    const winningStart = sender.restart();
-    secondStart.resolve(startResponse({ streamId: 'stream-2', generation: 2 }));
-    await winningStart;
-    firstStart.resolve(startResponse({ streamId: 'stream-1', generation: 1 }));
-
-    await expect(staleStart).rejects.toMatchObject({ code: 'daemon_speech_stream_stale_start' });
-    await sender.pushChunk(new Uint8Array([0, 0]));
-    expect(chunk).toHaveBeenCalledWith(expect.objectContaining({ streamId: 'stream-2', generation: 2 }));
   });
 
   it('cancels the active stream and rejects later sends without leaking buffered chunks', async () => {

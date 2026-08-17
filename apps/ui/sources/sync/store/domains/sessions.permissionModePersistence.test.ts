@@ -47,7 +47,7 @@ vi.mock('../../domains/state/warmCacheAdapters', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../../domains/state/warmCacheAdapters')>();
     return {
         ...actual,
-        buildSessionListCacheEntriesFromRenderables: () => [],
+        buildPersistedSessionListCacheEntriesFromRenderables: () => [],
     };
 });
 

@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
+  type MachineAdministrationTargetV1,
   type PromptRegistryAdapterDescriptorV1,
   PromptRegistryConfiguredSourceV1Schema,
   type PromptRegistryConfiguredSourceV1,
@@ -13,6 +13,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { ContextBar } from '@/components/settings/contextBar/ContextBar';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { useContextBarSelection } from '@/components/settings/contextBar/useContextBarSelection';
@@ -20,12 +21,12 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import {
   machinePromptRegistriesListAdapters,
   machinePromptRegistriesListSources,
@@ -33,9 +34,15 @@ import {
 } from '@/sync/ops/machinePromptRegistries';
 import { importPromptRegistrySkillItem } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
 import { translatePromptLibraryMessage } from '@/sync/ops/promptLibrary/translatePromptLibraryMessage';
-import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import {
+  useMachineAdministrationTargetSelection,
+  type FreshMachineAdministrationExecutionTargetV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
 import { t, type TranslationKey } from '@/text';
 import { buildPromptRegistryItemDetailsHref } from './promptRegistryItemDetailsHref';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -44,7 +51,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     paddingVertical: 12,
-    maxWidth: layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
@@ -69,29 +75,54 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-function describeMachine(
-  machineId: string,
-  machines: ReadonlyArray<{ id: string; metadata?: { displayName?: string | null; host?: string | null } | null }>,
-): string {
-  const machine = machines.find((entry) => entry.id === machineId) ?? null;
-  return machine?.metadata?.displayName || machine?.metadata?.host || machineId;
-}
-
 export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen() {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const contentStyle = React.useMemo(() => [styles.content, contentMaxWidthStyle], [contentMaxWidthStyle]);
   const { theme } = useUnistyles();
   const router = useRouter();
-  const machines = useAllMachines();
-  const primaryMachineId = usePrimaryMachineFromActiveSelection();
+  const administrationTargetSelection = useMachineAdministrationTargetSelection(
+    MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptRegistries,
+  );
+  const selectedTarget = administrationTargetSelection.selectedTarget;
+  const selectionKey = selectedTarget
+    ? `${selectedTarget.serverIdentityId}\0${selectedTarget.machineId}`
+    : '';
+  const selectionKeyRef = React.useRef(selectionKey);
+  selectionKeyRef.current = selectionKey;
+  const resolveExecutionTargetRef = React.useRef(administrationTargetSelection.resolveExecutionTarget);
+  resolveExecutionTargetRef.current = administrationTargetSelection.resolveExecutionTarget;
+  const resolveExactExecutionTarget = React.useCallback((
+    expectedTarget: MachineAdministrationTargetV1 | null,
+  ): FreshMachineAdministrationExecutionTargetV1 | null => {
+    const resolved = resolveExecutionTargetRef.current();
+    return expectedTarget !== null
+      && resolved !== null
+      && machineAdministrationTargetsEqual(expectedTarget, resolved.target)
+      ? resolved
+      : null;
+  }, []);
+  const isExecutionTargetCurrent = React.useCallback((
+    requestedSelection: string,
+    executionTarget: FreshMachineAdministrationExecutionTargetV1,
+  ): boolean => {
+    if (selectionKeyRef.current !== requestedSelection) return false;
+    const current = resolveExactExecutionTarget(executionTarget.target);
+    return current !== null
+      && current.serverId === executionTarget.serverId
+      && current.machine.id === executionTarget.machine.id;
+  }, [resolveExactExecutionTarget]);
   const [storedSources, setStoredSources] = useSettingMutable('promptRegistrySourcesV1');
-  const defaultMachineId = primaryMachineId;
   const {
-    machineId,
-    setMachineId,
     workspacePath,
     setWorkspacePath,
   } = useContextBarSelection({
     selectionKey: 'promptRegistries.browse',
-    defaultMachineId,
+    // This legacy context entry now carries only the workspace path. Its
+    // machine field is deliberately ignored so it cannot compete with the
+    // Administration-owned portable target.
+    defaultMachineId: null,
   });
   const [configuredSources, setConfiguredSources] = React.useState<PromptRegistryConfiguredSourceV1[]>(() => storedSources.sources);
   const [adapterDescriptors, setAdapterDescriptors] = React.useState<PromptRegistryAdapterDescriptorV1[]>([]);
@@ -114,6 +145,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
   const sourcesRef = React.useRef<PromptRegistrySourceDescriptorV1[]>(sources);
   const adapterDescriptorsRef = React.useRef<PromptRegistryAdapterDescriptorV1[]>(adapterDescriptors);
   const latestScanRequestIdRef = React.useRef(0);
+  const previousSelectionKeyRef = React.useRef(selectionKey);
 
   React.useEffect(() => {
     selectedSourceIdRef.current = selectedSourceId;
@@ -131,19 +163,21 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     adapterDescriptorsRef.current = adapterDescriptors;
   }, [adapterDescriptors]);
 
-  React.useEffect(() => {
-    if (machineId && machines.some((entry) => entry.id === machineId)) return;
-    setMachineId(defaultMachineId);
-  }, [defaultMachineId, machineId, machines, setMachineId]);
+  React.useLayoutEffect(() => {
+    const previousSelectionKey = previousSelectionKeyRef.current;
+    previousSelectionKeyRef.current = selectionKey;
+    if (!previousSelectionKey || previousSelectionKey === selectionKey) return;
+    setWorkspacePath('');
+  }, [selectionKey, setWorkspacePath]);
 
-  const machineItems = React.useMemo(() => {
-    return machines.map((machine) => ({
-      id: machine.id,
-      title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
-      subtitle: machine.id,
-      icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
-    }));
-  }, [machines, theme.colors.text.secondary]);
+  React.useEffect(() => {
+    latestScanRequestIdRef.current += 1;
+    setAdapterDescriptors([]);
+    setSources([]);
+    setSelectedSourceId(null);
+    setItems([]);
+    setHasLoadedOnce(false);
+  }, [selectionKey]);
 
   const persistConfiguredSources = React.useCallback((nextSources: PromptRegistryConfiguredSourceV1[]) => {
     setConfiguredSources(nextSources);
@@ -161,14 +195,17 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
   );
 
   const listSources = React.useCallback(async (): Promise<PromptRegistrySourceDescriptorV1[]> => {
-    if (!machineId) {
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget) {
       setHasLoadedOnce(true);
       return [];
     }
 
-    const response = await machinePromptRegistriesListSources(machineId, {
+    const response = await machinePromptRegistriesListSources(executionTarget.machine.id, {
       configuredSources,
-    });
+    }, { serverId: executionTarget.serverId });
+    if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return [];
     if (!response.ok) {
       Modal.alert(t('common.error'), response.error);
       return [];
@@ -176,22 +213,27 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     setSources(response.sources);
     setHasLoadedOnce(true);
     return response.sources;
-  }, [configuredSources, machineId]);
+  }, [configuredSources, isExecutionTargetCurrent, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
   const listAdapters = React.useCallback(async (): Promise<PromptRegistryAdapterDescriptorV1[]> => {
-    if (!machineId) {
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget) {
       setAdapterDescriptors([]);
       return [];
     }
 
-    const response = await machinePromptRegistriesListAdapters(machineId);
+    const response = await machinePromptRegistriesListAdapters(executionTarget.machine.id, {
+      serverId: executionTarget.serverId,
+    });
+    if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return [];
     if (!response.ok) {
       Modal.alert(t('common.error'), response.error);
       return [];
     }
     setAdapterDescriptors(response.adapters);
     return response.adapters;
-  }, [machineId]);
+  }, [isExecutionTargetCurrent, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
   const scanSource = React.useCallback(async (
     sourceId: string,
@@ -199,7 +241,9 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     nextSources: readonly PromptRegistrySourceDescriptorV1[] = sourcesRef.current,
     nextAdapterDescriptors: readonly PromptRegistryAdapterDescriptorV1[] = adapterDescriptorsRef.current,
   ): Promise<PromptRegistryItemSummaryV1[]> => {
-    if (!machineId) return [];
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget) return [];
 
     const requestId = latestScanRequestIdRef.current + 1;
     latestScanRequestIdRef.current = requestId;
@@ -214,12 +258,15 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
       return [];
     }
 
-    const response = await machinePromptRegistriesScanSource(machineId, {
+    const response = await machinePromptRegistriesScanSource(executionTarget.machine.id, {
       sourceId,
       configuredSources,
       query: trimmedQuery || undefined,
-    });
-    if (latestScanRequestIdRef.current !== requestId) {
+    }, { serverId: executionTarget.serverId });
+    if (
+      latestScanRequestIdRef.current !== requestId
+      || !isExecutionTargetCurrent(requestedSelection, executionTarget)
+    ) {
       return [];
     }
     if (!response.ok) {
@@ -228,11 +275,13 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     }
     setItems(response.items);
     return response.items;
-  }, [configuredSources, machineId]);
+  }, [configuredSources, isExecutionTargetCurrent, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
   const refreshSources = React.useCallback(async () => {
+    const requestedSelection = selectionKey;
     const nextAdapterDescriptors = await listAdapters();
     const nextSources = await listSources();
+    if (selectionKeyRef.current !== requestedSelection) return;
     if (nextSources.length === 0) {
       setSelectedSourceId(null);
       setItems([]);
@@ -245,7 +294,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     if (nextSelectedSourceId) {
       await scanSource(nextSelectedSourceId, searchQueryRef.current, nextSources, nextAdapterDescriptors);
     }
-  }, [listAdapters, listSources, scanSource]);
+  }, [listAdapters, listSources, scanSource, selectionKey]);
 
   const [refreshing, runRefresh] = useHappyAction(refreshSources);
 
@@ -284,29 +333,33 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
   }, [configuredSources, persistConfiguredSources, selectedSourceId]);
 
   const importItem = React.useCallback(async (item: PromptRegistryItemSummaryV1) => {
-    if (!machineId) return;
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget) return;
 
     const imported = await importPromptRegistrySkillItem({
-      machineId,
+      machineId: executionTarget.machine.id,
+      serverId: executionTarget.serverId,
       configuredSources,
       sourceId: item.sourceId,
       itemId: item.itemId,
     });
+    if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
     if (!imported.ok) {
       Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
       return;
     }
     router.push(`/settings/prompts/skills/${imported.artifactId}`);
-  }, [configuredSources, machineId, router]);
+  }, [configuredSources, isExecutionTargetCurrent, resolveExactExecutionTarget, router, selectedTarget, selectionKey]);
 
   const openItemDetails = React.useCallback((item: PromptRegistryItemSummaryV1) => {
-    if (!machineId) return;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget) return;
     router.push(buildPromptRegistryItemDetailsHref({
-      machineId,
       item,
       workspacePath,
     }));
-  }, [machineId, router, workspacePath]);
+  }, [resolveExactExecutionTarget, router, selectedTarget, workspacePath]);
 
   const searchSelectedSource = React.useCallback(async () => {
     if (!selectedSourceId) return;
@@ -314,31 +367,28 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
   }, [scanSource, searchQuery, selectedSourceId]);
 
   const [searching, runSearchSelectedSource] = useHappyAction(searchSelectedSource);
+  const executionTarget = resolveExactExecutionTarget(selectedTarget);
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={contentStyle} keyboardShouldPersistTaps="handled">
         <ItemList>
+          <MachineAdministrationTargetSelector
+            selection={administrationTargetSelection}
+            testIDPrefix="settings.promptRegistries.administration.target"
+          />
           <ItemGroup title={t('promptLibrary.registriesContext')}>
             <ContextBar
-              mode="machine_and_workspace"
-              machine={{
-                selectedId: machineId,
-                subtitle: machineId ? describeMachine(machineId, machines) : t('promptLibrary.registriesNoMachine'),
-                items: machineItems,
-                onSelect: (nextMachineId) => {
-                  setMachineId(nextMachineId);
-                  setWorkspacePath('');
-                },
-              }}
+              mode="workspace_only"
               workspace={{
                 value: workspacePath,
                 onChange: setWorkspacePath,
                 placeholder: t('promptLibrary.externalAssetsProjectDirectoryPlaceholder' as TranslationKey),
                 testID: 'promptRegistries.workspacePath',
                 browse: {
-                  machineId,
-                  enabled: true,
+                  machineId: executionTarget?.machine.id ?? null,
+                  serverId: executionTarget?.serverId ?? null,
+                  enabled: administrationTargetSelection.canExecute,
                 },
               }}
             />
@@ -346,8 +396,8 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
               testID="promptRegistries.refresh"
               title={t('promptLibrary.registriesRefresh')}
               subtitle={refreshing ? t('common.loading') : t('promptLibrary.registriesRefreshSubtitle')}
-              icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.purple} />}
-              disabled={refreshing || !machineId}
+              icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.purple} />}
+              disabled={refreshing || !administrationTargetSelection.canExecute}
               onPress={runRefresh}
               showChevron={false}
             />
@@ -359,7 +409,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 testID="promptRegistries.loading"
                 title={t('common.loading')}
                 subtitle={t('promptLibrary.registriesRefreshSubtitle')}
-                icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.purple} />}
+                icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.purple} />}
                 showChevron={false}
               />
             ) : null}
@@ -370,7 +420,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 title={source.title}
                 subtitle={source.subtitle || source.id}
                 selected={source.id === selectedSourceId}
-                icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="git-branch" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => void scanSource(source.id)}
                 rightElement={source.origin === 'user' ? (
                   <ItemRowActions
@@ -380,7 +430,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                       {
                         id: 'delete',
                         title: t('common.delete'),
-                        icon: 'trash-outline',
+                        icon: 'trash',
                         destructive: true,
                         onPress: () => removeSource(source.id),
                       },
@@ -393,7 +443,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 testID="promptRegistries.sources.empty"
                 title={t('promptLibrary.registriesNoSources')}
                 subtitle={t('promptLibrary.registriesNoSourcesSubtitle')}
-                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="stack" size={29} color={theme.colors.text.secondary} />}
                 showChevron={false}
               />
             )}
@@ -406,7 +456,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
               triggerTestID="promptRegistries.addGitSource"
               title={t('promptLibrary.registriesAddGitSource')}
               subtitle={t('promptLibrary.registriesAddGitSourceSubtitle')}
-              icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.accent.blue} />}
+              icon={<Icon name="plus-circle" size={29} color={theme.colors.accent.blue} />}
               onCancel={() => {
                 setSourceTitle('');
                 setSourceUrl('');
@@ -459,7 +509,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 testID={`promptRegistries.item.${index}`}
                 title={item.title}
                 subtitle={item.description || item.displayPath}
-                icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
+                icon={<Icon name="sparkle" size={29} color={theme.colors.accent.indigo} />}
                 onPress={() => openItemDetails(item)}
                 rightElement={(
                   <ItemRowActions
@@ -469,13 +519,13 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                       {
                         id: 'details',
                         title: t('common.details'),
-                        icon: 'eye-outline',
+                        icon: 'eye',
                         onPress: () => openItemDetails(item),
                       },
                       {
                         id: 'import',
                         title: t('promptLibrary.externalAssetsImportAction'),
-                        icon: 'download-outline',
+                        icon: 'download',
                         disabled: searching,
                         onPress: () => { void importItem(item); },
                       },
@@ -488,7 +538,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 testID="promptRegistries.items.empty"
                 title={t('promptLibrary.registriesNoItems')}
                 subtitle={t('promptLibrary.registriesNoItemsSubtitle')}
-                icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="sparkle" size={29} color={theme.colors.text.secondary} />}
                 showChevron={false}
               />
             )}

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -20,8 +19,9 @@ import { t } from '@/text';
 import { tracking } from '@/track';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
-type OcticonName = keyof typeof Octicons.glyphMap;
+type OcticonName = IconName;
 
 export async function applyWorkspaceFileStageAction(input: Readonly<{
     scope: WorkspaceScopeBase;
@@ -241,7 +241,7 @@ export const WorkspaceScmCommitSelectionToggleButton = React.memo((props: Worksp
             {busy ? (
                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
             ) : (
-                <Octicons name={iconName} size={14} color={iconColor} />
+                <Icon name={iconName} size={14} color={iconColor} />
             )}
         </Pressable>
     );

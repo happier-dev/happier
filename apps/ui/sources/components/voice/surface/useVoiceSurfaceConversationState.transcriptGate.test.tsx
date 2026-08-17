@@ -33,7 +33,7 @@ vi.mock('@/voice/transcript/voiceTranscriptSelectors', () => ({
 
 const bindingState = {
     current: {
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         controlSessionId: 'voice-global',
         conversationSessionId: 'carrier-s1',
         transcriptMode: 'synthetic' as const,
@@ -73,7 +73,7 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
         const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
-                providerId: 'realtime_elevenlabs',
+                providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 activeControlSessionId: 'voice-global',
                 surfaceSessionId: null,
                 transcriptEnabled: false,
@@ -92,7 +92,7 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
         const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
-                providerId: 'realtime_elevenlabs',
+                providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 activeControlSessionId: 'voice-global',
                 surfaceSessionId: null,
                 transcriptEnabled: true,
@@ -109,7 +109,7 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
         const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
-                providerId: 'realtime_elevenlabs',
+                providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 activeControlSessionId: 'voice-global',
                 surfaceSessionId: null,
                 transcriptEnabled: false,
@@ -158,7 +158,7 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
         const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
-                providerId: 'realtime_elevenlabs',
+                providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 activeControlSessionId: null,
                 surfaceSessionId: null,
                 transcriptEnabled: false,

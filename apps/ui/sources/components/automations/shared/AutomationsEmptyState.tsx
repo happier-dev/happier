@@ -1,9 +1,9 @@
 import React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -31,7 +31,7 @@ export function AutomationsEmptyState(props: Readonly<{ title: string; body: str
 
     return (
         <View style={styles.container}>
-            <Ionicons name="timer-outline" size={56} color={theme.colors.text.secondary} />
+            <Icon name="timer" size={56} color={theme.colors.text.secondary} />
             <Text style={styles.title}>{props.title}</Text>
             <Text style={styles.body}>{props.body}</Text>
         </View>

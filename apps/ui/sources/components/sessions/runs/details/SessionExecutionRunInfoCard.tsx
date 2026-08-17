@@ -139,12 +139,18 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
                 </View>
             ) : null}
             <View style={styles.headerCopy}>
-                {typeof props.run.startedAtMs === 'number' ? (
+                {/*
+                  * `> 0`, not `typeof === 'number'`: `startedAtMs` is a required field on the wire,
+                  * so a run whose start was never recorded carries 0 — and printing that renders
+                  * "Started 1 January 1970" as though it were a fact (D-8).
+                  */}
+                {typeof props.run.startedAtMs === 'number' && props.run.startedAtMs > 0 ? (
                     <Text style={styles.subtitle}>
                         {t('executionRuns.details.timestamps.started')} {new Date(props.run.startedAtMs).toLocaleString()}
                     </Text>
                 ) : null}
-                {typeof (props.run as any).finishedAtMs === 'number' ? (
+                {/* Same rule for the finish: absent arrives as 0 through the history-row fallback. */}
+                {typeof (props.run as any).finishedAtMs === 'number' && (props.run as any).finishedAtMs > 0 ? (
                     <Text style={styles.subtitle}>
                         {t('executionRuns.details.timestamps.finished')} {new Date((props.run as any).finishedAtMs).toLocaleString()}
                     </Text>

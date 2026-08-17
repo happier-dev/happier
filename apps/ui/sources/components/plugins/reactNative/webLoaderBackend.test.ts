@@ -32,7 +32,6 @@ function realDataUriImporter(compiledSource: string) {
 afterEach(() => {
     resetPluginUiHostRuntimeExternalsGlobalForTesting();
     delete (globalThis as Record<string, unknown>)[PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY];
-    delete (globalThis as typeof globalThis & { __pluginAck?: unknown }).__pluginAck;
 });
 
 describe('createReactNativeWebLoaderBackend', () => {
@@ -42,11 +41,8 @@ describe('createReactNativeWebLoaderBackend', () => {
         expect(backend.backendId).toBe('reactNativeWebModule');
     });
 
-    it('really imports a named surface export and preserves its sibling runtime acknowledgment', async () => {
-        const compiled = [
-            'export function renderSurface(props) { return { proof: true, label: props?.surface?.pluginId }; }',
-            'export function acknowledgeHostRuntime(input) { globalThis.__pluginAck = input; }',
-        ].join('\n');
+    it('projects only the named surface export from a compiled module namespace', async () => {
+        const compiled = 'export function renderSurface(props) { return { proof: true, label: props?.surface?.pluginId }; }';
         const backend = createReactNativeWebLoaderBackend({ importModule: realDataUriImporter(compiled) });
 
         const module = await backend.loadInstalledBundle!({
@@ -57,13 +53,6 @@ describe('createReactNativeWebLoaderBackend', () => {
         expect(typeof module).toBe('function');
         const rendered = module({ surface: { pluginId: 'acme.example' } } as never);
         expect(rendered).toEqual({ proof: true, label: 'acme.example' });
-        const acknowledgeHostRuntime = (
-            module as typeof module & { acknowledgeHostRuntime?: (input: unknown) => void }
-        ).acknowledgeHostRuntime;
-        expect(acknowledgeHostRuntime).toBeTypeOf('function');
-        acknowledgeHostRuntime?.({ surfaceId: 'surface-1' });
-        expect((globalThis as typeof globalThis & { __pluginAck?: unknown }).__pluginAck)
-            .toEqual({ surfaceId: 'surface-1' });
     });
 
     it('rejects a default-object surface because the public contract requires a named executable export', async () => {
@@ -82,8 +71,8 @@ describe('createReactNativeWebLoaderBackend', () => {
         })).rejects.toMatchObject({ code: 'invalid_surface_module' });
     });
 
-    it('rejects the reserved runtime acknowledgment name as the configured executable export', async () => {
-        const compiled = 'export function acknowledgeHostRuntime() { return null; }';
+    it('allows a configured executable export without a surface-specific protocol', async () => {
+        const compiled = 'export function activateClientRuntime() { return null; }';
         const backend = createReactNativeWebLoaderBackend({ importModule: realDataUriImporter(compiled) });
 
         await expect(backend.loadInstalledBundle!({
@@ -92,9 +81,9 @@ describe('createReactNativeWebLoaderBackend', () => {
             moduleReference: {
                 containerName: 'acme_preview',
                 modulePath: './renderSurface',
-                exportName: 'acknowledgeHostRuntime',
+                exportName: 'activateClientRuntime',
             },
-        })).rejects.toMatchObject({ code: 'invalid_surface_module' });
+        })).resolves.toBeTypeOf('function');
     });
 
     it('installs the shared host-runtime externals global before instantiating (singleton react sharing)', async () => {

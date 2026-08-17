@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Linking, Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -8,6 +7,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export type CliNotDetectedBannerDismissScope = 'machine' | 'global' | 'temporary';
@@ -58,7 +58,7 @@ export function CliNotDetectedBanner(props: {
                         ) : null}
                     </View>
                 )}
-                icon={<Ionicons name="warning" size={16} color={props.theme.colors.state.neutral.foreground} />}
+                icon={<Icon name="warning" size={16} color={props.theme.colors.state.neutral.foreground} />}
                 showChevron={false}
                 rightElement={(
                     <View
@@ -106,7 +106,7 @@ export function CliNotDetectedBanner(props: {
                             onPress={() => props.onDismiss('temporary')}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
-                            <Ionicons name="close" size={18} color={props.theme.colors.text.secondary} />
+                            <Icon name="x" size={16} color={props.theme.colors.text.secondary} />
                         </Pressable>
                     </View>
                 )}

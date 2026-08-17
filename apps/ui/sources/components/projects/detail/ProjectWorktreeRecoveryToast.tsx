@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const TOAST_HIDE_DELAY_MS = 4000;
 
@@ -64,7 +64,7 @@ export const ProjectWorktreeRecoveryToast = React.memo((props: Readonly<{
     return (
         <View testID="project-worktree-recovery-toast" pointerEvents="none" style={styles.container}>
             <View style={styles.toast}>
-                <Ionicons name="warning-outline" size={16} color={theme.colors.state.warning.foreground} />
+                <Icon name="warning" size={16} color={theme.colors.state.warning.foreground} />
                 <Text style={styles.message}>
                     {t('projects.detail.missingWorktreeRecovered')}
                 </Text>

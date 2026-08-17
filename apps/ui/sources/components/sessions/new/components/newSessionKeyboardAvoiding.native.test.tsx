@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -106,7 +107,8 @@ vi.mock('@/components/sessions/new/attachments/useNewSessionAttachmentsControlle
         agentInputAttachments: [],
         addWebFiles: () => {},
         addPickedAttachments: () => {},
-        extraActionChips: [],
+        actionChips: [],
+        attachmentRowItems: [],
         handleSend: () => {},
     }),
 }));
@@ -180,12 +182,12 @@ function buildSimplePanel() {
             newSessionSidePadding={16}
             newSessionBottomPadding={8}
             containerStyle={{}}
-            sessionPrompt=""
+            promptStore={createNewSessionPromptStore('')}
             setSessionPrompt={() => {}}
             handleCreateSession={() => {}}
             canCreate={true}
             isCreating={false}
-            emptyAutocompletePrefixes={[]}
+            emptyAutocompleteKinds={[]}
             emptyAutocompleteSuggestions={async () => []}
             sessionPromptInputMaxHeight={200}
             agentInputExtraActionChips={[]}
@@ -298,12 +300,12 @@ function buildWizard() {
                 setFavoriteDirectories: () => {},
             }}
             footer={{
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: true,
                 isCreating: false,
-                emptyAutocompletePrefixes: [],
+                emptyAutocompleteKinds: [],
                 emptyAutocompleteSuggestions: async () => [],
                 inputMaxHeight: 200,
             }}

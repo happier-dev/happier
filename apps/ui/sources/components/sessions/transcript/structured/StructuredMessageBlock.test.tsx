@@ -3,12 +3,13 @@ import renderer from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
-import type { UserTextMessage } from '@/sync/domains/messages/messageTypes';
 import {
-    EMPTY_PLUGIN_UI_PROJECTION,
-    type PluginUiProjectionModel,
-} from '@/sync/domains/plugins/ui/projection';
+    createPluginMessageActionHost,
+    PluginMessageActionHostProvider,
+} from '@/components/sessions/transcript/messageActions/PluginMessageActions';
+import type { PluginContributedActionCurrentSnapshot } from '@/components/plugins/actions/pluginContributedActionController';
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
 
@@ -46,6 +47,10 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machinePluginStructuredMessageResolve: machinePluginStructuredMessageResolveMock,
     machinePluginStructuredMessageActionExecute: machinePluginStructuredMessageActionExecuteMock,
+    machinePluginActionFormConnectedAccountOptionsResolve: vi.fn(),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
@@ -63,7 +68,6 @@ const editableInteraction = deriveTranscriptInteraction({
     canApprovePermissions: true,
     isSessionActive: true,
 });
-const publicInteraction = deriveTranscriptInteraction({ kind: 'public' });
 
 beforeAll(async () => {
     ({ StructuredMessageBlock } = await import('./StructuredMessageBlock'));
@@ -76,37 +80,324 @@ beforeEach(() => {
         supported: true,
         result: { ok: true, result: null },
     });
-    machinePluginStructuredMessageResolveMock.mockImplementation(async (
-        _machineId: string,
-        params: Readonly<{ kind: string; payload: unknown }>,
-    ) => ({
-        supported: true,
-        resolution: {
-            ok: true,
-            model: {
-                identity: { pluginId: 'acme.preview', localId: 'preview-card', qualifiedId: 'acme.preview/preview-card', generation: '7' },
-                kind: params.kind,
-                title: 'Preview',
-                payload: params.payload,
-                renderer: { identity: { pluginId: 'acme.preview', localId: 'summary-card' }, qualifiedId: 'acme.preview/summary-card', generation: '7' },
-                actions: [],
-                resources: [],
-                fallback: { kind: 'summary', template: 'Preview unavailable' },
-                visible: true,
-            },
-            renderer: {
-                identity: { pluginId: 'acme.preview', localId: 'summary-card', qualifiedId: 'acme.preview/summary-card', generation: '7' },
-                visible: true,
-                requiredHostMethods: [],
-                root: { kind: 'status', path: 'root', order: 0, label: 'Preview', value: 'Ready' },
-                nodes: [{ kind: 'status', path: 'root', order: 0, label: 'Preview', value: 'Ready' }],
-            },
-            resources: [],
-        },
-    }));
 });
 
 describe('StructuredMessageBlock', () => {
+    it('renders a persisted structured snapshot without resolving current daemon content', async () => {
+        const screen = await renderScreen(
+            <StructuredMessageBlock
+                message={{
+                    kind: 'agent-text',
+                    id: 'persisted-plugin-transcript',
+                    localId: null,
+                    createdAt: 1,
+                    text: '',
+                    // An old normalizer marker cannot override a valid
+                    // persisted snapshot: snapshot replay stays the
+                    // authoritative historical representation.
+                    meta: { happierUnsupportedContentV1: 'unsupported-transcript-record' },
+                    structuredPresentation: createMessageStructuredPresentationV1({
+                        owner: { pluginId: 'acme.preview', contributionLocalId: 'report-card' },
+                        snapshot: { kind: 'status', label: 'Report', value: 'Ready' },
+                    }),
+                }}
+                sessionId="s1"
+                interaction={editableInteraction}
+                onJumpToAnchor={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('plugin-structured-message-declarative')).toBeTruthy();
+        expect(screen.findByTestId('plugin-declarative-status')).toBeTruthy();
+        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+    });
+
+    it('does not render a prohibited Field when corrupt content bypasses the upstream parser', async () => {
+        const screen = await renderScreen(
+            <StructuredMessageBlock
+                // Boundary fixture: deliberately bypass the transport normalizer to exercise the replay losing path.
+                message={{
+                    kind: 'agent-text',
+                    id: 'corrupt-plugin-transcript-field',
+                    localId: null,
+                    createdAt: 1,
+                    text: '',
+                    structuredPresentation: {
+                        v: 1,
+                        profile: 'pluginTranscriptV1',
+                        owner: { pluginId: 'acme.preview', contributionLocalId: 'report-card' },
+                        snapshot: {
+                            kind: 'field',
+                            label: 'Forbidden persisted setting',
+                            control: { kind: 'text', settingId: 'report-setting' },
+                        },
+                    },
+                } as any}
+                sessionId="s1"
+                interaction={editableInteraction}
+                onJumpToAnchor={() => {}}
+            />,
+        );
+
+        expect(
+            screen.tree.findAll((node: any) => (
+                node.type === 'Text' && node.props.children === 'Forbidden persisted setting'
+            )),
+        ).toHaveLength(0);
+    });
+
+    it('retains a persisted Action as unavailable instead of silently hiding it', async () => {
+        const screen = await renderScreen(
+            <StructuredMessageBlock
+                message={{
+                    kind: 'agent-text',
+                    id: 'persisted-plugin-action',
+                    localId: null,
+                    createdAt: 1,
+                    text: '',
+                    structuredPresentation: createMessageStructuredPresentationV1({
+                        owner: { pluginId: 'acme.preview', contributionLocalId: 'report-card' },
+                        snapshot: {
+                            kind: 'action',
+                            action: 'open-report',
+                            label: 'Open report',
+                        },
+                    }),
+                }}
+                sessionId="s1"
+                interaction={editableInteraction}
+                onJumpToAnchor={() => {}}
+            />,
+        );
+
+        const action = screen.findByTestId('plugin-declarative-action:acme.preview/open-report');
+        expect(action).toBeTruthy();
+        expect(action?.props.disabled).toBe(true);
+        expect(screen.findByTestId('plugin-declarative-action-label:acme.preview/open-report')).toBeTruthy();
+        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+    });
+
+    it('dispatches a persisted Action under current host Message intent without inventing a mounted caller', async () => {
+        const messageActionReference = {
+            v: 1 as const,
+            sessionId: 's1',
+            messageId: 'persisted-plugin-action-current',
+            observedRevision: 'revision-1',
+        };
+        const actionSnapshot: PluginContributedActionCurrentSnapshot = {
+            pluginProjectionById: {
+                'acme.preview': {
+                    pluginId: 'acme.preview',
+                    title: 'Preview',
+                    description: null,
+                    version: '1.0.0',
+                    enabled: true,
+                    generation: 7,
+                    generationLabel: '7',
+                    status: null,
+                    provenance: null,
+                    diagnostics: [],
+                    resources: [],
+                    editableSettingsGroups: [],
+                        actions: [{
+                            id: 'open-report',
+                            title: 'Current report Action title',
+                            description: null,
+                            icon: null,
+                            scopes: ['message'],
+                            surfaces: ['ui'],
+                            placementBindings: ['message.menu'],
+                            inputSchema: null,
+                            inputHints: null,
+                            priority: null,
+                            dangerLevel: 'safe',
+                        confirmation: null,
+                        available: true,
+                    }],
+                },
+            },
+            host: {
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                expectedGeneration: '7',
+                sessionId: 's1',
+                isCurrent: () => true,
+            },
+        };
+        const actionHost = createPluginMessageActionHost({
+            resolveCurrent: () => actionSnapshot,
+            sessionId: 's1',
+        });
+        const screen = await renderScreen(
+            <PluginMessageActionHostProvider host={actionHost}>
+                <StructuredMessageBlock
+                    message={{
+                        kind: 'agent-text',
+                        id: 'persisted-plugin-action-current',
+                        localId: null,
+                        createdAt: 1,
+                        text: '',
+                        messageActionReference,
+                        structuredPresentation: createMessageStructuredPresentationV1({
+                            owner: { pluginId: 'acme.preview', contributionLocalId: 'report-card' },
+                            snapshot: {
+                                kind: 'action',
+                                action: 'open-report',
+                                label: 'Historical report label',
+                                input: { reportId: 'report-1' },
+                            },
+                        }),
+                    }}
+                    sessionId="s1"
+                    interaction={editableInteraction}
+                    onJumpToAnchor={() => {}}
+                />
+            </PluginMessageActionHostProvider>,
+        );
+
+        expect(
+            screen.findByTestId('plugin-declarative-action-label:acme.preview/open-report')?.props.children,
+        ).toBe('Historical report label');
+        await act(async () => {
+            screen.pressByTestId('plugin-declarative-action:acme.preview/open-report');
+        });
+
+        // The immutable owner is presentation data, not a current mounted
+        // caller binding. The generic controller re-reads the Message-owned
+        // intent at dispatch time and forwards it to the canonical daemon
+        // action owner without reviving the retired structured-message route.
+        expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledWith('machine-1', {
+            serverId: 'server-1',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/open-report',
+            input: { reportId: 'report-1' },
+            executionSurface: 'ui',
+            sessionId: 's1',
+            messageActionReference,
+            invocation: {
+                kind: 'hostPresentedMessage',
+                currentMessageIntent: messageActionReference,
+            },
+        });
+        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+    });
+
+    it('shows a retired persisted Action as unavailable without rebinding its historical node', async () => {
+        const messageActionReference = {
+            v: 1 as const,
+            sessionId: 's1',
+            messageId: 'persisted-plugin-action-retired',
+            observedRevision: 'revision-2',
+        };
+        const actionHost = createPluginMessageActionHost({
+            resolveCurrent: () => ({
+                pluginProjectionById: {
+                    'acme.preview': {
+                        pluginId: 'acme.preview',
+                        title: 'Preview',
+                        description: null,
+                        version: '1.0.0',
+                        enabled: true,
+                        generation: 7,
+                        generationLabel: '7',
+                        status: null,
+                        provenance: null,
+                        diagnostics: [],
+                        resources: [],
+                        editableSettingsGroups: [],
+                        actions: [{
+                            id: 'open-report',
+                            title: 'New report Action title',
+                            icon: null,
+                            description: null,
+                            scopes: ['message'],
+                            surfaces: ['ui'],
+                            placementBindings: ['rowAction'],
+                            inputSchema: null,
+                            inputHints: null,
+                            priority: null,
+                            dangerLevel: 'safe',
+                            confirmation: null,
+                            available: false,
+                        }],
+                    },
+                },
+                host: {
+                    machineId: 'machine-1',
+                    serverId: 'server-1',
+                    expectedGeneration: '7',
+                    sessionId: 's1',
+                    isCurrent: () => true,
+                },
+            }),
+            sessionId: 's1',
+        });
+        const screen = await renderScreen(
+            <PluginMessageActionHostProvider host={actionHost}>
+                <StructuredMessageBlock
+                    message={{
+                        kind: 'agent-text',
+                        id: 'persisted-plugin-action-retired',
+                        localId: null,
+                        createdAt: 1,
+                        text: '',
+                        messageActionReference,
+                        structuredPresentation: createMessageStructuredPresentationV1({
+                            owner: { pluginId: 'acme.preview', contributionLocalId: 'report-card' },
+                            snapshot: {
+                                kind: 'action',
+                                action: 'open-report',
+                                label: 'Historical report label',
+                                input: { reportId: 'report-1' },
+                            },
+                        }),
+                    }}
+                    sessionId="s1"
+                    interaction={editableInteraction}
+                    onJumpToAnchor={() => {}}
+                />
+            </PluginMessageActionHostProvider>,
+        );
+
+        const action = screen.findByTestId('plugin-declarative-action:acme.preview/open-report');
+        expect(action?.props.disabled).toBe(true);
+        expect(
+            screen.findByTestId('plugin-declarative-action-label:acme.preview/open-report')?.props.children,
+        ).toBe('Historical report label');
+        await act(async () => {
+            screen.pressByTestId('plugin-declarative-action:acme.preview/open-report');
+        });
+        expect(machinePluginStructuredMessageActionExecuteMock).not.toHaveBeenCalled();
+        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+    });
+
+    it('does not revive an unsupported historical record through the legacy plugin resolver', async () => {
+        const screen = await renderScreen(
+            <StructuredMessageBlock
+                message={{
+                    kind: 'agent-text',
+                    id: 'future-plugin-transcript',
+                    localId: null,
+                    createdAt: 1,
+                    text: '[Unsupported transcript record]',
+                    meta: {
+                        happier: {
+                            kind: 'acme.preview/preview-card.v1',
+                            payload: { previewId: 'should-not-resolve' },
+                        },
+                        happierUnsupportedContentV1: 'unsupported-transcript-record',
+                    },
+                }}
+                sessionId="s1"
+                interaction={editableInteraction}
+                onJumpToAnchor={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
+        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+    });
+
     it('skips rendering when structured message props are referentially stable', async () => {
         const meta = {
             happier: {
@@ -151,135 +442,11 @@ describe('StructuredMessageBlock', () => {
         expect(metaReadCount).toBe(0);
     });
 
-    it('renders projected plugin structured messages through host-owned renderer ids', async () => {
-        const pluginUiProjection = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    renderer: { kind: 'host', rendererId: 'summaryCard' },
-                    display: { titleKey: 'title' },
-                    payloadSchema: { type: 'object' },
-                },
-            },
-        };
-
-        const screen = await renderScreen(<StructuredMessageBlock
-            message={{
-                kind: 'user-text',
-                id: 'm_plugin',
-                localId: null,
-                createdAt: 1,
-                text: 'Open preview',
-                meta: {
-                    happier: {
-                        kind: 'acme.preview/preview-card.v1',
-                        payload: { previewId: 'preview_1' },
-                    },
-                },
-            } as any}
-            sessionId="s1"
-            onJumpToAnchor={() => {}}
-            {...({ pluginUiProjection } as any)}
-        />);
-
-        expect(screen.findByTestId('plugin-structured-message-declarative')).toBeTruthy();
-    });
-
-    it('re-resolves a same-id plugin message when its projected payload changes', async () => {
-        machinePluginStructuredMessageResolveMock.mockImplementation(async (
-            _machineId: string,
-            params: Readonly<{ kind: string; payload: unknown }>,
-        ) => {
-            const previewId = (params.payload as Readonly<{ previewId: string }>).previewId;
-            return {
-                supported: true,
-                resolution: {
-                    ok: true,
-                    model: {
-                        identity: { pluginId: 'acme.preview', localId: 'preview-card', qualifiedId: 'acme.preview/preview-card', generation: '7' },
-                        kind: params.kind,
-                        title: 'Preview',
-                        payload: params.payload,
-                        renderer: { identity: { pluginId: 'acme.preview', localId: 'summary-card' }, qualifiedId: 'acme.preview/summary-card', generation: '7' },
-                        actions: [],
-                        resources: [],
-                        fallback: { kind: 'summary', template: 'Preview unavailable' },
-                        visible: true,
-                    },
-                    renderer: {
-                        identity: { pluginId: 'acme.preview', localId: 'summary-card', qualifiedId: 'acme.preview/summary-card', generation: '7' },
-                        visible: true,
-                        requiredHostMethods: [],
-                        root: { kind: 'status', path: 'root', order: 0, label: 'Preview', value: previewId },
-                        nodes: [{ kind: 'status', path: 'root', order: 0, label: 'Preview', value: previewId }],
-                    },
-                    resources: [],
-                },
-            };
-        });
-        const pluginUiProjection: PluginUiProjectionModel = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                },
-            },
-        };
-        const message = (previewId: string): UserTextMessage => ({
-            kind: 'user-text',
-            id: 'm_plugin',
-            localId: null,
-            createdAt: 1,
-            text: 'Open preview',
-            meta: {
-                happier: {
-                    kind: 'acme.preview/preview-card.v1',
-                    payload: { previewId },
-                },
-            },
-        });
-        const renderBlock = (previewId: string) => (
-            <StructuredMessageBlock
-                message={message(previewId)}
-                sessionId="s1"
-                onJumpToAnchor={() => {}}
-                pluginUiProjection={pluginUiProjection}
-            />
-        );
-        const screen = await renderScreen(renderBlock('preview_1'));
-
-        await act(async () => {
-            screen.tree.update(renderBlock('preview_2'));
-        });
-
-        expect(machinePluginStructuredMessageResolveMock).toHaveBeenCalledTimes(2);
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('preview_2');
-    });
-
-    it('aborts an in-flight plugin message resolution when the message unmounts', async () => {
-        let observedSignal: AbortSignal | undefined;
-        machinePluginStructuredMessageResolveMock.mockImplementationOnce(async (
-            _machineId: string,
-            params: Readonly<{ signal?: AbortSignal }>,
-        ) => {
-            observedSignal = params.signal;
-            return await new Promise(() => {});
-        });
-        const pluginUiProjection: PluginUiProjectionModel = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
+    it('does not resolve an unpersisted generic plugin envelope during replay', async () => {
+        // This is deliberately shaped like the pre-snapshot current registry.
+        // Reintroducing the old `pluginUiProjection`-driven branch would make
+        // this unknown historical record call the retired resolver.
+        const legacyProjection = {
             generation: 7,
             structuredMessagesByKind: {
                 'acme.preview/preview-card.v1': {
@@ -305,372 +472,16 @@ describe('StructuredMessageBlock', () => {
                         payload: { previewId: 'preview_1' },
                     },
                 },
-            }}
-            sessionId="s1"
-            onJumpToAnchor={() => {}}
-            pluginUiProjection={pluginUiProjection}
-        />);
-
-        expect(observedSignal).toBeInstanceOf(AbortSignal);
-        expect(observedSignal?.aborted).toBe(false);
-        await act(async () => {
-            screen.tree.unmount();
-        });
-        expect(observedSignal?.aborted).toBe(true);
-    });
-
-    it('submits at most one declarative action while pending and fails closed when it is rejected', async () => {
-        machinePluginStructuredMessageResolveMock.mockResolvedValueOnce({
-            supported: true,
-            resolution: {
-                ok: true,
-                model: {
-                    identity: { pluginId: 'acme.preview', localId: 'preview-card', qualifiedId: 'acme.preview/preview-card', generation: '7' },
-                    kind: 'acme.preview/preview-card.v1',
-                    title: 'Preview',
-                    payload: { previewId: 'preview_1' },
-                    renderer: { identity: { pluginId: 'acme.preview', localId: 'summary-card' }, qualifiedId: 'acme.preview/summary-card', generation: '7' },
-                    actions: [{
-                        identity: { pluginId: 'acme.preview', localId: 'open-preview' },
-                        qualifiedId: 'acme.preview/open-preview',
-                        generation: '7',
-                        enabled: true,
-                    }],
-                    resources: [],
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    visible: true,
-                },
-                renderer: {
-                    identity: { pluginId: 'acme.preview', localId: 'summary-card', qualifiedId: 'acme.preview/summary-card', generation: '7' },
-                    visible: true,
-                    requiredHostMethods: [],
-                    root: {
-                        kind: 'action',
-                        path: 'root',
-                        order: 0,
-                        label: 'Open preview',
-                        action: { qualifiedId: 'acme.preview/open-preview' },
-                        input: { previewId: 'preview_1' },
-                        enabled: true,
-                    },
-                    nodes: [],
-                },
-                resources: [],
-            },
-        });
-        let finishAction!: (result: {
-            supported: true;
-            result: { ok: false; code: string };
-        }) => void;
-        machinePluginStructuredMessageActionExecuteMock.mockImplementationOnce(
-            async () => await new Promise((resolve) => { finishAction = resolve; }),
-        );
-        const pluginUiProjection: PluginUiProjectionModel = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                },
-            },
-        };
-        const message: UserTextMessage = {
-                kind: 'user-text',
-                id: 'm_plugin',
-                localId: null,
-                createdAt: 1,
-                text: 'Open preview',
-                meta: { happier: { kind: 'acme.preview/preview-card.v1', payload: { previewId: 'preview_1' } } },
-        };
-        const renderBlock = (interaction: typeof editableInteraction) => (
-            <StructuredMessageBlock
-                message={message}
-                sessionId="s1"
-                interaction={interaction}
-                onJumpToAnchor={() => {}}
-                pluginUiProjection={pluginUiProjection}
-            />
-        );
-        const screen = await renderScreen(renderBlock(editableInteraction));
-
-        const action = screen.findByTestId('plugin-declarative-action:acme.preview/open-preview');
-        expect(action?.props.accessibilityRole).toBe('button');
-        expect(action?.props.style?.minWidth).toBeGreaterThanOrEqual(44);
-        expect(action?.props.style?.minHeight).toBeGreaterThanOrEqual(44);
-        const retainedOnPress = action!.props.onPress;
-
-        await act(async () => {
-            screen.tree.update(renderBlock(publicInteraction));
-        });
-        expect(screen.findByTestId('plugin-declarative-action:acme.preview/open-preview')).toBeNull();
-        await act(async () => {
-            retainedOnPress();
-            await Promise.resolve();
-        });
-        expect(machinePluginStructuredMessageActionExecuteMock).not.toHaveBeenCalled();
-
-        await act(async () => {
-            screen.tree.update(renderBlock(editableInteraction));
-        });
-        await act(async () => {
-            screen.pressByTestId('plugin-declarative-action:acme.preview/open-preview');
-            screen.pressByTestId('plugin-declarative-action:acme.preview/open-preview');
-        });
-
-        expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledTimes(1);
-        expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledWith('machine-1', {
-            serverId: 'server-1',
-            expectedGeneration: '7',
-            qualifiedActionId: 'acme.preview/open-preview',
-            input: { previewId: 'preview_1' },
-            sessionId: 's1',
-            executionSurface: 'ui',
-        });
-
-        await act(async () => {
-            finishAction({
-                supported: true,
-                result: { ok: false, code: 'plugin_action_unavailable' },
-            });
-        });
-        expect(screen.findByTestId('structured-message-summary-fallback')).toBeTruthy();
-    });
-
-    it('interprets null-prototype structured-message enum payloads with JSON equality semantics', async () => {
-        const pluginUiProjection = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    renderer: { kind: 'host', rendererId: 'summaryCard' },
-                    display: { titleKey: 'title' },
-                    payloadSchema: {
-                        enum: [{ valueOf: 'literal', nested: [{ enabled: true }], amount: 4 }],
-                    },
-                },
-            },
-        };
-        const payload = Object.assign(Object.create(null) as Record<string, unknown>, {
-            amount: 4,
-            nested: [Object.assign(Object.create(null) as Record<string, unknown>, { enabled: true })],
-            valueOf: 'literal',
-        });
-
-        const screen = await renderScreen(<StructuredMessageBlock
-            message={{
-                kind: 'user-text',
-                id: 'm_plugin_enum',
-                localId: null,
-                createdAt: 1,
-                text: 'Open preview',
-                meta: { happier: { kind: 'acme.preview/preview-card.v1', payload } },
             } as any}
             sessionId="s1"
             onJumpToAnchor={() => {}}
-            {...({ pluginUiProjection } as any)}
+            {...({ pluginUiProjection: legacyProjection } as any)}
         />);
 
-        expect(screen.findByTestId('plugin-structured-message-declarative')).toBeTruthy();
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
+        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
     });
 
-    it('rejects accessor-backed structured-message enum payloads without invoking the accessor', async () => {
-        machinePluginStructuredMessageResolveMock.mockResolvedValueOnce({
-            supported: true,
-            resolution: { ok: false, code: 'plugin_structured_message_payload_invalid', reason: 'invalid_payload' },
-        });
-        const pluginUiProjection = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    renderer: { kind: 'host', rendererId: 'summaryCard' },
-                    display: { titleKey: 'title' },
-                    payloadSchema: { const: { valueOf: 'literal', enabled: true } },
-                },
-            },
-        };
-        let accessorReads = 0;
-        const payload = { enabled: true } as Record<string, unknown>;
-        Object.defineProperty(payload, 'valueOf', {
-            enumerable: true,
-            get() {
-                accessorReads += 1;
-                throw new Error('accessor must not execute');
-            },
-        });
-
-        const screen = await renderScreen(<StructuredMessageBlock
-            message={{
-                kind: 'user-text',
-                id: 'm_plugin_accessor',
-                localId: null,
-                createdAt: 1,
-                text: 'Open preview',
-                meta: { happier: { kind: 'acme.preview/preview-card.v1', payload } },
-            } as any}
-            sessionId="s1"
-            onJumpToAnchor={() => {}}
-            {...({ pluginUiProjection } as any)}
-        />);
-
-        expect(screen.findByTestId('structured-message-summary-fallback')).toBeTruthy();
-        expect(accessorReads).toBe(0);
-    });
-
-    it('does not render projected plugin structured messages with deferred policy until the host can evaluate it', async () => {
-        machinePluginStructuredMessageResolveMock.mockResolvedValueOnce({
-            supported: true,
-            resolution: { ok: false, code: 'plugin_contribution_policy_fact_unavailable', reason: 'unavailable' },
-        });
-        const pluginUiProjection = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    renderer: { kind: 'host', rendererId: 'summaryCard' },
-                    display: { titleKey: 'title' },
-                    payloadSchema: { type: 'object' },
-                    visibility: { operand: 'platform.is', value: 'web' },
-                },
-            },
-        };
-
-        const screen = await renderScreen(<StructuredMessageBlock
-            message={{
-                kind: 'user-text',
-                id: 'm_plugin',
-                localId: null,
-                createdAt: 1,
-                text: 'Open preview',
-                meta: {
-                    happier: {
-                        kind: 'acme.preview/preview-card.v1',
-                        payload: { previewId: 'preview_1' },
-                    },
-                },
-            } as any}
-            sessionId="s1"
-            onJumpToAnchor={() => {}}
-            {...({ pluginUiProjection } as any)}
-        />);
-
-        expect(screen.findByTestId('structured-message-summary-fallback')).toBeTruthy();
-    });
-
-    it('renders a stable host fallback for projected plugin structured messages with unknown host renderers', async () => {
-        machinePluginStructuredMessageResolveMock.mockResolvedValueOnce({
-            supported: true,
-            resolution: { ok: false, code: 'plugin_structured_message_renderer_missing', reason: 'unavailable' },
-        });
-        const pluginUiProjection: PluginUiProjectionModel = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    renderer: { kind: 'host', rendererId: 'customRenderer' },
-                    display: { titleKey: 'title' },
-                    payloadSchema: { type: 'object' },
-                },
-            },
-        };
-        const message = {
-            kind: 'user-text',
-            id: 'm_plugin',
-            localId: null,
-            createdAt: 1,
-            text: 'Open preview',
-            meta: {
-                happier: {
-                    kind: 'acme.preview/preview-card.v1',
-                    payload: { previewId: 'preview_1' },
-                },
-            },
-        } satisfies UserTextMessage;
-
-        const screen = await renderScreen(<StructuredMessageBlock
-            message={message}
-            sessionId="s1"
-            onJumpToAnchor={() => {}}
-            pluginUiProjection={pluginUiProjection}
-        />);
-
-        expect(screen.findByTestId('structured-message-summary-fallback')).toBeTruthy();
-    });
-
-    it('renders a stable host fallback for projected plugin structured messages with malformed host renderers', async () => {
-        machinePluginStructuredMessageResolveMock.mockResolvedValueOnce({
-            supported: true,
-            resolution: { ok: false, code: 'plugin_structured_message_renderer_invalid', reason: 'unavailable' },
-        });
-        const pluginUiProjection: PluginUiProjectionModel = {
-            ...EMPTY_PLUGIN_UI_PROJECTION,
-            generation: 7,
-            structuredMessagesByKind: {
-                'acme.preview/preview-card.v1': {
-                    id: 'structuredMessage:acme.preview:preview-card',
-                    pluginId: 'acme.preview',
-                    contributionKind: 'structuredMessage',
-                    descriptorId: 'preview-card',
-                    kind: 'acme.preview/preview-card.v1',
-                    fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    renderer: { kind: 'host', rendererId: '' },
-                    display: { titleKey: 'title' },
-                    payloadSchema: { type: 'object' },
-                },
-            },
-        };
-        const message = {
-            kind: 'user-text',
-            id: 'm_plugin',
-            localId: null,
-            createdAt: 1,
-            text: 'Open preview',
-            meta: {
-                happier: {
-                    kind: 'acme.preview/preview-card.v1',
-                    payload: { previewId: 'preview_1' },
-                },
-            },
-        } satisfies UserTextMessage;
-
-        const screen = await renderScreen(<StructuredMessageBlock
-            message={message}
-            sessionId="s1"
-            onJumpToAnchor={() => {}}
-            pluginUiProjection={pluginUiProjection}
-        />);
-
-        expect(screen.findByTestId('structured-message-summary-fallback')).toBeTruthy();
-    });
 
     it('renders a stable host fallback for unknown structured message kinds', async () => {
         const screen = await renderScreen(<StructuredMessageBlock

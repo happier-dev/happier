@@ -14,12 +14,49 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { HappyError } from '@/utils/errors/errors';
 import {
+    createPlainSessionOwnerMetadataEnvelopeV1,
     encodeV2SessionListCursorV1,
     projectSessionSharedMetadataV1,
+    SessionOwnerMetadataV1Schema,
+    type AccountEncryptionCurrentnessResponse,
     type V2SessionRecord,
 } from '@happier-dev/protocol';
 
-import { fetchAndApplySessions, type SessionListEncryption } from './sessionSnapshot';
+import {
+    fetchAndApplySessions as fetchAndApplySessionsSource,
+    type SessionListEncryption,
+} from './sessionSnapshot';
+
+const PLAIN_ACCOUNT_CURRENTNESS = {
+    mode: 'plain',
+    version: 1,
+    signingKeyFingerprint: null,
+    contentKeyFingerprint: null,
+    updatedAt: 1,
+} satisfies AccountEncryptionCurrentnessResponse;
+
+const E2EE_ACCOUNT_CURRENTNESS = {
+    mode: 'e2ee',
+    version: 2,
+    signingKeyFingerprint: 'signing-current',
+    contentKeyFingerprint: 'content-current',
+    updatedAt: 2,
+} satisfies AccountEncryptionCurrentnessResponse;
+
+function fetchAndApplySessions(
+    params: Omit<
+        Parameters<typeof fetchAndApplySessionsSource>[0],
+        'accountCurrentness'
+    > & Readonly<{
+        accountCurrentness?: AccountEncryptionCurrentnessResponse;
+    }>,
+) {
+    return fetchAndApplySessionsSource({
+        ...params,
+        accountCurrentness:
+            params.accountCurrentness ?? PLAIN_ACCOUNT_CURRENTNESS,
+    });
+}
 
 const onAgentRequest = vi.fn();
 const OWNER_METADATA_CIPHERTEXT =
@@ -285,6 +322,169 @@ afterEach(() => {
 });
 
 describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
+    it('hydrates plaintext sessions for token-only accounts without an account encryption runtime', async () => {
+        const row = buildSessionRow({
+            id: 's_token_only_plain',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/plain/project', host: 'plain-host' }),
+            agentState: JSON.stringify({}),
+        });
+        const applySessions = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 'token-only' },
+            encryption: null,
+            sessionDataKeys: new Map(),
+            request: vi.fn(async () => jsonResponse({
+                sessions: [row],
+                nextCursor: null,
+                hasNext: false,
+            })),
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_token_only_plain',
+                encryptionMode: 'plain',
+                metadata: expect.objectContaining({
+                    path: '/plain/project',
+                    host: 'plain-host',
+                }),
+            }),
+        ]);
+    });
+
+    it('hydrates plaintext layout-v1 owner metadata and authoritative Agent state without account material', async () => {
+        const sharedMetadata = projectSessionSharedMetadataV1({
+            metadata: {
+                summary: { text: 'Shared title', updatedAt: 10 },
+            },
+        });
+        const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+            v: 1,
+            workspace: {
+                path: '/plain/private-worktree',
+                machineId: 'plain-owner-machine',
+            },
+        });
+        const agentState = {
+            controlledByUser: false,
+            requests: {
+                privateRequest: { tool: 'owner-only' },
+            },
+        };
+        const row = buildSessionRow({
+            id: 's_token_only_layout1_owner',
+            encryptionMode: 'plain',
+            metadataLayoutVersion: 1,
+            metadata: JSON.stringify(sharedMetadata),
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
+            agentStateVersion: 7,
+            agentState: JSON.stringify(agentState),
+        });
+        const applySessions = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 'token-only' },
+            encryption: null,
+            sessionDataKeys: new Map(),
+            request: vi.fn(async () => jsonResponse({
+                sessions: [row],
+                nextCursor: null,
+                hasNext: false,
+            })),
+            applySessions,
+            awaitSessionListHydration: true,
+            requiredHydrationSessionIds: [row.id],
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: row.id,
+                metadata: sharedMetadata,
+                ownerMetadataView: expect.objectContaining({
+                    path: '/plain/private-worktree',
+                    machineId: 'plain-owner-machine',
+                }),
+                agentState,
+                agentStateVersion: 7,
+            }),
+        ]);
+    });
+
+    it('loads Account currentness once through the matching list request only when an owner envelope needs it', async () => {
+        const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+            v: 1,
+            workspace: { path: '/plain/private-worktree' },
+        });
+        const ownerRow = buildSessionRow({
+            id: 's_owner_currentness',
+            encryptionMode: 'plain',
+            metadataLayoutVersion: 1,
+            metadata: JSON.stringify({ v: 1 }),
+            ownerMetadata:
+                createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
+        });
+        const request = vi.fn(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') {
+                return jsonResponse(PLAIN_ACCOUNT_CURRENTNESS);
+            }
+            return jsonResponse({
+                sessions: [ownerRow],
+                nextCursor: null,
+                hasNext: false,
+            });
+        });
+
+        const result = await fetchAndApplySessionsSource({
+            credentials: { token: 'scoped-token' },
+            encryption: null,
+            sessionDataKeys: new Map(),
+            request,
+            applySessions: vi.fn(),
+            awaitSessionListHydration: true,
+            requiredHydrationSessionIds: [ownerRow.id],
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(result.accountCurrentness).toEqual(
+            PLAIN_ACCOUNT_CURRENTNESS,
+        );
+        expect(request.mock.calls.filter(
+            ([path]) => path === '/v1/account/encryption/currentness',
+        )).toHaveLength(1);
+
+        const legacyRequest = vi.fn(async () => jsonResponse({
+            sessions: [buildSessionRow({
+                id: 's_layout0',
+                encryptionMode: 'plain',
+                metadata: JSON.stringify({ path: '/legacy' }),
+            })],
+            nextCursor: null,
+            hasNext: false,
+        }));
+        await fetchAndApplySessionsSource({
+            credentials: { token: 'scoped-token' },
+            encryption: null,
+            sessionDataKeys: new Map(),
+            request: legacyRequest,
+            applySessions: vi.fn(),
+            awaitSessionListHydration: true,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+        expect(legacyRequest).not.toHaveBeenCalledWith(
+            '/v1/account/encryption/currentness',
+            expect.anything(),
+        );
+    });
+
     it('treats layout-v1 recipient hydration as an authoritative privacy contraction over newer private cache state', async () => {
         const row = buildSessionRow({
             id: 's_privacy_contraction',
@@ -410,6 +610,204 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(rendered.metadata?.externalSessionV1).toBeNull();
         expect(rendered.hasPendingPermissionRequests).toBe(false);
         expect(rendered.hasPendingUserActionRequests).toBe(false);
+    });
+
+    it('does not fetch Account currentness or Agent state for a shared recipient', async () => {
+        const sharedMetadata = projectSessionSharedMetadataV1({
+            metadata: {
+                summary: { text: 'Shared title', updatedAt: 10 },
+            },
+        });
+        const row = buildSessionRow({
+            id: 's_shared_overprojection',
+            encryptionMode: 'plain',
+            metadataLayoutVersion: 1,
+            metadata: JSON.stringify(sharedMetadata),
+            ownerMetadata: undefined,
+            agentStateVersion: 7,
+            agentState: null,
+            share: {
+                accessLevel: 'edit',
+                canApprovePermissions: false,
+            },
+        });
+        let currentnessRequests = 0;
+        const applySessions = vi.fn();
+
+        await fetchAndApplySessionsSource({
+            credentials: { token: 'scoped-token' },
+            encryption: null,
+            sessionDataKeys: new Map(),
+            request: vi.fn(async (path: string) => {
+                if (path === '/v1/account/encryption/currentness') {
+                    currentnessRequests += 1;
+                    return jsonResponse(PLAIN_ACCOUNT_CURRENTNESS);
+                }
+                return jsonResponse({
+                    sessions: [row],
+                    nextCursor: null,
+                    hasNext: false,
+                });
+            }),
+            applySessions,
+            awaitSessionListHydration: true,
+            requiredHydrationSessionIds: [row.id],
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(currentnessRequests).toBe(0);
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                metadata: sharedMetadata,
+                ownerMetadataView: null,
+                agentState: null,
+            }),
+        ]);
+    });
+
+    it.each([
+        {
+            name: 'plain envelope after Account migration to E2EE',
+            sessionMode: 'plain' as const,
+            accountCurrentness: E2EE_ACCOUNT_CURRENTNESS,
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+                SessionOwnerMetadataV1Schema.parse({
+                    v: 1,
+                    workspace: { path: '/old-plain-owner' },
+                }),
+            ),
+        },
+        {
+            name: 'encrypted envelope after Account migration to plain',
+            sessionMode: 'e2ee' as const,
+            accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+            ownerMetadata: {
+                t: 'encrypted' as const,
+                c: OWNER_METADATA_CIPHERTEXT,
+            },
+        },
+    ])('locks $name without preserving cached or current private metadata', async ({
+        sessionMode,
+        accountCurrentness,
+        ownerMetadata,
+    }) => {
+        const id = `s_mismatch_${sessionMode}`;
+        const sharedMetadata = projectSessionSharedMetadataV1({
+            metadata: {
+                summary: { text: 'Shared title', updatedAt: 10 },
+            },
+        });
+        const row = buildSessionRow({
+            id,
+            encryptionMode: sessionMode,
+            metadataLayoutVersion: 1,
+            metadataVersion: 5,
+            metadata: sessionMode === 'plain'
+                ? JSON.stringify(sharedMetadata)
+                : 'encrypted-shared-metadata',
+            ownerMetadata,
+            agentStateVersion: 5,
+            agentState: sessionMode === 'plain'
+                ? JSON.stringify({ requests: { private: true } })
+                : 'encrypted-private-agent-state',
+            dataEncryptionKey: sessionMode === 'plain' ? null : 'encrypted-dek',
+            share: null,
+        });
+        const privateMetadata = {
+            path: '/private/stale-worktree',
+            host: 'private-stale-host',
+            machineId: 'private-stale-machine',
+        };
+        const existingSession = buildExistingSession({
+            id,
+            metadataLayoutVersion: 1,
+            metadataVersion: 4,
+            metadata: privateMetadata,
+            ownerMetadataView: privateMetadata,
+            agentStateVersion: 4,
+            agentState: {
+                requests: {
+                    private: {
+                        tool: 'private-tool',
+                        arguments: {},
+                    },
+                },
+            },
+        });
+        const currentRenderable = buildSessionListRenderableFromSession(
+            existingSession,
+        );
+        const cachedSessionListEntries = {
+            [id]: {
+                sessionId: id,
+                seq: 1,
+                metadataLayoutVersion: 1,
+                metadataVersion: 4,
+                agentStateVersion: 4,
+                updatedAt: 1,
+                createdAt: 1,
+                active: true,
+                activeAt: 1,
+                archivedAt: null,
+                name: 'Private stale title',
+                summaryText: null,
+                path: privateMetadata.path,
+                homeDir: '/private',
+                host: privateMetadata.host,
+                machineId: privateMetadata.machineId,
+                flavor: 'codex',
+                externalSessionV1: null,
+                hasPendingPermissionRequests: true,
+                hasPendingUserActionRequests: true,
+            },
+        } satisfies NonNullable<FetchAndApplySessionsParams['cachedSessionListEntries']>;
+        const encryptionHarness = createEncryptionHarness();
+        encryptionHarness.decryptMetadataPayload.mockResolvedValue(
+            sharedMetadata,
+        );
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            accountCurrentness,
+            encryption: encryptionHarness.encryption,
+            sessionDataKeys: new Map(),
+            request: vi.fn(async () => jsonResponse({
+                sessions: [row],
+                nextCursor: null,
+                hasNext: false,
+            })),
+            cachedSessionListEntries,
+            getExistingSession: () => existingSession,
+            getCurrentSessionListRenderable: () => currentRenderable,
+            applySessions,
+            applySessionListRenderables,
+            awaitSessionListHydration: true,
+            requiredHydrationSessionIds: [id],
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        const rendered = applySessionListRenderables.mock.calls[0]?.[0]?.[0];
+        expect(rendered).toEqual(expect.objectContaining({
+            metadata: null,
+            metadataVersion: 5,
+            metadataUnavailable: true,
+        }));
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                metadata: null,
+                ownerMetadataView: null,
+                agentState: null,
+            }),
+        ]);
+        expect(encryptionHarness.decryptAgentState).not.toHaveBeenCalled();
+        expect(JSON.stringify({
+            renderables: applySessionListRenderables.mock.calls,
+            sessions: applySessions.mock.calls,
+        })).not.toMatch(/private\/stale|Private stale|private-stale/);
     });
 
     it('fetches one bounded v2 session page by default and returns the next cursor for loading more', async () => {
@@ -950,6 +1348,10 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         ownerMetadata: undefined,
                         agentState: null,
                         agentStateVersion: 7,
+                        share: {
+                            accessLevel: 'view',
+                            canApprovePermissions: false,
+                        },
                     }),
                 ],
                 nextCursor: null,

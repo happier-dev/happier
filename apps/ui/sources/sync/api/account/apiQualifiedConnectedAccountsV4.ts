@@ -21,6 +21,7 @@ import {
   type QualifiedConnectedAccountRef,
   type QualifiedConnectedAccountServiceRef,
 } from '@happier-dev/protocol';
+import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { z } from 'zod';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -116,7 +117,7 @@ async function mutateQualifiedSnapshot<T>(params: Readonly<{
 
 function structuredQuery<T>(
   key: string,
-  schema: z.ZodType<T>,
+  schema: Pick<ProtocolComposableSchema<T>, 'parse'>,
   value: T,
 ): string {
   const encoded = encodeURIComponent(
@@ -222,6 +223,7 @@ export async function deleteQualifiedConnectedAccountGroupV4(
   credentials: AuthCredentials,
   params: Readonly<{
     group: QualifiedConnectedAccountGroupRef;
+    expectedIncarnation: string;
     expectedRuntimeStateRevision?: number;
   }>,
 ): Promise<boolean> {
@@ -233,6 +235,7 @@ export async function deleteQualifiedConnectedAccountGroupV4(
       params.group,
     ),
   );
+  query.set('expectedIncarnation', params.expectedIncarnation);
   if (params.expectedRuntimeStateRevision !== undefined) {
     query.set(
       'expectedRuntimeStateRevision',

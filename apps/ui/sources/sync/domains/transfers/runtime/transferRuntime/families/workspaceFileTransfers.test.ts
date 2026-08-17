@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createDeferred } from '@/dev/testkit';
 
 const createWorkspaceFileTransferRpcCallerMock = vi.hoisted(() => vi.fn());
 const directExportDownloadMock = vi.hoisted(() => vi.fn());
@@ -158,6 +159,58 @@ describe('workspaceFileTransfers', () => {
             ok: false,
             error: 'Workspace file download destination cleanup is required for retry-safe transfers',
         });
+        expect(directExportDownloadMock).not.toHaveBeenCalled();
+        expect(relayDownloadMock).not.toHaveBeenCalled();
+        expect(bulkDownloadMock).not.toHaveBeenCalled();
+    });
+
+    it('aborts a held non-zip stat preflight before any download carrier starts', async () => {
+        const statStarted = createDeferred<void>();
+        const statResult = createDeferred<Readonly<{ success: true; exists: true; kind: 'file'; sizeBytes: number }>>();
+        let observedSignal: AbortSignal | null = null;
+        let statSawAbort = false;
+        createWorkspaceFileTransferRpcCallerMock.mockImplementation(() => ({
+            call: vi.fn((callParams: Readonly<{ machineMethod: string; signal?: AbortSignal | null }>) => {
+                if (callParams.machineMethod !== RPC_METHODS.STAT_FILE) {
+                    throw new Error(`unexpected call: ${callParams.machineMethod}`);
+                }
+
+                observedSignal = callParams.signal ?? null;
+                statStarted.resolve();
+                return new Promise((resolve) => {
+                    callParams.signal?.addEventListener('abort', () => {
+                        statSawAbort = true;
+                        resolve({ success: false, error: 'Download canceled' });
+                    }, { once: true });
+                    void statResult.promise.then(resolve);
+                });
+            }),
+        }));
+
+        const controller = new AbortController();
+        const { downloadDaemonWorkspaceFileToDestination } = await import('./workspaceFileTransfers');
+        const download = downloadDaemonWorkspaceFileToDestination({
+            machineId: 'machine-1',
+            rootPath: '/repo',
+            request: {
+                path: 'a.txt',
+                asZip: false,
+            },
+            destination: {
+                writeBytes: async () => {},
+                close: async () => {},
+                cleanup: async () => {},
+            },
+            signal: controller.signal,
+        });
+
+        await statStarted.promise;
+        controller.abort();
+        statResult.resolve({ success: true, exists: true, kind: 'file', sizeBytes: 3 });
+
+        await expect(download).resolves.toEqual({ ok: false, error: 'Download canceled' });
+        expect(observedSignal).toBe(controller.signal);
+        expect(statSawAbort).toBe(true);
         expect(directExportDownloadMock).not.toHaveBeenCalled();
         expect(relayDownloadMock).not.toHaveBeenCalled();
         expect(bulkDownloadMock).not.toHaveBeenCalled();

@@ -12,6 +12,11 @@ export type VoiceRuntimeLevelChannelSnapshot = Readonly<{
   sourceActive: boolean;
 }>;
 
+export type VoiceRuntimeLevelSourceActivity = Readonly<{
+  inputSourceActive: boolean;
+  outputSourceActive: boolean;
+}>;
+
 type VoiceRuntimeLevelStoreOptions = Readonly<{
   staleAfterMs?: number;
   setTimer?: (task: () => void, waitMs: number) => ReturnType<typeof setTimeout>;
@@ -27,7 +32,9 @@ export type VoiceRuntimeLevelWriter = Readonly<{
 export type VoiceRuntimeLevelStore = Readonly<{
   open(args: Readonly<{ channel: VoiceRuntimeLevelChannel; sourceId: string }>): VoiceRuntimeLevelWriter;
   getSnapshot(): VoiceRuntimeLevelSnapshot;
+  getSourceActivitySnapshot(): VoiceRuntimeLevelSourceActivity;
   subscribe(channel: VoiceRuntimeLevelChannel, listener: (snapshot: VoiceRuntimeLevelChannelSnapshot) => void): () => void;
+  subscribeSourceActivity(listener: (snapshot: VoiceRuntimeLevelSourceActivity) => void): () => void;
 }>;
 
 const DEFAULT_STALE_AFTER_MS = 180;
@@ -57,6 +64,7 @@ export function createVoiceRuntimeLevelStore(
     input: new Set(),
     output: new Set(),
   };
+  const sourceActivityListeners = new Set<(snapshot: VoiceRuntimeLevelSourceActivity) => void>();
   const activeToken: Record<VoiceRuntimeLevelChannel, symbol | null> = {
     input: null,
     output: null,
@@ -68,6 +76,10 @@ export function createVoiceRuntimeLevelStore(
   let snapshot: VoiceRuntimeLevelSnapshot = Object.freeze({
     inputLevel: 0,
     outputLevel: 0,
+    inputSourceActive: false,
+    outputSourceActive: false,
+  });
+  let sourceActivitySnapshot: VoiceRuntimeLevelSourceActivity = Object.freeze({
     inputSourceActive: false,
     outputSourceActive: false,
   });
@@ -84,6 +96,13 @@ export function createVoiceRuntimeLevelStore(
       : { ...snapshot, outputLevel: next.level, outputSourceActive: next.sourceActive });
     const published = Object.freeze({ ...next });
     for (const listener of listeners[channel]) listener(published);
+    if (previous.sourceActive !== next.sourceActive) {
+      sourceActivitySnapshot = Object.freeze({
+        inputSourceActive: snapshot.inputSourceActive,
+        outputSourceActive: snapshot.outputSourceActive,
+      });
+      for (const listener of sourceActivityListeners) listener(sourceActivitySnapshot);
+    }
   };
 
   const cancelStaleTimer = (channel: VoiceRuntimeLevelChannel): void => {
@@ -130,9 +149,14 @@ export function createVoiceRuntimeLevelStore(
       });
     },
     getSnapshot: () => snapshot,
+    getSourceActivitySnapshot: () => sourceActivitySnapshot,
     subscribe: (channel, listener) => {
       listeners[channel].add(listener);
       return () => listeners[channel].delete(listener);
+    },
+    subscribeSourceActivity: (listener) => {
+      sourceActivityListeners.add(listener);
+      return () => sourceActivityListeners.delete(listener);
     },
   });
 }

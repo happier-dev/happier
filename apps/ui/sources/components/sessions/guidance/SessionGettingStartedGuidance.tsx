@@ -6,7 +6,6 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 import { router } from 'expo-router';
 import { Modal } from '@/modal';
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
@@ -30,6 +29,7 @@ import { useSessionGettingStartedGuidanceBaseModel } from './useSessionGettingSt
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
@@ -409,7 +409,7 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
                                           }}
                                       >
                                           {normalizeNodeForView(
-                                              <Ionicons name="copy-outline" size={16} color={theme.colors.text.secondary} />,
+                                              <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
                                           )}
                                       </Pressable>
                                       <CopiedPill

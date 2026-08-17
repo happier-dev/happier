@@ -32,10 +32,8 @@ function readDevServerResolverOptions(value: unknown): DevServerResolverOptions 
 
 describe('React Native dev-hot-reload loader', () => {
     it('registers a cache:false dev resolver, loads the script, imports the federated surface, and removes the resolver', async () => {
-        const acknowledgeHostRuntime = vi.fn();
         const module = {
             renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' }),
-            acknowledgeHostRuntime,
         };
         let resolver: DevServerResolver | null = null;
         const scriptManager = {
@@ -62,8 +60,6 @@ describe('React Native dev-hot-reload loader', () => {
         });
 
         expect(typeof loaded).toBe('function');
-        expect((loaded as typeof loaded & { acknowledgeHostRuntime?: unknown }).acknowledgeHostRuntime)
-            .toBe(acknowledgeHostRuntime);
         expect(scriptManager.addResolver).toHaveBeenCalledTimes(1);
         const [, rawOptions] = scriptManager.addResolver.mock.calls[0] ?? [];
         const options = readDevServerResolverOptions(rawOptions);

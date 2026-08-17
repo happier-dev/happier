@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -13,6 +12,7 @@ import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInferen
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type KokoroVoiceSummary = Readonly<{
     id: string;
@@ -133,7 +133,7 @@ export function LocalNeuralTtsSettings(props: {
                     title: String(speed),
                     icon: (
                         <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                            <Ionicons name="speedometer-outline" size={20} color={theme.colors.text.secondary} />
+                            <Icon name="speedometer" size={20} color={theme.colors.text.secondary} />
                         </View>
                     ),
                 }))}

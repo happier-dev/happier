@@ -522,6 +522,24 @@ describe('useExternalSessionRuntime', () => {
     }
   });
 
+  it('propagates terminal status auth while treating connectivity failures as unavailable', async () => {
+    const terminalAuthError = { kind: 'auth', canTryAgain: false };
+    machineExternalSessionStatusGetSpy
+      .mockRejectedValueOnce(terminalAuthError)
+      .mockRejectedValueOnce(new Error('Network request failed'));
+    const harness = await renderHarness();
+
+    await act(async () => {
+      await expect(harness.getCurrent().refreshNow()).rejects.toBe(terminalAuthError);
+    });
+    await act(async () => {
+      await expect(harness.getCurrent().refreshNow()).resolves.toBeNull();
+    });
+
+    expect(harness.getCurrent().status).toBeNull();
+    await harness.unmount();
+  });
+
   it('fails a status preflight closed without discarding the last displayed status', async () => {
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
@@ -973,6 +991,123 @@ describe('useExternalSessionRuntime', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not poll attach when the daemon lacks the canonical follow data plane', async () => {
+    vi.useFakeTimers();
+    try {
+      machineExternalSessionAttachSpy.mockResolvedValue({
+        ok: false,
+        errorCode: 'agent_unavailable',
+        error: 'background_follow_not_supported',
+      });
+
+      const harness = await renderHarness();
+
+      await act(async () => {
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+      });
+
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
+
+      await harness.unmount();
+      expect(machineExternalSessionDetachSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops attaching once the daemon reports the failure as non-retryable', async () => {
+    vi.useFakeTimers();
+    try {
+      machineExternalSessionAttachSpy.mockResolvedValue({
+        ok: false,
+        errorCode: 'agent_unavailable',
+        error: 'external_session_follow_unavailable',
+        retryable: false,
+      });
+
+      const harness = await renderHarness();
+
+      await act(async () => {
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+      });
+
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
+
+      await harness.unmount();
+      expect(machineExternalSessionDetachSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps retrying a failure a released daemon reports without retryability', async () => {
+    vi.useFakeTimers();
+    try {
+      machineExternalSessionAttachSpy
+        .mockResolvedValueOnce({
+          ok: false,
+          errorCode: 'agent_unavailable',
+          error: 'external_session_agent_unavailable',
+        })
+        .mockResolvedValue({ ok: true, leaseId: 'lease-recovered', expiresAtMs: Date.now() + 60_000 });
+
+      const harness = await renderHarness();
+
+      await act(async () => {
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(2);
+
+      await harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('detaches a viewer lease whose attach resolves after the view is gone', async () => {
+    const deferredAttach = createDeferred<{ ok: true; leaseId: string; expiresAtMs: number }>();
+    machineExternalSessionAttachSpy.mockImplementationOnce(() => deferredAttach.promise);
+
+    const harness = await renderHarness();
+
+    expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
+
+    await harness.unmount();
+
+    expect(machineExternalSessionDetachSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      deferredAttach.resolve({ ok: true, leaseId: 'late-lease', expiresAtMs: Date.now() + 60_000 });
+      await deferredAttach.promise;
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+    });
+
+    expect(machineExternalSessionDetachSpy).toHaveBeenCalledWith({
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      leaseId: 'late-lease',
+    }, { serverId: 'server-owned' });
   });
 
   it('does not detach and reattach when metadata changes only direct-session follow policy fields', async () => {

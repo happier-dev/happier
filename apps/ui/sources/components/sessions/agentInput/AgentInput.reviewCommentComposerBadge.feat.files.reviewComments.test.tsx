@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -9,6 +9,14 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((result, entry) => ({ ...result, ...flattenStyle(entry) }), {});
+    }
+    return typeof style === 'object' ? style as Record<string, unknown> : {};
+}
 
 const modalAlertSpy = vi.fn();
 const modalShowSpy = vi.fn((_config: unknown) => 'review-comments-modal');
@@ -161,7 +169,7 @@ describe('AgentInput review comment composer badge', () => {
             body: 'Consider extracting this.',
             createdAt: 1,
         } satisfies ReviewCommentDraft;
-        const reviewCommentsChip = createReviewCommentsActionChip({
+        const reviewCommentsPresentation = createReviewCommentsActionChip({
             reviewScope: {
                 serverId: 'server-1',
                 machineId: 'machine-1',
@@ -173,9 +181,17 @@ describe('AgentInput review comment composer badge', () => {
             onDeleteDraft: deleteDraftSpy,
             onUpdateDraft: updateDraftSpy,
         });
-        if (!reviewCommentsChip) {
+        if (!reviewCommentsPresentation) {
             throw new Error('Expected review comments chip');
         }
+
+        const { actionChip: reviewCommentsChip, attachmentRowItem: reviewCommentsRowItem } = reviewCommentsPresentation;
+
+        expect('composerAttachmentBadge' in reviewCommentsChip).toBe(false);
+        expect(reviewCommentsRowItem).toMatchObject({
+            kind: 'badge',
+            testID: 'agent-input-review-comments-attachment-badge',
+        });
 
         modalAlertSpy.mockClear();
         modalShowSpy.mockClear();
@@ -186,15 +202,16 @@ describe('AgentInput review comment composer badge', () => {
                 placeholder="placeholder"
                 onChangeText={() => {}}
                 onSend={() => {}}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 extraActionChips={[reviewCommentsChip]}
+                attachmentRowItems={reviewCommentsRowItem ? [reviewCommentsRowItem] : []}
             />,
         );
 
         expect(screen.findByTestId('agent-input-review-comments-attachment-badge')).toBeTruthy();
 
-        await screen.pressByTestIdAsync('agent-input-review-comments-attachment-badge');
+        await screen.pressByTestIdAsync('agent-input-review-comments-attachment-badge-preview');
 
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
         const modalConfig = modalShowSpy.mock.calls[0]?.[0] as any;
@@ -220,16 +237,20 @@ describe('AgentInput review comment composer badge', () => {
             body: 'Consider extracting this.',
             createdAt: 1,
         } satisfies ReviewCommentDraft;
-        const reviewCommentsChip = createReviewCommentsActionChip({
+        const reviewCommentsPresentation = createReviewCommentsActionChip({
             reviewCommentDrafts: [draft],
             onSetDraftIncluded: setDraftIncludedSpy,
             onClearDrafts: clearDraftsSpy,
             onDeleteDraft: deleteDraftSpy,
             onUpdateDraft: updateDraftSpy,
         });
-        if (!reviewCommentsChip) {
+        if (!reviewCommentsPresentation) {
             throw new Error('Expected review comments chip');
         }
+
+        const { actionChip: reviewCommentsChip, attachmentRowItem: reviewCommentsRowItem } = reviewCommentsPresentation;
+
+        expect('composerAttachmentBadge' in reviewCommentsChip).toBe(false);
 
         modalAlertSpy.mockClear();
         setDraftIncludedSpy.mockClear();
@@ -241,11 +262,18 @@ describe('AgentInput review comment composer badge', () => {
                 placeholder="placeholder"
                 onChangeText={() => {}}
                 onSend={() => {}}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 extraActionChips={[reviewCommentsChip]}
+                attachmentRowItems={reviewCommentsRowItem ? [reviewCommentsRowItem] : []}
             />,
         );
+
+        const removeButton = screen.findByTestId('agent-input-review-comments-attachment-badge-remove');
+        expect(removeButton?.props.accessibilityRole).toBe('button');
+        expect(removeButton?.props.accessibilityLabel).toBe('files.reviewComments.detachOrDiscardTitle');
+        expect(removeButton?.props.hitSlop).toBeUndefined();
+        expect(flattenStyle(removeButton?.props.style)).toMatchObject({ minHeight: 44, minWidth: 44 });
 
         await screen.pressByTestIdAsync('agent-input-review-comments-attachment-badge-remove');
 

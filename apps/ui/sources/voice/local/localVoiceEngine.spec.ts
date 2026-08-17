@@ -44,7 +44,7 @@ describe('local voice engine (turn-based) smoke', () => {
         );
         voiceConversationRuntimeMachine.transitionToConnected({
             controlSessionId: 's-realtime',
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         });
 
         await toggleLocalVoiceTurn('s1');
@@ -96,7 +96,7 @@ describe('local voice engine (turn-based) smoke', () => {
                 ...storage.getState().settings,
                 voice: {
                     ...storage.getState().settings.voice,
-                    providerId: 'realtime_elevenlabs',
+                    providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 },
             },
         });

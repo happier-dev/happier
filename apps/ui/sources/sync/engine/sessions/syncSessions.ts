@@ -1,6 +1,4 @@
-import type { NormalizedMessage, RawRecord } from '@/sync/typesRaw';
-import type { SessionMessageRole } from '@happier-dev/protocol';
-import { createRawMessageNormalizationSequenceState, normalizeRawMessageInSequence } from '@/sync/typesRaw';
+import type { NormalizedMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { AgentState, Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { computeNextReadStateV1 } from '@/sync/domains/state/readStateV1';
@@ -12,12 +10,10 @@ import {
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListRenderableMetadataComparison } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
-import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
-import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
+import type { ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { readRollbackEligibleTurnStarts } from '@/sync/domains/session/rollback/rollbackEligibleTurnStarts';
 import type { Encryption } from '@/sync/encryption/encryption';
-import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 import { writeSyncDebugLog } from '@/sync/runtime/syncDebugLogging';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { nowServerMs } from '@/sync/runtime/time';
@@ -31,8 +27,14 @@ import {
     tryParsePlainSessionAgentState,
     tryParsePlainSessionMetadata,
 } from './parsePlainSessionPayload';
-import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
-import { runSessionMessagesPagePipeline } from './sessionMessagesPagePipeline';
+import {
+    runSessionMessagesPagePipeline,
+    type SessionMessagesEncryption,
+    type SessionMessagesPageOptions,
+} from './sessionMessagesPagePipeline';
+import {
+    type SessionReceivedMessages,
+} from './sessionMessageCurrentness';
 import {
     resolveSessionRuntimeActivityProjectionFields,
     type SessionRuntimeActivityResyncHandler,
@@ -157,7 +159,7 @@ export async function buildNewSessionFromSocketUpdate(params: {
     updateSeq: number;
     updateCreatedAt: number;
     sourceServerId?: string | null;
-    encryption: NewSessionSocketEncryption;
+    encryption: NewSessionSocketEncryption | null;
 }): Promise<Session | null> {
     const { updateBody, encryption } = params;
     const sessionId = readNewSessionId(updateBody);
@@ -176,16 +178,21 @@ export async function buildNewSessionFromSocketUpdate(params: {
     const agentStateVersion = readTimestamp(updateBody.agentStateVersion, 0);
     const agentStatePayload = typeof updateBody.agentState === 'string' ? updateBody.agentState : null;
 
-    const decryptedState = await (async (): Promise<{ metadata: Metadata | null; agentState: AgentState } | null> => {
+    const decryptedState = await (async (): Promise<{ metadata: Metadata | null; agentState: AgentState | null } | null> => {
         try {
             if (encryptionMode === 'plain') {
                 return {
                     metadata: parsePlainSessionMetadata(metadataPayload, metadataLayoutVersion),
-                    agentState: parsePlainSessionAgentState(agentStatePayload),
+                    agentState: metadataLayoutVersion === 1
+                        ? null
+                        : parsePlainSessionAgentState(agentStatePayload),
                 };
             }
 
             if (typeof updateBody.dataEncryptionKey !== 'string' || updateBody.dataEncryptionKey.length === 0) {
+                return { metadata: null, agentState: {} };
+            }
+            if (!encryption) {
                 return { metadata: null, agentState: {} };
             }
             const dataEncryptionKey: string = updateBody.dataEncryptionKey;
@@ -220,7 +227,9 @@ export async function buildNewSessionFromSocketUpdate(params: {
                 metadataLayoutVersion === 1
                     ? sessionEncryption.decryptMetadataPayload(metadataVersion, metadataPayload)
                     : sessionEncryption.decryptMetadata(metadataVersion, metadataPayload),
-                sessionEncryption.decryptAgentState(agentStateVersion, agentStatePayload),
+                metadataLayoutVersion === 1
+                    ? Promise.resolve(null)
+                    : sessionEncryption.decryptAgentState(agentStateVersion, agentStatePayload),
             ]);
             return {
                 metadata: parseDecryptedSessionMetadata(
@@ -270,13 +279,39 @@ export async function buildNewSessionFromSocketUpdate(params: {
 
 export function handleDeleteSessionSocketUpdate(params: {
     sessionId: string;
+    /** Socket owns its queued/coalesced work; callers inject its per-session teardown. */
+    dropSocketSessionWork?: (sessionId: string) => void;
+    invalidateSessionHydration?: (sessionId: string) => void;
+    resetSessionTranscriptState?: (sessionId: string) => void;
     deleteSession: (sessionId: string) => void;
     removeSessionEncryption: (sessionId: string) => void;
     removeProjectManagerSession: (sessionId: string) => void;
     clearScmStatusForSession: (sessionId: string) => void;
     log: { log: (message: string) => void };
 }) {
-    const { sessionId, deleteSession, removeSessionEncryption, removeProjectManagerSession, clearScmStatusForSession, log } = params;
+    const {
+        sessionId,
+        dropSocketSessionWork,
+        invalidateSessionHydration,
+        resetSessionTranscriptState,
+        deleteSession,
+        removeSessionEncryption,
+        removeProjectManagerSession,
+        clearScmStatusForSession,
+        log,
+    } = params;
+
+    // Drop admitted socket work before it can flush back into the just-deleted
+    // carrier. The socket module owns this queue/raw-normalization inventory.
+    dropSocketSessionWork?.(sessionId);
+
+    // Fence older by-id responses before removing local state or encryption.
+    // Otherwise an already-started hydration can reapply the deleted tuple/key.
+    invalidateSessionHydration?.(sessionId);
+
+    // Sync owns the transcript's map, pagination and deferred state. Reset it
+    // before the session disappears so a later same-id carrier is a fresh row.
+    resetSessionTranscriptState?.(sessionId);
 
     // Remove session from storage
     deleteSession(sessionId);
@@ -486,7 +521,9 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             };
         }
 
-        const agentStatePromise = updateBody.agentState && hydrateAgentState
+        const agentStatePromise = nextMetadataLayoutVersion === 1
+            ? Promise.resolve(null)
+            : updateBody.agentState && hydrateAgentState
             ? encryptionMode === 'plain'
                 ? Promise.resolve(parsePlainSessionAgentState(updateBody.agentState.value))
                 : sessionEncryption!.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
@@ -616,6 +653,8 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
     const parsedAgentState =
         !updateBody.agentState || !hydrateAgentState
             ? undefined
+            : nextMetadataLayoutVersion === 1
+                ? null
             : sessionEncryption
                 ? await sessionEncryption.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
                 : tryParsePlainSessionAgentState(updateBody.agentState.value);
@@ -808,245 +847,6 @@ export async function repairInvalidReadStateV1(params: {
     }
 }
 
-type SessionMessagesEncryption = {
-    decryptMessages: (messages: ApiMessage[]) => Promise<Array<DecryptedSessionMessage | null>>;
-};
-
-type SessionMessagesEncryptionMode = 'e2ee' | 'plain';
-
-type DecryptedSessionMessage = Readonly<{
-    id: string;
-    seq?: number | null;
-    localId: string | null;
-    messageRole?: SessionMessageRole | null;
-    content: unknown | null;
-    createdAt: number;
-}>;
-
-type MessageDecryptBatchOptions = {
-    initialMessageDecryptBatchSize?: number;
-    messageDecryptBatchSize?: number;
-    messageDecryptYieldDelayMs?: number;
-    yieldToMessageDecryptBatch?: (delayMs: number) => Promise<void>;
-};
-
-type SessionMessagesPageOptions = MessageDecryptBatchOptions & {
-    sessionEncryptionMode?: SessionMessagesEncryptionMode;
-};
-
-const DEFAULT_MESSAGE_DECRYPT_BATCH_SIZE = 8;
-const DEFAULT_INITIAL_MESSAGE_DECRYPT_BATCH_SIZE = 64;
-
-const plainSessionMessagesEncryption: SessionMessagesEncryption = {
-    decryptMessages: async (messages) => Promise.all(
-        messages.map((message) => readStoredSessionMessage({ message })),
-    ),
-};
-
-function normalizePositiveInteger(value: number | undefined, fallback: number): number {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-    return Math.max(1, Math.trunc(value));
-}
-
-function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-    return Math.max(0, Math.trunc(value));
-}
-
-function resolveMessageDecryptBatchSize(kind: MessagePageTelemetryKind, options: MessageDecryptBatchOptions): number {
-    if (kind === 'initial') {
-        return normalizePositiveInteger(
-            options.initialMessageDecryptBatchSize ?? options.messageDecryptBatchSize,
-            DEFAULT_INITIAL_MESSAGE_DECRYPT_BATCH_SIZE,
-        );
-    }
-    return normalizePositiveInteger(options.messageDecryptBatchSize, DEFAULT_MESSAGE_DECRYPT_BATCH_SIZE);
-}
-
-async function yieldToMessageDecryptBatch(delayMs: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-        setTimeout(resolve, delayMs);
-    });
-}
-
-function resolveSessionMessagesEncryption(params: Readonly<{
-    sessionId: string;
-    sessionEncryptionMode?: SessionMessagesEncryptionMode;
-    getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
-}>): SessionMessagesEncryption | null {
-    if (params.sessionEncryptionMode === 'plain') {
-        return plainSessionMessagesEncryption;
-    }
-    return params.getSessionEncryption(params.sessionId);
-}
-
-type MessagePageTelemetryKind = 'initial' | 'older' | 'newer';
-type MessagePageScope = 'main' | 'sidechain' | 'all';
-
-function messagePageTelemetryFields(
-    kind: MessagePageTelemetryKind,
-    fields: Record<string, number>,
-): Record<string, number> {
-    return {
-        initial: kind === 'initial' ? 1 : 0,
-        older: kind === 'older' ? 1 : 0,
-        newer: kind === 'newer' ? 1 : 0,
-        ...fields,
-    };
-}
-
-function messagePageScopeTelemetryFields(
-    kind: MessagePageTelemetryKind,
-    scope: MessagePageScope,
-    sidechainId: string | null,
-    fields: Record<string, number> = {},
-): Record<string, number> {
-    return messagePageTelemetryFields(kind, {
-        scopeMain: scope === 'main' ? 1 : 0,
-        scopeSidechain: scope === 'sidechain' ? 1 : 0,
-        scopeAll: scope === 'all' ? 1 : 0,
-        hasSidechainId: sidechainId ? 1 : 0,
-        ...fields,
-    });
-}
-
-async function fetchSessionMessagesPageWithTelemetry(params: Readonly<{
-    kind: MessagePageTelemetryKind;
-    request: (path: string) => Promise<Response>;
-    path: string;
-    scope: MessagePageScope;
-    sidechainId: string | null;
-    limit?: number;
-    beforeSeq?: number;
-    afterSeq?: number;
-}>): Promise<ApiSessionMessagesResponse> {
-    const rangeFields: Record<string, number> = {};
-    if (typeof params.limit === 'number' && Number.isFinite(params.limit)) {
-        rangeFields.limit = Math.trunc(params.limit);
-    }
-    if (typeof params.beforeSeq === 'number' && Number.isFinite(params.beforeSeq)) {
-        rangeFields.beforeSeq = Math.trunc(params.beforeSeq);
-    }
-    if (typeof params.afterSeq === 'number' && Number.isFinite(params.afterSeq)) {
-        rangeFields.afterSeq = Math.trunc(params.afterSeq);
-    }
-
-    const requestFields = messagePageScopeTelemetryFields(
-        params.kind,
-        params.scope,
-        params.sidechainId,
-        rangeFields,
-    );
-    const response = await syncPerformanceTelemetry.measureAsync(
-        'sync.sessions.messages.request',
-        requestFields,
-        () => params.request(params.path),
-    );
-    const json = await syncPerformanceTelemetry.measureAsync(
-        'sync.sessions.messages.responseJson',
-        {
-            ...requestFields,
-            status: typeof response.status === 'number' && Number.isFinite(response.status)
-                ? Math.trunc(response.status)
-                : 0,
-        },
-        () => response.json(),
-    );
-    const parsed = syncPerformanceTelemetry.measure(
-        'sync.sessions.messages.parseResponse',
-        requestFields,
-        () => ApiSessionMessagesResponseSchema.safeParse(json),
-    );
-    if (!parsed.success) {
-        throw new Error(`Invalid /messages response: ${parsed.error.message}`);
-    }
-    return parsed.data;
-}
-
-function recordMessagePageTelemetry(kind: MessagePageTelemetryKind, fetched: number): void {
-    syncPerformanceTelemetry.count('sync.sessions.messages.page', messagePageTelemetryFields(kind, { fetched }));
-}
-
-function recordMessageDedupeTelemetry(kind: MessagePageTelemetryKind, fetched: number, toDecrypt: number): void {
-    syncPerformanceTelemetry.count('sync.sessions.messages.dedupe', messagePageTelemetryFields(kind, {
-        fetched,
-        toDecrypt,
-        skipped: Math.max(0, fetched - toDecrypt),
-    }));
-}
-
-async function decryptMessagesInBatchesWithTelemetry(
-    kind: MessagePageTelemetryKind,
-    encryption: SessionMessagesEncryption,
-    messages: ApiMessage[],
-    options: MessageDecryptBatchOptions,
-): Promise<Array<DecryptedSessionMessage | null>> {
-    const batchSize = resolveMessageDecryptBatchSize(kind, options);
-    return syncPerformanceTelemetry.measureAsync(
-        'sync.sessions.messages.decrypt',
-        messagePageTelemetryFields(kind, {
-            messages: messages.length,
-            batchSize,
-            yieldDelayMs: normalizeNonNegativeInteger(options.messageDecryptYieldDelayMs, 0),
-        }),
-        () => decryptMessagesInBatches(encryption, messages, options, batchSize),
-    );
-}
-
-function recordMessageApplyTelemetry(
-    kind: MessagePageTelemetryKind,
-    decrypted: number,
-    sessionId: string,
-    normalizedMessages: NormalizedMessage[],
-    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void,
-): void {
-    syncPerformanceTelemetry.measure(
-        'sync.sessions.messages.apply',
-        messagePageTelemetryFields(kind, {
-            decrypted,
-            normalized: normalizedMessages.length,
-        }),
-        () => applyMessages(sessionId, normalizedMessages),
-    );
-}
-
-function measureMessageNormalization<T>(
-    kind: MessagePageTelemetryKind,
-    decrypted: number,
-    normalize: () => T,
-): T {
-    return syncPerformanceTelemetry.measure(
-        'sync.sessions.messages.normalize',
-        messagePageTelemetryFields(kind, { decrypted }),
-        normalize,
-    );
-}
-
-async function decryptMessagesInBatches(
-    encryption: SessionMessagesEncryption,
-    messages: ApiMessage[],
-    options: MessageDecryptBatchOptions,
-    batchSize: number,
-): Promise<Array<DecryptedSessionMessage | null>> {
-    if (messages.length === 0) return [];
-
-    if (messages.length <= batchSize) {
-        return encryption.decryptMessages(messages);
-    }
-
-    const yieldDelayMs = normalizeNonNegativeInteger(options.messageDecryptYieldDelayMs, 0);
-    const yieldToBatch = options.yieldToMessageDecryptBatch ?? yieldToMessageDecryptBatch;
-    const decryptedMessages: Array<DecryptedSessionMessage | null> = [];
-    for (let index = 0; index < messages.length; index += batchSize) {
-        const batch = messages.slice(index, index + batchSize);
-        decryptedMessages.push(...await encryption.decryptMessages(batch));
-        if (index + batchSize < messages.length) {
-            await yieldToBatch(yieldDelayMs);
-        }
-    }
-    return decryptedMessages;
-}
-
 export async function fetchAndApplyMessages(params: {
     sessionId: string;
     scope?: 'main' | 'sidechain' | 'all';
@@ -1054,38 +854,13 @@ export async function fetchAndApplyMessages(params: {
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Map<string, number>>;
+    sessionReceivedMessages: SessionReceivedMessages;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     markMessagesLoaded: (sessionId: string) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
     log: { log: (message: string) => void };
 } & SessionMessagesPageOptions): Promise<void> {
-    const { sessionId, request, sessionReceivedMessages, applyMessages, markMessagesLoaded, log } =
-        params;
-
-    writeSyncDebugLog(log, `💬 fetchMessages starting for session ${sessionId} - acquiring lock`);
-
-    const DEBUG_MESSAGE_DECRYPT =
-        typeof globalThis !== 'undefined'
-        && (
-            (globalThis as any).__HAPPIER_DEBUG_MESSAGE_DECRYPT__ === true
-            || (typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.messageDecrypt') === '1')
-        );
-
-    // Get encryption - may not be ready yet if session was just created
-    // Throwing an error triggers backoff retry in InvalidateSync
-    const encryption = resolveSessionMessagesEncryption(params);
-    if (!encryption) {
-        if (params.isSessionKnown?.(sessionId) === false) {
-            writeSyncDebugLog(log, `💬 fetchMessages: Session ${sessionId} is not known on this server; skipping message fetch`);
-            return;
-        }
-        writeSyncDebugLog(log, `💬 fetchMessages: Session encryption not ready for ${sessionId}, will retry`);
-        throw new Error(`Session encryption not ready for ${sessionId}`);
-    }
-
-    // Request (apiSocket.request calibrates server time best-effort from the HTTP Date header)
     const scope = params.scope ?? 'main';
     const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim().length > 0 ? params.sidechainId.trim() : null;
     if (scope === 'sidechain' && sidechainId === null) {
@@ -1100,129 +875,38 @@ export async function fetchAndApplyMessages(params: {
     if (scope === 'sidechain' && sidechainId) {
         qs.set('sidechainId', sidechainId);
     }
-    const data = await fetchSessionMessagesPageWithTelemetry({
-        kind: 'initial',
-        request,
-        path: `/v1/sessions/${sessionId}/messages?${qs.toString()}`,
-        scope,
-        sidechainId,
-    });
-    params.onMessagesPage?.(data);
-    recordMessagePageTelemetry('initial', data.messages.length);
-
-    // Collect existing messages
-    let existingMessages = sessionReceivedMessages.get(sessionId);
-    if (!existingMessages) {
-        existingMessages = new Map<string, number>();
-        sessionReceivedMessages.set(sessionId, existingMessages);
-    }
-
-    // Decrypt and normalize messages
-    const normalizedMessages: NormalizedMessage[] = [];
-
-    // Filter out existing messages and prepare for batch decryption
-    const messagesToDecrypt: ApiMessage[] = [];
-    for (const msg of [...data.messages].reverse()) {
-        const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
-        const existingUpdatedAt = existingMessages.get(msg.id);
-        if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
-            messagesToDecrypt.push(msg);
-        }
-    }
-    recordMessageDedupeTelemetry('initial', data.messages.length, messagesToDecrypt.length);
-
-    const decryptedMessages = await decryptMessagesInBatchesWithTelemetry('initial', encryption, messagesToDecrypt, params);
-
-    // Process decrypted messages
-    const debugDecryptStats = DEBUG_MESSAGE_DECRYPT
-        ? {
-            fetched: data.messages.length,
-            toDecrypt: messagesToDecrypt.length,
-            decryptedEntries: decryptedMessages.length,
-            decryptedWithContent: 0,
-            normalized: 0,
-        }
-        : null;
-
-    const normalizationState = createRawMessageNormalizationSequenceState();
-    measureMessageNormalization('initial', decryptedMessages.length, () => {
-        for (let i = 0; i < decryptedMessages.length; i++) {
-            const decrypted = decryptedMessages[i];
-            const inputMessage = messagesToDecrypt[i];
-            const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
-            if (decrypted) {
-                if (debugDecryptStats && decrypted.content !== null) {
-                    debugDecryptStats.decryptedWithContent++;
-                }
-
-                const inputUpdatedAt = inputMessage
-                    ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
-                    : decrypted.createdAt;
-                // IMPORTANT: Do not mark encrypted messages as "received" when decryption failed.
-                // Otherwise a keyless device (or a device with delayed key init) can permanently
-                // treat encrypted history as empty until runtime state is fully reset.
-                if (decrypted.content !== null || !inputWasEncrypted) {
-                    existingMessages.set(decrypted.id, inputUpdatedAt);
-                }
-
-                // Expected: encrypted history can be present even when this device lacks the secret key.
-                // In that case decryption yields null and we must not attempt to normalize/log it.
-                if (inputWasEncrypted && decrypted.content === null) {
-                    continue;
-                }
-                if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
-                    continue;
-                }
-
-                const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
-                if (lifecycleEvent) {
-                    params.onTaskLifecycleEvent?.(lifecycleEvent);
-                }
-                // Normalize the decrypted message
-                const normalized = normalizeRawMessageInSequence({
-                    id: decrypted.id,
-                    localId: decrypted.localId,
-                    createdAt: decrypted.createdAt,
-                    raw: decrypted.content,
-                    seq: decrypted.seq ?? undefined,
-                    messageRole: decrypted.messageRole ?? undefined,
-                }, normalizationState);
-                if (normalized) {
-                    applySidechainScopeMetadata({
-                        normalizedMessage: normalized,
-                        inputSidechainId: inputMessage?.sidechainId,
-                        scope: params.scope,
-                        requestedSidechainId: params.sidechainId ?? null,
-                    });
-                    normalizedMessages.push(normalized);
-                }
-            }
-        }
+    const result = await runSessionMessagesPagePipeline({
+        sessionId: params.sessionId,
+        purpose: 'initial',
+        page: {
+            direction: 'initial',
+            requestPath: `/v1/sessions/${params.sessionId}/messages?${qs.toString()}`,
+            scope,
+            sidechainId,
+        },
+        lifecyclePolicy: 'emit',
+        getSessionEncryption: params.getSessionEncryption,
+        isSessionKnown: params.isSessionKnown,
+        request: params.request,
+        sessionReceivedMessages: params.sessionReceivedMessages,
+        applyMessages: params.applyMessages,
+        onTaskLifecycleEvent: params.onTaskLifecycleEvent,
+        onMessagesPage: params.onMessagesPage,
+        log: params.log,
+        sessionEncryptionMode: params.sessionEncryptionMode,
+        initialMessageDecryptBatchSize: params.initialMessageDecryptBatchSize,
+        messageDecryptBatchSize: params.messageDecryptBatchSize,
+        messageDecryptYieldDelayMs: params.messageDecryptYieldDelayMs,
+        yieldToMessageDecryptBatch: params.yieldToMessageDecryptBatch,
     });
 
-    if (debugDecryptStats) {
-        debugDecryptStats.normalized = normalizedMessages.length;
-        const sample = messagesToDecrypt[0];
-        const sampleCipherPreview =
-            sample && sample.content?.t === 'encrypted' && typeof sample.content.c === 'string'
-                ? `${sample.content.c.slice(0, 24)}…(${sample.content.c.length})`
-                : null;
+    if (result.skippedMissingSession || params.isSessionKnown?.(params.sessionId) === false) return;
 
-        log.log(
-            `[debug] fetchMessages decrypt stats for ${sessionId}: `
-                + `fetched=${debugDecryptStats.fetched} `
-                + `toDecrypt=${debugDecryptStats.toDecrypt} `
-                + `decryptedWithContent=${debugDecryptStats.decryptedWithContent} `
-                + `normalized=${debugDecryptStats.normalized}`
-                + (sample ? ` sample={id:${sample.id} seq:${sample.seq} cipher:${sampleCipherPreview}}` : '')
-        );
-    }
-
-    // Apply to storage
-    recordMessageApplyTelemetry('initial', decryptedMessages.length, sessionId, normalizedMessages, applyMessages);
-
-    markMessagesLoaded(sessionId);
-    writeSyncDebugLog(log, `💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
+    params.markMessagesLoaded(params.sessionId);
+    writeSyncDebugLog(
+        params.log,
+        `💬 fetchMessages completed for session ${params.sessionId} - processed ${result.applied} messages`,
+    );
 }
 
 export async function fetchAndApplyOlderMessages(params: {
@@ -1234,7 +918,7 @@ export async function fetchAndApplyOlderMessages(params: {
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Map<string, number>>;
+    sessionReceivedMessages: SessionReceivedMessages;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
@@ -1287,12 +971,14 @@ export async function fetchAndApplyNewerMessages(params: {
     sessionId: string;
     afterSeq: number;
     limit: number;
+    /** Exact server rows whose hidden message-updated event authorized replacement. */
+    authoritativeUpdateMessageIds?: ReadonlySet<string>;
     scope?: 'main' | 'sidechain' | 'all';
     sidechainId?: string | null;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Map<string, number>>;
+    sessionReceivedMessages: SessionReceivedMessages;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
@@ -1325,6 +1011,7 @@ export async function fetchAndApplyNewerMessages(params: {
         lifecyclePolicy: 'emit',
         getSessionEncryption: params.getSessionEncryption,
         isSessionKnown: params.isSessionKnown,
+        authoritativeUpdateMessageIds: params.authoritativeUpdateMessageIds,
         request,
         sessionReceivedMessages,
         applyMessages,

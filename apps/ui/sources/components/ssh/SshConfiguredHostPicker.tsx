@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -9,6 +8,7 @@ import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { t } from '@/text';
 
 import type { SshConfiguredHostSuggestion } from './filterConfiguredSshHostSuggestions';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type ApplySshConfiguredHostSuggestion = (suggestion: SshConfiguredHostSuggestion) => void;
 
@@ -42,7 +42,7 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
         id: suggestion.id,
         title: suggestion.alias,
         subtitle: describeSuggestion(suggestion),
-        icon: <Ionicons name="terminal-outline" size={16} color={theme.colors.text.secondary} />,
+        icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} />,
     })), [props.suggestions, theme.colors.text.secondary]);
 
     const handleSelect = React.useCallback((suggestionId: string) => {
@@ -82,12 +82,12 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
                             variant="selectable"
                             selected={open}
                             onPress={toggle}
-                            left={<Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />}
+                            left={<Icon name="terminal" size={16} color={theme.colors.text.secondary} />}
                             title={t('settings.sshConfiguredHostPickerTitle')}
                             subtitle={props.refreshing
                                 ? t('settings.sshConfiguredHostPickerRefreshingSubtitle')
                                 : t('settings.sshConfiguredHostPickerSubtitle')}
-                            right={<Ionicons name="chevron-down" size={18} color={theme.colors.text.secondary} />}
+                            right={<Icon name="caret-down" size={16} color={theme.colors.text.secondary} />}
                         />
                     )}
                 />

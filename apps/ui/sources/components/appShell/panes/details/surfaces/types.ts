@@ -1,5 +1,10 @@
 import type * as React from 'react';
 
+import type {
+    PluginUiDestinationReferenceV1,
+    PluginUiInstanceKeyV1,
+} from '@happier-dev/protocol/plugins/ui';
+
 import type { DetailsTab, DetailsTabState } from '../workspace/detailsWorkspaceTypes';
 
 export type DetailsSurfaceScopeV1 =
@@ -63,10 +68,22 @@ export type DetailsSurfaceDescriptorV1 = Readonly<{
 
 export type DetailsSurfaceHostCallbacksV1 = Readonly<{
     openTab?: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
+    /**
+     * The canonical Details workspace overlay owner. A plugin destination is
+     * qualified before this callback is reached; input/currentness stay in the
+     * mount-local navigation handoff rather than the workspace state.
+     */
+    openOverlay?: (input: Readonly<{
+        destination: PluginUiDestinationReferenceV1;
+        instanceKey?: PluginUiInstanceKeyV1;
+    }>) => void;
     closeTab?: (tabKey: string) => void;
     pinTab?: (tabKey: string) => void;
     unpinTab?: (tabKey: string) => void;
-    replaceTab?: (tabKey: string, tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
+    replaceTab?: (tabKey: string, tab: DetailsTab, options?: Readonly<{
+        intent?: 'default' | 'pinned' | 'preview';
+        restoreSourceOnRehydrate?: boolean;
+    }>) => void;
 }>;
 
 export type DetailsSurfaceRenderInputV1 = Readonly<{

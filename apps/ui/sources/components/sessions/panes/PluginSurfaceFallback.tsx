@@ -1,24 +1,38 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
+import {
+    SurfaceStateCard,
+    type SurfaceStateAction,
+    type SurfaceStateAccessibilitySemantics,
+} from '@/components/ui/surfaces/SurfaceStateCard';
+import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
 
 export function PluginSurfaceFallback(props: Readonly<{
     testID: string;
-    reason?: string;
+    /** Raw host/runtime diagnostic; the shared presentation owner localizes it. */
+    reasonCode?: string | null;
+    /** Caller-owned recovery through an incumbent host surface. */
+    action?: SurfaceStateAction;
+    /** Dynamic mount failures announce through the shared terminal-state owner. */
+    accessibilitySemantics?: SurfaceStateAccessibilitySemantics;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
+    const presentation = resolvePluginSurfaceStatePresentation({
+        state: 'unavailable',
+        reasonCode: props.reasonCode,
+    });
+    const card = presentation.card;
+    if (!card) {
+        throw new Error('plugin_surface_unavailable_presentation_missing_card');
+    }
     return (
-        <View
+        <SurfaceStateCard
             testID={props.testID}
-            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}
-        >
-            <Text style={{ color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center' }}>
-                {props.reason ?? t('common.unavailable')}
-            </Text>
-        </View>
+            kind={card.kind}
+            title={card.title}
+            reason={card.reason}
+            diagnosticCode={presentation.diagnosticCode}
+            action={props.action}
+            accessibilitySemantics={props.accessibilitySemantics ?? card.accessibilitySemantics}
+        />
     );
 }

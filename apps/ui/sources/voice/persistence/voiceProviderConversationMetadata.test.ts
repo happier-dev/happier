@@ -34,14 +34,14 @@ describe('voice provider conversation metadata', () => {
   it('round-trips provider-owned resumable identity without overwriting siblings', () => {
     const first = writeVoiceProviderConversationMetadata(
       { retained: true },
-      { providerId: 'realtime_grok', state: { conversationId: 'conversation-1' }, updatedAt: 10 },
+      { providerId: 'happier.voice.xai/realtime-grok', state: { conversationId: 'conversation-1' }, updatedAt: 10 },
     );
     const second = writeVoiceProviderConversationMetadata(
       first,
-      { providerId: 'realtime_other', state: { conversationId: 'conversation-2' }, updatedAt: 20 },
+      { providerId: 'happier.voice.openai/realtime-openai', state: { conversationId: 'conversation-2' }, updatedAt: 20 },
     );
 
-    expect(readVoiceProviderConversationMetadata(second, 'realtime_grok')).toEqual({
+    expect(readVoiceProviderConversationMetadata(second, 'happier.voice.xai/realtime-grok')).toEqual({
       conversationId: 'conversation-1',
       updatedAt: 10,
     });
@@ -54,20 +54,20 @@ describe('voice provider conversation metadata', () => {
       voiceProviderConversationsV1: {
         v: 1,
         providers: {
-          realtime_grok: { conversationId: 'conversation-1', updatedAt: 10 },
-          realtime_other: { conversationId: 'conversation-2', updatedAt: 20 },
+          'happier.voice.xai/realtime-grok': { conversationId: 'conversation-1', updatedAt: 10 },
+          'happier.voice.openai/realtime-openai': { conversationId: 'conversation-2', updatedAt: 20 },
         },
       },
     };
 
     const oneLeft = writeVoiceProviderConversationMetadata(metadata, {
-      providerId: 'realtime_grok', state: null, updatedAt: 30,
+      providerId: 'happier.voice.xai/realtime-grok', state: null, updatedAt: 30,
     });
-    expect(readVoiceProviderConversationMetadata(oneLeft, 'realtime_grok')).toBeNull();
-    expect(readVoiceProviderConversationMetadata(oneLeft, 'realtime_other')?.conversationId).toBe('conversation-2');
+    expect(readVoiceProviderConversationMetadata(oneLeft, 'happier.voice.xai/realtime-grok')).toBeNull();
+    expect(readVoiceProviderConversationMetadata(oneLeft, 'happier.voice.openai/realtime-openai')?.conversationId).toBe('conversation-2');
 
     const empty = writeVoiceProviderConversationMetadata(oneLeft, {
-      providerId: 'realtime_other', state: null, updatedAt: 40,
+      providerId: 'happier.voice.openai/realtime-openai', state: null, updatedAt: 40,
     });
     expect(empty).toEqual({ retained: true });
   });
@@ -88,12 +88,12 @@ describe('voice provider conversation metadata', () => {
       voiceProviderConversationsV1: {
         v: 1,
         providers: {
-          realtime_grok: { conversationId: '', updatedAt: 10 },
+          'happier.voice.xai/realtime-grok': { conversationId: '', updatedAt: 10 },
           'acme.synthetic-voice/': { conversationId: 'malformed', updatedAt: 10 },
           [oversizedProviderId]: { conversationId: 'oversized', updatedAt: 10 },
         },
       },
-    }, 'realtime_grok')).toBeNull();
+    }, 'happier.voice.xai/realtime-grok')).toBeNull();
     expect(readVoiceProviderConversationMetadata({
       voiceProviderConversationsV1: {
         v: 1,

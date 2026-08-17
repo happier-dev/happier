@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type DiffPresentationStyleToggleButtonProps = Readonly<{
     disabled?: boolean;
@@ -52,8 +52,8 @@ export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyl
             }}
         >
             <View style={styles.icon}>
-                <Ionicons
-                    name={effectiveStyle === 'unified' ? 'swap-vertical-outline' : 'grid-outline'}
+                <Icon
+                    name={effectiveStyle === 'unified' ? 'arrows-down-up' : 'grid-four'}
                     size={iconSize}
                     color={theme.colors.text.secondary}
                 />

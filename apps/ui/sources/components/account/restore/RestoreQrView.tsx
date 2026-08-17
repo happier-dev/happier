@@ -21,6 +21,9 @@ import { Text } from '@/components/ui/text/Text';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { trackAccountRestored } from '@/track';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -200,11 +203,19 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
 
                 if (credentials && !isCancelledRef.current) {
                     const secretString = encodeBase64(credentials.secret, 'base64url');
-                    await auth.login(credentials.token, secretString);
-                    trackAccountRestored();
-                    if (!isCancelledRef.current) {
-                        handleBack();
-                    }
+                    await presentFirstKeyCredentialLifecycle({
+                        run: async () =>
+                            await auth.login(
+                                credentials.token,
+                                secretString,
+                            ),
+                        onCompleted: () => {
+                            trackAccountRestored();
+                            if (!isCancelledRef.current) {
+                                handleBack();
+                            }
+                        },
+                    });
                 } else if (!isCancelledRef.current) {
                     Modal.alert(t('common.error'), t('errors.authenticationFailed'));
                 }

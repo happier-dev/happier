@@ -1,31 +1,27 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { Platform } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 import { MultiPaneHost } from './MultiPaneHost';
 import { renderScreen } from '@/dev/testkit';
+import {
+    dispatchEscapeToLayerStack,
+} from '@/keyboard/escape';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('MultiPaneHost (Escape closes docked panes)', () => {
     it('closes docked details first on Escape (web)', async () => {
+        const originalPlatform = Platform.OS;
         const onCloseRight = vi.fn();
         const onCloseDetails = vi.fn();
 
-        const fakeWindow = new (globalThis as any).EventTarget();
-        (globalThis as any).window = fakeWindow;
-        (globalThis as any).KeyboardEvent = class KeyboardEvent extends Event {
-            key: string;
-            target: any;
-            defaultPrevented = false;
-            constructor(type: string, init: { key: string; target?: any }) {
-                super(type);
-                this.key = init.key;
-                this.target = init.target;
-            }
-        };
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
 
-        await renderScreen(<MultiPaneHost
+        try {
+            expect(Platform.OS).toBe('web');
+            await renderScreen(<MultiPaneHost
                 main={<Main />}
                 rightPane={<Right />}
                 detailsPane={<Details />}
@@ -38,32 +34,27 @@ describe('MultiPaneHost (Escape closes docked panes)', () => {
                 onCommitDetailsDockWidthPx={() => {}}
             />);
 
-        act(() => {
-            (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
-        });
+            act(() => {
+                dispatchEscapeToLayerStack({ key: 'Escape' });
+            });
 
-        expect(onCloseDetails).toHaveBeenCalledTimes(1);
-        expect(onCloseRight).toHaveBeenCalledTimes(0);
+            expect(onCloseDetails).toHaveBeenCalledTimes(1);
+            expect(onCloseRight).toHaveBeenCalledTimes(0);
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
     });
 
     it('does not close panes on Escape when event target is a text input', async () => {
+        const originalPlatform = Platform.OS;
         const onCloseRight = vi.fn();
         const onCloseDetails = vi.fn();
 
-        const fakeWindow = new (globalThis as any).EventTarget();
-        (globalThis as any).window = fakeWindow;
-        (globalThis as any).KeyboardEvent = class KeyboardEvent extends Event {
-            key: string;
-            target: any;
-            defaultPrevented = false;
-            constructor(type: string, init: { key: string; target?: any }) {
-                super(type);
-                this.key = init.key;
-                this.target = init.target;
-            }
-        };
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
 
-        await renderScreen(<MultiPaneHost
+        try {
+            expect(Platform.OS).toBe('web');
+            await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={<Details />}
@@ -76,14 +67,15 @@ describe('MultiPaneHost (Escape closes docked panes)', () => {
                     onCommitDetailsDockWidthPx={() => {}}
                 />);
 
-        act(() => {
-            (globalThis as any).window.dispatchEvent(
-                new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape', target: { tagName: 'INPUT' } })
-            );
-        });
+            act(() => {
+                dispatchEscapeToLayerStack({ key: 'Escape', target: { tagName: 'INPUT' } });
+            });
 
-        expect(onCloseDetails).toHaveBeenCalledTimes(0);
-        expect(onCloseRight).toHaveBeenCalledTimes(0);
+            expect(onCloseDetails).toHaveBeenCalledTimes(0);
+            expect(onCloseRight).toHaveBeenCalledTimes(0);
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
     });
 });
 

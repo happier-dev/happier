@@ -74,6 +74,19 @@ export function insertForkDividersIntoTranscriptItems<T extends ForkDividerTrans
     items: readonly T[];
     fork: ForkedTranscriptSnapshot;
 }>): Array<T | Extract<ChatListItem, { kind: 'fork-divider' }>> {
+    // A boundary divider is CHROME FOR CONTENT: it labels the seam between an ancestor
+    // segment and its child. With no rows there is no seam to label, and emitting one anyway
+    // publishes a NON-EMPTY transcript before a single message exists. Measured live on web
+    // (session cms4aenky5lnktm72sfmya6uk, cold route load, 2026-07-30): the first published
+    // list was `[fork-divider]` alone (1 mounted row, 324px), so Legend completed its
+    // bootstrap against that placeholder and flipped its row container from `opacity: 0` to
+    // `opacity: 1` — every later hydration wave (2291 -> 2253 -> 12241px) then happened in
+    // front of the reader. The unforked control published an EMPTY list, stayed covered
+    // through placement, and revealed once, already at the tail. Staying empty until the
+    // first real row lands is what restores that behaviour for forked transcripts; it is a
+    // data-shape decision at the producer, NOT a reveal delay or a cover.
+    if (params.items.length === 0) return [];
+
     const boundaries: Array<{
         childSegmentIndex: number;
         parentSessionId: string;

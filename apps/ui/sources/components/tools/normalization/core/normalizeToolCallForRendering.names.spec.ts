@@ -83,7 +83,7 @@ describe('normalizeToolCallForRendering (names)', () => {
 
         const webSearch = normalizeToolCallForRendering(
             makeTool({
-                name: 'search',
+                name: 'magnifying-glass',
                 input: { _acp: { title: 'web_search' }, title: 'web_search' },
             }),
         );

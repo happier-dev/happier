@@ -13,6 +13,7 @@ export type StaleSessionRunnerTranslationKey =
     | 'session.staleRunner.banner.pendingBody'
     | 'session.staleRunner.banner.busyBody'
     | 'session.staleRunner.banner.failedBody'
+    | 'session.staleRunner.banner.unavailableBody'
     | 'session.staleRunner.actions.restart'
     | 'session.staleRunner.actions.restarting'
     | 'session.staleRunner.actions.hideBanner'
@@ -20,7 +21,8 @@ export type StaleSessionRunnerTranslationKey =
     | 'session.staleRunner.status.stale'
     | 'session.staleRunner.status.restarting'
     | 'session.staleRunner.status.busy'
-    | 'session.staleRunner.status.failed';
+    | 'session.staleRunner.status.failed'
+    | 'common.unavailable';
 
 export type StaleSessionRunnerTranslate = (key: StaleSessionRunnerTranslationKey) => string;
 
@@ -37,6 +39,7 @@ export type StaleSessionRunnerNoticePresentation = Readonly<{
         body: string;
         actionLabel: string;
         actionAccessibilityLabel: string;
+        actionBusy: boolean;
         disabled: boolean;
     }>;
     statusBadge: AgentInputStatusBadge;
@@ -54,31 +57,45 @@ export function buildStaleSessionRunnerFingerprint(state: SessionRunnerRuntimeSt
         readIdentityPart(state.runner.processCommandHash),
         readIdentityPart(state.runner.runtimeId ?? state.runner.entrypointVersion),
         readIdentityPart(state.daemon.currentEntrypointVersion),
-        state.plannedRestart.eligible ? 'eligible' : state.plannedRestart.disabledReason ?? 'ineligible',
     ].join(':');
 }
 
-function isActionableStaleRuntimeState(state: SessionRunnerRuntimeStateV1): boolean {
-    return state.versionState === 'stale'
-        && state.plannedRestart.supported === true
-        && state.plannedRestart.eligible === true;
+function isRestartAvailable(state: SessionRunnerRuntimeStateV1): boolean {
+    return state.plannedRestart.supported === true
+        && state.plannedRestart.eligible === true
+        && !state.plannedRestart.disabledReason;
 }
 
-function resolveBodyKey(status: StaleSessionRunnerOperationStatus | null): StaleSessionRunnerTranslationKey {
+function isRestartBusy(state: SessionRunnerRuntimeStateV1): boolean {
+    return state.plannedRestart.disabledReason === 'turn_in_progress'
+        || state.plannedRestart.disabledReason === 'approval_pending'
+        || state.plannedRestart.disabledReason === 'restart_already_running';
+}
+
+function resolveBodyKey(
+    state: SessionRunnerRuntimeStateV1,
+    status: StaleSessionRunnerOperationStatus | null,
+): StaleSessionRunnerTranslationKey {
     if (status?.kind === 'pending') return 'session.staleRunner.banner.pendingBody';
     if (status?.kind === 'result') {
         if (status.result.status === 'busy') return 'session.staleRunner.banner.busyBody';
         if (status.result.ok === false) return 'session.staleRunner.banner.failedBody';
     }
+    if (isRestartBusy(state)) return 'session.staleRunner.banner.busyBody';
+    if (!isRestartAvailable(state)) return 'session.staleRunner.banner.unavailableBody';
     return 'session.staleRunner.banner.body';
 }
 
-function resolveBadgeLabelKey(status: StaleSessionRunnerOperationStatus | null): StaleSessionRunnerTranslationKey {
+function resolveBadgeLabelKey(
+    state: SessionRunnerRuntimeStateV1,
+    status: StaleSessionRunnerOperationStatus | null,
+): StaleSessionRunnerTranslationKey {
     if (status?.kind === 'pending') return 'session.staleRunner.status.restarting';
     if (status?.kind === 'result') {
         if (status.result.status === 'busy') return 'session.staleRunner.status.busy';
         if (status.result.ok === false) return 'session.staleRunner.status.failed';
     }
+    if (isRestartBusy(state)) return 'session.staleRunner.status.busy';
     return 'session.staleRunner.status.stale';
 }
 
@@ -87,30 +104,34 @@ export function buildStaleSessionRunnerNoticePresentation(input: Readonly<{
     operationStatus: StaleSessionRunnerOperationStatus | null;
     translate: StaleSessionRunnerTranslate;
 }>): StaleSessionRunnerNoticePresentation | null {
-    if (!isActionableStaleRuntimeState(input.runtimeState)) return null;
+    if (input.runtimeState.versionState !== 'stale') return null;
 
     const pending = input.operationStatus?.kind === 'pending';
-    const labelKey = resolveBadgeLabelKey(input.operationStatus);
+    const restartAvailable = isRestartAvailable(input.runtimeState);
+    const restartBusy = isRestartBusy(input.runtimeState);
+    const labelKey = resolveBadgeLabelKey(input.runtimeState, input.operationStatus);
+    const actionLabelKey = pending
+        ? 'session.staleRunner.actions.restarting'
+        : restartAvailable || restartBusy
+            ? 'session.staleRunner.actions.restart'
+            : 'common.unavailable';
     return {
         fingerprint: buildStaleSessionRunnerFingerprint(input.runtimeState),
         banner: {
             testID: 'session-staleRunner-version',
             actionTestID: 'session-staleRunner-restart',
             title: input.translate('session.staleRunner.banner.title'),
-            body: input.translate(resolveBodyKey(input.operationStatus)),
-            actionLabel: pending
-                ? input.translate('session.staleRunner.actions.restarting')
-                : input.translate('session.staleRunner.actions.restart'),
-            actionAccessibilityLabel: pending
-                ? input.translate('session.staleRunner.actions.restarting')
-                : input.translate('session.staleRunner.actions.restart'),
-            disabled: pending,
+            body: input.translate(resolveBodyKey(input.runtimeState, input.operationStatus)),
+            actionLabel: input.translate(actionLabelKey),
+            actionAccessibilityLabel: input.translate(actionLabelKey),
+            actionBusy: pending,
+            disabled: pending || !restartAvailable,
         },
         statusBadge: {
             key: STALE_SESSION_RUNNER_STATUS_BADGE_KEY,
             label: input.translate(labelKey),
             testID: 'session-staleRunner-status-badge',
-            accessibilityLabel: input.translate('session.staleRunner.status.stale'),
+            accessibilityLabel: input.translate(labelKey),
             tone: 'warning',
             emphasis: 'prominent',
         },

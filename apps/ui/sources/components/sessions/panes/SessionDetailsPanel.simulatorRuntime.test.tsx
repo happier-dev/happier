@@ -96,6 +96,9 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
             familiesById: {},
         },
     })),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/domains/local/services/preview/useLocalServicePreviewState', () => ({

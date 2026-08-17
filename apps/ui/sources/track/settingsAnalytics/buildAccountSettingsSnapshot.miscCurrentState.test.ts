@@ -19,9 +19,7 @@ describe('buildAccountSettingsSnapshot', () => {
             attachmentsUploadsUploadLocation: 'os_temp',
             attachmentsUploadsVcsIgnoreStrategy: 'none',
             attachmentsUploadsVcsIgnoreWritesEnabled: false,
-            serverSelectionActiveTargetKind: 'group',
             sessionTagsEnabled: false,
-            terminalConnectLegacySecretExportEnabled: true,
         });
 
         expect(snapshot.properties.acct_setting__sessionThinkingDisplayMode).toBe('hidden');
@@ -35,9 +33,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__attachmentsUploadsUploadLocation).toBe('os_temp');
         expect(snapshot.properties.acct_setting__attachmentsUploadsVcsIgnoreStrategy).toBe('none');
         expect(snapshot.properties.acct_setting__attachmentsUploadsVcsIgnoreWritesEnabled).toBe(false);
-        expect(snapshot.properties.acct_setting__serverSelectionActiveTargetKind).toBe('group');
         expect(snapshot.properties.acct_setting__sessionTagsEnabled).toBe(false);
-        expect(snapshot.properties.acct_setting__terminalConnectLegacySecretExportEnabled).toBe(true);
     });
 
     it('tracks scm and files settings from the canonical account registry', () => {

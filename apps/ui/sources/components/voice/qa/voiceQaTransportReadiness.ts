@@ -4,6 +4,7 @@ import {
   type FeaturesResponse,
 } from '@happier-dev/protocol';
 
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveVoiceDaemonDirectRouteAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
 
 export type VoiceQaTransportReadiness = Readonly<{
@@ -33,6 +34,7 @@ export function resolveVoiceQaTransportReadiness(input: Readonly<{
   machineId: string | null | undefined;
   daemonHttpPort: unknown;
   directEndpoint: unknown;
+  credentials: AuthCredentials | null;
   accountProfileId: unknown;
   socketStatus: unknown;
   activeSocketId: unknown;
@@ -49,10 +51,8 @@ export function resolveVoiceQaTransportReadiness(input: Readonly<{
     machineControlPortAuthorized,
     directLoopbackEndpointReady: resolveVoiceDaemonDirectRouteAvailability({
       serverFeatures: input.serverFeatures,
-      serverId: input.serverId,
-      machineId: input.machineId,
+      credentials: input.credentials,
       endpoint: input.directEndpoint,
-      daemonHttpPort,
     }) === 'available',
     accountProfileReady: normalizeNonEmptyString(input.accountProfileId) !== null,
     activeServerSocketReady: input.socketStatus === 'connected'

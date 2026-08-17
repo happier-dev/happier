@@ -2,6 +2,7 @@ import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceRe
 import type { DaemonVoiceInferenceNormalizationDecision } from '@happier-dev/protocol';
 
 import { DaemonVoiceInferenceClient } from './DaemonVoiceInferenceClient';
+import type { DaemonVoiceInferenceMachineTarget } from './DaemonVoiceInferenceClient';
 
 export type DaemonSttControllerDeps = Readonly<{
     client: Pick<DaemonVoiceInferenceClient, 'transcribeRecordedAudio'>;
@@ -19,6 +20,7 @@ export class DaemonSttController {
 
     async transcribeRecordedAudio(params: Readonly<{
         sessionId?: string | null;
+        machineTarget?: DaemonVoiceInferenceMachineTarget | null;
         source: LocalUploadSource;
         inputMimeType: string;
         packId: string | null;

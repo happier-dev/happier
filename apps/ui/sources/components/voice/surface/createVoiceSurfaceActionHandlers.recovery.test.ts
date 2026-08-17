@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { VoiceConnectRecoveryTarget } from './resolveVoiceConnectRecoveryTarget';
+
 const state = vi.hoisted(() => ({
   hapticsLight: vi.fn(),
   bargeIn: vi.fn(async () => undefined),
@@ -85,7 +87,7 @@ describe('createVoiceSurfaceActionHandlers recovery', () => {
     expect(router.push).toHaveBeenCalledWith('/settings/voice');
   });
 
-  it('retains the exact selected machine, server, service, and account for Connect recovery', async () => {
+  it('forwards the canonical selected service and account route for Connect recovery', async () => {
     const { createVoiceSurfaceActionHandlers } = await import('./createVoiceSurfaceActionHandlers');
     const router = { push: vi.fn() };
     createVoiceSurfaceActionHandlers({
@@ -98,11 +100,9 @@ describe('createVoiceSurfaceActionHandlers recovery', () => {
             pluginId: 'happier.agent.codex',
             localId: 'openai-codex',
             accountId: 'account-work',
-            machineId: 'm2',
-            serverId: 'server1',
           },
         },
-      },
+      } satisfies VoiceConnectRecoveryTarget,
     }).onRecover();
     expect(router.push).toHaveBeenCalledWith({
       pathname: '/(app)/settings/connected-services/account',
@@ -110,8 +110,6 @@ describe('createVoiceSurfaceActionHandlers recovery', () => {
         pluginId: 'happier.agent.codex',
         localId: 'openai-codex',
         accountId: 'account-work',
-        machineId: 'm2',
-        serverId: 'server1',
       },
     });
   });
@@ -197,10 +195,10 @@ describe('createVoiceSurfaceActionHandlers recovery', () => {
 
     createVoiceSurfaceActionHandlers({
       ...params(null, router),
-      activeAdapterId: 'realtime_codex',
+      activeAdapterId: 'happier.agent.codex/realtime-codex',
       fallbackOpenConversationControlSessionId: 'control-session',
       openConversationSessionId: 'conversation-before-binding',
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       captureNavigationFocusReturn,
       navigateWithFocusReturn,
     }).onOpenConversation();
@@ -217,6 +215,27 @@ describe('createVoiceSurfaceActionHandlers recovery', () => {
     expect(router.push).toHaveBeenCalledWith('/session/conversation-after-binding');
   });
 
+  it('opens Voice History when the active direct-media binding has no ordinary session destination', async () => {
+    const { createVoiceSurfaceActionHandlers } = await import('./createVoiceSurfaceActionHandlers');
+    const router = { push: vi.fn() };
+    state.ensureBoundForOpenConversation.mockResolvedValueOnce({
+      conversationSessionId: null,
+    });
+
+    createVoiceSurfaceActionHandlers({
+      ...params(null, router),
+      fallbackOpenConversationControlSessionId: 'global-voice-control',
+      openConversationSessionId: 'voice-history-carrier',
+      routeSessionId: null,
+      sessionId: null,
+      variant: 'sidebar',
+    }).onOpenConversation();
+
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledWith('/settings/voice-history');
+    });
+  });
+
   it('opens platform settings for microphone permission recovery', async () => {
     const { createVoiceSurfaceActionHandlers } = await import('./createVoiceSurfaceActionHandlers');
     createVoiceSurfaceActionHandlers(params('open_settings')).onRecover();
@@ -227,36 +246,6 @@ describe('createVoiceSurfaceActionHandlers recovery', () => {
     const { createVoiceSurfaceActionHandlers } = await import('./createVoiceSurfaceActionHandlers');
     createVoiceSurfaceActionHandlers(params('retry')).onRecover();
     expect(state.toggle).toHaveBeenCalledWith('s1');
-  });
-
-  it('requires an exact session when resolved binding scope does not authorize global start', async () => {
-    const { createVoiceSurfaceActionHandlers } = await import('./createVoiceSurfaceActionHandlers');
-
-    createVoiceSurfaceActionHandlers({
-      ...params(null),
-      startSessionId: null,
-      globalStartAuthorized: false,
-    }).onTogglePress();
-    expect(state.toggle).not.toHaveBeenCalled();
-  });
-
-  it('fires one light haptic only after a legal start or stop action is accepted', async () => {
-    let now = 1_000;
-    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
-    const { createVoiceSurfaceActionHandlers } = await import('./createVoiceSurfaceActionHandlers');
-
-    createVoiceSurfaceActionHandlers(params(null)).onTogglePress();
-    expect(state.toggle).toHaveBeenCalledWith('s1');
-    expect(state.hapticsLight).toHaveBeenCalledTimes(1);
-
-    now += 200;
-    createVoiceSurfaceActionHandlers({ ...params(null), canStop: true }).onTogglePress();
-    expect(state.stop).toHaveBeenCalledWith('s1');
-    expect(state.hapticsLight).toHaveBeenCalledTimes(2);
-
-    createVoiceSurfaceActionHandlers({ ...params(null), startSessionId: null }).onTogglePress();
-    expect(state.hapticsLight).toHaveBeenCalledTimes(2);
-    nowSpy.mockRestore();
   });
 
   it('waits for the canonical interrupted transition before haptic feedback', async () => {

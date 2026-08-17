@@ -134,7 +134,7 @@ describe('buildModelCatalogRows', () => {
       licenseText: 'Review these exact model terms.',
       licenseSourceUrl: 'https://example.com/licenses/acme-v1',
       licenseTextDigest: `sha256:${'a'.repeat(64)}`,
-      artifactDigest: `sha256:${'b'.repeat(64)}`,
+      artifactBinding: { kind: 'sourceIntegrity', integrity: `sha256:${'b'.repeat(64)}` },
       accepted: false,
     } as const;
     const row = buildModelCatalogRows({
@@ -194,12 +194,16 @@ describe('buildModelCatalogRows', () => {
   it('prefers readiness runtimeState over installed when the pack is loaded', () => {
     const sttPack = listModelPackCatalogEntries('stt_sherpa')[0]!.packId;
     const ready = buildModelCatalogRows({
-      statuses: [status(sttPack, { installState: 'installed', runtimeState: 'ready', residentMemoryBytes: 2048 })],
+      statuses: [status(sttPack, {
+        installState: 'installed',
+        runtimeState: 'ready',
+        loadedArtifactBytes: 2048,
+      })],
       selectedSttPackId: null,
       selectedTtsPackId: null,
     }).stt.find((candidate) => candidate.packId === sttPack)!;
     expect(ready.state).toBe('ready');
-    expect(ready.residentMemoryBytes).toBe(2048);
+    expect(ready.loadedArtifactBytes).toBe(2048);
     expect(ready.canRemove).toBe(true);
 
     const warming = buildModelCatalogRows({
@@ -342,7 +346,7 @@ describe('buildModelCatalogRows', () => {
   it('falls back to the catalog default when no selection is stored', () => {
     const result = buildModelCatalogRows({ statuses: [], selectedSttPackId: null, selectedTtsPackId: null });
     expect(result.stt.find((row) => row.isDefault)?.packId).toBe(getDefaultModelPackId('stt_sherpa'));
-    expect(result.tts.find((row) => row.isDefault)).toBeUndefined();
+    expect(result.tts.find((row) => row.isDefault)?.packId).toBe(getDefaultModelPackId('tts_sherpa'));
   });
 
   it('exposes a stable display name derived from the catalog model', () => {

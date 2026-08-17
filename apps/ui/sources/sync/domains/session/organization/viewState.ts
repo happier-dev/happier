@@ -1,4 +1,7 @@
-import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
+import type {
+    SessionFolderList,
+    SessionFolderWorkspaceRefV1,
+} from '@/sync/domains/session/folders';
 import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import {
     buildSessionWorkspaceOrderScopeKey,
@@ -6,17 +9,38 @@ import {
 } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import type { ReorderSessionOrganizationRequest } from '@happier-dev/protocol';
 
-import type { SessionOrganizationProjection } from './types';
+import type {
+    SessionOrganizationDisplayState,
+    SessionOrganizationProjection,
+} from './types';
 import { buildSessionOrganizationTagLabelById } from './tagLabels';
+
+type HumanDisplayState =
+    | Readonly<{ status: 'available'; value: string }>
+    | Extract<SessionOrganizationDisplayState, { status: 'locked' }>;
+
+export type SessionOrganizationListTag = Readonly<{
+    tagId: string;
+    display: HumanDisplayState;
+}>;
 
 export type SessionOrganizationListViewState = Readonly<{
     pinnedSessionKeysV1: readonly string[];
-    sessionFoldersV1: SessionFoldersV1;
+    sessionFoldersV1: SessionFolderList;
     sessionFolderAssignmentsBySessionKey: Record<string, string | null>;
-    sessionTagsV1: Record<string, readonly string[]>;
+    sessionTagsV1: Record<string, readonly SessionOrganizationListTag[]>;
     sessionListGroupOrderV1: Record<string, readonly string[]>;
     sessionWorkspaceOrderV1: SessionWorkspaceOrderV1;
-    workspaceLabelsV1: Record<string, string>;
+    workspaceLabelsV1: Record<string, HumanDisplayState>;
+    folderDisplayStatesById: Record<string, HumanDisplayState>;
+    labelDisplayStatesByKey: Record<string, HumanDisplayState>;
+    sessionTagDisplayStatesBySessionKey: Record<
+        string,
+        readonly Readonly<{
+            tagId: string;
+            display: HumanDisplayState;
+        }>[]
+    >;
 }>;
 
 function buildServerSessionKey(serverId: string, sessionId: string): string {
@@ -33,20 +57,39 @@ function readPlainDisplayRecord(value: unknown): Record<string, unknown> | null 
     return value.v;
 }
 
-function readFolderName(display: unknown): string | null {
-    const record = readPlainDisplayRecord(display);
+function readDisplayRecord(
+    displayState: SessionOrganizationDisplayState,
+    display: unknown,
+): Record<string, unknown> | null {
+    if (displayState.status !== 'available') return null;
+    return isRecord(displayState.value)
+        ? displayState.value
+        : readPlainDisplayRecord(display);
+}
+
+function readFolderName(
+    displayState: SessionOrganizationDisplayState,
+    display: unknown,
+): string | null {
+    const record = readDisplayRecord(displayState, display);
     const name = typeof record?.name === 'string' ? record.name.trim() : '';
     return name || null;
 }
 
-function readLabel(display: unknown): string | null {
-    const record = readPlainDisplayRecord(display);
+function readLabel(
+    displayState: SessionOrganizationDisplayState,
+    display: unknown,
+): string | null {
+    const record = readDisplayRecord(displayState, display);
     const label = typeof record?.label === 'string' ? record.label.trim() : '';
     return label || null;
 }
 
-function readWorkspaceRef(display: unknown): SessionFolderWorkspaceRefV1 | null {
-    const record = readPlainDisplayRecord(display);
+function readWorkspaceRef(
+    displayState: SessionOrganizationDisplayState,
+    display: unknown,
+): SessionFolderWorkspaceRefV1 | null {
+    const record = readDisplayRecord(displayState, display);
     const workspace = record?.workspace;
     if (!isRecord(workspace)) return null;
     if (workspace.t !== 'workspaceScope') return null;
@@ -185,17 +228,36 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
             sessionListGroupOrderV1: {},
             sessionWorkspaceOrderV1: {},
             workspaceLabelsV1: {},
+            folderDisplayStatesById: {},
+            labelDisplayStatesByKey: {},
+            sessionTagDisplayStatesBySessionKey: {},
         };
     }
 
     const pinnedSessionKeysV1 = projection.pinnedSessionIds.map((sessionId) => buildServerSessionKey(serverId, sessionId));
     const tagLabelsById = buildSessionOrganizationTagLabelById(projection.tagsById);
-    const sessionTagsV1 = Object.fromEntries(
+    const lockedUnreadable = {
+        status: 'locked',
+        reason: 'content_unreadable',
+    } as const;
+    const sessionTagDisplayStatesBySessionKey = Object.fromEntries(
         Object.entries(projection.tagAssignmentsBySessionId).map(([sessionId, tagIds]) => [
             buildServerSessionKey(serverId, sessionId),
-            tagIds.map((tagId) => tagLabelsById[tagId] ?? tagId),
+            tagIds.map((tagId) => {
+                const tag = projection.tagsById[tagId];
+                const label = tagLabelsById[tagId];
+                return {
+                    tagId,
+                    display: label
+                        ? { status: 'available' as const, value: label }
+                        : tag?.displayState.status === 'locked'
+                            ? tag.displayState
+                            : lockedUnreadable,
+                };
+            }),
         ]),
     );
+    const sessionTagsV1 = sessionTagDisplayStatesBySessionKey;
     const sessionFolderAssignmentsBySessionKey = Object.fromEntries(
         Object.entries(projection.folderAssignmentsBySessionId).map(([sessionId, folderId]) => [
             buildServerSessionKey(serverId, sessionId),
@@ -203,28 +265,37 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         ]),
     );
 
+    const folderDisplayStatesById: Record<string, HumanDisplayState> = {};
     const folders = Object.values(projection.foldersById)
         .filter((folder) => folder.archivedAt == null)
         .map((folder) => {
-            const name = readFolderName(folder.display);
-            const workspace = readWorkspaceRef(folder.display);
-            if (!name || !workspace) return null;
+            const name = readFolderName(folder.displayState, folder.display);
+            const workspace = readWorkspaceRef(folder.displayState, folder.display);
+            folderDisplayStatesById[folder.folderId] = name
+                ? { status: 'available', value: name }
+                : folder.displayState.status === 'locked'
+                    ? folder.displayState
+                    : lockedUnreadable;
             return {
                 id: folder.folderId,
-                workspace,
+                workspace: workspace ?? null,
                 parentId: folder.parentFolderId,
-                name,
+                name: name ?? '',
                 createdAt: folder.createdAt,
                 updatedAt: folder.updatedAt,
                 ...(folder.sortKey ? { sortKey: folder.sortKey } : {}),
+                displayState: folderDisplayStatesById[folder.folderId]!,
             };
         })
         .filter((folder): folder is NonNullable<typeof folder> => folder != null)
-        .sort((a, b) => compareBySortKey(a, b) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+        .sort((a, b) => compareBySortKey(a, b)
+            || a.name.localeCompare(b.name)
+            || a.id.localeCompare(b.id));
 
     const sessionListGroupOrderV1: Record<string, string[]> = {};
     const sessionWorkspaceOrderV1: Record<string, string[]> = {};
-    const workspaceLabelsV1: Record<string, string> = {};
+    const workspaceLabelsV1: Record<string, HumanDisplayState> = {};
+    const labelDisplayStatesByKey: Record<string, HumanDisplayState> = {};
     for (const entries of Object.values(projection.orderEntriesByScopeKey)) {
         const orderedEntries = [...entries].sort((a, b) => compareBySortKey(a, b) || a.itemKey.localeCompare(b.itemKey));
         for (const entry of orderedEntries) {
@@ -245,13 +316,18 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
             }
         }
     }
-    for (const label of Object.values(projection.labelsByLabelKey)) {
+    for (const [labelKey, label] of Object.entries(projection.labelsByLabelKey)) {
         if (label.labelKind !== 'workspace' || label.archivedAt != null) continue;
-        const displayLabel = readLabel(label.display);
-        if (!displayLabel) continue;
+        const displayLabel = readLabel(label.displayState, label.display);
+        labelDisplayStatesByKey[labelKey] = displayLabel
+            ? { status: 'available', value: displayLabel }
+            : label.displayState.status === 'locked'
+                ? label.displayState
+                : lockedUnreadable;
         const scopeKey = label.scopeKey.trim();
         if (scopeKey) {
-            workspaceLabelsV1[scopeKey] = displayLabel;
+            workspaceLabelsV1[scopeKey] =
+                labelDisplayStatesByKey[labelKey]!;
         }
     }
 
@@ -263,5 +339,8 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         sessionListGroupOrderV1,
         sessionWorkspaceOrderV1,
         workspaceLabelsV1,
+        folderDisplayStatesById,
+        labelDisplayStatesByKey,
+        sessionTagDisplayStatesBySessionKey,
     };
 }

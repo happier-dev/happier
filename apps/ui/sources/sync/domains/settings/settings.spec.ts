@@ -1,13 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import {
-    buildBackendTargetKey,
     DEFAULT_ACTIONS_SETTINGS_V1,
-    DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
+    DEFAULT_BUILT_IN_BACKEND_PROFILES,
+    PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
+    deriveAttentionDeliveryPolicyFromLegacySettings,
 } from '@happier-dev/protocol';
 import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { settingsParse, applySettings, settingsDefaults, type Settings } from './settings';
+import {
+    settingsParse,
+    applySettings,
+    settingsDefaults,
+    SUPPORTED_SCHEMA_VERSION,
+    type Settings,
+} from './settings';
 import { AIBackendProfileSchema } from '../profiles/profileCompatibility';
 import type { AIBackendProfile } from '../profiles/profileCompatibility';
 import type { SavedSecret } from './savedSecretTypes';
@@ -16,6 +23,13 @@ import {
     VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS,
     readLocalConversationVoiceSettings,
 } from './voiceSettings';
+import { readRetainedSecretBindingsByProfileId } from './secretBindings';
+import {
+    mergeCurrentFavoriteModelSelectionsIntoRaw,
+    mergeCurrentRememberedEngineSelectionsIntoRaw,
+    readRetainedFavoriteModelSelectionsV1,
+    readRetainedRememberedEngineSelectionsByScopeV1,
+} from './sessionAuthoringSelectionPersistence';
 
 describe('settings', () => {
     const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
@@ -95,6 +109,14 @@ describe('settings', () => {
                 strictMode: false,
                 servers: [],
                 bindings: [],
+            });
+        });
+
+        it('includes workspace file viewer preferences by default', () => {
+            const settings = settingsParse({});
+            expect(settings.workspaceFileViewerPreferencesV1).toEqual({
+                v: 1,
+                selections: {},
             });
         });
 
@@ -464,11 +486,9 @@ describe('settings', () => {
             expect((parsed as any).featureToggles).toEqual({});
         });
 
-        it('defaults per-agent new-session permission modes', () => {
+        it('keeps per-agent new-session permission defaults sparse', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]).toBe('default');
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]).toBe('default');
-            expect((parsed as any).sessionDefaultPermissionModeByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByTargetKey).toEqual({});
         });
 
         it('defaults source-control commit strategy to atomic', () => {
@@ -496,7 +516,7 @@ describe('settings', () => {
             expect((parsed as any).scmCommitMessageGeneratorEnabled).toBe(true);
             expect((parsed as any).scmCommitMessageGeneratorBackendId).toBe(DEFAULT_AGENT_ID);
             expect((parsed as any).scmCommitMessageGeneratorInstructions).toBe('');
-            expect((parsed as any).scmIncludeCoAuthoredBy).toBe(false);
+            expect((parsed as any).scmIncludeCoAuthoredBy).toBeUndefined();
         });
 
         it('keeps the released source-control backend field strict while accepting a qualified selection separately', () => {
@@ -669,7 +689,7 @@ describe('settings', () => {
             expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
 
 	            expect(localConversation.conversationMode).toBe('direct_session');
-	            expect(localConversation.agent.backend).toBe('daemon');
+	            expect(localConversation.agent.providerChat).toBeNull();
 	            expect(localConversation.handsFree.enabled).toBe(false);
 	            expect(localConversation.handsFree.endpointing.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
 	            expect(localConversation.handsFree.endpointing.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
@@ -856,7 +876,6 @@ describe('settings', () => {
                 newSessionDefaultPersistenceModeByTargetKeyV1: {
                     [codexTargetKey]: 'direct',
                     [claudeTargetKey]: 'persisted',
-                    invalid: 'nope',
                 },
             } as any);
 
@@ -865,6 +884,17 @@ describe('settings', () => {
                 [codexTargetKey]: 'direct',
                 [claudeTargetKey]: 'persisted',
             });
+        });
+
+        it('falls back to sparse new-session persistence defaults when the target-keyed map is malformed', () => {
+            const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+
+            expect((settingsParse({
+                newSessionDefaultPersistenceModeByTargetKeyV1: {
+                    [codexTargetKey]: 'direct',
+                    invalid: 'nope',
+                },
+            } as any) as any).newSessionDefaultPersistenceModeByTargetKeyV1).toEqual({});
         });
 
         it('migrates legacy lastUsedPermissionMode into per-agent defaults when missing', () => {
@@ -905,7 +935,7 @@ describe('settings', () => {
             expect(parsed.secrets).toEqual([validSecret]);
         });
 
-        it('should keep valid execution runs guidance entries when one entry is invalid', () => {
+        it('opaque-preserves bounded legacy execution guidance entries', () => {
             const parsed = settingsParse({
                 viewInline: true,
                 executionRunsGuidanceEntries: [
@@ -919,7 +949,7 @@ describe('settings', () => {
                     },
                     {
                         id: 'rule-2',
-                        description: 'Invalid backend id should be dropped',
+                        description: 'Invalid backend id is retained as legacy data',
                         enabled: true,
                         suggestedBackendTarget: { kind: 'backend', backendId: 'not-a-real-agent' },
                     },
@@ -934,6 +964,11 @@ describe('settings', () => {
                     suggestedBackendTarget: { kind: 'backend', backendId: 'claude' },
                     suggestedModelId: 'claude-sonnet-4-5',
                     suggestedIntent: 'delegate',
+                }),
+                expect.objectContaining({
+                    id: 'rule-2',
+                    description: 'Invalid backend id is retained as legacy data',
+                    suggestedBackendTarget: { kind: 'backend', backendId: 'not-a-real-agent' },
                 }),
             ]);
         });
@@ -1053,9 +1088,6 @@ describe('settings', () => {
                 favoriteBackendTargetKeysV1: [
                     codexTargetKey,
                     claudeTargetKey,
-                    codexTargetKey,
-                    '',
-                    42,
                 ],
                 lastNewSessionAgentPickerViewV1: {
                     kind: 'backend',
@@ -1077,75 +1109,157 @@ describe('settings', () => {
             } as any).lastNewSessionAgentPickerViewV1).toEqual({ kind: 'favoriteModels' });
         });
 
-        it('parses remembered engine selections and drops invalid entries', () => {
-            const parsed = settingsParse({
-                rememberLastEngineSelectionsV1: true,
-                lastEngineSelectionsByScopeV1: {
-                    'server-1:backend:codex': {
-                        v: 1,
-                        modelId: 'gpt-5.4',
-                        acpSessionModeId: 'plan',
-                        sessionConfigOptionOverrides: {
-                            v: 1,
-                            updatedAt: 123,
-                            overrides: {
-                                reasoning_effort: {
-                                    updatedAt: 123,
-                                    value: 'high',
-                                },
-                            },
-                        },
-                        updatedAt: 123,
-                    },
-                    'server-1:backend:broken': {
-                        v: 1,
-                        modelId: '',
-                        updatedAt: 123,
-                    },
-                },
-            } as any);
+        it('falls back to no favorite backend targets when the collection is malformed', () => {
+            const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
 
-            expect((parsed as any).rememberLastEngineSelectionsV1).toBe(true);
-            expect((parsed as any).lastEngineSelectionsByScopeV1).toEqual({
-                'server-1:backend:codex': {
+            expect((settingsParse({
+                favoriteBackendTargetKeysV1: [codexTargetKey, 42],
+            } as any) as any).favoriteBackendTargetKeysV1).toEqual([]);
+        });
+
+        it('retains bounded legacy authoring carriers while projecting only current typed selections', () => {
+            const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+            const retainedRememberedSelections = {
+                [`server-1:${codexTargetKey}`]: {
                     v: 1,
                     modelId: 'gpt-5.4',
-                    acpSessionModeId: 'plan',
-                    sessionConfigOptionOverrides: {
+                    updatedAt: 123,
+                },
+                'future-writer-scope': {
+                    v: 2,
+                    futureSelection: true,
+                },
+            };
+            const retainedFavoriteSelections = [
+                {
+                    backendTargetKey: codexTargetKey,
+                    modelId: 'gpt-5.4',
+                    addedAtMs: 123,
+                },
+                {
+                    v: 2,
+                    futureSelection: true,
+                },
+            ];
+            const parsed = settingsParse({
+                rememberLastEngineSelectionsV1: true,
+                lastEngineSelectionsByScopeV1: retainedRememberedSelections,
+                favoriteModelSelectionsV1: retainedFavoriteSelections,
+            });
+            const rawRememberedSelections = readRetainedRememberedEngineSelectionsByScopeV1(parsed);
+            const rawFavoriteSelections = readRetainedFavoriteModelSelectionsV1(parsed);
+
+            expect(rawRememberedSelections).toEqual(retainedRememberedSelections);
+            expect(rawFavoriteSelections).toEqual(retainedFavoriteSelections);
+            expect(parsed).toHaveProperty('currentRememberedEngineSelectionsByScopeV1', {
+                [`server-1:${codexTargetKey}`]: {
+                    v: 1,
+                    modelSelection: {
                         v: 1,
                         updatedAt: 123,
-                        overrides: {
-                            reasoning_effort: {
-                                updatedAt: 123,
-                                value: 'high',
-                            },
+                        ref: {
+                            agentTargetKey: codexTargetKey,
+                            providerConnectionId: null,
+                            modelId: 'gpt-5.4',
                         },
                     },
                     updatedAt: 123,
                 },
+            });
+            expect(parsed).toHaveProperty('currentFavoriteModelSelectionsV1', [
+                {
+                    selection: {
+                        v: 1,
+                        updatedAt: 123,
+                        ref: {
+                            agentTargetKey: codexTargetKey,
+                            providerConnectionId: null,
+                            modelId: 'gpt-5.4',
+                        },
+                    },
+                    addedAtMs: 123,
+                },
+            ]);
+            expect(Object.keys(parsed)).not.toContain('currentRememberedEngineSelectionsByScopeV1');
+            expect(Object.keys(parsed)).not.toContain('currentFavoriteModelSelectionsV1');
+            expect(JSON.parse(JSON.stringify(parsed))).toMatchObject({
+                lastEngineSelectionsByScopeV1: retainedRememberedSelections,
+                favoriteModelSelectionsV1: retainedFavoriteSelections,
+            });
+
+            const afterUnrelatedMutation = applySettings(parsed, { useProfiles: true });
+            expect(readRetainedRememberedEngineSelectionsByScopeV1(afterUnrelatedMutation))
+                .toEqual(retainedRememberedSelections);
+            expect(readRetainedFavoriteModelSelectionsV1(afterUnrelatedMutation))
+                .toEqual(retainedFavoriteSelections);
+
+            const nextFavorites = [
+                ...parsed.currentFavoriteModelSelectionsV1,
+                {
+                    selection: {
+                        v: 1 as const,
+                        updatedAt: 456,
+                        ref: {
+                            agentTargetKey: codexTargetKey,
+                            providerConnectionId: null,
+                            modelId: 'gpt-5.5',
+                        },
+                    },
+                    addedAtMs: 456,
+                },
+            ];
+            expect(mergeCurrentFavoriteModelSelectionsIntoRaw({
+                rawFavorites: readRetainedFavoriteModelSelectionsV1(parsed),
+                currentFavorites: parsed.currentFavoriteModelSelectionsV1,
+                nextFavorites,
+            })).toEqual([
+                retainedFavoriteSelections[0],
+                retainedFavoriteSelections[1],
+                nextFavorites[1],
+            ]);
+
+            const nextRemembered = {
+                ...parsed.currentRememberedEngineSelectionsByScopeV1,
+                [`server-1:${codexTargetKey}`]: {
+                    ...parsed.currentRememberedEngineSelectionsByScopeV1[`server-1:${codexTargetKey}`]!,
+                    updatedAt: 456,
+                },
+                'future-writer-scope': {
+                    v: 1 as const,
+                    modelSelection: null,
+                    updatedAt: 456,
+                },
+            };
+            expect(mergeCurrentRememberedEngineSelectionsIntoRaw({
+                rawSelections: readRetainedRememberedEngineSelectionsByScopeV1(parsed),
+                currentSelections: parsed.currentRememberedEngineSelectionsByScopeV1,
+                nextSelections: nextRemembered,
+            })).toEqual({
+                [`server-1:${codexTargetKey}`]: nextRemembered[`server-1:${codexTargetKey}`],
+                'future-writer-scope': retainedRememberedSelections['future-writer-scope'],
             });
         });
     });
 
     describe('applySettings', () => {
         it('should apply delta to existing settings', () => {
-            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient' });
+            const currentSettings = makeSettings({ schemaVersion: SUPPORTED_SCHEMA_VERSION, avatarStyle: 'gradient' });
             const delta: Partial<Settings> = { viewInline: true };
             expect(applySettings(currentSettings, delta)).toEqual({
                 ...currentSettings,
-                schemaVersion: 1, // Preserved from currentSettings
+                schemaVersion: SUPPORTED_SCHEMA_VERSION,
                 viewInline: true,
             });
         });
 
         it('should merge with defaults', () => {
-            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
+            const currentSettings = makeSettings({ schemaVersion: SUPPORTED_SCHEMA_VERSION, avatarStyle: 'gradient', viewInline: true });
             const delta: Partial<Settings> = {};
             expect(applySettings(currentSettings, delta)).toEqual(currentSettings);
         });
 
         it('should override existing values with delta', () => {
-            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
+            const currentSettings = makeSettings({ schemaVersion: SUPPORTED_SCHEMA_VERSION, avatarStyle: 'gradient', viewInline: true });
             const delta: Partial<Settings> = { viewInline: false };
             expect(applySettings(currentSettings, delta)).toEqual({
                 ...currentSettings,
@@ -1154,7 +1268,7 @@ describe('settings', () => {
         });
 
         it('should handle empty delta', () => {
-            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
+            const currentSettings = makeSettings({ schemaVersion: SUPPORTED_SCHEMA_VERSION, avatarStyle: 'gradient', viewInline: true });
             expect(applySettings(currentSettings, {})).toEqual(currentSettings);
         });
 
@@ -1174,7 +1288,7 @@ describe('settings', () => {
         });
 
         it('should handle extra fields in delta', () => {
-            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
+            const currentSettings = makeSettings({ schemaVersion: SUPPORTED_SCHEMA_VERSION, avatarStyle: 'gradient', viewInline: true });
             const delta: any = {
                 viewInline: false,
                 newField: 'new value'
@@ -1206,18 +1320,9 @@ describe('settings', () => {
 
         describe('settingsDefaults', () => {
             it('should have correct default values', () => {
-            expect(settingsDefaults.schemaVersion).toBe(7);
+            expect(settingsDefaults.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
             expect(settingsDefaults.experiments).toBe(false);
-            expect(settingsDefaults.backendEnabledByTargetKey).toMatchObject({
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: true,
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: true,
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'opencode' })]: true,
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: true,
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'auggie' })]: true,
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'qwen' })]: true,
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kimi' })]: true,
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kilo' })]: true,
-            });
+            expect(settingsDefaults.backendEnabledByTargetKey).toEqual({});
             expect((settingsDefaults as any).profileEnabledById).toEqual({});
             expect((settingsDefaults as any).backendCliSourcePreferenceByTargetKey).toEqual({});
             expect(settingsDefaults).not.toHaveProperty('codexBackendMode');
@@ -1225,11 +1330,7 @@ describe('settings', () => {
             expect(settingsDefaults.sessionMessageSendMode).toBe('server_pending');
             expect((settingsDefaults as any).sessionPendingQueueDrainMode).toBe('one_at_a_time');
             expect((settingsDefaults as any).sessionPendingQueueDeliveryTiming).toBe('after_foreground_ready');
-            expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'default',
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'default',
-                [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: 'default',
-            });
+            expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toEqual({});
             expect(settingsDefaults.toolViewDetailLevelDefault).toBe('default');
             expect(settingsDefaults.toolViewDetailLevelDefaultLocalControl).toBe('title');
             expect(settingsDefaults.toolViewDetailLevelByToolName).toEqual({});
@@ -1277,7 +1378,13 @@ describe('settings', () => {
                     readyIncludeMessageText: true,
                 },
             ]);
-            expect((settingsDefaults as any).attentionDeliveryPolicyV1).toEqual(DEFAULT_ATTENTION_DELIVERY_POLICY_V1);
+            expect((settingsDefaults as any).attentionDeliveryPolicyV1).toEqual(
+                deriveAttentionDeliveryPolicyFromLegacySettings({
+                    notificationsSettings: settingsDefaults.notificationsSettingsV1,
+                    notificationChannels: settingsDefaults.notificationChannelsV1,
+                }),
+            );
+            expect((settingsDefaults as any).attentionDeliveryPolicyV1.channels.webhook.enabled).toBe(false);
             expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
             expect((settingsDefaults as any).attachmentsUploadsWorkspaceRelativeDir).toBe('.happier/uploads');
             expect((settingsDefaults as any).attachmentsUploadsVcsIgnoreStrategy).toBe('git_info_exclude');
@@ -1308,11 +1415,18 @@ describe('settings', () => {
     });
 
     describe('profiles', () => {
-        it('accepts the built-in profiles schema', () => {
-            const profile = getBuiltInProfile('anthropic');
-            expect(profile).toBeTruthy();
-            const parsed = AIBackendProfileSchema.safeParse(profile);
-            expect(parsed.success).toBe(true);
+        it('uses the Protocol-retained built-in profiles schema', () => {
+            for (const expectedProfile of DEFAULT_BUILT_IN_BACKEND_PROFILES) {
+                const profile = getBuiltInProfile(expectedProfile.id);
+                expect(profile).toBe(expectedProfile);
+                expect(AIBackendProfileSchema.safeParse(profile).success).toBe(true);
+            }
+        });
+
+        it('does not reintroduce provider-migration IDs as built-in profiles', () => {
+            for (const profileId of PROVIDER_MIGRATION_SOURCE_PROFILE_IDS) {
+                expect(getBuiltInProfile(profileId)).toBeNull();
+            }
         });
 
         it('accepts per-agent persistence mode defaults on profiles', () => {
@@ -1359,8 +1473,8 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).backendCliSourcePreferenceByTargetKey).toEqual({
-                'backend:codex': 'managed-first',
-                'backend:gemini': 'system-first',
+                [buildAgentUniverseBackendTargetKey('codex')]: 'managed-first',
+                [buildAgentUniverseBackendTargetKey('gemini')]: 'system-first',
             });
         });
 
@@ -1434,60 +1548,6 @@ describe('settings', () => {
     });
 
     describe('AIBackendProfile validation', () => {
-        it('validates built-in Anthropic profile', () => {
-            const profile = getBuiltInProfile('anthropic');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in DeepSeek profile', () => {
-            const profile = getBuiltInProfile('deepseek');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in Z.AI profile', () => {
-            const profile = getBuiltInProfile('zai');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in OpenAI profile', () => {
-            const profile = getBuiltInProfile('openai');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in Azure OpenAI profile', () => {
-            const profile = getBuiltInProfile('azure-openai');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in Codex profile', () => {
-            const profile = getBuiltInProfile('codex');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in Gemini profile', () => {
-            const profile = getBuiltInProfile('gemini');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in Gemini API key profile', () => {
-            const profile = getBuiltInProfile('gemini-api-key');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
-        it('validates built-in Gemini Vertex profile', () => {
-            const profile = getBuiltInProfile('gemini-vertex');
-            expect(profile).not.toBeNull();
-            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
-        });
-
         it('accepts all 7 permission modes', () => {
             const modes = ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'read-only', 'safe-yolo', 'yolo'];
             modes.forEach(mode => {
@@ -1617,7 +1677,7 @@ describe('settings', () => {
     describe('secretBindingsByProfileId', () => {
         it('defaults to an empty object', () => {
             const parsed = settingsParse({});
-            expect(parsed.secretBindingsByProfileId).toEqual({});
+            expect(readRetainedSecretBindingsByProfileId(parsed)).toEqual({});
         });
     });
 

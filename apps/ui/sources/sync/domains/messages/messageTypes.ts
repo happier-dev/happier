@@ -1,4 +1,5 @@
 import { AgentEvent } from '../../typesRaw';
+import type { MessageStructuredPresentationV1 } from '@happier-dev/protocol';
 import { MessageMeta } from './messageMetaTypes';
 import type { TranscriptObservationMetadata } from './transcriptObservationProvenance';
 
@@ -7,7 +8,7 @@ export type ToolCall = {
     // Optional for backward compatibility with older sessions and unit tests.
     id?: string;
     name: string;
-    state: 'running' | 'completed' | 'error';
+    state: 'running' | 'completed' | 'error' | 'unavailable';
     input: any;
     createdAt: number;
     startedAt: number | null;
@@ -45,6 +46,7 @@ export type UserTextMessage = {
     text: string;
     displayText?: string; // Optional text to display in UI instead of actual text
     meta?: MessageMeta;
+    structuredPresentation?: MessageStructuredPresentationV1;
 } & TranscriptObservationMetadata;
 
 export type ModeSwitchMessage = {
@@ -69,6 +71,7 @@ export type AgentTextMessage = {
     text: string;
     isThinking?: boolean;
     meta?: MessageMeta;
+    structuredPresentation?: MessageStructuredPresentationV1;
 } & TranscriptObservationMetadata;
 
 export type ToolCallMessage = {

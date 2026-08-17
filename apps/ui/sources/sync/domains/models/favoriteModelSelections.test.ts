@@ -10,6 +10,37 @@ import {
 } from './favoriteModelSelections';
 
 describe('favorite model selections', () => {
+    it('fails closed when a current favorite carries an unknown field', () => {
+        const raw = {
+            selection: {
+                v: 1,
+                updatedAt: 42,
+                ref: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: null,
+                    modelId: 'gpt-5.5',
+                },
+            },
+            addedAtMs: 42,
+            futureWriterField: true,
+        };
+
+        expect(FavoriteModelSelectionV1Schema.safeParse(raw).success).toBe(false);
+        expect(raw).toHaveProperty('futureWriterField', true);
+    });
+
+    it('fails closed rather than stripping an unknown legacy favorite field', () => {
+        const raw = {
+            backendTargetKey: 'backend:codex',
+            modelId: 'gpt-5.5',
+            addedAtMs: 42,
+            futureWriterField: true,
+        };
+
+        expect(FavoriteModelSelectionV1Schema.safeParse(raw).success).toBe(false);
+        expect(raw).toHaveProperty('futureWriterField', true);
+    });
+
     it('normalizes a legacy bare favorite into a native structured selection on read', () => {
         const parsed = FavoriteModelSelectionV1Schema.parse({
             backendTargetKey: 'backend:codex',

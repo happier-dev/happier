@@ -36,6 +36,8 @@ describe('renderDropdownItemTriggerRightElement', () => {
         });
 
         expect(React.isValidElement(node)).toBe(true);
-        expect((node as React.ReactElement).type).toBe(mockComponents.MockIonicons);
+        // The chevron is drawn by the icon seam now; the contract worth asserting is that it is
+        // returned as a bare element rather than wrapped in a Text node.
+        expect((node as React.ReactElement).type).toBe('Icon');
     });
 });

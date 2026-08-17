@@ -1,8 +1,14 @@
 import * as React from 'react';
-import type { PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
+import {
+    PLUGIN_UI_HOST_METHODS_V1,
+    type PluginUiSurfaceContextV1,
+} from '@happier-dev/protocol/plugins/ui';
+import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
+import { createCanonicalPluginReactNativeHostApiAdapter } from './hostApi';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,47 +45,64 @@ const surfaceContext: PluginUiSurfaceContextV1 = {
     diagnostics: [],
 };
 
+function createCanonicalRenderContextFixture(): Readonly<{
+    renderContext: RenderContext;
+    dispose(): void;
+}> {
+    const surface = createPluginSurfaceContextFixture({
+        target: { kind: 'session', sessionId: 'session-1' },
+    });
+    const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+        surface,
+        requestSurface: surfaceContext,
+        requestIdPrefix: 'rn:loader-test',
+        handleRequest: async () => ({ accepted: true }),
+        installedMethods: PLUGIN_UI_HOST_METHODS_V1,
+    });
+    return Object.freeze({
+        renderContext: Object.freeze({
+            plugin: Object.freeze({ id: 'acme.preview', version: '2.1.0' }),
+            surface,
+            hostApi: adapter.api,
+            signal: new AbortController().signal,
+        }) satisfies RenderContext,
+        dispose: () => adapter.dispose(),
+    });
+}
+
 describe('PluginReactNativeSurface loader integration', () => {
-    it('loads installed artifacts through the loader policy and passes only host API plus surface context', async () => {
+    it('loads installed artifacts through the loader policy and passes the canonical render context', async () => {
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
-        const { createPluginReactNativeHostApiAdapter } = await import('./hostApi');
         const renderSurface = vi.fn(() => React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' }));
-        const acknowledgeHostRuntime = vi.fn();
-        const load = vi.fn(async () => ({ renderSurface, acknowledgeHostRuntime }));
-        const hostApiAdapter = createPluginReactNativeHostApiAdapter({
-            surface: surfaceContext,
-            requestIdPrefix: 'rn:test',
-            handleRequest: vi.fn(async () => ({ accepted: true })),
-        });
+        const load = vi.fn(async () => ({ renderSurface }));
+        const canonical = createCanonicalRenderContextFixture();
 
-        const screen = await renderScreen(<PluginReactNativeSurface
-            surfaceId="surface_1"
-            surface={surfaceContext}
-            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
-            hostApi={hostApiAdapter.api}
-            load={load}
-            loadPolicy={{ source: 'installedArtifact' }}
-            cacheKey="cache_1"
-            loadTimeoutMs={1000}
-        />);
-        await flushHookEffects();
+        try {
+            const screen = await renderScreen(<PluginReactNativeSurface
+                surfaceId="surface_1"
+                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+                renderContext={canonical.renderContext}
+                load={load}
+                loadPolicy={{ source: 'installedArtifact' }}
+                cacheKey="cache_1"
+                loadTimeoutMs={1000}
+            />);
+            await flushHookEffects();
 
-        expect(load).toHaveBeenCalledTimes(1);
-        expect(screen.findByTestId('plugin-native-surface')).toBeTruthy();
-        expect(renderSurface).toHaveBeenCalledWith({
-            hostApi: expect.objectContaining({
-                requestSessionResource: expect.any(Function),
-                dispatchAction: expect.any(Function),
-            }),
-            surface: surfaceContext,
-        });
-        expect(acknowledgeHostRuntime).toHaveBeenCalledWith({
-            surfaceId: 'surface_1',
-            cacheKey: 'cache_1',
-        });
+            expect(load).toHaveBeenCalledTimes(1);
+            expect(screen.findByTestId('plugin-native-surface')).toBeTruthy();
+            expect(renderSurface).toHaveBeenCalledWith(expect.objectContaining({
+                plugin: canonical.renderContext.plugin,
+                surface: canonical.renderContext.surface,
+                hostApi: canonical.renderContext.hostApi,
+                signal: canonical.renderContext.signal,
+            }));
+        } finally {
+            canonical.dispose();
+        }
     });
 
-    it('preserves a Re.Pack module runtime acknowledgment through the installed-artifact loader', async () => {
+    it('projects a Re.Pack surface through the installed-artifact loader without a sibling startup protocol', async () => {
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
         const { createPluginReactNativeBundleCache } = await import('./bundleCache');
         const {
@@ -90,7 +113,6 @@ describe('PluginReactNativeSurface loader integration', () => {
         const renderSurface = vi.fn(() =>
             React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' })
         );
-        const acknowledgeHostRuntime = vi.fn();
         const identity = {
             pluginId: 'acme.preview',
             contributionId: 'native-preview',
@@ -122,7 +144,6 @@ describe('PluginReactNativeSurface loader integration', () => {
                 Federated: {
                     importModule: vi.fn(async () => ({
                         renderSurface,
-                        acknowledgeHostRuntime,
                     })),
                 },
             },
@@ -130,34 +151,32 @@ describe('PluginReactNativeSurface loader integration', () => {
                 resolveInstalledArtifactFileUrl: vi.fn(async () => 'file:///cache/ios.bundle.js'),
             }),
         });
-        const load = vi.fn(async () => {
-            const result = await loadPluginReactNativeBundleModule({
-                cache,
-                identity,
-                backend,
-            });
-            if (!result.ok) {
-                throw result;
-            }
-            return result.module;
+        const loaded = await loadPluginReactNativeBundleModule({
+            cache,
+            identity,
+            backend,
         });
+        if (!loaded.ok) throw loaded;
+        expect(Object.keys(loaded.module)).toEqual(['renderSurface']);
+        const load = vi.fn(async () => loaded.module);
+        const canonical = createCanonicalRenderContextFixture();
 
-        const screen = await renderScreen(<PluginReactNativeSurface
-            surfaceId="surface_1"
-            surface={surfaceContext}
-            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
-            load={load}
-            loadPolicy={{ source: 'installedArtifact' }}
-            cacheKey="cache_ack_1"
-            loadTimeoutMs={1000}
-        />);
-        await flushHookEffects();
+        try {
+            const screen = await renderScreen(<PluginReactNativeSurface
+                surfaceId="surface_1"
+                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+                renderContext={canonical.renderContext}
+                load={load}
+                loadPolicy={{ source: 'installedArtifact' }}
+                cacheKey="cache_ack_1"
+                loadTimeoutMs={1000}
+            />);
+            await flushHookEffects();
 
-        expect(load).toHaveBeenCalledTimes(1);
-        expect(screen.findByTestId('plugin-native-surface')).toBeTruthy();
-        expect(acknowledgeHostRuntime).toHaveBeenCalledWith({
-            surfaceId: 'surface_1',
-            cacheKey: 'cache_ack_1',
-        });
+            expect(load).toHaveBeenCalledTimes(1);
+            expect(screen.findByTestId('plugin-native-surface')).toBeTruthy();
+        } finally {
+            canonical.dispose();
+        }
     });
 });

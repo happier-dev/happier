@@ -4,6 +4,7 @@
 import React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
@@ -23,7 +24,66 @@ installPopoverCommonModuleMocks({
     },
 });
 
+const requireForTest = createRequire(import.meta.url);
+const { Drawer: CjsDrawer } = requireForTest('vaul') as typeof import('vaul');
+
 describe('PopoverPortalTargetProvider (web dom)', () => {
+    it('keeps its portal target inside an Expo Router drawer before styles are observable', async () => {
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+        const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');
+        const observedTargetRef: { current: Element | DocumentFragment | null } = { current: null };
+        const originalGetComputedStyle = window.getComputedStyle.bind(window);
+        const computedStyleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
+            const style = originalGetComputedStyle(element);
+            return new Proxy(style, {
+                get(target, property, receiver) {
+                    if (property === 'overflow' || property === 'overflowX' || property === 'overflowY') {
+                        return 'visible';
+                    }
+                    return Reflect.get(target, property, receiver);
+                },
+            });
+        });
+
+        function TargetProbe() {
+            observedTargetRef.current = useModalPortalTarget();
+            return null;
+        }
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(
+                    <CjsDrawer.Root open handleOnly>
+                        <CjsDrawer.Portal>
+                            <CjsDrawer.Content>
+                                <CjsDrawer.Title>New session</CjsDrawer.Title>
+                                <CjsDrawer.Description>Configure a session</CjsDrawer.Description>
+                                <PopoverPortalTargetProvider>
+                                    <TargetProbe />
+                                </PopoverPortalTargetProvider>
+                            </CjsDrawer.Content>
+                        </CjsDrawer.Portal>
+                    </CjsDrawer.Root>,
+                );
+            });
+
+            const observedTarget = observedTargetRef.current;
+            if (!(observedTarget instanceof Element)) {
+                throw new Error('Expected the provider to expose a web portal target');
+            }
+            expect(observedTarget.closest('[data-vaul-drawer]')).not.toBeNull();
+        } finally {
+            computedStyleSpy.mockRestore();
+            await act(async () => {
+                root.unmount();
+            });
+            container.remove();
+        }
+    });
+
     it('does not target an unrelated dialog when the scope anchor is outside that dialog', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');

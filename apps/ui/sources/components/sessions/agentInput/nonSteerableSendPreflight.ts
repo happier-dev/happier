@@ -1,5 +1,6 @@
 import { classifyAgentSessionComposerNonSteerablePayload } from '@/agents/registry/registryUiBehavior';
 import type { AgentType } from '@/sync/domains/models/modelOptions';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import {
     getPermissionModeLabelForAgentType,
@@ -53,6 +54,8 @@ export async function resolveNonSteerableSendPlan(opts: {
     forceImmediate?: boolean;
     explicitPendingIntent?: boolean;
     structuredInputMetaOverrides?: Record<string, unknown> | null;
+    agentTargetKey?: string | null;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     nowMs?: number;
 }): Promise<NonSteerableSendPlan> {
     if (
@@ -72,7 +75,9 @@ export async function resolveNonSteerableSendPlan(opts: {
         nonSteerableSendPrompt: opts.nonSteerableSendPrompt,
         providerNonSteerableReason: classifyAgentSessionComposerNonSteerablePayload({
             session: opts.session,
+            agentTargetKey: opts.agentTargetKey ?? null,
             metaOverrides: opts.structuredInputMetaOverrides ?? null,
+            currentRunnerProcessIdentity: opts.currentRunnerProcessIdentity ?? null,
         }),
         nowMs: opts.nowMs,
     });

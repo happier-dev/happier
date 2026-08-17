@@ -1,6 +1,8 @@
 import {
+    EXTERNAL_SESSION_OPERATION_TIMELINES_V1,
     ExternalSessionOperationProgressV1Schema,
     ExternalSessionOperationSharedPresentationV1Schema,
+    projectExternalSessionOperationSharedPresentationV1,
     type ExternalSessionOperationProgressV1,
     type ExternalSessionOperationSharedPresentationV1,
 } from '@happier-dev/protocol';
@@ -19,6 +21,9 @@ type HookInput = Readonly<{
     presentation: ExternalSessionOperationSharedPresentationV1 | null;
     isExactOwner: boolean;
     machineOnline: boolean;
+    machineId?: string | null;
+    ownerScopeKey?: string | null;
+    serverId?: string | null;
 }>;
 
 function createPresentation(
@@ -38,18 +43,24 @@ function createPresentation(
 function createProgress(
     overrides: Partial<ExternalSessionOperationProgressV1> = {},
 ): ExternalSessionOperationProgressV1 {
+    const request = overrides.request ?? {
+        plan: 'materialize',
+        targetStorageMode: 'external-linked',
+        targetRuntimeMode: null,
+    };
+    const timeline = request.plan === 'materialize'
+        ? EXTERNAL_SESSION_OPERATION_TIMELINES_V1.materialize
+        : request.targetStorageMode === 'persisted'
+            ? EXTERNAL_SESSION_OPERATION_TIMELINES_V1.takeover_persisted
+            : EXTERNAL_SESSION_OPERATION_TIMELINES_V1.takeover_external_linked;
     return ExternalSessionOperationProgressV1Schema.parse({
         v: 1,
         operationId: 'operation-1',
         revision: 4,
-        request: {
-            plan: 'materialize',
-            targetStorageMode: 'external-linked',
-            targetRuntimeMode: null,
-        },
+        request,
         status: 'running',
         phase: 'validating',
-        timeline: ['validating', 'staging', 'importing', 'publishing'],
+        timeline,
         updatedAtMs: 1_700_000_000_000,
         priorStableStorage: { state: 'machine_only' },
         currentStorageState: 'machine_only',
@@ -70,18 +81,50 @@ function createProgress(
     });
 }
 
+function createSameIdentityPresentationChange(
+    field: 'kind' | 'status' | 'phase',
+): Readonly<{
+    presentation: ExternalSessionOperationSharedPresentationV1;
+    progress: ExternalSessionOperationProgressV1;
+}> {
+    const progress = field === 'kind'
+        ? createProgress({
+            request: {
+                plan: 'takeover',
+                targetStorageMode: 'external-linked',
+                targetRuntimeMode: 'terminal',
+            },
+        })
+        : field === 'status'
+            ? createProgress({ status: 'cancel_requested' })
+            : createProgress({ phase: 'staging' });
+    return {
+        presentation: projectExternalSessionOperationSharedPresentationV1(progress),
+        progress,
+    };
+}
+
 async function renderOwnerHydration(input: HookInput) {
     const { useExternalSessionOperationOwnerHydration } = await import(
         './useExternalSessionOperationOwnerHydration'
     );
-    return await renderHook((props: HookInput) => (
-        useExternalSessionOperationOwnerHydration({
-            ...props,
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            sessionId: 'session-1',
-        })
-    ), {
+    return await renderHook((props: HookInput) => {
+        const {
+            machineId = 'machine-1',
+            ownerScopeKey = 'server-1:owner-1',
+            serverId = 'server-1',
+            ...ownerInput
+        } = props;
+        return (
+            useExternalSessionOperationOwnerHydration({
+                ...ownerInput,
+                machineId,
+                ownerScopeKey,
+                serverId,
+                sessionId: 'session-1',
+            })
+        );
+    }, {
         initialProps: input,
     });
 }
@@ -139,28 +182,214 @@ describe('useExternalSessionOperationOwnerHydration', () => {
     });
 
     it.each([
-        ['shared reader', false, true],
-        ['offline owner', true, false],
+        ['kind'],
+        ['status'],
+        ['phase'],
+    ] as const)(
+        'invalidates and refreshes hydration when exact presentation %s changes at the same operation revision',
+        async (field) => {
+            const initialProgress = createProgress();
+            const changed = createSameIdentityPresentationChange(field);
+            const changedRead = createDeferred<{
+                ok: true;
+                progress: ExternalSessionOperationProgressV1;
+            }>();
+            machineExternalSessionOperationStatusSpy
+                .mockResolvedValueOnce({ ok: true, progress: initialProgress })
+                .mockReturnValueOnce(changedRead.promise);
+            const initialPresentation = createPresentation();
+            const hook = await renderOwnerHydration({
+                presentation: initialPresentation,
+                isExactOwner: true,
+                machineOnline: true,
+            });
+
+            expect(hook.getCurrent().progress).toEqual(initialProgress);
+
+            await hook.rerender({
+                presentation: changed.presentation,
+                isExactOwner: true,
+                machineOnline: true,
+            });
+
+            expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+            expect(hook.getCurrent().progress).toBeNull();
+
+            changedRead.resolve({ ok: true, progress: changed.progress });
+            await flushHookEffects();
+            expect(hook.getCurrent().progress).toEqual(changed.progress);
+        },
+    );
+
+    it.each([
+        ['kind'],
+        ['status'],
+        ['phase'],
+    ] as const)(
+        'rejects a point response whose exact presentation %s differs at the same operation revision',
+        async (field) => {
+            const changed = createSameIdentityPresentationChange(field);
+            machineExternalSessionOperationStatusSpy.mockResolvedValue({
+                ok: true,
+                progress: createProgress(),
+            });
+            const hook = await renderOwnerHydration({
+                presentation: changed.presentation,
+                isExactOwner: true,
+                machineOnline: true,
+            });
+
+            expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().progress).toBeNull();
+        },
+    );
+
+    it.each([
+        ['kind'],
+        ['status'],
+        ['phase'],
+    ] as const)(
+        'rejects an action result whose exact presentation %s differs at the same operation revision',
+        async (field) => {
+            const initialProgress = createProgress();
+            machineExternalSessionOperationStatusSpy.mockResolvedValue({
+                ok: true,
+                progress: initialProgress,
+            });
+            const hook = await renderOwnerHydration({
+                presentation: createPresentation(),
+                isExactOwner: true,
+                machineOnline: true,
+            });
+            const changed = createSameIdentityPresentationChange(field);
+
+            await act(async () => {
+                hook.getCurrent().onActionResult(changed.progress);
+            });
+
+            expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().progress).toBeNull();
+        },
+    );
+
+    it.each([
+        ['kind'],
+        ['status'],
+        ['phase'],
+    ] as const)(
+        'invalidates retained offline progress and refreshes once after reconnect when presentation %s changes',
+        async (field) => {
+            const initialProgress = createProgress();
+            const changed = createSameIdentityPresentationChange(field);
+            const reconnectRead = createDeferred<{
+                ok: true;
+                progress: ExternalSessionOperationProgressV1;
+            }>();
+            machineExternalSessionOperationStatusSpy
+                .mockResolvedValueOnce({ ok: true, progress: initialProgress })
+                .mockReturnValueOnce(reconnectRead.promise);
+            const hook = await renderOwnerHydration({
+                presentation: createPresentation(),
+                isExactOwner: true,
+                machineOnline: true,
+            });
+
+            await hook.rerender({
+                presentation: changed.presentation,
+                isExactOwner: true,
+                machineOnline: false,
+            });
+
+            expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
+            expect(hook.getCurrent().progress).toBeNull();
+
+            await hook.rerender({
+                presentation: changed.presentation,
+                isExactOwner: true,
+                machineOnline: true,
+            });
+
+            expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+            expect(hook.getCurrent().progress).toBeNull();
+
+            reconnectRead.resolve({ ok: true, progress: changed.progress });
+            await flushHookEffects();
+            expect(hook.getCurrent().progress).toEqual(changed.progress);
+        },
+    );
+
+    it('clears private progress and point-reads again when the server scope changes', async () => {
+        const initialProgress = createProgress();
+        const scopedProgress = createProgress({ updatedAtMs: 1_700_000_000_001 });
+        const scopedRead = createDeferred<{
+            ok: true;
+            progress: ExternalSessionOperationProgressV1;
+        }>();
+        machineExternalSessionOperationStatusSpy
+            .mockResolvedValueOnce({ ok: true, progress: initialProgress })
+            .mockReturnValueOnce(scopedRead.promise);
+        const presentation = createPresentation();
+        const hook = await renderOwnerHydration({
+            presentation,
+            isExactOwner: true,
+            machineOnline: true,
+            serverId: 'server-1',
+        });
+
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
+
+        await hook.rerender({
+            presentation,
+            isExactOwner: true,
+            machineOnline: true,
+            serverId: 'server-2',
+        });
+
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenLastCalledWith({
+            machineId: 'machine-1',
+            sessionId: 'session-1',
+            operationId: 'operation-1',
+            revision: 4,
+        }, { serverId: 'server-2' });
+        expect(hook.getCurrent().progress).toBeNull();
+
+        scopedRead.resolve({ ok: true, progress: scopedProgress });
+        await flushHookEffects();
+        expect(hook.getCurrent().progress).toEqual(scopedProgress);
+    });
+
+    it.each([
+        ['shared reader', false, true, 'server-1:reader-1'],
+        ['offline owner', true, false, 'server-1:owner-1'],
+        ['owner without an authenticated account scope', true, true, null],
     ] as const)('keeps %s on generic presentation without a status call', async (
         _label,
         isExactOwner,
         machineOnline,
+        ownerScopeKey,
     ) => {
         const hook = await renderOwnerHydration({
             presentation: createPresentation(),
             isExactOwner,
             machineOnline,
+            ownerScopeKey,
         });
 
         expect(machineExternalSessionOperationStatusSpy).not.toHaveBeenCalled();
         expect(hook.getCurrent().progress).toBeNull();
     });
 
-    it('waits for first online eligibility and never re-polls the same mounted key', async () => {
-        machineExternalSessionOperationStatusSpy.mockResolvedValue({
-            ok: true,
-            progress: createProgress(),
-        });
+    it('retains exact hydrated progress offline and point-reads once on reconnect', async () => {
+        const initialProgress = createProgress();
+        const refreshedProgress = createProgress({ updatedAtMs: 1_700_000_000_001 });
+        const reconnectRead = createDeferred<{
+            ok: true;
+            progress: ExternalSessionOperationProgressV1;
+        }>();
+        machineExternalSessionOperationStatusSpy
+            .mockResolvedValueOnce({ ok: true, progress: initialProgress })
+            .mockReturnValueOnce(reconnectRead.promise);
         const presentation = createPresentation();
         const hook = await renderOwnerHydration({
             presentation,
@@ -175,20 +404,168 @@ describe('useExternalSessionOperationOwnerHydration', () => {
             machineOnline: true,
         });
         expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
-        expect(hook.getCurrent().progress).not.toBeNull();
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
 
         await hook.rerender({
             presentation,
             isExactOwner: true,
             machineOnline: false,
         });
-        expect(hook.getCurrent().progress).toBeNull();
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
+
         await hook.rerender({
             presentation,
             isExactOwner: true,
             machineOnline: true,
         });
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().progress).toEqual(initialProgress);
+
+        await hook.rerender({
+            presentation: { ...presentation },
+            isExactOwner: true,
+            machineOnline: true,
+        });
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+
+        reconnectRead.resolve({ ok: true, progress: refreshedProgress });
+        await flushHookEffects();
+        expect(hook.getCurrent().progress).toEqual(refreshedProgress);
+    });
+
+    it.each([
+        ['a failed request', 'failure'],
+        ['a mismatched response', 'mismatch'],
+    ] as const)('permits one new point read after reconnect following %s', async (
+        _label,
+        initialOutcome,
+    ) => {
+        if (initialOutcome === 'failure') {
+            machineExternalSessionOperationStatusSpy.mockRejectedValueOnce(
+                new Error('initial status read failed'),
+            );
+        } else {
+            machineExternalSessionOperationStatusSpy.mockResolvedValueOnce({
+                ok: true,
+                progress: createProgress({ operationId: 'operation-other' }),
+            });
+        }
+        const matchingProgress = createProgress();
+        machineExternalSessionOperationStatusSpy.mockResolvedValueOnce({
+            ok: true,
+            progress: matchingProgress,
+        });
+        const presentation = createPresentation();
+        const hook = await renderOwnerHydration({
+            presentation,
+            isExactOwner: true,
+            machineOnline: true,
+        });
+
         expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().progress).toBeNull();
+
+        await hook.rerender({
+            presentation,
+            isExactOwner: true,
+            machineOnline: false,
+        });
+        await hook.rerender({
+            presentation,
+            isExactOwner: true,
+            machineOnline: true,
+        });
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().progress).toEqual(matchingProgress);
+
+        await hook.rerender({
+            presentation: { ...presentation },
+            isExactOwner: true,
+            machineOnline: true,
+        });
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not let an older online episode erase the reconnect result', async () => {
+        const initialRead = createDeferred<{
+            ok: true;
+            progress: ExternalSessionOperationProgressV1;
+        }>();
+        const reconnectProgress = createProgress();
+        machineExternalSessionOperationStatusSpy
+            .mockReturnValueOnce(initialRead.promise)
+            .mockResolvedValueOnce({ ok: true, progress: reconnectProgress });
+        const presentation = createPresentation();
+        const hook = await renderOwnerHydration({
+            presentation,
+            isExactOwner: true,
+            machineOnline: true,
+        });
+
+        await hook.rerender({
+            presentation,
+            isExactOwner: true,
+            machineOnline: false,
+        });
+        await hook.rerender({
+            presentation,
+            isExactOwner: true,
+            machineOnline: true,
+        });
+        expect(hook.getCurrent().progress).toEqual(reconnectProgress);
+
+        initialRead.reject(new Error('superseded online episode failed'));
+        await flushHookEffects();
+        expect(hook.getCurrent().progress).toEqual(reconnectProgress);
+    });
+
+    it.each([
+        ['owner role', { isExactOwner: false }, 1],
+        ['account scope', { ownerScopeKey: null }, 1],
+        ['server identity', { serverId: null }, 1],
+        ['machine identity', { machineId: null }, 1],
+        ['presentation', { presentation: null }, 1],
+        ['operation identity', {
+            presentation: createPresentation({ operationId: 'operation-2' }),
+        }, 2],
+        ['operation revision', {
+            presentation: createPresentation({ revision: 5, phase: 'staging' }),
+        }, 2],
+    ] as const)('clears immediately when %s is lost and rejects stale completion', async (
+        _label,
+        changedInput,
+        expectedReadCount,
+    ) => {
+        const staleRead = createDeferred<{
+            ok: true;
+            progress: ExternalSessionOperationProgressV1;
+        }>();
+        const currentRead = createDeferred<{
+            ok: true;
+            progress: ExternalSessionOperationProgressV1;
+        }>();
+        machineExternalSessionOperationStatusSpy
+            .mockReturnValueOnce(staleRead.promise)
+            .mockReturnValueOnce(currentRead.promise);
+        const initialInput: HookInput = {
+            presentation: createPresentation(),
+            isExactOwner: true,
+            machineOnline: true,
+        };
+        const hook = await renderOwnerHydration(initialInput);
+
+        await hook.rerender({
+            ...initialInput,
+            ...changedInput,
+        });
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(
+            expectedReadCount,
+        );
+        expect(hook.getCurrent().progress).toBeNull();
+
+        staleRead.resolve({ ok: true, progress: createProgress() });
+        await flushHookEffects();
         expect(hook.getCurrent().progress).toBeNull();
     });
 
@@ -225,8 +602,8 @@ describe('useExternalSessionOperationOwnerHydration', () => {
 
     it('uses a same-key action result only to trigger one authoritative point revalidation', async () => {
         const initialProgress = createProgress();
-        const actionProgress = createProgress({ phase: 'staging' });
-        const refreshedProgress = createProgress({ phase: 'importing' });
+        const actionProgress = createProgress({ updatedAtMs: 1_700_000_000_001 });
+        const refreshedProgress = createProgress({ updatedAtMs: 1_700_000_000_002 });
         const forcedRefresh = createDeferred<{
             ok: true;
             progress: ExternalSessionOperationProgressV1;

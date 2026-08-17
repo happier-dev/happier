@@ -30,6 +30,13 @@ function isStoredSessionPlainContent(value: unknown): value is StoredSessionPlai
     );
 }
 
+function hasReservedStructuredTranscriptRoot(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+    return Object.prototype.hasOwnProperty.call(value, 'profile');
+}
+
 export async function readStoredSessionRawRecord(params: Readonly<{
     content: unknown;
     decryptEncrypted?: (ciphertext: string) => Promise<unknown> | unknown;
@@ -52,7 +59,12 @@ export async function readStoredSessionRawRecord(params: Readonly<{
             ? await decryptEncrypted(decodedContent.c)
             : null;
 
-    const parsed = RawRecordSchema.safeParse(rawContent ?? decodedContent);
+    const candidate = rawContent ?? decodedContent;
+    if (hasReservedStructuredTranscriptRoot(candidate)) {
+        return null;
+    }
+
+    const parsed = RawRecordSchema.safeParse(candidate);
     return parsed.success ? parsed.data : null;
 }
 
@@ -82,10 +94,13 @@ export async function readStoredSessionMessage(params: Readonly<{
     }
 
     const decrypted = await params.decryptMessage(message);
-    return decrypted
-        ? {
-            ...decrypted,
-            messageRole: decrypted.messageRole ?? message.messageRole ?? null,
-        }
-        : null;
+    if (!decrypted) {
+        return null;
+    }
+
+    return {
+        ...decrypted,
+        content: await readStoredSessionRawRecord({ content: decrypted.content }),
+        messageRole: decrypted.messageRole ?? message.messageRole ?? null,
+    };
 }

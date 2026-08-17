@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
 
 import type {
     BuiltInLegacyConnectedAccountOperation,
@@ -13,6 +13,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -20,11 +21,13 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { useQualifiedConnectedAccountGroups } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { resolveQualifiedConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
-    resolveConnectedAccountOperationTarget,
-    resolveQualifiedConnectedAccountSettingsRoute,
-} from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+    useMachineAdministrationTargetSelection,
+    type FreshMachineAdministrationExecutionTargetV1,
+    type MachineAdministrationTargetSelectionV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
 import {
     isQualifiedConnectedAccountLegacyOperationSupported,
     type QualifiedConnectedAccountUiPeerTransport,
@@ -44,15 +47,14 @@ import {
     type ConnectedAccountControlTarget,
     type ConnectedAccountDaemonControlResponse,
 } from '@/sync/ops/connectedAccounts/connectedAccountDaemon';
-import {
-    useAllMachines,
-    useMachineListByServerId,
-    useProfile,
-    useSettings,
-} from '@/sync/store/hooks';
+import { useProfile, useSettings } from '@/sync/store/hooks';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 
-import { readConnectedServiceSettingsErrorCode } from '../connectedServiceSettingsErrors';
+import {
+    isConnectedServiceCredentialReferencedByGroupError,
+    readConnectedServiceSettingsErrorCode,
+    resolveConnectedServiceSettingsErrorMessage,
+} from '../connectedServiceSettingsErrors';
 import { ConnectedAccountConfigurationForm } from './ConnectedAccountConfigurationForm';
 import { ConnectedAccountDeviceForm } from './ConnectedAccountDeviceForm';
 import { ConnectedAccountManualForm } from './ConnectedAccountManualForm';
@@ -153,7 +155,8 @@ type ConnectedAccountServiceControllerProps = Readonly<{
     connectedServicesRegistry:
         ReturnType<typeof useProjectedConnectedServicesRegistry>;
     activeServer: ReturnType<typeof useActiveServerSnapshot>;
-    machines: ReturnType<typeof useAllMachines>;
+    targetSelection: MachineAdministrationTargetSelectionV1;
+    executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
 }>;
 
 const ConnectedAccountServiceController = React.memo(
@@ -164,7 +167,8 @@ const ConnectedAccountServiceController = React.memo(
         params,
         connectedServicesRegistry,
         activeServer,
-        machines,
+        targetSelection,
+        executionTarget,
     } = controllerProps;
     const settings = useSettings();
     const profile = useProfile();
@@ -195,13 +199,8 @@ const ConnectedAccountServiceController = React.memo(
             params.machineId,
         ],
     );
-    const operationTarget = resolveConnectedAccountOperationTarget({
-        activeServerId,
-        executionTarget: route?.executionTarget ?? null,
-        machines,
-    });
-    const serverId = operationTarget?.serverId ?? '';
-    const machineId = operationTarget?.machineId ?? '';
+    const serverId = executionTarget?.serverId ?? '';
+    const machineId = executionTarget?.machine.id ?? '';
     const expectedActiveServer = React.useMemo(
         () => serverId === activeServerId
             ? {
@@ -247,25 +246,35 @@ const ConnectedAccountServiceController = React.memo(
     const [activeModeId, setActiveModeId] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
     const [errorCode, setErrorCode] = React.useState<string | null>(null);
+    const [retryingDescription, setRetryingDescription] = React.useState(false);
     const activeControllerRef = React.useRef(true);
     React.useEffect(() => () => {
         activeControllerRef.current = false;
     }, []);
     const accountPeer = React.useMemo(() => {
-        if (!description?.operationTransport) {
+        if (description?.operationTransport) {
             return {
+                status: 'ready' as const,
+                transport:
+                    projectDaemonPeerTransport(description.operationTransport),
+                error: null,
+            };
+        }
+        // No transport AND a failed description read is the only way this route
+        // learns the peer cannot be resolved at all; without emitting it, the
+        // groups hook would report "unsupported" for what is really a failure.
+        return errorCode
+            ? {
+                status: 'error' as const,
+                transport: null,
+                error: errorCode,
+            }
+            : {
                 status: 'loading' as const,
                 transport: null,
                 error: null,
             };
-        }
-        return {
-            status: 'ready' as const,
-            transport:
-                projectDaemonPeerTransport(description.operationTransport),
-            error: null,
-        };
-    }, [description?.operationTransport]);
+    }, [description?.operationTransport, errorCode]);
     const groups = useQualifiedConnectedAccountGroups({
         serverId,
         service,
@@ -310,6 +319,8 @@ const ConnectedAccountServiceController = React.memo(
                     }),
                     status: legacyProfile.status,
                     authenticationModeId,
+                    revisionSemantics: 'legacy_unfenced' as const,
+                    credentialRevision: null,
                     configurationReady: false,
                     configurationRevision: null,
                     displayName: legacyProfile.providerEmail
@@ -432,6 +443,20 @@ const ConnectedAccountServiceController = React.memo(
         });
         return () => controller.abort();
     }, [refreshDescription]);
+
+    const retryDescription = React.useCallback(async () => {
+        if (retryingDescription) return;
+        setRetryingDescription(true);
+        try {
+            await refreshDescription();
+        } catch {
+            if (activeControllerRef.current) {
+                setErrorCode('connected_account_daemon_unavailable');
+            }
+        } finally {
+            if (activeControllerRef.current) setRetryingDescription(false);
+        }
+    }, [refreshDescription, retryingDescription]);
 
     const readConfiguration = React.useCallback(async (
         target: ConnectedAccountConfigurationTarget,
@@ -583,11 +608,21 @@ const ConnectedAccountServiceController = React.memo(
         return () => clearTimeout(timeout);
     }, [activeModeKind, attempt, busy, runAuthentication]);
 
+    /**
+     * Revoke one exact qualified account.
+     *
+     * `alreadyConfirmed` marks a caller that owns the destructive confirmation
+     * itself (the account detail screen prompts before it calls), so exactly one
+     * prompt is shown per surface. The group-reference cleanup prompt below is a
+     * distinct, response-driven decision and always belongs to this operation.
+     * Resolves to whether the account was revoked.
+     */
     const revokeAccount = React.useCallback(async (
         account: QualifiedConnectedAccountRef,
-    ) => {
+        options?: Readonly<{ alreadyConfirmed?: boolean }>,
+    ): Promise<boolean> => {
         const serviceLabel = localizedText(description?.descriptor.title) || serviceId;
-        const confirmed = await Modal.confirm(
+        const confirmed = options?.alreadyConfirmed === true || await Modal.confirm(
             t('modals.disconnect'),
             t('connectedServices.detail.disconnectConfirmBody', {
                 service: serviceLabel,
@@ -598,7 +633,7 @@ const ConnectedAccountServiceController = React.memo(
                 cancelText: t('common.cancel'),
             },
         );
-        if (!confirmed || !activeControllerRef.current) return;
+        if (!confirmed || !activeControllerRef.current) return false;
 
         const revoke = async (cleanupGroupReferences: boolean) => {
             try {
@@ -613,9 +648,14 @@ const ConnectedAccountServiceController = React.memo(
                     },
                 });
             } catch (error) {
-                const code = readConnectedServiceSettingsErrorCode(error);
-                if (code === 'connect_credential_referenced_by_group') {
-                    return { status: 'conflict' as const, code };
+                // Peers report this conflict either as a thrown failure or as a
+                // `conflict` response; normalize to the response shape so the
+                // cleanup decision below reads exactly one of them.
+                if (isConnectedServiceCredentialReferencedByGroupError(error)) {
+                    return {
+                        status: 'conflict' as const,
+                        code: 'connect_credential_referenced_by_group',
+                    };
                 }
                 throw error;
             }
@@ -624,11 +664,8 @@ const ConnectedAccountServiceController = React.memo(
         setBusy(true);
         try {
             let result = await revoke(false);
-            if (!activeControllerRef.current) return;
-            if (
-                result.status === 'conflict'
-                && result.code === 'connect_credential_referenced_by_group'
-            ) {
+            if (!activeControllerRef.current) return false;
+            if (isConnectedServiceCredentialReferencedByGroupError(result)) {
                 const cleanupConfirmed = await Modal.confirm(
                     t('modals.disconnect'),
                     t('connectedServices.errors.credentialReferencedByGroup'),
@@ -637,9 +674,9 @@ const ConnectedAccountServiceController = React.memo(
                         cancelText: t('common.cancel'),
                     },
                 );
-                if (!cleanupConfirmed || !activeControllerRef.current) return;
+                if (!cleanupConfirmed || !activeControllerRef.current) return false;
                 result = await revoke(true);
-                if (!activeControllerRef.current) return;
+                if (!activeControllerRef.current) return false;
             }
             if (result.status === 'revoked') {
                 applySettings(pruneQualifiedConnectedAccountPreferences({
@@ -652,7 +689,7 @@ const ConnectedAccountServiceController = React.memo(
                         settings.connectedServicesProfileLabelByKey,
                 }));
                 await refreshDescription();
-                return;
+                return true;
             }
             setErrorCode(
                 result.status === 'outcomeUnknown'
@@ -662,12 +699,14 @@ const ConnectedAccountServiceController = React.memo(
                         'connected_account_revoke_unavailable',
                     ),
             );
+            return false;
         } catch (error) {
-            if (!activeControllerRef.current) return;
+            if (!activeControllerRef.current) return false;
             setErrorCode(
                 readConnectedServiceSettingsErrorCode(error)
                 ?? 'connected_account_daemon_unavailable',
             );
+            return false;
         } finally {
             if (activeControllerRef.current) setBusy(false);
         }
@@ -684,7 +723,7 @@ const ConnectedAccountServiceController = React.memo(
         settings.connectedServicesProfileLabelByKey,
     ]);
 
-    if (!exactRoute || !service || !serverId || !machineId) {
+    if (!exactRoute || !service) {
         return (
             <ItemList>
                 <ItemGroup title={t('connectedServices.title')}>
@@ -698,21 +737,44 @@ const ConnectedAccountServiceController = React.memo(
         );
     }
 
+    if (!serverId || !machineId) {
+        return (
+            <ItemList>
+                <MachineAdministrationTargetSelector
+                    selection={targetSelection}
+                    testIDPrefix="connected-account-target"
+                />
+                <ItemGroup
+                    title={localizedText(registryEntry?.projectedTitle)
+                        || serviceId
+                        || t('connectedServices.title')}
+                >
+                    <Item
+                        title={t('common.unavailable')}
+                        mode="info"
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            </ItemList>
+        );
+    }
+
     const title = localizedText(description?.descriptor.title)
         || localizedText(registryEntry?.projectedTitle)
         || serviceId;
+    // ONE projection of the daemon transport (the `accountPeer` memo) answers
+    // every peer-capability question on this route, so a second copy cannot drift
+    // into a different peer-class answer.
+    const peerTransport = accountPeer.transport;
     const supportsOperation = (
         operation: BuiltInLegacyConnectedAccountOperation,
     ): boolean => {
-        const transport = description?.operationTransport;
-        if (!transport) return false;
-        if (transport.kind === 'v4') return true;
+        if (!peerTransport) return false;
+        if (peerTransport.protocol === 'v4') return true;
         return isQualifiedConnectedAccountLegacyOperationSupported({
             service,
-            legacyServiceId: transport.serviceId,
-            peerClass: transport.peerClass === 'exact_v0_2_1'
-                ? 'exact-v0.2.1'
-                : 'revisioned-v2-v3',
+            legacyServiceId: peerTransport.legacyServiceId,
+            peerClass: peerTransport.peerClass,
             operation,
         });
     };
@@ -823,13 +885,29 @@ const ConnectedAccountServiceController = React.memo(
         });
     };
 
-    return (
-        <ItemList>
-            {description ? (
+    /**
+     * A focused detail screen (account or pool) renders its OWN scroll
+     * container, so this route must not nest it inside another list. While an
+     * authentication or configuration flow is in flight, that flow takes the
+     * focused screen's place and the route supplies the list — one scroll
+     * container either way.
+     */
+    const authenticationFlowActive = Boolean(attempt || configuration || errorCode);
+    const focusedScreenOwnsScroll = description !== null
+        && route.focus !== null
+        && !authenticationFlowActive;
+
+    const routeBody = (
+        <>
+            {description !== null
+                && !(route.focus !== null && authenticationFlowActive) ? (
                 <ConnectedAccountServiceContent
                     title={title}
                     service={service}
                     legacyServiceId={legacyServiceId}
+                    legacyPeerClass={peerTransport?.protocol === 'legacy'
+                        ? peerTransport.peerClass
+                        : null}
                     focus={route.focus}
                     modes={mutationModes}
                     accounts={visibleAccounts}
@@ -908,24 +986,21 @@ const ConnectedAccountServiceController = React.memo(
                     onRevoke={credentialDeleteAllowed ? (account) => {
                         void revokeAccount(account);
                     } : undefined}
+                    onDisconnectAccount={credentialDeleteAllowed ? (account) => (
+                        // The account detail screen already confirmed.
+                        revokeAccount(account, { alreadyConfirmed: true })
+                    ) : undefined}
                 />
-            ) : (
+            ) : null}
+            {description === null && !errorCode ? (
                 <ItemGroup title={title || t('connectedServices.title')}>
                     <Item
-                        title={
-                            errorCode
-                            ?? (
-                                accountPeer.status !== 'ready'
-                                    ? accountPeer.error
-                                    : null
-                            )
-                            ?? t('connectedServices.deviceAuth.preparing')
-                        }
+                        title={t('connectedServices.deviceAuth.preparing')}
                         mode="info"
                         showChevron={false}
                     />
                 </ItemGroup>
-            )}
+            ) : null}
 
             {attempt?.status === 'awaitingManual' && activeMode?.kind === 'manual' ? (
                 <ConnectedAccountManualForm
@@ -1070,13 +1145,20 @@ const ConnectedAccountServiceController = React.memo(
                 <ItemGroup title={t('common.error')}>
                     <Item
                         testID="connected-account:error"
-                        title={
-                            errorCode === 'connected_account_configuration_invalid'
-                                ? t('connectedServices.account.configurationInvalid')
-                                : t('common.error')
-                        }
+                        // ONE owner turns a daemon error code into copy, so this
+                        // screen never re-decides which failures are explainable.
+                        title={resolveConnectedServiceSettingsErrorMessage({
+                            code: errorCode,
+                        })}
                         mode="info"
                         showChevron={false}
+                    />
+                    <Item
+                        testID="connected-account:error:retry"
+                        title={t('common.retry')}
+                        loading={retryingDescription}
+                        disabled={busy || retryingDescription}
+                        onPress={() => void retryDescription()}
                     />
                 </ItemGroup>
             ) : null}
@@ -1115,6 +1197,21 @@ const ConnectedAccountServiceController = React.memo(
                     />
                 </ItemGroup>
             ) : null}
+        </>
+    );
+
+    return focusedScreenOwnsScroll ? routeBody : (
+        <ItemList
+            keyboardAware={authenticationFlowActive}
+            keyboardShouldPersistTaps={authenticationFlowActive ? 'handled' : undefined}
+        >
+            {route.focus === null ? (
+                <MachineAdministrationTargetSelector
+                    selection={targetSelection}
+                    testIDPrefix="connected-account-target"
+                />
+            ) : null}
+            {routeBody}
         </ItemList>
     );
 });
@@ -1124,44 +1221,40 @@ export function ConnectedAccountServiceView() {
     const connectedServicesRegistry =
         useProjectedConnectedServicesRegistry();
     const activeServer = useActiveServerSnapshot();
-    const activeMachines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const activeServerId = asStringParam(activeServer.serverId);
-    const requestedServerId = asStringParam(params.serverId);
-    const machines = React.useMemo(
-        () => [
-            ...(resolveServerScopedMachines({
-                serverId: requestedServerId || activeServerId,
-                activeServerId,
-                activeMachines,
-                machineListByServerId,
-            }) ?? []),
-        ],
-        [
-            activeMachines,
-            activeServerId,
-            machineListByServerId,
-            requestedServerId,
-        ],
+    const targetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
     );
-    const requestedMachineId = asStringParam(params.machineId);
-    const machine = requestedMachineId
-        ? machines.find((candidate) => candidate.id === requestedMachineId) ?? null
-        : machines.find(
-            (candidate) => candidate.active === true,
-        ) ?? machines[0] ?? null;
+    const executionTarget = targetSelection.resolveExecutionTarget();
     const controllerKey = [
-        activeServerId,
         String(activeServer.generation ?? ''),
-        machine?.id ?? '',
+        executionTarget?.target.serverIdentityId ?? '',
+        executionTarget?.target.machineId ?? '',
+        executionTarget?.serverId ?? '',
         asStringParam(params.pluginId),
         asStringParam(params.localId),
         asStringParam(params.serviceId),
         asStringParam(params.accountId),
         asStringParam(params.groupId),
-        requestedServerId,
-        requestedMachineId,
     ].join('\u0000');
+
+    // One route renders three screens, so the header title has to follow the
+    // focus. The static registry title ("Profile id") described none of them.
+    // Resolved here, above the controller, so it never depends on the
+    // controller's conditional hooks.
+    const focusedRoute = React.useMemo(
+        () => resolveQualifiedConnectedAccountSettingsRoute(params, connectedServicesRegistry.entries),
+        [connectedServicesRegistry.entries, params],
+    );
+    const headerTitle = focusedRoute?.focus?.kind === 'group'
+        ? t('connectedServices.detail.groupDetail.routeTitle')
+        : localizedText(focusedRoute?.entry.projectedTitle) || t('settings.connectedServices');
+    const navigation = useNavigation();
+    React.useLayoutEffect(() => {
+        // `useNavigation` returns null when this renders outside a navigator
+        // (embedded previews / tests), so the header wiring stays opt-in.
+        if (!navigation) return;
+        navigation.setOptions({ headerTitle });
+    }, [headerTitle, navigation]);
 
     return (
         <ConnectedAccountServiceController
@@ -1169,7 +1262,8 @@ export function ConnectedAccountServiceView() {
             params={params}
             connectedServicesRegistry={connectedServicesRegistry}
             activeServer={activeServer}
-            machines={machines}
+            targetSelection={targetSelection}
+            executionTarget={executionTarget}
         />
     );
 }

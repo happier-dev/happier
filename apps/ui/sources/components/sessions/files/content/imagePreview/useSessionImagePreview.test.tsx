@@ -4,6 +4,7 @@ import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
 
 const workspaceReadFileSpy = vi.hoisted(() => vi.fn());
 const createSessionFilePreviewSourceSpy = vi.hoisted(() => vi.fn());
+const createComposerStagedMediaPreviewSourceSpy = vi.hoisted(() => vi.fn());
 
 const sessionState = vi.hoisted(() => ({
     current: null as null | {
@@ -65,6 +66,7 @@ vi.mock('@/sync/ops/workspaceFileSystem', () => ({
 
 vi.mock('@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource', () => ({
     createSessionFilePreviewSource: (...args: unknown[]) => createSessionFilePreviewSourceSpy(...args),
+    createComposerStagedMediaPreviewSource: (...args: unknown[]) => createComposerStagedMediaPreviewSourceSpy(...args),
 }));
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
@@ -202,6 +204,17 @@ describe('useSessionImagePreview', () => {
                 revoke: vi.fn(),
             },
         });
+        createComposerStagedMediaPreviewSourceSpy.mockReset();
+        createComposerStagedMediaPreviewSourceSpy.mockResolvedValue({
+            ok: true,
+            source: {
+                kind: 'object-url',
+                uri: 'blob:composer-stage-preview',
+                byteLength: 3,
+                mimeType: 'image/png',
+                revoke: vi.fn(),
+            },
+        });
         setSessionWorkspaceUnavailable();
     });
 
@@ -255,11 +268,62 @@ describe('useSessionImagePreview', () => {
         expect(hook.getCurrent().uri?.startsWith('data:')).toBe(false);
     });
 
+    it('loads an opaque staged composer image through the incumbent preview cache without resolving a session workspace path', async () => {
+        const handle = {
+            v: 1,
+            id: 'stage_42',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            owner: { pluginId: 'acme.images', localId: 'image' },
+            mediaKind: 'image',
+            mimeType: 'image/png',
+            name: 'incident.png',
+            sizeBytes: 3,
+            sha256: 'a'.repeat(64),
+        } as const;
+        const { useSessionImagePreview } = await import('./useSessionImagePreview');
+        const usePreviewWithStagedMedia = useSessionImagePreview as unknown as (input: Parameters<typeof useSessionImagePreview>[0] & Readonly<{
+            composerStagedMedia: typeof handle;
+        }>) => ReturnType<typeof useSessionImagePreview>;
+
+        const hook = await renderHook(() => usePreviewWithStagedMedia({
+            sessionId: '',
+            filePath: handle.name,
+            enabled: true,
+            cacheKey: handle.sha256,
+            mimeType: handle.mimeType,
+            sizeBytes: handle.sizeBytes,
+            composerStagedMedia: handle,
+        }));
+
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        expect(workspaceReadFileSpy).not.toHaveBeenCalled();
+        expect(createSessionFilePreviewSourceSpy).not.toHaveBeenCalled();
+        expect(createComposerStagedMediaPreviewSourceSpy).toHaveBeenCalledWith(expect.objectContaining({
+            handle,
+            maxBytes: 1_000_000,
+            signal: expect.any(AbortSignal),
+        }));
+        expect(hook.getCurrent()).toEqual({
+            status: 'loaded',
+            uri: 'blob:composer-stage-preview',
+            error: null,
+        });
+
+        await hook.unmount();
+        const stagedRequest = createComposerStagedMediaPreviewSourceSpy.mock.calls[0]?.[0] as {
+            signal?: AbortSignal | null;
+        } | undefined;
+        expect(stagedRequest?.signal?.aborted).toBe(true);
+    });
+
     it('cleans up a preview source that resolves after unmount', async () => {
         setSessionWorkspaceAvailable();
         const revoke = vi.fn();
+        const transfer: { signal: AbortSignal | null } = { signal: null };
         let resolvePreview!: (value: unknown) => void;
-        createSessionFilePreviewSourceSpy.mockReturnValue(new Promise((resolve) => {
+        createSessionFilePreviewSourceSpy.mockImplementation((input: { signal?: AbortSignal }) => new Promise((resolve) => {
+            transfer.signal = input.signal ?? null;
             resolvePreview = resolve;
         }));
 
@@ -274,6 +338,7 @@ describe('useSessionImagePreview', () => {
         }));
 
         await hook.unmount();
+        expect(transfer.signal?.aborted).toBe(true);
         resolvePreview({
             ok: true,
             source: {

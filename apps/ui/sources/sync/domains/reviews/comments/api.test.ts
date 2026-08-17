@@ -88,14 +88,22 @@ describe('review comments HTTP action executor', () => {
         expect(options).toEqual(expect.objectContaining({ includeAuth: true }));
     });
 
-    it('executes transition actions only when explicitly requested', async () => {
+    it('seals a plain transition event with request-known binding in the single mutation POST', async () => {
         const durableComment = comment({ state: 'resolved' });
         serverFetchSpy.mockResolvedValueOnce(jsonResponse({ comment: durableComment }));
         const { createReviewCommentsHttpActionExecutor } = await import('./api');
 
-        const execute = createReviewCommentsHttpActionExecutor();
+        const execute = createReviewCommentsHttpActionExecutor({
+            resolveEventStorageContext: async () => ({
+                accountId: 'account-1',
+                mode: 'plain',
+            }),
+        });
         await expect(execute('reviews.comments.transition', {
+            projectId: 'project-1',
             commentId: 'comment-1',
+            expectedState: 'open',
+            expectedServerRevision: 1,
             toState: 'resolved',
             reason: 'Verified',
             clientMutationId: 'mutation-1',
@@ -103,13 +111,57 @@ describe('review comments HTTP action executor', () => {
 
         const [path, init] = serverFetchSpy.mock.calls[0] ?? [];
         expect(path).toBe('/v1/reviews/comments/comment-1/transition');
-        expect(init).toEqual(expect.objectContaining({
-            method: 'POST',
-            body: JSON.stringify({
+        expect(init).toEqual(expect.objectContaining({ method: 'POST' }));
+        expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+                projectId: 'project-1',
+                expectedState: 'open',
+                expectedServerRevision: 1,
                 toState: 'resolved',
                 reason: 'Verified',
                 clientMutationId: 'mutation-1',
+                eventEnvelope: {
+                    t: 'plain',
+                    v: {
+                        v: 1,
+                        requestBinding: expect.objectContaining({
+                            accountId: 'account-1',
+                            projectId: 'project-1',
+                            actionId: 'reviews.comments.transition',
+                            eventKind: 'transitioned',
+                            actor: { kind: 'user', userId: 'account-1' },
+                            target: { kind: 'comment', commentId: 'comment-1' },
+                            expectedCurrentness: {
+                                kind: 'transition',
+                                expectedState: 'open',
+                                expectedServerRevision: 1,
+                            },
+                        }),
+                        details: expect.objectContaining({
+                            commentId: 'comment-1',
+                            reason: 'Verified',
+                        }),
+                    },
+                },
+            });
+        expect(serverFetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails a token-only E2EE mutation before POST', async () => {
+        const { createReviewCommentsHttpActionExecutor } = await import('./api');
+        const execute = createReviewCommentsHttpActionExecutor({
+            resolveEventStorageContext: async () => ({
+                accountId: 'account-1',
+                mode: 'e2ee',
             }),
-        }));
+        });
+
+        await expect(execute('reviews.comments.create', {
+            projectId: 'project-1',
+            anchor: { kind: 'file', filePath: 'src/a.ts' },
+            snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+            body: 'body',
+            clientMutationId: 'mutation-1',
+        })).rejects.toThrow('review_comment_encryption_material_unavailable');
+        expect(serverFetchSpy).not.toHaveBeenCalled();
     });
 });

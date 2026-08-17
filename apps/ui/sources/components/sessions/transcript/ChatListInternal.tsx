@@ -11,6 +11,8 @@ import { useSessionCatchingUpNewer, useSessionTailContiguousFloorSeq } from '@/s
 import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessionScreenIsFocused';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useTranscriptMotionConfig } from '@/components/sessions/transcript/motion/useTranscriptMotionConfig';
+import { buildSessionTranscriptAgentAttributionIndex } from '@/components/sessions/transcript/attribution/sessionTranscriptAgentAttribution';
+import { SessionTranscriptAgentAttributionProvider } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { TranscriptMotionProvider } from '@/components/sessions/transcript/motion/TranscriptMotionProvider';
 import { InitialPresentationReadinessProvider } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 import {
@@ -204,6 +206,7 @@ import { stampViewportAnchorForEmit as stampViewportAnchorForEmitState } from '@
 import { readSessionViewportForEntry } from '@/components/sessions/transcript/viewport/entryRestore/entryRestoreAnchorUtilities';
 import { resolveTranscriptMountSettleTuning } from '@/components/sessions/transcript/viewport/lifecycle/mountSettleTuning';
 import { useTranscriptFirstPaintState, useTranscriptItemsPipeline, useTranscriptToolAutoExpandEffect } from '@/components/sessions/transcript/items/useTranscriptItemsPipeline';
+import { useSessionActionFieldOptionsForRowHeight } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { useTranscriptItemRenderer, useTranscriptItemsEdgeSlots } from '@/components/sessions/transcript/rowHost/useTranscriptRowHost';
 import { useTranscriptExpansionState } from '@/components/sessions/transcript/rowHost/useTranscriptExpansionState';
 export type { TranscriptViewportChangeState } from '@/components/sessions/transcript/chatListTypes';
@@ -211,6 +214,15 @@ type ExplicitJumpTakeoverApplyEffect = TranscriptLifecycleHostExplicitJumpPlan['
 type FollowBottomIntentTakeoverApplyEffect = TranscriptLifecycleHostFollowBottomIntentPlan['followBottomIntentTakeoverEffects'][number];
 const TRANSCRIPT_SCROLL_USER_INTENT_RECENT_MS = 500;
 export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
+    // Historical Agent attribution, resolved once for the whole transcript.
+    // A Session can change Agent without changing identity, and every tool row
+    // below this point needs to know which Agent produced it. Rows look the
+    // answer up; they never rebuild the index.
+    const agentAttributionIndex = React.useMemo(
+        () => buildSessionTranscriptAgentAttributionIndex(Object.values(props.messagesById)),
+        [props.messagesById],
+    );
+
     const transcriptMessageSelection = useOptionalTranscriptSelectionState();
     const transcriptContentMaxWidth = useLayoutMaxWidth();
     const [isLoadingOlder, setIsLoadingOlder] = React.useState(false);
@@ -510,6 +522,12 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const transcriptScrollPinEnabled = useSetting('transcriptScrollPinEnabled');
     const transcriptScrollPinOffsetThresholdPx = useSetting('transcriptScrollPinOffsetThresholdPx');
     const transcriptToolCallsCollapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
+    // F-4 (2026-08-11): the height-bearing half of the action-draft option resolution, so an
+    // `action-draft` row's size key moves when a synced settings push or a capabilities snapshot adds
+    // or removes one of its option rows while the row is offscreen. This hook is deliberately the
+    // narrow variant: it is inert until this session actually has a draft, and its result identity
+    // moves only when a painted option row does, so it does not churn the transcript.
+    const resolveActionDraftFieldOptions = useSessionActionFieldOptionsForRowHeight(props.sessionId);
     const [scrollPin, setScrollPin] = React.useState<TranscriptScrollPinState>(() => ({
         isPinned: resolveSessionEntryViewportState(readSessionViewportForEntry(props.sessionId)).shouldFollowBottom,
         newActivityCount: 0,
@@ -968,6 +986,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         messagesById: props.messagesById,
         preDecompositionItemsRef,
         renderWindowIndexMapRef,
+        resolveActionDraftFieldOptions,
         resolveThinkingExpanded,
         rowFontScaleKey: resolveFontScaleKey(),
         rowWidthBucket: listLayoutWidthBucket,
@@ -1996,6 +2015,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         ? scrollObservationHost.platformInteractionProps as Partial<React.ComponentProps<typeof View>>
         : undefined;
     return (
+        <SessionTranscriptAgentAttributionProvider value={agentAttributionIndex}>
         <TranscriptMotionProvider sessionKey={props.sessionId} config={motionConfig}>
             <InitialPresentationReadinessProvider value={initialRichContentPresentationController.boundary}>
               <View
@@ -2069,5 +2089,6 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
               </View>
             </InitialPresentationReadinessProvider>
         </TranscriptMotionProvider>
+        </SessionTranscriptAgentAttributionProvider>
     );
 });

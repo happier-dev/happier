@@ -9,24 +9,275 @@ import {
   voiceSettingsDefaults,
   voiceSettingsParse,
 } from './voiceSettings';
+import { DEFAULT_ELEVENLABS_VOICE_ID } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 
 describe('voiceSettings', () => {
+  const elevenLabsProviderId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+  it('drops never-released conversation selections and envelopes at settings ingress', () => {
+    const parsed = voiceSettingsParse({
+      providerId: 'realtime_codex',
+      providers: {
+        realtime_codex: {
+          schemaVersion: 2,
+          config: { globalConnectedServices: null },
+        },
+      },
+    });
+
+    expect(parsed.providerId).toBeNull();
+    expect(parsed.providers['happier.agent.codex/realtime-codex']).toEqual(
+      voiceSettingsDefaults.providers['happier.agent.codex/realtime-codex'],
+    );
+    expect(parsed.providers).not.toHaveProperty('realtime_codex');
+  });
+
+  it('keeps a canonical provider envelope while dropping a never-released lookalike', () => {
+    const parsed = voiceSettingsParse({
+      providers: {
+        realtime_codex: {
+          schemaVersion: 2,
+          config: { globalConnectedServices: null },
+        },
+        'happier.agent.codex/realtime-codex': {
+          schemaVersion: 2,
+          config: { globalConnectedServices: 'all' },
+        },
+      },
+    });
+
+    expect(parsed.providers['happier.agent.codex/realtime-codex']).toEqual({
+      schemaVersion: 2,
+      config: { globalConnectedServices: 'all' },
+    });
+    expect(parsed.providers).not.toHaveProperty('realtime_codex');
+  });
+
+  it('keeps an explicit canonical root speech envelope when contracting a colliding nested copy', () => {
+    const speechProviderId = 'happier.voice.google/gemini-stt';
+    const parsed = voiceSettingsParse({
+      providerId: 'local_conversation',
+      providers: {
+        [speechProviderId]: {
+          schemaVersion: 2,
+          config: { model: 'default-root', language: '' },
+        },
+        local_conversation: {
+          schemaVersion: 1,
+          config: {
+            stt: {
+              provider: speechProviderId,
+              providers: {
+                [speechProviderId]: {
+                  schemaVersion: 2,
+                  config: { model: 'selected-nested', language: 'de' },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.providers[speechProviderId]).toEqual({
+      schemaVersion: 2,
+      config: { model: 'default-root', language: '' },
+    });
+    expect(readLocalConversationVoiceSettings(parsed).stt).not.toHaveProperty('providers');
+  });
+
+  it('does not recover an invalid explicit root speech envelope from a valid nested copy', () => {
+    const speechProviderId = 'happier.voice.google/gemini-stt';
+    const parsed = voiceSettingsParse({
+      providerId: 'local_direct',
+      providers: {
+        [speechProviderId]: {
+          schemaVersion: 2,
+          config: { model: null, language: '' },
+        },
+        local_direct: {
+          schemaVersion: 1,
+          config: {
+            stt: {
+              provider: speechProviderId,
+              providers: {
+                [speechProviderId]: {
+                  schemaVersion: 2,
+                  config: { model: 'nested-must-not-recover', language: 'de' },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(readVoiceProviderSettingsConfig(parsed, speechProviderId)).toBeNull();
+    expect(readLocalDirectVoiceSettings(parsed).stt).not.toHaveProperty('providers');
+  });
+
+  it('does not promote an unshipped nested speech envelope into canonical root settings', () => {
+    const speechProviderId = 'happier.voice.google/gemini-stt';
+    const parsed = voiceSettingsParse({
+      providerId: 'local_direct',
+      providers: {
+        local_direct: {
+          schemaVersion: 1,
+          config: {
+            stt: {
+              provider: speechProviderId,
+              providers: {
+                [speechProviderId]: {
+                  schemaVersion: 2,
+                  config: { model: 'dev-only-nested', language: 'de' },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(readVoiceProviderSettingsConfig(parsed, speechProviderId)).toEqual({
+      model: 'gemini-2.5-flash',
+      language: '',
+    });
+  });
+
+  it('imports released OpenAI-compatible role settings without inferring current-only authority', () => {
+    const parsed = voiceSettingsParse({
+      providerId: 'local_direct',
+      adapters: {
+        local_direct: {
+          stt: {
+            provider: 'openai_compat',
+            openaiCompat: {
+              baseUrl: 'http://localhost:8101/v1',
+              insecureLocalOriginConsent: 'http://localhost:8101',
+              insecureLocalConsentMachineId: 'machine-a',
+              apiKey: null,
+              model: 'legacy-whisper',
+            },
+          },
+          tts: {
+            provider: 'openai_compat',
+          },
+        },
+        local_conversation: {
+          tts: {
+            provider: 'openai_compat',
+            openaiCompat: {
+              baseUrl: 'http://localhost:8102/v1',
+              insecureLocalOriginConsent: 'http://localhost:8102',
+              insecureLocalConsentMachineId: 'machine-b',
+              apiKey: null,
+              model: 'legacy-tts',
+              voice: 'legacy-voice',
+              format: 'wav',
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.providers['happier.voice.openai-compat/stt']).toEqual({
+      schemaVersion: 2,
+      config: expect.objectContaining({
+        baseUrl: 'http://localhost:8101/v1',
+        insecureLocalOriginConsent: '',
+        insecureLocalConsentMachineId: '',
+        model: 'legacy-whisper',
+        language: '',
+      }),
+    });
+    expect(parsed.providers['happier.voice.openai-compat/tts']).toEqual({
+      schemaVersion: 2,
+      config: expect.objectContaining({
+        baseUrl: 'http://localhost:8102/v1',
+        insecureLocalOriginConsent: '',
+        insecureLocalConsentMachineId: '',
+        model: 'legacy-tts',
+        voiceName: 'legacy-voice',
+        format: 'wav',
+      }),
+    });
+    expect(parsed.providers['happier.voice.openai-compat/stt']?.config).not.toHaveProperty('apiKey');
+    expect(parsed.providers['happier.voice.openai-compat/tts']?.config).not.toHaveProperty('apiKey');
+    const local = readLocalDirectVoiceSettings(parsed);
+    expect(local.stt.provider).toBe('happier.voice.openai-compat/stt');
+    expect(local.tts.provider).toBe('happier.voice.openai-compat/tts');
+    expect(local.stt).not.toHaveProperty('openaiCompat');
+    expect(local.tts).not.toHaveProperty('openaiCompat');
+  });
+
+  it('does not treat current-only speech fields as a released OpenAI-compatible configuration carrier', () => {
+    const parsed = voiceSettingsParse({
+      providerId: 'local_direct',
+      adapters: {
+        local_direct: {
+          stt: {
+            provider: 'openai_compat',
+            baseUrl: 'http://current-only-stt.test/v1',
+            insecureLocalOriginConsent: 'http://current-only-stt.test',
+            insecureLocalConsentMachineId: 'machine-stt',
+            language: 'de',
+            model: 'current-only-whisper',
+          },
+          tts: {
+            provider: 'openai_compat',
+            baseUrl: 'http://current-only-tts.test/v1',
+            insecureLocalOriginConsent: 'http://current-only-tts.test',
+            insecureLocalConsentMachineId: 'machine-tts',
+            model: 'current-only-tts',
+            voice: 'current-only-voice',
+            format: 'wav',
+          },
+        },
+      },
+    });
+
+    expect(readVoiceProviderSettingsConfig(parsed, 'happier.voice.openai-compat/stt')).toEqual({
+      baseUrl: '',
+      insecureLocalOriginConsent: '',
+      insecureLocalConsentMachineId: '',
+      language: '',
+      model: 'whisper-1',
+    });
+    expect(readVoiceProviderSettingsConfig(parsed, 'happier.voice.openai-compat/tts')).toEqual({
+      baseUrl: '',
+      insecureLocalOriginConsent: '',
+      insecureLocalConsentMachineId: '',
+      format: 'mp3',
+      model: 'tts-1',
+      voiceName: 'alloy',
+    });
+  });
+
   it('stores credential references in the Voice settings owner', () => {
     const parsed = voiceSettingsParse({
       credentialBindings: [{
-        providerId: 'realtime_openai',
+        contribution: { pluginId: 'happier.voice.openai', localId: 'realtime-openai' },
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'savedSecret' },
         credentialBindings: { account: { api_key: 'saved-openai' } },
       }],
     });
 
     expect(parsed.credentialBindings).toEqual([{
-      providerId: 'realtime_openai',
+      contribution: { pluginId: 'happier.voice.openai', localId: 'realtime-openai' },
+      credentialSlotId: 'api_key',
+      credentialSource: { kind: 'savedSecret' },
       credentialBindings: { account: { api_key: 'saved-openai' } },
     }]);
     expect(voiceSettingsParse({
       credentialBindings: [
-        { providerId: 'realtime_openai', credentialBindings: {} },
-        { providerId: 'realtime_openai', credentialBindings: {} },
+        {
+          contribution: { pluginId: 'happier.voice.openai', localId: 'realtime-openai' },
+          credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' }, credentialBindings: {},
+        },
+        {
+          contribution: { pluginId: 'happier.voice.openai', localId: 'realtime-openai' },
+          credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' }, credentialBindings: {},
+        },
       ],
     }).credentialBindings).toEqual([]);
   });
@@ -36,12 +287,13 @@ describe('voiceSettings', () => {
     expect(voiceSettingsDefaults.dictation).toEqual({
       sttBinding: 'explicit',
       language: null,
-      stt: expect.objectContaining({
+      stt: {
         provider: 'device',
-      }),
+        localNeural: expect.any(Object),
+      },
     });
     expect(voiceSettingsDefaults.providers).toEqual(expect.objectContaining({
-      realtime_elevenlabs: expect.objectContaining({ schemaVersion: 2 }),
+      [elevenLabsProviderId]: expect.objectContaining({ schemaVersion: 2 }),
       local_direct: expect.objectContaining({ schemaVersion: 1 }),
       local_conversation: expect.objectContaining({ schemaVersion: 1 }),
     }));
@@ -58,9 +310,12 @@ describe('voiceSettings', () => {
     expect('adapters' in voiceSettingsDefaults).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(voiceSettingsDefaults, 'adapters')).toBe(false);
     expect(JSON.stringify(voiceSettingsDefaults)).not.toContain('"adapters"');
+    expect(readLocalDirectVoiceSettings(voiceSettingsDefaults).stt).not.toHaveProperty('openaiCompat');
+    expect(readLocalDirectVoiceSettings(voiceSettingsDefaults).tts).not.toHaveProperty('openaiCompat');
+    expect(voiceSettingsDefaults.dictation.stt).not.toHaveProperty('openaiCompat');
   });
 
-  it('persists Dictation STT independently while stripping legacy inline secrets', () => {
+  it('persists the current qualified Dictation selection independently from provider configuration', () => {
     const parsed = voiceSettingsParse({
       providerId: 'local_conversation',
       providers: {
@@ -73,12 +328,7 @@ describe('voiceSettings', () => {
         sttBinding: 'explicit',
         language: 'de-CH',
         stt: {
-          provider: 'openai_compat',
-          openaiCompat: {
-            baseUrl: 'https://speech.example.test',
-            apiKey: { _isSecretValue: true, value: 'must-not-persist' },
-            model: 'whisper-dictation',
-          },
+          provider: 'happier.voice.openai-compat/stt',
         },
       },
     });
@@ -87,15 +337,11 @@ describe('voiceSettings', () => {
       sttBinding: 'explicit',
       language: 'de-CH',
       stt: {
-        provider: 'openai_compat',
-        openaiCompat: {
-          baseUrl: 'https://speech.example.test',
-          apiKey: null,
-          model: 'whisper-dictation',
-        },
+        provider: 'happier.voice.openai-compat/stt',
       },
     });
-    expect(JSON.stringify(parsed.dictation)).not.toContain('must-not-persist');
+    expect(parsed.dictation.stt).not.toHaveProperty('openaiCompat');
+    expect(parsed.dictation.stt).not.toHaveProperty('openaiCompat');
   });
 
   it('migrates the complete untouched legacy hosted default to unconfigured', () => {
@@ -105,7 +351,23 @@ describe('voiceSettings', () => {
       ui: {},
       privacy: {},
       adapters: {
-        realtime_elevenlabs: {},
+        realtime_elevenlabs: {
+          assistantLanguage: null,
+          billingMode: 'happier',
+          welcome: { enabled: false, mode: 'immediate', templateId: null },
+          tts: {
+            voiceId: 'EST9Ui6982FZPSi7gCHi',
+            modelId: null,
+            voiceSettings: {
+              stability: null,
+              similarityBoost: null,
+              style: null,
+              useSpeakerBoost: null,
+              speed: null,
+            },
+          },
+          byo: { agentId: null, apiKey: null },
+        },
         local_direct: {},
         local_conversation: {},
       },
@@ -115,18 +377,22 @@ describe('voiceSettings', () => {
   });
 
   it('preserves an explicit or customized legacy hosted selection', () => {
-    expect(voiceSettingsParse({ providerId: 'realtime_elevenlabs' }).providerId).toBe('realtime_elevenlabs');
+    expect(voiceSettingsParse({ providerId: 'realtime_elevenlabs' }).providerId).toBe(elevenLabsProviderId);
 
     const customized = voiceSettingsParse({
       providerId: 'realtime_elevenlabs',
       adapters: {
         realtime_elevenlabs: {
           billingMode: 'byo',
+          tts: { voiceId: 'EST9Ui6982FZPSi7gCHi' },
           byo: { agentId: 'agent-123', apiKey: null },
         },
       },
     });
-    expect(customized.providerId).toBe('realtime_elevenlabs');
+    expect(customized.providerId).toBe(elevenLabsProviderId);
+    expect(readVoiceProviderSettingsConfig(customized, elevenLabsProviderId)).toMatchObject({
+      tts: { voiceId: 'EST9Ui6982FZPSi7gCHi' },
+    });
   });
 
   it('does not expose legacy adapters on canonical parse results while preserving legacy boundary migration', () => {
@@ -134,7 +400,7 @@ describe('voiceSettings', () => {
 
     expect('adapters' in canonical).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(canonical, 'adapters')).toBe(false);
-    expect(voiceSettingsParse(canonical).providerId).toBe('realtime_elevenlabs');
+    expect(voiceSettingsParse(canonical).providerId).toBe(elevenLabsProviderId);
 
     const migrated = voiceSettingsParse({
       providerId: 'local_conversation',
@@ -180,15 +446,20 @@ describe('voiceSettings', () => {
       autoMachineId: 'machine-old',
     });
     expect(JSON.stringify(parsed)).not.toContain('machineTargetMode');
-    expect(JSON.stringify(parsed.providers.realtime_elevenlabs.config)).not.toContain('assistantLanguage');
+    expect(JSON.stringify(parsed.providers[elevenLabsProviderId].config)).not.toContain('assistantLanguage');
   });
 
   it('migrates the legacy assistant language only when the canonical root field is absent', () => {
-    expect(voiceSettingsParse({
+    const migrated = voiceSettingsParse({
       adapters: {
         realtime_elevenlabs: { assistantLanguage: 'fr' },
       },
-    }).assistantLanguage).toBe('fr');
+    });
+    expect(migrated.providers[elevenLabsProviderId]).toMatchObject({
+      schemaVersion: 2,
+      config: expect.any(Object),
+    });
+    expect(migrated.assistantLanguage).toBe('fr');
 
     expect(voiceSettingsParse({
       assistantLanguage: null,
@@ -199,18 +470,19 @@ describe('voiceSettings', () => {
   });
 
   it('preserves valid unknown provider envelopes without selecting or interpreting them', () => {
+    const providerId = 'acme.voice/future-vendor';
     const unknown = {
       schemaVersion: 7,
       config: { nested: ['value', 3, true, null], future: { flag: 'kept' } },
     };
     const parsed = voiceSettingsParse({
-      providerId: 'future_vendor',
-      providers: { future_vendor: unknown },
+      providerId,
+      providers: { [providerId]: unknown },
     });
 
-    expect(parsed.providerId).toBe('future_vendor');
-    expect(parsed.providers.future_vendor).toEqual(unknown);
-    expect(JSON.parse(JSON.stringify(parsed)).providers.future_vendor).toEqual(unknown);
+    expect(parsed.providerId).toBe(providerId);
+    expect(parsed.providers[providerId]).toEqual(unknown);
+    expect(JSON.parse(JSON.stringify(parsed)).providers[providerId]).toEqual(unknown);
   });
 
   it('reclaims an inert legacy bundled-provider envelope after the same owner is restored', () => {
@@ -230,9 +502,9 @@ describe('voiceSettings', () => {
 
     expect(parsed.assistantLanguage).toBe('fr');
     expect(parsed.welcome).toEqual({ enabled: true, mode: 'on_first_turn', templateId: 'restored' });
-    expect(parsed.providers.realtime_elevenlabs.config).toMatchObject({ billingMode: 'byo' });
-    expect(parsed.providers.realtime_elevenlabs.config).not.toHaveProperty('assistantLanguage');
-    expect(parsed.providers.realtime_elevenlabs.config).not.toHaveProperty('welcome');
+    expect(parsed.providers[elevenLabsProviderId].config).toMatchObject({ billingMode: 'byo' });
+    expect(parsed.providers[elevenLabsProviderId].config).not.toHaveProperty('assistantLanguage');
+    expect(parsed.providers[elevenLabsProviderId].config).not.toHaveProperty('welcome');
   });
 
   it('keeps a legacy credential envelope migration-only until the credential store confirms import', () => {
@@ -254,7 +526,7 @@ describe('voiceSettings', () => {
 
     expect(parsed.assistantLanguage).toBe('fr');
     expect(parsed.welcome).toEqual({ enabled: true, mode: 'on_first_turn', templateId: 'legacy' });
-    expect(parsed.providers.realtime_elevenlabs).toEqual({
+    expect(parsed.providers[elevenLabsProviderId]).toEqual({
       schemaVersion: 1,
       config: expect.objectContaining({ byo: { agentId: 'agent_1', apiKey: legacySecret } }),
     });
@@ -279,7 +551,7 @@ describe('voiceSettings', () => {
     });
 
     expect(parsed.welcome).toEqual({ enabled: false, mode: 'immediate', templateId: null });
-    expect(parsed.providers.realtime_elevenlabs.config).toMatchObject({
+    expect(parsed.providers[elevenLabsProviderId].config).toMatchObject({
       welcome: { enabled: true, mode: 'on_first_turn', templateId: 'later' },
     });
   });
@@ -302,16 +574,17 @@ describe('voiceSettings', () => {
   });
 
   it('migrates missing legacy providers without overwriting canonical provider envelopes', () => {
+    const providerId = 'acme.voice/future-vendor';
     const parsed = voiceSettingsParse({
       providers: {
-        future_vendor: { schemaVersion: 4, config: { preserved: true } },
+        [providerId]: { schemaVersion: 4, config: { preserved: true } },
       },
       adapters: {
         local_direct: { networkTimeoutMs: 32_000 },
       },
     });
 
-    expect(parsed.providers.future_vendor).toEqual({ schemaVersion: 4, config: { preserved: true } });
+    expect(parsed.providers[providerId]).toEqual({ schemaVersion: 4, config: { preserved: true } });
     expect((parsed.providers.local_direct.config as any).networkTimeoutMs).toBe(32_000);
   });
 
@@ -327,7 +600,7 @@ describe('voiceSettings', () => {
       },
     });
 
-    expect(parsed.providerId).toBe('realtime_elevenlabs');
+    expect(parsed.providerId).toBe(elevenLabsProviderId);
   });
 
   it('does not migrate an inactive realtime welcome preference onto local-direct voice', () => {
@@ -360,31 +633,35 @@ describe('voiceSettings', () => {
   });
 
   it('copies unknown provider JSON so callers cannot mutate parsed settings through the input object', () => {
+    const providerId = 'acme.voice/future-vendor';
     const config = { nested: { value: 'before' } };
     const parsed = voiceSettingsParse({
-      providers: { future_vendor: { schemaVersion: 7, config } },
+      providers: { [providerId]: { schemaVersion: 7, config } },
     });
 
     config.nested.value = 'after';
 
-    expect(parsed.providers.future_vendor).toEqual({
+    expect(parsed.providers[providerId]).toEqual({
       schemaVersion: 7,
       config: { nested: { value: 'before' } },
     });
   });
 
   it('drops malformed or oversized provider envelopes while preserving neighboring valid entries', () => {
+    const malformedProviderId = 'acme.voice/malformed';
+    const oversizedProviderId = 'acme.voice/oversized';
+    const validProviderId = 'acme.voice/valid-unknown';
     const parsed = voiceSettingsParse({
       providers: {
-        malformed: { schemaVersion: 0, config: { nope: true } },
-        oversized: { schemaVersion: 1, config: { value: 'x'.repeat(70_000) } },
-        valid_unknown: { schemaVersion: 1, config: { kept: true } },
+        [malformedProviderId]: { schemaVersion: 0, config: { nope: true } },
+        [oversizedProviderId]: { schemaVersion: 1, config: { value: 'x'.repeat(70_000) } },
+        [validProviderId]: { schemaVersion: 1, config: { kept: true } },
       },
     });
 
-    expect(parsed.providers.malformed).toBeUndefined();
-    expect(parsed.providers.oversized).toBeUndefined();
-    expect(parsed.providers.valid_unknown).toEqual({ schemaVersion: 1, config: { kept: true } });
+    expect(parsed.providers[malformedProviderId]).toBeUndefined();
+    expect(parsed.providers[oversizedProviderId]).toBeUndefined();
+    expect(parsed.providers[validProviderId]).toEqual({ schemaVersion: 1, config: { kept: true } });
   });
 
   it('defaults include ui activity feed + scope settings', () => {
@@ -419,9 +696,11 @@ describe('voiceSettings', () => {
   });
 
   it('defaults include ElevenLabs TTS voice selection', () => {
-    const elevenLabs = readVoiceProviderSettingsConfig(voiceSettingsDefaults, 'realtime_elevenlabs') as any;
+    const elevenLabs = readVoiceProviderSettingsConfig(voiceSettingsDefaults, elevenLabsProviderId) as any;
     expect(elevenLabs?.tts?.voiceId).toBeTypeOf('string');
-    expect(String(elevenLabs?.tts?.voiceId)).toBe('EST9Ui6982FZPSi7gCHi');
+    // The plugin manifest is the sole authority for the shipped default; a
+    // literal here would be a second copy that silently drifts from it.
+    expect(String(elevenLabs?.tts?.voiceId)).toBe(DEFAULT_ELEVENLABS_VOICE_ID);
     expect(voiceSettingsDefaults.welcome.enabled).toBe(false);
     expect(voiceSettingsDefaults.welcome.mode).toBe('immediate');
   });
@@ -529,10 +808,12 @@ describe('voiceSettings', () => {
 
   it('defaults include local TTS provider selection', () => {
     const tts = readLocalDirectVoiceSettings(voiceSettingsDefaults).tts;
-    expect(tts?.provider).toBe('openai_compat');
-    expect(tts?.openaiCompat?.model).toBe('tts-1');
-    expect(tts?.openaiCompat?.voice).toBe('alloy');
-    expect(tts?.openaiCompat?.format).toBe('mp3');
+    expect(tts?.provider).toBe('happier.voice.openai-compat/tts');
+    expect(tts).not.toHaveProperty('openaiCompat');
+    expect(readVoiceProviderSettingsConfig(
+      voiceSettingsDefaults,
+      'happier.voice.openai-compat/tts',
+    )).toMatchObject({ model: 'tts-1', voiceName: 'alloy', format: 'mp3' });
     expect(tts?.localNeural?.model).toBe('kokoro');
     expect(tts?.localNeural?.assetId).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
     expect(tts?.localNeural?.execution).toBe('auto');
@@ -540,8 +821,12 @@ describe('voiceSettings', () => {
 
   it('defaults include local STT provider selection', () => {
     const stt = readLocalDirectVoiceSettings(voiceSettingsDefaults).stt;
-    expect(stt?.provider).toBe('openai_compat');
-    expect(stt?.openaiCompat?.model).toBe('whisper-1');
+    expect(stt?.provider).toBe('happier.voice.openai-compat/stt');
+    expect(stt).not.toHaveProperty('openaiCompat');
+    expect(readVoiceProviderSettingsConfig(
+      voiceSettingsDefaults,
+      'happier.voice.openai-compat/stt',
+    )).toMatchObject({ model: 'whisper-1' });
     expect(stt?.localNeural?.assetId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
     expect(stt?.localNeural?.execution).toBe('auto');
   });
@@ -592,7 +877,7 @@ describe('voiceSettings', () => {
     expect(stt?.localNeural?.execution).toBe('device');
   });
 
-  it('migrates legacy local TTS settings into provider format', () => {
+  it('drops undeployed local TTS endpoint configuration at the qualified boundary', () => {
     const parsed = voiceSettingsParse({
       providerId: 'local_direct',
       adapters: {
@@ -611,11 +896,15 @@ describe('voiceSettings', () => {
       },
     });
 
-    expect(readLocalDirectVoiceSettings(parsed).tts.provider).toBe('openai_compat');
-    expect(readLocalDirectVoiceSettings(parsed).tts.openaiCompat.baseUrl).toBe('http://localhost:1234');
+    expect(readLocalDirectVoiceSettings(parsed).tts.provider).toBe('happier.voice.openai-compat/tts');
+    expect(readLocalDirectVoiceSettings(parsed).tts).not.toHaveProperty('openaiCompat');
+    expect(readVoiceProviderSettingsConfig(
+      parsed,
+      'happier.voice.openai-compat/tts',
+    )).toMatchObject({ baseUrl: '' });
   });
 
-  it('migrates legacy local STT settings into provider format', () => {
+  it('drops undeployed local STT endpoint configuration at the qualified boundary', () => {
     const parsed = voiceSettingsParse({
       providerId: 'local_direct',
       adapters: {
@@ -630,11 +919,15 @@ describe('voiceSettings', () => {
       },
     });
 
-    expect(readLocalDirectVoiceSettings(parsed).stt.provider).toBe('openai_compat');
-    expect(readLocalDirectVoiceSettings(parsed).stt.openaiCompat.baseUrl).toBe('http://localhost:1234');
+    expect(readLocalDirectVoiceSettings(parsed).stt.provider).toBe('happier.voice.openai-compat/stt');
+    expect(readLocalDirectVoiceSettings(parsed).stt).not.toHaveProperty('openaiCompat');
+    expect(readVoiceProviderSettingsConfig(
+      parsed,
+      'happier.voice.openai-compat/stt',
+    )).toMatchObject({ baseUrl: '' });
   });
 
-  it('migrates partial legacy local-conversation settings without dropping valid network fields', () => {
+  it('preserves host-owned local-conversation fields while dropping undeployed speech endpoint config', () => {
     const parsed = voiceSettingsParse({
       providerId: 'local_conversation',
       adapters: {
@@ -651,7 +944,6 @@ describe('voiceSettings', () => {
           networkTimeoutMs: 15_000,
           handsFree: { enabled: false, endpointing: { silenceMs: 5000, minSpeechMs: 1000 } },
           agent: {
-            backend: 'daemon',
             agentSource: 'session',
             agentId: 'claude',
             permissionPolicy: 'read_only',
@@ -660,14 +952,7 @@ describe('voiceSettings', () => {
             chatModelId: 'default',
             commitModelSource: 'chat',
             commitModelId: 'default',
-            openaiCompat: {
-              chatBaseUrl: null,
-              chatApiKey: null,
-              chatModel: 'default',
-              commitModel: 'default',
-              temperature: 0.4,
-              maxTokens: null,
-            },
+            providerChat: null,
             verbosity: 'short',
           },
           streaming: { enabled: false, ttsEnabled: false, ttsChunkChars: 200 },
@@ -675,11 +960,15 @@ describe('voiceSettings', () => {
       },
     });
 
-    expect((parsed.providers.local_conversation.config as any).stt.openaiCompat.baseUrl).toBe('http://localhost:8000');
+    expect((parsed.providers.local_conversation.config as any).stt).not.toHaveProperty('openaiCompat');
+    expect(readVoiceProviderSettingsConfig(
+      parsed,
+      'happier.voice.openai-compat/stt',
+    )).toMatchObject({ baseUrl: '' });
     expect((parsed.providers.local_conversation.config as any).streaming.enabled).toBe(false);
   });
 
-  it('preserves non-positive OpenAI-compatible max tokens as inert JSON and fails runtime reading closed', () => {
+  it('strips retired direct Chat aliases instead of retaining a parallel runtime configuration', () => {
     const parsed = voiceSettingsParse({
       providerId: 'local_conversation',
       providers: {
@@ -696,8 +985,10 @@ describe('voiceSettings', () => {
       },
     });
 
-    expect((parsed.providers.local_conversation.config as any).agent.openaiCompat.maxTokens).toBe(-9);
-    expect(readLocalConversationVoiceSettings(parsed).agent.openaiCompat.maxTokens).toBeNull();
+    const agent = (parsed.providers.local_conversation.config as any).agent;
+    expect(agent).not.toHaveProperty('backend');
+    expect(agent).not.toHaveProperty('openaiCompat');
+    expect(readLocalConversationVoiceSettings(parsed).agent.providerChat).toBeNull();
   });
 
   it('migrates legacy device STT toggle into provider format', () => {
@@ -735,9 +1026,10 @@ describe('voiceSettings', () => {
       },
     });
 
-    expect(readLocalDirectVoiceSettings(parsed).tts.provider).toBe('google_cloud');
-    expect(readLocalDirectVoiceSettings(parsed).tts.providers?.google_cloud).toEqual({
-      schemaVersion: 1,
+    expect(readLocalDirectVoiceSettings(parsed).tts.provider).toBe('happier.voice.google/google-cloud-tts');
+    expect(readLocalDirectVoiceSettings(parsed).tts).not.toHaveProperty('providers');
+    expect(parsed.providers['happier.voice.google/google-cloud-tts']).toEqual({
+      schemaVersion: 2,
       config: expect.objectContaining({ voiceName: 'en-US-Wavenet-D' }),
     });
   });

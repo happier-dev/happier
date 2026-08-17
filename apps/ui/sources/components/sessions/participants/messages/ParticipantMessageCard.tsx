@@ -4,9 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { ParticipantMessageV1 } from '@happier-dev/protocol';
 
-import type { Message } from '@/sync/domains/messages/messageTypes';
 import { Text } from '@/components/ui/text/Text';
-import { readStructuredUserMessageText } from '@/components/sessions/transcript/structured/readStructuredUserMessageText';
 import { t } from '@/text';
 
 function describeParticipantRecipient(payload: ParticipantMessageV1): string {
@@ -20,16 +18,13 @@ function describeParticipantRecipient(payload: ParticipantMessageV1): string {
     return r.memberLabel ?? r.memberId;
 }
 
-export function ParticipantMessageCard(props: Readonly<{ payload: ParticipantMessageV1; message: Message }>) {
-    const messageText = readStructuredUserMessageText(props.message);
-    if (!messageText) return null;
-
+export function ParticipantMessageCard(props: Readonly<{ payload: ParticipantMessageV1; messageText: string }>) {
     const label = describeParticipantRecipient(props.payload);
 
     return (
         <View style={styles.container}>
             <Text selectable style={styles.toText}>{t('session.participants.cardTo', { label })}</Text>
-            <Text selectable style={styles.bodyText}>{messageText}</Text>
+            <Text selectable style={styles.bodyText}>{props.messageText}</Text>
         </View>
     );
 }

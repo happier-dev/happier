@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -13,7 +12,7 @@ import {
 } from '@/components/onboarding/steps/AgentsLogoMultiSelect';
 import { WebDesktopDownloadCta } from '@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta';
 import { WizardTerminalHandoff } from '@/components/onboarding/ui/WizardTerminalHandoff';
-import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ActionCard } from '@/components/ui/cards/ActionCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -21,7 +20,8 @@ import { Text } from '@/components/ui/text/Text';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import { Modal } from '@/modal';
 import { useMachine } from '@/sync/domains/state/storage';
-import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
 import { AgentAuthenticationCard } from '../authentication/AgentAuthenticationCard';
 import { AgentAuthenticationTerminalPane } from '../authentication/AgentAuthenticationTerminalPane';
@@ -39,6 +39,7 @@ import {
 } from './agentSetupQueue';
 import { useAgentCliInstallQueue, type AgentCliInstallStatus } from './useAgentCliInstallQueue';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function supportsDirectAgentSetup(agentId: AgentId | null | undefined): agentId is AgentId {
     return isAgentId(agentId) && Boolean(getAgentCliRuntimeSpec(agentId).binaryName);
@@ -201,6 +202,13 @@ function buildInstallStepDetail(stepState: AgentCliInstallStatus): string | unde
     return undefined;
 }
 
+function areSetupExecutionTargetsEqual(
+    left: Readonly<{ machineId: string; serverId: string }>,
+    right: Readonly<{ machineId: string; serverId: string }>,
+): boolean {
+    return left.machineId === right.machineId && left.serverId === right.serverId;
+}
+
 export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly<{
     agentIds?: readonly AgentId[];
     agentEntries?: readonly AgentSetupEntry[];
@@ -235,9 +243,26 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
     }
 
     const { theme } = useUnistyles();
-    const defaultMachineId = usePrimaryMachineFromActiveSelection();
-    const serverId = props.serverId ?? getActiveServerId();
-    const machineId = props.machineId ?? defaultMachineId;
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents,
+    );
+    const hasExplicitTarget = props.machineId !== undefined || props.serverId !== undefined;
+    const resolveSetupExecutionTarget = React.useCallback(() => {
+        if (hasExplicitTarget) {
+            const machineId = typeof props.machineId === 'string' && props.machineId.trim()
+                ? props.machineId.trim()
+                : null;
+            const serverId = typeof props.serverId === 'string' && props.serverId.trim()
+                ? props.serverId.trim()
+                : null;
+            return machineId && serverId ? { machineId, serverId } : null;
+        }
+        const current = administrationTargetSelection.resolveExecutionTarget();
+        return current ? { machineId: current.machine.id, serverId: current.serverId } : null;
+    }, [administrationTargetSelection, hasExplicitTarget, props.machineId, props.serverId]);
+    const executionTarget = resolveSetupExecutionTarget();
+    const machineId = executionTarget?.machineId ?? null;
+    const serverId = executionTarget?.serverId ?? null;
     const machine = useMachine(machineId ?? '');
     const machineLabel = machine?.metadata?.displayName ?? machine?.metadata?.host ?? machineId ?? t('machine.detectedCliUnknown');
     const isWizardPresentation = presentation === 'wizard';
@@ -259,7 +284,6 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
         [activeProviderId, agentEntries],
     );
     const activeSetupProviderId = activeEntry?.catalogAgentId ?? null;
-    const activeCore = activeSetupProviderId ? getAgentCore(activeSetupProviderId) : null;
     const authPlugin = activeSetupProviderId ? getAgentLocalAuthPlugin(activeSetupProviderId) : null;
     const selectedSetupProviderIds = React.useMemo(
         () => uniqueSetupProviderIds(agentEntries.filter((entry) => selectedAgentIds.includes(entry.agentId))),
@@ -289,10 +313,21 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
     const installQueue = useAgentCliInstallQueue({
         machineId,
         serverId,
+        resolveExecutionTarget: resolveSetupExecutionTarget,
         agentIds: selectedSetupProviderIds,
         agentDetectKeys,
         installedByAgentId: cliAvailability.available,
     });
+    const resetInstallQueue = installQueue.reset;
+    const executionScopeKey = executionTarget
+        ? `${executionTarget.serverId}\0${executionTarget.machineId}`
+        : null;
+
+    React.useEffect(() => {
+        resetInstallQueue();
+        setQueueState(null);
+        setTerminalProviderId(null);
+    }, [executionScopeKey, resetInstallQueue]);
 
     const toggleAgent = React.useCallback((agentId: string) => {
         if (queueState || installQueue.state.hasStarted) return;
@@ -304,7 +339,10 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
         });
     }, [installQueue.state.hasStarted, queueState]);
 
-    const canStart = selectedAgentIds.length > 0 && hasRunnableSelectedProviders && Boolean(machineId) && !installQueue.state.isRunning;
+    const canStart = selectedAgentIds.length > 0
+        && hasRunnableSelectedProviders
+        && executionTarget !== null
+        && !installQueue.state.isRunning;
     const isFinished = queueState != null && queueState.activeProviderId == null;
 
     const startSetup = React.useCallback(async () => {
@@ -320,8 +358,13 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
         );
         if (!confirmed) return;
 
+        const initialExecutionTarget = resolveSetupExecutionTarget();
+        if (!initialExecutionTarget) return;
+
         const selectedEntries = agentEntries.filter((entry) => selectedAgentIds.includes(entry.agentId));
         const summary = await installQueue.start(uniqueSetupProviderIds(selectedEntries));
+        const currentExecutionTarget = resolveSetupExecutionTarget();
+        if (!currentExecutionTarget || !areSetupExecutionTargetsEqual(currentExecutionTarget, initialExecutionTarget)) return;
         const installedProviderIdSet = new Set(summary.installedAgentIds);
         const failedProviderIdSet = new Set(summary.failedAgentIds);
         setQueueState(createAgentSetupQueueStateFromInstallSummary({
@@ -333,7 +376,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                 .filter((entry) => entry.catalogAgentId != null && failedProviderIdSet.has(entry.catalogAgentId))
                 .map((entry) => entry.agentId),
         }));
-    }, [canStart, installQueue, agentEntries, selectedAgentIds]);
+    }, [agentEntries, canStart, installQueue, resolveSetupExecutionTarget, selectedAgentIds]);
 
     const continueQueue = React.useCallback(() => {
         setTerminalProviderId(null);
@@ -381,6 +424,12 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
 
     return (
         <View style={{ gap: 14 }}>
+            {!hasExplicitTarget ? (
+                <MachineAdministrationTargetSelector
+                    selection={administrationTargetSelection}
+                    testIDPrefix="settings.agents.setup.administration.target"
+                />
+            ) : null}
             {isWizardPresentation ? (
                 <View style={{ gap: 12, alignItems: 'center' }}>
                     <AgentsLogoMultiSelect
@@ -419,20 +468,20 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                                 selected={selected}
                                 showChevron={false}
                                 disabled={installQueue.state.hasStarted ? (installQueue.state.isRunning || !canRetryInstall) : Boolean(queueState)}
-                                icon={<Ionicons name={iconName as any} size={24} color={theme.colors.text.secondary} />}
+                                icon={<Icon name={iconName as any} size={24} color={theme.colors.text.secondary} />}
                                 rightElement={
                                     installQueue.state.hasStarted
                                         ? installStatus === 'installing'
                                             ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                             : installStatus === 'installed'
-                                                ? <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
+                                                ? <Icon name="check-circle" size={20} color={theme.colors.accent.blue} />
                                                 : installStatus === 'failed'
-                                                    ? <Ionicons name="alert-circle" size={20} color={theme.colors.text.secondary} />
+                                                    ? <Icon name="warning-circle" size={20} color={theme.colors.text.secondary} />
                                                     : installStatus === 'queued'
-                                                        ? <Ionicons name="time-outline" size={20} color={theme.colors.text.secondary} />
+                                                        ? <Icon name="clock" size={20} color={theme.colors.text.secondary} />
                                                         : undefined
                                         : selected
-                                            ? <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
+                                            ? <Icon name="check-circle" size={20} color={theme.colors.accent.blue} />
                                             : undefined
                                 }
                                 onPress={async () => {
@@ -477,7 +526,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                                 testID={`provider-setup-active-${activeProviderId}`}
                                 title={activeEntry.title}
                                 subtitle={t('settingsAgents.setup.activeDescription')}
-                                icon={<Ionicons name={activeIconName as any} size={24} color={theme.colors.accent.blue} />}
+                                icon={<Icon name={activeIconName as any} size={24} color={theme.colors.accent.blue} />}
                                 showChevron={false}
                                 mode="info"
                             />
@@ -488,7 +537,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                             testID={`provider-setup-active-${activeProviderId}`}
                             style={{ width: '100%', flexDirection: 'row', alignItems: 'center', gap: 10 }}
                         >
-                            <Ionicons name={activeIconName as any} size={24} color={theme.colors.accent.blue} />
+                            <Icon name={activeIconName as any} size={24} color={theme.colors.accent.blue} />
                             <View style={{ flex: 1, gap: 2 }}>
                                 <Text>{activeEntry.title}</Text>
                                 <Text style={{ color: theme.colors.text.secondary }}>
@@ -507,6 +556,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                         showActions={supportsDesktopControls}
                         onCheckNow={() => {
                             if (!activeSetupProviderId) return;
+                            if (!resolveSetupExecutionTarget()) return;
                             cliAvailability.refresh({
                                 bypassCache: true,
                                 includeLoginStatusForAgentIds: [activeSetupProviderId],
@@ -514,6 +564,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                         }}
                         onLaunchLogin={() => {
                             if (!supportsDesktopControls) return;
+                            if (!resolveSetupExecutionTarget()) return;
                             setTerminalProviderId(activeProviderId);
                         }}
                     />
@@ -526,6 +577,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                                 loginLaunch={authState.loginLaunch}
                                 onRequestClose={() => setTerminalProviderId(null)}
                                 onTerminalExit={() => {
+                                    if (!resolveSetupExecutionTarget()) return;
                                     cliAvailability.refresh({
                                         bypassCache: true,
                                         includeLoginStatusForAgentIds: [activeSetupProviderId],
@@ -591,7 +643,7 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                         const iconName = entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
                         return (
                             <View key={entry.agentId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <Ionicons name={iconName as any} size={22} color={theme.colors.text.secondary} />
+                                <Icon name={iconName as any} size={20} color={theme.colors.text.secondary} />
                                 <View style={{ flex: 1, gap: 2 }}>
                                     <Text>{entry.title}</Text>
                                     <Text style={{ color: theme.colors.text.secondary }}>
@@ -601,11 +653,11 @@ export const AgentSetupFlow = React.memo(function AgentSetupFlow(props: Readonly
                                 {status === 'installing' ? (
                                     <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                 ) : status === 'installed' ? (
-                                    <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
+                                    <Icon name="check-circle" size={20} color={theme.colors.accent.blue} />
                                 ) : status === 'failed' ? (
-                                    <Ionicons name="alert-circle" size={20} color={theme.colors.text.secondary} />
+                                    <Icon name="warning-circle" size={20} color={theme.colors.text.secondary} />
                                 ) : status === 'queued' ? (
-                                    <Ionicons name="time-outline" size={20} color={theme.colors.text.secondary} />
+                                    <Icon name="clock" size={20} color={theme.colors.text.secondary} />
                                 ) : null}
                             </View>
                         );

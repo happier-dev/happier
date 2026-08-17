@@ -1,16 +1,30 @@
-import type { Settings } from './settings';
+import { RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS } from '@happier-dev/protocol';
+
 import { areAccountSettingsJsonValuesEqual } from './accountSettingsStructuralEquality';
 
-const SESSION_PRESENTATION_KEYS = [
+type RetiredSessionOrganizationSettingKey =
+    typeof RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS[number];
+type MigratableRetiredSessionOrganizationSettingKey = Exclude<
+    RetiredSessionOrganizationSettingKey,
+    'collapsedGroupKeysV1'
+>;
+
+// Account migration accepts this compatibility-only raw subset. Collapsed group
+// state has no server-identity rewrite contract and deliberately does not participate.
+const MIGRATABLE_RETIRED_SESSION_ORGANIZATION_KEYS = [
     'pinnedSessionKeysV1',
     'workspaceLabelsV1',
     'sessionTagsV1',
     'sessionListGroupOrderV1',
     'sessionWorkspaceOrderV1',
     'sessionFoldersV1',
+] as const satisfies readonly MigratableRetiredSessionOrganizationSettingKey[];
+
+const SESSION_PRESENTATION_KEYS = [
+    ...MIGRATABLE_RETIRED_SESSION_ORGANIZATION_KEYS,
     'serverSelectionGroups',
     'serverSelectionActiveTargetId',
-] as const satisfies readonly (keyof Settings)[];
+] as const;
 
 type MigratableSettingsKey = typeof SESSION_PRESENTATION_KEYS[number];
 type ServerIdRewritePolicy = Readonly<{
@@ -203,19 +217,6 @@ function migrateSettingValue(
                 ? rewriteProvenServerId(value, policy)
                 : value;
     }
-}
-
-export function pickChangedServerIdentitySessionPresentationSettings(
-    settings: Record<string, unknown>,
-    changedKeys: readonly MigratableSettingsKey[],
-): Partial<Settings> {
-    const picked: Record<string, unknown> = {};
-    for (const key of changedKeys) {
-        if (Object.prototype.hasOwnProperty.call(settings, key)) {
-            picked[key] = settings[key];
-        }
-    }
-    return picked as Partial<Settings>;
 }
 
 export function migrateAccountSettingsServerIdentityKeys<T extends Record<string, unknown>>(params: {

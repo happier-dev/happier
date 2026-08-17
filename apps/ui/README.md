@@ -5,7 +5,7 @@
 </h1>
 
 <h4 align="center">
-Use Claude Code or Codex from anywhere with end-to-end encryption.
+Use Claude Code or Codex from anywhere with explicit E2EE and plaintext storage modes.
 </h4>
 
 <div align="center">
@@ -60,13 +60,14 @@ On your computer, run `happier` instead of `claude` or `happier codex` instead o
 - 📱 **Mobile access to Claude Code and Codex** - Check what your AI is building while away from your desk
 - 🔔 **Push notifications** - Get alerted when Claude Code and Codex needs permission or encounters errors  
 - ⚡ **Switch devices instantly** - Take control from phone or desktop with one keypress
-- 🔐 **End-to-end encrypted** - Your code never leaves your devices unencrypted
+- 🔐 **Encryption you control** - End-to-end encryption is the default; self-hosted
+  deployments can explicitly choose plaintext storage
 - 🛠️ **Open source** - Audit the code yourself. No telemetry, no tracking
 
 ## 📦 Project Components
 
 - **@happier-dev/cli** - Command-line interface for Claude Code and Codex
-- **@happier-dev/server** - Backend server for encrypted sync
+- **@happier-dev/server** - Backend server for mode-aware sync
 - **@happier-dev/app** - This mobile client (you are here)
 
 ## 🏠 Who We Are

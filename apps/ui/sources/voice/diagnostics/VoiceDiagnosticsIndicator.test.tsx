@@ -4,9 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
+const runtimeState = vi.hoisted(() => ({ daemonStateVersion: 1, isOnline: true }));
 vi.mock('@/sync/store/hooks', () => ({
   useActiveServerAccountScope: () => null,
-  useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
+  useMachineCliDetectionTarget: () => runtimeState,
+  useMachineCliDetectionTargets: (machineIds: readonly string[]) => Object.fromEntries(machineIds.map((machineId) => [
+    machineId,
+    runtimeState,
+  ])),
 }));
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,7 +38,7 @@ vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text' }));
 vi.mock('@/sync/domains/state/storage', () => ({ useSetting: () => ({ diagnostics }) }));
 vi.mock('@/sync/domains/settings/voiceSettings', () => ({
   voiceSettingsParse: (voice: any) => ({
-    diagnostics: { ...diagnostics },
+    diagnostics: { ...diagnostics, ...(voice?.diagnostics ?? {}) },
     executionMachine: voice?.executionMachine,
   }),
 }));
@@ -41,9 +46,11 @@ vi.mock('@/voice/credentials/useExecutionMachinePresentation', () => ({
   useVoiceExecutionMachinePresentation: () => ({ machineId: machineState.machineId, machineLabel: machineState.machineId }),
 }));
 vi.mock('@/text', () => ({
-  tLoose: (key: string) => key === 'settingsVoice.diagnostics.shutdownFailedIndicator'
-    ? 'Speech diagnostics could not be confirmed off'
-    : 'Speech diagnostics on',
+  tLoose: (key: string) => ({
+    'common.retry': 'Retry',
+    'settingsVoice.diagnostics.shutdownFailedIndicator': 'Speech diagnostics could not be confirmed off',
+    'settingsVoice.diagnostics.retryShutdown': 'Retry stopping diagnostics',
+  }[key] ?? 'Speech diagnostics on'),
 }));
 const modalConfirm = vi.hoisted(() => vi.fn(async () => modalState.confirmed));
 vi.mock('@/modal', () => ({ Modal: { confirm: modalConfirm, alert: modalAlert } }));
@@ -64,12 +71,15 @@ vi.mock('./client', () => ({ createVoiceDiagnosticsClientForMachine }));
 
 import {
   beginVoiceDiagnosticsRevocationObligation,
-  clearVoiceDiagnosticsRevocationObligation,
   publishVoiceDiagnosticsRuntimeStatus,
   readVoiceDiagnosticsRuntimeStatus,
   resetVoiceDiagnosticsRuntimeStatusForTests,
   updateVoiceDiagnosticsRevocationObligation,
 } from './runtimeStatus';
+import {
+  resetVoiceDiagnosticsSessionPolicyForTests,
+  resolveVoiceDiagnosticsCaptureContextFromSettings,
+} from './capturePolicy';
 import { useVoiceDiagnosticsRuntimeSync } from './useVoiceDiagnosticsRuntimeSync';
 import { VoiceDiagnosticsIndicator } from './VoiceDiagnosticsIndicator';
 import { resetVoiceDiagnosticsRevocationForTests } from './runtimeRevocation';
@@ -106,6 +116,8 @@ describe('VoiceDiagnosticsIndicator', () => {
     diagnostics.enabled = true;
     diagnostics.consentVersion = 1;
     machineState.machineId = 'm1';
+    runtimeState.daemonStateVersion = 1;
+    runtimeState.isOnline = true;
     resetVoiceDiagnosticsRuntimeStatusForTests();
     resetVoiceDiagnosticsRevocationForTests();
     publishVoiceDiagnosticsRuntimeStatus({ phase: 'active', machineId: 'm1' });
@@ -120,7 +132,6 @@ describe('VoiceDiagnosticsIndicator', () => {
     modalState.confirmed = true;
     revokeState.error = null;
     revokeState.pending = null;
-    const { resetVoiceDiagnosticsSessionPolicyForTests } = await import('./capturePolicy');
     resetVoiceDiagnosticsSessionPolicyForTests();
   });
 
@@ -156,6 +167,97 @@ describe('VoiceDiagnosticsIndicator', () => {
     const expectedMinimum = resolveMinimumInteractiveTargetSize('web');
     expect(frame.minWidth).toBe(expectedMinimum);
     expect(frame.minHeight).toBe(expectedMinimum);
+  });
+
+  it('keeps a failed risk message shrinkable beside a compact, fully named retry control', async () => {
+    beginVoiceDiagnosticsRevocationObligation(
+      { kind: 'machine_policy', machineId: 'm-layout' },
+      'failed',
+    );
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(React.createElement(VoiceDiagnosticsIndicator));
+    });
+
+    const root = tree.root.findByType('View' as any);
+    const rootStyle = flattenStyle(root.props.style);
+    const message = tree.root.findAllByType('Text' as any).find(
+      (node) => node.children.join('') === 'Speech diagnostics could not be confirmed off',
+    )!;
+    const messageStyle = flattenStyle(message.props.style);
+    const messageBlock = tree.root.findAllByType('View' as any).find((node) => {
+      const style = flattenStyle(node.props.style);
+      return style.flex === 1 && style.minWidth === 0;
+    });
+    const retry = tree.root.findByType('Pressable' as any);
+    const retryLabel = tree.root.findAllByType('Text' as any).find(
+      (node) => node.children.join('') === 'Retry',
+    );
+
+    // These are the semantic layout constraints for a narrow actions block:
+    // the disclosure can take the remaining width, while the actual control
+    // stays an independent compact target that can wrap beneath it.
+    expect(rootStyle.flexWrap).toBe('wrap');
+    expect(messageBlock).toBeTruthy();
+    expect(messageStyle.flexShrink).toBe(1);
+    expect(retry.props.accessibilityLabel).toBe('Retry stopping diagnostics');
+    expect(retryLabel).toBeTruthy();
+  });
+
+  it('keeps a failed shutdown status discoverable without an automatic announcement', async () => {
+    platformState.OS = 'ios';
+    beginVoiceDiagnosticsRevocationObligation(
+      { kind: 'machine_policy', machineId: 'm-announcement' },
+      'failed',
+    );
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(VoiceDiagnosticsIndicator),
+        ),
+      );
+    });
+
+    expect(tree.root.findAllByType('Text' as any).filter(
+      (node) => node.children.join('') === 'Speech diagnostics could not be confirmed off',
+    )).toHaveLength(1);
+    expect(tree.root.findAllByProps({ accessibilityLiveRegion: 'assertive' })).toHaveLength(0);
+    expect(tree.root.findAll((node) => node.props?.accessibilityRole === 'alert')).toHaveLength(0);
+    expect(announceForAccessibility).not.toHaveBeenCalled();
+  });
+
+  it('keeps a failed retry inline and re-enables it without a generic error modal', async () => {
+    beginVoiceDiagnosticsRevocationObligation(
+      { kind: 'machine_policy', machineId: 'm-inline-retry' },
+      'failed',
+    );
+    configureState.failedCalls.add('m-inline-retry:disabled');
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(React.createElement(VoiceDiagnosticsIndicator));
+    });
+
+    await act(async () => {
+      tree.root.findByType('Pressable' as any).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(readVoiceDiagnosticsRuntimeStatus().revocationObligations).toContainEqual(
+      expect.objectContaining({
+        target: { kind: 'machine_policy', machineId: 'm-inline-retry' },
+        status: 'failed',
+      }),
+    ));
+
+    expect(modalAlert).not.toHaveBeenCalled();
+    expect(tree.root.findByType('Pressable' as any).props.disabled).toBe(false);
+    expect(tree.root.findAllByType('Text' as any).some(
+      (node) => node.children.join('') === 'Speech diagnostics could not be confirmed off',
+    )).toBe(true);
   });
 
   it('moves web focus to the stable status owner after an acknowledged session opt-out removes the focused action', async () => {
@@ -299,7 +401,7 @@ describe('VoiceDiagnosticsIndicator', () => {
 
     expect(tree.toJSON()).not.toBeNull();
     expect(modalAlert).toHaveBeenCalledWith('Speech diagnostics on', 'Speech diagnostics on');
-    expect(JSON.stringify(tree.toJSON())).toContain('Speech diagnostics on');
+    expect(JSON.stringify(tree.toJSON())).toContain('Speech diagnostics could not be confirmed off');
 
     revokeState.error = null;
     await act(async () => {
@@ -309,6 +411,83 @@ describe('VoiceDiagnosticsIndicator', () => {
     });
     expect(revokeCaptureAuthorization).toHaveBeenCalledTimes(2);
     expect(tree.toJSON()).toBeNull();
+  });
+
+  it('keeps an automatically recovered session opted out across a later daemon replacement', async () => {
+    const captureSettings = {
+      voice: {
+        diagnostics: {
+          v: 1,
+          enabled: true,
+          consentVersion: 1,
+          captureSttInput: true,
+          captureTtsOutput: false,
+          maxAgeMs: 86_400_000,
+          maxFiles: 20,
+          maxBytes: 104_857_600,
+          maxDurationMs: 300_000,
+        },
+      },
+    };
+    let revokeAttempt = 0;
+    revokeCaptureAuthorization.mockImplementation(async () => {
+      revokeAttempt += 1;
+      if (revokeAttempt === 1) throw new Error('old_daemon_runtime_lost');
+    });
+    const voice = {
+      diagnostics: { ...diagnostics },
+      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+    };
+    const resolveCaptureContext = () => resolveVoiceDiagnosticsCaptureContextFromSettings({
+      settings: captureSettings,
+      sessionId: 'session-1',
+      direction: 'stt_input',
+      durationMs: null,
+    });
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(React.createElement(RuntimeSyncIndicatorHarness, {
+        voice,
+        sessionId: 'session-1',
+      }));
+    });
+
+    await act(async () => {
+      tree.root.findByType('Pressable' as any).props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(readVoiceDiagnosticsRuntimeStatus().revocationObligations).toEqual([
+      expect.objectContaining({ status: 'failed' }),
+    ]));
+    expect(resolveCaptureContext()).toMatchObject({
+      sessionId: 'session-1',
+      captureAllowed: true,
+    });
+
+    runtimeState.daemonStateVersion = 2;
+    await act(async () => {
+      tree.update(React.createElement(RuntimeSyncIndicatorHarness, {
+        voice,
+        sessionId: 'session-1',
+      }));
+    });
+    await vi.waitFor(() => expect(readVoiceDiagnosticsRuntimeStatus().revocationObligations).toEqual([]));
+
+    runtimeState.daemonStateVersion = 3;
+    await act(async () => {
+      tree.update(React.createElement(RuntimeSyncIndicatorHarness, {
+        voice,
+        sessionId: 'session-1',
+      }));
+    });
+    await vi.waitFor(() => expect(readVoiceDiagnosticsRuntimeStatus()).toMatchObject({
+      machineId: 'm1',
+      phase: 'active',
+    }));
+    expect(resolveCaptureContext()).toBeUndefined();
+    expect(tree.toJSON()).toBeNull();
+    await act(async () => { tree.unmount(); });
   });
 
   it('does not revoke on cancel and suppresses duplicate actions while a revoke is pending', async () => {
@@ -371,7 +550,6 @@ describe('VoiceDiagnosticsIndicator', () => {
   });
 
   it('keeps a failed exact-old-machine shutdown visible and retryable through the real runtime sync path', async () => {
-    platformState.OS = 'ios';
     const voiceFor = (machineId: string) => ({
       diagnostics: { ...diagnostics },
       executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
@@ -402,18 +580,6 @@ describe('VoiceDiagnosticsIndicator', () => {
       (node) => node.children.join('') === 'Speech diagnostics could not be confirmed off',
     );
     expect(renderedFailureLabels).toHaveLength(1);
-    const accessibleFailureLabels = tree.root.findAll((node) => (
-      node.props.accessibilityLabel === 'Speech diagnostics could not be confirmed off'
-      || (
-        node.props.accessibilityRole === 'alert'
-        && node.children.join('') === 'Speech diagnostics could not be confirmed off'
-      )
-    ));
-    expect(accessibleFailureLabels).toHaveLength(1);
-    expect(accessibleFailureLabels[0]?.props.accessibilityRole).toBe('alert');
-    expect(accessibleFailureLabels[0]?.props.accessibilityLiveRegion).toBe('assertive');
-    expect(announceForAccessibility).toHaveBeenCalledOnce();
-    expect(announceForAccessibility).toHaveBeenCalledWith('Speech diagnostics could not be confirmed off');
     await act(async () => {
       tree.update(React.createElement(RuntimeSyncIndicatorHarness, {
         voice: m2Voice,
@@ -421,7 +587,6 @@ describe('VoiceDiagnosticsIndicator', () => {
         includeSecondSurface: true,
       }));
     });
-    expect(announceForAccessibility).toHaveBeenCalledOnce();
     await act(async () => {
       tree.update(React.createElement(RuntimeSyncIndicatorHarness, {
         voice: m2Voice,
@@ -437,7 +602,6 @@ describe('VoiceDiagnosticsIndicator', () => {
     await act(async () => {
       updateVoiceDiagnosticsRevocationObligation(failedObligation, 'failed');
     });
-    expect(announceForAccessibility).toHaveBeenCalledTimes(2);
     const retryActionStyle = tree.root.findByType('Pressable' as any).props.style;
     expect(retryActionStyle.minWidth).toBeGreaterThanOrEqual(44);
     expect(retryActionStyle.minHeight).toBeGreaterThanOrEqual(44);
@@ -457,101 +621,6 @@ describe('VoiceDiagnosticsIndicator', () => {
     expect(configure.mock.calls.filter(
       ([machineId, settings]) => machineId === 'm2' && settings.enabled === false,
     )).toHaveLength(0);
-  });
-
-  it('re-arms an iOS failure that transitions through pending while every surface is unmounted', async () => {
-    platformState.OS = 'ios';
-    const obligation = beginVoiceDiagnosticsRevocationObligation(
-      { kind: 'machine_policy', machineId: 'm-unmounted-transition' },
-      'failed',
-    );
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(announceForAccessibility).toHaveBeenCalledOnce();
-
-    await act(async () => {
-      tree.update(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(announceForAccessibility).toHaveBeenCalledOnce();
-
-    await act(async () => {
-      tree.unmount();
-    });
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(announceForAccessibility).toHaveBeenCalledOnce();
-
-    await act(async () => {
-      tree.unmount();
-    });
-    updateVoiceDiagnosticsRevocationObligation(obligation, 'pending');
-    updateVoiceDiagnosticsRevocationObligation(obligation, 'failed');
-
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(announceForAccessibility).toHaveBeenCalledTimes(2);
-
-    await act(async () => {
-      updateVoiceDiagnosticsRevocationObligation(obligation, 'failed');
-      tree.update(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(announceForAccessibility).toHaveBeenCalledTimes(2);
-
-    await act(async () => {
-      clearVoiceDiagnosticsRevocationObligation(obligation);
-      beginVoiceDiagnosticsRevocationObligation(
-        { kind: 'machine_policy', machineId: 'm-unmounted-transition' },
-        'failed',
-      );
-      tree.update(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(announceForAccessibility).toHaveBeenCalledTimes(3);
-  });
-
-  it('announces each concurrent distinct iOS failure occurrence exactly once', async () => {
-    platformState.OS = 'ios';
-    const first = beginVoiceDiagnosticsRevocationObligation(
-      { kind: 'machine_policy', machineId: 'm-concurrent-first' },
-      'failed',
-    );
-    let tree!: renderer.ReactTestRenderer;
-    await act(async () => {
-      tree = renderer.create(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(announceForAccessibility).toHaveBeenCalledOnce();
-
-    let second!: ReturnType<typeof beginVoiceDiagnosticsRevocationObligation>;
-    await act(async () => {
-      second = beginVoiceDiagnosticsRevocationObligation(
-        { kind: 'machine_policy', machineId: 'm-concurrent-second' },
-        'failed',
-      );
-    });
-    expect(announceForAccessibility).toHaveBeenCalledTimes(2);
-
-    const snapshotBeforeDuplicateWrites = readVoiceDiagnosticsRuntimeStatus();
-    await act(async () => {
-      updateVoiceDiagnosticsRevocationObligation(first, 'failed');
-      updateVoiceDiagnosticsRevocationObligation(second, 'failed');
-      tree.update(React.createElement(VoiceDiagnosticsIndicator));
-    });
-    expect(readVoiceDiagnosticsRuntimeStatus()).toBe(snapshotBeforeDuplicateWrites);
-    expect(announceForAccessibility).toHaveBeenCalledTimes(2);
-
-    let replacement!: ReturnType<typeof beginVoiceDiagnosticsRevocationObligation>;
-    await act(async () => {
-      replacement = beginVoiceDiagnosticsRevocationObligation(
-        { kind: 'machine_policy', machineId: 'm-concurrent-second' },
-        'failed',
-      );
-    });
-    expect(updateVoiceDiagnosticsRevocationObligation(second, 'pending')).toBe(false);
-    expect(replacement.revision).not.toBe(second.revision);
-    expect(announceForAccessibility).toHaveBeenCalledTimes(3);
   });
 
   it('uses the canonical 48dp Android minimum in an isolated platform module', async () => {

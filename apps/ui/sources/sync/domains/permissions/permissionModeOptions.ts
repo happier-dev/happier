@@ -69,18 +69,18 @@ export function getPermissionModeOptionsForAgentType(agentType: AgentType): read
     const group = getAgentCore(agentId).permissions.modeGroup;
     if (group === 'codexLike') {
         return [
-            { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: getPermissionModeDescriptionForAgentType(agentType, 'default'), icon: 'shield-outline' },
-            { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: getPermissionModeDescriptionForAgentType(agentType, 'read-only'), icon: 'eye-outline' },
-            { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'safe-yolo'), icon: 'shield-checkmark-outline' },
-            { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'yolo'), icon: 'flash-outline' },
+            { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: getPermissionModeDescriptionForAgentType(agentType, 'default'), icon: 'shield' },
+            { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: getPermissionModeDescriptionForAgentType(agentType, 'read-only'), icon: 'eye' },
+            { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'safe-yolo'), icon: 'shield-check' },
+            { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'yolo'), icon: 'lightning' },
         ];
     }
 
     return [
-        { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: getPermissionModeDescriptionForAgentType(agentType, 'default'), icon: 'shield-outline' },
-        { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: getPermissionModeDescriptionForAgentType(agentType, 'read-only'), icon: 'eye-outline' },
-        { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'safe-yolo'), icon: 'shield-checkmark-outline' },
-        { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'yolo'), icon: 'flash-outline' },
+        { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: getPermissionModeDescriptionForAgentType(agentType, 'default'), icon: 'shield' },
+        { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: getPermissionModeDescriptionForAgentType(agentType, 'read-only'), icon: 'eye' },
+        { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'safe-yolo'), icon: 'shield-check' },
+        { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'yolo'), icon: 'lightning' },
     ];
 }
 

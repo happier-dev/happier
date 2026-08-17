@@ -228,12 +228,22 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
         }
     };
 
-    const clearActiveStream = () => {
+    const clearActiveStream = (): MediaStream | null => {
+        const activeStream = stream;
         clearMuteEscalationTimer();
         stopLevelMetering();
         detachTrackListeners();
         stream = null;
         lastFailureReason = null;
+        return activeStream;
+    };
+
+    const retireActiveStream = (): void => {
+        const activeStream = clearActiveStream();
+        if (!activeStream) return;
+        for (const track of activeStream.getAudioTracks()) {
+            track.stop();
+        }
     };
 
     const attachTrackListeners = (track: MediaStreamTrack) => {
@@ -274,13 +284,21 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
             syncTrackMute();
             return;
         }
+        const streamAtDeviceChange = stream;
         void Promise.resolve(enumerate())
             .then((devices) => {
                 const hasAudioInput = devices.some((device) => device.kind === 'audioinput');
                 if (!hasAudioInput) {
                     // The capture input is gone; drop the stream so the next
-                    // `ensureActive` re-acquires once an input returns.
-                    clearActiveStream();
+                    // `ensureActive` re-acquires once an input returns. The
+                    // enumeration is asynchronous, so retire only the stream
+                    // that was active when this device-change was observed;
+                    // teardown/reacquisition may have installed a newer owner
+                    // while the browser was enumerating devices.
+                    if (!streamAtDeviceChange || stream !== streamAtDeviceChange) {
+                        return;
+                    }
+                    retireActiveStream();
                     notifyFailure('web_mic_input_removed', 'mic_ended');
                     return;
                 }
@@ -390,17 +408,12 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
             const pendingAcquisition = ensureActiveInFlight;
             const teardown = (async () => {
                 await pendingAcquisition?.catch(() => {});
-                const activeStream = stream;
                 const activeContext = audioContext;
-                clearActiveStream();
+                retireActiveStream();
                 detachEnvironmentListeners();
                 audioContext = null;
                 if (activeContext && activeContext.state !== 'closed') {
                     await activeContext.close().catch(() => {});
-                }
-                if (!activeStream) return;
-                for (const track of activeStream.getAudioTracks()) {
-                    track.stop();
                 }
             })();
             teardownInFlight = teardown;

@@ -1,8 +1,16 @@
 import * as React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { flushHookEffects, pressTestInstance, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
+import {
+  EMPTY_PLUGIN_UI_PROJECTION,
+  type PluginUiProjectionModel,
+  type PluginUiSurfacePlacementProjection,
+} from '@/sync/domains/plugins/ui/projection';
+import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,6 +31,11 @@ const keyboardDismissSpy = vi.hoisted(() => vi.fn());
 const ensureSidechainMessagesLoadedSpy = vi.hoisted(() => vi.fn(async () => 'loaded' as const));
 const paneOpenRightSpy = vi.hoisted(() => vi.fn());
 const paneSetRightTabSpy = vi.hoisted(() => vi.fn());
+const appPaneSurfaceOpenSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true as const })));
+const freshPaneBridgeFixture = vi.hoisted(() => ({ enabled: false }));
+const scopedPluginProjectionState = vi.hoisted(() => ({
+  projection: null as PluginUiProjectionModel | null,
+}));
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
 const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
@@ -63,6 +76,10 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  initialWindowMetrics: {
+    frame: { x: 0, y: 0, width: 0, height: 0 },
+    insets: { top: 0, bottom: 0, left: 0, right: 0 },
+  },
 }));
 vi.mock('@happier-dev/agents', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@happier-dev/agents')>();
@@ -86,8 +103,33 @@ vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
   AgentContentView: () => null,
 }));
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
-  AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
+  AppPaneScopeHost: (props: any) => {
+    React.useEffect(() => {
+      if (!freshPaneBridgeFixture.enabled) return;
+      props.onPluginSurfaceOpenChange?.(appPaneSurfaceOpenSpy);
+      return () => props.onPluginSurfaceOpenChange?.(undefined);
+    }, [props.onPluginSurfaceOpenChange]);
+    return React.createElement('AppPaneScopeHost', props, props.main ?? null);
+  },
 }));
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/plugins/projection/useScopedPluginUiProjection')>();
+  return {
+    ...actual,
+    useScopedPluginUiProjection: (...args: Parameters<typeof actual.useScopedPluginUiProjection>) => (
+      freshPaneBridgeFixture.enabled
+        ? {
+          pluginUiProjection: scopedPluginProjectionState.projection,
+          pluginBrowserProjection: null,
+          machineId: 'machine-1',
+          serverId: 'server-1',
+          interactionEnabled: true,
+          platform: 'web',
+        }
+        : actual.useScopedPluginUiProjection(...args)
+    ),
+  };
+});
 vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
   useRegisterSessionPaneDriver: () => 'pane-scope-test',
 }));
@@ -124,9 +166,6 @@ vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
 }));
 vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', () => ({
   useOpenAttachedSessionTerminal: () => attachedTerminalState,
-}));
-vi.mock('@/components/ui/icons/DependabotIcon', () => ({
-  DependabotIcon: 'DependabotIcon',
 }));
 vi.mock('@/components/voice/surface/VoiceSurface', () => ({
   VoiceSurface: () => null,
@@ -222,19 +261,23 @@ vi.mock('@/voice/session/voiceSession', () => ({
   useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
   voiceSessionManager: {},
 }));
-	vi.mock('@/sync/sync', () => ({
-	  sync: {
-	    markSessionViewed: async () => {},
-	    fetchPendingMessages: async () => {},
-	    refreshSessions: async () => {},
-	    onSessionVisible: () => () => {},
-	    ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedSpy,
-	    sendMessage: async () => {},
-	    enqueuePendingMessage: async () => {},
-	    submitMessage: async () => {},
-    encryption: { getMachineEncryption: () => null },
-  },
-}));
+vi.mock('@/sync/sync', async () => {
+  const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
+  return {
+    sync: {
+      ...createAcceptedExternalSessionTailCursorSyncBoundary(),
+      markSessionViewed: async () => {},
+      fetchPendingMessages: async () => {},
+      refreshSessions: async () => {},
+      onSessionVisible: () => () => {},
+      ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedSpy,
+      sendMessage: async () => {},
+      enqueuePendingMessage: async () => {},
+      submitMessage: async () => {},
+      encryption: { getMachineEncryption: () => null },
+    },
+  };
+});
 vi.mock('@/sync/ops', () => ({
   continueSessionWithReplay: vi.fn(),
   sessionAbort: vi.fn(),
@@ -410,6 +453,55 @@ async function renderSessionView() {
   );
 }
 
+function createSessionSurfacePlacement(input: Readonly<{
+  descriptorId: string;
+  container: 'rightPane' | 'rightSidebarTab' | 'bottomPane' | 'detailsTab' | 'detailsPane';
+}>): PluginUiSurfacePlacementProjection {
+  const binding = normalizePluginUiDestinationBindingV1({
+    pluginId: 'acme.preview',
+    destinationId: input.descriptorId,
+    rendererId: `${input.descriptorId}-renderer`,
+    container: input.container,
+    target: { kind: 'session' },
+  });
+  if (!binding) throw new Error('test fixture must use an admitted Session destination binding');
+
+  return {
+    id: `surfacePlacement:acme.preview:${input.descriptorId}`,
+    pluginId: 'acme.preview',
+    contributionKind: 'surfacePlacement',
+    descriptorId: input.descriptorId,
+    binding,
+    target: { kind: 'session' },
+    renderer: { kind: 'hostedWeb', contributionId: `${input.descriptorId}-renderer` },
+    display: { developerFallback: input.descriptorId },
+    availability: { state: 'available', reason: 'available', diagnostics: [] },
+    headerActions: [],
+    hostOrigin: {
+      machineId: 'machine-1',
+      serverId: 'server-1',
+      generation: 1,
+      interactionEnabled: true,
+      executionOrigin: {
+        serverIdentityId: 'srv_account_one',
+        materializationRef: {
+          pluginId: 'acme.preview',
+          machineId: 'machine-1',
+          materializationId: `${input.descriptorId}-install-a`,
+        },
+      } satisfies PluginMachineExecutionOriginV1,
+    },
+  };
+}
+
+function projectionWith(...placements: readonly PluginUiSurfacePlacementProjection[]): PluginUiProjectionModel {
+  return {
+    ...EMPTY_PLUGIN_UI_PROJECTION,
+    generation: 1,
+    surfacePlacementsById: Object.fromEntries(placements.map((placement) => [placement.id, placement])),
+  };
+}
+
 describe('SessionView header action menu visibility', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -442,6 +534,9 @@ describe('SessionView header action menu visibility', () => {
     ensureSidechainMessagesLoadedSpy.mockClear();
     paneOpenRightSpy.mockClear();
     paneSetRightTabSpy.mockClear();
+	  appPaneSurfaceOpenSpy.mockClear();
+	  freshPaneBridgeFixture.enabled = false;
+	  scopedPluginProjectionState.projection = null;
 	    routerPushSpy.mockReset();
     routerBackSpy.mockReset();
     navigateWithBlurOnWebSpy.mockClear();
@@ -467,8 +562,63 @@ describe('SessionView header action menu visibility', () => {
     expect(openRunsButton).toBeUndefined();
   });
 
-  it('shows neutral background copy in the header without making the composer busy or hiding execution runs', async () => {
-    sessionExecutionRunsSupportedState.supported = true;
+  it('forwards fresh Session pane and Details destinations to the current AppPane owner', async () => {
+    freshPaneBridgeFixture.enabled = true;
+    const rightPlacement = createSessionSurfacePlacement({ descriptorId: 'right', container: 'rightPane' });
+    const bottomPlacement = createSessionSurfacePlacement({ descriptorId: 'activity', container: 'bottomPane' });
+    const detailsPlacement = createSessionSurfacePlacement({ descriptorId: 'details', container: 'detailsTab' });
+    const rightSidebarPlacement = createSessionSurfacePlacement({ descriptorId: 'sidebar', container: 'rightSidebarTab' });
+    scopedPluginProjectionState.projection = projectionWith(
+      rightPlacement,
+      bottomPlacement,
+      detailsPlacement,
+      rightSidebarPlacement,
+    );
+
+    await renderSessionView();
+    await flushHookEffects();
+
+    const headerProps = headerActionMenuSpy.mock.calls.at(-1)?.[0] as Readonly<{
+      onOpenPluginSurface?: PluginSurfaceOpenHandler;
+    }> | undefined;
+    const openSurface = headerProps?.onOpenPluginSurface;
+    expect(openSurface).toBeTypeOf('function');
+    if (!openSurface) throw new Error('Session header did not receive its openSurface handler');
+
+    const rightRequest = {
+      destination: rightPlacement.binding.destination,
+      input: { source: 'session-header' },
+    } as const;
+    const bottomRequest = {
+      destination: bottomPlacement.binding.destination,
+      input: { source: 'session-header' },
+    } as const;
+    const detailsRequest = {
+      destination: detailsPlacement.binding.destination,
+      input: { source: 'session-header' },
+    } as const;
+
+    await expect(openSurface(rightRequest)).resolves.toEqual({ ok: true });
+    await expect(openSurface(bottomRequest)).resolves.toEqual({ ok: true });
+    await expect(openSurface(detailsRequest)).resolves.toEqual({ ok: true });
+    expect(appPaneSurfaceOpenSpy).toHaveBeenNthCalledWith(1, rightRequest);
+    expect(appPaneSurfaceOpenSpy).toHaveBeenNthCalledWith(2, bottomRequest);
+    expect(appPaneSurfaceOpenSpy).toHaveBeenNthCalledWith(3, detailsRequest);
+
+    await expect(openSurface({
+      destination: rightSidebarPlacement.binding.destination,
+      input: { source: 'session-header' },
+    })).resolves.toEqual({
+      ok: false,
+      code: 'unsupported_method',
+      reason: 'plugin_surface_open_launch_input_unsupported',
+    });
+    expect(appPaneSurfaceOpenSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps background activity out of the header', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000_000));
     sessionState.session = {
       ...sessionState.session,
       active: true,
@@ -477,13 +627,14 @@ describe('SessionView header action menu visibility', () => {
       latestTurnStatus: 'completed',
       latestTurnStatusObservedAt: 999_000,
       runtimeActivityState: 'active',
+      runtimeActivityRevision: 1,
       runtimeActivityActiveCount: 1,
+      runtimeActivityObservedAt: 999_000,
     };
 
     const screen = await renderSessionView();
 
-    expect(screen.findByTestId('session-header-background-activity-status')).toBeDefined();
-    expect(findPressableByAccessibilityLabel(screen, 'session.openRuns')).toBeDefined();
+    expect(screen.findByTestId('session-header-background-activity-status')).toBeNull();
   });
 
   it('routes to session automations through blur-safe navigation', async () => {

@@ -233,11 +233,10 @@ describe('apiSocket reachability supervision', () => {
 
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : String(input);
-            if (url.endsWith('/health')) {
+            // Reachability must never come online here, so every readiness route has to fail: an authenticated
+            // client probes /v1/auth/ping, a tokenless one probes /health.
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 throw new TypeError('Network request failed');
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                return new Response(null, { status: 200, headers: new Headers() });
             }
             return new Response(null, { status: 200, headers: new Headers() });
         });
@@ -362,7 +361,9 @@ describe('apiSocket reachability supervision', () => {
 
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : String(input);
-            if (url.endsWith('/health')) {
+            // "The network is down" must fail every readiness route: an authenticated client probes
+            // /v1/auth/ping, a tokenless one probes /health.
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 throw new TypeError('Network request failed');
             }
             if (url.endsWith('/v1/account/profile')) {
@@ -427,5 +428,55 @@ describe('apiSocket reachability supervision', () => {
         expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
         expect(stopSpy).toHaveBeenCalledTimes(1);
         expect(stopSpy.mock.calls[0]?.[0]).toBe('https://api.example.test');
+    });
+
+    it('stops claiming a live endpoint when supervision is torn down intentionally', async () => {
+        // disconnect() unsubscribes from the reachability entry BEFORE stopping it, so the supervisor's own
+        // teardown state can never reach our listeners. Without publishing it ourselves the last claim stays
+        // `online` for the whole background window, and consumers read "endpoint online, socket down" on resume
+        // and surface it as a server outage.
+        const stopSpy = vi.fn(async (_serverUrl: string) => {});
+
+        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
+            return {
+                ...actual,
+                subscribeServerReachabilityState: (_serverUrl: string, listener: (state: any) => void) => {
+                    listener({
+                        phase: 'online',
+                        reason: null,
+                        attempt: 0,
+                        nextRetryAt: null,
+                        lastConnectedAt: Date.now(),
+                        lastDisconnectedAt: null,
+                        lastErrorMessage: null,
+                    });
+                    return vi.fn();
+                },
+                startServerReachabilitySupervisor: vi.fn(async () => {}),
+                stopServerReachabilitySupervisor: stopSpy,
+            };
+        });
+
+        vi.doMock('@/sync/api/session/connection/createSyncSocketTransport', () => ({
+            createSyncSocketTransport: () => {
+                throw new Error('createSyncSocketTransport should not be called in this test');
+            },
+        }));
+
+        const { apiSocket } = await import('./apiSocket');
+        const encryption = { getSessionEncryption: () => null } as unknown as Encryption;
+
+        const observedPhases: string[] = [];
+        apiSocket.onConnectionStateChange((state) => {
+            observedPhases.push(state.phase);
+        });
+
+        apiSocket.initialize({ endpoint: 'https://api.example.test', token: 'token-a' }, encryption);
+        expect(observedPhases.at(-1)).toBe('online');
+
+        apiSocket.disconnect();
+
+        expect(observedPhases.at(-1)).toBe('shutting_down');
     });
 });

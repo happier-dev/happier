@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import * as React from 'react';
-import { AccessibilityInfo, AppState, Pressable, View, useWindowDimensions, type AppStateStatus, type GestureResponderEvent, type ViewStyle } from 'react-native';
+import { AccessibilityInfo, Pressable, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,8 +17,16 @@ import {
     type PetCompanionTrayItem,
 } from '@/components/pets/activity';
 import { DEFAULT_BUILT_IN_PET_ID } from '@/components/pets/builtIns/builtInPetRegistry';
-import { PetNativeAnimatedView, usePetNativePanGesture } from '@/components/pets/interaction/usePetNativePanGesture';
-import { PetNoDragRegion, PetNoDragRegionProvider, usePetNoDragRegions } from '@/components/pets/interaction/PetNoDragRegion';
+import {
+    CompanionNativeAnimatedView,
+    useCompanionNativePanGesture,
+} from '@/components/companion/interaction/useCompanionNativePanGesture';
+import {
+    CompanionNoDragRegion,
+    useCompanionNoDragRegions,
+} from '@/components/companion/interaction/CompanionNoDragRegion';
+import { PET_COMPANION_RELEASE_MOTION } from '@/components/pets/interaction/petPointerDragBindings';
+import { resolvePetNativeDragAnimationState } from '@/components/pets/interaction/resolvePetDragAnimationState';
 import { PetCompanionState } from '@/components/pets/render/PetCompanionState';
 import { resolvePetCompanionOverlayMetrics } from '@/components/pets/render/petCompanionDisplayMetrics';
 import { PetSprite } from '@/components/pets/render/PetSprite.native';
@@ -43,6 +51,7 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 const PET_TAP_REACTION_STATE = 'jumping' satisfies PetAnimationStateV1;
 const PET_TAP_REACTION_HAPTIC_STYLE: Record<typeof PET_TAP_REACTION_HAPTIC, Haptics.ImpactFeedbackStyle> = {
@@ -72,21 +81,6 @@ function useReducedMotionPreference(): boolean {
     }, []);
 
     return reducedMotion;
-}
-
-function useAppStateActive(): boolean {
-    const [active, setActive] = React.useState(() => AppState.currentState === 'active');
-
-    React.useEffect(() => {
-        const subscription = AppState.addEventListener('change', (state: AppStateStatus) => {
-            setActive(state === 'active');
-        });
-        return () => {
-            subscription.remove();
-        };
-    }, []);
-
-    return active;
 }
 
 function useTapReactionState(): Readonly<{
@@ -125,13 +119,13 @@ function useTapReactionState(): Readonly<{
 const NativePetCompanionSprite = React.memo(function NativePetCompanionSprite(props: Readonly<{
     state: PetAnimationStateV1;
     reducedMotion: boolean;
-    appActive: boolean;
+    hostViewed: boolean;
     spritesheetSource: ReturnType<typeof usePetSpritesheetSource>;
     scale: number;
 }>): React.ReactElement {
     const frame = usePetAnimatedFrame({
         state: props.state,
-        reducedMotion: props.reducedMotion || !props.appActive,
+        reducedMotion: props.reducedMotion || !props.hostViewed,
     });
 
     return (
@@ -158,8 +152,12 @@ function NativePetCompanionLayer({
     const safeAreaInsets = useSafeAreaInsets();
     const keyboardHeight = useKeyboardHeight();
     const reducedMotion = useReducedMotionPreference();
-    const appActive = useAppStateActive();
-    const noDragRegions = usePetNoDragRegions();
+    // One host watch for the whole app, and it answers the question this actually asks: is anyone
+    // looking? A private `AppState.currentState === 'active'` sample said "no" on a host that had
+    // not reported yet — Android before its first foreground transition — and froze the companion
+    // on frame 0 for the whole of a cold start.
+    const hostViewed = useHostActivelyViewed();
+    const noDragRegions = useCompanionNoDragRegions();
     const spritesheetSource = usePetSpritesheetSource(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
     const { reactionState, triggerTapReaction } = useTapReactionState();
     const metrics = React.useMemo(
@@ -192,10 +190,12 @@ function NativePetCompanionLayer({
         bounds,
     ), [bounds, petsCompanionPosition]);
 
-    const pan = usePetNativePanGesture({
+    const pan = useCompanionNativePanGesture<PetAnimationStateV1>({
         bounds,
         initialPoint,
         noDragRegions,
+        releaseMotion: PET_COMPANION_RELEASE_MOTION,
+        resolveDragState: resolvePetNativeDragAnimationState,
         onPositionChange: ({ point }) => {
             applyLocalSettings({
                 petsCompanionPosition: createStoredPetCompanionPosition({
@@ -226,7 +226,7 @@ function NativePetCompanionLayer({
     }, [actionExecutor]);
     return (
         <GestureDetector gesture={pan.gesture}>
-            <PetNativeAnimatedView
+            <CompanionNativeAnimatedView
                 pointerEvents="box-none"
                 style={[
                     styles.root,
@@ -239,7 +239,7 @@ function NativePetCompanionLayer({
                 testID="pet-app-shell-companion-root"
             >
                 {hasTrayItems ? (
-                    <PetNoDragRegion
+                    <CompanionNoDragRegion
                         testID="pet-app-shell-companion-tray-no-drag-region"
                         style={[
                             styles.trayNoDragRegion,
@@ -253,7 +253,7 @@ function NativePetCompanionLayer({
                             onDismissItem={dismissTrayItem}
                             onQuickReply={handleQuickReply}
                         />
-                    </PetNoDragRegion>
+                    </CompanionNoDragRegion>
                 ) : null}
                 <PetCompanionState
                     state={effectiveState}
@@ -279,13 +279,13 @@ function NativePetCompanionLayer({
                         <NativePetCompanionSprite
                             state={effectiveState}
                             reducedMotion={reducedMotion}
-                            appActive={appActive}
+                            hostViewed={hostViewed}
                             spritesheetSource={spritesheetSource}
                             scale={metrics.scale}
                         />
                     </Pressable>
                 </PetCompanionState>
-            </PetNativeAnimatedView>
+            </CompanionNativeAnimatedView>
         </GestureDetector>
     );
 }
@@ -296,11 +296,11 @@ export function PetAppShellCompanionMount(): React.ReactElement | null {
         return null;
     }
 
+    // The no-drag registry is provided once at app-shell level so the pet and the Voice orb read
+    // the same regions; a second provider here would give each companion only its own subtree.
     return (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-            <PetNoDragRegionProvider>
-                <NativePetCompanionLayer selectedPetPackage={selectedPetPackage} />
-            </PetNoDragRegionProvider>
+            <NativePetCompanionLayer selectedPetPackage={selectedPetPackage} />
         </View>
     );
 }

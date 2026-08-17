@@ -439,6 +439,61 @@ describe('serverProfiles', () => {
         expect(profiles.getServerProfileLegacyServerIds('srv_identity_123')).toContain(created.id);
     });
 
+    it('resolves a portable server identity to its current device-local routing profile', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://relay.example.test',
+            name: 'Relay',
+        });
+        profiles.setServerProfileIdentityForUrl(created.serverUrl, 'srv_identity_123');
+
+        const resolver = profiles as unknown as Readonly<{
+            resolveServerProfileForPortableIdentity?: (serverIdentityId: string) => unknown;
+        }>;
+
+        expect(resolver.resolveServerProfileForPortableIdentity?.('srv_identity_123')).toEqual(
+            expect.objectContaining({
+                kind: 'resolved',
+                serverIdentityId: 'srv_identity_123',
+                profile: expect.objectContaining({
+                    id: created.id,
+                    serverIdentityId: 'srv_identity_123',
+                }),
+            }),
+        );
+    });
+
+    it('does not invalidate the active server generation when the same identity is learned again', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({ serverUrl: 'https://relay.example.test', name: 'Relay' });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+        profiles.setServerProfileIdentityForUrl(created.serverUrl, 'srv_identity_123');
+        const before = profiles.getActiveServerSnapshot();
+        expect(profiles.getServerProfileById('srv_identity_123')).toMatchObject({
+            id: created.id,
+            serverIdentityId: 'srv_identity_123',
+        });
+        expect(profiles.listServerProfiles().filter((profile) => (
+            profile.serverUrl === created.serverUrl
+            || profile.serverIdentityId === 'srv_identity_123'
+        ))).toHaveLength(1);
+        const listener = vi.fn();
+        const unsubscribe = profiles.subscribeActiveServer(listener);
+
+        const learned = profiles.setServerProfileIdentityForUrl(created.serverUrl, 'srv_identity_123');
+
+        expect(learned?.serverIdentityId).toBe('srv_identity_123');
+        expect(profiles.getActiveServerSnapshot()).toBe(before);
+        expect(listener).not.toHaveBeenCalled();
+        unsubscribe();
+    });
+
     it('preserves a previous server identity as a legacy alias when the same profile learns a new identity', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
@@ -457,6 +512,34 @@ describe('serverProfiles', () => {
         expect(profiles.getServerProfileById('srv_old_identity')?.id).toBe(created.id);
         expect(profiles.getServerProfileLegacyServerIds('srv_new_identity')).toEqual(
             expect.arrayContaining([created.id, 'srv_old_identity']),
+        );
+    });
+
+    it('routes a persisted portable server-identity alias through its current local profile', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({
+            serverUrl: 'https://relay.example.test',
+            name: 'Relay',
+        });
+        profiles.setServerProfileIdentityForUrl(created.serverUrl, 'srv_old_identity');
+        profiles.setServerProfileIdentityForUrl(created.serverUrl, 'srv_new_identity');
+
+        const resolver = profiles as unknown as Readonly<{
+            resolveServerProfileForPortableIdentity?: (serverIdentityId: string) => unknown;
+        }>;
+
+        expect(resolver.resolveServerProfileForPortableIdentity?.('srv_old_identity')).toEqual(
+            expect.objectContaining({
+                kind: 'resolved',
+                serverIdentityId: 'srv_old_identity',
+                profile: expect.objectContaining({
+                    id: created.id,
+                    serverIdentityId: 'srv_new_identity',
+                }),
+            }),
         );
     });
 
@@ -581,10 +664,19 @@ describe('serverProfiles', () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
         const profiles = await importFresh();
-        const one = profiles.upsertServerProfile({ serverUrl: 'https://Example.COM:8443/' });
-        const two = profiles.upsertServerProfile({ serverUrl: 'https://example.com:8443' });
+        const one = profiles.upsertServerProfile({
+            serverUrl: 'https://Example.COM:8443/',
+            name: 'Existing',
+        });
+        const two = profiles.upsertServerProfile({
+            serverUrl: 'https://example.com:8443',
+            name: 'Replacement',
+        });
 
         expect(one.id).toBe(two.id);
+        expect(two.createdAt).toBe(one.createdAt);
+        expect(two.name).toBe('Existing');
+        expect(profiles.listServerProfiles().filter((profile) => profile.id === one.id)).toHaveLength(1);
         expect(one.id).toMatch(/^[a-z0-9._-]+$/);
     });
 

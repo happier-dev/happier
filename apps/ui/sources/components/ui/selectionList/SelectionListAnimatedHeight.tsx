@@ -10,21 +10,31 @@
  * hard jump at the END of an otherwise smooth slide.
  *
  * Fix: this component wraps any keyed `children` in an Animated.View and
- * renders a hidden "measure host" that reproduces the same children at their
- * natural size (offscreen, opacity 0, pointerEvents none, aria-hidden). The
- * measure host's onLayout reports the INCOMING natural height for the
- * current `stepKey`; the visible wrapper's onLayout reports the actual
- * rendered/clamped height (used as the "from" snapshot before each
- * transition AND as the maxHeight cap for the measure host so its reported
- * value never exceeds what the popover surface would actually paint).
+ * animates its height toward the INCOMING step's natural height, which the
+ * orchestrator supplies through `measuredContentHeight`. The visible
+ * wrapper's own onLayout reports the actual rendered/clamped height, used as
+ * the "from" snapshot before each transition AND as the upper bound on the
+ * animation target so it never overshoots what the popover surface would
+ * actually paint.
+ *
+ * R1 — this component does NOT measure. It used to render its own hidden
+ * mirror of the incoming body to read that natural height, while
+ * `SelectionList` rendered a second hidden mirror of the SAME subtree for
+ * `useSelectionListMeasuredPopoverHeight`. Two owners of one question meant
+ * every row of the list mounted THREE times per open on the native popover
+ * path (two of them invisible) — all of it in front of the user, because the
+ * container stays `opacity: 0` until the first measurement lands. The
+ * measurement now has a single owner (`SelectionList`'s measure host) and is
+ * passed here as a number.
  *
  * When `stepKey` changes:
  *
  *  1. Snapshot the just-prior wrapper-rendered height as the "from" value.
  *  2. Pin the container's height to that "from" value (a number).
- *  3. Once the new step's measure-host layout fires, animate via
- *     `withTiming` to the (clamped) target, using a duration tuned to feel
- *     synchronized with the SlideTransitionSwitch compact-preset spring.
+ *  3. Once a NEW `measuredContentHeight` arrives for the incoming step,
+ *     animate via `withTiming` to the (clamped) target, using a duration
+ *     tuned to feel synchronized with the SlideTransitionSwitch
+ *     compact-preset spring.
  *  4. On animation completion, flip the React-side `pinned` flag back off so
  *     the container's height returns to `auto` — subsequent natural layout
  *     reflows (e.g. dynamic-section row count changes) flow without being
@@ -38,32 +48,21 @@
  * generation counter so a stale callback can never release the pin
  * prematurely while a fresh animation is in flight.
  *
- * Why a separate `measureChildren` prop? The visible `children` is wrapped in
- * a SlideTransitionSwitch which keeps both layers mounted during the swap —
- * that container's natural height tracks the OUTGOING content, not the
- * incoming. We need an independent "shadow" subtree that renders just the
- * incoming body content (passed by the orchestrator) so its layout reflects
- * the destination height the moment React commits the new tree. The shadow
- * is render-only (no side effects, no focus/scroll), so duplicating the body
- * subtree is cheap.
+ * Why can't we measure the visible `children`? They are wrapped in a
+ * SlideTransitionSwitch which keeps both layers mounted during the swap, with
+ * the incoming layer absolutely positioned — that container's natural height
+ * tracks the OUTGOING content, not the incoming. The destination height can
+ * only be read from a subtree that renders the incoming body at its natural
+ * size, which is exactly what the orchestrator's offscreen measure host does.
  *
- * RV-8 / FRESH-1: the shadow subtree's identity-bearing props
- * (`id` / `nativeID` / `testID` / `aria-*` / accessibilityRole / etc.) are
- * stripped via `stripIdentityProps` before render so the live DOM never
- * contains duplicate listbox ids, duplicate option testIDs, or duplicate
- * aria-labels. The `aria-hidden` wrapper still shields the mirror from AT,
- * but the prop strip is a SECOND line of defense for selectors and id-based
- * DOM queries (some tools enumerate by id/testID regardless of `aria-hidden`).
- *
- * Why clamp the measure host to the wrapper's last-measured height? Long
+ * Why clamp the incoming height to the wrapper's last-measured height? Long
  * step bodies (e.g. a 100-row path picker) have a NATURAL height that vastly
  * exceeds the popover surface's `maxHeight`. Animating to that natural
- * height would balloon the popover well past its cap. Clamping the measure
- * host to the wrapper's most recent settled height keeps targets within the
- * range the popover surface will actually paint. The clamp is an UPPER
- * bound — when the incoming step is shorter than the cap, the measure host
- * reports the smaller natural height (that's the case the user reported:
- * 480 → 280).
+ * height would balloon the popover well past its cap. Clamping to the
+ * wrapper's most recent settled height keeps targets within the range the
+ * popover surface will actually paint. The clamp is an UPPER bound — when
+ * the incoming step is shorter than the cap, the smaller natural height is
+ * used verbatim (that's the case the user reported: 480 → 280).
  */
 
 import * as React from 'react';
@@ -78,8 +77,6 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-
-import { SelectionListMeasureHost } from './SelectionListMeasureHost';
 
 /**
  * Duration tuned to feel locked-in with the SlideTransitionSwitch `compact`
@@ -118,15 +115,21 @@ export type SelectionListAnimatedHeightProps = Readonly<{
      */
     children: React.ReactNode;
     /**
-     * Optional measure-only mirror of the body content. Defaults to
-     * `children` when omitted (acceptable when the children's natural height
-     * faithfully tracks the current step). For SelectionList, the
-     * orchestrator passes the raw `body` here so the measure host reflects
-     * the INCOMING step's height the moment React commits the new tree —
-     * not the outgoing layer's height that the SlideTransitionSwitch's
-     * container otherwise reports.
+     * The natural height of the body for the step identified by `stepKey`,
+     * measured by the single measurement owner (`SelectionList`'s offscreen
+     * measure host).
+     *
+     * `undefined` means "not measured for THIS step yet" — the owner
+     * withholds a height it took for a different step rather than letting a
+     * transition resolve against the step it is leaving.
+     *
+     * A number rather than a subtree: this component does not own a measure
+     * host, because `SelectionList` already renders one for
+     * `useSelectionListMeasuredPopoverHeight` over the SAME body, and a
+     * second mirror is a second mount of every row (see the R1 note in the
+     * file header).
      */
-    measureChildren?: React.ReactNode;
+    measuredContentHeight?: number;
     style?: StyleProp<ViewStyle>;
     testID?: string;
     /** Override; defaults via `useReducedMotionPreference()`. */
@@ -143,8 +146,8 @@ export function SelectionListAnimatedHeight(
     /**
      * Tracks the wrapper's most recent rendered height (when not pinned).
      * This is the value used both as the "from" snapshot when a transition
-     * starts AND as the `maxHeight` cap for the measure host so its
-     * incoming-height report never exceeds the visible cap.
+     * starts AND as the upper bound on the animation target so it never
+     * exceeds the visible cap.
      */
     const lastWrapperHeightRef = React.useRef<number>(0);
     const pendingTargetHeightRef = React.useRef<number | null>(null);
@@ -156,14 +159,6 @@ export function SelectionListAnimatedHeight(
      */
     const animationGenRef = React.useRef<number>(0);
     const [pinned, setPinned] = React.useState<boolean>(false);
-    /**
-     * Mirrors `lastWrapperHeightRef` into render so the measure host's
-     * `maxHeight` style updates when the wrapper's natural size changes.
-     * Stored separately from `animatedHeight` (which is the in-flight
-     * animation target) because the cap must apply during reduced-motion
-     * snaps too.
-     */
-    const [measureMaxHeight, setMeasureMaxHeight] = React.useState<number | undefined>(undefined);
 
     /**
      * RV-8 / FRESH-2 — unmount safety. The `withTiming` completion callback
@@ -191,15 +186,13 @@ export function SelectionListAnimatedHeight(
         // state — otherwise we'd record a pinned mid-animation height as the
         // cap and freeze the popover at that intermediate value.
         if (pinned) return;
-        if (lastWrapperHeightRef.current === measured) return;
         lastWrapperHeightRef.current = measured;
-        setMeasureMaxHeight(measured);
     }, [pinned]);
 
     // When stepKey changes: snapshot the prior natural height as the "from"
     // value, pin to it, and clear any pending target. The incoming target is
-    // resolved when the measure host's onLayout fires for the new key (see
-    // `handleMeasureLayout`).
+    // resolved once `measuredContentHeight` carries a measurement for the new
+    // key (see the measurement effect below).
     React.useLayoutEffect(() => {
         if (lastStepKeyRef.current === props.stepKey) return;
         lastStepKeyRef.current = props.stepKey;
@@ -262,46 +255,60 @@ export function SelectionListAnimatedHeight(
         };
     }, [animatedHeight]);
 
-    const handleMeasureLayout = React.useCallback(
-        (event: LayoutChangeEvent) => {
-            const measured = event.nativeEvent.layout.height;
-            if (measured <= 0) return;
+    const incomingContentHeight = normalizeContentHeight(props.measuredContentHeight);
 
-            if (!pinned) return;
+    // The measurement for the step now on screen resolves the transition
+    // target. It arrives from the orchestrator's single measure host, whose
+    // `onLayout` used to be wired directly to a second, locally-owned mirror
+    // of the same subtree. The orchestrator publishes `undefined` until the
+    // measurement it holds belongs to THIS `stepKey`, so a pin can never
+    // resolve against the outgoing step's height.
+    React.useEffect(() => {
+        if (!pinned) return;
+        if (incomingContentHeight === undefined) return;
 
-            // We are mid-transition; the measure host has just reported the
-            // incoming step's natural (clamped) height. Animate (or snap,
-            // under reduced motion) to that target.
-            if (pendingTargetHeightRef.current === measured) return;
-            pendingTargetHeightRef.current = measured;
+        // Upper-bound the target by the wrapper's last natural height so a
+        // naturally-tall incoming body cannot balloon the popover past what
+        // its surface will paint. Before the first wrapper layout there is no
+        // bound to apply.
+        const cap = lastWrapperHeightRef.current;
+        const target = cap > 0 ? Math.min(incomingContentHeight, cap) : incomingContentHeight;
 
-            if (reducedMotion) {
-                animatedHeight.value = measured;
-                releasePin(animationGenRef.current);
-                return;
-            }
+        if (pendingTargetHeightRef.current === target) return;
+        pendingTargetHeightRef.current = target;
 
-            const generation = animationGenRef.current;
-            animatedHeight.value = withTiming(measured, TIMING_CONFIG, (finished) => {
-                'worklet';
-                if (!finished) return;
-                // Defer the unpin until the SlideTransitionSwitch's own
-                // spring + popover-surface measurement catch up to our
-                // pinned target. Without the buffer, the wrapper unpins
-                // while the popover surface is still oversized — `flex: 1`
-                // immediately re-stretches the wrapper to the surface's
-                // current available space, producing a one-frame jump UP
-                // before the surface eventually shrinks (a visible bounce).
-                // The buffer keeps the pin held for the full slide-spring
-                // duration; by then both the SlideTransitionSwitch's layer
-                // commit AND the popover surface's natural-height
-                // measurement have caught up to the new step body's
-                // natural height, so unpinning is a no-op visually.
-                runOnJS(scheduleDeferredRelease)(generation);
-            });
-        },
-        [animatedHeight, pinned, reducedMotion, releasePin, scheduleDeferredRelease],
-    );
+        if (reducedMotion) {
+            animatedHeight.value = target;
+            releasePin(animationGenRef.current);
+            return;
+        }
+
+        const generation = animationGenRef.current;
+        animatedHeight.value = withTiming(target, TIMING_CONFIG, (finished) => {
+            'worklet';
+            if (!finished) return;
+            // Defer the unpin until the SlideTransitionSwitch's own
+            // spring + popover-surface measurement catch up to our
+            // pinned target. Without the buffer, the wrapper unpins
+            // while the popover surface is still oversized — `flex: 1`
+            // immediately re-stretches the wrapper to the surface's
+            // current available space, producing a one-frame jump UP
+            // before the surface eventually shrinks (a visible bounce).
+            // The buffer keeps the pin held for the full slide-spring
+            // duration; by then both the SlideTransitionSwitch's layer
+            // commit AND the popover surface's natural-height
+            // measurement have caught up to the new step body's
+            // natural height, so unpinning is a no-op visually.
+            runOnJS(scheduleDeferredRelease)(generation);
+        });
+    }, [
+        animatedHeight,
+        incomingContentHeight,
+        pinned,
+        reducedMotion,
+        releasePin,
+        scheduleDeferredRelease,
+    ]);
 
     const animatedStyle = useAnimatedStyle(() => {
         if (!pinned) return {};
@@ -320,27 +327,13 @@ export function SelectionListAnimatedHeight(
             style={[wrapperBaseStyle, props.style, pinnedOverrideStyle, animatedStyle]}
         >
             {props.children}
-            {/*
-             * Hidden measure host. Renders an independent copy of the
-             * INCOMING body content so we can read its natural height as
-             * soon as React commits the new tree. Positioned absolutely so
-             * it never participates in the visible flex layout. opacity:0 +
-             * pointerEvents:none + aria-hidden keeps it invisible to users
-             * and assistive tech. The measure subtree must be render-only
-             * (no focus/scroll/side effects) — for SelectionList the
-             * orchestrator passes the raw `body` (a pure render of
-             * `SelectionListBody`) here.
-             */}
-            <SelectionListMeasureHost
-                rootTestID={props.testID}
-                onMeasureLayout={handleMeasureLayout}
-                measureMaxHeight={measureMaxHeight}
-                measureChildren={props.measureChildren}
-            >
-                {props.children}
-            </SelectionListMeasureHost>
         </Animated.View>
     );
+}
+
+function normalizeContentHeight(value: number | undefined): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+    return value;
 }
 
 /**

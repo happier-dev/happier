@@ -77,6 +77,22 @@ async function collectNonTestSourceFiles(rootDir: string): Promise<string[]> {
 }
 
 describe('voice transcript canonical owner imports', () => {
+    it('keeps the common session transcript writer behind one Voice projector boundary', async () => {
+        const sourceFiles = await collectNonTestSourceFiles('sources/voice');
+        const writerOwners: string[] = [];
+
+        for (const filePath of sourceFiles) {
+            const source = await readFile(filePath, 'utf8');
+            if (source.includes('sync.persistSessionTranscriptMessage')) {
+                writerOwners.push(filePath);
+            }
+        }
+
+        expect(writerOwners).toEqual([
+            'sources/voice/transcript/VoiceTranscriptProjector.ts',
+        ]);
+    });
+
     it('routes UI surfaces through transcript selectors and keeps projector usage behind transcript owners', async () => {
         for (const expectation of sourceExpectations) {
             const source = await readFile(expectation.filePath, 'utf8');

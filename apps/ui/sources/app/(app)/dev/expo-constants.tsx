@@ -3,7 +3,6 @@ import { View, Text, ScrollView, Pressable, Platform, NativeModules } from 'reac
 import { Stack } from 'expo-router';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -15,6 +14,7 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { config } from '@/config';
 import { resolveExpoReleaseChannel } from '@/sync/runtime/appVariant';
+import { Icon } from '@/components/ui/icons/Icon';
 
 interface JsonViewerProps {
     title: string;
@@ -57,8 +57,8 @@ function JsonViewer({ title, data, defaultExpanded = false }: JsonViewerProps) {
                 }}
                 onPress={() => setIsExpanded(!isExpanded)}
             >
-                <Ionicons
-                    name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+                <Icon
+                    name={isExpanded ? 'caret-down' : 'caret-right'}
                     size={20}
                     color="#8E8E93"
                     style={{ marginRight: 8 }}
@@ -74,7 +74,7 @@ function JsonViewer({ title, data, defaultExpanded = false }: JsonViewerProps) {
                     {copyFeedback.isCopied('json') ? (
                         <CopiedPill visible testID={`dev-expo-constants-copy-feedback:${title}`} />
                     ) : (
-                        <Ionicons name="copy-outline" size={20} color="#007AFF" />
+                        <Icon name="copy" size={20} color="#007AFF" />
                     )}
                 </Pressable>
             </Pressable>

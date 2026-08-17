@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
+import { Icon, type IconName, type IconWeight } from '@/components/ui/icons/Icon';
 
 export type ProgressChecklistStepStatus =
     | 'pending'
@@ -37,17 +37,18 @@ export const ProgressChecklist = React.memo(function ProgressChecklist(props: Re
 
     return props.steps.map((step) => {
         const testId = `${props.testIDPrefix}-${step.status}-${encodeProgressChecklistStepIdForTestId(step.stepId)}`;
-        const iconName = step.status === 'done'
-            ? 'checkmark-circle'
+        const iconName: IconName = step.status === 'done'
+            ? 'check-circle'
             : step.status === 'failed'
-                ? 'close-circle'
+                ? 'x-circle'
                 : step.status === 'canceled'
-                    ? 'remove-circle'
+                    ? 'minus-circle'
                     : step.status === 'waiting'
-                        ? 'help-circle'
-                        : step.status === 'active'
-                            ? 'ellipse'
-                            : 'ellipse-outline';
+                        ? 'question'
+                        : 'circle';
+        // 'active' and 'pending' both render the same 'circle' glyph; Phosphor expresses the old
+        // filled-vs-outline Ionicons pair ('ellipse' vs 'ellipse-outline') as a weight, not a name.
+        const iconWeight: IconWeight | undefined = step.status === 'active' ? 'fill' : undefined;
         const iconColor = step.status === 'done'
             ? theme.colors.state.success.foreground
             : step.status === 'failed'
@@ -65,7 +66,7 @@ export const ProgressChecklist = React.memo(function ProgressChecklist(props: Re
                 testID={testId}
                 title={step.title}
                 subtitle={subtitle}
-                icon={<Ionicons name={iconName} size={18} color={iconColor} />}
+                icon={<Icon name={iconName} size={16} color={iconColor} weight={iconWeight} />}
                 loading={step.status === 'active'}
                 showChevron={false}
                 mode="info"

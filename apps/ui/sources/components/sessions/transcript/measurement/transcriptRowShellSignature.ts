@@ -2,13 +2,33 @@ import type { ChatListItem } from '@/components/sessions/chatListItems';
 import type { TranscriptTurn } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
 import type { TranscriptToolGroupUnitItem } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits';
 import type { TranscriptWindowGapItem } from '@/components/sessions/transcript/viewport/window/transcriptTargetWindowTypes';
+import {
+    groupedToolCallRowPaintDependsOnGroupExpansion,
+} from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowRenderDecision';
+import {
+    getPendingMessageVisualState,
+    isPendingMessageProviderDeliveryInFlight,
+    resolvePendingMessageHeightBearingChrome,
+} from '@/components/sessions/pending/pendingMessageVisualState';
+import {
+    resolvePluginTranscriptActivityHeightBearingPaint,
+} from '@/components/sessions/transcript/pluginTranscriptActivityPresentation';
+import { resolveSessionActionDraftHeightBearingPaint } from '@/components/sessions/actions/sessionActionDraftPresentation';
+import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
+import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 
 import type {
     TranscriptItemHeightRowState,
     TranscriptItemHeightValiditySignature,
 } from './transcriptItemHeightCache';
+// The reconciler is the single owner of which row states are still GROWING; this module consumes
+// that set rather than re-listing it, so a future state cannot diverge between the reservation
+// policy and the size-version key.
+import { TRANSCRIPT_GROWING_ROW_STATES } from './transcriptMeasurementReconciler';
+
 
 const TRANSCRIPT_COLLAPSED_TOOL_GROUP_SIGNATURE_PREVIEW_COUNT = 15;
 
@@ -59,6 +79,7 @@ export function resolveTranscriptRowItemType(params: Readonly<{
     if (item.kind === 'pending-queue') return 'pending-action';
     if (item.kind === 'pending-user-action') return 'pending-action';
     if (item.kind === 'external-session-operation') return 'pending-action';
+    if (item.kind === 'plugin-transcript-activity') return 'pending-action';
     if (item.kind === 'action-draft') return 'pending-action';
     if (item.kind === 'fork-divider') return 'fork-divider';
     if (item.kind === 'transcript-window-gap') return 'transcript-window-gap';
@@ -92,6 +113,14 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     groupingMode: string;
     item: TranscriptRowShellItem;
     latestCommittedActivityKey: string | null;
+    /**
+     * F-4: the option list an `action-draft` row's `select` / `multiselect` fields paint. The card
+     * resolves this from subscriptions it owns, and an OFFSCREEN row has no card — so the producer of
+     * the key has to carry it. `useTranscriptItemsPipeline` takes it from
+     * `useSessionActionFieldOptionsForRowHeight`, whose whole job is to be the narrowest derived value
+     * that answers this question. Rows other than `action-draft` never call it.
+     */
+    resolveActionDraftFieldOptions: ResolveSessionActionFieldOptions;
     resolveThinkingExpanded: (messageId: string) => boolean;
     sessionActive: boolean;
     widthBucket: string;
@@ -113,9 +142,20 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
 
     if (item.kind === 'message') {
         const message = params.getMessageById(item.messageId);
+        const rowState = resolveMessageRowState({
+            activeThinkingMessageId: params.activeThinkingMessageId,
+            isLatestCommittedActivity: item.messageId === params.latestCommittedActivityKey,
+            message,
+            sessionActive: params.sessionActive,
+        });
         return {
             ...base,
-            structuralKey: buildMessageShellStructuralKey(item.messageId, message, params.getMessageRevisionById(item.messageId)),
+            // R2: a row classified GROWING keeps its own measurement across the writes that grow it
+            // — see `buildGrowingMessageShellStructuralKey`. P2 scoped that classification to the
+            // rows that can actually grow; `resolveMessageRowState` owns the decision.
+            structuralKey: TRANSCRIPT_GROWING_ROW_STATES.has(rowState)
+                ? buildGrowingMessageShellStructuralKey(item.messageId)
+                : buildMessageShellStructuralKey(item.messageId, message, params.getMessageRevisionById(item.messageId)),
             expansionKey: [
                 'tools:none',
                 buildThinkingExpansionKey({
@@ -124,12 +164,7 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
                     resolveThinkingExpanded: params.resolveThinkingExpanded,
                 }),
             ].join('|'),
-            rowState: resolveMessageRowState({
-                activeThinkingMessageId: params.activeThinkingMessageId,
-                isLatestCommittedActivity: item.messageId === params.latestCommittedActivityKey,
-                message,
-                sessionActive: params.sessionActive,
-            }),
+            rowState,
         };
     }
 
@@ -159,8 +194,14 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
 
     // Per-unit tool-group rows (N2c): deliberately SMALL structural keys so the height
     // cache stays valid across sibling churn — caps key on group facts only, tool rows
-    // key on their OWN message revision plus group expansion.
+    // key on their OWN message revision (plus group expansion only where it can change
+    // what the row paints — see F-P1 below).
     if (item.kind === 'tool-group-header') {
+        // F-P1: expansion is NOT an input here. The header's only expansion-dependent output is a
+        // 16px chevron in a row whose height is set by its 13px title text, and the live per-variant
+        // header measurement behind `estimateTranscriptRowHeightFromCache` has no expanded/collapsed
+        // split for exactly that reason. Keying on it only discarded the header's measured height
+        // (Legend `validateItemSizeVersion` drops `sizesKnown` + `sizes`) on every tap.
         return {
             ...base,
             structuralKey: buildStableJsonSignature({
@@ -170,9 +211,8 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
                     getMessageById: params.getMessageById,
                     toolMessageIds: item.toolMessageIds,
                 }),
-                expanded: item.expanded,
             }),
-            expansionKey: [item.expanded ? 'tools:expanded' : 'tools:collapsed', 'thinking:none'].join('|'),
+            expansionKey: 'tools:none|thinking:none',
             rowState: 'stable',
         };
     }
@@ -191,14 +231,27 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
 
     if (item.kind === 'tool-group-tool') {
         const message = params.getMessageById(item.toolMessageId);
+        // F-P1: group expansion belongs in this row's size version ONLY when it can change what the
+        // row PAINTS. `ChatListInternal` wires Legend's vendored `getItemSizeVersion` to this
+        // signature and `validateItemSizeVersion` DELETES `sizesKnown` + `sizes` whenever the version
+        // moves, so keying every grouped tool row on expansion made one expand/collapse tap throw
+        // away the measured height of every tool row in the group and re-place them from estimates.
+        // The renderer module stays the single decision-maker; this only consumes its answer.
+        const expansionAffectsPaint = message?.kind === 'tool-call'
+            && groupedToolCallRowPaintDependsOnGroupExpansion(message);
         return {
             ...base,
             structuralKey: buildStableJsonSignature({
                 groupId: item.groupId,
-                groupExpanded: item.expanded,
+                groupExpanded: expansionAffectsPaint ? item.expanded : null,
                 messageRevision: buildMessageShellStructuralKey(item.toolMessageId, message, params.getMessageRevisionById(item.toolMessageId)),
             }),
-            expansionKey: [item.expanded ? 'tools:expanded' : 'tools:collapsed', 'thinking:none'].join('|'),
+            expansionKey: [
+                expansionAffectsPaint
+                    ? (item.expanded ? 'tools:expanded' : 'tools:collapsed')
+                    : 'tools:none',
+                'thinking:none',
+            ].join('|'),
             rowState: resolveMessageRowState({
                 activeThinkingMessageId: params.activeThinkingMessageId,
                 isLatestCommittedActivity: item.toolMessageId === params.latestCommittedActivityKey,
@@ -257,14 +310,349 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
         };
     }
 
+    // J/D2 (2026-07-30): the remaining shapes are keyed on PRESENTATION facts, never on a
+    // serialization of the record. `ChatListInternal` wires the vendored Legend
+    // `getItemSizeVersion` to this signature and `validateItemSizeVersion` DELETES `sizesKnown` +
+    // `sizes` whenever the version moves, while `TranscriptRowShell` additionally calls
+    // `resetReservationForStructuralChange` (wiping `minHeight` AND `lastMeasuredHeight`) on an
+    // `isStructuralSignatureDelta`. Routing these five through `buildStableJsonSignature(item)`
+    // therefore destroyed the row's measured height on every field bump anywhere in the record —
+    // and a `PendingMessage` carries `updatedAt` plus the whole `rawRecord`, so every server touch
+    // of a queued message (delivery status, outbox operation, send state) re-sized the row from an
+    // estimate. Measured native consequence: a ±12.70px scroll oscillation with `contentLength`
+    // byte-identical while the pending row is on screen, each reversal re-virtualising the list.
+    // This is the same rule message rows already follow (`buildMessageShellStructuralKey`:
+    // "Never serialize the message itself"); these shapes never got it.
+    if (item.kind === 'pending-queue') {
+        // F-P2 (2026-08-10): HEIGHT-bearing presentation only, not visible-state. The J/D2 fix above
+        // stopped serializing the record and keyed on `getPendingMessageVisualState(...).kind`
+        // instead — but that kind is a STATUS, and the chrome it selects splits in two: the status
+        // chip is `position: 'absolute'` (`pendingAffordanceChip`) and cannot move the row at all,
+        // while `blockedDeliveryNotice` is in flow. In THIS repository the chip is the only thing the
+        // other states select — the whole `queuedReason` vocabulary is painted INSIDE that chip — so
+        // a plain send (`saving → send_unconfirmed → queued → delivering`) moved this key several
+        // times with the painted box byte-identical, and every move deleted the row's measured size
+        // (Legend `validateItemSizeVersion`) and its reservation
+        // (`resetReservationForStructuralChange`). `resolvePendingMessageHeightBearingChrome` is the
+        // owner's own answer to "which in-flow notice does this row paint", the same rule F-P1 states
+        // for grouped tool rows; the block renders from that descriptor, so key and paint cannot
+        // drift. `deliveryBlockedPresentation.labelKey` stays because it decides the notice's own
+        // copy, hence its line count.
+        //
+        // The block's own local `materializingLocalIds` is still not available here, and neither are
+        // the session-runtime inputs — none of them can change this row's height in this repository,
+        // because every state they select paints into the absolute chip. What matters otherwise is
+        // that the key still moves on every change of the queue's COMPOSITION (ids, order, count) and
+        // of each message's text extent, which is what `isStructuralSignatureDelta` needs to re-seed
+        // the floor when the queue drains.
+        // BLOCK-LEVEL RESIDUAL, pre-existing and unchanged: `showNonSteerableNotice` is an in-flow
+        // notice this row paints ONCE for the whole queue, derived from session capabilities rather
+        // than from any pending record, so no per-message key can see it. The row's own `onLayout`
+        // stays the measurement authority for it. Do not buy it back with a ticking field.
+        const hasProviderDeliveryInFlight = item.pendingMessages.some(isPendingMessageProviderDeliveryInFlight);
+        return {
+            ...base,
+            structuralKey: [
+                ...item.pendingMessages.map((message) => buildPendingMessagePresentationKey(message, hasProviderDeliveryInFlight)),
+                ...item.discardedMessages.map((message) => buildDiscardedPendingMessagePresentationKey(message)),
+            ].join('|'),
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'pending-action',
+        };
+    }
+
+    if (item.kind === 'pending-user-action') {
+        // `request.arguments` is arbitrary provider payload (unbounded) and is immutable for a given
+        // request id, so it is identity, not a signature input.
+        return {
+            ...base,
+            structuralKey: `${item.request.id}:${item.request.kind}:${item.request.tool}`,
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'pending-action',
+        };
+    }
+
+    if (item.kind === 'action-draft') {
+        // F-P3 (2026-08-10): same rule as the pending row above — HEIGHT-bearing presentation only.
+        // See `buildActionDraftPresentationKey` for why `status` is deliberately absent.
+        return {
+            ...base,
+            structuralKey: buildActionDraftPresentationKey(item.draft, params.resolveActionDraftFieldOptions),
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'pending-action',
+        };
+    }
+
+    if (item.kind === 'fork-divider') {
+        return {
+            ...base,
+            structuralKey: `${item.parentSessionId}:${item.childSessionId}:${item.parentCutoffSeqInclusive}`,
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'stable',
+        };
+    }
+
+    if (item.kind === 'transcript-window-gap') {
+        return {
+            ...base,
+            structuralKey: `${item.id}:${item.direction}`,
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'stable',
+        };
+    }
+
+    if (item.kind === 'external-session-operation') {
+        // `progress` is the whole cross-device operation projection: it carries `revision`,
+        // `updatedAtMs`, a timeline, and live import counters, all of which move while the card
+        // renders. Only the facts that change what the card PAINTS (which notice, which actions)
+        // belong in the size version; the counters change text inside a line, not the row's height.
+        //
+        // F-P5 (2026-08-10): `progress` ALSO selects the card. `useTranscriptRowHost` renders
+        // `ExternalSessionOperationSharedCard` while it is null and `ExternalImportProgressCard`
+        // once owner hydration adopts it — a group title plus one status row becoming a status row
+        // with a subtitle, an N-step `ProgressChecklist`, an optional import row, an optional
+        // published row and one row per action. That swap was invisible here, because
+        // `appendExternalSessionOperationTranscriptItem` adopts `progress` only when
+        // `matchesExternalSessionOperationPresentation` holds, whose identity is
+        // `(v, operationId, revision, kind, status, phase)` — so the two status/phase legs below are
+        // byte-equal across the transition by construction.
+        const progress = item.progress;
+        return {
+            ...base,
+            structuralKey: [
+                item.presentation.operationId,
+                item.presentation.kind,
+                progress ? 'progress-card' : 'shared-card',
+                progress?.status ?? item.presentation.status,
+                progress?.phase ?? item.presentation.phase,
+                progress?.error?.code ?? '',
+                progress?.retryTargetPhase ?? '',
+                progress?.publication ? 'published' : '',
+            ].join(':'),
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'pending-action',
+        };
+    }
+
+    if (item.kind === 'plugin-transcript-activity') {
+        // F-P4 (2026-08-10). This key used to enumerate projection fields — `phase`, `status`,
+        // `progress.completed`, `progress.total`, the whole `checklist`, `dismissible`, `freshness`
+        // — and so keyed checklist state whose icon/spinner does not alter row geometry, plus a live
+        // counter it paints only as text inside one line. A run reporting `1 / 10 -> 2 / 10 -> ...`
+        // therefore deleted the row's measured size once per tick at a strictly higher rate than a
+        // send walk.
+        //
+        // It now reads the paint descriptor the CARD owns, so what is keyed and what is painted
+        // cannot drift, and applies the one line-keying rule to each painted line.
+        const paint = resolvePluginTranscriptActivityHeightBearingPaint(item);
+        return {
+            ...base,
+            structuralKey: [
+                item.identityKey,
+                buildPaintedLinePresentationKey(paint.groupTitle),
+                buildPaintedLinePresentationKey(paint.statusTitle),
+                paint.statusDetail === null ? '' : buildPaintedLinePresentationKey(paint.statusDetail),
+                // The fixed-width determinate rail changes the status text column, but its
+                // counter/fill changes only paint inside that fixed geometry.
+                paint.hasProgress ? 'progress' : '',
+                // Each checklist entry is its own Item. Its state changes the icon/spinner, not
+                // the row geometry; membership and label extent do.
+                paint.checklistStepLabels.map(buildPaintedLinePresentationKey).join(','),
+                // Each action is a whole `Item`, so both membership and each label's own extent are
+                // height-bearing; per-label extents encode the count too.
+                paint.actionLabels.map(buildPaintedLinePresentationKey).join(','),
+                paint.canDismiss ? 'dismissible' : '',
+            ].join(':'),
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'pending-action',
+        };
+    }
+
+    // Exhaustive: a NEW row shape must declare its own presentation-scoped key rather than silently
+    // inheriting a whole-record serialization in this per-row-per-render path.
+    const unhandled: never = item;
     return {
         ...base,
-        structuralKey: buildStableJsonSignature(item),
+        structuralKey: (unhandled as { id?: string }).id ?? 'unknown',
         expansionKey: 'tools:none|thinking:none',
-        rowState: item.kind === 'pending-queue' || item.kind === 'pending-user-action' || item.kind === 'external-session-operation' || item.kind === 'action-draft'
-            ? 'pending-action'
-            : 'stable',
+        rowState: 'stable',
     };
+}
+
+/**
+ * Text extent BOUNDED BY THE BOX THAT PAINTS IT. THE rule for keying a painted line, used by every
+ * row that paints live text. A painted line can be very large (a pasted spec) and this runs per row
+ * per render, so the key carries only the facts that decide how many lines the box paints.
+ *
+ * `maxLines` is the painter's own clamp — a `numberOfLines` on the `Text`, or a `multiline={false}`
+ * text field, which is a clamp of one — and `null` means the box grows with its content.
+ *
+ *   - UNBOUNDED box: rendered length AND hard line breaks. Both can add a line.
+ *   - CLAMP OF ONE: a constant. No value it can hold paints a second line, so neither its length nor
+ *     its hard breaks are height-bearing.
+ *   - CLAMP OF TWO OR MORE: rendered length AND hard line breaks, the breaks capped at
+ *     `maxLines - 1`. Such a box is NOT height-invariant in its text — it paints one line while the
+ *     value fits and `maxLines` once it does not — so length stays in exactly as it does for an
+ *     unbounded box. The cap is what keeps breaks the clamp already swallows out of the key.
+ *
+ * Keying a live line VERBATIM is the churn defect (F-P2 / F-P4): a counter stepping
+ * `1 / 10 -> 2 / 10` repaints the same box at the same height, and a verbatim key would delete the
+ * row's measured size on every tick through `validateItemSizeVersion`. Keying a SINGLE-LINE box by
+ * its LENGTH is the same defect one level down (V-1 / V-2): a user typing in a one-line input, or a
+ * counter crossing `9 / 10 -> 10 / 10`, moved the key with the painted box byte-identical.
+ *
+ * F-1 (2026-08-11): V-2 dropped length at ANY clamp, which over-corrected into the opposite defect.
+ * Every case V-2 measured — `9 / 10 -> 10 / 10`, `99 -> 100 / 200`, `Compiling -> Linking` — paints
+ * inside `statusDetail`, a clamp of ONE. `checklistStepLabels` and `actionLabels` are clamp TWO, and
+ * dropping their length was a real UNDER-key: an offscreen row whose label grew from `Build` to a
+ * 90-character step kept a byte-identical key, a stale measured height and a stale floor. The drop
+ * is therefore restricted to the clamp that can actually pay for it.
+ *
+ * The residual is deliberate and bounded, and it is the same residual in both directions: two
+ * same-length strings of different glyph widths can wrap differently without moving the key. The
+ * row's own `onLayout` stays the measurement authority for that — the same trade this file has
+ * always made for the pending prompt.
+ */
+function buildTextExtentPresentationKey(rendered: string, maxLines: number | null): string {
+    let newlines = 0;
+    for (let i = 0; i < rendered.length; i += 1) {
+        if (rendered.charCodeAt(i) === 10) newlines += 1;
+    }
+    if (maxLines === null) return `${rendered.length}n${newlines}`;
+    if (maxLines <= 1) return `c${maxLines}`;
+    return `c${maxLines}:${rendered.length}n${Math.min(newlines, maxLines - 1)}`;
+}
+
+/** Keys one painted line through the rule above, from the painter's own `{ text, maxLines }`. */
+function buildPaintedLinePresentationKey(line: Readonly<{ text: string; maxLines: number | null }>): string {
+    return buildTextExtentPresentationKey(line.text, line.maxLines);
+}
+
+/**
+ * Reads `displayText ?? text` — the same string `PendingMessagesTranscriptBlock` renders.
+ *
+ * Keyed as UNBOUNDED. Observed 2026-08-11 and deliberately left alone: the block paints that text
+ * through `numberOfLines={collapsedLines}` while the message is COLLAPSED, so this is an over-key of
+ * the same family as V-1 — but the clamp comes from the `transcriptPendingMessageCollapsedLines`
+ * SETTING and the collapsed/expanded state is the block's own local state, neither of which reaches
+ * this module. Fixing it needs that state threaded in, not a hardcoded clamp here, which would
+ * UNDER-key the expanded message.
+ */
+function buildPendingTextPresentationKey(message: Pick<PendingMessage, 'text' | 'displayText'>): string {
+    return buildTextExtentPresentationKey((message.displayText ?? message.text) ?? '', null);
+}
+
+function buildPendingMessagePresentationKey(
+    message: PendingMessage,
+    hasProviderDeliveryInFlight: boolean,
+): string {
+    const visualState = getPendingMessageVisualState(message, { hasProviderDeliveryInFlight });
+    return [
+        message.id,
+        message.localId ?? '',
+        resolvePendingMessageHeightBearingChrome(visualState),
+        visualState.deliveryBlockedPresentation?.labelKey ?? '',
+        buildPendingTextPresentationKey(message),
+    ].join(':');
+}
+
+function buildDiscardedPendingMessagePresentationKey(message: DiscardedPendingMessage): string {
+    return [
+        'discarded',
+        message.id,
+        message.localId ?? '',
+        message.discardedReason ? 'reason' : '',
+        buildPendingTextPresentationKey(message),
+    ].join(':');
+}
+
+/**
+ * A draft row paints an action form, so the row's height moves with WHICH fields that form paints and
+ * with how much text each of them displays — both read off the painter,
+ * `resolveSessionActionDraftHeightBearingPaint`, exactly as the pending row's chrome and the plugin
+ * activity row's paint are.
+ *
+ * F-P3 (2026-08-10): `draft.status` is DELIBERATELY absent, for the same reason `visualState.kind`
+ * left the pending row's key. `SessionActionDraftCard` reads `props.draft.status` in exactly three
+ * places — `ActionInputFields.editable` (forwarded only to the field widgets' `disabled`), the cancel
+ * button's `disabled`, and both buttons' `opacity`. None of them adds, removes, or reflows a box, so
+ * `editing -> running` on every action start moved this key with the painted card byte-identical, and
+ * every move deleted the row's measured size (Legend `validateItemSizeVersion`) and its reservation
+ * (`resetReservationForStructuralChange`). That invariant is pinned at the owner by
+ * `SessionActionDraftCard.test.tsx#paints byte-identical in-flow chrome for every draft status`.
+ *
+ * F-P6 (2026-08-11), the CONVERSE, found while auditing F-P3: what remained was still a PROXY over
+ * the raw payload (top-level key count + summed top-level string lengths), and a proxy is blind the
+ * other way. The card's visible field SET is a function of the input VALUES (`visibleWhen`), and
+ * `review.start` drives all three of its conditional fields from an OBJECT (`base.kind`) or an ARRAY
+ * (`engineIds`) — both scored as zero by that proxy — so a labelled text field appeared or vanished
+ * with the key byte-identical, and the reconciler handed the taller frame the shorter row's floor.
+ * Nested and array-valued text (`base.baseBranch`, `engines.coderabbit.configFiles`) was invisible
+ * for the same reason. Keying the PAINT rather than the payload fixes all of it at once; the field
+ * `disabled` flag stays out, because like `status` it only reaches an interaction state.
+ *
+ * V-1 (2026-08-11): F-P6 over-corrected. It keyed EVERY text field by extent, and most of them paint
+ * a `multiline: false` field — one line tall for every value — so the key moved on every keystroke in
+ * a `text` widget or a comma `text_list`, which the pre-F-P6 key did not do. The descriptor now names
+ * each field's box (`textBox.maxLines`) and the bounded extent rule above does the rest: extent where
+ * the box grows, a constant where it cannot.
+ *
+ * V-4 (2026-08-11): `errorLine` is now the line the card actually paints — `validationError ??
+ * draft.error` — resolved by the descriptor. It is keyed by extent rather than presence because a
+ * one-line failure and a pasted stack trace are different heights, and it is UNBOUNDED because the
+ * card's notice `<Text>` carries no `numberOfLines`.
+ *
+ * F-4 (2026-08-11): the OPTION LIST of a `select` / `multiselect` is keyed too, and it is the last
+ * height-bearing input this row had left outside the key. `ActionInputFields` hands the list to
+ * `HappierSelect`, which maps it into a `gap`-stacked `View` — one `HappierPressable` ROW per option,
+ * each at least `minimumTouchTarget` tall — so gaining or losing an option adds or removes a whole
+ * row. And the list is a function of BOTH the SYNCED `backendEnabledByTargetKey` setting AND the
+ * ASYNC machine-capabilities snapshot (`reviewEngineCatalog`'s `discoveredReviewOptions`), so either
+ * another device or a capabilities RPC resolving can change it while this row is offscreen, where no
+ * `onLayout` exists and the reconciler's floor is monotonic within one structuralKey.
+ *
+ * WHAT is keyed, and why not less: each option's LABEL and any caption, under the same
+ * bounded-extent rule as every other painted line (the option's `HappierText` carries no
+ * `numberOfLines`, so it is unbounded), in PAINT ORDER.
+ *   - A bare COUNT is not enough: this repo's catalog lets the snapshot RENAME an option at an
+ *     unchanged id (`resolveReviewEngineLabel` prefers `entry.title`), and a longer label can wrap an
+ *     option row onto a second line.
+ *   - An unordered SET of option VALUES is not enough either: it is blind to exactly that rename.
+ *   - `disabled` is deliberately EXCLUDED. Like `draft.status` in F-P3 it reaches only the option's
+ *     `opacity` and its press handler. Excluding it is also what lets
+ *     `useSessionActionFieldOptionsForRowHeight` hold ONE resolver identity across capabilities churn
+ *     that cannot repaint a row.
+ * The residual is the corridor's usual one and is stated once above: two labels of the same length
+ * and different glyph widths can wrap differently without moving the key.
+ */
+function buildActionDraftPresentationKey(
+    draft: SessionActionDraft,
+    resolveFieldOptions: ResolveSessionActionFieldOptions,
+): string {
+    const paint = resolveSessionActionDraftHeightBearingPaint({
+        draft,
+        sessionId: draft.sessionId,
+        resolveFieldOptions,
+    });
+    return [
+        draft.id,
+        draft.actionId,
+        buildTextExtentPresentationKey(paint.errorLine, null),
+        paint.fields
+            .map((entry) => `${entry.field.path}@${entry.field.widget}${
+                entry.textBox === null ? '' : `=${buildPaintedLinePresentationKey(entry.textBox)}`
+            }${
+                entry.options === null
+                    ? ''
+                    : `#${JSON.stringify(entry.options.map((option) => [
+                        buildTextExtentPresentationKey(option.label, null),
+                        option.description
+                            ? buildTextExtentPresentationKey(option.description, null)
+                            : null,
+                    ]))}`
+            }`)
+            .join(','),
+    ].join(':');
 }
 
 function resolveForkContextKeyForItem(
@@ -348,6 +736,54 @@ function buildMessageShellStructuralKey(
         return `${messageId}:r${Math.trunc(revision)}`;
     }
     return buildStableJsonSignature(message);
+}
+
+/**
+ * R2 (2026-08-10) — the structural key of a row classified GROWING carries identity only.
+ *
+ * P2 (2026-08-10) narrowed what "growing" means. `resolveMessageRowState` decides it, and it is a
+ * LIVENESS test intersected with the one message kind whose body arrives incrementally
+ * (`agent-text`) — it is NOT a proof that this particular row is still receiving content. A finished
+ * agent reply that is still the tail of an active session stays growing-classified until the next
+ * message commits, because no per-row growth signal exists to intersect with (see that function).
+ * The consequence to hold in mind when reading the guarantee below: the revision is dropped for that
+ * finished tail row too, so a REWRITE of it while it is unmounted keeps a stale size until it
+ * remounts. Everything else here is unchanged.
+ *
+ * `ChatListInternal` wires the vendored Legend `getItemSizeVersion` to
+ * `buildTranscriptItemHeightSignatureKey(...)`, and `validateItemSizeVersion` answers a moved
+ * version by deleting the row's `sizesKnown` AND `sizes` entries. Because
+ * {@link buildMessageShellStructuralKey} is revision-keyed and the store bumps a message's revision
+ * on EVERY write, a streaming reply's own measured height was deleted on every chunk and the list
+ * was re-positioned from `getEstimatedItemSize` for the whole time the user was watching it — the
+ * reported down-then-up excursion. Tuning that estimate was treating the symptom; the discard is
+ * the defect.
+ *
+ * A growing row does not need the version to re-measure: a MOUNTED Legend container carries a live
+ * `onLayout` (`processContainerLayout` -> `updateItemSizes`) and, on the New Architecture, an
+ * unconditional `useLayoutEffect` that re-schedules its own layout on every commit
+ * (`@legendapp/list` 3.3.3 `useContainerMeasurement`). The version's real job is the row that
+ * CANNOT re-measure itself — one scrolled out of the render window, with no container and no
+ * onLayout — and every such change is still keyed: `kind`, `expansionKey`, `widthBucket`,
+ * `fontScaleKey`, `groupingMode`, `forkContextKey` and `rowState` are all separate members of the
+ * signature, so a collapse, a kind flip, a resize and the streaming -> stable finalize each still
+ * move the version. Only the per-write revision of a row that is growing on screen is dropped.
+ *
+ * This is scoped to {@link TRANSCRIPT_GROWING_ROW_STATES} because those are exactly the states in
+ * which `structuralKey` has no other live consumer: `isFloorShapeValid` returns before comparing it
+ * for a growing floor, `isStructuralSignatureDelta` skips its `structuralKey` clause when either
+ * side is growing, `hasStructuralDelta` never reads it, and the exact-height LRU cache is written
+ * and read only for `stable` rows (`isTranscriptItemHeightSignatureStable`). Deleting the revision
+ * here therefore removes the discard and nothing else.
+ *
+ * `tool-progress` is deliberately NOT included even though a running tool also grows: the reconciler
+ * classifies it as SHRINK-CAPABLE (a `permission_pending` -> `running` collapse keeps that same row
+ * state, so no other signature member moves) and its measured height genuinely must be dropped when
+ * the row shrinks offscreen. Extending this rule to it needs its own evidence, not a symmetry
+ * argument.
+ */
+function buildGrowingMessageShellStructuralKey(messageId: string): string {
+    return `${messageId}:growing`;
 }
 
 function buildTurnShellStructuralKey(params: Readonly<{
@@ -480,7 +916,26 @@ function resolveMessageRowState(params: Readonly<{
         }
     }
     if (params.sessionActive && params.isLatestCommittedActivity) {
-        return message.kind === 'tool-call' ? 'tool-progress' : 'streaming';
+        if (message.kind === 'tool-call') return 'tool-progress';
+        // P2 (2026-08-10) — `sessionActive && isLatestCommittedActivity` is a LIVENESS test, so it
+        // must be intersected with the one thing that actually grows. Only an agent reply's body
+        // ARRIVES INCREMENTALLY: a `user-text` row is whole at birth (the composer submits it in one
+        // piece) and an `agent-event` row is a discrete record. Classifying those as growing gave
+        // them a monotonic floor carried ACROSS content shapes, made
+        // `estimateTranscriptRowHeightFromCache` refuse to serve their real last measurement, and —
+        // after R2 dropped the per-write revision from a growing row's structural key — removed the
+        // last invalidation of a content REWRITE, which for an unmounted row (no container, no
+        // onLayout) strands a size the row no longer paints.
+        //
+        // This is an ALLOWLIST because there is no per-row growth signal to intersect with instead:
+        // no message carries a streaming flag (`messageTypes.ts`), and the session-level
+        // `session.thinking` toggles between chunks — `thinkingGraceUntil` exists precisely to
+        // debounce that flicker for the indicator — so gating on it would delete a genuinely growing
+        // row's measurement on every flicker, which is the R2 defect returning. An agent reply that
+        // has FINISHED but is still the tail of an active session therefore stays growing-classified
+        // until the next message commits; that residual is stated in the remote-dev review
+        // `.project/reviews/2026-08-10-port-gap-and-predicate/P2-predicate.md`.
+        return message.kind === 'agent-text' ? 'streaming' : 'stable';
     }
     return 'stable';
 }

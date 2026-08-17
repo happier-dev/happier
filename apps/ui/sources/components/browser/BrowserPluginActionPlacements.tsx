@@ -1,17 +1,17 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
 import { Text } from '@/components/ui/text/Text';
-import { resolvePluginUiIoniconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
+import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import type { PluginBrowserActionProjection } from '@/sync/domains/plugins/browser/actions';
 import {
     resolvePluginBrowserPolicyDecision,
 } from '@/sync/domains/plugins/browser/policy';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const ACTION_TARGET_SIZE = 44;
 
@@ -94,9 +94,9 @@ export function BrowserPluginActionPlacements(props: Readonly<{
                 subtitle: decision.enabled ? undefined : decision.unavailableReason ?? undefined,
                 accessibilityLabel: action.display.title,
                 icon: (
-                    <Ionicons
-                        name={resolvePluginUiIoniconName(action.display.iconToken)}
-                        size={18}
+                    <Icon
+                        name={resolvePluginUiIconName(action.display.iconToken)}
+                        size={16}
                         color={theme.colors.text.secondary}
                     />
                 ),
@@ -134,9 +134,9 @@ export function BrowserPluginActionPlacements(props: Readonly<{
                                     !decision.enabled ? stylesheet.actionDisabled : null,
                                 ]}
                             >
-                                <Ionicons
-                                    name={resolvePluginUiIoniconName(action.display.iconToken)}
-                                    size={18}
+                                <Icon
+                                    name={resolvePluginUiIconName(action.display.iconToken)}
+                                    size={16}
                                     color={theme.colors.text.secondary}
                                 />
                                 <Text style={stylesheet.actionText}>{action.display.title}</Text>
@@ -156,9 +156,9 @@ export function BrowserPluginActionPlacements(props: Readonly<{
                         onPress={() => setContextMenuOpen((open) => !open)}
                         style={stylesheet.contextTrigger}
                     >
-                        <Ionicons
-                            name="ellipsis-horizontal"
-                            size={18}
+                        <Icon
+                            name="dots-three"
+                            size={16}
                             color={theme.colors.text.primary}
                         />
                     </Pressable>

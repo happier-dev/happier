@@ -25,7 +25,7 @@ const PRESETS: readonly QuickInstallDraft[] = [
             id: 'playwright',
             title: 'Playwright',
             description: 'Browser automation and testing.',
-            iconName: 'globe-outline',
+            iconName: 'globe',
         },
         server: {
             name: 'playwright',
@@ -45,7 +45,7 @@ const PRESETS: readonly QuickInstallDraft[] = [
             id: 'context7',
             title: 'Context7',
             description: 'Documentation lookup for libraries and frameworks.',
-            iconName: 'book-outline',
+            iconName: 'book',
         },
         server: {
             name: 'context7',
@@ -65,7 +65,7 @@ const PRESETS: readonly QuickInstallDraft[] = [
             id: 'sequential-thinking',
             title: 'Sequential Thinking',
             description: 'Think through complex problems step-by-step.',
-            iconName: 'git-branch-outline',
+            iconName: 'git-branch',
         },
         server: {
             name: 'sequential_thinking',
@@ -86,7 +86,7 @@ const PRESETS: readonly QuickInstallDraft[] = [
             id: 'github',
             title: 'GitHub',
             description: 'Repos, issues, PRs, and code search.',
-            iconName: 'logo-github',
+            iconName: 'github-logo',
         },
         server: {
             name: 'github',

@@ -42,6 +42,7 @@ export function useSessionWorkspaceTarget(sessionId: string | null): WorkspaceTa
             machineId,
             rootPath,
             serverId,
+            ...(machineTarget.agentBasePath ? { agentRootPath: machineTarget.agentBasePath } : {}),
         };
     }, [
         allMachines,
@@ -55,5 +56,6 @@ export function useSessionWorkspaceTarget(sessionId: string | null): WorkspaceTa
         ownerMetadata?.host,
         ownerMetadata?.machineId,
         ownerMetadata?.path,
+        ownerMetadata?.sessionWorkspaceLocationV1,
     ]);
 }

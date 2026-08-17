@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
@@ -11,6 +10,7 @@ import { t } from '@/text';
 
 import type { ImportedMcpInputDefinitionV1 } from '@/sync/domains/settings/mcpServers/parseImportedMcpServerJson';
 import type { ImportedMcpInputResolutionV1 } from '@/sync/domains/settings/mcpServers/materializeImportedMcpServerDrafts';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const McpInputMappingEditor = React.memo(function McpInputMappingEditor(props: Readonly<{
     inputs: readonly ImportedMcpInputDefinitionV1[];
@@ -39,7 +39,7 @@ export const McpInputMappingEditor = React.memo(function McpInputMappingEditor(p
                                     subtitle={candidateMode === 'savedSecret'
                                         ? t('settings.mcpServersValueSourceSavedSecretSubtitle')
                                         : t('settings.mcpServersImportMachineEnvPlaceholder')}
-                                    icon={<Ionicons name={candidateMode === 'savedSecret' ? 'key-outline' : 'terminal-outline'} size={29} color={theme.colors.accent.indigo} />}
+                                    icon={<Icon name={candidateMode === 'savedSecret' ? 'key' : 'terminal'} size={29} color={theme.colors.accent.indigo} />}
                                     onPress={() => {
                                         props.onChangeMapping(
                                             input.inputId,
@@ -59,9 +59,9 @@ export const McpInputMappingEditor = React.memo(function McpInputMappingEditor(p
                                     selected={selected}
                                     showChevron={false}
                                     rightElement={(
-                                        <Ionicons
-                                            name="checkmark-circle"
-                                            size={22}
+                                        <Icon
+                                            name="check-circle"
+                                            size={20}
                                             color={theme.colors.text.primary}
                                             style={{ opacity: selected ? 1 : 0 }}
                                         />

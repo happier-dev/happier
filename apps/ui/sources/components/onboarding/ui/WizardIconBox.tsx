@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type WizardIconBoxProps = Readonly<{
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    icon: IconName;
     selected?: boolean;
     boxSize?: number;
     iconSize?: number;
@@ -43,7 +43,7 @@ export const WizardIconBox = React.memo(function WizardIconBox(props: WizardIcon
                 selected ? styles.selected : null,
             ]}
         >
-            <Ionicons
+            <Icon
                 name={props.icon}
                 size={iconSize}
                 color={selected ? theme.colors.text.primary : theme.colors.text.secondary}

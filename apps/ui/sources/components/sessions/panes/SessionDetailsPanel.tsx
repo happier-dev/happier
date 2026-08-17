@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import type { PaneSurfaceScope } from '@/components/appShell/panes/types';
+import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
+import { PluginDetailsPaneOverlay } from '@/components/appShell/panes/details/surfaces/PluginDetailsPaneOverlay';
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import {
     DetailsSurfaceHost,
@@ -19,6 +21,9 @@ import {
 } from '@/agents/registry/sessionSubagentUiBehavior';
 import { t } from '@/text';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { SidebarCollapseIcon, SidebarExpandIcon } from '@/components/navigation/shell/SidebarIcons';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 import { createSessionFileDetailsTab } from './details/sessionDetailsTabBuilders';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
@@ -51,10 +56,13 @@ import { useSimulatorLiveStreamRelaySocket } from '@/components/devices/simulato
 import { useSessionBrowserContextRuntimeContext } from '@/components/sessions/browser/sessionBrowserContextRuntime';
 import { useSessionBrowserRecordingRuntime } from '@/components/sessions/browser/sessionBrowserRecordingRuntime';
 import { createManagedChromiumBrowserAnnotationCaptureProvider } from '@/sync/domains/browser/context';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type SessionDetailsPanelProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    /** Exact AppPane target/projection facts when this panel is driver-rendered. */
+    paneSurfaceScope?: Extract<PaneSurfaceScope, Readonly<{ targetKind: 'session' }>>;
     presentation?: 'pane' | 'screen';
     /**
      * Optional override for the close action. Used by fullscreen/mobile routes that render the same
@@ -92,10 +100,16 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
     const showRightPaneToggle = showHeaderActions && props.presentation !== 'screen';
     const pluginRuntime = useSessionDetailsPanelPluginRuntime({
         sessionId: props.sessionId,
+        paneSurfaceScope: props.paneSurfaceScope,
         pluginUiProjection: props.pluginUiProjection,
         peerMediationObservabilityScope: props.peerMediationObservabilityScope,
         platform: props.platform,
     });
+    const deviceType = useDeviceType();
+    const pluginRuntimeFormFactor = React.useMemo(
+        () => resolvePluginUiRuntimeFormFactor({ deviceType }),
+        [deviceType],
+    );
     const sessionBrowserContextRuntime = useSessionBrowserContextRuntimeContext();
     const liveLocalServicePreviewState = useLocalServicePreviewState({
         machineId: pluginRuntime.machineId,
@@ -240,12 +254,14 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
 
     const detailsSurfaceCallbacks = React.useMemo(() => createDetailsSurfacePaneCallbacks({
         openTab: pane.openDetailsTab,
+        openOverlay: pane.openDetailsOverlay,
         closeTab: pane.closeDetailsTab,
         pinTab: pane.pinDetailsTab,
         unpinTab: pane.unpinDetailsTab,
         replaceTab: pane.replaceDetailsTab,
     }), [
         pane.closeDetailsTab,
+        pane.openDetailsOverlay,
         pane.openDetailsTab,
         pane.pinDetailsTab,
         pane.replaceDetailsTab,
@@ -258,13 +274,16 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             machineId: pluginRuntime.machineId,
             serverId: pluginRuntime.serverId,
             pluginUiProjection: pluginRuntime.pluginUiProjection,
-            pluginUiInteractionEnabled: pluginRuntime.interactionEnabled,
+            pluginUiProjectionPhase: pluginRuntime.phase,
+            pluginUiInteractionEnabled: pluginRuntime.phase === 'current'
+                && pluginRuntime.interactionEnabled === true,
             pluginBrowserProjection: pluginRuntime.pluginBrowserProjection,
             localServicePreviewState,
             peerMediationObservabilityState,
             peerMediationObservabilityScope: pluginRuntime.peerMediationObservabilityScope,
             simulatorPreview,
             platform: pluginRuntime.platform,
+            formFactor: pluginRuntimeFormFactor,
             productModels: browserProductModels,
             browserRecording,
             launchpadRows: browserLaunchpad.rows,
@@ -289,8 +308,10 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         peerMediationObservabilityState,
         pluginRuntime.machineId,
         pluginRuntime.interactionEnabled,
+        pluginRuntime.phase,
         pluginRuntime.peerMediationObservabilityScope,
         pluginRuntime.platform,
+        pluginRuntimeFormFactor,
         pluginRuntime.pluginUiProjection,
         pluginRuntime.pluginBrowserProjection,
         pluginRuntime.serverId,
@@ -319,15 +340,48 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         detailsSurfaceScope,
     ]);
 
+    const renderOverlay = React.useCallback((overlay: NonNullable<typeof pane.scopeState>['details']['overlay']) => {
+        if (!overlay) return null;
+        return (
+            <PluginDetailsPaneOverlay
+                targetKind="session"
+                projection={pluginRuntime.pluginUiProjection}
+                overlay={overlay}
+                callbacks={detailsSurfaceCallbacks}
+                mount={{
+                    sessionId: props.sessionId,
+                    machineId: pluginRuntime.machineId,
+                    serverId: pluginRuntime.serverId,
+                    platform: pluginRuntime.platform,
+                    formFactor: pluginRuntimeFormFactor,
+                    projectionPhase: pluginRuntime.phase,
+                    projectionInteractionEnabled: pluginRuntime.phase === 'current'
+                        && pluginRuntime.interactionEnabled === true,
+                }}
+            />
+        );
+    }, [
+        pluginRuntime.interactionEnabled,
+        pluginRuntime.machineId,
+        pluginRuntime.platform,
+        pluginRuntime.phase,
+        pluginRuntimeFormFactor,
+        pluginRuntime.pluginUiProjection,
+        pluginRuntime.serverId,
+        detailsSurfaceCallbacks,
+        props.sessionId,
+    ]);
+
+    // Geometry only. A bordered box around a single glyph is chrome competing with the content
+    // beside it, and this header had four of them. The three controls below use the canonical
+    // `IconButton`; `BrowserSurfaceOpenButton` renders its own Pressable, so it cannot be wrapped in
+    // one and takes the matching geometry instead.
     const iconButtonStyle = {
         width: 34,
         height: 34,
-        borderRadius: 10,
+        borderRadius: 8,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
     };
 
     const testIds = React.useMemo(() => ({
@@ -339,24 +393,20 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
     }), [sessionScreenTestIdsEnabled]);
 
     const closeButton = (
-        <Pressable
+        <IconButton
+            variant="plain"
+            size={34}
             onPress={requestClose}
             testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-close')}
-            style={closeButtonAtStart ? undefined : iconButtonStyle}
-            hitSlop={closeButtonAtStart ? 15 : undefined}
-            accessibilityRole="button"
             accessibilityLabel={closeButtonAtStart ? t('common.back') : t('session.detailsPanel.closeA11y')}
-        >
-            {closeButtonAtStart ? (
-                <SafeIonicons
-                    name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+            icon={closeButtonAtStart
+                ? <Icon
+                    name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                     size={24}
                     color={theme.colors.chrome.header.foreground}
                 />
-            ) : (
-                <Octicons name="chevron-right" size={18} color={theme.colors.text.secondary} />
-            )}
-        </Pressable>
+                : <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />}
+        />
     );
 
     const toggleRightPane = React.useCallback(() => {
@@ -390,43 +440,40 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             <>
                 {browserOpenButton}
                 {Platform.OS === 'web' ? (
-                    <Pressable
+                    <IconButton
+                        variant="plain"
+                        size={34}
                         onPress={paneFocusMode.toggle}
                         testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-focus-toggle')}
-                        style={iconButtonStyle}
-                        accessibilityRole="button"
                         disabled={!paneFocusMode.canEnter}
+                        selected={paneFocusMode.active}
                         accessibilityLabel={
                             paneFocusMode.active
                                 ? t('session.detailsPanel.exitFocusModeA11y')
                                 : t('session.detailsPanel.enterFocusModeA11y')
                         }
-                    >
-                        <Ionicons
-                            name={paneFocusMode.active ? 'contract-outline' : 'expand-outline'}
-                            size={18}
+                        icon={<Icon
+                            name={paneFocusMode.active ? 'arrows-in' : 'arrows-out'}
+                            size={16}
                             color={theme.colors.text.secondary}
-                        />
-                    </Pressable>
+                        />}
+                    />
                 ) : null}
                 {showRightPaneToggle ? (
-                    <Pressable
+                    <IconButton
+                        variant="plain"
+                        size={34}
                         onPress={toggleRightPane}
                         testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-right-pane-toggle')}
-                        style={iconButtonStyle}
-                        accessibilityRole="button"
                         accessibilityLabel={
                             rightPaneOpen
                                 ? t('session.detailsPanel.closeRightSidebarA11y')
                                 : t('session.detailsPanel.openRightSidebarA11y')
                         }
-                    >
-                        <Octicons
-                            name={rightPaneOpen ? 'sidebar-collapse' : 'sidebar-expand'}
-                            size={18}
-                            color={theme.colors.text.secondary}
-                        />
-                    </Pressable>
+                        icon={rightPaneOpen
+                            ? <SidebarCollapseIcon edge="right" size={18} color={theme.colors.text.secondary} />
+                            : <SidebarExpandIcon edge="right" size={18} color={theme.colors.text.secondary} />}
+                    />
                 ) : null}
                 {closeButtonAtStart ? null : closeButton}
             </>
@@ -456,10 +503,10 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             resolveTabIconName={(tab) =>
                 resolveSessionDetailsSurfaceIconName({
                     tab,
-                    pluginUiProjection: pluginRuntime.pluginUiProjection,
                 }) ?? resolveProviderSessionDetailsTabIconName(tab)
             }
             renderTabContent={renderTabContent}
+            renderOverlay={renderOverlay}
             renderHeaderLeadingActions={renderHeaderLeadingActions}
             renderHeaderActions={renderHeaderActions}
         />

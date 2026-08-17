@@ -223,7 +223,7 @@ export function collectUnexpectedRawTextNodes(
     function walk(value: ReactTestRendererJSON | ReactTestRendererJSON[] | string | null, parentType: string | null): void {
         if (value == null) return;
         if (typeof value === 'string') {
-            if (!allowedParents.has(parentType ?? '') && value.trim().length > 0) {
+            if (!allowedParents.has(parentType ?? '')) {
                 findings.push({
                     parent: parentType,
                     value,

@@ -1,13 +1,13 @@
 import { tracking } from '@/track';
 import { HappyError } from '@/utils/errors/errors';
-import { applySettings, settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
+import { applySettings, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import {
     normalizeVoiceSettingsLocalDelta,
     normalizeVoiceSettingsServerDelta,
 } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { summarizeSettings, summarizeSettingsDelta, dbgSettings, isSettingsSyncDebugEnabled } from '@/sync/domains/settings/debugSettings';
 import {
-    pickLocalOnlyAccountSettings,
+    stripDerivedAccountSettingsProjections,
     stripLocalOnlyAccountSettings,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
 import {
@@ -33,18 +33,21 @@ import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accou
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import {
-    resealSecretsDeep,
     sealSecretsDeep,
-    unsealSecretsDeepWithKeys,
 } from '@/sync/encryption/secretSettings';
+import {
+    normalizeAccountSettingsForLocalStorage,
+    normalizeAccountSettingsForServerStorage,
+    openAccountSettingsStoredContent,
+} from '@/sync/domains/settings/accountSettingsNormalization';
 import { serverFetch } from '@/sync/http/client';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import {
     AccountSettingsV2GetResponseSchema,
     AccountSettingsV2UpdateResponseSchema,
-    openAccountScopedBlobCiphertext,
     sealAccountScopedBlobCiphertext,
+    type AccountScopedCiphertextFormat,
     type AccountSettingsStoredContentEnvelope,
 } from '@happier-dev/protocol';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
@@ -88,9 +91,27 @@ function pickMigratedSessionOrganizationSettings(settings: Record<string, unknow
     return picked;
 }
 
-export type SyncSettingsParams = {
+export type OneShotAccountSettingsMutationResult<T> =
+    | Readonly<{
+        status: 'applied';
+        settingsVersion: number;
+        value: T;
+    }>
+    | Readonly<{
+        status: 'conflict';
+        currentSettingsVersion: number;
+    }>
+    | Readonly<{
+        /** The one-shot write may have reached storage without its durable result. */
+        status: 'outcomeUnknown';
+        lastKnownSettingsVersion: number;
+        /** Present only when this owner completed its one safe canonical readback. */
+        safeSnapshotVersion?: number;
+    }>;
+
+export type SyncSettingsParams<TOneShotMutationValue = never> = {
     credentials: AuthCredentials;
-    encryption: Encryption;
+    encryption: Encryption | null;
     settingsScope?: AccountSettingsScope | null;
     pendingSettings: Partial<Settings>;
     clearPendingSettings: (nextPendingSettings: Partial<Settings>) => void;
@@ -100,9 +121,25 @@ export type SyncSettingsParams = {
     serverSettingsMutation?: (
         raw: Readonly<Record<string, unknown>>,
     ) => Record<string, unknown>;
+    /**
+     * One explicit semantic mutation against one Account Settings version.
+     * Unlike serverSettingsMutation, this callback is never replayed after a
+     * version conflict; the canonical winner is refreshed and returned.
+     */
+    oneShotServerSettingsMutation?: Readonly<{
+        expectedSettingsVersion: number;
+        mutate: (
+            raw: Readonly<Record<string, unknown>>,
+        ) => Readonly<{
+            settings: Record<string, unknown>;
+            value: TOneShotMutationValue;
+        }>;
+    }>;
 };
 
-export async function syncSettings(params: SyncSettingsParams): Promise<void> {
+export async function syncSettings<TOneShotMutationValue = never>(
+    params: SyncSettingsParams<TOneShotMutationValue>,
+): Promise<OneShotAccountSettingsMutationResult<TOneShotMutationValue> | void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
     const settingsScope = params.settingsScope ?? null;
     const settingsSecretsKey = params.settingsSecretsKey ?? null;
@@ -120,8 +157,27 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const pendingServerSettings = stripMigratedSessionOrganizationSettings(pendingAccountSettings) as Partial<Settings>;
     let legacySessionOrganizationImportCompletedThisRun = false;
 
+    if (params.serverSettingsMutation && params.oneShotServerSettingsMutation) {
+        throw new Error('Account settings mutation cannot be both replaying and one-shot');
+    }
+    if (params.oneShotServerSettingsMutation) {
+        if (Object.keys(pendingServerSettings).length > 0) {
+            throw new Error('One-shot Account Settings mutation requires pending settings to be flushed first');
+        }
+        const expected = params.oneShotServerSettingsMutation.expectedSettingsVersion;
+        if (!Number.isInteger(expected) || expected < 0) {
+            throw new Error('One-shot Account Settings mutation requires a valid expected version');
+        }
+    }
+
     const encryptionMode = await fetchAccountEncryptionMode(credentials);
     const accountMode = encryptionMode.mode === 'plain' ? 'plain' : 'e2ee';
+    const requireEncryption = (): Encryption => {
+        if (!encryption) {
+            throw new Error('Account settings encryption material is unavailable');
+        }
+        return encryption;
+    };
 
     function isSettingsScopeActive(): boolean {
         if (!settingsScope) return true;
@@ -178,6 +234,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         content: AccountSettingsStoredContentEnvelope | null;
         version: number;
         raw: Record<string, unknown> | null;
+        format: AccountScopedCiphertextFormat | 'plain' | 'empty';
         serverIdentityKeysChanged: boolean;
     };
 
@@ -277,32 +334,6 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         throw new Error(`Failed to update settings (v1): ${response.status}`);
     }
 
-    async function decryptSettingsCiphertext(ciphertext: string): Promise<Record<string, unknown> | null> {
-        const machineKey = encryption.getContentPrivateKey();
-        const opened = openAccountScopedBlobCiphertext({
-            kind: 'account_settings',
-            material: { type: 'dataKey', machineKey },
-            ciphertext,
-        });
-        if (opened?.value && typeof opened.value === 'object' && !Array.isArray(opened.value)) {
-            return opened.value as Record<string, unknown>;
-        }
-        return await decryptAccountSettingsCiphertextForUi(encryption, ciphertext);
-    }
-
-    async function openSettingsContent(
-        content: AccountSettingsStoredContentEnvelope | null,
-        options?: { requireReadable?: boolean },
-    ): Promise<Record<string, unknown> | null> {
-        if (!content) return null;
-        if (content.t === 'plain') return content.v as Record<string, unknown>;
-        const decrypted = await decryptSettingsCiphertext(String(content.c ?? ''));
-        if (!decrypted && options?.requireReadable) {
-            throw new Error('Failed to open encrypted account settings');
-        }
-        return decrypted;
-    }
-
     function migrateRawServerIdentityKeys(raw: Record<string, unknown> | null): {
         raw: Record<string, unknown> | null;
         changed: boolean;
@@ -328,16 +359,25 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         return migrateRawServerIdentityKeys(merged).raw;
     }
 
-    async function fetchAccountSettingsBaseline(options?: { requireReadable?: boolean }): Promise<AccountSettingsServerBaseline> {
+    async function fetchAccountSettingsBaseline(): Promise<AccountSettingsServerBaseline> {
         try {
             const fetched = await fetchSettingsV2();
-            const raw = await openSettingsContent(fetched.content, options);
-            const migrated = migrateRawServerIdentityKeys(raw);
+            const opened = openAccountSettingsStoredContent({
+                content: fetched.content,
+                encryption,
+                expectedMode: accountMode,
+            });
+            const migrated = migrateRawServerIdentityKeys(opened.raw);
+            normalizeSettingsForLocalStorage({
+                raw: migrated.raw,
+                mode: opened.mode,
+            });
             return {
                 api: 'v2',
                 content: fetched.content,
                 version: fetched.version,
                 raw: migrated.raw,
+                format: opened.format,
                 serverIdentityKeysChanged: migrated.changed,
             };
         } catch (e: any) {
@@ -346,13 +386,22 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 throw new Error('Settings v2 is required but not supported by this server');
             }
             const fetched = await fetchSettingsV1();
-            const raw = await openSettingsContent(fetched.content, options);
-            const migrated = migrateRawServerIdentityKeys(raw);
+            const opened = openAccountSettingsStoredContent({
+                content: fetched.content,
+                encryption,
+                expectedMode: 'e2ee',
+            });
+            const migrated = migrateRawServerIdentityKeys(opened.raw);
+            normalizeSettingsForLocalStorage({
+                raw: migrated.raw,
+                mode: opened.mode,
+            });
             return {
                 api: 'v1',
                 content: fetched.content,
                 version: fetched.version,
                 raw: migrated.raw,
+                format: opened.format,
                 serverIdentityKeysChanged: migrated.changed,
             };
         }
@@ -363,70 +412,71 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             (typeof data.currentSettings === 'string' || data.currentSettings === null
                 ? (data.currentSettings ? { t: 'encrypted', c: data.currentSettings } : null)
                 : null)) as AccountSettingsStoredContentEnvelope | null;
-        const raw = await openSettingsContent(currentContent, { requireReadable: true });
-        const migrated = migrateRawServerIdentityKeys(raw);
+        const opened = openAccountSettingsStoredContent({
+            content: currentContent,
+            encryption,
+            expectedMode: accountMode,
+        });
+        const migrated = migrateRawServerIdentityKeys(opened.raw);
+        normalizeSettingsForLocalStorage({
+            raw: migrated.raw,
+            mode: opened.mode,
+        });
         return {
             api: data.currentContent !== undefined ? 'v2' : 'v1',
             content: currentContent,
             version: data.currentVersion,
             raw: migrated.raw,
+            format: opened.format,
             serverIdentityKeysChanged: migrated.changed,
         };
     }
 
-    function normalizeSettingsForLocalStorage(params: { raw: Record<string, unknown>; mode: 'plain' | 'e2ee' }): Settings {
-        const raw = stripMigratedSessionOrganizationSettingsForImportedScope(params.raw);
-        const parsed = settingsParse(raw);
-        if (params.mode === 'plain') {
-            return sealSecretsDeep(parsed, settingsSecretsKey);
-        }
-        if (settingsSecretsKey) {
-            return resealSecretsDeep(parsed, {
-                readKeys: settingsSecretsReadKeys,
-                writeKey: settingsSecretsKey,
-            }).value as Settings;
-        }
-        return parsed;
+    function normalizeSettingsForLocalStorage(params: {
+        raw: Record<string, unknown> | null;
+        mode: 'plain' | 'e2ee';
+    }): Settings {
+        return normalizeAccountSettingsForLocalStorage({
+            raw: params.raw,
+            mode: params.mode,
+            settingsSecretsKey,
+            settingsSecretsReadKeys,
+            localSettings: loadSettingsForCapturedScope().settings,
+            normalizeServerRaw: stripMigratedSessionOrganizationSettingsForImportedScope,
+        });
     }
 
     function normalizeSettingsForServerStorageResult(params: {
         raw: Settings | Record<string, unknown>;
         mode: 'plain' | 'e2ee';
     }): { value: Record<string, unknown>; changed: boolean } {
-        const strippedLocalOnly = stripLocalOnlyAccountSettings(params.raw);
-        const stripped = stripMigratedSessionOrganizationSettingsForImportedScope(strippedLocalOnly as Record<string, unknown>);
+        const strippedLocalOnly = stripLocalOnlyAccountSettings(params.raw) as Record<string, unknown>;
+        const stripped = stripMigratedSessionOrganizationSettingsForImportedScope(strippedLocalOnly);
         const migratedOrganizationStripped = !areAccountSettingsRawObjectsEqual(
-            strippedLocalOnly as Record<string, unknown>,
-            stripped as Record<string, unknown>,
+            strippedLocalOnly,
+            stripped,
         );
         // Enforce Voice persistence compatibility at the final write boundary.
         // This also covers crash-recovered pending deltas created by an older
         // build and every CAS conflict retry baseline.
         const voiceNormalized = normalizeVoiceSettingsServerDelta(stripped);
         const voiceChanged = !areAccountSettingsRawObjectsEqual(
-            stripped as Record<string, unknown>,
+            stripped,
             voiceNormalized as Record<string, unknown>,
         );
-        if (params.mode === 'plain') {
-            const unsealed = unsealSecretsDeepWithKeys(voiceNormalized, settingsSecretsReadKeys) as Record<string, unknown>;
-            return {
-                value: unsealed,
-                changed: migratedOrganizationStripped || voiceChanged || unsealed !== voiceNormalized,
-            };
-        }
-        if (!settingsSecretsKey) {
-            return {
-                value: voiceNormalized as Record<string, unknown>,
-                changed: migratedOrganizationStripped || voiceChanged,
-            };
-        }
-        const resealed = resealSecretsDeep(voiceNormalized, {
-            readKeys: settingsSecretsReadKeys,
-            writeKey: settingsSecretsKey,
+        const normalized = normalizeAccountSettingsForServerStorage({
+            raw: strippedLocalOnly,
+            mode: params.mode,
+            settingsSecretsKey,
+            settingsSecretsReadKeys,
+            normalizeServerRaw: (raw) =>
+                normalizeVoiceSettingsServerDelta(
+                    stripMigratedSessionOrganizationSettingsForImportedScope(raw),
+                ) as Record<string, unknown>,
         });
         return {
-            value: resealed.value as Record<string, unknown>,
-            changed: migratedOrganizationStripped || voiceChanged || resealed.changed,
+            value: normalized.value,
+            changed: migratedOrganizationStripped || voiceChanged || normalized.secretsChanged,
         };
     }
 
@@ -439,7 +489,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         }
         const ciphertext = sealAccountScopedBlobCiphertext({
             kind: 'account_settings',
-            material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
+            material: { type: 'dataKey', machineKey: requireEncryption().getContentPrivateKey() },
             payload: raw,
             randomBytes: getRandomBytes,
         });
@@ -451,26 +501,56 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         version: number;
         remainingPendingSettings?: Partial<Settings>;
         replace?: boolean;
-    }): void {
+    }): Settings {
         const parsedSettings = params.raw
             ? normalizeSettingsForLocalStorage({ raw: params.raw, mode: accountMode })
-            : { ...settingsDefaults };
+            : normalizeAccountSettingsForLocalStorage({
+                raw: null,
+                mode: accountMode,
+                settingsSecretsKey,
+                settingsSecretsReadKeys,
+                localSettings: loadSettingsForCapturedScope().settings,
+            });
         const remainingServerPending = stripMigratedSessionOrganizationSettings(
             stripLocalOnlyAccountSettings(params.remainingPendingSettings ?? {}) as Record<string, unknown>,
         ) as Partial<Settings>;
         const mergedWithPending = Object.keys(remainingServerPending).length > 0
             ? applySettings(parsedSettings, remainingServerPending)
             : parsedSettings;
-        const nextSettings = applySettings(
-            mergedWithPending,
-            pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings),
-        );
+        const nextSettings = mergedWithPending;
         if (params.replace) {
             replaceSettingsForCapturedScope(nextSettings, params.version);
         } else {
             applySettingsForCapturedScope(nextSettings, params.version);
         }
         applyActiveSettingsSideEffects(nextSettings);
+        return nextSettings;
+    }
+
+    async function recoverOneShotOutcomeUnknown(
+        lastKnownSettingsVersion: number,
+    ): Promise<OneShotAccountSettingsMutationResult<TOneShotMutationValue>> {
+        try {
+            // The POST may have committed even though its acknowledgement was
+            // lost. Re-enter the existing canonical reader once; never replay
+            // the one-shot callback against a later baseline.
+            const readback = await fetchAccountSettingsBaseline();
+            applyRawSettingsProjection({
+                raw: readback.raw,
+                version: readback.version,
+                remainingPendingSettings: {},
+            });
+            return Object.freeze({
+                status: 'outcomeUnknown' as const,
+                lastKnownSettingsVersion: readback.version,
+                safeSnapshotVersion: readback.version,
+            });
+        } catch {
+            return Object.freeze({
+                status: 'outcomeUnknown' as const,
+                lastKnownSettingsVersion,
+            });
+        }
     }
 
     function clearCommittedPendingSettings(
@@ -569,7 +649,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     let prefetchedFinalBaseline: AccountSettingsServerBaseline | null = null;
 
     // Apply pending settings
-    if (Object.keys(pendingServerSettings).length > 0 || params.serverSettingsMutation) {
+    if (Object.keys(pendingServerSettings).length > 0
+        || params.serverSettingsMutation
+        || params.oneShotServerSettingsMutation) {
         dbgSettings('syncSettings: pending detected; will POST', {
             endpoint: activeServerUrl,
             pendingKeys: Object.keys(pendingServerSettings).sort(),
@@ -577,15 +659,32 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             base: summarizeSettings(storage.getState().settings, { version: storage.getState().settingsVersion }),
         });
 
-        let baseline = await fetchAccountSettingsBaseline({ requireReadable: true });
+        let baseline = await fetchAccountSettingsBaseline();
         let pendingLegacySessionOrganizationImported = await maybeImportLegacySessionOrganization(
             mergePendingLegacySessionOrganizationSettings(baseline.raw),
         );
         while (retryCount < maxRetries) {
             const version = baseline.version;
-            const mutationBaseline = params.serverSettingsMutation
-                ? params.serverSettingsMutation(baseline.raw ?? {})
-                : baseline.raw;
+            if (params.oneShotServerSettingsMutation
+                && version !== params.oneShotServerSettingsMutation.expectedSettingsVersion) {
+                applyRawSettingsProjection({
+                    raw: baseline.raw,
+                    version,
+                    remainingPendingSettings: {},
+                });
+                return Object.freeze({
+                    status: 'conflict',
+                    currentSettingsVersion: version,
+                });
+            }
+            const oneShotMutation = params.oneShotServerSettingsMutation
+                ? params.oneShotServerSettingsMutation.mutate(baseline.raw ?? {})
+                : null;
+            const mutationBaseline = oneShotMutation
+                ? oneShotMutation.settings
+                : params.serverSettingsMutation
+                    ? params.serverSettingsMutation(baseline.raw ?? {})
+                    : baseline.raw;
             const merged = mergePendingSettingsIntoRawBaseline({
                 rawBaseline: mutationBaseline,
                 pendingSettings: pendingServerSettings,
@@ -618,9 +717,19 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                     version,
                     remainingPendingSettings,
                 });
-                return;
+                return oneShotMutation
+                    ? Object.freeze({
+                        status: 'applied',
+                        settingsVersion: version,
+                        value: oneShotMutation.value,
+                    })
+                    : undefined;
             }
 
+            normalizeSettingsForLocalStorage({
+                raw: merged.outgoingRaw,
+                mode: accountMode,
+            });
             const { content, v1Settings } = createSettingsContentForWrite(merged.outgoingRaw);
             dbgSettings('syncSettings: POST attempt', {
                 endpoint: activeServerUrl,
@@ -629,9 +738,20 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 merged: summarizeSettings(merged.outgoingRaw as any, { version }),
             });
 
-            const data: any = baseline.api === 'v2'
-                ? await updateSettingsV2({ content, expectedVersion: version })
-                : await updateSettingsV1({ settings: v1Settings, expectedVersion: version });
+            let data: any;
+            try {
+                // From this point the one-shot external mutation may have
+                // reached storage. Missing or malformed acknowledgement is
+                // reconciled once, never retried as another mutation.
+                data = baseline.api === 'v2'
+                    ? await updateSettingsV2({ content, expectedVersion: version })
+                    : await updateSettingsV1({ settings: v1Settings, expectedVersion: version });
+            } catch (error) {
+                if (params.oneShotServerSettingsMutation) {
+                    return await recoverOneShotOutcomeUnknown(version);
+                }
+                throw error;
+            }
 
             if (data.success) {
                 const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
@@ -648,7 +768,13 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                     version: data.version,
                     remainingPendingSettings,
                 });
-                return;
+                return oneShotMutation
+                    ? Object.freeze({
+                        status: 'applied',
+                        settingsVersion: data.version,
+                        value: oneShotMutation.value,
+                    })
+                    : undefined;
             }
 
             if (data.error === 'version-mismatch') {
@@ -661,6 +787,17 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 pendingLegacySessionOrganizationImported = await maybeImportLegacySessionOrganization(
                     mergePendingLegacySessionOrganizationSettings(baseline.raw),
                 ) || pendingLegacySessionOrganizationImported;
+                if (params.oneShotServerSettingsMutation) {
+                    applyRawSettingsProjection({
+                        raw: baseline.raw,
+                        version: baseline.version,
+                        remainingPendingSettings: {},
+                    });
+                    return Object.freeze({
+                        status: 'conflict',
+                        currentSettingsVersion: baseline.version,
+                    });
+                }
                 dbgSettings('syncSettings: version-mismatch merge', {
                     endpoint: activeServerUrl,
                     expectedVersion: version,
@@ -679,7 +816,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         // Drop them from pending storage to avoid unnecessary sync attempts.
         if (Object.keys(pendingLegacySessionOrganizationSettings).length > 0) {
             if (settingsScope) {
-                const baseline = await fetchAccountSettingsBaseline({ requireReadable: true });
+                const baseline = await fetchAccountSettingsBaseline();
                 prefetchedFinalBaseline = baseline;
                 const imported = await maybeImportLegacySessionOrganization(
                     mergePendingLegacySessionOrganizationSettings(baseline.raw),
@@ -719,16 +856,6 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const decryptedSettings = fetched.raw;
     await maybeImportLegacySessionOrganization(decryptedSettings);
 
-    const parsedSettings = decryptedSettings
-        ? normalizeSettingsForLocalStorage({ raw: decryptedSettings, mode: accountMode })
-        : { ...settingsDefaults };
-
-    dbgSettings('syncSettings: GET applied', {
-        endpoint: activeServerUrl,
-        serverVersion: fetched.version,
-        parsed: summarizeSettings(parsedSettings, { version: fetched.version }),
-    });
-
     // Merge any locally-pending settings deltas before applying server settings.
     //
     // Why:
@@ -738,44 +865,30 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     // - Pending settings are persisted for crash safety; reload from disk so in-flight sync calls
     //   don't miss deltas when the Sync instance replaces the pending object reference.
     const pendingLatest = loadPendingSettingsForCapturedScope();
-    const pendingLatestForServer = stripMigratedSessionOrganizationSettings(
-        stripLocalOnlyAccountSettings(pendingLatest) as Record<string, unknown>,
-    ) as Partial<Settings>;
-
-    const mergedWithPending =
-        Object.keys(pendingLatestForServer).length > 0
-            ? applySettings(parsedSettings, pendingLatestForServer)
-            : parsedSettings;
-
-    const nextSettings = applySettings(mergedWithPending, pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings));
-
-    applyRawSettingsProjection({
+    const nextSettings = applyRawSettingsProjection({
         raw: decryptedSettings,
         version: fetched.version,
         remainingPendingSettings: pendingLatest,
     });
 
+    dbgSettings('syncSettings: GET applied', {
+        endpoint: activeServerUrl,
+        serverVersion: fetched.version,
+        parsed: summarizeSettings(nextSettings, { version: fetched.version }),
+    });
+
     // Best-effort migration: if settings were readable but not in canonical `account_scoped_v1` format,
     // rewrite them so other clients can decrypt them reliably.
     if (decryptedSettings && fetched.api === 'v2') {
-        const ciphertext = fetched.content?.t === 'encrypted' ? String(fetched.content.c ?? '') : '';
-        const machineKey = encryption.getContentPrivateKey();
-        const opened = accountMode === 'e2ee' && fetched.content?.t === 'encrypted' && ciphertext
-            ? openAccountScopedBlobCiphertext({
-                  kind: 'account_settings',
-                  material: { type: 'dataKey', machineKey },
-                  ciphertext,
-              })
-            : null;
         try {
             const migratedServerSettings = normalizeSettingsForServerStorageResult({
                 raw: decryptedSettings as Record<string, unknown>,
                 mode: accountMode,
             });
-            const missingCanonicalEnvelope = accountMode === 'e2ee' && fetched.content?.t === 'encrypted' && !opened;
-            const nonCanonicalFormat = Boolean(opened && opened.format !== 'account_scoped_v1');
-            const needsMigration = missingCanonicalEnvelope
-                || nonCanonicalFormat
+            const nonCanonicalFormat = accountMode === 'e2ee'
+                && fetched.content?.t === 'encrypted'
+                && fetched.format !== 'account_scoped_v1';
+            const needsMigration = nonCanonicalFormat
                 || fetched.serverIdentityKeysChanged
                 || migratedServerSettings.changed;
             if (needsMigration) {
@@ -794,22 +907,6 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     }
 }
 
-async function decryptAccountSettingsCiphertextForUi(encryption: Encryption, ciphertext: string): Promise<Record<string, unknown> | null> {
-    const machineKey = encryption.getContentPrivateKey();
-    const opened = openAccountScopedBlobCiphertext({
-        kind: 'account_settings',
-        material: { type: 'dataKey', machineKey },
-        ciphertext,
-    });
-    if (opened?.value && typeof opened.value === 'object' && !Array.isArray(opened.value)) {
-        return opened.value as Record<string, unknown>;
-    }
-
-    // Historical raw settings/templates shared a key without a content tag.
-    // Fail closed rather than admitting a cross-domain raw object.
-    return null;
-}
-
 export function applySettingsLocalDelta(params: {
     delta: Partial<Settings>;
     settingsSecretsKey: Uint8Array | null;
@@ -821,8 +918,22 @@ export function applySettingsLocalDelta(params: {
     const { settingsSecretsKey, getPendingSettings, setPendingSettings, schedulePendingSettingsFlush } = params;
     let { delta } = params;
 
+    // Generic writes cannot name runtime-derived keys in TypeScript, and this
+    // boundary also drops stale/untyped deltas before local or pending writes.
+    delta = stripDerivedAccountSettingsProjections(delta);
+
+    const currentState = storage.getState();
+    const hasServerBackedDelta = Object.keys(stripLocalOnlyAccountSettings(delta)).length > 0;
+    if (hasServerBackedDelta
+        && (currentState.settingsScope === null || currentState.settingsVersion === null)) {
+        dbgSettings('applySettings skipped (account settings not hydrated)', {
+            delta: summarizeSettingsDelta(delta),
+        });
+        return;
+    }
+
     // Seal secret settings fields before any persistence.
-    const currentSettings = storage.getState().settings;
+    const currentSettings = currentState.settings;
     delta = sealSecretsDeep(delta, settingsSecretsKey);
 
     const hasRealChangeAgainstCurrent = (candidate: Partial<Settings>): boolean => {

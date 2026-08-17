@@ -1,8 +1,14 @@
 import { externalSessionOperationTranslations } from './externalSessionOperationTranslations';
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
+import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
+import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
+import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
+import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Create a server, import host JSON, or install a recommended preset.',
@@ -100,7 +106,7 @@ const mcpServersUxTranslationExtension = {
   mcpServersDeliveryNativeTitle: 'Native MCP',
   mcpServersDeliveryNativeSubtitle: 'This backend receives Happier tools as native MCP servers.',
   mcpServersDeliveryShellBridgeTitle: 'Happier shell bridge',
-  mcpServersDeliveryShellBridgeSubtitle: 'This backend calls Happier tools through the `happier tools` bridge.',
+  mcpServersDeliveryShellBridgeSubtitle: 'This backend calls Happier tools through the happier tools bridge.',
   mcpServersDeliveryUnsupportedTitle: 'Unsupported',
   mcpServersDeliveryUnsupportedSubtitle: 'This backend does not currently receive Happier tools.',
 } as const;
@@ -478,7 +484,26 @@ export const en = {
     },
     voice: voiceReadinessTranslations.en,
     pluginPermissions: pluginPermissionTranslations.en,
+    sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.en,
     pluginSurfaces: {
+        state: {
+            loading: {
+                title: 'Loading plugin content',
+                reason: 'Showing the available content while Happier loads the latest update.',
+            },
+            refreshing: {
+                title: 'Refreshing plugin content',
+                reason: 'Showing the last available content while Happier checks for updates.',
+            },
+            stale: {
+                title: 'Plugin content may be out of date',
+                reason: 'Showing the last available content. Retry to check for updates.',
+            },
+            offline: {
+                title: 'Plugin content is offline',
+                reason: 'Showing the last available content in read-only mode until reconnection.',
+            },
+        },
         offlineSnapshot: {
             accessibilityLabel: ({ title }: { title: string }) =>
                 `Offline snapshot of ${title}. Content is read-only until reconnection.`,
@@ -488,6 +513,12 @@ export const en = {
                 accessibilityLabel: 'Plugin panel',
                 untitled: 'Plugin panel',
             },
+        },
+        appPage: {
+            title: 'Plugin pages',
+            subtitle: 'Full-page destinations contributed by installed plugins.',
+            empty: 'No plugin pages available.',
+            unknown: 'This plugin page is not available. The plugin may be loading, disabled or uninstalled.',
         },
         appScopeRightSidebar: {
             empty: 'No app plugin tabs available.',
@@ -975,6 +1006,17 @@ export const en = {
 
     automations: {
         openA11y: 'Open automations',
+        list: {
+            interval: ({ minutes, timezone }: { minutes: number; timezone: string | null }) => `Every ${minutes}m${timezone ? ` (${timezone})` : ''}`,
+            cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ''}${timezone ? ` (${timezone})` : ''}`,
+            schedule: 'Schedule',
+            event: ({ eventId }: { eventId: string }) => `Event: ${eventId}`,
+            manual: 'Manual',
+            conversationTrigger: 'Conversation trigger',
+            noNextRun: 'No next run',
+            nextRun: ({ time }: { time: string }) => `Next: ${time}`,
+            nextRunPending: 'Next run pending',
+        },
         gate: {
             disabledTitle: 'Automations are disabled',
             disabledBody: 'Enable them from Settings, then turn on Experiments and Automations.',
@@ -1016,6 +1058,36 @@ export const en = {
                 cronTitle: 'Cron',
                 cronSubtitle: 'Advanced schedule expression.',
                 cronHelpText: 'Standard 5-field cron: minute hour day-of-month month day-of-week.',
+            },
+            trigger: {
+                schedule: 'Schedule',
+                event: 'Event',
+                target: 'EXECUTION TARGET',
+                targetNewSession: 'New session',
+                targetExistingSession: 'Existing session',
+                targetExecutionRun: 'Execution run',
+                chooseExistingSession: 'Choose a session',
+                noEligibleExistingSessions: 'No sessions are available for this target.',
+                existingSessionUnavailable: 'The selected session is unavailable for Automation execution.',
+                executionPermissionMode: 'PERMISSION MODE',
+                executionNoTools: 'No tools',
+                executionReadOnly: 'Read only',
+                eventCatalogUnavailable: 'Event sources are unavailable until this machine finishes loading.',
+                eventSource: 'EVENT SOURCE',
+                chooseEvent: 'Choose an event',
+                noEligibleEvents: 'No eligible Event sources are available on this machine.',
+                source: 'SOURCE',
+                configureSource: 'Configure source',
+                sourceConfigured: 'Source configured',
+                sourceUnavailable: 'Source setup is unavailable. Check the Event source and try again.',
+                chooseWatcher: 'Choose an observation watcher',
+                noEligibleWatchers: 'No current watcher is available for this Event source.',
+                eventFilter: 'EVENT FILTER (OPTIONAL)',
+                eventFilterPlaceholder: '{"v":1,"all":[…]}',
+                eventFilterInvalid: 'Enter a valid Event filter.',
+                maximumObservationAge: 'MAXIMUM OBSERVATION AGE (MS, OPTIONAL)',
+                maximumObservationAgePlaceholder: '30000',
+                maximumObservationAgeInvalid: 'Enter a whole number of milliseconds.',
             },
             sentence: {
                 run: 'Run',
@@ -1074,6 +1146,7 @@ export const en = {
             emptyTitle: 'No automations',
             emptyBody: 'Add an automation to queue scheduled messages into this session.',
             addAutomation: 'Add automation',
+            addEventAutomation: 'Add event automation',
             failedToLoad: 'Failed to load automations.',
         },
         screen: {
@@ -1097,6 +1170,10 @@ export const en = {
                 active: 'Active',
                 paused: 'Paused',
             },
+            event: {
+                watcherTitle: 'Observation watcher',
+                watcherUnwatched: 'Unwatched',
+            },
             actionsGroupTitle: 'Actions',
             runNowTitle: 'Run now',
             runNowQueuedBadge: 'Queued',
@@ -1116,10 +1193,53 @@ export const en = {
             deleteFailed: 'Failed to delete automation.',
             assignmentsUpdateFailed: 'Failed to update machine assignments.',
             recentRunsTitle: 'Recent runs',
+            loadMoreRuns: 'Load more runs',
             runMeta: {
+                originTitle: 'Origin',
+                origin: {
+                    scheduled: 'Scheduled',
+                    manual: 'Manual',
+                    pluginEvent: 'Event',
+                    conversation: 'Conversation',
+                },
+                occurred: ({ time }: { time: string }) => `Occurred: ${time}`,
+                invoked: ({ time }: { time: string }) => `Invoked: ${time}`,
+                admitted: ({ time }: { time: string }) => `Admitted: ${time}`,
+                occurrenceTitle: 'Occurrence',
+                sourceTitle: 'Observation source',
                 scheduled: ({ time }: { time: string }) => `Scheduled: ${time}`,
                 updated: ({ time }: { time: string }) => `Updated: ${time}`,
                 error: ({ message }: { message: string }) => `Error: ${message}`,
+            },
+            runDetail: {
+                title: 'Admitted details',
+                recipe: 'Admitted recipe',
+                recipeAbsent: 'No admitted private detail was recorded.',
+                templateVersion: 'Template version',
+                event: 'Event',
+                conversation: 'Conversation',
+                sourceInstance: 'Source instance',
+                filter: 'Filter',
+                filterMatched: 'Matched',
+                payload: 'Payload',
+                input: 'Input',
+                target: 'Frozen target',
+                outputCeiling: 'Output limit',
+                existingSession: ({ sessionId }: { sessionId: string }) => `Existing session: ${sessionId}`,
+                newSession: ({ machineId, directory }: { machineId: string; directory: string }) => `New session on ${machineId}: ${directory}`,
+                executionRun: ({ permissionMode }: { permissionMode: string }) => `Execution run · ${permissionMode}`,
+                prompt: 'Frozen prompt',
+                result: 'Final result',
+                resultAbsent: 'No final result was recorded.',
+                failureDetail: 'Failure detail',
+                failureDetailAbsent: 'No private failure detail was recorded.',
+                predecessorSummary: 'A predecessor summary exists but is not readable in this detail.',
+                currentnessUnavailable: 'Private Run detail is temporarily unavailable while account encryption changes.',
+                materialUnavailable: 'This device does not have the current Account encryption key.',
+                modeMismatch: 'Retained private detail uses a different Account encryption mode.',
+                contentInvalid: 'Retained private detail is invalid.',
+                invalidTemplate: 'The admitted template was invalid. This Run will not dispatch or retry.',
+                outcomeUnknown: 'Dispatch outcome is unknown. Happier will not dispatch the frozen target again.',
             },
         },
         create: {
@@ -1164,7 +1284,9 @@ export const en = {
 	        actions: 'Actions',
 	        moreActions: 'More actions',
 	        moreActionsHint: 'Opens a menu with more actions',
+        destructiveActionHint: 'This action is destructive and cannot be undone.',
 	        cancel: 'Cancel',
+	        submit: 'Submit',
 	        close: 'Close',
 	        open: 'Open',
 	        done: 'Done',
@@ -1176,14 +1298,16 @@ export const en = {
 	        saveAs: 'Save As',
 		        error: 'Error',
 		        success: 'Success',
+		        warning: 'Warning',
 		        info: 'Info',
 		        comingSoon: 'Coming soon',
 		        ok: 'OK',
 		        continue: 'Continue',
 		        back: 'Back',
                 previous: 'Previous',
-                next: 'Next',
+	        next: 'Next',
 	        start: 'Start',
+	        run: 'Run',
 	        create: 'Create',
 	        rename: 'Rename',
         remove: 'Remove',
@@ -1267,7 +1391,19 @@ export const en = {
     ui: {
         resizableDockedPane: {
             resizeA11y: 'Resize panel',
-            resizeHint: 'Use left and right arrow keys to resize',
+            resizeHint: 'Use keyboard arrows or adjustment actions to resize',
+        },
+        modalPane: {
+            right: 'Right sidebar',
+            details: 'Details panel',
+            bottom: 'Bottom panel',
+            dismiss: ({ pane }: { pane: string }) => `Close ${pane}`,
+        },
+        pluginUi: {
+            loading: 'Loading',
+            empty: 'Nothing to show',
+            error: 'Something went wrong',
+            moreActions: 'More actions',
         },
     },
 
@@ -1307,6 +1443,7 @@ export const en = {
         externalStatusUnknown: 'External status unknown',
         workingRetained: 'working, awaiting updates…',
         readyForReview: 'ready for review',
+        canceled: 'Canceled',
         offline: 'offline',
         lastSeen: ({ time }: { time: string }) => `last seen ${time}`,
         actionRequired: 'action required',
@@ -1406,6 +1543,7 @@ export const en = {
             'This will create a new account and re-link your provider identity. Your old encrypted history cannot be recovered.',
         lostAccessConfirmButton: 'Reset and continue',
         secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
+        secretKeyInputLabel: 'Secret key',
         linkNewDeviceTitle: 'Link New Device',
         linkNewDeviceSubtitle: 'Scan the QR code shown on your new device to link it to this account',
         linkNewDeviceQrInstructions: 'Open Happier on your new device and display the QR code',
@@ -1443,7 +1581,7 @@ export const en = {
                 disabledByServerSuffix: ' (disabled by server)',
                 pasteDoctorJson: {
                     title: 'CLI doctor JSON (optional)',
-                    subtitle: 'If your machine is unreachable from the UI, run `happier doctor --json` on your computer and paste it here.',
+                    subtitle: 'If your machine is unreachable from the UI, run happier doctor --json on your computer and paste it here.',
                     placeholder: '{ "capturedAt": "...", ... }',
                     invalid: ({ error }: { error: string }) => `Invalid doctor JSON: ${error}`,
                     valid: 'Doctor JSON looks valid and will be attached to the report.',
@@ -1851,6 +1989,7 @@ export const en = {
 
     settings: {
         title: 'Settings',
+        overview: 'Overview',
 
         // Main settings hub category groups
         profileAndAccount: 'Profile & Account',
@@ -2229,8 +2368,6 @@ export const en = {
         executionRunsSubtitle: 'Subagents across machines',
         connectedServices: 'Connected services',
         connectedServicesSubtitle: 'Claude/Codex subscriptions and OAuth profiles',
-        channelBridges: 'Channel Bridges',
-        channelBridgesSubtitle: 'Bridge external chats (Telegram) into sessions',
         featuresTitle: 'Features',
         featuresSubtitle: 'Enable or disable app features',
         developer: 'Developer',
@@ -2547,7 +2684,7 @@ export const en = {
             copyReportSubtitle: 'Copy a redacted JSON report for support',
         },
         pasteDoctorJson: {
-            footer: 'Tip: run `happier doctor --json` on your computer and paste it here.',
+            footer: 'Tip: run happier doctor --json on your computer and paste it here.',
             placeholder: '{ "capturedAt": "...", ... }',
             parse: 'Validate pasted JSON',
             ok: 'Pasted doctor JSON looks valid.',
@@ -2740,6 +2877,7 @@ export const en = {
                 provider_account_adoption_mismatch: 'Provider account did not switch',
                 post_switch_verification_failed: 'Provider account could not be verified',
                 connected_service_credential_reconnect_required: 'Connected account needs reconnect',
+                connected_service_credential_refresh_unavailable: 'Connected account refresh is temporarily unavailable',
                 claude_subscription_missing_claude_code_scope: 'Claude Code access needs reconnect',
                 claude_subscription_native_auth_materialization_failed: 'Claude Code credentials could not be prepared',
                 claude_subscription_setup_token_not_supported_for_unified: 'Claude setup token cannot start Unified mode',
@@ -2755,17 +2893,16 @@ export const en = {
                 provider_account_adoption_mismatch: 'Provider stayed on a different account',
                 post_switch_verification_failed: 'Provider account could not be verified',
                 connected_service_credential_reconnect_required: 'Connected account needs reconnect',
+                connected_service_credential_refresh_unavailable: 'Connected account refresh failed temporarily',
                 claude_subscription_missing_claude_code_scope: 'Reconnect Claude subscription for Claude Code',
                 claude_subscription_native_auth_materialization_failed: 'Claude Code native auth could not be prepared',
                 claude_subscription_setup_token_not_supported_for_unified: 'Reconnect Claude with OAuth for Unified mode',
             },
             body: {
                 default: 'Review connected accounts and try again.',
-                provider_session_state_unavailable_for_resume: ({ reason, agentId }: { reason: string; agentId: string }) =>
-                    `Review connected accounts, then start fresh under the selected account or continue with the current account. ${agentId}: ${reason}.`,
+                provider_session_state_unavailable_for_resume: 'Review connected accounts, then start fresh under the selected account or continue with the current account.',
                 connected_service_materialization_identity_missing: 'This session is missing the connected-service identity needed to reuse its materialized provider state. Start fresh under the selected account or continue with the current account.',
-                resume_reachability_inputs_missing: ({ reason, agentId }: { reason: string; agentId: string }) =>
-                    `The daemon could not verify the provider resume state because required resume inputs were missing. ${agentId}: ${reason}.`,
+                resume_reachability_inputs_missing: 'The daemon could not verify the provider resume state because required resume inputs were missing.',
                 metadata_update_failed: 'The session could not save the new authentication selection. Try again after the session finishes syncing.',
                 no_eligible_group_member: 'No account in this group is currently eligible for fallback. Review connected accounts and reconnect a profile if needed.',
                 recovery_retry_scheduled: 'Happier scheduled a provider recovery retry. You can retry now or review connected accounts.',
@@ -2773,6 +2910,7 @@ export const en = {
                 provider_account_adoption_mismatch: 'The provider stayed on a different account after the switch. Review connected accounts or retry the switch.',
                 post_switch_verification_failed: 'Happier could not verify that the provider adopted the selected account. Review connected accounts or retry the switch.',
                 connected_service_credential_reconnect_required: 'The selected connected account needs to be reconnected before this session can resume. Reconnect the profile, then retry.',
+                connected_service_credential_refresh_unavailable: 'Happier could not refresh the selected connected account. Try again in a moment.',
                 claude_subscription_missing_claude_code_scope: 'This Claude profile was connected before Claude Code scopes were granted. Reconnect it, then retry the session or group switch.',
                 claude_subscription_native_auth_materialization_failed: 'Happier could not create the native Claude Code credential file for this profile. Reconnect the profile or choose another group member.',
                 claude_subscription_setup_token_not_supported_for_unified: 'Claude Unified mode must launch the Claude CLI with native OAuth credentials. Reconnect this profile with OAuth instead of a setup token.',
@@ -3045,7 +3183,6 @@ export const en = {
             setDefaultProfileSubtitleChoose: 'Choose which profile is selected by default',
             setProfileLabelTitle: 'Set profile label',
             setProfileLabelSubtitle: 'Optional label shown in auth pickers',
-            addOauthProfileTitle: 'Add OAuth profile',
             addOauthProfileSubtitle: 'Connect a new account profile',
             addOauthProfileDeviceTitle: 'Add via device auth',
             addOauthProfileDeviceSubtitle: 'Recommended for web/headless flows',
@@ -3195,6 +3332,9 @@ export const en = {
                 removeMember: 'Remove member',
                 removeMemberConfirmTitle: 'Remove member',
                 removeMemberConfirmBody: ({ profileId }: { profileId: string }) => `Remove "${profileId}" from this group?`,
+                removeMembersConfirmBody: ({ count, members }: { count: number; members: string }) => `Remove ${count === 1 ? "this member" : `these ${count} members`} from this pool?\n\n${members}`,
+                manageMembersTitle: 'Manage members',
+                manageMembersSubtitle: ({ count, total }: { count: number; total: number }) => `${count} of ${total} accounts`,
                 searchMembersPlaceholder: 'Search profiles',
                 membersTitle: 'Members',
                 membersSubtitle: 'Check profiles to include in this group.',
@@ -3248,6 +3388,7 @@ export const en = {
             status: 'Status',
             email: 'Email',
             accountId: 'Account id',
+            providerAccountId: 'Provider account id',
             quotaTitle: 'Quotas',
             defaultSubtitle: 'This profile is selected by default',
             setDefaultSubtitle: 'Use this profile by default',
@@ -3327,7 +3468,7 @@ export const en = {
                 promptTitle: 'Uploads directory',
                 promptMessage: 'Enter a workspace-relative directory (no absolute paths, no ..).',
                 invalidDirectoryTitle: 'Invalid directory',
-                invalidDirectoryMessage: 'Use a relative path like `.happier/uploads`.',
+                invalidDirectoryMessage: 'Use a relative path like .happier/uploads.',
             },
         },
         sourceControlIgnore: {
@@ -4782,7 +4923,7 @@ export const en = {
                     },
                     server: {
                         title: "Server connection",
-                        footer: "Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute http(s) URL to connect to an existing OpenCode server instead."
+                        footer: "Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute HTTPS URL for any server you run yourself, or HTTP only for localhost. Put the password in the field below, never in the URL."
                     }
                 },
                 fields: {
@@ -4802,7 +4943,11 @@ export const en = {
                     },
                     opencodeServerBaseUrl: {
                         title: "Existing OpenCode server URL",
-                        subtitle: "Optional override for a user-managed OpenCode server."
+                        subtitle: "Optional override for a server you run yourself. HTTPS may use any host; HTTP is limited to localhost."
+                    },
+                    opencodeServerPassword: {
+                        title: "Existing OpenCode server password",
+                        subtitle: "Set this only if your OpenCode server runs with OPENCODE_SERVER_PASSWORD. Stored encrypted on this machine and never synced."
                     }
                 }
             },
@@ -5143,22 +5288,6 @@ export const en = {
         },
     },
 
-    settingsChannelBridges: {
-
-    unsupported: 'Channel bridges are not supported in this environment.',
-
-    enableInFeatures: 'Enable Channel Bridges',
-
-    enableInFeaturesSubtitle: 'Channel bridges are experimental and disabled by default.',
-
-    description: 'Channel bridges let you attach external chats (Telegram) to sessions and forward messages to the agent.',
-
-    telegramTitle: 'Telegram',
-
-    telegramFooter: 'Configure Telegram via CLI, then manage bindings in Telegram with /sessions, /attach, /detach, /help.',
-
-    },
-
     settingsFeatures: {
         // Features settings screen
         experiments: 'Experiments',
@@ -5218,8 +5347,6 @@ export const en = {
         expHomeScreenWidgetsSubtitle: 'Enable Home Screen widget surfaces for Happier activity',
         expConnectedServicesQuotas: 'Connected services quotas',
         expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
-        expChannelBridges: 'Channel bridges',
-        expChannelBridgesSubtitle: 'Connect Telegram and other chat channels to Happier sessions (experimental)',
         expMemorySearch: 'Memory search',
         expMemorySearchSubtitle: 'Enable local memory search screens and settings',
         expSessionsDirect: 'External Sessions',
@@ -5292,6 +5419,7 @@ export const en = {
         fileNotFound: 'File not found',
         invalidFormat: 'Invalid format',
         operationFailed: 'Operation failed',
+        signupDisabled: 'This server has new account sign-ups disabled. Sign in with an existing account, or ask the server admin to enable sign-ups.',
         failedToForkSession: 'Failed to fork session',
         daemonUnavailableTitle: 'Daemon unavailable',
         daemonUnavailableBody:
@@ -5478,7 +5606,8 @@ export const en = {
         sessionSpawningFailed: 'Session spawning failed - no session ID returned.',
         startingSession: 'Starting session...',
         startNewSessionInFolder: 'New session here',
-        failedToStart: 'Failed to start session. Make sure the daemon is running on the target machine.',
+        failedToStart: 'Couldn’t start the session. Try again or review the selected machine and session settings.',
+        actionMethodUnavailable: 'Update Happier on the target machine to create a new session.',
         sessionTimeout: 'Session startup timed out. The machine may be slow or the daemon may not be responding.',
         notConnectedToServer: 'Not connected to server. Check your internet connection.',
         daemonRpcUnavailableTitle: 'Daemon unavailable',
@@ -5488,9 +5617,6 @@ export const en = {
         launchStillPendingBody:
             'Happier hasn’t confirmed the new session yet. Your launch request is still saved. Retry to continue the same launch without creating a duplicate session.',
         connectedServiceSwitchUnavailable: {
-            title: 'Switch unavailable',
-            body: ({ reason, agentId }: { reason: string; agentId: string }) =>
-                `This session can’t continue under the new account because its previous ${agentId} conversation couldn’t be carried over (${reason}).\n\nYou can start fresh under the new account instead — this begins a new conversation without the previous history.`,
             startFreshAction: 'Start fresh under the new account',
         },
         noMachineSelected: 'Please select a machine to start the session',
@@ -5767,6 +5893,8 @@ export const en = {
             replyNotLoaded: 'Reply not loaded',
             awaitingReply: 'Awaiting reply',
             loadingBody: 'Loading transcript navigation…',
+            railScrollUpA11y: 'Scroll navigation up',
+            railScrollDownA11y: 'Scroll navigation down',
             emptyPinnedHint: 'Hover a message and choose the pin icon to pin it.',
             emptyPinnedPrivacy: 'Pins are saved on this device only.',
         },
@@ -5888,10 +6016,11 @@ export const en = {
         staleRunner: {
             banner: {
                 title: 'Session runner is out of date',
-                body: 'This session is still running on an older Happier CLI. Restart the runner to use the current daemon runtime.',
+                body: 'This session is still running older runtime code. Restart the runner to use the current daemon runtime.',
                 pendingBody: 'Restarting the session runner on the current daemon runtime.',
                 busyBody: 'The runner is busy right now. Try again after the current work finishes.',
                 failedBody: 'The runner could not be restarted. The session is still available on the existing runner.',
+                unavailableBody: 'Restart is unavailable for this session. The session can keep running on its existing runner.',
             },
             actions: {
                 restart: 'Restart runner',
@@ -5913,6 +6042,57 @@ export const en = {
         },
         toolCalls: 'Tool calls',
         toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} more…`,
+        agentContinuation: {
+            currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Running this Session.`,
+            currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Last used by this Session.`,
+            currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Last reported for this Session.`,
+            armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Selected for your next message.`,
+            detailTitle: ({ agent }: { agent: string }) => `Continue with ${agent}`,
+            sendLabel: ({ agent }: { agent: string }) => `Continue with ${agent}`,
+            detailDescription: 'Your conversation carries over. Nothing is sent until your next message.',
+            announcement: ({ agent }: { agent: string }) => `${agent} selected for the next message. Nothing has been sent.`,
+            dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Continued this Session from ${from_} to ${to}`,
+            checking: 'Checking availability…',
+            unavailable: {
+                unsupportedSession: ({ agent }: { agent: string }) => `This Session can’t continue with ${agent}.`,
+                updateCli: 'Update the CLI on this machine to switch Agents.',
+                updateOrReconnect: 'Update or reconnect the CLI to switch Agents.',
+                targetNoSessions: ({ agent }: { agent: string }) => `${agent} can’t run a Session.`,
+                targetNotProven: ({ agent }: { agent: string }) => `Switching to ${agent} isn’t supported yet.`,
+                targetUnavailable: ({ agent }: { agent: string }) => `${agent} isn’t available on this machine.`,
+            },
+            transition: {
+                rejected: {
+                    unsupportedOperation: 'Switching Agents isn’t supported for this Session. Nothing was sent.',
+                    forbidden: 'You don’t have permission to switch this Session’s Agent. Nothing was sent.',
+                    sameTarget: ({ agent }: { agent: string }) => `This Session already runs ${agent}. Nothing was sent.`,
+                    staleSelection: 'This Session changed while you were choosing. Nothing was sent — try again.',
+                    targetUnavailable: ({ agent }: { agent: string }) => `${agent} isn’t available on this machine. Nothing was sent.`,
+                    sourceNotIdle: ({ agent }: { agent: string }) => `${agent} is still working. Nothing was sent — try again once it finishes.`,
+                    sourceStopFailed: ({ agent }: { agent: string }) => `${agent} couldn’t be stopped, so nothing changed. Nothing was sent.`,
+                },
+                conflictingDestination: ({ agent }: { agent: string }) => `Nothing was sent. This message already has another destination, so it can’t also switch this Session to ${agent}. Clear one of the two and send again.`,
+                sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} stopped, but the switch to ${agent} didn’t complete. Your message wasn’t sent.`,
+                switched: ({ agent }: { agent: string }) => `This Session is now ${agent}, but your message wasn’t sent. Send it again.`,
+                /** Compact status for the collapsed composer banner badge. */
+                badgeLabel: 'Agent switch',
+                /** Delegates to the Session’s existing resume owner; never a second start path. */
+                resumeAction: 'Resume session',
+                unknown: 'Happier couldn’t confirm what happened. Check this Session before sending again.',
+            },
+        },
+        sourceContext: {
+            chipLabel: ({ session }: { session: string }) => `From ${session}`,
+            unknownSession: 'another session',
+            detailTitle: 'Continuing from another session',
+            detailBodyLatest: ({ session }: { session: string }) => `The conversation in ${session} will be carried over as context for this new session.`,
+            detailBodyAtMessage: ({ session }: { session: string }) => `The conversation in ${session}, up to the message you picked, will be carried over as context for this new session.`,
+            carriedOver: 'Conversation will be carried over',
+            removeAction: 'Remove',
+            removeA11y: 'Remove the source conversation',
+            keepAction: 'Keep it',
+            serverMismatch: 'That conversation lives on a different Happier server. Switch back to it, or remove the source conversation to start fresh.',
+        },
         forking: {
             dividerTitle: 'Forked from earlier context',
             dividerTitleWithParent: ({ parent }: { parent: string }) => `Forked from ${parent}`,
@@ -5920,6 +6100,44 @@ export const en = {
             openParent: 'Open',
             openParentA11y: 'Open parent session',
             forkFromMessageA11y: 'Fork from this message',
+            strategy: {
+                title: 'Fork this session',
+                subtitleLatest: 'Branch from where this conversation is now.',
+                subtitleFromMessage: 'Branch from this point in the conversation.',
+                recommended: 'Recommended',
+                native: {
+                    title: 'Native fork',
+                    subtitle: 'The agent branches its own conversation. Closest to the original.',
+                },
+                replay: {
+                    title: 'Replay fork',
+                    subtitle: 'Happier replays the conversation so far as context for the new session.',
+                },
+                configure: {
+                    title: 'Configure a new session',
+                    subtitle: 'Pick a different agent, model, machine or folder, and carry this conversation over.',
+                },
+                progress: {
+                    creatingNative: 'Creating the native fork…',
+                    creatingReplay: 'Creating the replay fork…',
+                    opening: 'Opening your fork…',
+                    stalledTitle: 'Your fork was created',
+                    stalledBody: 'It has not appeared here yet. Try opening it again.',
+                    openAction: 'Open fork',
+                },
+                unknown: {
+                    title: 'Happier could not confirm the fork',
+                    body: 'The request went out, so a fork may already exist. Check for it instead of forking again, because a second attempt could create a duplicate.',
+                    checkAction: 'Check for fork',
+                    checking: 'Looking for your fork…',
+                    noneFound: 'No matching fork yet. It may still be starting, so you can check again.',
+                    ambiguous: 'More than one matching fork appeared. Open your sessions list to pick the right one.',
+                },
+                failure: {
+                    updateRequired: 'Update or reconnect the CLI on this machine to fork this session.',
+                    generic: 'Happier could not create the fork.',
+                },
+            },
         },
         transcriptGap: {
             earlierMessages: 'Earlier messages',
@@ -6255,8 +6473,10 @@ export const en = {
                 sendDiscardedFailed: 'Failed to send discarded message',
                 reorderFailed: 'Failed to reorder pending messages',
                 retryDeliveryFailed: 'Failed to retry pending delivery',
+                actionConflict: 'This pending message changed while the action was being applied. Review its current status and try again.',
                 discardFailed: 'Failed to discard pending delivery',
                 markHandledFailed: 'Failed to mark pending delivery handled',
+                editStructuredInputUnsupported: 'This pending message has structured content that can’t be safely edited yet.',
             },
         },
 
@@ -6427,12 +6647,14 @@ export const en = {
         tapToEnd: 'Tap to end',
         startDictation: 'Start dictation',
         startVoice: 'Start Voice',
+        startGlobalVoice: 'Start Global Voice',
         endVoice: 'End Voice',
         transcribing: 'Transcribing…',
         endDictation: 'End dictation',
         dictationNoSpeech: 'No speech was detected',
         dictationErrors: {
             captureFailed: 'Dictation stopped because microphone capture failed. Check microphone access and try again.',
+            providerUnavailable: 'The selected Dictation provider is unavailable. Review its setup, then try again.',
             captureStartDeadlineExceeded: 'Dictation could not start within 60 seconds. Check microphone access, then try again.',
             captureDurationExceeded: 'Dictation reached the 60-second listening limit. Start again to continue.',
             transcriptionDeadlineExceeded: 'Transcription took longer than 30 seconds. Try again with a shorter dictation.',
@@ -6455,6 +6677,16 @@ export const en = {
         selectSessionToStart: 'Select a session to start voice',
         targetSession: 'Target session',
         conversationalTranscriptUnavailable: 'Conversational transcript unavailable for this voice session',
+        orbLabel: "Voice",
+        orbStartHint: "Starts a spoken conversation. Swipe up to open the conversation.",
+        orbEndHint: "Ends the spoken conversation. Coding work already started keeps running. Swipe up to open the conversation.",
+        orbMinimiseHint: "Minimises Voice",
+        orbExpand: "Expand Voice",
+        orbCollapse: "Collapse Voice",
+        delegatedWorking: "Working…",
+        composerStartHint: "Starts a spoken conversation about this session.",
+        composerGlobalStartHint: "Starts a spoken conversation that is not attached to any session.",
+        composerEndHint: "Ends the spoken conversation. Coding work already started keeps running.",
         noTarget: 'No session selected',
         clearTarget: 'Clear target',
         a11y: {
@@ -6632,10 +6864,18 @@ export const en = {
             title: 'Retention policy',
             summary: 'Summary',
             keepForever: 'No automatic deletion',
+            automaticDeletionEnabled: 'Automatic deletion is enabled',
+            detailsUnavailable: 'Automatic deletion is enabled, but this client cannot display every active policy',
+            singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}: ${policy}`,
+            relayCleanupSummary: ({ policies }: { policies: string }) => `This relay cleans up ${policies}.`,
+            relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain} after ${count} ${plural({ count, singular: 'day', plural: 'days' })}`,
+            relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `inactive sessions after ${count} ${plural({ count, singular: 'day', plural: 'days' })}`,
             deleteInactiveSessionsDays: ({ count }: { count: number }) => `Deletes inactive sessions after ${count} ${plural({ count, singular: 'day', plural: 'days' })}.`,
             deleteOlderThanDays: ({ count }: { count: number }) => `Deletes data after ${count} ${plural({ count, singular: 'day', plural: 'days' })}.`,
             sessionNotice: ({ count }: { count: number }) => `This relay deletes inactive sessions after ${count} ${plural({ count, singular: 'day', plural: 'days' })} of inactivity.`,
             sessions: 'Sessions',
+            sidechainMessages: 'Subagent transcripts',
+            usageEvents: 'Usage events',
             accountChanges: 'Account changes',
             voiceSessionLeases: 'Voice session leases',
             feedItems: 'Feed items',
@@ -6822,7 +7062,7 @@ export const en = {
         killSessionConfirm: 'Are you sure you want to terminate this session?',
         stopSession: 'Stop Session',
         stopSessionConfirm: 'Are you sure you want to stop this session?',
-        stopSessionUpgradeRequired: 'Update Happier on the session machine, then try stopping again.',
+        stopSessionControlUnavailable: 'Happier could not reach the session controls. Make sure the session machine and daemon are online, then try again.',
         archiveSession: 'Archive Session',
         archiveSessionConfirm: 'Are you sure you want to archive this session?',
         workspaceTitle: 'Workspace',
@@ -7010,6 +7250,19 @@ export const en = {
     },
 
     agentInput: {
+        chipPicker: {
+            selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selected.`,
+        },
+        // Section headers for the composer suggestion picker. One per suggestion
+        // kind; the registry maps kind -> key, mirroring markdown.slash.groups.*.
+        suggestionGroups: {
+            files: 'Files',
+            plugins: 'Plugins',
+            sessions: 'Sessions',
+            references: 'References',
+            skills: 'Skills',
+            commands: 'Commands',
+        },
         stopCodingTurn: 'Stop coding turn',
         nonSteerableSend: {
             title: 'Agent is busy',
@@ -7095,6 +7348,8 @@ export const en = {
               running: ({ model }: { model: string }) => `Running: ${model}`,
               lastUsed: ({ model }: { model: string }) => `Last used: ${model}`,
               lastReported: ({ model }: { model: string }) => `Last reported: ${model}`,
+              applyTimingNextMessage: 'Applies from your next message',
+              applyTimingNewSession: 'Applies when you start a new session',
               selectedForResume: 'The selected model will be used when this session resumes.',
               configureInCli: 'Configure models in CLI settings',
               unavailable: 'Model discovery is unavailable for this provider on this machine.',
@@ -7322,6 +7577,12 @@ export const en = {
             updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `Update subagent ${id} → ${status}`,
             updateTaskWithId: ({ id }: { id: string }) => `Update subagent ${id}`,
             updateTask: 'Update subagent',
+        },
+        taskOutputView: {
+            waitingForTask: 'Waiting for the background task to finish.',
+        },
+        taskStopView: {
+            stoppedCommandLabel: 'Stopped command',
         },
         taskView: {
             moreTools: ({ count }: { count: number }) => `+${count} more tools`,
@@ -7815,6 +8076,7 @@ export const en = {
                 generatedVideoA11y: ({ name }: { name: string }) => `Open generated video ${name}`,
                 attachmentVideoA11y: ({ name }: { name: string }) => `Open attached video ${name}`,
                 toolArtifactVideoA11y: ({ name }: { name: string }) => `Open tool artifact video ${name}`,
+                previewImageA11y: ({ name, current, total }: { name: string; current: number; total: number }) => `Image ${current} of ${total}: ${name}`,
 
                 previewUnavailableA11y: "Media preview unavailable",
                 unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,},
@@ -9117,6 +9379,14 @@ settingsSession: {
 	              identityDisplayAgentLogoSubtitle: 'Show the agent logo for each session.',
 	              identityDisplayNoneTitle: 'None',
 	              identityDisplayNoneSubtitle: 'Hide the identity marker in session rows.',
+	              headerIdentityDisplayTitle: 'In-session header identity',
+	              headerIdentityDisplaySubtitle: 'Choose what appears before the title inside a session.',
+	              headerIdentityDisplayAvatarTitle: 'Avatar',
+	              headerIdentityDisplayAvatarSubtitle: 'Show the session’s generated avatar.',
+	              headerIdentityDisplayAgentLogoTitle: 'Agent logo',
+	              headerIdentityDisplayAgentLogoSubtitle: 'Show the logo of the agent running the session.',
+	              headerIdentityDisplayNoneTitle: 'None',
+	              headerIdentityDisplayNoneSubtitle: 'Start the header with the session title.',
 	              activeColorTitle: 'Active title color',
 	              activeColorSubtitle: 'Choose which sessions use the active title color.',
 	              activeColorActivityAndAttentionTitle: 'Activity and attention',
@@ -9764,6 +10034,12 @@ settingsSession: {
         consoleSubtitle: 'Open the session in a standard Windows console window.',
     },
     settingsVoice: {
+        intents: {
+            dictation: { title: 'Dictation', subtitle: 'Turn one spoken utterance into composer text.' },
+            conversations: { title: 'Voice conversations', subtitle: 'Choose a provider and configure its primary setup.' },
+            privacy: { title: 'Privacy & data', subtitle: 'Review provider processing, context sharing, and Voice History.', processingTitle: 'Provider processing' },
+            advanced: { title: 'Advanced', subtitle: 'Configure Voice UI, execution machine, and diagnostics.' },
+        },
         // Voice settings screen
         history: {
             title: 'Voice History',
@@ -9802,6 +10078,8 @@ settingsSession: {
             clearFailed: 'Voice History could not be cleared.',
             errorTitle: 'Voice History is unavailable',
             errorBody: 'Happier could not load the encrypted history for this account. Check your connection and try again.',
+            upgradeRequiredTitle: 'Update required to load Voice History',
+            upgradeRequiredBody: 'This server does not support the encrypted-history format used by this account. Update Happier on the server, then reload.',
             supersededTitle: 'The active account changed',
             supersededBody: 'This Voice History request was stopped before it could use a different account. Reload to continue safely.',
             retry: 'Try again',
@@ -9861,6 +10139,8 @@ settingsSession: {
             activityFeedEnabledSubtitle: 'Show recent voice events on screen while using voice',
             activityFeedAutoExpandOnStart: 'Auto-expand on start',
             activityFeedAutoExpandOnStartSubtitle: 'Expand the activity feed automatically when voice starts',
+            orbEnabled: 'Floating Voice orb',
+            orbEnabledSubtitle: 'Show the draggable Voice companion on this device. Voice stays available from the sidebar and the composer.',
             scopeTitle: 'Default voice scope',
             scopeSubtitle: 'Choose whether voice is treated as global (account-scoped) or session-scoped by default.',
             scopeGlobal: 'Global (account)',
@@ -9964,6 +10244,10 @@ settingsSession: {
             },
             invalidValue: 'That value is not supported by this provider.',
             operationFailed: 'The setting could not be updated. Please try again.',
+            operationFailedUnsaved: 'The setting could not be updated. Your changes were not saved.',
+            operationFailedVoiceNotFound: 'The selected voice is not available in the connected account. Choose a different voice, then run this action again. Your changes were not saved.',
+            operationFailedStage: ({ stage }: { stage: string }) => `Failed step: ${stage}`,
+            operationFailedStatus: ({ status }: { status: number }) => `Provider response: HTTP ${status}`,
             advanced: {
                 show: 'Show advanced settings',
                 hide: 'Hide advanced settings',
@@ -9995,7 +10279,10 @@ settingsSession: {
                 outputSpeed: { title: 'Speaking speed', subtitle: 'Adjust the provider speaking speed.', promptTitle: 'Speaking speed', promptBody: 'Enter a value from 0.7 to 1.5.' },
                 languageHint: { title: 'Language hint', subtitle: 'Optionally help transcription identify your language.', promptTitle: 'Language hint', promptBody: 'Choose a supported language.' },
                 keyterms: { title: 'Key terms', subtitle: 'Names and domain terms that transcription should recognize.', promptTitle: 'Key terms', promptBody: 'Enter up to 100 terms separated by commas or new lines.' },
-                resumption: { title: 'Conversation resumption', subtitle: 'Allow the provider to retain a short-lived conversation id for reconnects.' },
+                resumption: {
+                    title: voiceProviderPrivacyTranslations.en.fields.resumption.title,
+                    subtitle: voiceProviderPrivacyTranslations.en.fields.resumption.subtitle,
+                },
             },
             options: {
                 pinned: 'Pinned version', movingAlias: 'Automatically follows provider updates', automatic: 'Automatic', custom: 'Custom…',
@@ -10014,9 +10301,6 @@ settingsSession: {
                 confirmAction: 'Use latest',
             },
             resumption: {
-                confirmTitle: 'Enable conversation resumption?',
-                confirmBody: 'The provider may retain a conversation identifier for up to {minutes} minutes so interrupted sessions can reconnect.',
-                confirmAction: 'Enable',
                 ...voiceProviderPrivacyTranslations.en.resumption,
             },
             links: {
@@ -10100,14 +10384,6 @@ settingsSession: {
                 'Paste it here (stored encrypted).',
             apiKeyPlaceholder: 'xi-api-key',
             voiceSearchPlaceholder: 'Search voices',
-            speakerBoostTitle: 'Speaker boost',
-            speakerBoostSubtitle: 'Improve clarity and presence (optional).',
-            speakerBoostAuto: 'Auto',
-            speakerBoostAutoSubtitle: 'Use ElevenLabs default.',
-            speakerBoostOn: 'On',
-            speakerBoostOnSubtitle: 'Force enable speaker boost.',
-            speakerBoostOff: 'Off',
-            speakerBoostOffSubtitle: 'Force disable speaker boost.',
             voiceGroupTitle: 'Voice',
             voiceGroupFooter: 'Choose how your ElevenLabs agent speaks. Changes apply when you update the agent.',
             provisioningGroupTitle: 'Agent provisioning',
@@ -10172,19 +10448,12 @@ settingsSession: {
                         promptBody: 'Enter a number between 0 and 1. Leave blank to use the default.',
                         invalid: 'Please enter a number between 0 and 1.',
                     },
-                    style: {
-                        title: 'Style',
-                        subtitle: '0–1. Leave blank for default.',
-                        promptTitle: 'Style (0–1)',
-                        promptBody: 'Enter a number between 0 and 1. Leave blank to use the default.',
-                        invalid: 'Please enter a number between 0 and 1.',
-                    },
                     speed: {
                         title: 'Speed',
-                        subtitle: '0.5–2. Leave blank for default.',
-                        promptTitle: 'Speed (0.5–2)',
-                        promptBody: 'Enter a number between 0.5 and 2. Leave blank to use the default.',
-                        invalid: 'Please enter a number between 0.5 and 2.',
+                        subtitle: '0.7–1.2. Leave blank for default.',
+                        promptTitle: 'Speed (0.7–1.2)',
+                        promptBody: 'Enter a number between 0.7 and 1.2. Leave blank to use the default.',
+                        invalid: 'Please enter a number between 0.7 and 1.2.',
                     },
                 },
                 getStartedTitle: 'Get started',
@@ -10200,7 +10469,11 @@ settingsSession: {
             apiKeyTitle: 'API key',
             promptTitle: 'Connect this voice provider',
             promptDescription: 'Paste the provider API key. It will be saved to your account and sent only to the provider endpoint declared by this plugin; plugin runtime code does not receive it.',
-            footer: 'This key is saved to your account. Host mediation sends it to the declared provider endpoint; plugin runtime code receives only the operation result.',
+            footer: 'Saved keys are stored in your account. Host mediation sends them to the declared provider endpoint; plugin runtime code receives only the operation result.',
+            rawPromptDescription: 'Paste the provider API key. Plugin code in this provider’s declared runtime receives the selected credential directly and can use or copy it.',
+            rawFooter: 'Raw credential access lets plugin code in the declared runtime receive the selected credential directly and use or copy it. Review access before use.',
+            rawCredentialAccessReviewBody: ({ pluginId, localId, credentialSlot, source, realm, phase }: { pluginId: string; localId: string; credentialSlot: string; source: string; realm: string; phase: string }) =>
+                `Plugin code for ${pluginId}/${localId} receives the selected ${source} credential for ${credentialSlot} during ${phase} in the ${realm} runtime. It can use or copy it.`,
             ready: 'API key saved',
             missing: 'API key required',
             unavailable: 'Credential setup unavailable',
@@ -10211,6 +10484,8 @@ settingsSession: {
                 `Package: ${title} (${pluginId}); source: ${sourceKind} ${sourceLocator}`,
             recipientApprovalPublisher: ({ trust, identity }: { trust: string; identity: string }) =>
                 `Publisher: ${identity} (${trust})`,
+            recipientApprovalPackageSignature: ({ status, keyId }: { status: string; keyId: string }) =>
+                `Package signature: ${keyId} (${status})`,
             recipientApprovalContribution: ({ pluginId, localId }: { pluginId: string; localId: string }) =>
                 `Contribution: ${pluginId}/${localId}`,
             recipientApprovalOperations: 'Declared operations:',
@@ -10267,6 +10542,8 @@ settingsSession: {
                 importBody: ({ machine }: { machine: string }) => `Copy the existing encrypted account setting to ${machine}. The original stays available for your other devices.`,
                 importAction: 'Import',
                 enterNewAction: 'Enter new',
+                useSavedSecretTitle: 'Use a saved secret',
+                useSavedSecretSubtitle: 'Choose a key already stored in this account.',
                 replaceOrRemoveBody: 'Enter a replacement API key, or leave it blank to remove the key from this machine.',
                 deleteTitle: 'Remove API key?',
                 deleteBody: ({ machine }: { machine: string }) => `Remove this API key from ${machine}? The legacy cross-device value, if any, is not changed.`,
@@ -10869,7 +11146,7 @@ settingsSession: {
                 installSubtitle: 'Tap to install on the daemon',
                 setDefaultSubtitle: 'Tap to use as the default',
                 unknownSubtitle: 'Status unavailable',
-                memory: ({ size }: { size: string }) => `${size} resident`,
+                modelFiles: ({ size }: { size: string }) => `${size} model files`,
                 removeConfirmTitle: 'Remove model pack',
                 removeConfirmBody: ({ name }: { name: string }) => `Delete the daemon-side files for ${name}?`,
                 state: {
@@ -11038,6 +11315,19 @@ settingsSession: {
         restoreRequiredTitle: 'Restore required',
         restoreRequiredBody:
             'This account has encrypted history. To re-enable encryption on this device, restore your secret key. If you lost your key, you can reset the account to start fresh (old encrypted history cannot be recovered).',
+        firstKeyRecovery: {
+            title: 'Finish encryption setup',
+            description:
+                'Happier is still holding the recovery key for an encryption setup that may already have completed. Finish setup before signing out or switching accounts.',
+            warning:
+                'Encryption may already have been committed. Discarding this recovery key can permanently remove your access to the account.',
+            finish: 'Finish encryption setup',
+            keep: 'Keep recovery key',
+            abandon: 'Discard recovery key',
+            abandonConfirmTitle: 'Discard the recovery key?',
+            failed:
+                'The recovery state changed or could not be cleared. Your credentials and recovery key were kept. Please try again.',
+        },
     },
 
     settingsLanguage: {
@@ -11573,12 +11863,12 @@ settingsSession: {
             a2: {
                 eyebrow: 'Already here',
                 title: "Already running sessions? They're already here.",
-                body: 'Happier gathers the work you already started so adoption begins from familiar ground.',
+                body: 'Happier gathers the sessions you already started, so you begin on familiar ground.',
             },
             a3: {
                 eyebrow: 'Terminal',
                 title: 'You love the terminal? We do too.',
-                body: 'Keep your TUI flow, then move the same session into the app when the work needs a richer surface.',
+                body: 'Keep your TUI flow, then move the same session into the app when the work needs more room.',
             },
             a4: {
                 eyebrow: 'Cockpit',
@@ -11588,7 +11878,7 @@ settingsSession: {
             a5: {
                 eyebrow: 'Team',
                 title: 'One session. A whole team of agents.',
-                body: 'Hand off focused jobs between agents while the original session stays coherent.',
+                body: 'Send focused jobs out to other agents, and their results land back in the session you started.',
             },
             a6: {
                 eyebrow: 'Queue',
@@ -11598,17 +11888,17 @@ settingsSession: {
             a7: {
                 eyebrow: 'Attention',
                 title: 'Always know what needs you.',
-                body: 'Preview smart attention and working sections now; apply the preference only when setup completes.',
+                body: 'Sessions that need you rise to the top. Choose how they surface here, and it takes effect once setup is done.',
             },
             a8: {
                 eyebrow: 'Review',
                 title: 'Review the diff. Send notes.',
-                body: 'Inspect line-level changes and send precise feedback back into the agent loop.',
+                body: 'Read the diff line by line and send precise notes straight back to the agent.',
             },
             a9: {
                 eyebrow: 'Git',
                 title: 'Build it. Ship it.',
-                body: 'Open or reuse pull requests from wherever you are, including the phone in your hand.',
+                body: 'Set how agents commit, push, and recover from a rejected push - the same rules on every machine you connect.',
             },
             a10: {
                 eyebrow: 'Voice',
@@ -11617,18 +11907,18 @@ settingsSession: {
             },
             a11: {
                 eyebrow: 'MCP',
-                title: 'Your MCP servers. Every provider, every machine.',
+                title: 'Your MCP servers. Every agent, every machine.',
                 body: 'Configure once, then make those tools available wherever your agents run.',
             },
             a12: {
                 eyebrow: 'Pools',
                 title: 'Pool your accounts. Sail past usage limits.',
-                body: 'Watch usage, account pools, and reset windows so a busy day does not hit a hard wall.',
+                body: 'Gather your accounts into pools, and a long day rolls on to the next account instead of stopping at a limit.',
             },
             a13: {
                 eyebrow: 'Customize',
                 title: 'Configure (almost) everything.',
-                body: 'Shape sessions, themes, providers, and workflows around the way you already work.',
+                body: 'Start with themes of your own, then shape sessions, agents, and workflows around the way you already work.',
             },
             a14: {
                 eyebrow: 'And more',
@@ -11638,27 +11928,27 @@ settingsSession: {
             s1: {
                 eyebrow: 'Setup',
                 title: 'Your data lives where you decide.',
-                body: 'Start with Happier Cloud or choose an advanced relay path before you sign in.',
+                body: 'Start on Happier Cloud, or point Happier at a relay you run yourself, before you sign in.',
             },
             s2: {
                 eyebrow: 'Identity',
                 title: 'One key. Yours.',
-                body: 'Your account and privacy choices meet at the sign-in hinge, without changing the surrounding journey.',
+                body: 'By default your account is a secret key that never leaves your devices, so your history is end-to-end encrypted. The Relay you picked sets what it can store.',
             },
             s3: {
                 eyebrow: 'Machine',
                 title: "Let's wake this machine up.",
-                body: 'Connect the computer that will run your sessions and wait for the live green flip.',
+                body: 'Connect the computer that will run your sessions, and watch it come online.',
             },
             s4: {
                 eyebrow: 'Providers',
                 title: 'Bring your agents with you.',
-                body: 'Check provider readiness on the connected machine before starting your first real session.',
+                body: 'See which agents are ready on the machine you just connected, before your first real session.',
             },
             s5: {
                 eyebrow: 'Ready',
                 title: 'Ready when you are.',
-                body: 'Run `happier` instead of `claude` or `codex`. Your sessions sync everywhere instantly.',
+                body: 'Type happier instead of claude or codex. Your sessions sync everywhere, instantly.',
             },
         },
         reel: {
@@ -11823,7 +12113,7 @@ settingsSession: {
         doneConnectedMachineSummary: ({ machine }: { machine: string }) => `Connected machine: ${machine}`,
         doneMachineFallback: 'Connected machine',
         doneStartFirstSession: 'Start your first session',
-        doneFirstSessionLine: 'Run `happier` instead of `claude` or `codex`. Your sessions sync everywhere instantly.',
+        doneFirstSessionLine: 'Type happier instead of claude or codex. Your sessions sync everywhere, instantly.',
         doneExistingSessionsLine: ({ count }: { count: number }) => `You already have ${count} existing ${plural({ count, singular: 'session', plural: 'sessions' })}.`,
         machineArrival: {
             oneCommand: 'One command.',
@@ -11931,7 +12221,7 @@ settingsSession: {
     machine: {
         launchNewSessionInDirectory: 'Launch New Session in Directory',
         offlineUnableToSpawn: 'Launcher disabled while machine is offline',
-        offlineHelp: '• Make sure your computer is online\n• Run `happier daemon status` to diagnose\n• Are you running the latest CLI version? Run `happier self update`',
+        offlineHelp: '• Make sure your computer is online\n• Run happier daemon status to diagnose\n• Are you running the latest CLI version? Run happier self update',
         customPathPlaceholder: 'Enter custom path',
         tools: {
             title: 'Tools',
@@ -12090,9 +12380,12 @@ settingsSession: {
         },},
 
     message: {
+        sessionReferenceUnavailable: 'Unavailable session',
+        sessionReferenceOpen: ({ name }: { name: string }) => `Open session ${name}`,
         switchedToMode: ({ mode }: { mode: string }) => `Switched to ${mode} mode`,
         discarded: 'Discarded',
         recoveredHistory: 'Recovered history',
+        pluginAttribution: ({ pluginId }: { pluginId: string }) => `From plugin ${pluginId}`,
         unknownEvent: 'Unknown event',
         runtimeConfigOutcomeAppliesBeforeNextMessage: 'Applies before your next message',
         runtimeConfigOutcomeQueuedUntilReady: 'Queued until ready',
@@ -12153,11 +12446,6 @@ settingsSession: {
         directTakeoverDialogDirectBody: 'Resume without importing history. The external Agent transcript stays authoritative.',
         directTakeoverDialogPersistTitle: 'Import and take over',
         directTakeoverDialogPersistBody: 'Import the transcript into Happier, convert the session, then resume with hosted session features.',
-        directTakeoverDialogForceStopTitle: 'Try to stop the local process first',
-        directTakeoverDialogForceStopBody: 'Happier found a trusted local process for this session. Enable this if you want Happier to stop it before taking over.',
-        directTakeoverForceStopConfirmTitle: 'Stop the local process first?',
-        directTakeoverForceStopConfirmBody: 'Happier found a trusted local process for this direct session. Stop it before taking over here?',
-        directTakeoverForceStopConfirmAction: 'Stop and take over',
 
         externalSessionTakeoverAvailable: 'This external session is ready to take over in Happier.',
         externalSessionMachineOffline: 'This external session is currently unavailable because the machine is offline.',
@@ -12185,7 +12473,7 @@ settingsSession: {
             yesForTool: "Yes, don't ask again for this tool",
             yesForCommandPrefix: "Yes, don't ask again for this command prefix",
             yesForSubcommand: "Yes, don't ask again for this subcommand",
-            yesForCommandName: "Yes, don't ask again for this command",
+            yesForCommandName: "Yes, allow any matching command this session",
             stop: 'Stop',
             noTellClaude: 'No, and provide feedback',
         }
@@ -12639,12 +12927,12 @@ settingsSession: {
             },
             claudeCode: {
                 title: 'Claude Code',
-                instructions: 'Run `claude`, then type `/login` to sign in.',
-                warning: 'Note: setting `ANTHROPIC_AUTH_TOKEN` overrides CLI login.',
+                instructions: 'Run claude, then type /login to sign in.',
+                warning: 'Note: setting ANTHROPIC_AUTH_TOKEN overrides CLI login.',
             },
             codex: {
                 title: 'Codex',
-                instructions: 'Run `codex login` to sign in.',
+                instructions: 'Run codex login to sign in.',
             },
         },
         requirements: {
@@ -12905,11 +13193,19 @@ settingsSession: {
             },
         },
     },
-    settingsPlugins: {
+   settingsPlugins: {
+      ...pluginWebhookAdministrationTranslations['en'],
+      ...pluginAccountDataEraseTranslations.en,
+      ...pluginAccountReleaseSelectionTranslations.en,
+      ...pluginInvocationLogTranslations.en,
+      ...eventAutomationComposerTranslations.en,
       title: "Plugin marketplace",
       subtitle: "Browse curated plugin descriptors and manage installed plugins on this machine.",
       appPanelsTitle: "Plugin panels",
       appPanelsSubtitle: "Open app panels contributed by installed plugins.",
+      executionOriginReleaseContentConflict: "Release content does not match. Publish a new version.",
+      readOnlyProjectionUnavailable: "Cached plugin details are read-only: this machine is reachable, but its plugin registry could not be loaded. Retry to manage plugins.",
+      readOnlyAccountRecovery: "Account plugin details are available, but machine-specific details are unavailable until a compatible plugin installation is available.",
       readOnlySnapshot: "Cached plugin details are read-only while this machine is disconnected. Reconnect to manage plugins.",
       viewSelectorLabel: "Plugin management views",
       views: { installed: "Installed", discover: "Discover", development: "Development", diagnostics: "Diagnostics" },
@@ -12920,12 +13216,26 @@ settingsSession: {
       developmentCreate: "Create plugin",
       developmentCreateSubtitle: "Create a first-party local plugin scaffold on this machine.",
       developmentCreateSucceeded: "Plugin scaffold created.",
+      developmentSourceInstall: "Develop a local plugin folder",
+      developmentSourceInstallSubtitle: "Let this machine's daemon build and run a plugin from a folder you own. You approve the exact folder first.",
+      developmentSourceInstallTitle: "Plugin folder",
+      developmentSourceInstallBody: "Enter the full path to the plugin project folder on this machine.",
+      developmentSourceInstallSucceeded: "Development source approved and projected.",
+      developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `The development source was not installed (${outcome}).`,
+      developmentTrustSourceRootTitle: "Trust this plugin folder?",
+      developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier will install dependencies in, build, and run code from:\n\n${path}\n\nOnly continue if you trust everything in that folder and everything it can pull in. You will review the plugin itself in the next step.`,
+      developmentTrustSourceRootConfirm: "Trust folder",
       developmentCreateDirectoryTitle: "Plugin directory",
       developmentCreateDirectoryBody: "Enter the new plugin's absolute directory on the selected machine. The directory must not already exist.",
       developmentCreateNameTitle: "Plugin name",
       developmentCreateNameBody: "Enter the display name shown for this plugin.",
       developmentCreateIdTitle: "Plugin ID",
       developmentCreateIdBody: "Enter a lower-case, dot-delimited owner namespace outside happier.*.",
+      developmentCreateSurfaceTitle: "Plugin UI surface",
+      developmentCreateSurfaceBody: "Choose the UI surface this plugin starts with. React Native also renders on the web.",
+      developmentCreateSurfaceReactNative: "React Native",
+      developmentCreateSurfaceHostedWeb: "Hosted web",
+      developmentCreateSurfaceNone: "No UI",
       developmentCreateConfirmTitle: "Create plugin scaffold?",
       developmentCreateConfirmBody: ({ pluginId, targetDir }: { pluginId: string; targetDir: string }) => `Create ${pluginId} in ${targetDir}?`,
       developmentWatchConfigured: "Watch approval configured",
@@ -12945,6 +13255,10 @@ settingsSession: {
       loadCatalog: "Load catalog",
       installAndTrust: "Install & Trust",
       marketplaceInstallReviewTitle: ({ name, version }: { name: string; version: string }) => `Install & Trust ${name} ${version}?`,
+      marketplaceInstallReviewBlockedNewerVersions: 'Newer versions blocked before download:',
+      marketplaceInstallReviewRawCredentialAccess: ({ details }: { details: string }) => `Raw Voice credential access:\n${details}`,
+      marketplaceInstallReviewRawCredentialAccessItem: ({ contribution, credential, source, realm, phase, request }: { contribution: string; credential: string; source: string; realm: string; phase: string; request: string }) =>
+        `${contribution}: ${credential}; source ${source}; realm ${realm}; phase ${phase}; request ${request}. Plugin code in the ${realm} realm receives the selected credential directly and can use or copy it.`,
       marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Identity:\n${identity}\n\nVerification signals:\n${verification}\n\nExecutable code: ${executableRealms}\nContributions: ${contributions}\nUI artifacts: ${uiArtifacts}\n\nTrusted daemon and React Native code runs with the app or process authority and can directly use files, network, environment, and processes. The host access listed below describes Happier-mediated services; it is not a sandbox for executable plugin code.\n\nRequired disclosures and cooperative services:\n${requiredAccess}\n\nOptional host-owned resources (off by default):\n${optionalAccess}\n\nCompatibility and updates:\n${compatibility}`,
       marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `The plugin was not installed (${outcome}).`,
       marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action} failed (${outcome}).`,
@@ -12960,6 +13274,7 @@ settingsSession: {
       marketplaceWithdrawnInstalledBody: "This listing was withdrawn from the curated marketplace. New installs and updates are blocked. Your installed plugin remains enabled until you disable or uninstall it.",
       emptySubtitle: "This catalog did not return any descriptors.",
       detailTitle: "Plugin details",
+      managePlugin: "Manage plugin",
       provenanceTitle: "Source and trust",
       diagnosticsTitle: "Plugin diagnostics",
       registryDiagnosticsTitle: "Registry diagnostics",
@@ -13117,15 +13432,46 @@ settingsSession: {
         unavailable: 'React Native plugin UI unavailable',
         disabled: 'React Native plugin UI disabled',
         fallback: 'Using plugin fallback',
+        reset: {
+            requested: {
+                title: 'Resetting plugin UI',
+                reason: 'Happier is waiting for the reset to be confirmed.',
+            },
+            awaitingProjection: {
+                title: 'Waiting for plugin reset',
+                reason: 'Happier is waiting for the updated plugin state.',
+            },
+            complete: {
+                title: 'Plugin UI reset complete',
+                reason: 'The plugin UI is available again.',
+            },
+            failed: {
+                title: 'Could not reset plugin UI',
+                reason: 'Try the reset again.',
+            },
+        },
     },
     pluginRuntime: {
         unavailableGeneric: 'This plugin view is unavailable right now.',
         crashLoop: 'The plugin was stopped after repeated crashes.',
         disabledByPolicy: 'This plugin view is disabled by current settings or compatibility.',
+        hostedWebUnavailableTitle: 'Hosted plugin view unavailable',
+        hostedWebPolicyDenied: 'This plugin view is not available in this surface. Check its availability settings or use a supported surface.',
+        hostedWebSandboxUnavailable: 'This plugin does not declare the isolation settings needed to show this view. Update the plugin and try again.',
+        hostedWebSecurityUnavailable: 'The plugin security settings cannot be enforced in this view. Update the plugin or use a supported host.',
+        hostedWebFrameOriginUnavailable: 'Happier could not establish a trusted address for this view. Refresh it and try again.',
+        hostedWebBridgeNonceUnavailable: 'Happier could not establish a secure connection to this view. Refresh it and try again.',
+        hostedWebBridgeTimeout: 'This plugin view did not finish connecting. Refresh it and try again.',
+        hostedWebEndpointPolicyDenied: 'This view address is blocked by its security policy. Check the plugin settings or use a supported host.',
         missingRequirement: 'This plugin view is missing a requirement on this device.',
     },
     settingsSearch: {
         placeholder: 'Search settings',
+    },
+    onboardingJourney: {
+        accessibility: {
+            skipToContent: 'Skip to content',
+        },
     },};
 
 type DeepTranslationShape<T> =

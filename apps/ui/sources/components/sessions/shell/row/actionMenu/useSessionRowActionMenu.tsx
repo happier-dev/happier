@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
@@ -24,6 +23,7 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
 import { buildSessionRowMoreMenuItems } from './buildSessionRowActionMenuItems';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     SESSION_ROW_ACTION_SELECT_ID,
     type SessionRowActionMenuState,
@@ -113,7 +113,7 @@ export function useSessionRowActionMenu(params: Readonly<{
             id: tag,
             title: tag,
             rightElement: params.activeTags.includes(tag) ? (
-                <Ionicons name="checkmark" size={16} color={params.iconColor} />
+                <Icon name="check" size={16} color={params.iconColor} />
             ) : undefined,
         }));
     }, [params.activeTags, params.iconColor, params.knownTags]);
@@ -242,7 +242,7 @@ export function useSessionRowActionMenu(params: Readonly<{
             ? [{
                 id: SESSION_ROW_ACTION_SELECT_ID,
                 title: t('sessionsList.selectionSelectAction'),
-                icon: <Ionicons name="checkmark-circle-outline" size={16} color={params.iconColor} />,
+                icon: <Icon name="check-circle" size={16} color={params.iconColor} />,
             }]
             : [];
         return buildSessionRowMoreMenuItems({
@@ -331,7 +331,7 @@ export function useSessionRowActionMenu(params: Readonly<{
             items.push({
                 id: SESSION_ROW_ACTION_SELECT_ID,
                 title: t('sessionsList.selectionSelectAction'),
-                icon: <Ionicons name="checkmark-circle-outline" size={14} color={params.iconColor} />,
+                icon: <Icon name="check-circle" size={14} color={params.iconColor} />,
             });
         }
         if (params.tagsEnabled && typeof params.onSetTags === 'function') {

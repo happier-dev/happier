@@ -22,11 +22,6 @@ vi.mock('@/voice/local/speakDeviceText', () => ({
   stopDeviceSpeech: (..._args: any[]) => stopDeviceSpeechSpy(..._args),
 }));
 
-const speakOpenAiCompatTextSpy = vi.fn().mockResolvedValue(undefined);
-vi.mock('@/voice/output/TtsController', () => ({
-  speakOpenAiCompatText: (...args: any[]) => speakOpenAiCompatTextSpy(...args),
-}));
-
 const speakKokoroTextSpy = vi.fn().mockResolvedValue(undefined);
 vi.mock('@/voice/output/KokoroTtsController', () => ({
   speakKokoroText: (...args: any[]) => speakKokoroTextSpy(...args),
@@ -77,8 +72,6 @@ describe('speakAssistantText', () => {
   beforeEach(() => {
     speakDeviceTextSpy.mockReset();
     speakDeviceTextSpy.mockResolvedValue(undefined);
-    speakOpenAiCompatTextSpy.mockReset();
-    speakOpenAiCompatTextSpy.mockResolvedValue(undefined);
     speakKokoroTextSpy.mockReset();
     speakKokoroTextSpy.mockResolvedValue(undefined);
     daemonTtsControllerSpeakSpy.mockReset();
@@ -100,7 +93,6 @@ describe('speakAssistantText', () => {
 
   it('trims the voice provider id before selecting the TTS adapter', async () => {
     speakDeviceTextSpy.mockClear();
-    speakOpenAiCompatTextSpy.mockClear();
 
     const onSpeaking = vi.fn();
     const registerPlaybackStopper = (_s: () => void) => () => {};
@@ -114,7 +106,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'device',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
@@ -122,8 +113,7 @@ describe('speakAssistantText', () => {
             } },
             local_conversation: { schemaVersion: 1, config: {
               tts: {
-                provider: 'openai_compat',
-                openaiCompat: { baseUrl: 'http://example.com/v1', apiKey: null, model: 'm', voice: 'v', format: 'wav' },
+                provider: 'happier.voice.openai-compat/tts',
                 localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
@@ -142,7 +132,6 @@ describe('speakAssistantText', () => {
       onSpeaking,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(speakOpenAiCompatTextSpy).not.toHaveBeenCalled();
   });
 
   it('routes device TTS provider to expo speech', async () => {
@@ -162,7 +151,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'device',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
@@ -184,84 +172,6 @@ describe('speakAssistantText', () => {
     expect(typeof stopper).toBe('function');
   });
 
-  it('routes OpenAI-compatible provider to speakOpenAiCompatText', async () => {
-    const onSpeaking = vi.fn();
-    const registerPlaybackStopper = (_s: () => void) => () => {};
-
-    await speakAssistantText({
-      text: 'hello',
-      settings: {
-        voice: {
-          providerId: 'local_direct',
-          providers: {
-            local_direct: { schemaVersion: 1, config: {
-              tts: {
-                provider: 'openai_compat',
-                openaiCompat: { baseUrl: 'http://example.com/v1', apiKey: null, model: 'm', voice: 'v', format: 'wav' },
-                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
-                autoSpeakReplies: true,
-                bargeInEnabled: true,
-              },
-            } },
-          },
-        },
-      },
-      networkTimeoutMs: 15000,
-      registerPlaybackStopper,
-      onSpeaking,
-    });
-
-    expect(speakOpenAiCompatTextSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        baseUrl: 'http://example.com/v1',
-        model: 'm',
-        voice: 'v',
-        format: 'wav',
-        input: 'hello',
-        onPlaybackStarted: onSpeaking,
-      }),
-    );
-    expect(onSpeaking).not.toHaveBeenCalled();
-  });
-
-  it('accepts legacy openai-compatible baseUrl when openaiCompat.baseUrl is unset', async () => {
-    speakOpenAiCompatTextSpy.mockClear();
-
-    const onSpeaking = vi.fn();
-    const registerPlaybackStopper = (_s: () => void) => () => {};
-
-    await speakAssistantText({
-      text: 'hello',
-      settings: {
-        voice: {
-          providerId: 'local_direct',
-          providers: {
-            local_direct: { schemaVersion: 1, config: {
-              tts: {
-                provider: 'openai_compat',
-                baseUrl: 'http://example.com/v1',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'm', voice: 'v', format: 'wav' },
-                localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
-                autoSpeakReplies: true,
-                bargeInEnabled: true,
-              },
-            } },
-          },
-        },
-      },
-      networkTimeoutMs: 15000,
-      registerPlaybackStopper,
-      onSpeaking,
-    });
-
-    expect(speakOpenAiCompatTextSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        baseUrl: 'http://example.com/v1',
-        input: 'hello',
-      }),
-    );
-  });
-
   it('routes local_neural (Kokoro model) provider to speakKokoroText', async () => {
     const onSpeaking = vi.fn();
     const registerPlaybackStopper = (_s: () => void) => () => {};
@@ -275,7 +185,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: { model: 'kokoro', assetId: 'kokoro-82m', voiceId: 'af_heart', speed: 1, execution: 'device' },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
@@ -327,7 +236,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: { model: 'kokoro', assetId: 'kokoro-82m', voiceId: 'af_heart', speed: 1, execution: 'auto' },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
@@ -352,7 +260,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'device',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
@@ -389,7 +296,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: {
                   model: 'kokoro',
                   assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -436,7 +342,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: {
                   model: 'kokoro',
                   assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -481,7 +386,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: {
                   model: 'kokoro',
                   assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -528,7 +432,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: {
                   model: 'kokoro',
                   assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -576,25 +479,22 @@ describe('speakAssistantText', () => {
           providers: {
             local_direct: { schemaVersion: 1, config: {
               tts: {
-                provider: 'google_cloud',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+                provider: 'happier.voice.google/google-cloud-tts',
                 localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
-                providers: {
-                  google_cloud: {
-                    schemaVersion: 2,
-                    config: {
-                      voiceName: 'en-US-Wavenet-D',
-                      languageCode: 'en-US',
-                      format: 'mp3',
-                      speakingRate: null,
-                      pitch: null,
-                    },
-                  },
-                },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
               },
             } },
+            'happier.voice.google/google-cloud-tts': {
+              schemaVersion: 2,
+              config: {
+                voiceName: 'en-US-Wavenet-D',
+                languageCode: 'en-US',
+                format: 'mp3',
+                speakingRate: 1,
+                pitch: 0,
+              },
+            },
           },
         },
       },
@@ -605,7 +505,7 @@ describe('speakAssistantText', () => {
 
     expect(synthesizeBundledSpeechSpy).toHaveBeenCalledTimes(1);
     const synthesizeInput = synthesizeBundledSpeechSpy.mock.calls[0]?.[0] as any;
-    expect(synthesizeInput.entry?.providerId).toBe('google_cloud');
+    expect(synthesizeInput.entry?.providerId).toBe('happier.voice.google/google-cloud-tts');
     expect(synthesizeInput.input).toBe('hello');
     expect(synthesizeBundledSpeechSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: expect.anything(), androidCertSha1: expect.anything() }),
@@ -644,25 +544,22 @@ describe('speakAssistantText', () => {
           providers: {
             local_direct: { schemaVersion: 1, config: {
               tts: {
-                provider: 'google_cloud',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
+                provider: 'happier.voice.google/google-cloud-tts',
                 localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
-                providers: {
-                  google_cloud: {
-                    schemaVersion: 2,
-                    config: {
-                      voiceName: 'en-US-Wavenet-D',
-                      languageCode: 'en-US',
-                      format: 'mp3',
-                      speakingRate: null,
-                      pitch: null,
-                    },
-                  },
-                },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
               },
             } },
+            'happier.voice.google/google-cloud-tts': {
+              schemaVersion: 2,
+              config: {
+                voiceName: 'en-US-Wavenet-D',
+                languageCode: 'en-US',
+                format: 'mp3',
+                speakingRate: 1,
+                pitch: 0,
+              },
+            },
           },
         },
       },
@@ -682,7 +579,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'device',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
@@ -719,7 +615,6 @@ describe('speakAssistantText', () => {
             local_direct: { schemaVersion: 1, config: {
               tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: { model: 'kokoro', assetId: 'kokoro-82m', voiceId: 'af_heart', speed: 1 },
                 autoSpeakReplies: true,
                 bargeInEnabled: true,

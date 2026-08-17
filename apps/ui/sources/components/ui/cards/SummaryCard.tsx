@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View, ViewStyle, StyleProp } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SurfaceCard } from './SurfaceCard';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export interface SummaryCardEntry {
     label: string;
@@ -54,8 +54,8 @@ export const SummaryCard = React.memo<SummaryCardProps>(({ entries, onPress, tes
                 ))}
             </View>
             {onPress ? (
-                <Ionicons
-                    name="chevron-forward"
+                <Icon
+                    name="caret-right"
                     size={16}
                     color={theme.colors.text.secondary}
                     style={styles.chevron}

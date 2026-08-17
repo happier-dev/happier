@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -8,6 +7,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const MemorySettingsPrivacySection = React.memo(function MemorySettingsPrivacySection(props: Readonly<{
     settings: MemorySettingsV1;
@@ -25,7 +25,7 @@ export const MemorySettingsPrivacySection = React.memo(function MemorySettingsPr
                 testID="memory-settings-delete-on-disable-item"
                 title={t('memorySearchSettings.privacy.deleteOnDisableTitle')}
                 subtitle={t('memorySearchSettings.privacy.deleteOnDisableSubtitle')}
-                icon={<Ionicons name="trash-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                icon={<Icon name="trash" size={29} color={theme.colors.state.danger.foreground} />}
                 rightElement={(
                     <Switch
                         testID="memory-settings-delete-on-disable"

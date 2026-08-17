@@ -127,23 +127,27 @@ vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
 }));
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        markSessionViewed: markSessionViewedSpy,
-        fetchPendingMessages: vi.fn(async () => {}),
-        publishSessionPermissionModeToMetadata: async () => {},
-        publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-        publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-        publishSessionModelOverrideToMetadata: async () => {},
-        refreshSessions: async () => {},
-        onSessionVisible: () => {},
-        sendMessage: async () => {},
-        enqueuePendingMessage: async () => {},
-        submitMessage: async () => {},
-        encryption: { getMachineEncryption: () => null },
-        onSessionViewportChange: () => {},
-    },
-}));
+vi.mock('@/sync/sync', async () => {
+    const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
+    return {
+        sync: {
+            ...createAcceptedExternalSessionTailCursorSyncBoundary(),
+            markSessionViewed: markSessionViewedSpy,
+            fetchPendingMessages: vi.fn(async () => {}),
+            publishSessionPermissionModeToMetadata: async () => {},
+            publishSessionAcpSessionModeOverrideToMetadata: async () => {},
+            publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
+            publishSessionModelOverrideToMetadata: async () => {},
+            refreshSessions: async () => {},
+            onSessionVisible: () => {},
+            sendMessage: async () => {},
+            enqueuePendingMessage: async () => {},
+            submitMessage: async () => {},
+            encryption: { getMachineEncryption: () => null },
+            onSessionViewportChange: () => {},
+        },
+    };
+});
 vi.mock('@/sync/ops', () => ({
     continueSessionWithReplay: vi.fn(),
     sessionAbort: vi.fn(),
@@ -352,9 +356,6 @@ vi.mock('@/sync/domains/session/control/sessionLocalControl', () => ({
 }));
 vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
     supportsEffectiveLocalControlForSession: () => true,
-}));
-vi.mock('@/sync/domains/session/subagents/deriveSessionSubagentCounts', () => ({
-    deriveSessionSubagentCounts: () => ({ total: 0, active: 0 }),
 }));
 vi.mock('@/sync/domains/models/modelOptions', () => ({
     findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>

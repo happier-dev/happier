@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { type BackendTargetRefV2 } from '@happier-dev/protocol';
@@ -32,6 +31,7 @@ import {
 import { t } from '@/text';
 
 import { showSubAgentGuidanceRuleEditorModal } from './guidance/showSubAgentGuidanceRuleEditorModal';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function resolveText(input: string | Readonly<{ fallback: string }> | undefined): string | undefined {
     if (input === undefined) return undefined;
@@ -193,7 +193,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 <Item
                     title={t('subAgentGuidance.settings.overview.explainerTitle')}
                     subtitle={t('subAgentGuidance.settings.overview.explainerSubtitle')}
-                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
                 <Item
@@ -203,7 +203,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             ? t('subAgentGuidance.settings.overview.happierStatusEnabledSubtitle')
                             : t('subAgentGuidance.settings.overview.happierStatusDisabledSubtitle')
                     }
-                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
+                    icon={<Icon name="sparkle" size={29} color={theme.colors.accent.orange} />}
                     onPress={() => router.push(SETTINGS_ROUTES.features)}
                 />
             </ItemGroup>
@@ -215,19 +215,19 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 <Item
                     title={t('subAgentGuidance.settings.related.sessionTitle')}
                     subtitle={t('subAgentGuidance.settings.related.sessionSubtitle')}
-                    icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="arrows-left-right" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => router.push(SETTINGS_ROUTES.session)}
                 />
                 <Item
                     title={t('subAgentGuidance.settings.related.providersTitle')}
                     subtitle={t('subAgentGuidance.settings.related.providersSubtitle')}
-                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
+                    icon={<Icon name="sparkle" size={29} color={theme.colors.accent.orange} />}
                     onPress={() => router.push(SETTINGS_ROUTES.agents)}
                 />
                 <Item
                     title={t('subAgentGuidance.settings.related.backendsTitle')}
                     subtitle={t('subAgentGuidance.settings.related.backendsSubtitle')}
-                    icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="graph" size={29} color={theme.colors.accent.indigo} />}
                     onPress={() => router.push(SETTINGS_ROUTES.agents)}
                 />
             </ItemGroup>
@@ -245,7 +245,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                                     ? t('subAgentGuidance.ruleEditor.enabledState.enabled')
                                     : t('subAgentGuidance.ruleEditor.enabledState.disabled')
                             }
-                            icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
+                            icon={<Icon name="sparkle" size={29} color={theme.colors.accent.orange} />}
                             rightElement={<Switch value={enabled === true} onValueChange={(v) => setEnabled(v as any)} />}
                             showChevron={false}
                             onPress={() => setEnabled((enabled !== true) as any)}
@@ -254,7 +254,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                         <Item
                             title={t('subAgentGuidance.settings.characterBudget.title')}
                             subtitle={t('subAgentGuidance.settings.characterBudget.subtitle', { value: maxChars.toLocaleString() })}
-                            icon={<Ionicons name="text-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="text-aa" size={29} color={theme.colors.text.secondary} />}
                             onPress={async () => {
                                 const raw = await Modal.prompt(
                                     t('subAgentGuidance.settings.characterBudget.promptTitle'),
@@ -280,7 +280,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             <Item
                                 title={t('subAgentGuidance.settings.rules.emptyTitle')}
                                 subtitle={t('subAgentGuidance.settings.rules.emptySubtitle')}
-                                icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
                                 onPress={() => {
                                     void addRule();
                                 }}
@@ -293,8 +293,8 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                                     subtitle={getRuleSubtitle(entry, resolvedBackendEntries)}
                                     subtitleLines={2}
                                     icon={
-                                        <Ionicons
-                                            name={entry.enabled === false ? 'pause-circle-outline' : 'play-circle-outline'}
+                                        <Icon
+                                            name={entry.enabled === false ? 'pause-circle' : 'play-circle'}
                                             size={29}
                                             color={entry.enabled === false ? theme.colors.text.secondary : theme.colors.state.success.foreground}
                                         />
@@ -309,7 +309,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                         <Item
                             title={t('subAgentGuidance.settings.rules.addRuleTitle')}
                             subtitle={t('subAgentGuidance.settings.rules.addRuleSubtitle')}
-                            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="plus-circle" size={29} color={theme.colors.text.secondary} />}
                             onPress={() => {
                                 void addRule();
                             }}
@@ -355,7 +355,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                     <Item
                         title={t('subAgentGuidance.settings.disabled.enableExecutionRuns.title')}
                         subtitle={t('subAgentGuidance.settings.disabled.enableExecutionRuns.subtitle')}
-                        icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
+                        icon={<Icon name="flask" size={29} color={theme.colors.accent.orange} />}
                         onPress={() => router.push(SETTINGS_ROUTES.features)}
                     />
                 </ItemGroup>
@@ -372,7 +372,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             key={`${agentId}:${section.id}:${item.id}`}
                             title={resolveText(item.title) ?? ''}
                             subtitle={resolveText(item.description)}
-                            icon={<Ionicons name={(item.iconIonName as any) ?? 'options-outline'} size={29} color={theme.colors.accent.orange} />}
+                            icon={<Icon name={(item.iconIonName as any) ?? 'sliders-horizontal'} size={29} color={theme.colors.accent.orange} />}
                             onPress={() => router.push(item.route)}
                         />
                     ))}

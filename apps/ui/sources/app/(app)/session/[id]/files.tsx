@@ -88,6 +88,7 @@ export default function FilesScreenRoute() {
     usePersistSessionMobileSurface({
         sessionId,
         surface: cockpitEnabled ? 'browse' : null,
+        serverId: routeScope.serverId,
     });
 
     const onRequestClose = React.useCallback(() => {

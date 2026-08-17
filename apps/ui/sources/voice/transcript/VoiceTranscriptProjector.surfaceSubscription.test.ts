@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { VoiceTranscriptCanonicalEventV1 } from '@happier-dev/protocol';
 
 import { createVoiceTranscriptProjector } from './VoiceTranscriptProjector';
 
-function event(overrides: Record<string, unknown>) {
+function event(overrides: Partial<VoiceTranscriptCanonicalEventV1>): VoiceTranscriptCanonicalEventV1 {
   return {
     v: 1,
     eventId: 'e1',
@@ -15,7 +16,7 @@ function event(overrides: Record<string, unknown>) {
     type: 'voice.transcript.delta',
     text: 'Hel',
     ...overrides,
-  } as any;
+  };
 }
 
 describe('VoiceTranscriptProjector canonical surface subscription', () => {

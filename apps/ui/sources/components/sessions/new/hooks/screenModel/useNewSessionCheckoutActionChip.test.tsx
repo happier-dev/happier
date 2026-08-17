@@ -2,7 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type {
+    AgentInputExtraActionChip,
+    AgentInputExtraActionChipRenderContext,
+} from '@/components/sessions/agentInput/agentInputContracts';
 import type {
     SelectionListOption,
     SelectionListStep,
@@ -120,6 +123,18 @@ async function renderCheckoutChip(
 
     await renderScreen(<Probe />);
     return chip;
+}
+
+function makeChipRenderContext(): AgentInputExtraActionChipRenderContext {
+    return {
+        chipStyle: () => ({}),
+        showLabel: true,
+        iconColor: '#000000',
+        textStyle: {},
+        countTextStyle: {},
+        chipAnchorRef: React.createRef<unknown>(),
+        popoverAnchorRef: React.createRef<unknown>(),
+    };
 }
 
 function expectDrillDownOption(option: SelectionListOption | undefined): SelectionListStep {
@@ -332,6 +347,12 @@ describe('useNewSessionCheckoutActionChip', () => {
             // The chip must rebuild rootStep when nowMs ticks (referential identity change),
             // so RelativeTimeText / stale recomputation observes the new clock.
             expect(tickedRoot).not.toBe(initialRoot);
+            // ...but the rebuild describes the SAME destination. `SelectionList` keys its
+            // "a rebuilt root is a refresh, not navigation" rule on the root step id
+            // (`useSelectionListStepStack`), so a rebuild that changed the id would drain
+            // the step stack and throw the user out of the worktree name step — losing the
+            // name they were typing — once a minute.
+            expect(tickedRoot?.id).toBe(initialRoot?.id);
         } finally {
             vi.useRealTimers();
         }
@@ -396,5 +417,80 @@ describe('useNewSessionCheckoutActionChip', () => {
         });
 
         expect(chip).toBeNull();
+    });
+
+    /**
+     * The chip descriptor is rebuilt whenever any of its inputs move — including the once-a-minute
+     * tick that keeps the picker's relative times fresh. If the rendered chip component were minted
+     * inside that rebuild, its type would change with it and React would unmount and remount the
+     * chip on a timer, discarding its press state and re-firing its popover-bridging effect. The
+     * component type must survive a rebuild; only the descriptor may be new.
+     */
+    it('renders the same chip component type across descriptor rebuilds', async () => {
+        const { useNewSessionCheckoutActionChip } = await import('./useNewSessionCheckoutActionChip');
+
+        const chipRef: { current: AgentInputExtraActionChip | null } = { current: null };
+        let selectAnotherPath: (() => void) | null = null;
+        function Probe() {
+            const [selectedPath, setSelectedPath] = React.useState('/repo/packages/app');
+            selectAnotherPath = () => setSelectedPath('/repo/packages/other');
+            chipRef.current = useNewSessionCheckoutActionChip(makeDefaultParams({ selectedPath }));
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+        const before = chipRef.current?.render(makeChipRenderContext());
+        const beforeDescriptor = chipRef.current;
+
+        await act(async () => {
+            selectAnotherPath?.();
+        });
+
+        const after = chipRef.current?.render(makeChipRenderContext());
+        expect(chipRef.current).not.toBe(beforeDescriptor);
+        if (!React.isValidElement(before) || !React.isValidElement(after)) {
+            throw new Error('Expected the checkout chip to render a React element');
+        }
+        expect(after.type).toBe(before.type);
+    });
+
+    /**
+     * The bridge used to ride on the remount the previous test now prevents, so it has to fire from
+     * a state change instead. Opening the picker must still hand the chip to the shared overlay
+     * controller and clear the legacy flag.
+     */
+    it('bridges the auto-open picker state into the shared popover controller when it opens', async () => {
+        const { useNewSessionCheckoutActionChip } = await import('./useNewSessionCheckoutActionChip');
+
+        const toggleCollapsedPopover = vi.fn();
+        const setCheckoutPickerOpen = vi.fn();
+        let openPicker: (() => void) | null = null;
+
+        function Probe() {
+            const [checkoutPickerOpen, setOpen] = React.useState(false);
+            openPicker = () => setOpen(true);
+            // Identity-stable, exactly as the screen model's own `useState` setter is: a fresh
+            // setter each render would re-run the bridge effect on its own and hide a missing
+            // `checkoutPickerOpen` dependency.
+            const stableSetCheckoutPickerOpen = React.useCallback((next: React.SetStateAction<boolean>) => {
+                setCheckoutPickerOpen(next);
+                setOpen(false);
+            }, []);
+            const chip = useNewSessionCheckoutActionChip(makeDefaultParams({
+                checkoutPickerOpen,
+                setCheckoutPickerOpen: stableSetCheckoutPickerOpen,
+            }));
+            return <>{chip?.render({ ...makeChipRenderContext(), toggleCollapsedPopover })}</>;
+        }
+
+        await renderScreen(<Probe />);
+        expect(toggleCollapsedPopover).not.toHaveBeenCalled();
+
+        await act(async () => {
+            openPicker?.();
+        });
+
+        expect(toggleCollapsedPopover).toHaveBeenCalledWith('new-session-checkout');
+        expect(setCheckoutPickerOpen).toHaveBeenCalledWith(false);
     });
 });

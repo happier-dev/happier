@@ -6,7 +6,10 @@ import {
 import { isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { decideMachinePluginInstallReviewAsPresentUser } from '@/sync/ops/machinePluginInstallPresentUserDecision.mjs';
+import {
+    decideMachinePluginDevelopmentSourceRootAsPresentUser,
+    decideMachinePluginInstallReviewAsPresentUser,
+} from '@/sync/ops/machinePluginInstallPresentUserDecision.mjs';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 type PositiveDecision = Omit<
@@ -17,16 +20,42 @@ type PositiveDecision = Omit<
         readonly Readonly<{ accessId: string; selected: boolean }>[] | null
     >;
 }>;
+type TrustSourceRootDecision = Omit<
+    Extract<HostPrivatePluginInstallDecisionV1, Readonly<{ decision: 'trustSourceRoot' }>>,
+    'v' | 'actorEvidence'
+> & Readonly<{
+    confirmPresentUser: () => Promise<boolean>;
+}>;
 type CancelDecision = Omit<
     Extract<HostPrivatePluginInstallDecisionV1, Readonly<{ decision: 'cancel' }>>,
     'v'
 >;
 
-export type MachinePluginInstallDecisionInput = PositiveDecision | CancelDecision;
+export type MachinePluginInstallDecisionInput =
+    | PositiveDecision
+    | TrustSourceRootDecision
+    | CancelDecision;
 
 export type MachinePluginInstallDecisionOutcome = Readonly<{
-    kind: 'committed' | 'failed' | 'conflict' | 'expired' | 'cancelled' | 'unavailable' | 'outcomeUnknown' | 'busy';
+    kind:
+        | 'committed'
+        | 'failed'
+        | 'conflict'
+        | 'expired'
+        | 'cancelled'
+        | 'unavailable'
+        | 'outcomeUnknown'
+        | 'busy'
+        | 'reviewRequired';
     detail: string | null;
+    /**
+     * The daemon's own change payload, retained verbatim **only** for the one
+     * outcome that carries a follow-up decision, so a multi-step review
+     * (source-root trust answered with an install-and-trust review) is read by
+     * the caller's canonical change reader instead of being re-modelled here.
+     * Terminal outcomes stay a bare `{ kind, detail }` result.
+     */
+    change?: unknown;
 }>;
 
 export type MachinePluginInstallDecisionResult =
@@ -55,13 +84,12 @@ function parseOutcome(value: unknown): MachinePluginInstallDecisionOutcome | nul
         && kind !== 'unavailable'
         && kind !== 'outcomeUnknown'
         && kind !== 'busy'
+        && kind !== 'reviewRequired'
     ) {
         return null;
     }
-    return {
-        kind,
-        detail: readNonEmptyString(value.message) ?? readNonEmptyString(value.code),
-    };
+    const detail = readNonEmptyString(value.message) ?? readNonEmptyString(value.code);
+    return kind === 'reviewRequired' ? { kind, detail, change: value } : { kind, detail };
 }
 
 export async function machinePluginInstallDecision(
@@ -75,7 +103,27 @@ export async function machinePluginInstallDecision(
 ): Promise<MachinePluginInstallDecisionResult> {
     try {
         let rawPayload: unknown;
-        if (opts.decision.decision === 'installAndTrust') {
+        const callAuthenticatedPrivateRpc = async (
+            method: typeof HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
+            payload: HostPrivatePluginInstallDecisionV1,
+        ) => await machineRpcWithServerScope({
+            machineId,
+            serverId: opts.serverId ?? undefined,
+            timeoutMs: opts.timeoutMs ?? undefined,
+            method,
+            payload,
+        });
+        if (opts.decision.decision === 'trustSourceRoot') {
+            const { confirmPresentUser, pendingChangeId } = opts.decision;
+            rawPayload = await decideMachinePluginDevelopmentSourceRootAsPresentUser({
+                pendingChangeId,
+                confirmPresentUser,
+                isAuthorityCurrent: opts.isAuthorityCurrent,
+                createInteractionId: randomUUID,
+                nowMs: Date.now,
+                callAuthenticatedPrivateRpc,
+            });
+        } else if (opts.decision.decision === 'installAndTrust') {
             const affirmativeDecision = opts.decision;
             const { confirmPresentUser, ...decision } = affirmativeDecision;
             rawPayload = await decideMachinePluginInstallReviewAsPresentUser({
@@ -84,13 +132,7 @@ export async function machinePluginInstallDecision(
                 isAuthorityCurrent: opts.isAuthorityCurrent,
                 createInteractionId: randomUUID,
                 nowMs: Date.now,
-                callAuthenticatedPrivateRpc: async (method, payload) => await machineRpcWithServerScope({
-                    machineId,
-                    serverId: opts.serverId ?? undefined,
-                    timeoutMs: opts.timeoutMs ?? undefined,
-                    method,
-                    payload,
-                }),
+                callAuthenticatedPrivateRpc,
             });
         } else {
             if (!opts.isAuthorityCurrent()) {

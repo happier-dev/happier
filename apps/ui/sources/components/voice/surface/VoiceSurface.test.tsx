@@ -106,6 +106,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 const routerPushSpy = vi.fn();
 const pathnameState: { current: string } = { current: '/' };
+const CODEX_VOICE_PROVIDER_ID = 'happier.agent.codex/realtime-codex';
 
 const featureEnabledState: Record<string, boolean> = { 'voice.agent': true };
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -145,7 +146,7 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
 }));
 
 const voiceSettingState: { current: any } = {
-    current: { providerId: 'realtime_elevenlabs', ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } },
+    current: { providerId: 'happier.voice.elevenlabs/realtime-elevenlabs', ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } },
 };
 const storageState: { current: any } = { current: { sessions: {}, concurrentSessionListCacheByServerId: {} } };
 const storageListeners = new Set<() => void>();
@@ -185,6 +186,63 @@ function mirrorRegisteredVoiceAdapterTargeting(
   );
 }
 
+/**
+ * The surface's presentation is Horizon, and Horizon draws with the app's one
+ * energy clock (§4.2 rule 6). `useVoiceEnergy` throws without it on purpose — a
+ * planet with no clock is a bug, not a degraded mode — so the harness mounts the
+ * same provider the app layout does rather than letting the surface render a
+ * silently motionless variant that production never has.
+ */
+async function withVoiceEnergyBus(element: React.ReactElement) {
+  const { VoiceEnergyProvider } = await import('@/components/voice/light/useVoiceEnergy');
+  // `children` is a required prop, so it must be in the props object rather than
+  // supplied positionally — TS does not fold the positional form into the props type.
+  return React.createElement(VoiceEnergyProvider, {
+    state: { luminosity: 0, energized: false, direction: 'none' as const },
+    children: element,
+  });
+}
+
+/**
+ * Horizon shows the transcript inside the vessel when the feed is expanded (§2.1) instead of a
+ * count badge beside a collapsed panel title. Tests that used to read the badge assert the entries
+ * themselves, which is the guarantee the badge stood in for: the bound hidden conversation's
+ * messages actually reach the sidebar.
+ */
+async function pressSidebarVoiceActivityToggle(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  const toggle = screen.findByProps({ testID: 'voice-surface-activity-toggle:sidebar' });
+  await pressTestInstanceAsync(toggle, 'voice-surface-activity-toggle:sidebar');
+}
+
+/**
+ * Every microphone state Horizon reports to assistive tech.
+ *
+ * Collected with a predicate rather than `findAllByProps({ accessibilityValue: { text } })`:
+ * react-test-renderer compares props by reference, so an object literal never matches.
+ */
+function readMicrophoneStateTexts(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
+  return screen.root
+    .findAll((node: any) => typeof node.props?.accessibilityValue?.text === 'string')
+    .map((node: any) => String(node.props.accessibilityValue.text));
+}
+
+/**
+ * The expanded state Horizon reports to assistive tech, wherever on the toggle it lands.
+ *
+ * `aria-expanded` is the canonical spelling on both platforms; `accessibilityState` never reached
+ * react-native-web at all. What this helper is for is the *expansion store* — auto-expand on start,
+ * collapse persistence across remount — not the DOM attribute, which
+ * `presentations/VoiceHorizon.focusReturn.web.dom.test.tsx` asserts against the real web renderer.
+ */
+function readSidebarActivityToggleExpanded(
+  screen: Awaited<ReturnType<typeof renderScreen>>,
+): boolean | undefined {
+  return screen.root
+    .findAllByProps({ testID: 'voice-surface-activity-toggle:sidebar' })
+    .map((node: any) => node.props?.['aria-expanded'])
+    .find((expanded: any) => expanded !== undefined && expanded !== null);
+}
+
 async function renderVoiceSurface(element: React.ReactElement) {
   if (!sharedVoiceAdapterAssembly) {
     const { createBuiltinVoiceAdapterAssembly } = await import('@/voice/adapters/registerBuiltinVoiceAdapters');
@@ -193,7 +251,7 @@ async function renderVoiceSurface(element: React.ReactElement) {
   const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
   mirrorRegisteredVoiceAdapterTargeting(sharedVoiceAdapterAssembly.adapters);
   registerVoiceAdapters(sharedVoiceAdapterAssembly.adapters);
-  return await renderScreen(element);
+  return await renderScreen(await withVoiceEnergyBus(element));
 }
 
 async function renderVoiceSurfaceWithAdapter(
@@ -203,7 +261,7 @@ async function renderVoiceSurfaceWithAdapter(
   const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
   mirrorRegisteredVoiceAdapterTargeting([adapter]);
   registerVoiceAdapters([adapter]);
-  return await renderScreen(element);
+  return await renderScreen(await withVoiceEnergyBus(element));
 }
 
 function createGlobalSurfaceTestAdapter(
@@ -247,14 +305,14 @@ function createElevenLabsVoiceSettings(input: Readonly<{
   billingMode?: 'happier' | 'byo';
 }>) {
   return {
-    providerId: 'realtime_elevenlabs',
+    providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
     ui: {
       activityFeedEnabled: input.activityFeedEnabled,
       scopeDefault: input.scopeDefault,
       surfaceLocation: input.surfaceLocation,
     },
     providers: {
-      realtime_elevenlabs: {
+      'happier.voice.elevenlabs/realtime-elevenlabs': {
         schemaVersion: 2,
         config: {
           ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
@@ -269,14 +327,14 @@ function createCodexVoiceSettings(
   globalConnectedServices: unknown,
 ) {
   return {
-    providerId: 'realtime_codex',
+    providerId: 'happier.agent.codex/realtime-codex',
     ui: {
       activityFeedEnabled: false,
       scopeDefault: 'global' as const,
       surfaceLocation: 'auto' as const,
     },
     providers: {
-      realtime_codex: {
+      'happier.agent.codex/realtime-codex': {
         schemaVersion: 2,
         config: { globalConnectedServices },
       },
@@ -428,7 +486,7 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 's1',
       status: 'connected',
       mode: 'idle',
@@ -442,7 +500,7 @@ describe('VoiceSurface', () => {
     expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.endVoice' }).props.disabled).toBe(false);
   });
 
-  it('opens the selected provider disclosure without routing to context-sharing controls', async () => {
+  it('keeps the selected provider disclosure off the active surface', async () => {
     vi.resetModules();
     routerPushSpy.mockReset();
     featureEnabledState['voice.agent'] = true;
@@ -459,7 +517,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: null,
       status: 'disconnected',
       mode: 'idle',
@@ -469,22 +527,27 @@ describe('VoiceSurface', () => {
     const { VoiceSurface } = await import('./VoiceSurface');
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
-    const disclosure = screen.findByProps({ testID: 'voice-surface-data:sidebar' });
-    expect(disclosure.props.accessibilityLabel).toBe('voiceSurface.a11y.providerDataDisclosure');
-    await pressTestInstanceAsync(disclosure, 'voiceSurface.a11y.providerDataDisclosure');
-    expect(routerPushSpy).toHaveBeenCalledWith({
+    // §2.8 (ratified 2026-07-30): active Voice surfaces carry no provider or
+    // data-processing disclosure affordance. Disclosure lives in Voice settings
+    // and the privacy policy; the surface must not route there.
+    expect(screen.findAllByProps({ testID: 'voice-surface-data:sidebar' })).toHaveLength(0);
+    expect(screen.findAllByProps({
+      accessibilityLabel: 'voiceSurface.a11y.providerDataDisclosure',
+    })).toHaveLength(0);
+    expect(routerPushSpy).not.toHaveBeenCalledWith({
       pathname: '/settings/voice',
       params: { focus: 'provider' },
     });
   });
 
   it.each([
-    ['realtime_openai', OPENAI_REALTIME_DEFAULT_SETTINGS],
-    ['realtime_grok', XAI_REALTIME_DEFAULT_SETTINGS],
-  ] as const)('surfaces the manifest data affordance for selected %s', async (providerId, config) => {
+    ['happier.voice.elevenlabs/realtime-elevenlabs', ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS],
+    ['happier.voice.openai/realtime-openai', OPENAI_REALTIME_DEFAULT_SETTINGS],
+    ['happier.voice.xai/realtime-grok', XAI_REALTIME_DEFAULT_SETTINGS],
+  ] as const)('keeps the manifest data affordance off the active surface for selected %s', async (providerId, config) => {
     vi.resetModules();
     routerPushSpy.mockReset();
     voiceSettingState.current = {
@@ -517,9 +580,10 @@ describe('VoiceSurface', () => {
       createGlobalSurfaceTestAdapter(providerId),
     );
 
-    const disclosure = screen.findByProps({ testID: 'voice-surface-data:sidebar' });
-    await pressTestInstanceAsync(disclosure, 'voiceSurface.a11y.providerDataDisclosure');
-    expect(routerPushSpy).toHaveBeenCalledWith({
+    // §2.8 — the manifest disclosure is read in Voice settings, never on the
+    // active surface, for every provider that declares one.
+    expect(screen.findAllByProps({ testID: 'voice-surface-data:sidebar' })).toHaveLength(0);
+    expect(routerPushSpy).not.toHaveBeenCalledWith({
       pathname: '/settings/voice',
       params: { focus: 'provider' },
     });
@@ -531,7 +595,7 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'error',
       mode: 'idle',
@@ -554,36 +618,27 @@ describe('VoiceSurface', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/settings/voice');
   });
 
-  it.each([
-    ['voice_saved_secret', 'settingsVoice.realtimeProviders.authentication.savedSecret.subtitle'],
-    ['connected_service_api_key', 'settingsVoice.realtimeProviders.authentication.openAiApiKey.subtitle'],
-    ['connected_service_oauth', 'settingsVoice.realtimeProviders.authentication.openAiCodex.subtitle'],
-  ] as const)('identifies the selected OpenAI authentication source in credential recovery for %s', async (
-    source,
-    expectedSubtitle,
-  ) => {
+  it('uses the canonical provider-auth recovery copy for the final qualified OpenAI provider', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
+    const providerId = 'happier.voice.openai/realtime-openai';
     voiceSettingState.current = {
-      providerId: 'realtime_openai',
+      providerId,
       ui: {
         activityFeedEnabled: false,
         scopeDefault: 'global',
         surfaceLocation: 'auto',
       },
       providers: {
-        realtime_openai: {
+        [providerId]: {
           schemaVersion: 1,
-          config: {
-            ...OPENAI_REALTIME_DEFAULT_SETTINGS,
-            authentication: { source },
-          },
+          config: OPENAI_REALTIME_DEFAULT_SETTINGS,
         },
       },
     };
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_openai',
+      adapterId: providerId,
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'error',
       mode: 'idle',
@@ -595,10 +650,29 @@ describe('VoiceSurface', () => {
     });
 
     const { VoiceSurface } = await import('./VoiceSurface');
-    const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+    const screen = await renderVoiceSurfaceWithAdapter(
+      React.createElement(VoiceSurface, { variant: 'sidebar' }),
+      createGlobalSurfaceTestAdapter(providerId),
+    );
+    // Adapter registration publishes its initial disconnected snapshot. Drive
+    // the terminal auth failure afterward so this assertion exercises the
+    // mounted final-qualified provider surface rather than stale setup state.
+    await act(async () => {
+      setVoiceSessionSnapshot({
+        adapterId: providerId,
+        sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        status: 'error',
+        mode: 'idle',
+        canStop: false,
+        errorCode: 'provider_auth_invalid',
+        errorMessage: 'credential_unavailable',
+        errorRecoveryAction: 'review_credentials',
+        errorPresentation: 'error',
+      });
+    });
 
-    expect(screen.getTextContent()).toContain(expectedSubtitle);
-    expect(screen.getTextContent()).not.toContain('settingsVoice.local.machineErrors.provider_auth_invalid');
+    expect(screen.getTextContent()).toContain('settingsVoice.local.machineErrors.provider_auth_invalid');
+    expect(screen.getTextContent()).not.toContain('settingsVoice.realtimeProviders.authentication.openAiCodex.subtitle');
     expect(screen.findByProps({ accessibilityLabel: 'voiceSurface.reviewCredentials' })).toBeTruthy();
   });
 
@@ -615,7 +689,7 @@ describe('VoiceSurface', () => {
     });
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'error',
       mode: 'idle',
@@ -630,12 +704,12 @@ describe('VoiceSurface', () => {
     const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
     expect(screen.getTextContent()).toContain(`settingsVoice.local.machineErrors.${errorCode}`);
-    expect(screen.findAllByProps({ testID: 'voice-surface-toggle:sidebar' })).toHaveLength(0);
+    expect(screen.findAllByProps({ accessibilityLabel: 'voiceAssistant.startVoice' })).toHaveLength(0);
     expect(screen.findAllByProps({ testID: 'voice-surface-recovery:sidebar' })).toHaveLength(0);
 
     await act(async () => {
       setVoiceSessionSnapshot({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         sessionId: null,
         status: 'disconnected',
         mode: 'idle',
@@ -643,7 +717,7 @@ describe('VoiceSurface', () => {
       });
     });
 
-    expect(screen.findByProps({ testID: 'voice-surface-toggle:sidebar' }).props.disabled).toBe(false);
+    expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.startVoice' }).props.disabled).toBe(false);
   });
 
   it('keeps the canonical Retry action for a neighboring recoverable provider failure', async () => {
@@ -656,7 +730,7 @@ describe('VoiceSurface', () => {
     });
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'disconnected',
       mode: 'idle',
@@ -671,7 +745,11 @@ describe('VoiceSurface', () => {
     const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
     expect(screen.findByProps({ testID: 'voice-surface-recovery:sidebar' }).props.accessibilityLabel).toBe('common.retry');
-    expect(screen.findAllByProps({ testID: 'voice-surface-toggle:sidebar' })).toHaveLength(0);
+    // §12.2 defect 2, inverted: the retired controls row early-returned on
+    // `canRecover` and removed the whole transport, so a recoverable failure took
+    // Start (and, on a live session, Stop) away with it. Recovery is an addition.
+    expect(screen.findAllByProps({ accessibilityLabel: 'voiceAssistant.startVoice' }).length)
+      .toBeGreaterThan(0);
   });
 
   it('does not show the level visualizer for stale speaking mode after disconnect', async () => {
@@ -679,7 +757,7 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: null,
       status: 'disconnected',
       mode: 'speaking',
@@ -697,7 +775,7 @@ describe('VoiceSurface', () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
       providers: {
         local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } },
@@ -706,7 +784,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -720,7 +798,7 @@ describe('VoiceSurface', () => {
 
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     await pressTestInstanceAsync(
@@ -738,7 +816,7 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 's1',
       status: 'connected',
       mode: 'listening',
@@ -757,13 +835,13 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     routerPushSpy.mockReset();
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
     const voiceSessionBindingStore = await getVoiceConversationBindingStore();
     voiceSessionBindingStore.getState().bind({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'carrier-s1',
       transcriptMode: 'synthetic',
@@ -779,7 +857,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -802,13 +880,13 @@ describe('VoiceSurface', () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -830,7 +908,7 @@ describe('VoiceSurface', () => {
       });
       const voiceSessionBindingStore = await getVoiceConversationBindingStore();
       voiceSessionBindingStore.getState().bind({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         conversationSessionId: 'carrier-s2',
         transcriptMode: 'synthetic',
@@ -847,7 +925,7 @@ describe('VoiceSurface', () => {
     await registerMockedStorageStateBridge();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
     allSessionsState.current = [];
@@ -855,7 +933,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -877,7 +955,7 @@ describe('VoiceSurface', () => {
           summary: { text: 'Voice conversation' },
           voiceConversationBindingV1: {
             v: 1,
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             transcriptMode: 'synthetic',
             targetSessionId: null,
@@ -902,7 +980,7 @@ describe('VoiceSurface', () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: true, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
     allSessionsState.current = [];
@@ -910,7 +988,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -935,7 +1013,7 @@ describe('VoiceSurface', () => {
               summary: { text: 'Voice conversation' },
               voiceConversationBindingV1: {
                 v: 1,
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
                 transcriptMode: 'synthetic',
                 targetSessionId: null,
@@ -964,8 +1042,9 @@ describe('VoiceSurface', () => {
     });
 
     expect(screen.findAllByProps({ accessibilityLabel: 'voiceSurface.a11y.openConversation' }).length).toBeGreaterThan(0);
+    await pressSidebarVoiceActivityToggle(screen);
     const texts = screen.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
-    expect(texts).toContain('2');
+    expect(texts).toEqual(expect.arrayContaining(['first', 'second']));
   });
 
   it('keeps the sidebar hidden conversation affordance when the current provider no longer matches the persisted binding adapter', async () => {
@@ -973,7 +1052,7 @@ describe('VoiceSurface', () => {
     await registerMockedStorageStateBridge();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: { activityFeedEnabled: true, scopeDefault: 'global', surfaceLocation: 'auto' },
       providers: {
         local_conversation: { schemaVersion: 1, config: {
@@ -986,7 +1065,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -1009,7 +1088,7 @@ describe('VoiceSurface', () => {
               summary: { text: 'Voice conversation' },
               voiceConversationBindingV1: {
                 v: 1,
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
                 transcriptMode: 'synthetic',
                 targetSessionId: null,
@@ -1038,15 +1117,16 @@ describe('VoiceSurface', () => {
     });
 
     expect(screen.findAllByProps({ accessibilityLabel: 'voiceSurface.a11y.openConversation' }).length).toBeGreaterThan(0);
+    await pressSidebarVoiceActivityToggle(screen);
     const texts = screen.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
-    expect(texts).toContain('2');
+    expect(texts).toEqual(expect.arrayContaining(['first', 'second']));
   });
 
   it('does not present a global Voice Home tool target as the voice binding', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
       privacy: { shareSessionSummary: true, shareFilePaths: true },
     };
@@ -1068,7 +1148,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -1079,7 +1159,7 @@ describe('VoiceSurface', () => {
 
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     expect(screen.getTextContent()).not.toContain('Ready and waiting');
@@ -1090,7 +1170,7 @@ describe('VoiceSurface', () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
       privacy: { shareSessionSummary: true, shareFilePaths: true },
     };
@@ -1138,7 +1218,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'idle',
@@ -1149,7 +1229,7 @@ describe('VoiceSurface', () => {
 
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     expect(screen.getTextContent()).not.toContain('Lookup target session summary');
@@ -1163,7 +1243,7 @@ describe('VoiceSurface', () => {
     ensureVoiceBindingSpy.mockReset();
     pathnameState.current = '/';
     ensureVoiceBindingSpy.mockResolvedValueOnce({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'persisted-voice-session',
       transcriptMode: 'synthetic',
@@ -1171,7 +1251,7 @@ describe('VoiceSurface', () => {
       updatedAt: 1,
     });
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
     allSessionsState.current = [
@@ -1183,7 +1263,7 @@ describe('VoiceSurface', () => {
           summary: { text: 'Voice conversation' },
           voiceConversationBindingV1: {
             v: 1,
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             transcriptMode: 'synthetic',
             targetSessionId: null,
@@ -1201,7 +1281,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'disconnected',
       mode: 'idle',
@@ -1213,12 +1293,14 @@ describe('VoiceSurface', () => {
     const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
     const openConversation = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.openConversation' });
-    const icon = screen.root
-      .findAllByType('Ionicons' as any)
-      .find((node: any) => node.props?.name === 'chatbubble-ellipses-outline');
 
     expect(openConversation).toBeTruthy();
-    expect(icon).toBeTruthy();
+    // D6: the affordance is a labelled text pill, not an icon-only control. The visible label and
+    // the accessible name are the same string, so the way into the conversation is readable
+    // without decoding a glyph.
+    expect(
+      openConversation.findAllByType('Text' as any).map((node: any) => String(node.props.children ?? '')),
+    ).toContain('voiceSurface.a11y.openConversation');
 
     await pressTestInstanceAsync(openConversation, 'voiceSurface.a11y.openConversation');
 
@@ -1248,7 +1330,7 @@ describe('VoiceSurface', () => {
         },
       });
       const hiddenBinding = {
-        adapterId: 'realtime_codex',
+        adapterId: CODEX_VOICE_PROVIDER_ID,
         controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         conversationSessionId: 'hidden-codex-voice-a',
         transcriptMode: 'native_session',
@@ -1282,7 +1364,7 @@ describe('VoiceSurface', () => {
 
       const voiceSessionBindingStore = await getVoiceConversationBindingStore();
       voiceSessionBindingStore.getState().bind({
-        adapterId: 'realtime_codex',
+        adapterId: CODEX_VOICE_PROVIDER_ID,
         controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         conversationSessionId: 'hidden-codex-voice-a',
         transcriptMode: 'native_session',
@@ -1292,7 +1374,7 @@ describe('VoiceSurface', () => {
 
       const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
       setVoiceSessionSnapshot({
-        adapterId: 'realtime_codex',
+        adapterId: CODEX_VOICE_PROVIDER_ID,
         sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         status,
         mode: 'idle',
@@ -1302,7 +1384,7 @@ describe('VoiceSurface', () => {
       const { VoiceSurface } = await import('./VoiceSurface');
       const screen = await renderVoiceSurfaceWithAdapter(
         React.createElement(VoiceSurface, { variant: 'sidebar' }),
-        createGlobalSurfaceTestAdapter('realtime_codex', 'bound_conversation'),
+        createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID, 'bound_conversation'),
       );
 
       await pressTestInstanceAsync(
@@ -1402,7 +1484,7 @@ describe('VoiceSurface', () => {
       requestedTargetSessionId: 's2',
     });
     expect(ensureVoiceBindingSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ adapterId: 'realtime_elevenlabs' }),
+      expect.objectContaining({ adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' }),
     );
     expect(routerPushSpy).toHaveBeenCalledWith('/session/persisted-voice-session-s2');
   });
@@ -1538,7 +1620,7 @@ describe('VoiceSurface', () => {
     routerPushSpy.mockReset();
     ensureVoiceBindingSpy.mockReset();
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
     allSessionsState.current = [
@@ -1554,7 +1636,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'disconnected',
       mode: 'idle',
@@ -1600,10 +1682,14 @@ describe('VoiceSurface', () => {
     expect(bargeIn).toBeTruthy();
     expect(typeof bargeIn.props.onPress).toBe('function');
 
+    // Half duplex: the microphone is closed while the assistant speaks. The surface must say so
+    // with a glyph AND a state string — never colour alone, and never a plain mic that implies an
+    // open microphone the runtime is not actually capturing from.
     const micIcon = screen.root
-      .findAllByType('Ionicons' as any)
-      .find((n: any) => n.props?.name === 'mic-off-outline');
+      .findAllByType('Icon' as any)
+      .find((n: any) => n.props?.name === 'microphone-slash');
     expect(micIcon).toBeTruthy();
+    expect(readMicrophoneStateTexts(screen)).toContain('voiceSurface.a11y.microphoneInactive');
 
     await pressTestInstanceAsync(bargeIn, 'voiceSurface.a11y.bargeIn');
     expect(bargeInSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
@@ -1625,7 +1711,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: CODEX_VOICE_PROVIDER_ID,
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'speaking',
@@ -1634,27 +1720,24 @@ describe('VoiceSurface', () => {
     const { voiceRuntimeLevelStore } = await import('@/voice/runtime/levels/voiceRuntimeLevelStore');
     const inputLevel = voiceRuntimeLevelStore.open({
       channel: 'input',
-      sourceId: 'realtime_codex:voice-global',
+      sourceId: 'happier.agent.codex/realtime-codex:voice-global',
     });
 
     try {
       const { VoiceSurface } = await import('./VoiceSurface');
       const screen = await renderVoiceSurfaceWithAdapter(
         React.createElement(VoiceSurface, { variant: 'sidebar' }),
-        createGlobalSurfaceTestAdapter('realtime_codex'),
+        createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
       );
 
       expect(screen.findAllByProps({ accessibilityLabel: 'voiceSurface.a11y.bargeIn' })).toHaveLength(0);
-      expect(screen.findByProps({
-        accessibilityLabel: 'voiceSurface.a11y.microphoneActive',
-      })).toBeTruthy();
-      expect(screen.root.findAllByType('Ionicons' as any).some(
-        (node: any) => node.props?.name === 'mic',
+      // Full duplex: the input level source above is genuinely open while output speaks, so the
+      // transport reports an ACTIVE microphone. State rides `accessibilityValue`; the control's
+      // `accessibilityLabel` stays the action it performs.
+      expect(readMicrophoneStateTexts(screen)).toContain('voiceSurface.a11y.microphoneActive');
+      expect(screen.root.findAllByType('Icon' as any).some(
+        (node: any) => node.props?.name === 'microphone',
       )).toBe(true);
-      expect(screen.findByType('VoiceLevelVisualizer' as any).props).toMatchObject({
-        channel: 'input',
-        fallbackPulse: false,
-      });
     } finally {
       await act(async () => {
         inputLevel.close();
@@ -1733,12 +1816,12 @@ describe('VoiceSurface', () => {
       activityFeedEnabled: false,
       scopeDefault: 'global',
       surfaceLocation: 'auto',
-      billingMode: 'byo',
+      billingMode: 'happier',
     });
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'connected',
       mode: 'speaking',
@@ -1854,7 +1937,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: null,
       status: 'disconnected',
       mode: 'idle',
@@ -1868,7 +1951,7 @@ describe('VoiceSurface', () => {
 
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     const pressable = screen.findByProps({ accessibilityLabel: 'voiceAssistant.startVoice' });
@@ -1891,7 +1974,7 @@ describe('VoiceSurface', () => {
     pathnameState.current = '/';
     voiceSettingState.current = binding === undefined
       ? {
-          providerId: 'realtime_codex',
+          providerId: 'happier.agent.codex/realtime-codex',
           ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
         }
       : createCodexVoiceSettings(binding);
@@ -1905,7 +1988,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: null,
       status: 'disconnected',
       mode: 'idle',
@@ -1917,12 +2000,16 @@ describe('VoiceSurface', () => {
     const { VoiceSurface } = await import('./VoiceSurface');
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     expect(screen.findByProps({
       accessibilityLabel: 'voiceAssistant.startVoice',
     }).props.disabled).toBe(true);
+    expect(screen.getTextContent()).toContain(
+      'settingsVoice.realtimeProviders.authentication.referenceRequired',
+    );
+    expect(screen.getTextContent()).not.toContain('voiceSurface.selectSessionToStart');
     expect(toggleSpy).not.toHaveBeenCalled();
     toggleSpy.mockRestore();
   });
@@ -1932,14 +2019,14 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     pathnameState.current = '/session/sidebar-direct-session';
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: {
         activityFeedEnabled: false,
         scopeDefault: 'session',
         surfaceLocation: 'sidebar',
       },
       providers: {
-        realtime_codex: {
+        'happier.agent.codex/realtime-codex': {
           schemaVersion: 2,
           config: { globalConnectedServices: null },
         },
@@ -1961,7 +2048,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: null,
       status: 'disconnected',
       mode: 'idle',
@@ -1973,7 +2060,7 @@ describe('VoiceSurface', () => {
     const { VoiceSurface } = await import('./VoiceSurface');
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     const start = screen.findByProps({
@@ -1990,14 +2077,14 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     pathnameState.current = '/';
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: {
         activityFeedEnabled: false,
         scopeDefault: 'session',
         surfaceLocation: 'sidebar',
       },
       providers: {
-        realtime_codex: {
+        'happier.agent.codex/realtime-codex': {
           schemaVersion: 2,
           config: {
             globalConnectedServices: {
@@ -2028,7 +2115,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: null,
       status: 'disconnected',
       mode: 'idle',
@@ -2040,7 +2127,7 @@ describe('VoiceSurface', () => {
     const { VoiceSurface } = await import('./VoiceSurface');
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'sidebar' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     const start = screen.findByProps({
@@ -2054,13 +2141,13 @@ describe('VoiceSurface', () => {
     toggleSpy.mockRestore();
   });
 
-  it('starts a global-capable provider directly only from its explicit exact session surface', async () => {
+  it('keeps an in-session Codex Start bound to its exact session when Global is the default', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     pathnameState.current = '/session/s1';
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
-      ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' },
+      providerId: 'happier.agent.codex/realtime-codex',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'session' },
     };
     const currentVoiceTargetStore = await getVoiceTargetStore();
     currentVoiceTargetStore.setState({
@@ -2071,7 +2158,7 @@ describe('VoiceSurface', () => {
     });
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: null,
       status: 'disconnected',
       mode: 'idle',
@@ -2083,7 +2170,7 @@ describe('VoiceSurface', () => {
     const { VoiceSurface } = await import('./VoiceSurface');
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }),
-      createGlobalSurfaceTestAdapter('realtime_codex'),
+      createGlobalSurfaceTestAdapter(CODEX_VOICE_PROVIDER_ID),
     );
 
     await pressTestInstanceAsync(
@@ -2109,7 +2196,7 @@ describe('VoiceSurface', () => {
       generation: 2,
     };
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' },
     };
     storageState.current = {
@@ -2158,7 +2245,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: 'original-direct-session-b',
       status: 'error',
       mode: 'idle',
@@ -2173,7 +2260,7 @@ describe('VoiceSurface', () => {
     const screen = await renderVoiceSurfaceWithAdapter(
       React.createElement(VoiceSurface, { variant: 'session', sessionId: 'navigated-session-c' }),
       createGlobalSurfaceTestAdapter(
-        'realtime_codex',
+        CODEX_VOICE_PROVIDER_ID,
         undefined,
         { pluginId: 'happier.agent.codex', localId: 'codex' },
       ),
@@ -2190,8 +2277,6 @@ describe('VoiceSurface', () => {
         pluginId: 'happier.agent.codex',
         localId: 'openai-codex',
         accountId: 'account-b',
-        serverId: 'server-b',
-        machineId: 'machine-b',
       },
     });
   });
@@ -2201,7 +2286,7 @@ describe('VoiceSurface', () => {
     featureEnabledState['voice.agent'] = true;
     pathnameState.current = '/session/direct-session-without-binding';
     voiceSettingState.current = {
-      providerId: 'realtime_codex',
+      providerId: 'happier.agent.codex/realtime-codex',
       ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' },
     };
     storageState.current = {
@@ -2228,7 +2313,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_codex',
+      adapterId: 'happier.agent.codex/realtime-codex',
       sessionId: 'direct-session-without-binding',
       status: 'error',
       mode: 'idle',
@@ -2246,7 +2331,7 @@ describe('VoiceSurface', () => {
         sessionId: 'direct-session-without-binding',
       }),
       createGlobalSurfaceTestAdapter(
-        'realtime_codex',
+        'happier.agent.codex/realtime-codex',
         undefined,
         { pluginId: 'happier.agent.codex', localId: 'codex' },
       ),
@@ -2442,7 +2527,7 @@ describe('VoiceSurface', () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
@@ -2458,7 +2543,7 @@ describe('VoiceSurface', () => {
     try {
       const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
       setVoiceSessionSnapshot({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         sessionId: null,
         status: 'disconnected',
         mode: 'idle',
@@ -2482,13 +2567,13 @@ describe('VoiceSurface', () => {
   it('does not violate hook ordering when provider setting toggles off', async () => {
     vi.resetModules();
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'session', surfaceLocation: 'session' },
     };
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 's1',
       status: 'connected',
       mode: 'idle',
@@ -2510,13 +2595,13 @@ describe('VoiceSurface', () => {
   it('auto-selects surface placement when ui.surfaceLocation is auto', async () => {
     vi.resetModules();
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 's1',
       status: 'connected',
       mode: 'idle',
@@ -2585,7 +2670,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: null,
       status: 'disconnected',
       mode: 'idle',
@@ -2609,7 +2694,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'disconnected',
       mode: 'idle',
@@ -2623,20 +2708,20 @@ describe('VoiceSurface', () => {
     const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
     expect(screen.findByProps({ testID: 'voice-surface-status:sidebar:disconnected' })).toBeTruthy();
-    expect(screen.findByProps({ testID: 'voice-surface-toggle:sidebar' }).props.disabled).toBe(false);
+    expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.startVoice' }).props.disabled).toBe(false);
     expect(screen.getTextContent()).toContain('settingsVoice.local.machineErrors.transport_disconnect');
   });
 
   it('renders the canonical recovery copy for newly structured microphone revocation errors', async () => {
     vi.resetModules();
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
     };
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       status: 'error',
       mode: 'idle',
@@ -2707,7 +2792,7 @@ describe('VoiceSurface', () => {
     };
     const voiceSessionBindingStore = await getVoiceConversationBindingStore();
     voiceSessionBindingStore.getState().bind({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'carrier-s1',
       transcriptMode: 'synthetic',
@@ -2717,7 +2802,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: null,
       status: 'connected',
       mode: 'idle',
@@ -2728,9 +2813,10 @@ describe('VoiceSurface', () => {
 
     const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    // Ensure count is not hard-coded to 0 for sidebar feed.
+    // Ensure the sidebar feed is not hard-coded empty: both bound-conversation messages surface.
+    await pressSidebarVoiceActivityToggle(screen);
     const texts = screen.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
-    expect(texts).toContain('2');
+    expect(texts).toEqual(expect.arrayContaining(['first', 'second']));
   });
 
   it('orders sidebar transcript entries by createdAt and shows note entries from the same projection path', async () => {
@@ -2787,7 +2873,7 @@ describe('VoiceSurface', () => {
     };
     const voiceSessionBindingStore = await getVoiceConversationBindingStore();
     voiceSessionBindingStore.getState().bind({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       conversationSessionId: 'carrier-s1',
       transcriptMode: 'synthetic',
@@ -2797,7 +2883,7 @@ describe('VoiceSurface', () => {
 
     const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: null,
       status: 'connected',
       mode: 'idle',
@@ -2808,26 +2894,28 @@ describe('VoiceSurface', () => {
 
     const screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
 
-    const toggle = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
-    await pressTestInstanceAsync(toggle, 'voiceSurface.a11y.toggleActivity');
+    await pressSidebarVoiceActivityToggle(screen);
 
-    const eventTexts = screen.root
-      .findAllByType('Text' as any)
-      .filter((n) => n.props.numberOfLines === 3)
-      .map((n) => String(n.props.children ?? ''));
-
-    expect(eventTexts).toEqual([
+    // Matched by content rather than by line-clamp: the contract is newest-first order with note
+    // entries carried on the same projection path, not how many lines a row is allowed to use.
+    const expectedOrder = [
       '[Voice] Tool result: sendSessionMessage failed',
       'new',
       'old',
       'older',
-    ]);
+    ];
+    const eventTexts = screen.root
+      .findAllByType('Text' as any)
+      .map((n) => String(n.props.children ?? ''))
+      .filter((text) => expectedOrder.includes(text));
+
+    expect(eventTexts).toEqual(expectedOrder);
   });
 
   it('auto-expands once per canonical voice attempt and respects manual collapse through reconnect and remount', async () => {
     vi.resetModules();
     voiceSettingState.current = {
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       ui: {
         activityFeedEnabled: true,
         activityFeedAutoExpandOnStart: true,
@@ -2844,52 +2932,50 @@ describe('VoiceSurface', () => {
 
     await act(async () => {
       setVoiceSessionSnapshot({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         sessionId: 'voice-session-1',
         status: 'connecting',
         mode: 'idle',
         canStop: true,
       });
     });
-    let toggle = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
-    expect(toggle.findByType('Ionicons' as any).props.name).toBe('chevron-down');
+    // Horizon's status block IS the expand/collapse target (§2.1) and carries no disclosure glyph,
+    // so the expanded/collapsed fact reaches assistive tech through `aria-expanded` instead.
+    expect(readSidebarActivityToggleExpanded(screen)).toBe(true);
 
-    await pressTestInstanceAsync(toggle, 'voiceSurface.a11y.toggleActivity');
+    await pressSidebarVoiceActivityToggle(screen);
     await act(async () => {
       setVoiceSessionSnapshot({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         sessionId: 'voice-session-1',
         status: 'connected',
         mode: 'listening',
         canStop: true,
       });
       setVoiceSessionSnapshot({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         sessionId: 'voice-session-1',
         status: 'connecting',
         mode: 'idle',
         canStop: true,
       });
     });
-    toggle = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
-    expect(toggle.findByType('Ionicons' as any).props.name).toBe('chevron-forward');
+    expect(readSidebarActivityToggleExpanded(screen)).toBe(false);
 
     await act(async () => screen.unmount());
     screen = await renderVoiceSurface(React.createElement(VoiceSurface, { variant: 'sidebar' }));
-    toggle = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
-    expect(toggle.findByType('Ionicons' as any).props.name).toBe('chevron-forward');
+    expect(readSidebarActivityToggleExpanded(screen)).toBe(false);
 
     await act(async () => {
       setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
       setVoiceSessionSnapshot({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         sessionId: 'voice-session-1',
         status: 'connecting',
         mode: 'idle',
         canStop: true,
       });
     });
-    toggle = screen.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
-    expect(toggle.findByType('Ionicons' as any).props.name).toBe('chevron-down');
+    expect(readSidebarActivityToggleExpanded(screen)).toBe(true);
   });
 });

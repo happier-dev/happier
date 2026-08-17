@@ -2,11 +2,17 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
-import type { machineContributionRegistryProjectionDescribe as machineContributionRegistryProjectionDescribeFn } from '@/sync/ops/machineContributionRegistryProjection';
+import type {
+    machineContributionRegistryProjectionDescribe as machineContributionRegistryProjectionDescribeFn,
+    machinePluginSettingsGet as machinePluginSettingsGetFn,
+    machinePluginSettingsSet as machinePluginSettingsSetFn,
+} from '@/sync/ops/machineContributionRegistryProjection';
 import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
 import { createTransferRecipientKeyPair } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 
 type MachineContributionRegistryProjectionDescribeFn = typeof machineContributionRegistryProjectionDescribeFn;
+type MachinePluginSettingsGetFn = typeof machinePluginSettingsGetFn;
+type MachinePluginSettingsSetFn = typeof machinePluginSettingsSetFn;
 
 export const sendMessage = vi.fn();
 export const submitMessage = vi.fn();
@@ -21,6 +27,8 @@ export const enqueuePendingMessage = vi.fn(async (
     accepted: true,
     externalHandoffClaimed: true,
 }));
+export const blockPendingDelivery = vi.fn(async () => {});
+export const markPendingDeliveryHandled = vi.fn(async () => {});
 export const daemonVoiceAgentStart = vi.fn();
 export const daemonVoiceAgentSendTurn = vi.fn();
 export const daemonVoiceAgentWelcome = vi.fn();
@@ -91,6 +99,12 @@ export const machineContributionRegistryProjectionDescribe = vi.fn<MachineContri
         supported: false,
         reason: 'not-supported',
     }),
+);
+export const machinePluginSettingsGet = vi.fn<MachinePluginSettingsGetFn>(
+    async () => ({ supported: false, reason: 'not-supported' }),
+);
+export const machinePluginSettingsSet = vi.fn<MachinePluginSettingsSetFn>(
+    async () => ({ supported: false, reason: 'not-supported' }),
 );
 
 let platformOs: 'ios' | 'web' = 'ios';
@@ -168,28 +182,23 @@ export const BASE_SETTINGS = {
             shareToolArgs: false,
         },
         providers: {
-            realtime_elevenlabs: { schemaVersion: 2, config: {
+            'happier.voice.elevenlabs/realtime-elevenlabs': { schemaVersion: 2, config: {
                 billingMode: 'happier',
                 byo: { agentId: null },
             } },
 	            local_direct: { schemaVersion: 1, config: {
                 stt: {
-                    baseUrl: 'http://localhost:8000',
-                    apiKey: null,
-                    model: 'whisper-1',
-                    useDeviceStt: false,
+                    provider: 'happier.voice.openai-compat/stt',
+                    localNeural: {
+                        assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+                        language: null,
+                        execution: 'auto',
+                    },
                 },
                 tts: {
                     autoSpeakReplies: false,
                     bargeInEnabled: true,
-                    provider: 'openai_compat',
-                    openaiCompat: {
-                        baseUrl: null,
-                        apiKey: null,
-                        model: 'tts-1',
-                        voice: 'alloy',
-                        format: 'mp3',
-                    },
+                    provider: 'happier.voice.openai-compat/tts',
                     localNeural: {
                         model: 'kokoro',
                         assetId: null,
@@ -210,22 +219,17 @@ export const BASE_SETTINGS = {
             local_conversation: { schemaVersion: 1, config: {
                 conversationMode: 'direct_session',
                 stt: {
-                    baseUrl: 'http://localhost:8000',
-                    apiKey: null,
-                    model: 'whisper-1',
-                    useDeviceStt: false,
+                    provider: 'happier.voice.openai-compat/stt',
+                    localNeural: {
+                        assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+                        language: null,
+                        execution: 'auto',
+                    },
                 },
                 tts: {
                     autoSpeakReplies: false,
                     bargeInEnabled: true,
-                    provider: 'openai_compat',
-                    openaiCompat: {
-                        baseUrl: null,
-                        apiKey: null,
-                        model: 'tts-1',
-                        voice: 'alloy',
-                        format: 'mp3',
-                    },
+                    provider: 'happier.voice.openai-compat/tts',
                     localNeural: {
                         model: 'kokoro',
                         assetId: null,
@@ -243,7 +247,6 @@ export const BASE_SETTINGS = {
 	                    },
 	                },
 	                agent: {
-                    backend: 'daemon',
                     agentSource: 'session',
                     agentId: 'claude',
                     permissionIntent: 'read-only',
@@ -252,14 +255,7 @@ export const BASE_SETTINGS = {
                     chatModelId: 'default',
                     commitModelSource: 'chat',
                     commitModelId: 'default',
-                    openaiCompat: {
-                        chatBaseUrl: null,
-                        chatApiKey: null,
-                        chatModel: 'default',
-                        commitModel: 'default',
-                        temperature: 0.4,
-                        maxTokens: null,
-                    },
+                    providerChat: null,
                     verbosity: 'short',
                 },
                 streaming: {
@@ -267,6 +263,21 @@ export const BASE_SETTINGS = {
                     ttsEnabled: false,
                     ttsChunkChars: 200,
                 },
+            } },
+            'happier.voice.openai-compat/stt': { schemaVersion: 2, config: {
+                baseUrl: 'http://localhost:8000',
+                insecureLocalOriginConsent: 'http://localhost:8000',
+                insecureLocalConsentMachineId: 'machine-1',
+                model: 'whisper-1',
+                language: '',
+            } },
+            'happier.voice.openai-compat/tts': { schemaVersion: 2, config: {
+                baseUrl: 'http://localhost:8001',
+                insecureLocalOriginConsent: 'http://localhost:8001',
+                insecureLocalConsentMachineId: 'machine-1',
+                model: 'tts-1',
+                voiceName: 'alloy',
+                format: 'mp3',
             } },
         },
     },
@@ -335,6 +346,8 @@ vi.mock('@/sync/sync', () => ({
         sendMessage,
         submitMessage,
         enqueuePendingMessage,
+        blockPendingDelivery,
+        markPendingDeliveryHandled,
         ensureSessionVisibleForMessageRoute: vi.fn(async () => {}),
         refreshSessionMessages: vi.fn(async () => {}),
         refreshSessions: (...args: any[]) => (refreshSessions as any)(...args),
@@ -410,6 +423,10 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machineId: Parameters<MachineContributionRegistryProjectionDescribeFn>[0],
         opts?: Parameters<MachineContributionRegistryProjectionDescribeFn>[1],
     ) => machineContributionRegistryProjectionDescribe(machineId, opts),
+    machinePluginSettingsGet: (...args: Parameters<MachinePluginSettingsGetFn>) =>
+        machinePluginSettingsGet(...args),
+    machinePluginSettingsSet: (...args: Parameters<MachinePluginSettingsSetFn>) =>
+        machinePluginSettingsSet(...args),
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -632,12 +649,6 @@ vi.mock('@/sync/domains/state/storage', () => {
         },
         sessions: {},
         sessionMessages: {},
-        // Realtime status mirror sink: the realtime transport singleton subscribes
-        // to the runtime machine and mirrors realtime-owned snapshots into these
-        // store setters. They are storage-boundary no-ops for the local engine.
-        setRealtimeStatus: () => {},
-        setRealtimeMode: () => {},
-        clearRealtimeModeDebounce: () => {},
     };
 
     const storage = {
@@ -718,6 +729,10 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         submitMessage.mockReset();
         submitMessage.mockResolvedValue(undefined);
         enqueuePendingMessage.mockClear();
+        blockPendingDelivery.mockReset();
+        blockPendingDelivery.mockResolvedValue(undefined);
+        markPendingDeliveryHandled.mockReset();
+        markPendingDeliveryHandled.mockResolvedValue(undefined);
         daemonVoiceAgentStart.mockReset();
         daemonVoiceAgentSendTurn.mockReset();
         daemonVoiceAgentStartTurnStream.mockReset();
@@ -783,7 +798,7 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         globalThis.fetch = vi.fn() as any;
         machineRpcWithServerScope.mockImplementation(async (request: any) => {
             switch (request?.method) {
-                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT: {
+                case RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_INIT: {
                     const recipient = createTransferRecipientKeyPair();
                     return {
                         success: true,
@@ -792,16 +807,16 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
                         recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
                     };
                 }
-                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_CHUNK:
+                case RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_CHUNK:
                     return { success: true };
-                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_FINALIZE:
+                case RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE_UPLOAD_FINALIZE:
                     return {
                         success: true,
                         uploadId: 'local-engine-test-upload',
                         sizeBytes: 3,
                         sha256: 'a'.repeat(64),
                     };
-                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE: {
+                case RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE: {
                     // These legacy engine-behavior suites use fetch queues only as
                     // deterministic third-party response fixtures. Production UI
                     // still crosses the machine-scoped daemon RPC boundary above.
@@ -811,18 +826,10 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
                         signal: request?.signal,
                     });
                     const body = await response.json();
-                    return { ok: true, text: String(body?.text ?? '') };
-                }
-                case RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_CHAT: {
-                    const response = await (globalThis.fetch as any)('http://localhost:8002/v1/chat/completions', {
-                        method: 'POST',
-                        body: JSON.stringify(request?.payload ?? {}),
-                        signal: request?.signal,
-                    });
-                    const body = await response.json();
                     return {
                         ok: true,
-                        text: String(body?.choices?.[0]?.message?.content ?? body?.text ?? ''),
+                        requestId: String(request?.payload?.requestId ?? ''),
+                        text: String(body?.text ?? ''),
                     };
                 }
                 default:
@@ -879,6 +886,10 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         sessionExecutionRunStop.mockResolvedValue({ ok: true });
         machineContributionRegistryProjectionDescribe.mockReset();
         machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        machinePluginSettingsGet.mockReset();
+        machinePluginSettingsGet.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        machinePluginSettingsSet.mockReset();
+        machinePluginSettingsSet.mockResolvedValue({ supported: false, reason: 'not-supported' });
         machineSpawnNewSession.mockReset();
         machineSpawnNewSession.mockImplementation(async (args: any) => {
             const machineId = typeof args?.machineId === 'string' ? args.machineId : 'machine-1';

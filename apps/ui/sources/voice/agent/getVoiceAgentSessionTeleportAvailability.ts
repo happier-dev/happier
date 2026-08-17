@@ -23,7 +23,5 @@ export function getVoiceAgentSessionTeleportAvailability(params: Readonly<{ voic
     const agentCfg = adapterCfg?.agent ?? null;
     if (agentCfg?.stayInVoiceHome === true) return { ok: false, code: 'VOICE_TELEPORT_BLOCKED_BY_HOME' };
     if (agentCfg?.teleportEnabled === false) return { ok: false, code: 'VOICE_TELEPORT_DISABLED' };
-    if ((agentCfg?.backend ?? 'daemon') !== 'daemon') return { ok: false, code: 'VOICE_TELEPORT_UNAVAILABLE' };
-
     return { ok: true };
 }

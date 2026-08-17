@@ -225,4 +225,54 @@ describe('AgentCliInstallItem', () => {
         expect(modalConfirmMock).not.toHaveBeenCalled();
         expect(invokeWithAlertsMock).not.toHaveBeenCalled();
     });
+
+    it('does not invoke install when the canonical execution target changes while confirmation is open', async () => {
+        let currentExecutionTarget: Readonly<{ machineId: string; serverId: string }> = {
+            machineId: 'm1',
+            serverId: 'server1',
+        };
+        modalConfirmMock.mockImplementationOnce(async () => {
+            currentExecutionTarget = {
+                machineId: 'm2',
+                serverId: 'server2',
+            };
+            return true;
+        });
+        const resolveExecutionTarget = vi.fn(() => currentExecutionTarget);
+
+        const { AgentCliInstallItem } = await import('./AgentCliInstallItem');
+        const screen = await renderScreen(React.createElement(AgentCliInstallItem, {
+            machineId: 'm1',
+            serverId: 'server1',
+            capabilityId: 'cli.codex',
+            providerTitle: 'Codex',
+            installed: false,
+            resolveExecutionTarget,
+        }));
+
+        await pressTestInstanceAsync(screen.findByType('Item'), 'AgentCliInstallItem');
+
+        expect(resolveExecutionTarget).toHaveBeenCalledTimes(1);
+        expect(invokeWithAlertsMock).not.toHaveBeenCalled();
+    });
+
+    it('does not fall back to the rendered target when the canonical execution target becomes unavailable', async () => {
+        modalConfirmMock.mockResolvedValueOnce(true);
+        const resolveExecutionTarget = vi.fn(() => null);
+
+        const { AgentCliInstallItem } = await import('./AgentCliInstallItem');
+        const screen = await renderScreen(React.createElement(AgentCliInstallItem, {
+            machineId: 'm1',
+            serverId: 'server1',
+            capabilityId: 'cli.codex',
+            providerTitle: 'Codex',
+            installed: false,
+            resolveExecutionTarget,
+        }));
+
+        await pressTestInstanceAsync(screen.findByType('Item'), 'AgentCliInstallItem');
+
+        expect(resolveExecutionTarget).toHaveBeenCalledTimes(1);
+        expect(invokeWithAlertsMock).not.toHaveBeenCalled();
+    });
 });

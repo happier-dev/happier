@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol';
 
 describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
     it('returns stable references when runtimeKind is unchanged', async () => {
@@ -127,7 +128,7 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
 
         const settings = {} as any;
         const backendTarget = { kind: 'builtInAgent', agentId: 'claude' } as any;
-        const firstConnectedServices = {
+        const firstConnectedServices = ConnectedServiceBindingsV1Schema.parse({
             v: 1,
             bindingsByServiceId: {
                 'claude-subscription': {
@@ -136,8 +137,8 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
                     profileId: 'work',
                 },
             },
-        };
-        const secondConnectedServices = {
+        });
+        const secondConnectedServices = ConnectedServiceBindingsV1Schema.parse({
             v: 1,
             bindingsByServiceId: {
                 'claude-subscription': {
@@ -146,7 +147,7 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
                     profileId: 'personal',
                 },
             },
-        };
+        });
 
         const firstInput = {
             backendTarget,
@@ -193,12 +194,12 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         const input = {
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' } as any,
             settings: {} as any,
-            connectedServices: {
+            connectedServices: ConnectedServiceBindingsV1Schema.parse({
                 v: 1,
                 bindingsByServiceId: {
                     'claude-subscription': { source: 'connected', selection: 'group', groupId: 'team' },
                 },
-            },
+            }),
         };
 
         const { resolveNewSessionModelCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
@@ -206,13 +207,14 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         expect(resolveNewSessionModelCapabilityProbeContext(input)).toEqual({
             cacheKeySuffixParts: ['claude-subscription:group:team'],
             capabilityParams: { connectedServices: input.connectedServices },
+            modelSuccessCacheMaxAgeMs: 5 * 60_000,
         });
         expect(resolveNewSessionModelCapabilityProbeContext({
             ...input,
-            connectedServices: {
+            connectedServices: ConnectedServiceBindingsV1Schema.parse({
                 v: 1,
                 bindingsByServiceId: { 'claude-subscription': { source: 'native' } },
-            },
+            }),
         })).toBeNull();
     });
 });

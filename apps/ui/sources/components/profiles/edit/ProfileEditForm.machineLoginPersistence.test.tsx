@@ -129,6 +129,8 @@ vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 900 },
+    useLayoutMaxWidth: () => 900,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 900 }),
 }));
 
 vi.mock('@/utils/profiles/envVarTemplate', () => ({

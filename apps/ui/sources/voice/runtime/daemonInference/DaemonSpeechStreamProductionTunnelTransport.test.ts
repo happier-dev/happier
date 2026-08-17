@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
+import type { DaemonSpeechStreamTransport } from './DaemonSpeechStreamSender';
 
 const getReadyServerFeaturesMock = vi.hoisted(() => vi.fn());
 const resolveRuntimeFeatureDecisionMock = vi.hoisted(() => vi.fn());
@@ -123,6 +124,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport', () => {
     createServerScopedRelaySocketMock.mockReset();
     isLegacyAuthCredentialsMock.mockReset();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
 
     resolveTargetServerMock.mockReturnValue({
       serverId: 'server-1',
@@ -213,6 +215,223 @@ describe('DaemonSpeechStreamProductionTunnelTransport', () => {
       endpointFingerprint: 'fingerprint-1',
       grant,
       nonceProof,
+    });
+  });
+
+  it('skips direct and fails closed when a QA attempt requires an unavailable server relay', async () => {
+    vi.stubEnv('EXPO_PUBLIC_DEBUG', '1');
+    getReadyServerFeaturesMock.mockResolvedValue({
+      features: {
+        machines: {
+          tunnel: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: true } },
+          liveStream: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: false } },
+        },
+      },
+      capabilities: {
+        machines: {
+          tunnel: {
+            directPeer: { allowedPorts: [3005], maxIdleMs: 30_000, maxDurationMs: 300_000 },
+            serverRouted: { supportedEncodings: [PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2] },
+          },
+          liveStream: {
+            serverRouted: { caps: null, disabledReason: 'relay_not_enabled' },
+          },
+        },
+      },
+    });
+    resolveRuntimeFeatureDecisionMock.mockImplementation(async ({ featureId }: { featureId: string }) => ({
+      featureId,
+      state: featureId === 'machines.liveStream.serverRouted' ? 'disabled' : 'enabled',
+      diagnostics: [],
+      evaluatedAt: 1,
+      scope: { scopeKind: 'runtime', serverId: 'server-1' },
+    }));
+
+    const {
+      installDaemonSpeechStreamQaRouteRequirement,
+    } = await import('./daemonSpeechStreamQaRouteRequirement');
+    const release = installDaemonSpeechStreamQaRouteRequirement({
+      sessionId: 'qa-session',
+      routeKind: 'server_relay',
+    });
+    const {
+      createProductionDaemonSpeechStreamingSttTransport,
+    } = await import('./DaemonSpeechStreamProductionTunnelTransport');
+
+    await expect(createProductionDaemonSpeechStreamingSttTransport({
+      sessionId: 'qa-session',
+      machineTarget: { machineId: 'machine-1' },
+      requestId: 'request-1',
+      signal: null,
+      compatibilityTransport: {
+        start: vi.fn(),
+        chunk: vi.fn(),
+        finish: vi.fn(),
+        cancel: vi.fn(),
+      },
+    })).rejects.toThrow('voice_qa_required_server_relay_unavailable');
+    release();
+
+    expect(resolvePeerLoopbackRouteAvailabilityMock).not.toHaveBeenCalled();
+    expect(openPeerTcpTunnelMock).not.toHaveBeenCalled();
+    expect(createServerScopedRelaySocketMock).not.toHaveBeenCalled();
+  });
+
+  it('closes a non-OK direct start before returning it and permits a fresh retry', async () => {
+    let resolveFirstClose!: () => void;
+    const firstClose = vi.fn(() => new Promise<void>((resolve) => {
+      resolveFirstClose = resolve;
+    }));
+    const retryClose = vi.fn(async () => undefined);
+    let openCount = 0;
+    openPeerTcpTunnelMock.mockImplementation(async (input) => ({
+      ok: true,
+      routeKind: 'loopback_direct',
+      response: {
+        v: 1,
+        tunnelId: input.open.tunnelId,
+        streamPath: PEER_TCP_TUNNEL_STREAM_PATH,
+        encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+        initialWindowBytes: 1024 * 1024,
+        maxFrameBytes: 64 * 1024,
+      },
+      stream: {
+        sendFrame: vi.fn(),
+        onFrame: vi.fn(() => () => {}),
+        sendSubstreamOpen: vi.fn(),
+        sendSubstreamDataFrame: vi.fn(),
+        sendSubstreamFrame: vi.fn(),
+        onSubstreamFrame: vi.fn(() => () => {}),
+        close: ++openCount === 1 ? firstClose : retryClose,
+      },
+    }));
+    const compatibilityTransport = {
+      start: vi.fn()
+        .mockResolvedValueOnce({
+          ok: false as const,
+          error: 'start failed',
+          errorCode: 'internal_error' as const,
+        })
+        .mockImplementationOnce(async (payload) => ({
+          ok: true as const,
+          requestId: payload.requestId,
+          streamId: 'stream-2',
+          generation: 8,
+          ackSeq: -1,
+          format: payload.format,
+        })),
+      chunk: vi.fn(),
+      finish: vi.fn(async (payload) => ({
+        ok: true as const,
+        streamId: payload.streamId,
+        generation: payload.generation,
+        ackSeq: payload.finalSeq,
+        finalText: '',
+        language: null,
+        modelPackId: null,
+        events: [],
+      })),
+      cancel: vi.fn(),
+    };
+    const startPayload: Parameters<DaemonSpeechStreamTransport['start']>[0] = {
+      requestId: 'request-1',
+      packId: 'stt-pack-1',
+      language: 'en',
+      streamingMode: 'runtime' as const,
+      format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' as const },
+    };
+
+    const { createProductionDaemonSpeechStreamingSttTransport } = await import('./DaemonSpeechStreamProductionTunnelTransport');
+    const firstSelection = await createProductionDaemonSpeechStreamingSttTransport({
+      machineTarget: { machineId: 'machine-1' },
+      requestId: 'request-1',
+      signal: null,
+      compatibilityTransport,
+    });
+
+    const failedStart = firstSelection!.transport.start(startPayload);
+    await vi.waitFor(() => expect(firstClose).toHaveBeenCalledTimes(1));
+    let firstStartSettled = false;
+    void failedStart.finally(() => {
+      firstStartSettled = true;
+    });
+    await Promise.resolve();
+    expect(firstStartSettled).toBe(false);
+    resolveFirstClose();
+    await expect(failedStart).resolves.toMatchObject({ ok: false, error: 'start failed' });
+    expect(firstClose).toHaveBeenCalledTimes(1);
+
+    const retrySelection = await createProductionDaemonSpeechStreamingSttTransport({
+      machineTarget: { machineId: 'machine-1' },
+      requestId: 'request-2',
+      signal: null,
+      compatibilityTransport,
+    });
+    await expect(retrySelection!.transport.start({ ...startPayload, requestId: 'request-2' })).resolves.toMatchObject({
+      ok: true,
+      streamId: 'stream-2',
+    });
+    await retrySelection!.transport.finish({ streamId: 'stream-2', generation: 8, finalSeq: -1 });
+
+    expect(openPeerTcpTunnelMock).toHaveBeenCalledTimes(2);
+    expect(retryClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes a rejected direct start once while preserving its original error', async () => {
+    const startError = new Error('daemon_voice_inference_substream_response_timeout');
+    const close = vi.fn(async () => {
+      throw new Error('close failed');
+    });
+    openPeerTcpTunnelMock.mockImplementation(async (input) => ({
+      ok: true,
+      routeKind: 'loopback_direct',
+      response: {
+        v: 1,
+        tunnelId: input.open.tunnelId,
+        streamPath: PEER_TCP_TUNNEL_STREAM_PATH,
+        encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+        initialWindowBytes: 1024 * 1024,
+        maxFrameBytes: 64 * 1024,
+      },
+      stream: {
+        sendFrame: vi.fn(),
+        onFrame: vi.fn(() => () => {}),
+        sendSubstreamOpen: vi.fn(),
+        sendSubstreamDataFrame: vi.fn(),
+        sendSubstreamFrame: vi.fn(),
+        onSubstreamFrame: vi.fn(() => () => {}),
+        close,
+      },
+    }));
+    const compatibilityTransport = {
+      start: vi.fn(async () => {
+        throw startError;
+      }),
+      chunk: vi.fn(),
+      finish: vi.fn(),
+      cancel: vi.fn(),
+    };
+
+    const { createProductionDaemonSpeechStreamingSttTransport } = await import('./DaemonSpeechStreamProductionTunnelTransport');
+    const { daemonSpeechStreamDiagnostics } = await import('./daemonSpeechStreamDiagnostics');
+    const selection = await createProductionDaemonSpeechStreamingSttTransport({
+      machineTarget: { machineId: 'machine-1' },
+      requestId: 'request-timeout',
+      signal: null,
+      compatibilityTransport,
+    });
+
+    await expect(selection!.transport.start({
+      requestId: 'request-timeout',
+      packId: null,
+      language: null,
+      streamingMode: 'runtime',
+      format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
+    })).rejects.toBe(startError);
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(daemonSpeechStreamDiagnostics.snapshot().lastBinaryTunnelReceipt).toMatchObject({
+      localTransport: 'close_failed',
     });
   });
 
@@ -682,7 +901,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport', () => {
     expect(openPeerTcpTunnelMock).not.toHaveBeenCalled();
   });
 
-  it('reports the actual server relay when an advertised direct route falls back at runtime', async () => {
+  it('uses the actual server relay on direct fallback and closes failed encryption confirmation before retry', async () => {
     getReadyServerFeaturesMock.mockResolvedValue({
       features: {
         machines: {
@@ -780,6 +999,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport', () => {
       'base64url',
     );
     let installedKey: Uint8Array | null = null;
+    let installConfirmation: string = PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1;
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => ({
       ok: true,
       status: 200,
@@ -845,7 +1065,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport', () => {
       });
       if (encrypted.kind === 'data') expect([...requestPlaintext]).toEqual([4, 5, 6]);
       const responsePlaintext = encrypted.kind === 'install'
-        ? new TextEncoder().encode(PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1)
+        ? new TextEncoder().encode(installConfirmation)
         : encrypted.kind === 'finish'
           ? new TextEncoder().encode(JSON.stringify({
               ok: true, streamId: 'stream-1', generation: 7, ackSeq: 0,
@@ -1065,6 +1285,58 @@ describe('DaemonSpeechStreamProductionTunnelTransport', () => {
       localTransport: 'closed',
       operation: { kind: 'finish', result: 'ok' },
     });
+
+    close.mockClear();
+    relayDisconnect.mockClear();
+    compatibilityTransport.cancel.mockClear();
+    installConfirmation = 'invalid-confirmation';
+    const failedSelection = await createProductionDaemonSpeechStreamingSttTransport({
+      machineTarget: { machineId: 'machine-1' },
+      requestId: 'request-1',
+      signal: null,
+      compatibilityTransport,
+    });
+
+    await expect(failedSelection!.transport.start({
+      requestId: 'request-1',
+      packId: 'stt-pack-1',
+      language: 'en',
+      streamingMode: 'runtime',
+      format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
+    })).resolves.toMatchObject({
+      ok: false,
+      error: 'daemon_voice_inference_relay_encryption_failed',
+    });
+
+    expect(compatibilityTransport.cancel).toHaveBeenCalledTimes(1);
+    expect(compatibilityTransport.cancel).toHaveBeenCalledWith({ streamId: 'stream-1', generation: 7 });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(relayDisconnect).toHaveBeenCalledTimes(1);
+    expect(daemonSpeechStreamDiagnostics.snapshot().lastBinaryTunnelReceipt).toMatchObject({
+      routeKind: 'server_relay',
+      relayEvidence: 'pending',
+      localTransport: 'closed',
+      operation: null,
+    });
+
+    installConfirmation = PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1;
+    const retrySelection = await createProductionDaemonSpeechStreamingSttTransport({
+      machineTarget: { machineId: 'machine-1' },
+      requestId: 'request-1',
+      signal: null,
+      compatibilityTransport,
+    });
+    await expect(retrySelection!.transport.start({
+      requestId: 'request-1',
+      packId: 'stt-pack-1',
+      language: 'en',
+      streamingMode: 'runtime',
+      format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
+    })).resolves.toMatchObject({ ok: true, streamId: 'stream-1' });
+    await retrySelection!.transport.finish({ streamId: 'stream-1', generation: 7, finalSeq: -1 });
+
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(relayDisconnect).toHaveBeenCalledTimes(2);
   });
 
   it('fails closed when the server does not advertise socket-bound relay authorization minting', async () => {

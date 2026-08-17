@@ -173,6 +173,8 @@ export function resolveTranscriptViewportAnchorDescriptor(
 ): Pick<SessionViewportAnchorSnapshot, 'kind' | 'messageId' | 'itemId'> | null {
     if (typeof item.id !== 'string' || item.id.length === 0) return null;
     if (item.kind === 'transcript-window-gap') return null;
+    // Live Resource activity is tail chrome, never a durable viewport anchor.
+    if (item.kind === 'plugin-transcript-activity') return null;
 
     if (item.kind === 'message' && typeof item.messageId === 'string' && item.messageId.length > 0) {
         return {

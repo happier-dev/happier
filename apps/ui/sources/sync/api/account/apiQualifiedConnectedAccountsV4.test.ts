@@ -65,6 +65,7 @@ function makeGroup(overrides: Record<string, unknown> = {}) {
             resumePromptMode: 'standard',
         },
         activeConnectedAccountId: 'work',
+        incarnation: 'qualified-group-row-primary',
         generation: 3,
         runtimeStateRevision: 7,
         state: {},
@@ -147,18 +148,21 @@ describe('apiQualifiedConnectedAccountsV4', () => {
             connectedAccountId: 'backup',
             priority: 200,
             enabled: true,
+            expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
         });
         await patchQualifiedConnectedAccountGroupV4(credentials, {
             service,
             groupId: 'primary',
             policy: { autoSwitch: true },
+            expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
         });
         await setQualifiedConnectedAccountGroupActiveAccountV4(credentials, {
             group: groupRef,
             connectedAccountId: 'backup',
             expectedGeneration: 3,
+            expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
         });
 
@@ -171,6 +175,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                     connectedAccountId: 'backup',
                     priority: 200,
                     enabled: true,
+                    expectedIncarnation: 'qualified-group-row-primary',
                     expectedRuntimeStateRevision: 7,
                 },
             },
@@ -181,6 +186,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                     service,
                     groupId: 'primary',
                     policy: expect.objectContaining({ autoSwitch: true }),
+                    expectedIncarnation: 'qualified-group-row-primary',
                     expectedRuntimeStateRevision: 7,
                 }),
             }),
@@ -191,6 +197,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
                     group: groupRef,
                     connectedAccountId: 'backup',
                     expectedGeneration: 3,
+                    expectedIncarnation: 'qualified-group-row-primary',
                     expectedRuntimeStateRevision: 7,
                 },
             },
@@ -225,6 +232,7 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         const { deleteQualifiedConnectedAccountGroupV4 } = await import('./apiQualifiedConnectedAccountsV4');
         await expect(deleteQualifiedConnectedAccountGroupV4(credentials, {
             group: groupRef,
+            expectedIncarnation: 'qualified-group-row-primary',
             expectedRuntimeStateRevision: 7,
         })).rejects.toMatchObject({
             code: 'connect_group_runtime_state_revision_conflict',

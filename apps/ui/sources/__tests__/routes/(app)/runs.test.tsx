@@ -1,5 +1,8 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 
 import {
     flushHookEffects,
@@ -18,14 +21,19 @@ import { installRouteRootCommonModuleMocks } from '../routeRootTestHelpers';
 
 type MachineExecutionRunsListArgs = [string, Record<string, unknown>?];
 
-const machineExecutionRunsListSpy = vi.fn(async (..._args: MachineExecutionRunsListArgs) => ({
-    ok: true as const,
+const machineExecutionRunsListSpy = vi.fn(async (..._args: MachineExecutionRunsListArgs): Promise<{
+    ok: true;
+    runs: DaemonExecutionRunEntry[];
+}> => ({
+    ok: true,
     runs: [],
 }));
+const machineStopSessionSpy = vi.fn(async (..._args: [string, string, { serverId: string }]) => ({ ok: true as const }));
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const routerNavigateSpy = vi.fn();
+const sessionExecutionRunStopSpy = vi.fn(async (..._args: [string, { runId: string }, { serverId: string }]) => ({ ok: true as const }));
 const stackOptionsCapture = createStackOptionsCapture();
 const routerMock = createExpoRouterMock({
     router: {
@@ -109,11 +117,11 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    sessionExecutionRunStop: vi.fn(async () => ({ ok: true as const })),
+    sessionExecutionRunStop: (...args: [string, { runId: string }, { serverId: string }]) => sessionExecutionRunStopSpy(...args),
 }));
 
 vi.mock('@/sync/ops/machines', () => ({
-    machineStopSession: vi.fn(async () => ({ ok: true as const })),
+    machineStopSession: (...args: [string, string, { serverId: string }]) => machineStopSessionSpy(...args),
 }));
 
 vi.mock('@/utils/sessions/machineUtils', () => ({ isMachineOnline: () => true }));
@@ -121,13 +129,36 @@ vi.mock('@/utils/sessions/machineUtils', () => ({ isMachineOnline: () => true })
 describe('Runs screen', () => {
     let Screen: React.ComponentType<any>;
 
+    function createExecutionRun(overrides: Partial<DaemonExecutionRunEntry> & Pick<DaemonExecutionRunEntry, 'runId'>): DaemonExecutionRunEntry {
+        const { runId, ...rest } = overrides;
+        return {
+            happyHomeDir: '/tmp/happier-test-home',
+            pid: 123,
+            happySessionId: 'sess-1',
+            runId,
+            callId: 'call-1',
+            sidechainId: 'side-1',
+            intent: 'review',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            runClass: 'bounded',
+            ioMode: 'request_response',
+            retentionPolicy: 'ephemeral',
+            status: 'running',
+            startedAtMs: 1_700_000_000_000,
+            updatedAtMs: 1_700_000_000_000,
+            ...rest,
+        };
+    }
+
     beforeEach(async () => {
         Screen = (await import('@/app/(app)/runs')).default;
         machineExecutionRunsListSpy.mockClear();
+        machineStopSessionSpy.mockClear();
         routerPushSpy.mockClear();
         routerBackSpy.mockClear();
         routerReplaceSpy.mockClear();
         routerNavigateSpy.mockClear();
+        sessionExecutionRunStopSpy.mockClear();
         stackOptionsCapture.reset();
     });
 
@@ -166,5 +197,45 @@ describe('Runs screen', () => {
         await renderRunsScreen();
 
         expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', { serverId: 'server-a' });
+    });
+
+    it('keeps Session-associated daemon runs navigable and stoppable', async () => {
+        machineExecutionRunsListSpy.mockResolvedValueOnce({
+            ok: true,
+            runs: [createExecutionRun({ runId: 'run-associated' })],
+        });
+
+        const screen = await renderRunsScreen();
+        const row = screen.findByType('ExecutionRunRow' as any);
+
+        expect(row.props.subtitle).toContain('runs.sessionTitle');
+        expect(row.props.onPress).toEqual(expect.any(Function));
+        expect(row.props.rightAccessory).toBeTruthy();
+        row.props.onPress();
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/sess-1/runs/run-associated');
+
+        await act(async () => {
+            await row.props.rightAccessory.props.onPress();
+        });
+        await flushHookEffects({ cycles: 2 });
+
+        expect(sessionExecutionRunStopSpy).toHaveBeenCalledWith('sess-1', { runId: 'run-associated' }, { serverId: 'server-a' });
+    });
+
+    it('keeps detached daemon runs factual without a Session route or Session stop controls', async () => {
+        machineExecutionRunsListSpy.mockResolvedValueOnce({
+            ok: true,
+            runs: [createExecutionRun({ runId: 'run-detached', happySessionId: null })],
+        });
+
+        const screen = await renderRunsScreen();
+        const row = screen.findByType('ExecutionRunRow' as any);
+
+        expect(row.props.run.happySessionId).toBeNull();
+        expect(row.props.subtitle).not.toContain('runs.sessionTitle');
+        expect(row.props.onPress).toBeUndefined();
+        expect(row.props.rightAccessory).toBeNull();
+        expect(sessionExecutionRunStopSpy).not.toHaveBeenCalled();
+        expect(machineStopSessionSpy).not.toHaveBeenCalled();
     });
 });

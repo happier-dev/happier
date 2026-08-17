@@ -40,7 +40,6 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 }));
 
 const routerPushSpy = vi.fn();
-const setPinnedSessionKeysV1 = vi.fn();
 const setSessionListGroupOrderV1 = vi.fn();
 const setSessionListOrderingModeV1 = vi.fn();
 const setSessionListFolderSortModeV1 = vi.fn();
@@ -48,7 +47,6 @@ const setSessionListSectionModeV1 = vi.fn();
 const setSessionListActiveGroupingV1 = vi.fn();
 const setSessionListInactiveGroupingV1 = vi.fn();
 const setHideInactiveSessions = vi.fn();
-const setSessionTagsV1 = vi.fn();
 const setSessionFoldersV1 = vi.fn();
 const recoveryBannerMountSpy = vi.fn();
 const recoveryBannerUnmountSpy = vi.fn();
@@ -204,15 +202,12 @@ installSessionShellCommonModuleMocks({
             return null;
         },
         useSettingMutable: (key: string) => {
-            if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-            if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
             if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
             if (key === 'sessionListFolderSortModeV1') return [sessionListFolderSortModeV1, setSessionListFolderSortModeV1];
             if (key === 'sessionListSectionModeV1') return [sessionListSectionModeV1, setSessionListSectionModeV1];
             if (key === 'sessionListActiveGroupingV1') return [sessionListActiveGroupingV1, setSessionListActiveGroupingV1];
             if (key === 'sessionListInactiveGroupingV1') return [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1];
             if (key === 'hideInactiveSessions') return [hideInactiveSessions, setHideInactiveSessions];
-            if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
             if (key === 'sessionFoldersV1') return [sessionFoldersV1, setSessionFoldersV1];
             return [null, vi.fn()];
         },
@@ -384,12 +379,10 @@ describe('SessionsList (inline reorder)', () => {
         setSessionListActiveGroupingV1.mockClear();
         setSessionListInactiveGroupingV1.mockClear();
         setHideInactiveSessions.mockClear();
-        setPinnedSessionKeysV1.mockClear();
         setSessionListGroupOrderV1.mockClear();
         setSessionListOrderingModeV1.mockClear();
         setSessionListFolderSortModeV1.mockClear();
         setSessionListSectionModeV1.mockClear();
-        setSessionTagsV1.mockClear();
         setSessionFoldersV1.mockClear();
         getCredentialsForServerUrlSpy.mockClear();
         resolveSessionOrganizationMutationScopeSpy.mockClear();

@@ -12,6 +12,7 @@ vi.mock('react-native', async () => {
 
 const createPortalMock = vi.hoisted(() => vi.fn((node: any) => node));
 const reactDomReadyState = vi.hoisted(() => ({ value: true }));
+const navigationFocusState = vi.hoisted(() => ({ isFocused: true }));
 const preloadReactDomMock = vi.hoisted(() => vi.fn(async () => {
     reactDomReadyState.value = true;
     return { createPortal: createPortalMock };
@@ -27,6 +28,14 @@ vi.mock('@/utils/web/reactDomCjs', () => ({
     },
     preloadReactDOM: preloadReactDomMock,
 }));
+
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return {
+        ...createReactNavigationNativeMock(),
+        useIsFocused: () => navigationFocusState.isFocused,
+    };
+});
 
 vi.mock('react-native-safe-area-context', () => ({
     SafeAreaProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -55,7 +64,29 @@ function asFiniteNumber(value: unknown): number {
 
 describe('WizardCardLayout', () => {
     afterEach(() => {
+        navigationFocusState.isFocused = true;
         standardCleanup();
+    });
+
+    it('does not leave a blurred web route owning a fixed wizard overlay', async () => {
+        const { WizardCardLayout } = await import('./WizardCardLayout');
+        const previousDocument = (globalThis as any).document;
+        navigationFocusState.isFocused = false;
+        createPortalMock.mockReset();
+        (globalThis as any).document = { body: { nodeType: 1 } } as any;
+
+        try {
+            const screen = await renderScreen(React.createElement(WizardCardLayout, {
+                testID: 'wizard-card',
+                children: React.createElement('View', { testID: 'wizard-child' }),
+            }));
+
+            expect(createPortalMock).not.toHaveBeenCalled();
+            expect(screen.findAllByTestId('wizard-card-card')).toHaveLength(0);
+            expect(screen.findAllByTestId('wizard-card-scrim')).toHaveLength(0);
+        } finally {
+            (globalThis as any).document = previousDocument;
+        }
     });
 
     it('keeps using a fixed, portaled overlay even when a portal target provider exists for popovers (non-modal)', async () => {

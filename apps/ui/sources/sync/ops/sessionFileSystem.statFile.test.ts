@@ -1,16 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
-import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-const callGuardedMachineRpcWithPolicyMock = vi.fn();
+const callDaemonWorkspaceStatFileRpcMock = vi.fn();
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
-    callGuardedMachineRpcWithPolicy: (params: unknown) => callGuardedMachineRpcWithPolicyMock(params),
+vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
+    callDaemonWorkspaceStatFileRpc: (params: unknown) => callDaemonWorkspaceStatFileRpcMock(params),
 }));
 
 describe('workspaceStatFile', () => {
-    it('resolves relative paths against the workspace root and uses guarded machine RPC', async () => {
+    it('keeps the barrel stat binding in the file read owner and removes the metadata-path export', async () => {
+        const [barrel, fileReadWrite, pathMetadataMutations] = await Promise.all([
+            import('./workspaceFileSystem'),
+            import('./workspaceFileSystem/fileReadWrite'),
+            import('./workspaceFileSystem/pathMetadataMutations'),
+        ]);
+
+        expect(barrel.workspaceStatFile).toBe(fileReadWrite.workspaceStatFile);
+        expect(pathMetadataMutations).not.toHaveProperty('workspaceStatFile');
+    });
+
+    it('exports one file-details stat owner through the workspace filesystem barrel', async () => {
         const { workspaceStatFile } = await import('./workspaceFileSystem');
-        callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce({ success: true, exists: false });
+        callDaemonWorkspaceStatFileRpcMock.mockResolvedValueOnce({ success: true, exists: false });
 
         await expect(
             workspaceStatFile(
@@ -19,38 +29,30 @@ describe('workspaceStatFile', () => {
             ),
         ).resolves.toEqual({ success: true, exists: false });
 
-        expect(callGuardedMachineRpcWithPolicyMock).toHaveBeenCalledWith({
+        expect(callDaemonWorkspaceStatFileRpcMock).toHaveBeenCalledWith({
             machineId: 'm1',
             serverId: 'server-1',
-            method: RPC_METHODS.STAT_FILE,
-            payload: { path: '~/repo/src/a.ts' },
+            rootPath: '~/repo',
+            agentRootPath: undefined,
+            request: { path: 'src/a.ts' },
         });
     });
 
-    it('returns a stable failure response for unsupported RPC shapes', async () => {
+    it('preserves the transfer stat failure contract through the public barrel', async () => {
         const { workspaceStatFile } = await import('./workspaceFileSystem');
-        callGuardedMachineRpcWithPolicyMock.mockResolvedValueOnce(null);
+        callDaemonWorkspaceStatFileRpcMock.mockResolvedValueOnce({
+            success: false,
+            error: 'stat unavailable',
+            errorCode: 'METHOD_NOT_AVAILABLE',
+        });
 
-        const result = await workspaceStatFile(
+        await expect(workspaceStatFile(
             { machineId: 'm1', rootPath: '~/repo', serverId: 'server-1' },
             'src/a.ts',
-        );
-        expect(result.success).toBe(false);
-        if (result.success) {
-            throw new Error('Expected workspaceStatFile to fail');
-        }
-        expect(typeof result.error).toBe('string');
-    });
-
-    it('returns METHOD_NOT_AVAILABLE when guarded RPC throws without explicit code', async () => {
-        const { workspaceStatFile } = await import('./workspaceFileSystem');
-        callGuardedMachineRpcWithPolicyMock.mockRejectedValueOnce(new Error('boom'));
-
-        await expect(
-            workspaceStatFile(
-                { machineId: 'm1', rootPath: '~/repo', serverId: 'server-1' },
-                'src/a.ts',
-            ),
-        ).resolves.toMatchObject({ success: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+        )).resolves.toEqual({
+            success: false,
+            error: 'stat unavailable',
+            errorCode: 'METHOD_NOT_AVAILABLE',
+        });
     });
 });

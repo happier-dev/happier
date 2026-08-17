@@ -21,6 +21,34 @@ describe('parseTerminalConnectUrl', () => {
         });
     });
 
+    it('parses complete authenticated-pairing context', () => {
+        expect(parseTerminalConnectUrl(
+            'happier://terminal?key=abc&pairingSecret=secret&createdAt=1000&expiresAt=61000&supportsTokenOnly=1',
+        )).toEqual({
+            publicKeyB64Url: 'abc',
+            serverUrl: null,
+            pairing: {
+                secretB64Url: 'secret',
+                createdAtMs: 1000,
+                expiresAtMs: 61000,
+            },
+            supportsTokenOnly: true,
+        });
+    });
+
+    it('ignores incomplete or invalid authenticated-pairing context for compatibility', () => {
+        expect(parseTerminalConnectUrl('happier://terminal?key=abc&pairingSecret=secret')).toEqual({
+            publicKeyB64Url: 'abc',
+            serverUrl: null,
+        });
+        expect(parseTerminalConnectUrl(
+            'happier://terminal?key=abc&pairingSecret=secret&createdAt=61000&expiresAt=1000',
+        )).toEqual({
+            publicKeyB64Url: 'abc',
+            serverUrl: null,
+        });
+    });
+
     it('parses terminal connect web URLs with hash parameters', () => {
         expect(
             parseTerminalConnectUrl(
@@ -71,6 +99,35 @@ describe('buildTerminalConnectDeepLink', () => {
         ).toBe(
             'happier://terminal?key=abcDEF_123-zzz&server=https%3A%2F%2Fstack.example.test%2Fpath%3Fx%3D1',
         );
+    });
+
+    it('includes complete authenticated-pairing context', () => {
+        expect(buildTerminalConnectDeepLink({
+            publicKeyB64Url: 'abc',
+            serverUrl: null,
+            pairing: {
+                secretB64Url: 'secret',
+                createdAtMs: 1000,
+                expiresAtMs: 61000,
+            },
+            supportsTokenOnly: true,
+        })).toBe(
+            'happier://terminal?key=abc&pairingSecret=secret&createdAt=1000&expiresAt=61000&supportsTokenOnly=1',
+        );
+    });
+
+    it('omits token-only support without authenticated pairing context', () => {
+        expect(buildTerminalConnectDeepLink({
+            publicKeyB64Url: 'abc',
+            serverUrl: null,
+            supportsTokenOnly: true,
+        })).toBe('happier://terminal?abc');
+        expect(parseTerminalConnectUrl(
+            'happier://terminal?key=abc&supportsTokenOnly=1',
+        )).toEqual({
+            publicKeyB64Url: 'abc',
+            serverUrl: null,
+        });
     });
 
     it('falls back to legacy format when server URL is missing', () => {

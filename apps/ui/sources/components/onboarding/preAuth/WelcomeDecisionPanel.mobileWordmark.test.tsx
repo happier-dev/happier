@@ -25,7 +25,10 @@ const baseOptions: AuthEntryOptions = {
     providerKeylessTitle: '',
     anonymousSignupTitle: 'Create account',
     mtlsTitle: 'Sign in with certificate',
-    primarySignupTitle: 'Create account',
+    primaryAction: {
+        kind: 'anonymous',
+        title: 'Create account',
+    },
     mtlsPrimary: false,
     keylessPrimary: false,
     autoRedirect: {

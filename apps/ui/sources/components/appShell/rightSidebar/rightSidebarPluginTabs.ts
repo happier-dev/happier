@@ -1,137 +1,129 @@
-import type { Ionicons } from '@expo/vector-icons';
-
-import { resolvePluginUiIoniconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
-import { resolvePluginDisplayString } from '@/components/plugins/surfaces/resolvePluginDisplayString';
-import { canRenderPluginUiProjectionEntry, type PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import {
+    isPluginUiDestinationBindingAdmittedAtRuntimeV1,
+    type PluginUiDestinationRuntimeFormFactorV1,
+    type PluginUiPlatformV1,
+} from '@happier-dev/protocol/plugins/ui';
+import {
+    readPluginSurfaceRecord,
+    resolvePluginSurfaceDestinations,
+} from '@/components/plugins/surfaces/pluginSurfaceDestinations';
+import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type {
     RightSidebarPluginTabDefinition,
     RightSidebarScope,
 } from './rightSidebarBuiltinTabs';
 
-const RESERVED_BUILTIN_TAB_IDS = new Set([
-    'git',
-    'files',
-    'agents',
-    'terminal',
-    'browser',
-    'services',
-]);
-
-type UnknownRecord = Readonly<Record<string, unknown>>;
+export type RightSidebarPluginTabRuntimeAdmission = Readonly<{
+    platform: PluginUiPlatformV1;
+    formFactor: PluginUiDestinationRuntimeFormFactorV1;
+}>;
 
 export type ResolveRightSidebarPluginTabsInput = Readonly<{
     scope: RightSidebarScope;
     placements?: readonly PluginUiSurfacePlacementProjection[];
     projectionGeneration?: number | null;
     policyContext?: PluginUiPolicyEvaluationContext;
+    /** Current mounted host facts for catalog admission. */
+    runtimeAdmission?: RightSidebarPluginTabRuntimeAdmission;
 }>;
 
-function readRecord(value: unknown): UnknownRecord | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as UnknownRecord
-        : null;
-}
-
-function readString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function normalizePluginTabSlug(value: string): string {
-    const normalized = value.trim();
-    return normalized.length > 0 ? normalized : 'tab';
-}
-
-function resolvePluginTabLabel(placement: PluginUiSurfacePlacementProjection): string {
-    // UX-1: `labelKey`/`titleKey` are translation KEYS (resolved via the catalog, the same
-    // precedence the built-in tabs use), `developerFallback`/`label` are literals, and the
-    // descriptorId is the last-resort fallback so an unresolved key never renders raw.
-    return resolvePluginDisplayString({
-        developerFallback: placement.display.developerFallback,
-        literals: [placement.display.label],
-        keys: [placement.display.labelKey, placement.display.titleKey],
-        fallback: placement.descriptorId,
-    }) ?? placement.descriptorId;
-}
-
-function resolvePluginTabIcon(placement: PluginUiSurfacePlacementProjection): keyof typeof Ionicons.glyphMap {
-    const token = readString(placement.display.iconToken) ?? readString(placement.display.icon);
-    return resolvePluginUiIoniconName(token);
-}
-
-function resolveDisabledReason(
+function readRightSidebarMetadata(
     placement: PluginUiSurfacePlacementProjection,
-    tabSlug: string,
-    policyContext: PluginUiPolicyEvaluationContext | undefined,
-): string | null {
-    if (RESERVED_BUILTIN_TAB_IDS.has(tabSlug)) {
-        return 'right_sidebar_tab_id_reserved';
-    }
-    if (placement.availability.state !== 'available') {
-        return placement.availability.reason;
-    }
-    if (!canRenderPluginUiProjectionEntry(placement, policyContext)) {
-        return 'policy_deferred';
-    }
-    return null;
+): Readonly<Record<string, unknown>> | null {
+    return readPluginSurfaceRecord(placement.rightSidebar);
 }
 
-function shouldHideDisabledTab(rightSidebar: UnknownRecord, disabledReason: string | null): boolean {
-    return disabledReason !== null && rightSidebar.disabledPolicy !== 'disable';
+function resolveRightSidebarPluginDestinations(input: Readonly<{
+    scope: RightSidebarScope;
+    placements?: readonly PluginUiSurfacePlacementProjection[];
+    policyContext?: PluginUiPolicyEvaluationContext;
+}>) {
+    return resolvePluginSurfaceDestinations({
+        ...(input.placements ? { placements: input.placements } : {}),
+        ...(input.policyContext ? { policyContext: input.policyContext } : {}),
+        select: (placement) => {
+            if (
+                placement.binding.container !== 'rightSidebarTab'
+                || placement.binding.targetKind !== input.scope
+            ) {
+                return null;
+            }
+            return {
+                // The normalized binding owns the public destination identity;
+                // right-sidebar metadata cannot introduce a second tab-id alias.
+                slug: placement.binding.destination.localId,
+                // Final catalog order is host-owned. V2 projections publish no
+                // contributor rank, so legacy metadata and placement-order
+                // fields must not still move a plugin destination ahead of a
+                // built-in or another host-owned entry.
+                order: Number.MAX_SAFE_INTEGER,
+            };
+        },
+        // Preserve the contributor's declared hide/disable policy. A missing
+        // metadata record takes the schema default (`hide`) instead of making a
+        // previously hidden destination interactable during migration.
+        hideWhenDisabled: (placement) => (
+            readRightSidebarMetadata(placement)?.disabledPolicy !== 'disable'
+        ),
+    });
+}
+
+function isMobilePluginTab(
+    placement: PluginUiSurfacePlacementProjection,
+    scope: RightSidebarScope,
+): boolean {
+    // Platform admission is a registry-owned binding fact. Do not retain a
+    // side-channel `rightSidebar.mobile` flag: V2 never produces one, and a
+    // project binding is intentionally not admitted on iOS/Android.
+    return scope === 'session'
+        && placement.binding.targetKind === 'session'
+        && (isPluginUiDestinationBindingAdmittedAtRuntimeV1({
+            binding: placement.binding,
+            platform: 'ios',
+            formFactor: 'phone',
+        }) || isPluginUiDestinationBindingAdmittedAtRuntimeV1({
+            binding: placement.binding,
+            platform: 'android',
+            formFactor: 'phone',
+        }));
 }
 
 export function resolveRightSidebarPluginTabs(
     input: ResolveRightSidebarPluginTabsInput,
 ): readonly RightSidebarPluginTabDefinition[] {
     const generation = input.projectionGeneration ?? null;
-    const tabs: RightSidebarPluginTabDefinition[] = [];
-    const seenTabIds = new Set<string>();
 
-    for (const placement of input.placements ?? []) {
-        const rightSidebar = readRecord(placement.rightSidebar);
-        if (!rightSidebar || rightSidebar.scope !== input.scope) {
-            continue;
-        }
+    const destinations = resolveRightSidebarPluginDestinations(input).filter((destination) => (
+        !input.runtimeAdmission
+        || isPluginUiDestinationBindingAdmittedAtRuntimeV1({
+            binding: destination.placement.binding,
+            ...input.runtimeAdmission,
+        })
+    ));
 
-        const tabSlug = normalizePluginTabSlug(
-            readString(rightSidebar.tabId) ?? placement.descriptorId,
-        );
-        const disabledReason = resolveDisabledReason(placement, tabSlug, input.policyContext);
-        if (shouldHideDisabledTab(rightSidebar, disabledReason)) {
-            continue;
-        }
-
-        const tabId = `plugin:${placement.pluginId}:${tabSlug}` as const;
-        if (seenTabIds.has(tabId)) {
-            continue;
-        }
-        seenTabIds.add(tabId);
-
-        const mobile = readRecord(rightSidebar.mobile);
-        tabs.push(Object.freeze({
-            id: tabId,
+    return Object.freeze(destinations.map((destination) => {
+        return Object.freeze({
+            id: destination.id,
             owner: 'plugin',
-            label: resolvePluginTabLabel(placement),
-            icon: resolvePluginTabIcon(placement),
-            order: readNumber(rightSidebar.order) ?? placement.order ?? Number.MAX_SAFE_INTEGER,
+            label: destination.label,
+            icon: destination.icon,
+            ...(destination.badge === undefined ? {} : { badge: destination.badge }),
+            ...(destination.groupHint === undefined ? {} : { groupHint: destination.groupHint }),
+            ...(destination.rankHint === undefined ? {} : { rankHint: destination.rankHint }),
+            order: destination.order,
             scopes: Object.freeze([input.scope]),
-            ...(mobile?.enabled === true ? {
-                mobileSurfaces: Object.freeze({ [input.scope]: 'plugin' }),
+            ...(isMobilePluginTab(destination.placement, input.scope) ? {
+                mobileSurfaces: Object.freeze({ session: 'plugin' }),
             } : {}),
-            ...(disabledReason ? { disabledReason } : {}),
-            placement,
+            ...(destination.disabledReason ? { disabledReason: destination.disabledReason } : {}),
+            placement: destination.placement,
             plugin: Object.freeze({
-                pluginId: placement.pluginId,
-                descriptorId: placement.descriptorId,
+                pluginId: destination.placement.binding.destination.pluginId,
+                descriptorId: destination.placement.binding.destination.localId,
                 generation,
             }),
-            retentionKey: `${tabId}:${generation ?? 'unknown'}`,
-        }));
-    }
-
-    return Object.freeze(tabs.sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)));
+            retentionKey: `${destination.id}:${generation ?? 'unknown'}`,
+        }) as RightSidebarPluginTabDefinition;
+    }));
 }

@@ -9,13 +9,13 @@ export const saplingScmBackendSettingsPlugin: ScmBackendSettingsPlugin = {
             id: 'commitModel',
             title: 'Change-set model',
             subtitle: 'Commits operate on pending working-copy changes using Sapling-native semantics.',
-            iconName: 'git-branch-outline',
+            iconName: 'git-branch',
         },
         {
             id: 'partialSelection',
             title: 'Partial selection',
             subtitle: 'Line/file include-exclude controls are hidden for Sapling backends.',
-            iconName: 'eye-off-outline',
+            iconName: 'eye-slash',
         },
     ],
 };

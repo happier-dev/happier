@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { renderScreen } from '@/dev/testkit';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
@@ -84,33 +85,44 @@ describe('RightSidebarIconTabBar', () => {
         const onSelectTab = vi.fn();
         const { RightSidebarIconTabBar } = await import('./RightSidebarIconTabBar');
         const { getRightSidebarBuiltinTab } = await import('./rightSidebarTabRegistry');
+        const pluginId = 'acme.review';
+        const binding = normalizePluginUiDestinationBindingV1({
+            pluginId,
+            destinationId: 'review-panel',
+            rendererId: 'review-panel-renderer',
+            container: 'rightSidebarTab',
+            target: { kind: 'session' },
+        });
+        if (!binding) {
+            throw new Error('test fixture must use an admitted V2 session right-sidebar binding');
+        }
         const placement = {
-            id: 'pluginUi:review:surfacePlacement:review-panel',
-            pluginId: 'review',
+            id: `surfacePlacement:${pluginId}:review-panel`,
+            pluginId,
             contributionKind: 'surfacePlacement',
             descriptorId: 'review-panel',
-            placement: 'session.rightSidebarTab',
-            target: { kind: 'session' },
+            binding,
+            target: binding.target,
             renderer: { kind: 'host', rendererId: 'review.panel' },
             display: { developerFallback: 'Review' },
             availability: { state: 'available', reason: 'available', diagnostics: [] },
-            rightSidebar: { tabId: 'review', scope: 'session' },
+            headerActions: [],
         } satisfies PluginUiSurfacePlacementProjection;
         const disabledPluginTab = {
             ...getRightSidebarBuiltinTab('browser'),
-            id: 'plugin:review:review',
+            id: `plugin:${pluginId}:review-panel`,
             owner: 'plugin',
             label: 'Review',
             order: 70,
             scopes: ['session'],
             disabledReason: 'policy_deferred',
             plugin: {
-                pluginId: 'review',
+                pluginId,
                 descriptorId: 'review-panel',
                 generation: 4,
             },
             placement,
-            retentionKey: 'plugin:review:review:4',
+            retentionKey: `plugin:${pluginId}:review-panel:4`,
         } as const;
 
         const screen = await renderScreen(
@@ -122,12 +134,12 @@ describe('RightSidebarIconTabBar', () => {
             />,
         );
 
-        const pluginTab = screen.findByTestId('right-sidebar-tab:plugin:review:review');
+        const pluginTab = screen.findByTestId(`right-sidebar-tab:plugin:${pluginId}:review-panel`);
         expect(pluginTab?.props.accessibilityRole).toBe('tab');
         expect(pluginTab?.props.accessibilityLabel).toBe('Review');
         expect(pluginTab?.props.accessibilityState).toEqual({ selected: false, disabled: true });
 
-        await screen.pressByTestIdAsync('right-sidebar-tab:plugin:review:review');
+        await screen.pressByTestIdAsync(`right-sidebar-tab:plugin:${pluginId}:review-panel`);
         expect(onSelectTab).not.toHaveBeenCalled();
     });
 });

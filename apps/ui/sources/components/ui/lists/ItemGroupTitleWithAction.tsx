@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 
 export type ItemGroupTitleAction = {
     testID?: string;
     accessibilityLabel: string;
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
     iconColor?: string;
     disabled?: boolean;
     loading?: boolean;
@@ -40,7 +40,7 @@ export const ItemGroupTitleWithAction = React.memo((props: ItemGroupTitleWithAct
                 >
                     {props.action.loading === true
                         ? <ActivitySpinner size="small" color={props.action.iconColor} />
-                        : <Ionicons name={props.action.iconName} size={18} color={props.action.iconColor} />}
+                        : <Icon name={props.action.iconName} size={16} color={props.action.iconColor} />}
                 </Pressable>
             ) : null}
         </View>

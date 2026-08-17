@@ -5,6 +5,7 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
 import { SplitCanvasFocusRing } from './SplitCanvasFocusRing';
 import type { SplitCanvasLeafHostRef } from '../model/splitCanvasTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type WebSplitCanvasHostElement = EventTarget & SplitCanvasLeafHostRef & {
     addEventListener: (type: string, listener: EventListener) => void;
@@ -134,8 +135,8 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                                     justifyContent: 'center',
                                 }}
                             >
-                                <SafeIonicons
-                                    name={props.isMaximized ? 'contract-outline' : 'expand-outline'}
+                                <Icon
+                                    name={props.isMaximized ? 'arrows-in' : 'arrows-out'}
                                     size={16}
                                     color={theme.colors.text.secondary}
                                 />
@@ -153,8 +154,8 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                                     justifyContent: 'center',
                                 }}
                             >
-                                <SafeIonicons
-                                    name="close"
+                                <Icon
+                                    name="x"
                                     size={16}
                                     color={theme.colors.text.secondary}
                                 />

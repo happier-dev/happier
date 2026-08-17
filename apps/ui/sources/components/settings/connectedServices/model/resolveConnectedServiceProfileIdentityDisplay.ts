@@ -87,12 +87,3 @@ export function formatConnectedServiceIdentityVisibleLabel(display: ConnectedSer
         ? `${display.primaryLabel} · ${display.secondaryLabel}`
         : display.primaryLabel;
 }
-
-export function resolveConnectedServiceProfileDiagnosticLabel(params: Readonly<{
-    serviceId: string;
-    profileId: string;
-    labelsByKey: Readonly<Record<string, string | undefined>>;
-    profiles?: ReadonlyArray<ConnectedServiceProfileIdentityLike>;
-}>): string {
-    return resolveConnectedServiceProfileIdentityDisplay(params).diagnosticLabel;
-}

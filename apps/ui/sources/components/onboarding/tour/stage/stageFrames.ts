@@ -1,5 +1,5 @@
 import type { StageDevice } from './DeviceFrame';
-import type { StageSurfaceId } from './stageSurfaces';
+import { stageSurfaceById, type StageSurfaceId } from './stageSurfaces';
 import { STAGE_SPOTLIGHT_TARGET_IDS } from './stageSpotlightTargetIds';
 
 export type StageFrame = Readonly<{
@@ -151,3 +151,37 @@ export const stageFrames = [
 export const stageFrameById = new Map<string, StageFrame>(
     stageFrames.map((frame) => [frame.id, frame]),
 );
+
+/**
+ * Frame resolution is surface-aware here, at the single frame owner.
+ *
+ * A frame's `device` is the canvas it was art-directed for, and a presentation
+ * that can host the desktop window plays it verbatim — including A4's deliberate
+ * phone-inside-desktop cockpit. A phone-width presentation cannot host the
+ * 1280x800 window (it lands near 0.2 scale, which renders the app shell
+ * unreadable), so it asks for the phone canvas and gets it for every frame whose
+ * surface registers phone support.
+ *
+ * Device capability already has an owner — `stageSurfaces[].devices` — so this
+ * reads that registry instead of declaring per-device frame rows: a phone variant
+ * differs ONLY by canvas, and a parallel phone frame list would be a second
+ * mapping table to keep in sync with every id, spotlight, zoom and dim.
+ */
+export function resolveStageFrameDevice(frame: StageFrame, hostDevice: StageDevice): StageDevice {
+    if (hostDevice !== 'phone' || frame.device === 'phone') return frame.device;
+    return stageSurfaceById.get(frame.surface)?.devices.includes('phone') === true ? 'phone' : frame.device;
+}
+
+const phoneHostedStageFrames: readonly StageFrame[] = stageFrames.map((frame) => {
+    const device = resolveStageFrameDevice(frame, 'phone');
+    return device === frame.device ? frame : { ...frame, device };
+});
+
+/**
+ * The frame list for a presentation whose largest hostable canvas is `hostDevice`.
+ * Ids, order and camera data are preserved, so frame lookups and the stage's
+ * neighbour mounting are unaffected — only the canvas can change.
+ */
+export function resolveStageFramesForHostDevice(hostDevice: StageDevice): readonly StageFrame[] {
+    return hostDevice === 'phone' ? phoneHostedStageFrames : stageFrames;
+}

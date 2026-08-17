@@ -1,7 +1,7 @@
 export type RepositoryTreeUploadMenuItemConfig = Readonly<{
     id: 'repository-tree-upload-files' | 'repository-tree-upload-folder';
     titleKey: 'files.toolbar.uploadFiles' | 'files.toolbar.uploadFolder';
-    iconName: 'cloud-upload-outline' | 'folder-outline';
+    iconName: 'cloud-arrow-up' | 'folder';
     disabled: boolean;
 }>;
 
@@ -18,13 +18,13 @@ export function createRepositoryTreeUploadMenuConfig(params: Readonly<{
             {
                 id: 'repository-tree-upload-files',
                 titleKey: 'files.toolbar.uploadFiles',
-                iconName: 'cloud-upload-outline',
+                iconName: 'cloud-arrow-up',
                 disabled: !params.uploadActionsAvailable,
             },
             {
                 id: 'repository-tree-upload-folder',
                 titleKey: 'files.toolbar.uploadFolder',
-                iconName: 'folder-outline',
+                iconName: 'folder',
                 disabled: !params.uploadActionsAvailable || !params.isWeb,
             },
         ],

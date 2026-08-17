@@ -1,4 +1,7 @@
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import {
+  FeaturesResponseSchema,
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+} from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseReleasedServerV021Features } from '@/dev/testkit';
@@ -58,6 +61,26 @@ function createSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+function composerAttachmentOnlyMeta(): Record<string, unknown> {
+  return {
+    [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
+      v: 1,
+      composerAttachments: [{
+        v: 1,
+        instanceId: 'attachment-instance-1',
+        attachment: {
+          pluginId: 'com.acme.review',
+          localId: 'review',
+        },
+        key: 'review-42',
+        value: { reviewId: '42' },
+        presentation: { label: 'Review #42', typeLabel: 'Review comment' },
+        content: [{ mediaId: 'media-42' }],
+      }],
+    },
+  };
+}
+
 describe('sendSessionMessageWithServerScope', () => {
   beforeEach(() => {
     resetPendingQueueState();
@@ -89,6 +112,111 @@ describe('sendSessionMessageWithServerScope', () => {
     );
   });
 
+  it('admits an attachment-only active first turn with the stable local id', async () => {
+    const enqueuePendingMessageActive = vi.fn(async () => ({ localId: 'attachment-only-1', accepted: true }));
+    serverFeaturesSnapshotMock.mockResolvedValue({
+      status: 'ready',
+      features: parseReleasedServerV021Features(),
+    });
+    const { sendSessionMessageWithServerScope } = createServerScopedSessionSendMessage({
+      getSession: () => createSession(),
+      resolveContext: vi.fn(async () => ({ scope: 'active' as const, timeoutMs: 1_000 })),
+      enqueuePendingMessageActive,
+    });
+    const metaOverrides = composerAttachmentOnlyMeta();
+
+    await expect(sendSessionMessageWithServerScope({
+      sessionId: 's1',
+      message: '',
+      metaOverrides,
+      messageLocalId: 'attachment-only-1',
+      providerDeliveryIntent: 'first_turn',
+    })).resolves.toMatchObject({
+      ok: true,
+      ack: { localId: 'attachment-only-1', persistence: 'pending', accepted: true },
+    });
+
+    expect(enqueuePendingMessageActive).toHaveBeenCalledWith(
+      's1',
+      '',
+      undefined,
+      metaOverrides,
+      { localId: 'attachment-only-1', requestedAction: { v: 1, kind: 'enqueue' } },
+    );
+  });
+
+  it('keeps blank input without an approved composer attachment rejected', async () => {
+    const enqueuePendingMessageActive = vi.fn(async () => ({ localId: 'must-not-send', accepted: true }));
+    const { sendSessionMessageWithServerScope } = createServerScopedSessionSendMessage({
+      getSession: () => createSession(),
+      resolveContext: vi.fn(async () => ({ scope: 'active' as const, timeoutMs: 1_000 })),
+      enqueuePendingMessageActive,
+    });
+
+    await expect(sendSessionMessageWithServerScope({
+      sessionId: 's1',
+      message: '   ',
+      metaOverrides: { arbitrary: 'metadata-is-not-input' },
+      messageLocalId: 'must-not-send',
+      providerDeliveryIntent: 'first_turn',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+
+    expect(enqueuePendingMessageActive).not.toHaveBeenCalled();
+  });
+
+  it('keeps blank input with a malformed composer attachment selection rejected', async () => {
+    const enqueuePendingMessageActive = vi.fn(async () => ({ localId: 'must-not-send-malformed', accepted: true }));
+    const { sendSessionMessageWithServerScope } = createServerScopedSessionSendMessage({
+      getSession: () => createSession(),
+      resolveContext: vi.fn(async () => ({ scope: 'active' as const, timeoutMs: 1_000 })),
+      enqueuePendingMessageActive,
+    });
+
+    await expect(sendSessionMessageWithServerScope({
+      sessionId: 's1',
+      message: '',
+      metaOverrides: {
+        [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
+          v: 1,
+          composerAttachments: [{ malformed: true }],
+        },
+      },
+      messageLocalId: 'must-not-send-malformed',
+      providerDeliveryIntent: 'first_turn',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+
+    expect(enqueuePendingMessageActive).not.toHaveBeenCalled();
+  });
+
+  it('preserves an explicit settings-aware action intent from the Action surface', async () => {
+    const enqueuePendingMessageActive = vi.fn(async () => ({ localId: 'action-1', accepted: true }));
+    const { sendSessionMessageWithServerScope } = createServerScopedSessionSendMessage({
+      getSession: () => createSession(),
+      resolveContext: vi.fn(async () => ({ scope: 'active' as const, timeoutMs: 1_000 })),
+      enqueuePendingMessageActive,
+    });
+
+    await sendSessionMessageWithServerScope({
+      sessionId: 's1',
+      message: 'continue',
+      messageLocalId: 'action-1',
+      requestedAction: { v: 1, kind: 'steer_if_active' },
+    });
+
+    expect(enqueuePendingMessageActive).toHaveBeenCalledWith(
+      's1', 'continue', undefined, undefined,
+      { localId: 'action-1', requestedAction: { v: 1, kind: 'steer_if_active' } },
+    );
+  });
+
   it('leaves an inactive first-turn wake to the durable Pending activation owner', async () => {
     const enqueuePendingMessageActive = vi.fn(async () => ({ localId: 'wake-1', accepted: true }));
     const session = createSession({ active: false, presence: 0 });
@@ -97,16 +225,8 @@ describe('sendSessionMessageWithServerScope', () => {
       features: FeaturesResponseSchema.parse({
         features: {},
         capabilities: {
-          compatibility: {
-            v: 1,
-            sessionSync: {
-              v: 1,
-              enforcement: 'observe',
-              minimumSessionSyncProtocolVersion: 1,
-              currentSessionSyncProtocolVersion: 2,
-              declarationTransport: 'headers-v1',
-            },
-            pendingInput: { currentPendingInputProtocolVersion: 1 },
+          session: {
+            pendingInput: { protocolVersion: 1 },
           },
         },
       }),
@@ -137,16 +257,8 @@ describe('sendSessionMessageWithServerScope', () => {
         features: FeaturesResponseSchema.parse({
           features: {},
           capabilities: {
-            compatibility: {
-              v: 1,
-              sessionSync: {
-                v: 1,
-                enforcement: 'observe',
-                minimumSessionSyncProtocolVersion: 1,
-                currentSessionSyncProtocolVersion: 2,
-                declarationTransport: 'headers-v1',
-              },
-              pendingInput: { currentPendingInputProtocolVersion: 1 },
+            session: {
+              pendingInput: { protocolVersion: 1 },
             },
           },
         }),
@@ -207,16 +319,8 @@ describe('sendSessionMessageWithServerScope', () => {
       features: FeaturesResponseSchema.parse({
         features: {},
         capabilities: {
-          compatibility: {
-            v: 1,
-            sessionSync: {
-              v: 1,
-              enforcement: 'observe',
-              minimumSessionSyncProtocolVersion: 1,
-              currentSessionSyncProtocolVersion: 2,
-              declarationTransport: 'headers-v1',
-            },
-            pendingInput: { currentPendingInputProtocolVersion: 1 },
+          session: {
+            pendingInput: { protocolVersion: 1 },
           },
         },
       }),
@@ -334,16 +438,8 @@ describe('sendSessionMessageWithServerScope', () => {
       features: FeaturesResponseSchema.parse({
         features: {},
         capabilities: {
-          compatibility: {
-            v: 1,
-            sessionSync: {
-              v: 1,
-              enforcement: 'observe',
-              minimumSessionSyncProtocolVersion: 1,
-              currentSessionSyncProtocolVersion: 2,
-              declarationTransport: 'headers-v1',
-            },
-            pendingInput: { currentPendingInputProtocolVersion: 1 },
+          session: {
+            pendingInput: { protocolVersion: 1 },
           },
         },
       }),

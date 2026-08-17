@@ -14,7 +14,6 @@ import { DEFAULT_PROFILES, getBuiltInProfile, getBuiltInProfileNameKey, resolveP
 import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
-import { Ionicons } from '@expo/vector-icons';
 import { PopoverScope } from '@/components/ui/popover';
 import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -31,6 +30,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { isLaunchProfileV2, readAiLaunchProfileCollection, type AiLaunchProfile } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     appendAiLaunchProfile,
     readUiAiLaunchProfiles,
@@ -317,7 +317,7 @@ export default React.memo(function ProfileEditScreen() {
                     padding: 4,
                 })}
             >
-                <Ionicons name="close" size={24} color={theme.colors.chrome.header.foreground} />
+                <Icon name="x" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }, [handleCancel, theme.colors.chrome.header.foreground]);
@@ -339,7 +339,7 @@ export default React.memo(function ProfileEditScreen() {
                     padding: 4,
                 })}
             >
-                <Ionicons name="checkmark" size={24} color={theme.colors.chrome.header.foreground} />
+                <Icon name="check" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }, [handleSavePress, isDirty, theme.colors.chrome.header.foreground]);

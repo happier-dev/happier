@@ -28,4 +28,23 @@ describe('resolveMachineAbsolutePath', () => {
         expect(resolveMachineAbsolutePath({ rootPath: uncRoot, requestPath: String.raw`a\b` }))
             .toBe(String.raw`\\server\share\repo\a\b`);
     });
+
+    it('rebases absolute agent workspace paths without touching sibling paths', () => {
+        expect(resolveMachineAbsolutePath({
+            rootPath: '/Users/alice/project',
+            agentRootPath: '/home/coder/project',
+            requestPath: '/home/coder/project/src/index.ts',
+        })).toBe('/Users/alice/project/src/index.ts');
+        expect(resolveMachineAbsolutePath({
+            rootPath: '/Users/alice/project',
+            agentRootPath: '/home/coder/project',
+            requestPath: '/home/coder/project-other/src/index.ts',
+        })).toBe('/home/coder/project-other/src/index.ts');
+
+        expect(resolveMachineAbsolutePath({
+            rootPath: String.raw`D:\work\project`,
+            agentRootPath: String.raw`C:\Users\Alice\project`,
+            requestPath: String.raw`c:\users\alice\project\src\index.ts`,
+        })).toBe(String.raw`D:\work\project\src\index.ts`);
+    });
 });

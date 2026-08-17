@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { Pressable, type PressableProps } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ModalCloseButtonProps = Readonly<{
     onPress: () => void;
@@ -36,7 +36,7 @@ export function ModalCloseButton(props: ModalCloseButtonProps) {
                 { opacity: pressed ? 0.7 : 1 },
             ]}
         >
-            <Ionicons name="close" size={size} color={theme.colors.text.secondary} />
+            <Icon name="x" size={size} color={theme.colors.text.secondary} />
         </Pressable>
     );
 }

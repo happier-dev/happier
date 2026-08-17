@@ -61,6 +61,7 @@ describe('buildNewSessionActionShortcutChips', () => {
             tint: '#000',
             dismiss: () => {},
             blurInput: () => {},
+            openCollapsedPopover: () => {},
         }));
         expect(collapsedAction.id).toBe('new-session-action:review.start');
 

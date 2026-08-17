@@ -248,7 +248,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(snapshot.defaultTarget).toBe('open-inbox');
     });
 
-    it('ignores detached sessions that are not present in the canonical session-list lookup owners', () => {
+    it('includes hydrated user-facing sessions and their requests when the session-list lookup lags', () => {
         const visibleSession = createSessionFixture({
             id: 'visible-session',
             active: true,
@@ -265,6 +265,17 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             active: true,
             presence: 'online',
             pendingPermissionRequestCount: 1,
+            agentState: {
+                requests: {
+                    'detached-permission': {
+                        tool: 'Bash',
+                        arguments: {
+                            command: 'git status',
+                        },
+                        createdAt: 900,
+                    },
+                },
+            },
             metadata: {
                 path: '/Users/tester/project/detached',
                 host: 'tester.local',
@@ -299,8 +310,17 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             nowMs: 1_000,
         });
 
-        expect(snapshot.sessions.map((session) => session.sessionId)).toEqual(['visible-session']);
-        expect(snapshot.permissionRequests).toEqual([]);
+        expect(snapshot.sessions.map((session) => session.sessionId)).toEqual([
+            'detached-session',
+            'visible-session',
+        ]);
+        expect(snapshot.permissionRequests).toEqual([
+            expect.objectContaining({
+                kind: 'permission_request',
+                requestId: 'detached-permission',
+                sessionId: 'detached-session',
+            }),
+        ]);
     });
 
     it('derives permission-request and user-question snapshots for selected overlay sessions', () => {
@@ -652,7 +672,9 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                 quotaSummaries: [
                     {
                         key: 'claude:default',
-                        serviceId: 'anthropic',
+                        service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+                        legacyServiceId: 'anthropic',
+                        serviceLabel: 'Anthropic',
                         profileId: 'default',
                         profileLabel: 'Claude',
                         planLabel: 'Pro',

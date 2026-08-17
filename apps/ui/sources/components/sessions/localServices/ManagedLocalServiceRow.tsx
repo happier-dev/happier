@@ -126,7 +126,7 @@ export function ManagedLocalServiceRow(props: Readonly<{
                         {canRestart ? (
                             <IconButton
                                 testID={`${props.testID}-restart`}
-                                iconName="refresh-outline"
+                                iconName="arrow-clockwise"
                                 accessibilityLabel={t('localServices.managed.restartActionA11y')}
                                 animationEnabled={props.animationEnabled}
                                 onPress={handleRestart}
@@ -135,7 +135,7 @@ export function ManagedLocalServiceRow(props: Readonly<{
                         {canStop ? (
                             <IconButton
                                 testID={`${props.testID}-stop`}
-                                iconName="stop-circle-outline"
+                                iconName="stop-circle"
                                 accessibilityLabel={t('localServices.managed.stopActionA11y')}
                                 tone="danger"
                                 animationEnabled={props.animationEnabled}

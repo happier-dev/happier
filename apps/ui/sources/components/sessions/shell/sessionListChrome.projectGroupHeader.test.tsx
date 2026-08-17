@@ -486,6 +486,53 @@ describe('ProjectGroupHeader menu items', () => {
         expect(onMoveToWorkspaceRoot).toHaveBeenCalledTimes(1);
     });
 
+    it('renders a locked folder as unavailable state and disables name-dependent actions', async () => {
+        const { FolderGroupHeader } = await import('./sessionListChrome');
+        const screen = await renderScreen(
+            <FolderGroupHeader
+                title=""
+                depth={0}
+                collapsed={false}
+                item={{
+                    type: 'header',
+                    title: '',
+                    headerKind: 'folder',
+                    folderId: 'private-folder-id',
+                    folderDepth: 0,
+                    serverId: 'server_a',
+                    displayState: {
+                        status: 'locked',
+                        reason: 'account_key_unavailable',
+                    },
+                }}
+                onPress={vi.fn()}
+                onToggleCollapse={vi.fn()}
+                onNewSession={vi.fn()}
+                onAddSubfolder={vi.fn()}
+                onRename={vi.fn()}
+                onDelete={vi.fn()}
+            />,
+        );
+
+        const focusButton = screen.findByProps({
+            testID: 'session-folder-header-private-folder-id-focus',
+        });
+        expect(focusButton.props.accessibilityLabel).toBe(
+            'common.unavailable',
+        );
+        expect(
+            screen.findAllByType('Eyebrow' as never)
+                .map((node) => node.props.children),
+        ).not.toContain('private-folder-id');
+        const latestMenuProps = dropdownMenuSpy.mock.calls.at(-1)?.[0] as any;
+        expect(latestMenuProps?.items).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ id: 'rename', disabled: true }),
+                expect.objectContaining({ id: 'delete', disabled: true }),
+            ]),
+        );
+    });
+
     it('keeps folder drop target registration separate from row-local outline styling', async () => {
         platformOs = 'web';
         const { FolderGroupHeader } = await import('./sessionListChrome');
@@ -735,7 +782,7 @@ describe('ProjectGroupHeader menu items', () => {
         const pressables = screen.root.findAllByType('Pressable');
         const rowPressable = pressables[0];
         const addButton = screen.findByProps({ accessibilityLabel: 'machine.launchNewSessionInDirectory' });
-        const chevronWrapper = rowPressable.findAllByType('Ionicons')[0]?.parent;
+        const chevronWrapper = rowPressable.findAllByType('Icon')[0]?.parent;
 
         expect(addButton).toBeTruthy();
         expect(chevronWrapper?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 0 })]));
@@ -757,7 +804,7 @@ describe('ProjectGroupHeader menu items', () => {
         expect(reorderHandle).toBeTruthy();
         expect(typeof reorderHandle.props.onHoverIn).toBe('function');
         expect(typeof reorderHandle.props.onHoverOut).toBe('function');
-        expect(rowPressable.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
+        expect(rowPressable.findAllByType('Icon')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
         const menuTrigger = screen.findByProps({ accessibilityLabel: 'common.moreActions' });
 
         await act(async () => {
@@ -780,7 +827,7 @@ describe('ProjectGroupHeader menu items', () => {
             rowPressable.props.onHoverOut?.();
         });
 
-        expect(rowPressable.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 0 })]));
+        expect(rowPressable.findAllByType('Icon')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 0 })]));
 
         const collapsedScreen = await renderScreen(
             <ProjectGroupHeader
@@ -799,7 +846,7 @@ describe('ProjectGroupHeader menu items', () => {
             />,
         );
 
-        expect(collapsedScreen.root.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
+        expect(collapsedScreen.root.findAllByType('Icon')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
     });
 
     it('shows detected workspace favicons on project headers when enabled', async () => {

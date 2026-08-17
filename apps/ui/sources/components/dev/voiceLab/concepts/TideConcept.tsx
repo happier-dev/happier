@@ -5,12 +5,12 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from '
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { ControlRow, TactilePressable } from '../ConceptControls';
-import { Bloom, Grain } from '../VoiceLight';
-import { TranscriptStream } from '../TranscriptStream';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
-import { controlsForState } from '../voiceLabModel';
-import { VOICE_MOTION, light, useVoiceLabTokens } from '../voiceLabTokens';
+import { ControlRow, TactilePressable } from '@/components/voice/controls/VoiceControls';
+import { Bloom, Grain } from '@/components/voice/light/VoiceLight';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
+import { controlsForState, VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
+import { VOICE_MOTION, light, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, number, number, number]));
@@ -33,8 +33,8 @@ const Meniscus = React.memo(function Meniscus(props: Readonly<{
     phase: number;
     blur?: number;
 }>) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     // A very wide circle gives a shallow, believable surface curve.
     const arc = Math.max(props.width * 2.6, 520);
 
@@ -103,8 +103,8 @@ const Meniscus = React.memo(function Meniscus(props: Readonly<{
  * speaking.
  */
 export function TideConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const { state } = props;
     const [width, setWidth] = React.useState(300);
     const onLayout = React.useCallback((e: LayoutChangeEvent) => {
@@ -164,7 +164,7 @@ export function TideConcept(props: VoiceConceptProps) {
 
                     {conversational ? (
                         <View style={{ height: 150, paddingHorizontal: 13, marginBottom: 6 }}>
-                            <TranscriptStream compact />
+                            <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} compact />
                         </View>
                     ) : null}
 

@@ -101,6 +101,7 @@ import {
     createSessionFolder,
     deleteSessionFolder,
     renameSessionFolder,
+    selectAvailableSessionFolders,
     type SessionFolderMoveTarget,
     type SessionFolderWorkspaceRefV1,
     resolveDurableWorkspaceRefForSessionListHeader,
@@ -514,9 +515,48 @@ export function useSessionListViewStateFromPaneState(
     const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1 as string[];
     const sessionListGroupOrderV1 = organizationListViewState.sessionListGroupOrderV1 as Record<string, string[]>;
     const sessionWorkspaceOrderV1 = organizationListViewState.sessionWorkspaceOrderV1 as Record<string, string[]>;
-    const sessionTagsV1 = organizationListViewState.sessionTagsV1 as Record<string, string[]>;
-    const workspaceLabelsV1 = organizationListViewState.workspaceLabelsV1;
+    const sessionTagsV1 = React.useMemo(
+        () => Object.fromEntries(
+            Object.entries(organizationListViewState.sessionTagsV1).map(
+                ([sessionKey, tags]) => [
+                    sessionKey,
+                    tags.flatMap((tag) =>
+                        tag.display.status === 'available'
+                            ? [tag.display.value]
+                            : []),
+                ],
+            ),
+        ),
+        [organizationListViewState.sessionTagsV1],
+    );
+    const workspaceLabelsV1 = React.useMemo(
+        () => Object.fromEntries(
+            Object.entries(organizationListViewState.workspaceLabelsV1).map(
+                ([scopeKey, display]) => [
+                    scopeKey,
+                    display.status === 'available'
+                        ? display.value
+                        : t('common.unavailable'),
+                ],
+            ),
+        ),
+        [organizationListViewState.workspaceLabelsV1],
+    );
+    const availableWorkspaceLabelsV1 = React.useMemo(
+        () => Object.fromEntries(
+            Object.entries(organizationListViewState.workspaceLabelsV1)
+                .flatMap(([scopeKey, display]) =>
+                    display.status === 'available'
+                        ? [[scopeKey, display.value] as const]
+                        : []),
+        ),
+        [organizationListViewState.workspaceLabelsV1],
+    );
     const sessionFoldersV1 = organizationListViewState.sessionFoldersV1;
+    const availableSessionFoldersV1 = React.useMemo(
+        () => selectAvailableSessionFolders(sessionFoldersV1),
+        [sessionFoldersV1],
+    );
     const orderingPersistenceState = resolveSessionListOrderingPersistenceState({
         pinnedSessionKeysV1,
         sessionListGroupOrderV1,
@@ -631,22 +671,22 @@ export function useSessionListViewStateFromPaneState(
             if (!scope) return;
             await writeSessionOrganizationFolders({
                 scope,
-                current: sessionFoldersV1,
+                current: availableSessionFoldersV1,
                 next: nextFolders,
             });
         });
-    }, [activeOrganizationServerId, getAvailableOrganizationMutationScope, runOrganizationMutation, sessionFoldersV1]);
+    }, [activeOrganizationServerId, availableSessionFoldersV1, getAvailableOrganizationMutationScope, runOrganizationMutation]);
     const setWorkspaceLabelsV1 = React.useCallback((nextLabelsRaw: Record<string, string>) => {
         runOrganizationMutation(async () => {
             const scope = await getAvailableOrganizationMutationScope(activeOrganizationServerId);
             if (!scope) return;
             await writeSessionOrganizationWorkspaceLabels({
                 scope,
-                current: workspaceLabelsV1,
+                current: availableWorkspaceLabelsV1,
                 next: nextLabelsRaw,
             });
         });
-    }, [activeOrganizationServerId, getAvailableOrganizationMutationScope, runOrganizationMutation, workspaceLabelsV1]);
+    }, [activeOrganizationServerId, availableWorkspaceLabelsV1, getAvailableOrganizationMutationScope, runOrganizationMutation]);
     const sessionListMemoryCandidateKeys = React.useMemo(
         () => buildSessionListMemoryCandidateKeySet(renderPaneState.visibleSessionListIndex ?? []),
         [renderPaneState.visibleSessionListIndex],
@@ -1098,7 +1138,7 @@ export function useSessionListViewStateFromPaneState(
 
     const rowInteractions = useSessionListRowInteractions({
         folderActionsEnabled: Boolean(folderActionsEnabled),
-        sessionFoldersV1,
+        sessionFoldersV1: availableSessionFoldersV1,
         listItems: renderModels.listItems,
         currentGroupOrderMap: orderingPersistenceState.currentGroupOrderMap,
         currentWorkspaceOrderMap,
@@ -1359,7 +1399,7 @@ export function useSessionListViewStateFromPaneState(
         );
         if (name == null) return;
         const created = createSessionFolder({
-            current: sessionFoldersV1,
+            current: availableSessionFoldersV1,
             workspace,
             renderWorkspaceKey: item.workspaceKey,
             parentId: null,
@@ -1367,7 +1407,7 @@ export function useSessionListViewStateFromPaneState(
             now: Date.now(),
         });
         setSessionFoldersV1(created.next);
-    }, [sessionFoldersV1, setSessionFoldersV1]);
+    }, [availableSessionFoldersV1, setSessionFoldersV1]);
 
     const handleFocusSessionFolder = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId || !item.workspace) return;
@@ -1398,7 +1438,7 @@ export function useSessionListViewStateFromPaneState(
         );
         if (name == null) return;
         const created = createSessionFolder({
-            current: sessionFoldersV1,
+            current: availableSessionFoldersV1,
             workspace: item.workspace,
             renderWorkspaceKey: item.workspaceKey,
             parentId: item.folderId,
@@ -1406,7 +1446,7 @@ export function useSessionListViewStateFromPaneState(
             now: Date.now(),
         });
         setSessionFoldersV1(created.next);
-    }, [sessionFoldersV1, setSessionFoldersV1]);
+    }, [availableSessionFoldersV1, setSessionFoldersV1]);
 
     const handleRenameFolder = React.useCallback(async (item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId) return;
@@ -1420,13 +1460,13 @@ export function useSessionListViewStateFromPaneState(
         );
         if (name == null) return;
         const renamed = renameSessionFolder({
-            current: sessionFoldersV1,
+            current: availableSessionFoldersV1,
             folderId: item.folderId,
             name,
             now: Date.now(),
         });
         setSessionFoldersV1(renamed.next);
-    }, [sessionFoldersV1, setSessionFoldersV1]);
+    }, [availableSessionFoldersV1, setSessionFoldersV1]);
 
     const handleDeleteFolder = React.useCallback(async (item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId) return;
@@ -1441,7 +1481,7 @@ export function useSessionListViewStateFromPaneState(
         );
         if (!confirmed) return;
         const deleted = deleteSessionFolder({
-            current: sessionFoldersV1,
+            current: availableSessionFoldersV1,
             folderId: item.folderId,
         });
         if (deleted.deletedFolderIds.length === 0) return;
@@ -1452,11 +1492,11 @@ export function useSessionListViewStateFromPaneState(
         ) {
             setSessionListFocusedFolderV1(null);
         }
-    }, [sessionFoldersV1, sessionListFocusedFolderV1, setSessionFoldersV1, setSessionListFocusedFolderV1]);
+    }, [availableSessionFoldersV1, sessionListFocusedFolderV1, setSessionFoldersV1, setSessionListFocusedFolderV1]);
 
     const sessionFoldersSignature = React.useMemo(
-        () => buildSessionFoldersSignature(sessionFoldersV1),
-        [sessionFoldersV1],
+        () => buildSessionFoldersSignature(availableSessionFoldersV1),
+        [availableSessionFoldersV1],
     );
     const folderMoveTargetsByRowIdRef = React.useRef(new Map<string, Readonly<{
         signature: string;
@@ -1480,14 +1520,14 @@ export function useSessionListViewStateFromPaneState(
         const cached = folderMoveTargetsByRowIdRef.current.get(rowId);
         if (cached?.signature === signature) return cached.value;
         const value = buildSessionFolderMoveTargets({
-            folders: sessionFoldersV1,
+            folders: availableSessionFoldersV1,
             workspace: item.workspace,
             currentFolderId: item.folderId ?? null,
             workspaceRootTitle: t('sessionsList.workspaceRoot'),
         });
         folderMoveTargetsByRowIdRef.current.set(rowId, { signature, value });
         return value;
-    }, [folderActionsEnabled, sessionFoldersSignature, sessionFoldersV1]);
+    }, [availableSessionFoldersV1, folderActionsEnabled, sessionFoldersSignature]);
     const sessionListBulkActionContext = React.useMemo<SessionBulkActionExecutionContext>(() => ({
         setSessionPin: async ({ target, pinned }) => {
             await setSessionPinForTarget(target, pinned);

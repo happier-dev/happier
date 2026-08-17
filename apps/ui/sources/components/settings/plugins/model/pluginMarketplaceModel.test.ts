@@ -8,7 +8,7 @@ import {
     isPluginMutationVisibleAfterRefresh,
     readPendingPluginChangeReview,
     readPluginChangeKind,
-    shouldShowPluginReadOnlySnapshotNotice,
+    resolvePluginReadOnlySnapshotNotice,
     type InstalledPluginEntry,
 } from './pluginMarketplaceModel';
 
@@ -29,11 +29,6 @@ const completeReview = {
             kind: 'curated',
             sourceUrl: 'https://marketplace.example.test/catalog.json',
         },
-    },
-    integrity: {
-        packageDigest: `sha256:${'a'.repeat(64)}`,
-        manifestDigest: `sha256:${'b'.repeat(64)}`,
-        uiArtifactDigest: `sha256:${'c'.repeat(64)}`,
     },
     signature: { status: 'verified', keyId: 'registry-key-1' },
     provenance: { status: 'retrievedUnverified', predicateTypes: ['https://slsa.dev/provenance/v1'] },
@@ -60,6 +55,7 @@ const completeReview = {
         authorizationClass: 'hostResourceSelection',
         normalizedScope: { access: ['read'] },
     }],
+    rawCredentialAccess: [],
     compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
     updatePolicy: 'automatic',
 } as const;
@@ -109,15 +105,73 @@ describe('installed marketplace catalog formatting', () => {
     });
 
     it('marks catalog-only cached management metadata as a read-only snapshot while the daemon is unavailable', () => {
-        expect(shouldShowPluginReadOnlySnapshotNotice({
+        expect(resolvePluginReadOnlySnapshotNotice({
             daemonOperationsAvailable: false,
+            daemonTransportOnline: false,
+            projectionPhase: 'idle',
             hasCapabilitySnapshot: false,
             installedPluginCount: 0,
             developmentPluginCount: 0,
             hasCatalog: true,
             hasMarketplaceSourceRegistry: false,
             hasProjectionInputs: false,
-        })).toBe(true);
+        })).toEqual({ reason: 'disconnected' });
+    });
+
+    it('reports a projection failure rather than a disconnect when the machine is still reachable', () => {
+        expect(resolvePluginReadOnlySnapshotNotice({
+            daemonOperationsAvailable: false,
+            daemonTransportOnline: true,
+            projectionPhase: 'error',
+            hasCapabilitySnapshot: true,
+            installedPluginCount: 2,
+            developmentPluginCount: 0,
+            hasCatalog: false,
+            hasMarketplaceSourceRegistry: false,
+            hasProjectionInputs: true,
+        })).toEqual({ reason: 'projectionUnavailable' });
+    });
+
+    it('reports a projection failure when a reachable daemon does not serve the registry projection', () => {
+        expect(resolvePluginReadOnlySnapshotNotice({
+            daemonOperationsAvailable: false,
+            daemonTransportOnline: true,
+            projectionPhase: 'unsupported',
+            hasCapabilitySnapshot: true,
+            installedPluginCount: 1,
+            developmentPluginCount: 0,
+            hasCatalog: false,
+            hasMarketplaceSourceRegistry: false,
+            hasProjectionInputs: false,
+        })).toEqual({ reason: 'projectionUnavailable' });
+    });
+
+    it('still reports a disconnect when a reachable transport has no daemon capability answer yet', () => {
+        expect(resolvePluginReadOnlySnapshotNotice({
+            daemonOperationsAvailable: false,
+            daemonTransportOnline: true,
+            projectionPhase: 'loading',
+            hasCapabilitySnapshot: true,
+            installedPluginCount: 1,
+            developmentPluginCount: 0,
+            hasCatalog: false,
+            hasMarketplaceSourceRegistry: false,
+            hasProjectionInputs: false,
+        })).toEqual({ reason: 'disconnected' });
+    });
+
+    it('shows no notice when daemon operations are available', () => {
+        expect(resolvePluginReadOnlySnapshotNotice({
+            daemonOperationsAvailable: true,
+            daemonTransportOnline: true,
+            projectionPhase: 'ready',
+            hasCapabilitySnapshot: true,
+            installedPluginCount: 1,
+            developmentPluginCount: 0,
+            hasCatalog: true,
+            hasMarketplaceSourceRegistry: true,
+            hasProjectionInputs: true,
+        })).toBeNull();
     });
 
     it('does not advertise an update from a legacy catalog locator', () => {
@@ -141,6 +195,187 @@ describe('installed marketplace catalog formatting', () => {
             action: 'install',
             change: { kind: 'reviewRequired', pendingChangeId: '', review: {} },
         }, 'install', 'example.plugin')).toBeNull();
+    });
+
+    it('rejects a fabricated content-integrity claim for a local path review', () => {
+        const review = {
+            ...completeReview,
+            packageIdentity: { name: null, version: '2.0.0' },
+            publisherIdentity: { status: 'unavailable' },
+            source: {
+                kind: 'path',
+                locator: '/tmp/example-plugin',
+                integrity: 'sha512-fabricated-local',
+            },
+            updateChannel: { kind: 'path', locator: '/tmp/example-plugin', development: false },
+            signature: { status: 'notProvided' },
+            provenance: { status: 'notProvided' },
+            curation: { status: 'notApplicable' },
+            updatePolicy: 'manual',
+        };
+
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-local-integrity', review },
+        }, 'install', 'example.plugin')).toBeNull();
+    });
+
+    it('retains and explains bounded newer versions rejected before the selected artifact download', () => {
+        const review = {
+            ...completeReview,
+            compatibility: {
+                ...completeReview.compatibility,
+                blockedNewerVersions: [{
+                    version: '2.1.0',
+                    diagnostics: [{
+                        code: 'plugin_manifest_semantic_invalid',
+                        message: 'Plugin manifest requires happier >=9999.0.0',
+                    }],
+                }],
+            },
+        };
+        const parsed = readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-blocked-newer', review },
+        }, 'install', 'example.plugin');
+
+        expect(parsed?.review.compatibility.blockedNewerVersions).toEqual(
+            review.compatibility.blockedNewerVersions,
+        );
+        expect(formatPluginInstallationReviewBody(parsed!.review)).toContain(
+            'Newer versions blocked before download:',
+        );
+        expect(formatPluginInstallationReviewBody(parsed!.review)).toContain(
+            '2.1.0 [plugin_manifest_semantic_invalid]: Plugin manifest requires happier >=9999.0.0',
+        );
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: {
+                kind: 'reviewRequired',
+                pendingChangeId: 'pending-too-many-blocked-newer',
+                review: {
+                    ...review,
+                    compatibility: {
+                        ...review.compatibility,
+                        blockedNewerVersions: Array.from({ length: 33 }, () => (
+                            review.compatibility.blockedNewerVersions[0]
+                        )),
+                    },
+                },
+            },
+        }, 'install', 'example.plugin')).toBeNull();
+    });
+
+    it('accepts the bounded daemon-entry compatibility diagnostic emitted before download', () => {
+        const review = {
+            ...completeReview,
+            compatibility: {
+                ...completeReview.compatibility,
+                blockedNewerVersions: [{
+                    version: '2.1.0',
+                    diagnostics: [{
+                        code: 'plugin_manifest_semantic_invalid',
+                        message: 'Plugin daemon entry uses an unsupported extension',
+                    }],
+                }],
+            },
+        };
+
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-daemon-entry', review },
+        }, 'install', 'example.plugin')).toEqual({
+            pendingChangeId: 'pending-daemon-entry',
+            review,
+        });
+    });
+
+    it('accepts the bounded generated UI artifact compatibility diagnostic emitted before download', () => {
+        const review = {
+            ...completeReview,
+            compatibility: {
+                ...completeReview.compatibility,
+                blockedNewerVersions: [{
+                    version: '2.1.0',
+                    diagnostics: [{
+                        code: 'plugin_compatibility_projection_invalid',
+                        message: 'Generated UI artifact compatibility check failed: generated_ui_host_api_mismatch.',
+                    }],
+                }],
+            },
+        };
+
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-ui-artifact', review },
+        }, 'install', 'example.plugin')).toEqual({
+            pendingChangeId: 'pending-ui-artifact',
+            review,
+        });
+    });
+
+    it('accepts the bounded incompatible-engine compatibility diagnostic emitted before download', () => {
+        const review = {
+            ...completeReview,
+            compatibility: {
+                ...completeReview.compatibility,
+                blockedNewerVersions: [{
+                    version: '2.1.0',
+                    diagnostics: [{
+                        code: 'plugin_manifest_semantic_invalid',
+                        message: 'Plugin manifest requires a compatible Happier CLI version',
+                    }],
+                }],
+            },
+        };
+
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-incompatible-engine', review },
+        }, 'install', 'example.plugin')).toEqual({
+            pendingChangeId: 'pending-incompatible-engine',
+            review,
+        });
+    });
+
+    it('accepts the bounded selected-engine compatibility declaration', () => {
+        const review = {
+            ...completeReview,
+            compatibility: {
+                ...completeReview.compatibility,
+                happier: 'Declared compatible Happier CLI range',
+            },
+        };
+
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-selected-engine', review },
+        }, 'install', 'example.plugin')).toEqual({
+            pendingChangeId: 'pending-selected-engine',
+            review,
+        });
+    });
+
+    it('accepts the optional engine omission without inventing a host floor', () => {
+        const review = {
+            ...completeReview,
+            compatibility: { runtimeApiVersion: 1 },
+        };
+        const parsed = readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-no-engine', review },
+        }, 'install', 'example.plugin');
+
+        expect(parsed?.review.compatibility).toEqual({ runtimeApiVersion: 1 });
+        expect(formatPluginInstallationReviewBody(parsed!.review)).toContain('Happier: Not provided');
     });
 
     it('fails closed when any complete review-fact class is absent and renders every semantic class', () => {
@@ -179,6 +414,46 @@ describe('installed marketplace catalog formatting', () => {
         });
         expect(notProvidedBody).toContain('Signature: Not provided');
         expect(notProvidedBody).toContain('Provenance: Not provided');
+    });
+
+    it('requires raw Voice credential disclosures and states that plugin code can receive and copy them', () => {
+        const rawReview = {
+            ...completeReview,
+            rawCredentialAccess: [{
+                accessMode: 'raw',
+                contribution: { pluginId: 'acme.voice', localId: 'conversation' },
+                credentialSlot: {
+                    id: 'voice_auth',
+                    title: 'Voice credential',
+                    purpose: 'voice.client-auth',
+                },
+                sourceClass: { kind: 'savedSecret', secretKinds: ['apiKey'] },
+                realm: 'web',
+                phase: 'connection',
+                request: {
+                    kind: 'httpHeaders',
+                    origin: 'https://voice.example.test',
+                    headerNames: ['authorization'],
+                },
+            }],
+        };
+        const parsed = readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-raw', review: rawReview },
+        }, 'install', 'example.plugin');
+        const { rawCredentialAccess: _omittedRawCredentialAccess, ...undisclosedReview } = completeReview;
+
+        expect(parsed).not.toBeNull();
+        expect(formatPluginInstallationReviewBody(parsed!.review)).toContain('Raw Voice credential access:');
+        expect(formatPluginInstallationReviewBody(parsed!.review)).toContain(
+            'Plugin code in the web realm receives the selected credential directly and can use or copy it.',
+        );
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: { kind: 'reviewRequired', pendingChangeId: 'pending-missing-raw', review: undisclosedReview },
+        }, 'install', 'example.plugin')).toBeNull();
     });
 
     it('accepts the bounded review and committed result shapes for marketplace updates', () => {
@@ -236,4 +511,38 @@ describe('installed marketplace catalog formatting', () => {
             })).toBe(expected);
         },
     );
+
+    it('treats a same-version acquisition-integrity replacement as a visible external mutation', () => {
+        const before = Object.assign({ ...installed }, { admittedIntegrity: 'sha512:first' });
+        const after = Object.assign({ ...installed }, { admittedIntegrity: 'sha512:second' });
+
+        expect(isPluginMutationVisibleAfterRefresh({
+            method: 'rollback',
+            pluginId: installed.pluginId,
+            before,
+            after,
+            targetVersion: null,
+        })).toBe(true);
+    });
+
+    it('retains structural generation identity for same-version local-path mutations', () => {
+        const before = Object.assign({ ...installed }, {
+            source: { ...installed.source, kind: 'path' },
+            desiredGeneration: 'generation-1',
+            appliedGeneration: 'generation-1',
+        });
+        const after = Object.assign({ ...installed }, {
+            source: { ...installed.source, kind: 'path' },
+            desiredGeneration: 'generation-2',
+            appliedGeneration: 'generation-2',
+        });
+
+        expect(isPluginMutationVisibleAfterRefresh({
+            method: 'rollback',
+            pluginId: installed.pluginId,
+            before,
+            after,
+            targetVersion: null,
+        })).toBe(true);
+    });
 });

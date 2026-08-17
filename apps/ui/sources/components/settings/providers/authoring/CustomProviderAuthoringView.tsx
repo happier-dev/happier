@@ -17,6 +17,7 @@ import type { CustomProviderDraft } from '@/providers/authoring/state';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { ProviderErrorItems } from '../ProviderErrorItems';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create(() => ({
     fields: { gap: 16, paddingHorizontal: 16, paddingVertical: 14 },
@@ -95,7 +96,7 @@ export function CustomProviderAuthoringView(props: Readonly<{
                     itemTrigger={{
                         title: t('settingsProviders.authoring.protocolTitle'),
                         subtitle: model.presets.find((item) => item.id === draft.protocol)?.title,
-                        icon: <SafeIonicons name="git-network-outline" size={29} color={model.secondaryTextColor} />,
+                        icon: <Icon name="graph" size={29} color={model.secondaryTextColor} />,
                         showSelectedDetail: false,
                         showSelectedSubtitle: false,
                     }}
@@ -145,7 +146,7 @@ export function CustomProviderAuthoringView(props: Readonly<{
                     mode="info"
                     title={t('settingsProviders.authoring.localAddressTitle')}
                     subtitle={t('settingsProviders.authoring.localAddressDescription', { machine: model.currentMachineName, endpoint: model.localEndpoint })}
-                    icon={<SafeIonicons name="desktop-outline" size={29} color={model.secondaryTextColor} />}
+                    icon={<Icon name="desktop" size={29} color={model.secondaryTextColor} />}
                 /> : null}
                 <Item
                     title={t('settingsProviders.authoring.enableAfterSaving')}
@@ -193,7 +194,7 @@ export function CustomProviderAuthoringView(props: Readonly<{
                     <Item
                         title={t('settingsProviders.authoring.apiKey')}
                         subtitle={model.secretSelected ? t('settingsProviders.detail.apiKeySelected') : t('settingsProviders.authoring.apiKeyDescription')}
-                        icon={<SafeIonicons name="key-outline" size={29} color={model.secondaryTextColor} />}
+                        icon={<Icon name="key" size={29} color={model.secondaryTextColor} />}
                         onPress={actions.onPickSecret}
                     />
                 </> : null}
@@ -201,7 +202,7 @@ export function CustomProviderAuthoringView(props: Readonly<{
                 <Item
                     title={t('settingsProviders.authoring.apiKey')}
                     subtitle={model.secretSelected ? t('settingsProviders.detail.apiKeySelected') : t('settingsProviders.authoring.apiKeyDescription')}
-                    icon={<SafeIonicons name="key-outline" size={29} color={model.secondaryTextColor} />}
+                    icon={<Icon name="key" size={29} color={model.secondaryTextColor} />}
                     onPress={actions.onPickSecret}
                 />
             </ItemGroup> : null}

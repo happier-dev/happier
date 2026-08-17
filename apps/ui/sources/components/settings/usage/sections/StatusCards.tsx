@@ -8,6 +8,7 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { ContextGauge, InstrumentCard } from '@/components/instrument';
 import { t } from '@/text';
 import { EntranceView } from './EntranceView';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
     errorCard: {
@@ -95,7 +96,7 @@ export const UsageErrorCard: React.FC<{ message: string; onRetry?: () => void }>
             <InstrumentCard>
                 <View style={styles.errorCard}>
                     <View style={styles.errorRow}>
-                        <SafeIonicons name="alert-circle-outline" size={20} color={theme.colors.status.error} />
+                        <Icon name="warning-circle" size={20} color={theme.colors.status.error} />
                         <Text style={styles.errorText}>{message}</Text>
                     </View>
                     {typeof onRetry === 'function' ? (

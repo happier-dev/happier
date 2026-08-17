@@ -37,6 +37,8 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["sync"] }
 wry = "0.53.5"
 base64 = "0.22"
+percent-encoding = "2.3"
+sha2 = "0.10"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-autostart = "2"
@@ -47,7 +49,7 @@ block2 = "0.6.1"
 objc2 = "0.6.2"
 objc2-app-kit = { version = "0.3.1", features = ["NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSScreen", "NSWindow"] }
 objc2-core-graphics = "0.3.1"
-objc2-foundation = { version = "0.3.1", features = ["NSData", "NSDate", "NSDictionary", "NSError", "NSObject", "NSRunLoop", "NSString"] }
+objc2-foundation = { version = "0.3.1", features = ["NSData", "NSDate", "NSDictionary", "NSError", "NSKeyValueObserving", "NSObject", "NSRunLoop", "NSString"] }
 objc2-web-kit = { version = "0.3.1", features = ["WKSnapshotConfiguration", "WKWebView", "block2", "objc2-app-kit"] }
 png = "0.17.16"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

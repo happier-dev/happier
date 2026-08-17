@@ -8,8 +8,7 @@ import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHoo
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerReplaceMock = vi.fn();
-const setActiveServerIdMock = vi.fn();
-const switchConnectionToActiveServerMock = vi.fn(async () => {});
+const setActiveServerAndSwitchMock = vi.fn(async () => true);
 const refreshFromActiveServerMock = vi.fn(async () => {});
 const createEndpointReadinessProbeMock = vi.hoisted(() => vi.fn(() => async () => ({ status: 'ready' as const })));
 const promptSignedOutServerSwitchConfirmationMock = vi.hoisted(() => vi.fn(async () => true));
@@ -19,6 +18,14 @@ const pendingTerminalConnectMock = vi.hoisted(() => ({
         pendingTerminalConnectMock.current = value;
     }),
 }));
+const addedServerProfile = {
+    id: 'server-correct',
+    serverUrl: 'https://correct.example.test',
+    name: 'Correct',
+    createdAt: 0,
+    updatedAt: 0,
+    lastUsedAt: 0,
+};
 
 const settingsState = {
     serverSelectionGroups: [] as unknown[],
@@ -72,8 +79,8 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     setPendingTerminalConnect: pendingTerminalConnectMock.set,
 }));
 
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    switchConnectionToActiveServer: switchConnectionToActiveServerMock,
+vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
+    setActiveServerAndSwitch: setActiveServerAndSwitchMock,
 }));
 
 vi.mock('@/sync/runtime/connectivity/createEndpointReadinessProbe', () => ({
@@ -100,15 +107,11 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getTabActiveServerId: () => null,
     getResetToDefaultServerId: () => 'server-a',
     clearTabActiveServerId: vi.fn(),
-    setActiveServerId: (...args: unknown[]) => setActiveServerIdMock(...args),
-    upsertServerProfile: vi.fn(() => ({
-        id: 'server-correct',
-        serverUrl: 'https://correct.example.test',
-        name: 'Correct',
-        createdAt: 0,
-        updatedAt: 0,
-        lastUsedAt: 0,
-    })),
+    getServerProfileById: (serverId: string) =>
+        serverId === addedServerProfile.id ? addedServerProfile : null,
+    resolveServerProfileScopeId: (profile: { serverIdentityId?: string; id: string }) =>
+        profile.serverIdentityId ?? profile.id,
+    upsertServerProfile: vi.fn(() => addedServerProfile),
     removeServerProfile: vi.fn(),
 }));
 
@@ -164,8 +167,8 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
 describe('useServerSettingsScreenController (add server pending terminal)', () => {
     afterEach(() => {
         routerReplaceMock.mockClear();
-        setActiveServerIdMock.mockClear();
-        switchConnectionToActiveServerMock.mockClear();
+        setActiveServerAndSwitchMock.mockReset();
+        setActiveServerAndSwitchMock.mockResolvedValue(true);
         refreshFromActiveServerMock.mockClear();
         createEndpointReadinessProbeMock.mockClear();
         promptSignedOutServerSwitchConfirmationMock.mockClear();
@@ -207,11 +210,45 @@ describe('useServerSettingsScreenController (add server pending terminal)', () =
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://correct.example.test',
         });
-        expect(setActiveServerIdMock).toHaveBeenCalledWith('server-correct', { scope: 'device' });
+        expect(setActiveServerAndSwitchMock).toHaveBeenCalledWith({
+            serverId: 'server-correct',
+            scope: 'device',
+            refreshAuth: refreshFromActiveServerMock,
+        });
         expect(storageState.serverSelectionActiveTargetKind).toBe('server');
         expect(storageState.serverSelectionActiveTargetId).toBe('server-correct');
-        expect(switchConnectionToActiveServerMock).toHaveBeenCalledTimes(1);
-        expect(refreshFromActiveServerMock).toHaveBeenCalledTimes(1);
         expect(routerReplaceMock).toHaveBeenLastCalledWith('/?server=https%3A%2F%2Fcorrect.example.test');
+    });
+
+    it('does not retarget terminal or navigation state when marked custody blocks the switch', async () => {
+        setActiveServerAndSwitchMock.mockResolvedValue(false);
+        pendingTerminalConnectMock.current = {
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://active.example.test',
+        };
+
+        const { useServerSettingsScreenController } = await import('./useServerSettingsScreenController');
+
+        let value: ReturnType<typeof useServerSettingsScreenController> | null = null;
+        function Probe() {
+            value = useServerSettingsScreenController();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        await act(async () => {
+            value?.onChangeUrl('https://correct.example.test');
+            value?.onChangeName('Correct');
+        });
+        await act(async () => {
+            await value?.onAddServer();
+        });
+
+        expect(setActiveServerAndSwitchMock).toHaveBeenCalledTimes(1);
+        expect(pendingTerminalConnectMock.set).not.toHaveBeenCalled();
+        expect(storageState.serverSelectionActiveTargetKind).toBeNull();
+        expect(storageState.serverSelectionActiveTargetId).toBeNull();
+        expect(routerReplaceMock).not.toHaveBeenCalled();
     });
 });

@@ -4,7 +4,12 @@ import { buildSessionFolderAssignmentKey } from './assignmentKeys';
 import { buildSessionFolderCollapseKey } from './collapseKeys';
 import { resolveSessionFolderFocusScope, type SessionFolderFocusScope } from './focus';
 import { buildSessionFolderTree, type SessionFolderTreeNode } from './tree';
-import type { SessionFoldersV1, SessionFolderWorkspaceRefV1 } from './types';
+import { selectAvailableSessionFolders } from './types';
+import type {
+    SessionFolderList,
+    SessionFoldersV1,
+    SessionFolderWorkspaceRefV1,
+} from './types';
 import {
     buildSessionFolderWorkspaceRefKey,
     compareSessionFolderWorkspaceRefs,
@@ -77,6 +82,7 @@ function pushFolderNode(params: Readonly<{
         folderId: params.node.id,
         folderDepth: params.node.depth,
         workspace: params.workspace,
+        displayState: params.node.displayState,
     });
 
     const collapseKey = buildSessionFolderCollapseKey({
@@ -142,7 +148,7 @@ function splitProjectGroups(source: ReadonlyArray<SessionListIndexItem>): Projec
 
 export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
-    folders: SessionFoldersV1;
+    folders: SessionFolderList;
     assignmentsBySessionKey: Readonly<Record<string, string | null | undefined>>;
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
     focusedFolder: Readonly<{
@@ -151,9 +157,15 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
         serverId?: string | null;
     }> | null;
 }>): FolderAwareSessionListIndexResult {
-    const focus = resolveSessionFolderFocusScope(params.folders, params.focusedFolder);
+    const availableFolders: SessionFoldersV1 =
+        selectAvailableSessionFolders(params.folders);
+    const focus = resolveSessionFolderFocusScope(
+        availableFolders,
+        params.focusedFolder,
+    );
     const out: SessionListIndexItem[] = [];
     const groups = splitProjectGroups(params.source);
+    const renderedFolderIds = new Set<string>();
 
     for (const group of groups) {
         if (!group.workspace || group.header.headerKind !== 'project') {
@@ -165,9 +177,36 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
         const scopedFocus = focus && compareSessionFolderWorkspaceRefs(focus.folder.workspace, group.workspace)
             ? focus
             : null;
-        const tree = buildSessionFolderTree(params.folders, group.workspace);
+        const assignedFolderIds = new Set<string>();
+        for (const session of group.sessions) {
+            const folderId = params.assignmentsBySessionKey[
+                buildSessionFolderAssignmentKey(
+                    session.serverId ?? group.header.serverId ?? null,
+                    session.sessionId,
+                )
+            ];
+            if (folderId) assignedFolderIds.add(folderId);
+        }
+        const folderById = new Map(
+            params.folders.folders.map((folder) => [folder.id, folder] as const),
+        );
+        for (const folderId of [...assignedFolderIds]) {
+            let parentId = folderById.get(folderId)?.parentId ?? null;
+            const seen = new Set<string>([folderId]);
+            while (parentId && !seen.has(parentId)) {
+                assignedFolderIds.add(parentId);
+                seen.add(parentId);
+                parentId = folderById.get(parentId)?.parentId ?? null;
+            }
+        }
+        const tree = buildSessionFolderTree(params.folders, group.workspace, {
+            includeLockedFolderIds: assignedFolderIds,
+        });
         const knownFolderIds = new Set<string>();
         collectFolderIds(tree.rootNodes, knownFolderIds);
+        for (const folderId of knownFolderIds) {
+            renderedFolderIds.add(folderId);
+        }
 
         const sessionsByFolderId = new Map<string, Array<Extract<SessionListIndexItem, { type: 'session' }>>>();
         const rootSessions: Array<Extract<SessionListIndexItem, { type: 'session' }>> = [];
@@ -219,6 +258,63 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
         for (const session of rootSessions) {
             out.push(cloneSessionWithFolder(session, null, 0, rootGroupKey, group.workspace));
         }
+    }
+
+    const remainingLockedFolders = params.folders.folders
+        .filter((folder) =>
+            folder.displayState?.status === 'locked'
+            && !renderedFolderIds.has(folder.id))
+        .slice()
+        .sort((left, right) => {
+            const leftSort = left.sortKey ?? '';
+            const rightSort = right.sortKey ?? '';
+            return leftSort.localeCompare(rightSort)
+                || left.id.localeCompare(right.id);
+        });
+    const remainingIds = new Set(
+        remainingLockedFolders.map((folder) => folder.id),
+    );
+    const childrenByParentId = new Map<
+        string | null,
+        typeof remainingLockedFolders
+    >();
+    for (const folder of remainingLockedFolders) {
+        const parentId = folder.parentId && remainingIds.has(folder.parentId)
+            ? folder.parentId
+            : null;
+        const siblings = childrenByParentId.get(parentId) ?? [];
+        siblings.push(folder);
+        childrenByParentId.set(parentId, siblings);
+    }
+    const visited = new Set<string>();
+    const fallbackServerId = groups
+        .map((group) => group.header.serverId)
+        .find((serverId): serverId is string => Boolean(serverId));
+    const appendLockedFolder = (
+        folder: (typeof remainingLockedFolders)[number],
+        depth: number,
+    ) => {
+        if (visited.has(folder.id)) return;
+        visited.add(folder.id);
+        out.push({
+            type: 'header',
+            title: '',
+            headerKind: 'folder',
+            groupKey: `locked-folder:${fallbackServerId ?? 'local'}:${folder.id}`,
+            serverId: fallbackServerId,
+            folderId: folder.id,
+            folderDepth: depth,
+            displayState: folder.displayState,
+        });
+        for (const child of childrenByParentId.get(folder.id) ?? []) {
+            appendLockedFolder(child, depth + 1);
+        }
+    };
+    for (const root of childrenByParentId.get(null) ?? []) {
+        appendLockedFolder(root, 0);
+    }
+    for (const folder of remainingLockedFolders) {
+        appendLockedFolder(folder, 0);
     }
 
     return { items: out, folderFocus: focus };

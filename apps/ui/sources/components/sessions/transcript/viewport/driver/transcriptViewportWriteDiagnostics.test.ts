@@ -121,13 +121,99 @@ describe('transcriptViewportWriteDiagnostics', () => {
         ]);
         expect(warn).not.toHaveBeenCalled();
 
-        for (let index = 0; index < 80; index += 1) {
+        for (let index = 0; index < 700; index += 1) {
             recordTranscriptHeldIntentLifecycle({
                 ...landing,
                 currentOffset: index,
             });
         }
-        expect(sink.heldIntents).toHaveLength(64);
+        expect(sink.heldIntents).toHaveLength(512);
+    });
+
+    /**
+     * A CORRECTOR READ MUST NEVER EVICT THE WRITE IT EXPLAINS.
+     *
+     * The settle loop emits `landing-read` on EVERY frame (~60/s on a busy transcript), while
+     * `residual-write` — the one entry the probe exists to attribute — fires only when a
+     * correction is actually spent. Under a single flat ring the reads bury the write within
+     * ~1s: a live census over 79 trials retained 2 140 `landing-read` (plus as many
+     * adoption-probe reads, since retired with the stabilization corrector) and ZERO
+     * `residual-write` while the DOM instrument was recording those very writes (B2 §4.1,
+     * 2026-08-06). The ring then reports "no writes" exactly like a corridor that made none.
+     */
+    it('retains every write and lifecycle transition under a per-frame settle read flood', () => {
+        vi.stubGlobal('localStorage', { getItem: () => '1' });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const identity = { intentId: 'msg:cvv0m1h50mu', intentKind: 'anchor' as const };
+
+        recordTranscriptHeldIntentLifecycle({ ...identity, anchorReason: 'entry-restore', event: 'hold-set' });
+        recordTranscriptHeldIntentLifecycle({
+            ...identity,
+            anchorReason: 'entry-restore',
+            basis: 'web-dom',
+            currentOffset: 44_703,
+            event: 'residual-write',
+            residual: -32,
+            targetOffset: 44_671,
+        });
+
+        // ~65 seconds of per-frame settle reads at 60Hz.
+        for (let index = 0; index < 4_000; index += 1) {
+            recordTranscriptHeldIntentLifecycle({
+                ...identity,
+                anchorReason: 'restore-anchor',
+                currentOffset: 40_000 + index,
+                event: 'landing-missing',
+            });
+            recordTranscriptHeldIntentLifecycle({
+                ...identity,
+                anchorReason: 'restore-anchor',
+                currentOffset: 40_000 + index,
+                event: 'landing-read',
+                residual: -1,
+            });
+        }
+
+        const sink = (globalThis as Record<string, unknown>).__happierViewportDiagnostics as {
+            heldIntents: Array<{ anchorReason?: string | null; event: string }>;
+        };
+        // The write survives — with the discriminator that attributes it to its placement.
+        expect(sink.heldIntents.filter((entry) => entry.event === 'residual-write')).toEqual([
+            expect.objectContaining({ anchorReason: 'entry-restore', event: 'residual-write' }),
+        ]);
+        expect(sink.heldIntents.filter((entry) => entry.event === 'hold-set')).toHaveLength(1);
+        // ...and the reads are still bounded, in the same ordered ring.
+        expect(sink.heldIntents.length).toBeLessThanOrEqual(512);
+        expect(sink.heldIntents.filter((entry) => entry.event === 'landing-missing').length)
+            .toBeGreaterThan(100);
+        expect(sink.heldIntents.at(-1)).toMatchObject({ event: 'landing-read' });
+    });
+
+    /**
+     * The read class cannot grow without bound either: once the ring holds nothing but
+     * records, records evict records, so the instrument stays memory-bounded on a session
+     * that spends thousands of corrections.
+     */
+    it('evicts the oldest record once the ring holds nothing but records', () => {
+        vi.stubGlobal('localStorage', { getItem: () => '1' });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        for (let index = 0; index < 600; index += 1) {
+            recordTranscriptHeldIntentLifecycle({
+                basis: 'web-dom',
+                currentOffset: index,
+                event: 'residual-write',
+                intentId: 'msg:flood',
+                intentKind: 'anchor',
+                residual: -1,
+                targetOffset: index - 1,
+            });
+        }
+        const sink = (globalThis as Record<string, unknown>).__happierViewportDiagnostics as {
+            heldIntents: Array<{ currentOffset?: number; event: string }>;
+        };
+        expect(sink.heldIntents).toHaveLength(512);
+        expect(sink.heldIntents[0]).toMatchObject({ currentOffset: 88 });
+        expect(sink.heldIntents.at(-1)).toMatchObject({ currentOffset: 599 });
     });
 
     it('supports a lightweight held-intent probe without enabling physical scroll interception', () => {

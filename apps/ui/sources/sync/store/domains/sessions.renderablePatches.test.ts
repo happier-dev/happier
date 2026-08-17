@@ -50,7 +50,7 @@ function mockSessionsDomainBoundaries() {
         const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
         return {
             ...actual,
-            buildSessionListCacheEntriesFromRenderables: vi.fn(actual.buildSessionListCacheEntriesFromRenderables),
+            buildPersistedSessionListCacheEntriesFromRenderables: vi.fn(actual.buildPersistedSessionListCacheEntriesFromRenderables),
         };
     });
     vi.doMock('../../domains/server/serverRuntime', () => ({
@@ -606,7 +606,7 @@ describe('sessions domain: renderable patches', () => {
         const initialRenderables = get().sessionListRenderables;
         const initialRenderable = initialRenderables['s1'];
         const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
-        const buildPreviousEntries = warmCacheAdapters.buildSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
+        const buildPreviousEntries = warmCacheAdapters.buildPersistedSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
         expect(initialRenderable).toBeDefined();
         expect(saveWarmCache).toHaveBeenCalledTimes(1);
         buildPreviousEntries.mockClear();
@@ -729,7 +729,7 @@ describe('sessions domain: renderable patches', () => {
         const initialRenderables = get().sessionListRenderables;
         const initialRenderable = initialRenderables['s1'];
         const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
-        const buildPreviousEntries = warmCacheAdapters.buildSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
+        const buildPreviousEntries = warmCacheAdapters.buildPersistedSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
         expect(initialRenderable).toBeDefined();
         expect(saveWarmCache).toHaveBeenCalledTimes(1);
         buildPreviousEntries.mockClear();

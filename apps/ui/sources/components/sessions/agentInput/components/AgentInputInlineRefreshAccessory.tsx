@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Pressable, View, type AccessibilityState } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type AgentInputInlineRefreshAccessoryProps = Readonly<{
     probe: OptionPickerProbeState | null | undefined;
@@ -47,7 +47,7 @@ export function AgentInputInlineRefreshAccessory(props: AgentInputInlineRefreshA
                 ]}
             >
                 {probe.phase === 'idle' ? (
-                    <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
+                    <Icon name="arrow-clockwise" size={16} color={theme.colors.text.secondary} />
                 ) : (
                     <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 )}

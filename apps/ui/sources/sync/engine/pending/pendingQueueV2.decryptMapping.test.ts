@@ -378,6 +378,41 @@ describe('pendingQueueV2 decrypt mapping', () => {
         expect(discardedFailure?.pendingDecryptFailure).toEqual({ kind: 'decrypt_failed' });
     });
 
+    it('hides a send-as-new idempotency tombstone returned by an older server', async () => {
+        const sessionId = 's_send_as_new_legacy_tombstone';
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption: await createPendingQueueEncryption({ sessionId }),
+            request: async () => Response.json({
+                pending: [
+                    {
+                        localId: 'replacement',
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'send me' } } },
+                        status: 'queued',
+                        position: 0,
+                        createdAt: 2,
+                        updatedAt: 2,
+                    },
+                    {
+                        localId: 'original',
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'send me' } } },
+                        status: 'discarded',
+                        position: 0,
+                        createdAt: 1,
+                        updatedAt: 2,
+                        discardedAt: 2,
+                        discardedReason: 'resent_as_new',
+                    },
+                ],
+            }),
+        });
+
+        const pendingState = storage.getState().sessionPending[sessionId];
+        expect(pendingState?.messages.map((message) => message.localId)).toEqual(['replacement']);
+        expect(pendingState?.discarded).toEqual([]);
+    });
+
     it('retains encrypted pending rows as decrypt failures when session encryption is unavailable', async () => {
         const sessionId = 's_missing_session_encryption';
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));

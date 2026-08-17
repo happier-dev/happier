@@ -24,15 +24,22 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: runtimeFetchMock,
+vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
+    runtimeFetchWithServerReachability: runtimeFetchMock,
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: getCredentialsForServerUrlMock,
-    },
-}));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const actual = await importOriginal<
+        typeof import('@/auth/storage/tokenStorage')
+    >();
+    return {
+        ...actual,
+        TokenStorage: {
+            ...actual.TokenStorage,
+            getCredentialsForServerUrl: getCredentialsForServerUrlMock,
+        },
+    };
+});
 
 vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
     createEncryptionFromAuthCredentials: createEncryptionFromAuthCredentialsMock,
@@ -101,10 +108,11 @@ describe('createSessionRequestWithServerScope', () => {
         await request('/v1/sessions/s1/messages?scope=main', { method: 'GET' });
 
         expect(activeRequest).not.toHaveBeenCalled();
-        const call = runtimeFetchMock.mock.calls.find(([input]) => String(input).includes('/v1/sessions/s1/messages?scope=main'));
+        const call = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input?.url).includes('/v1/sessions/s1/messages?scope=main'));
         expect(call).toBeTruthy();
-        expect(call?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
-        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
+        expect(call?.[0]?.init).toEqual(expect.objectContaining({ method: 'GET' }));
+        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${ownerToken}`);
     });
 
     it('preserves request body and existing headers for non-GET scoped requests', async () => {
@@ -133,15 +141,16 @@ describe('createSessionRequestWithServerScope', () => {
         });
 
         expect(activeRequest).not.toHaveBeenCalled();
-        const call = runtimeFetchMock.mock.calls.find(([input]) => String(input).includes('/v2/sessions/s1/pending'));
+        const call = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input?.url).includes('/v2/sessions/s1/pending'));
         expect(call).toBeTruthy();
-        expect(call?.[1]).toEqual(expect.objectContaining({
+        expect(call?.[0]?.init).toEqual(expect.objectContaining({
             method: 'POST',
             body: JSON.stringify({ hello: 'world' }),
         }));
-        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
-        expectHeaderValue(call?.[1]?.headers, 'Content-Type', 'application/json');
-        expectHeaderValue(call?.[1]?.headers, 'X-Test', '1');
+        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${ownerToken}`);
+        expectHeaderValue(call?.[0]?.init?.headers, 'Content-Type', 'application/json');
+        expectHeaderValue(call?.[0]?.init?.headers, 'X-Test', '1');
     });
 
     it('binds an outbox action request to the exact persisted server and authenticated account', async () => {
@@ -159,10 +168,11 @@ describe('createSessionRequestWithServerScope', () => {
         });
         await request('/v2/sessions/s1/pending', { method: 'POST', body: 'exact-body' });
 
-        const call = runtimeFetchMock.mock.calls.find(([input]) => String(input).includes('/v2/sessions/s1/pending'));
+        const call = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input?.url).includes('/v2/sessions/s1/pending'));
         expect(call).toBeTruthy();
-        expect(call?.[1]).toEqual(expect.objectContaining({ body: 'exact-body' }));
-        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
+        expect(call?.[0]?.init).toEqual(expect.objectContaining({ body: 'exact-body' }));
+        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${ownerToken}`);
     });
 
     it('keeps a same-server request bound to the captured account after stored credentials change', async () => {
@@ -192,9 +202,9 @@ describe('createSessionRequestWithServerScope', () => {
 
         expect(getCredentialsForServerUrlMock).toHaveBeenCalledTimes(1);
         const call = runtimeFetchMock.mock.calls.find(([input]) =>
-            String(input).includes('/v1/sessions/history/messages'));
+            String(input?.url).includes('/v1/sessions/history/messages'));
         expect(call).toBeTruthy();
-        expectHeaderValue(call?.[1]?.headers, 'Authorization', `Bearer ${accountAToken}`);
+        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${accountAToken}`);
         expect(authority.scope).toEqual({
             serverId: activeServer.id,
             accountId: 'account-a',

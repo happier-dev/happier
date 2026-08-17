@@ -10,10 +10,6 @@ import {
     formatVoiceToolResultsFollowUp,
     VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX,
 } from '@happier-dev/protocol';
-import {
-    EMPTY_PLUGIN_UI_PROJECTION,
-    type PluginUiProjectionModel,
-} from '@/sync/domains/plugins/ui/projection';
 
 const structuredRouterState = vi.hoisted(() => ({
     push: vi.fn(),
@@ -60,6 +56,9 @@ installMessageViewCommonModuleMocks({
                 if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
                 if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
                 if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
+                if (key === 'message.pluginAttribution' && params && typeof params.pluginId === 'string') {
+                    return `From plugin ${params.pluginId}`;
+                }
                 return key;
             },
         });
@@ -91,6 +90,11 @@ installMessageViewCommonModuleMocks({
                 canApprovePermissions: true,
                 active: true,
                 presence: 'online',
+            }),
+            useSessionInteractionSource: () => ({
+                accessLevel: null,
+                canApprovePermissions: true,
+                active: true,
             }),
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSetting: (key: string) => {
@@ -302,44 +306,184 @@ function createReviewFindingsMessage(kind: 'review_findings.v1' | 'review_findin
     });
 }
 
-function createPluginStructuredMessageProjection(params: Readonly<{
-    kind: string;
-    rendererId: string;
-}>): PluginUiProjectionModel {
-    return {
-        ...EMPTY_PLUGIN_UI_PROJECTION,
-        generation: 7,
-        structuredMessagesByKind: {
-            [params.kind]: {
-                id: 'structuredMessage:acme.preview:preview-card',
-                pluginId: 'acme.preview',
-                contributionKind: 'structuredMessage',
-                descriptorId: 'preview-card',
-                kind: params.kind,
-                fallback: { kind: 'summary', template: 'Preview unavailable' },
-                renderer: { kind: 'host', rendererId: params.rendererId },
-                display: { titleKey: 'preview.title' },
-                payloadSchema: {
-                    type: 'object',
-                    required: ['title'],
-                    properties: {
-                        title: { type: 'string' },
-                        summary: { type: 'string' },
+describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
+    it('renders every persisted composer attachment as host-only transcript context', async () => {
+        const { MessageView } = await import('./MessageView');
+        const message = {
+            kind: 'user-text' as const,
+            id: 'composer-attachments',
+            localId: 'local-composer-attachments',
+            createdAt: 0,
+            text: 'Please investigate these issues.',
+            meta: {
+                happierStructuredInputV1: {
+                    v: 1,
+                    composerAttachments: [
+                        {
+                            v: 1,
+                            instanceId: 'issue-42',
+                            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                            key: '42',
+                            value: { issueId: 42 },
+                            presentation: {
+                                typeLabel: 'Issue',
+                                label: 'Issue #42',
+                                description: 'Production error',
+                                icon: 'error',
+                            },
+                        },
+                        {
+                            v: 1,
+                            instanceId: 'run-7',
+                            attachment: { pluginId: 'acme.deployments', localId: 'run' },
+                            key: '7',
+                            value: { runId: 7 },
+                            presentation: {
+                                typeLabel: 'Deployment',
+                                label: 'Deploy #7',
+                                tone: 'warning',
+                            },
+                        },
+                    ],
+                },
+            },
+        } satisfies UserTextMessage;
+
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+            />,
+        );
+
+        expect(screen.findByTestId('transcript-composer-attachment:composer-attachments:issue-42')).not.toBeNull();
+        expect(screen.findByTestId('transcript-composer-attachment:composer-attachments:run-7')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Issue #42');
+        expect(screen.getTextContent()).toContain('Production error');
+        expect(screen.getTextContent()).toContain('Deploy #7');
+    });
+
+    it('renders durable plugin provenance in ordinary and structured user messages, but fails closed otherwise', async () => {
+        const { MessageView } = await import('./MessageView');
+        const pluginProvenance = {
+            v: 1,
+            kind: 'pluginSession',
+            pluginId: 'acme.preview',
+            contributionLocalId: 'inbound',
+            surface: 'unspecified',
+        } as const;
+        const messages = [
+            {
+                kind: 'user-text',
+                id: 'plugin-ordinary',
+                localId: 'local-plugin-ordinary',
+                createdAt: 0,
+                text: 'Plugin input',
+                meta: { happierProvenanceV1: pluginProvenance },
+            },
+            {
+                kind: 'user-text',
+                id: 'plugin-structured',
+                localId: 'local-plugin-structured',
+                createdAt: 0,
+                text: 'Plugin preview',
+                meta: {
+                    happierProvenanceV1: pluginProvenance,
+                    happier: {
+                        kind: 'acme.preview/preview-card.v1',
+                        payload: { title: 'Preview ready' },
                     },
                 },
             },
-        },
-    };
-}
+            {
+                kind: 'user-text',
+                id: 'legacy-plugin',
+                localId: 'local-legacy-plugin',
+                createdAt: 0,
+                text: 'Legacy plugin input',
+                meta: {
+                    happier: {
+                        kind: 'conversation_turn.v1',
+                        payload: { v: 1 },
+                        conversationTurnOriginV1: {
+                            v: 1,
+                            channel: 'realtime_conversation',
+                            modality: 'voice',
+                            source: {
+                                pluginId: 'example.channels',
+                                contributionId: 'inbound',
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                kind: 'user-text',
+                id: 'no-provenance',
+                localId: 'local-no-provenance',
+                createdAt: 0,
+                text: 'Ordinary input',
+                meta: {},
+            },
+            {
+                kind: 'user-text',
+                id: 'malformed-provenance',
+                localId: 'local-malformed-provenance',
+                createdAt: 0,
+                text: 'Malformed input',
+                meta: {
+                    happierProvenanceV1: {
+                        v: 1,
+                        kind: 'pluginSession',
+                        pluginId: 'acme.preview',
+                    },
+                },
+            },
+            {
+                kind: 'user-text',
+                id: 'other-provenance',
+                localId: 'local-other-provenance',
+                createdAt: 0,
+                text: 'Voice input',
+                meta: { happierProvenanceV1: { v: 1, kind: 'voice' } },
+            },
+        ] satisfies UserTextMessage[];
 
-describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
-    it('passes plugin UI projection into product structured message rendering', async () => {
+        const screen = await renderScreen(
+            <>
+                {messages.map((message) => (
+                    <MessageView
+                        key={message.id}
+                        message={message}
+                        metadata={null}
+                        sessionId="s1"
+                    />
+                ))}
+            </>,
+        );
+
+        for (const [id, label] of [
+            ['plugin-ordinary', 'From plugin acme.preview'],
+            ['plugin-structured', 'From plugin acme.preview'],
+            ['legacy-plugin', 'From plugin example.channels'],
+        ]) {
+            const attribution = screen.findByTestId(`transcript-plugin-attribution:${id}`);
+            expect(attribution).not.toBeNull();
+            expect(attribution?.props.accessibilityRole).toBe('text');
+            expect(attribution?.props.accessibilityLabel).toBe(label);
+            expect(attribution?.props.numberOfLines).toBe(1);
+            expect(attribution?.props.ellipsizeMode).toBe('tail');
+            expect(attribution?.props.children).toBe(label);
+        }
+        expect(screen.findByTestId('transcript-plugin-attribution:no-provenance')).toBeNull();
+        expect(screen.findByTestId('transcript-plugin-attribution:malformed-provenance')).toBeNull();
+        expect(screen.findByTestId('transcript-plugin-attribution:other-provenance')).toBeNull();
+    });
+
+    it('fails closed for an unpersisted generic plugin envelope', async () => {
         const { MessageView } = await import('./MessageView');
         const kind = 'acme.preview/preview-card.v1';
-        const pluginUiProjection = createPluginStructuredMessageProjection({
-            kind,
-            rendererId: 'summaryCard',
-        });
         const message = {
             kind: 'user-text',
             id: 'plugin-structured-message-1',
@@ -362,12 +506,10 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 message={message}
                 metadata={null}
                 sessionId="s1"
-                pluginUiProjection={pluginUiProjection}
             />,
         );
 
-        expect(screen.findByTestId('structured-message-summary-fallback')).toBeTruthy();
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('Preview unavailable');
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
     });
 
     it('renders session_media.v1 inline images from the dedicated media metadata slot', async () => {

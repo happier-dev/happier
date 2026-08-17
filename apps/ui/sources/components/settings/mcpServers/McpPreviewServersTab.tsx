@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { DaemonMcpServersPreviewResponse } from '@happier-dev/protocol';
@@ -12,13 +11,11 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { TextInput } from '@/components/ui/text/Text';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 
 import { McpServerBadgePills } from './McpServerBadgePills';
 import { McpServerRowSummary } from './McpServerRowSummary';
 import {
-    describeMachine,
     resolveAgentToolsDeliveryDescription,
     resolveAgentToolsDeliveryLabel,
     resolveAuthBadgeLabel,
@@ -28,19 +25,16 @@ import {
     resolveTransportIconName,
     resolveTransportLabel,
 } from './mcpServerUi';
-import { resolveMachineServerId } from './resolveMachineServerId';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type PreviewSuccess = Extract<DaemonMcpServersPreviewResponse, { ok: true }>;
 
 export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(props: Readonly<{
-    machines: readonly Machine[];
-    machineItems: readonly DropdownMenuItem[];
     agentItems: readonly DropdownMenuItem[];
     selectedAgentTools: AgentCoreConfig['tools'];
     selectedMachineId: string | null;
-    onSelectMachine: (machineId: string) => void;
-    machineMenuOpen: boolean;
-    onMachineMenuOpenChange: (open: boolean) => void;
+    selectedServerId: string | null;
+    canExecute: boolean;
     selectedAgentId: AgentId;
     onSelectAgentId: (agentId: AgentId) => void;
     agentMenuOpen: boolean;
@@ -52,23 +46,19 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
     onRefresh: () => void;
 }>) {
     const { theme } = useUnistyles();
-    const selectedMachineServerId = React.useMemo(
-        () => resolveMachineServerId(props.machines, props.selectedMachineId),
-        [props.machines, props.selectedMachineId],
-    );
 
     const handleBrowseDirectory = React.useCallback(async () => {
-        if (!props.selectedMachineId) return;
+        if (!props.selectedMachineId || !props.selectedServerId || !props.canExecute) return;
         const selected = await openMachinePathBrowserModal({
             machineId: props.selectedMachineId,
-            serverId: selectedMachineServerId,
+            serverId: props.selectedServerId,
             initialPath: props.directory,
             title: t('settings.mcpServersPreviewDirectoryTitle'),
         });
         if (selected) {
             props.onChangeDirectory(selected);
         }
-    }, [props.directory, props.onChangeDirectory, props.selectedMachineId, selectedMachineServerId]);
+    }, [props.canExecute, props.directory, props.onChangeDirectory, props.selectedMachineId, props.selectedServerId]);
 
     return (
         <>
@@ -82,25 +72,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                     itemTrigger={{
                         title: t('settings.mcpServersPreviewAgentTitle'),
                         subtitle: props.selectedAgentId,
-                        icon: <Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.blue} />,
-                    }}
-                    rowKind="item"
-                    connectToTrigger
-                    variant="default"
-                />
-
-                <DropdownMenu
-                    open={props.machineMenuOpen}
-                    onOpenChange={props.onMachineMenuOpenChange}
-                    items={props.machineItems}
-                    selectedId={props.selectedMachineId}
-                    onSelect={props.onSelectMachine}
-                    itemTrigger={{
-                        title: t('settings.mcpServersPreviewMachineTitle'),
-                        subtitle: props.selectedMachineId
-                            ? describeMachine(props.selectedMachineId, props.machines)
-                            : t('settings.mcpServersNoMachineSelected'),
-                        icon: <Ionicons name="laptop-outline" size={29} color={theme.colors.accent.indigo} />,
+                        icon: <Icon name="sparkle" size={29} color={theme.colors.accent.blue} />,
                     }}
                     rowKind="item"
                     connectToTrigger
@@ -112,7 +84,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                     title={t('settings.mcpServersPreviewDeliveryTitle')}
                     subtitle={resolveAgentToolsDeliveryDescription(props.selectedAgentTools.delivery)}
                     detail={resolveAgentToolsDeliveryLabel(props.selectedAgentTools.delivery)}
-                    icon={<Ionicons name="hardware-chip-outline" size={29} color={theme.colors.accent.green} />}
+                    icon={<Icon name="cpu" size={29} color={theme.colors.accent.green} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -121,7 +93,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                     testID="settings.mcpServers.preview.directory"
                     title={t('settings.mcpServersPreviewDirectoryTitle')}
                     subtitle={t('settings.mcpServersPreviewDirectorySubtitle')}
-                    icon={<Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="folder-open" size={29} color={theme.colors.accent.blue} />}
                     showChevron={false}
                     rightElement={(
                         <View style={styles.directoryInputRow}>
@@ -137,7 +109,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                             />
                             <PathInputBrowseButton
                                 onPress={handleBrowseDirectory}
-                                disabled={!props.selectedMachineId}
+                                disabled={!props.canExecute}
                             />
                         </View>
                     )}
@@ -147,9 +119,9 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                     testID="settings.mcpServers.preview.refresh"
                     title={t('settings.mcpServersPreviewRefreshTitle')}
                     subtitle={props.loading ? t('common.loading') : t('settings.mcpServersPreviewRefreshSubtitle')}
-                    icon={<Ionicons name="eye-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="eye" size={29} color={theme.colors.accent.blue} />}
                     onPress={props.onRefresh}
-                    disabled={props.loading || !props.selectedMachineId}
+                    disabled={props.loading || !props.canExecute}
                     showChevron={false}
                 />
             </ItemGroup>
@@ -160,7 +132,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                         testID="settings.mcpServers.preview.empty"
                         title={t('settings.mcpServersPreviewEmptyTitle')}
                         subtitle={t('settings.mcpServersPreviewEmptySubtitle')}
-                        icon={<Ionicons name="eye-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="eye" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -178,7 +150,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                                         secondary={t('settings.mcpServersBuiltInDescription')}
                                     />
                                 )}
-                                icon={<Ionicons name={resolveTransportIconName(entry.transport)} size={29} color={theme.colors.accent.blue} />}
+                                icon={<Icon name={resolveTransportIconName(entry.transport)} size={29} color={theme.colors.accent.blue} />}
                                 detail={resolveTransportLabel(entry.transport)}
                                 rightElement={(
                                     <McpServerBadgePills
@@ -205,7 +177,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                                         secondary={resolveManagedAvailabilityLabel(entry)}
                                     />
                                 )}
-                                icon={<Ionicons name={resolveTransportIconName(entry.transport)} size={29} color={theme.colors.accent.blue} />}
+                                icon={<Icon name={resolveTransportIconName(entry.transport)} size={29} color={theme.colors.accent.blue} />}
                                 detail={resolveTransportLabel(entry.transport)}
                                 rightElement={(
                                     <McpServerBadgePills
@@ -232,7 +204,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                                         secondary={entry.sourcePath}
                                     />
                                 )}
-                                icon={<Ionicons name={resolveTransportIconName(entry.transport)} size={29} color={theme.colors.accent.blue} />}
+                                icon={<Icon name={resolveTransportIconName(entry.transport)} size={29} color={theme.colors.accent.blue} />}
                                 detail={resolveTransportLabel(entry.transport)}
                                 rightElement={(
                                     <McpServerBadgePills

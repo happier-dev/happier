@@ -2,10 +2,14 @@ import * as React from 'react';
 import * as ReactJsxRuntime from 'react/jsx-runtime';
 import * as ReactJsxDevRuntime from 'react/jsx-dev-runtime';
 import * as ReactNative from 'react-native';
+import * as ReactNativeReanimated from 'react-native-reanimated';
+import * as ReactNavigationNative from '@react-navigation/native';
+import * as ReactNavigationNativeStack from '@react-navigation/native-stack';
 
 import {
-    PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS,
-    type PluginUiHostReactRuntimeExternalSpecifierV1,
+    PLUGIN_UI_HOST_NATIVE_RUNTIME_EXTERNAL_SPECIFIERS,
+    type PluginUiHostNativeRuntimeExternalModulesV1,
+    type PluginUiHostNativeRuntimeExternalSpecifierV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 // Metro's own asset graph does not reliably serve `./package.json` subpath
@@ -18,8 +22,19 @@ import {
 // (`singleton:true`) remote agree exists; it does not need to be read from
 // the package at runtime. Kept in lockstep with `package.json` intentionally
 // (not derived) so a dependency bump is a visible, reviewed diff here too.
-const HOST_REACT_VERSION = '19.2.0';
-const HOST_REACT_NATIVE_VERSION = '0.83.4';
+//
+// EU-6: the lockstep is now ENFORCED rather than aspirational —
+// `moduleFederationHostSharedScope.test.ts` reads `apps/ui/package.json` and
+// fails when a declared range no longer admits the version below. It had
+// already drifted silently (`react-native` was pinned here at `0.83.4` while
+// the app declared `0.83.5`).
+const HOST_SHARED_MODULE_VERSIONS = Object.freeze({
+    react: '19.2.0',
+    'react-native': '0.83.5',
+    'react-native-reanimated': '4.3.0',
+    '@react-navigation/native': '7.2.4',
+    '@react-navigation/native-stack': '7.14.5',
+} as const);
 
 /**
  * RN-HARDEN (IOS-REBUILD residual — "Host MF share scope + per-artifact chunk
@@ -33,7 +48,8 @@ const HOST_REACT_NATIVE_VERSION = '0.83.4';
  * `__webpack_share_scopes__` (the scope registry a remote container's
  * `container.init(shareScope)` consumes to resolve its own declared exact
  * React runtime closure plus `react-native` singleton against —
- * see `packages/plugins/inspector/rspack.config.mjs`'s `shared` map).
+ * see `packages/plugin-sdk/src/ui/reactNativeBuild.ts`'s builder-owned
+ * `createReactNativeRepackSharedModules()` map).
  *
  * This app's HOST bundle is built by METRO, not webpack/rspack, so neither
  * global exists natively — IOS-REBUILD's live capstone proof
@@ -47,13 +63,19 @@ const HOST_REACT_NATIVE_VERSION = '0.83.4';
  * QA-only hack.
  *
  * Mirrors `../shared/hostRuntimeExternals.ts`'s web-loader externals
- * installer: the SAME exact React runtime namespaces and `react-native`
- * instance the host app itself renders with are handed to remote containers,
- * so a plugin's React surface shares one React closure across the
- * module-federation boundary.
+ * installer: the SAME exact module namespaces the host app itself renders with
+ * are handed to remote containers, so a plugin's React, navigation and
+ * animation surfaces share one closure across the module-federation boundary.
  *
- * Other native host-provided modules remain additive and must be paired with
- * a real remote consumer before they are added here.
+ * EU-6: the specifier list is NOT decided here. It is
+ * `PLUGIN_UI_HOST_NATIVE_RUNTIME_EXTERNAL_SPECIFIERS`
+ * (`packages/protocol/src/plugins/ui/hostRuntimeExternals.ts`), the same owner
+ * `packages/plugin-sdk`'s Re.Pack build preset derives its `external` list and
+ * `import:false` Module Federation `shared` map from. Adding a module to that
+ * list alone breaks this file's `satisfies` — which is the point: the two ends
+ * previously drifted (UI-D14) and shipped externalized Reanimated/React
+ * Navigation the host never provided. Only the share-scope VERSION keys are
+ * owned here, in lockstep with `apps/ui/package.json`.
  */
 
 export const MODULE_FEDERATION_DEFAULT_SHARE_SCOPE = 'default';
@@ -85,20 +107,45 @@ type HostSharedModuleProvider = Readonly<{
     getModule: () => unknown;
 }>;
 
-const HOST_REACT_RUNTIME_MODULES = Object.freeze({
+/**
+ * EU-6 closure: every specifier the Re.Pack build preset externalizes with
+ * `import:false` resolves HERE, to the host app's own module instance. The
+ * `satisfies` binds this table to the protocol-owned specifier list, so adding
+ * a specifier to `PLUGIN_UI_HOST_NATIVE_RUNTIME_EXTERNAL_SPECIFIERS` alone
+ * fails to compile here instead of shipping an unprovidable promise (UI-D14).
+ */
+const HOST_NATIVE_RUNTIME_MODULES = Object.freeze({
     react: React,
     'react/jsx-runtime': ReactJsxRuntime,
     'react/jsx-dev-runtime': ReactJsxDevRuntime,
-} satisfies Record<PluginUiHostReactRuntimeExternalSpecifierV1, unknown>);
+    'react-native': ReactNative,
+    'react-native-reanimated': ReactNativeReanimated,
+    '@react-navigation/native': ReactNavigationNative,
+    '@react-navigation/native-stack': ReactNavigationNativeStack,
+} satisfies PluginUiHostNativeRuntimeExternalModulesV1);
 
-const HOST_SHARED_MODULE_PROVIDERS: readonly HostSharedModuleProvider[] = Object.freeze([
-    ...PLUGIN_UI_HOST_REACT_RUNTIME_EXTERNAL_SPECIFIERS.map((name) => Object.freeze({
+/**
+ * The share-scope version key each specifier is published under. React's three
+ * runtime subpaths are one package, so they share React's version.
+ */
+function readHostSharedModuleVersion(specifier: PluginUiHostNativeRuntimeExternalSpecifierV1): string {
+    switch (specifier) {
+        case 'react':
+        case 'react/jsx-runtime':
+        case 'react/jsx-dev-runtime':
+            return HOST_SHARED_MODULE_VERSIONS.react;
+        default:
+            return HOST_SHARED_MODULE_VERSIONS[specifier];
+    }
+}
+
+const HOST_SHARED_MODULE_PROVIDERS: readonly HostSharedModuleProvider[] = Object.freeze(
+    PLUGIN_UI_HOST_NATIVE_RUNTIME_EXTERNAL_SPECIFIERS.map((name) => Object.freeze({
         name,
-        version: HOST_REACT_VERSION,
-        getModule: () => HOST_REACT_RUNTIME_MODULES[name],
+        version: readHostSharedModuleVersion(name),
+        getModule: () => HOST_NATIVE_RUNTIME_MODULES[name],
     })),
-    Object.freeze({ name: 'react-native', version: HOST_REACT_NATIVE_VERSION, getModule: () => ReactNative }),
-]);
+);
 
 function createHostSharedScopeEntries(): ModuleFederationShareScopeEntries {
     const entries: Record<string, Record<string, ModuleFederationSharedModuleVersionEntry>> = {};

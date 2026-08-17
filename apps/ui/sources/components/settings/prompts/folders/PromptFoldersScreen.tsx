@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PromptBundleBodyV1Schema, PromptDocBodyV1Schema } from '@happier-dev/protocol';
@@ -9,7 +8,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { sync } from '@/sync/sync';
@@ -18,6 +17,7 @@ import { updateSkillPromptBundle, readSkillMarkdownFromPromptBundleBody } from '
 import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { normalizePromptFolderName, removePromptFolder, renamePromptFolder } from '@/sync/ops/promptLibrary/promptFolders';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -26,13 +26,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     paddingVertical: 12,
-    maxWidth: layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
 }));
 
 export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const contentStyle = React.useMemo(() => [styles.content, contentMaxWidthStyle], [contentMaxWidthStyle]);
   const { theme } = useUnistyles();
   const artifacts = useArtifacts();
   const [promptFoldersV1, setPromptFoldersV1] = useSettingMutable('promptFoldersV1');
@@ -138,7 +141,7 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
 
   return (
     <View style={styles.container}>
-      <ItemList containerStyle={styles.content}>
+      <ItemList containerStyle={contentStyle}>
         <ItemGroup title={t('promptLibrary.folders')}>
           {folders.length > 0 ? folders.map((folder) => (
             <Item
@@ -146,7 +149,7 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
               testID={`promptFolders.entry.${folder.id}`}
               title={folder.name}
               subtitle={t('promptLibrary.folderUsageCount', { count: usageCountByFolderId.get(folder.id) ?? 0 })}
-              icon={<Ionicons name="folder-outline" size={29} color={theme.colors.accent.blue} />}
+              icon={<Icon name="folder" size={29} color={theme.colors.accent.blue} />}
               rightElement={(
                 <ItemRowActions
                   title={folder.name}
@@ -155,13 +158,13 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
                     {
                       id: 'rename',
                       title: t('common.edit'),
-                      icon: 'pencil-outline',
+                      icon: 'pencil',
                       onPress: () => { void renameFolderAction(folder.id, folder.name); },
                     },
                     {
                       id: 'delete',
                       title: t('common.delete'),
-                      icon: 'trash-outline',
+                      icon: 'trash',
                       destructive: true,
                       onPress: () => { void deleteFolderAction(folder.id); },
                     },
@@ -184,7 +187,7 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
             testID="promptFolders.add"
             title={t('promptLibrary.addFolder')}
             subtitle={t('promptLibrary.addFolderSubtitle')}
-            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.accent.indigo} />}
+            icon={<Icon name="plus-circle" size={29} color={theme.colors.accent.indigo} />}
             onPress={() => { void addFolder(); }}
           />
         </ItemGroup>

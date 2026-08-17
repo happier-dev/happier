@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import {
+    SPAWN_SESSION_ERROR_CODES,
+    type PluginProjectedComposerAttachmentEntryV1,
+} from '@happier-dev/protocol';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { findTestInstanceByTypeWithProps } from '@/dev/testkit/render/renderScreen';
@@ -10,6 +13,11 @@ import type { ResumeSessionResult } from '@/sync/ops/sessions';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
+import {
+    clearSessionDraftValuesForSession,
+    readSessionDraftValue,
+    writeSessionDraftValue,
+} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
@@ -28,6 +36,7 @@ const resumeSessionSpy = vi.hoisted(() =>
         errorMessage: 'Daemon RPC is not available',
     })),
 );
+const routerPushSpy = vi.hoisted(() => vi.fn());
 const continueSessionWithReplaySpy = vi.hoisted(() =>
     vi.fn(async (..._args: any[]) => ({
         type: 'success' as const,
@@ -99,6 +108,10 @@ const inputComposerPersistenceSpies = vi.hoisted(() => ({
 const inputComposerExpandedState = vi.hoisted(() => ({
     current: false,
 }));
+const daemonMergedProjectionState = vi.hoisted(() => ({
+    current: { phase: 'idle', inputs: null } as unknown,
+    listeners: new Set<() => void>(),
+}));
 const resolveSessionComposerSendMock = vi.hoisted(() =>
     vi.fn((...args: any[]) => {
         const first = args[0] as { input?: unknown } | undefined;
@@ -141,6 +154,52 @@ const themeColors = vi.hoisted(() => ({
 
 let authCredentials: any = { token: 't', secret: 's' };
 const pendingFireAndForget: Promise<unknown>[] = [];
+const pendingFireAndForgetTags: Array<string | undefined> = [];
+
+const issueAttachmentCatalogEntry = {
+    id: 'acme.issues/issue',
+    pluginId: 'acme.issues',
+    identity: { pluginId: 'acme.issues', localId: 'issue' },
+    immutableGenerationId: 'issues-generation-1',
+    definition: {
+        id: 'issue',
+        title: 'Issue',
+        icon: 'file',
+        cardinality: 'many',
+        valueSchema: {
+            type: 'object',
+            required: ['issueId'],
+            properties: { issueId: { type: 'integer' } },
+            additionalProperties: false,
+        },
+    },
+} satisfies PluginProjectedComposerAttachmentEntryV1;
+
+function setComposerAttachmentProjection(
+    entriesById: Readonly<Record<string, PluginProjectedComposerAttachmentEntryV1>>,
+    generation = 1,
+) {
+    daemonMergedProjectionState.current = {
+        phase: 'ready',
+        inputs: {
+            pluginProjectionById: {},
+            pluginProjectionV2: {
+                v: 2,
+                generation,
+                installedPackagesById: {},
+                familiesById: {
+                    composerAttachments: {
+                        family: 'composerAttachments',
+                        entriesById,
+                    },
+                },
+            },
+        },
+    };
+    for (const listener of daemonMergedProjectionState.listeners) {
+        listener();
+    }
+}
 
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
@@ -149,6 +208,7 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 vi.mock('react-native-safe-area-context', () => ({
+    initialWindowMetrics: null,
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 vi.mock('@react-navigation/native', () => ({
@@ -216,7 +276,7 @@ installSessionShellCommonModuleMocks({
         return createExpoRouterMock({
             pathname: '/',
             router: {
-                push: vi.fn(),
+                push: (...args: any[]) => routerPushSpy(...args),
                 back: vi.fn(),
                 replace: vi.fn(),
                 setParams: vi.fn(),
@@ -339,6 +399,7 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleStub({
             storage,
             useSession: () => storage((state) => state.sessions.s1 ?? null),
+            useSessionMachineId: () => 'm-target',
             useIsDataReady: () => true,
             useRealtimeStatus: () => 'connected',
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
@@ -440,6 +501,7 @@ vi.mock('@/hooks/session/useDraft', () => ({
                 update('');
                 return true;
             },
+            readLatestDraftValue: () => draftHookSpies.valuesBySessionId.get(_sessionId) ?? '',
             setDraftValue: (nextValueOrUpdater: string | ((currentValue: string) => string)) => {
                 const currentValue = draftHookSpies.valuesBySessionId.get(_sessionId) ?? '';
                 const nextValue = typeof nextValueOrUpdater === 'function'
@@ -599,7 +661,13 @@ vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     getResolvedBackendCatalogEntries: () => [],
 }));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+    useDaemonMergedProjectionInputs: () => React.useSyncExternalStore(
+        (listener) => {
+            daemonMergedProjectionState.listeners.add(listener);
+            return () => daemonMergedProjectionState.listeners.delete(listener);
+        },
+        () => daemonMergedProjectionState.current,
+    ),
 }));
 vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
     applyPermissionModeSelection: async () => {},
@@ -619,8 +687,9 @@ vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
     ensureAgentInstallablesBackground: (params: any) => ensureAgentInstallablesBackgroundSpy(params),
 }));
 vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (promise: Promise<unknown>) => {
+    fireAndForget: (promise: Promise<unknown>, options?: Readonly<{ tag?: string }>) => {
         pendingFireAndForget.push(promise);
+        pendingFireAndForgetTags.push(options?.tag);
         return promise;
     },
 }));
@@ -659,6 +728,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
     beforeEach(() => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
+        daemonMergedProjectionState.listeners.clear();
+        daemonMergedProjectionState.current = { phase: 'idle', inputs: null };
         authCredentials = { token: 't', secret: 's' };
         enqueuePendingMessageSpy.mockClear();
         submitMessageSpy.mockClear();
@@ -692,6 +763,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             errorMessage: 'Daemon RPC is not available',
         }));
         continueSessionWithReplaySpy.mockReset();
+        routerPushSpy.mockReset();
         continueSessionWithReplaySpy.mockResolvedValue({
             type: 'success',
             sessionId: 's2',
@@ -718,11 +790,13 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         inputComposerPersistenceSpies.onStructuredInputMentionsChange.mockClear();
         inputComposerExpandedState.current = false;
         pendingFireAndForget.length = 0;
+        pendingFireAndForgetTags.length = 0;
     });
 
     afterEach(() => {
         standardCleanup();
         pendingFireAndForget.length = 0;
+        pendingFireAndForgetTags.length = 0;
         vi.clearAllMocks();
         (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
     });
@@ -747,6 +821,185 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         });
 
         expect(inputComposerPersistenceSpies.setExpanded).toHaveBeenCalledTimes(1);
+    });
+
+    it('submits an attachment-only contentless composer draft through the structured-input envelope', async () => {
+        const composerAttachments = [{
+            v: 1 as const,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        }];
+        setComposerAttachmentProjection({
+            [issueAttachmentCatalogEntry.id]: issueAttachmentCatalogEntry,
+        });
+        writeSessionDraftValue(
+            null,
+            's1',
+            'structuredInput.composerAttachments',
+            composerAttachments,
+        );
+
+        let screen: Awaited<ReturnType<typeof renderSessionView>> | undefined;
+        try {
+            screen = await renderSessionView();
+            const agentInput = findAgentInput(screen);
+            expect(agentInput.props.hasSendableAttachments).toBe(true);
+
+            pendingFireAndForget.length = 0;
+            await act(async () => {
+                agentInput.props.onSend();
+            });
+            const coordinatorInvocation = pendingFireAndForgetTags.lastIndexOf('SessionView.composer.dispatch');
+            expect(coordinatorInvocation).toBeGreaterThanOrEqual(0);
+            await act(async () => {
+                await pendingFireAndForget[coordinatorInvocation];
+            });
+
+            expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
+            expect(enqueuePendingMessageSpy.mock.calls[0]?.[3]).toMatchObject({
+                happierStructuredInputV1: {
+                    v: 1,
+                    composerAttachments,
+                },
+            });
+            expect(readSessionDraftValue(
+                null,
+                's1',
+                'structuredInput.composerAttachments',
+            )).toBeUndefined();
+        } finally {
+            await screen?.unmount();
+            clearSessionDraftValuesForSession(null, 's1', { reason: 'composerClear' });
+        }
+    });
+
+    it('keeps an uninstalled or incompatible persisted attachment visible, refuses its text send, and retains the draft until the exact current generation returns', async () => {
+        const composerAttachments = [{
+            v: 1 as const,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        }];
+        setComposerAttachmentProjection({
+            [issueAttachmentCatalogEntry.id]: issueAttachmentCatalogEntry,
+        });
+        writeSessionDraftValue(
+            null,
+            's1',
+            'structuredInput.composerAttachments',
+            composerAttachments,
+        );
+
+        let screen: Awaited<ReturnType<typeof renderSessionView>> | undefined;
+        try {
+            screen = await renderSessionView();
+            let agentInput = findAgentInput(screen);
+            expect(agentInput.props.hasSendableAttachments).toBe(true);
+
+            await act(async () => {
+                setComposerAttachmentProjection({}, 2);
+            });
+
+            agentInput = findAgentInput(screen);
+            expect(agentInput.props.hasSendableAttachments).toBe(false);
+            expect(agentInput.props.attachmentRowItems).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    availability: 'unavailable',
+                    onRemove: expect.any(Function),
+                }),
+            ]));
+            await act(async () => {
+                agentInput.props.onChangeText('Keep this unavailable Session draft');
+            });
+            agentInput = findAgentInput(screen);
+            pendingFireAndForget.length = 0;
+            pendingFireAndForgetTags.length = 0;
+            await act(async () => {
+                agentInput.props.onSend();
+            });
+            const coordinatorInvocation = pendingFireAndForgetTags.lastIndexOf('SessionView.composer.dispatch');
+            expect(coordinatorInvocation).toBeGreaterThanOrEqual(0);
+            await act(async () => {
+                await pendingFireAndForget[coordinatorInvocation];
+            });
+            expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(submitMessageSpy).not.toHaveBeenCalled();
+            expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'common.unavailable');
+            expect(findAgentInput(screen).props.value).toBe('Keep this unavailable Session draft');
+            expect(readSessionDraftValue(
+                null,
+                's1',
+                'structuredInput.composerAttachments',
+            )).toEqual(composerAttachments);
+
+            const reinstalled = {
+                ...issueAttachmentCatalogEntry,
+                immutableGenerationId: 'issues-generation-2',
+            };
+            await act(async () => {
+                setComposerAttachmentProjection({ [reinstalled.id]: reinstalled }, 3);
+            });
+            expect(findAgentInput(screen).props.hasSendableAttachments).toBe(true);
+
+            const incompatible = {
+                ...issueAttachmentCatalogEntry,
+                immutableGenerationId: 'issues-generation-3',
+            definition: {
+                ...issueAttachmentCatalogEntry.definition,
+                valueSchema: {
+                        type: 'object',
+                        required: ['slug'],
+                        properties: { slug: { type: 'string' } },
+                    additionalProperties: false,
+                },
+            },
+        } satisfies PluginProjectedComposerAttachmentEntryV1;
+            await act(async () => {
+                setComposerAttachmentProjection({ [incompatible.id]: incompatible }, 4);
+            });
+            agentInput = findAgentInput(screen);
+            expect(agentInput.props.hasSendableAttachments).toBe(false);
+            expect(agentInput.props.attachmentRowItems).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    availability: 'invalid',
+                    onRemove: expect.any(Function),
+                }),
+            ]));
+            await act(async () => {
+                agentInput.props.onChangeText('Keep this invalid Session draft');
+            });
+            agentInput = findAgentInput(screen);
+            modalMockState.current?.spies.alert.mockClear();
+            pendingFireAndForget.length = 0;
+            pendingFireAndForgetTags.length = 0;
+            await act(async () => {
+                agentInput.props.onSend();
+            });
+            const invalidCoordinatorInvocation = pendingFireAndForgetTags.lastIndexOf('SessionView.composer.dispatch');
+            expect(invalidCoordinatorInvocation).toBeGreaterThanOrEqual(0);
+            await act(async () => {
+                await pendingFireAndForget[invalidCoordinatorInvocation];
+            });
+            expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(submitMessageSpy).not.toHaveBeenCalled();
+            expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'common.unavailable');
+            expect(findAgentInput(screen).props.value).toBe('Keep this invalid Session draft');
+            expect(readSessionDraftValue(
+                null,
+                's1',
+                'structuredInput.composerAttachments',
+            )).toEqual(composerAttachments);
+        } finally {
+            await screen?.unmount();
+            clearSessionDraftValuesForSession(null, 's1', { reason: 'composerClear' });
+        }
     });
 
     it('shows a non-blocking warning (no modal) when resume fails after enqueueing a pending message', async () => {
@@ -788,7 +1041,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('renders the canonical resuming lifecycle marker around pending-queue wake', async () => {
+    it('renders the canonical resuming lifecycle through pending-queue wake acceptance', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
         sessionStateOverrides.current = { presence: 'online' };
         machineEncryptionAvailable.current = true;
@@ -829,6 +1082,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
         expect(findAgentInput(screen).props.value).toBe('');
+        expect(findAgentInput(screen).props.isSending).toBe(false);
         expect(findAgentInput(screen).props.connectionStatus?.text).toBe('session.resuming');
         expect(findAgentInput(screen).props.connectionStatus?.isPulsing).toBe(true);
 
@@ -845,8 +1099,10 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await pendingFireAndForget[0];
         });
 
-        expect(findAgentInput(screen).props.connectionStatus?.text).not.toBe('session.resuming');
-        expect(findAgentInput(screen).props.connectionStatus?.isPulsing).not.toBe(true);
+        // RPC acceptance is not provider attachment. Preserve the honest transitional state until
+        // authoritative session activity replaces the local resume lifecycle.
+        expect(findAgentInput(screen).props.connectionStatus?.text).toBe('session.resuming');
+        expect(findAgentInput(screen).props.connectionStatus?.isPulsing).toBe(true);
 
         await screen.unmount();
     });
@@ -1188,7 +1444,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('uses the reachable machine target for replay resume when direct resume is unavailable', async () => {
+    it('authors a replay continuation through New Session with source context instead of the legacy creator', async () => {
         settingsState.current = {
             experiments: true,
             featureToggles: {},
@@ -1200,28 +1456,24 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             sessionReplaySummaryRunnerV1: null,
         };
         canResumeSessionWithOptionsSpy.mockReturnValue(false);
-        continueSessionWithReplaySpy.mockResolvedValue({
-            type: 'success',
-            sessionId: 's-replayed',
-        });
         modalMockState.current?.spies.confirm.mockResolvedValue(true);
         modalMockState.current?.spies.alert.mockClear();
 
         const screen = await renderSessionView();
 
         await act(async () => {
-            emitSessionResumeRequest('s1');
+            await emitSessionResumeRequest('s1');
         });
 
         expect(resumeCapabilityMachineIds).toContain('m-target');
         expect(modalMockState.current?.spies.confirm).toHaveBeenCalledTimes(1);
-        expect(continueSessionWithReplaySpy).toHaveBeenCalledTimes(1);
-        expect(continueSessionWithReplaySpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                machineId: 'm-target',
-                directory: '/tmp/target',
-            }),
-        );
+        // The legacy Replay creator is no longer a UI product path; creation goes
+        // through the canonical New Session + sourceContext owner.
+        expect(continueSessionWithReplaySpy).not.toHaveBeenCalled();
+        expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/new',
+            params: expect.objectContaining({ dataId: expect.any(String) }),
+        }));
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
 
         await screen.unmount();
@@ -1231,7 +1483,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         const screen = await renderSessionView();
 
         await act(async () => {
-            emitSessionResumeRequest('s1');
+            await emitSessionResumeRequest('s1');
         });
 
         expect(cliDetectionServerIds).toContain('server-cache');

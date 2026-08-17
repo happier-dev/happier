@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { useUnistyles } from 'react-native-unistyles';
-import { Octicons } from '@expo/vector-icons';
 
 import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
@@ -46,6 +45,7 @@ import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteO
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type WorkspaceSourceControlViewProps = Readonly<{
     serverId: string;
@@ -361,7 +361,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                 })}
                             >
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                                    <Octicons name="archive" size={14} color={theme.colors.text.secondary} />
+                                    <Icon name="archive" size={14} color={theme.colors.text.secondary} />
                                     <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                                         {t('files.stash.summaryTitle')}
                                     </Text>
@@ -370,7 +370,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                     <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
                                         {String(stashCount)}
                                     </Text>
-                                    <Octicons name="chevron-right" size={14} color={theme.colors.text.secondary} />
+                                    <Icon name="caret-right" size={14} color={theme.colors.text.secondary} />
                                 </View>
                             </Pressable>
                         ) : null}
@@ -408,7 +408,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                     borderColor: theme.colors.border.default,
                                 }}
                             >
-                                <Octicons name="search" size={16} color={theme.colors.text.secondary} style={{ marginRight: 8 }} />
+                                <Icon name="magnifying-glass" size={16} color={theme.colors.text.secondary} style={{ marginRight: 8 }} />
                                 <TextInput
                                     value={searchQuery}
                                     onChangeText={setSearchQuery}
@@ -460,7 +460,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                         gap: 6,
                                     })}
                                 >
-                                    <Octicons name="diff" size={14} color={theme.colors.text.secondary} />
+                                    <Icon name="git-diff" size={14} color={theme.colors.text.secondary} />
                                     <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                                         {t('files.toolbar.review')}
                                     </Text>
@@ -485,7 +485,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                     opacity: pressed ? 0.78 : 1,
                                 })}
                             >
-                                <Octicons name="sync" size={14} color={theme.colors.text.secondary} />
+                                <Icon name="arrows-clockwise" size={14} color={theme.colors.text.secondary} />
                             </Pressable>
                         </View>
                     </View>

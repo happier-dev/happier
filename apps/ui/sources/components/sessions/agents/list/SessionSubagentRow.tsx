@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -10,6 +9,7 @@ import { SessionSubagentQuickActions } from '@/components/sessions/agents/action
 import { resolveSessionSubagentPrimaryTitle } from '@/components/sessions/agents/presentation/resolveSessionSubagentPrimaryTitle';
 import { t } from '@/text';
 import { SessionSubagentFactsRow } from './SessionSubagentFactsRow';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     row: {
@@ -123,10 +123,10 @@ const ViewWithClick = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & { onClick?: any; onKeyDown?: any; tabIndex?: number }
 >;
 
-function resolveKindIconName(kind: SessionSubagent['kind']): React.ComponentProps<typeof Ionicons>['name'] {
-    if (kind === 'execution_run') return 'play-circle-outline';
-    if (kind === 'agent_team_member') return 'people-outline';
-    return 'layers-outline';
+function resolveKindIconName(kind: SessionSubagent['kind']): IconName {
+    if (kind === 'execution_run') return 'play-circle';
+    if (kind === 'agent_team_member') return 'users';
+    return 'stack-simple';
 }
 
 function buildSubtitle(subagent: SessionSubagent): string {
@@ -140,7 +140,10 @@ function resolveStatusColor(status: SessionSubagent['status'], theme: ReturnType
     if (status === 'running') return theme.colors.accent.blue;
     if (status === 'succeeded') return theme.colors.accent.green;
     if (status === 'failed') return theme.colors.accent.red;
-    if (status === 'cancelled' || status === 'terminated') return theme.colors.accent.orange;
+    // A timed-out run ran out of budget rather than succeeding or erroring, so it shares the
+    // interrupted-outcome accent with cancelled/terminated — never the success green, and never the
+    // secondary grey that means "the transcript never said".
+    if (status === 'timedOut' || status === 'cancelled' || status === 'terminated') return theme.colors.accent.orange;
     return theme.colors.text.secondary;
 }
 
@@ -195,7 +198,7 @@ export const SessionSubagentRow = React.memo((props: Readonly<{
                             accentColor ? { borderColor: accentColor } : null,
                         ]}
                     >
-                        <Ionicons name={kindIconName} size={16} color={accentColor ?? theme.colors.text.secondary} />
+                        <Icon name={kindIconName} size={16} color={accentColor ?? theme.colors.text.secondary} />
                     </View>
                     <View style={styles.copy}>
                         <View style={styles.headerRow}>
@@ -268,7 +271,7 @@ export const SessionSubagentRow = React.memo((props: Readonly<{
                         accentColor ? { borderColor: accentColor } : null,
                     ]}
                 >
-                    <Ionicons name={kindIconName} size={16} color={accentColor ?? theme.colors.text.secondary} />
+                    <Icon name={kindIconName} size={16} color={accentColor ?? theme.colors.text.secondary} />
                 </View>
                 <View style={styles.copy}>
                     <View style={styles.headerRow}>

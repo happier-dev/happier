@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
@@ -30,6 +29,7 @@ import {
     relayAccessProviderUsesPrerequisitesStep,
 } from './relayAccessUiCatalog';
 import { useRelayAccessControl } from './useRelayAccessControl';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function resolveStatusSubtitle(state: string | null | undefined): string {
     switch (state) {
@@ -434,9 +434,9 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                     selected={selectedProviderId === providerId}
                     disabled={isBusy || isUnavailable}
                     left={(
-                        <Ionicons
+                        <Icon
                             name={definition.iconName}
-                            size={18}
+                            size={16}
                             color={selectedProviderId === providerId ? theme.colors.text.primary : theme.colors.text.secondary}
                         />
                     )}

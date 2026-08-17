@@ -1,29 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { ACCOUNT_SETTING_ARTIFACTS } from '@happier-dev/protocol';
+import { describe, expect, it } from 'vitest';
 
-vi.mock('@happier-dev/agents', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@happier-dev/agents')>();
-    return {
-        ...actual,
-        getAllAgentCatalogDefinitions: () => [
-            ...actual.getAllAgentCatalogDefinitions(),
-            { id: 'acme.review.backend' },
-        ],
-    };
-});
+describe('Account runtime settings analytics presentation', () => {
+    it('attaches count-only peer mediation analytics to the canonical Protocol definition without re-declaring persistence', async () => {
+        const { ACCOUNT_RUNTIME_SETTING_ANALYTICS } = await import('./accountRuntimeSettingDefinitions');
 
-describe('ACCOUNT_RUNTIME_SETTING_DEFINITIONS', () => {
-    it('defines peer mediation preferences as account-scoped count-only metadata', async () => {
-        vi.resetModules();
-        const { ACCOUNT_RUNTIME_SETTING_DEFINITIONS, ACCOUNT_RUNTIME_SETTING_ARTIFACTS } = await import('./accountRuntimeSettingDefinitions');
-
-        expect(ACCOUNT_RUNTIME_SETTING_DEFINITIONS.peerMediationPreferencesV1.storageScope).toBe('account');
-        expect(ACCOUNT_RUNTIME_SETTING_DEFINITIONS.peerMediationPreferencesV1.analytics).toEqual(expect.objectContaining({
+        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).toEqual(expect.objectContaining({
             privacy: 'count_only',
             valueKind: 'count',
             identityScope: 'person',
         }));
 
-        const parsed = ACCOUNT_RUNTIME_SETTING_ARTIFACTS.shape.peerMediationPreferencesV1.parse({
+        const parsed = ACCOUNT_SETTING_ARTIFACTS.shape.peerMediationPreferencesV1.parse({
             v: 1,
             flows: {
                 bounded_transfer: { direct: 'enabled' },
@@ -38,13 +26,15 @@ describe('ACCOUNT_RUNTIME_SETTING_DEFINITIONS', () => {
         });
 
         expect(parsed.byMachineId.machine_1?.flows?.tcp_tunnel?.direct).toBe('disabled');
+        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('schema');
+        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('default');
+        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('storageScope');
     });
 
-    it('accepts execution-run guidance entries for provider-universe built-in backend targets', async () => {
-        vi.resetModules();
-        const { ACCOUNT_RUNTIME_SETTING_ARTIFACTS } = await import('./accountRuntimeSettingDefinitions');
+    it('leaves execution-guidance parsing with the Protocol legacy catalog while projecting only its count analytics', async () => {
+        const { ACCOUNT_RUNTIME_SETTING_ANALYTICS } = await import('./accountRuntimeSettingDefinitions');
 
-        const parsed = ACCOUNT_RUNTIME_SETTING_ARTIFACTS.shape.executionRunsGuidanceEntries.safeParse([
+        const parsed = ACCOUNT_SETTING_ARTIFACTS.shape.executionRunsGuidanceEntries.safeParse([
             {
                 id: 'guidance_1',
                 description: 'Prefer the provider-universe backend target',
@@ -55,27 +45,9 @@ describe('ACCOUNT_RUNTIME_SETTING_DEFINITIONS', () => {
         ]);
 
         expect(parsed.success).toBe(true);
-        expect(parsed.success ? parsed.data : null).toEqual([
-            expect.objectContaining({
-                suggestedBackendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
-                suggestedIntent: 'review',
-            }),
-        ]);
-    });
-
-    it('rejects unknown built-in backend targets that are outside the provider universe', async () => {
-        vi.resetModules();
-        const { ACCOUNT_RUNTIME_SETTING_ARTIFACTS } = await import('./accountRuntimeSettingDefinitions');
-
-        const parsed = ACCOUNT_RUNTIME_SETTING_ARTIFACTS.shape.executionRunsGuidanceEntries.safeParse([
-            {
-                id: 'guidance_2',
-                description: 'Drop unknown built-in backend targets',
-                enabled: true,
-                suggestedBackendTarget: { kind: 'backend', backendId: 'not-a-real-agent' },
-            },
-        ]);
-
-        expect(parsed.success).toBe(false);
+        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.executionRunsGuidanceEntries).toEqual(expect.objectContaining({
+            privacy: 'count_only',
+            valueKind: 'count',
+        }));
     });
 });

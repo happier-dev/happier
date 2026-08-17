@@ -19,6 +19,11 @@ import { decideDurableSessionRealtimeRoute } from '@/sync/domains/session/realti
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
 import {
+    advanceSessionReceivedMessageCurrentness,
+    isSessionMessageRowCurrent,
+    type SessionReceivedMessages,
+} from './sessionMessageCurrentness';
+import {
     applyTranscriptObservationMetadata,
     isRecoveredHistoryTranscriptObservation,
 } from '@/sync/domains/messages/transcriptObservationProvenance';
@@ -104,6 +109,8 @@ function shouldApplyLifecycleLatestTurnStatus(params: Readonly<{
 
 type HandleSessionMessageSocketUpdateParams = {
     updateData: any;
+    /** Captured server/account scope fence supplied by the socket owner. */
+    shouldContinue?: () => boolean;
     getSessionEncryption: (sessionId: string) => SessionMessageEncryption | null;
     getSession: (sessionId: string) => Session | undefined;
     getSessionProjection?: (sessionId: string) => SessionRealtimeProjectionCandidate | undefined;
@@ -118,6 +125,8 @@ type HandleSessionMessageSocketUpdateParams = {
         updateType: 'new-message' | 'message-updated';
     }>) => boolean;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    /** Shared page/socket row watermark; owned by Sync and advanced only after a direct authoritative apply. */
+    sessionReceivedMessages?: SessionReceivedMessages;
     enqueueMessages?: (sessionId: string, messages: NormalizedMessage[]) => void;
     onNormalizedMessagesApplied?: (sessionId: string, messages: NormalizedMessage[]) => void;
     rawMessageNormalizationState?: RawMessageNormalizationSequenceState;
@@ -361,6 +370,9 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
     } = params;
 
     const body = updateData?.body;
+    if (params.shouldContinue?.() === false) {
+        return;
+    }
     if (!body || typeof body !== 'object') {
         return;
     }
@@ -377,9 +389,34 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
         : undefined;
     const isRecoveredHistory = isRecoveredHistoryTranscriptObservation(rawMessage);
     const updateType = inferLifecycle ? 'new-message' : 'message-updated';
+    const isCurrentDirectMessageUpdate = (): boolean => {
+        if (updateType !== 'message-updated' || !rawMessage || !params.sessionReceivedMessages) {
+            return true;
+        }
+        const socketUpdatedAt = finiteNumber(rawMessage.updatedAt)
+            ?? finiteNumber(rawMessage.createdAt);
+        if (socketUpdatedAt === null) return true;
+        return isSessionMessageRowCurrent({
+            existingUpdatedAt: params.sessionReceivedMessages.get(sessionId)?.get(rawMessage.id),
+            incomingUpdatedAt: socketUpdatedAt,
+            isAuthoritativeUpdate: true,
+        });
+    };
     const prevMaterializedMaxSeq = getSessionMaterializedMaxSeq(sessionId);
     const sessionMessagesLoaded = isSessionMessagesLoaded(sessionId);
     const session = getSession(sessionId);
+    // A message-updated row corrects an existing durable row; it cannot create
+    // a transcript shell. In particular, a local Voice History delete may win
+    // before this async socket handler begins. Refresh the shell if useful,
+    // but never let that stale update recreate transcript/currentness state.
+    if (updateType === 'message-updated' && !session) {
+        if (params.requestSessionShellRefresh) {
+            params.requestSessionShellRefresh(sessionId);
+        } else {
+            fetchSessions();
+        }
+        return;
+    }
     if (
         inferLifecycle
         &&
@@ -427,6 +464,17 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
         messagesLoaded: sessionMessagesLoaded,
         messageSeq: normalizedMessageSeq,
     });
+    // Durable transcript application needs a current session shell. A visible
+    // or mounted consumer can outlive local retirement; it must not turn a
+    // late new-message into orphan transcript/currentness state.
+    if (routeDecision.route === 'fullTranscriptApply' && !session) {
+        if (params.requestSessionShellRefresh) {
+            params.requestSessionShellRefresh(sessionId);
+        } else {
+            fetchSessions();
+        }
+        return;
+    }
     if (realtimeProjectionMode === 'enabled' && routeDecision.route === 'projectionOnly') {
         applyProjectionOnlySessionPatch({
             session,
@@ -476,6 +524,11 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
         return;
     }
 
+    // A direct message-updated event is authoritative only for an equal
+    // revision. Do not let an older socket row regress a newer page/socket
+    // application that already owns this transcript row.
+    if (!isCurrentDirectMessageUpdate()) return;
+
     const expectsEncryptedMessages = session?.encryptionMode !== 'plain';
     const encryption = expectsEncryptedMessages ? getSessionEncryption(sessionId) : null;
     if (!encryption && expectsEncryptedMessages && session) {
@@ -503,11 +556,22 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
                 readMessage,
             )
             : await readMessage();
-        const sessionAfterRead = session ? getSession(sessionId) : undefined;
-        if (session && !sessionAfterRead) {
+        // `socket.ts` fences its callbacks, but a callback no-op does not tell
+        // this owner whether application happened. Stop here when the captured
+        // server/account scope retired so no projection, row watermark, or
+        // materialized-seq state can outlive the decrypt boundary.
+        if (params.shouldContinue?.() === false) {
             return;
         }
-        const sessionForApply = sessionAfterRead ?? session;
+        const sessionAfterRead = getSession(sessionId);
+        if (!sessionAfterRead) {
+            return;
+        }
+        // The decrypt boundary can let a newer page/socket row advance the
+        // shared watermark after the early route check. Recheck immediately
+        // before normalization and projection so the stale row has no effects.
+        if (!isCurrentDirectMessageUpdate()) return;
+        const sessionForApply = sessionAfterRead;
         if (decrypted) {
             if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
                 return;
@@ -546,6 +610,9 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
 
             if (lastMessage) {
                 applyTranscriptObservationMetadata(lastMessage, rawMessage);
+                if (updateType === 'message-updated') {
+                    lastMessage.isAuthoritativeUpdate = true;
+                }
             }
 
             const shouldInferLifecycle = inferLifecycle && !isRecoveredHistory;
@@ -612,6 +679,9 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
             if (lastMessage) {
                 const normalizedMessage = lastMessage;
                 if (enqueueMessages) {
+                    // Queue admission is not a transcript apply. The production
+                    // message-updated route is direct; do not publish currentness
+                    // here for an optional deferred caller.
                     enqueueMessages(sessionId, [normalizedMessage]);
                     if (telemetryFields) {
                         syncPerformanceTelemetry.count('sync.sessions.socket.message.apply', {
@@ -638,6 +708,18 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
                         );
                     } else {
                         applyMessage();
+                    }
+                    if (updateType === 'message-updated' && normalizedMessage.isAuthoritativeUpdate === true) {
+                        const socketUpdatedAt = finiteNumber(rawMessage?.updatedAt)
+                            ?? finiteNumber(rawMessage?.createdAt);
+                        if (socketUpdatedAt !== null && params.sessionReceivedMessages) {
+                            advanceSessionReceivedMessageCurrentness(
+                                params.sessionReceivedMessages,
+                                sessionId,
+                                normalizedMessage.id,
+                                socketUpdatedAt,
+                            );
+                        }
                     }
                     params.onNormalizedMessagesApplied?.(sessionId, [normalizedMessage]);
                     if (typeof messageSeq === 'number') {

@@ -1,18 +1,11 @@
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
 import { t } from '@/text';
+import { participantRecipientsMatch } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 
 export const RECIPIENT_LEAD_OPTION_ID = 'lead';
-
-export function recipientsEqual(a: ParticipantRecipientV1, b: ParticipantRecipientV1): boolean {
-    if (a.kind !== b.kind) return false;
-    if (a.kind === 'execution_run') return a.runId === (b as Extract<ParticipantRecipientV1, { kind: 'execution_run' }>).runId;
-    if (a.kind === 'agent_team_broadcast') return a.teamId === (b as Extract<ParticipantRecipientV1, { kind: 'agent_team_broadcast' }>).teamId;
-    const next = b as Extract<ParticipantRecipientV1, { kind: 'agent_team_member' }>;
-    return a.teamId === next.teamId && a.memberId === next.memberId;
-}
 
 export function resolveSessionParticipantTargetLabel(target: SessionParticipantTarget): string {
     const recipient = target.recipient;
@@ -30,7 +23,7 @@ export function resolveRecipientLabel(
     recipient: ParticipantRecipientV1 | null,
 ): string {
     if (!recipient) return t('session.participants.lead');
-    const target = targets.find((candidate) => recipientsEqual(candidate.recipient, recipient)) ?? null;
+    const target = targets.find((candidate) => participantRecipientsMatch(candidate.recipient, recipient)) ?? null;
     if (target) return resolveSessionParticipantTargetLabel(target);
     if (recipient.kind === 'execution_run') return t('session.participants.executionRun', { runId: recipient.runId });
     if (recipient.kind === 'agent_team_broadcast') return t('session.participants.broadcast', { teamId: recipient.teamId });
@@ -51,7 +44,7 @@ export function resolveRecipientPopoverSelectedOptionId(
     recipient: ParticipantRecipientV1 | null,
 ): string | null {
     if (!recipient) return RECIPIENT_LEAD_OPTION_ID;
-    return targets.find((candidate) => recipientsEqual(candidate.recipient, recipient))?.key ?? null;
+    return targets.find((candidate) => participantRecipientsMatch(candidate.recipient, recipient))?.key ?? null;
 }
 
 export function buildRecipientPopoverOptions(

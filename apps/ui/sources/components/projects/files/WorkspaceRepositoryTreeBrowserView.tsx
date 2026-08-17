@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { ChangedFilesTreeList } from '@/components/workspaces/files/repositoryTree/ChangedFilesTreeList';
 import { SearchResultsList } from '@/components/workspaces/files/repositoryTree/SearchResultsList';
@@ -18,7 +17,7 @@ import { clearCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/w
 import { searchWorkspaceFiles, workspaceFileSearchCache } from '@/sync/domains/workspaces/files/workspaceFileSearch';
 import { workspaceCreateDirectory, workspaceWriteFile } from '@/sync/ops/workspaceFileSystem';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { storage, useMachine, useWorkspaceRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
@@ -42,12 +41,17 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveTransferAvailability } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { WorkspaceRepositoryTreeList, type WorkspaceRepositoryTreeWebDropTarget } from './WorkspaceRepositoryTreeList';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
-    workspaceCacheKey: string;
-    machineId: string;
-    rootPath: string;
-    serverId?: string | null;
+    /**
+     * The workspace, as ONE identity. This used to be a `workspaceCacheKey` alongside a
+     * separate `machineId`/`rootPath`/`serverId` address, and this component is where the two
+     * came apart: it passed the server-scoped key while calling the file search without the
+     * server, so the index was built through the ACTIVE server and filed under the ADDRESSED
+     * server's key — poisoning the entry the composer then read.
+     */
+    scope: WorkspaceScopeBase;
     onOpenFile: (fullPath: string) => void;
     onOpenFilePinned?: (fullPath: string) => void;
     density?: 'panel' | 'screen' | 'modal';
@@ -85,19 +89,19 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     const [uploadMenuOpen, setUploadMenuOpen] = React.useState(false);
     const [uploadDestinationDir, setUploadDestinationDir] = React.useState('');
 
-    const workspaceScope = React.useMemo((): WorkspaceScopeBase | null => {
-        const serverId = typeof props.serverId === 'string' ? props.serverId.trim() : '';
-        const machineId = String(props.machineId ?? '').trim();
-        const rootPath = String(props.rootPath ?? '').trim();
-        if (!serverId || !machineId || !rootPath) return null;
-        return { serverId, machineId, rootPath };
-    }, [props.machineId, props.rootPath, props.serverId]);
+    // Stabilized on the three FIELDS: several hosts build this prop inline, and the search
+    // effect / row actions below key on the scope OBJECT. A fresh literal every render would
+    // re-run them every render — the primitive props they used to depend on could not.
+    const workspaceScope = React.useMemo(
+        () => props.scope,
+        [props.scope.serverId, props.scope.machineId, props.scope.rootPath],
+    );
     const workspaceScmController = useWorkspaceScmSnapshotController(props.scmSnapshot === undefined ? workspaceScope : null);
     const effectiveScmSnapshot = props.scmSnapshot ?? workspaceScmController.snapshot ?? null;
-    const machine = useMachine(props.machineId);
+    const machine = useMachine(workspaceScope.machineId);
     const machineRpcTargetAvailable = Boolean(machine && isMachineOnline(machine));
-    const serverSnapshot = useServerFeaturesSnapshotForServerId(workspaceScope?.serverId ?? null, {
-        enabled: Boolean(workspaceScope?.serverId) && machineRpcTargetAvailable,
+    const serverSnapshot = useServerFeaturesSnapshotForServerId(workspaceScope.serverId, {
+        enabled: Boolean(workspaceScope.serverId) && machineRpcTargetAvailable,
     });
     const machineTransferEnabled = serverSnapshot.status === 'ready'
         ? resolveTransferAvailability({
@@ -106,17 +110,13 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             machineRpcDirectRoute: { status: 'unknown' },
         }).machineTransferEnabled
         : false;
-    const transferActionsAvailable = machineTransferEnabled
-        && machineRpcTargetAvailable
-        && workspaceScope !== null;
+    const transferActionsAvailable = machineTransferEnabled && machineRpcTargetAvailable;
 
     const workspaceExpandedPaths = useWorkspaceRepositoryTreeExpandedPaths(workspaceScope);
 
-    const [uncontrolledExpandedPaths, setUncontrolledExpandedPaths] = React.useState<readonly string[]>([]);
-    const expandedPaths = props.expandedPaths ?? (workspaceScope ? workspaceExpandedPaths : uncontrolledExpandedPaths);
-    const setExpandedPaths = props.onExpandedPathsChange ?? (workspaceScope
-        ? (paths: string[]) => storage.getState().setWorkspaceRepositoryTreeExpandedPaths(workspaceScope, paths)
-        : setUncontrolledExpandedPaths);
+    const expandedPaths = props.expandedPaths ?? workspaceExpandedPaths;
+    const setExpandedPaths = props.onExpandedPathsChange
+        ?? ((paths: string[]) => storage.getState().setWorkspaceRepositoryTreeExpandedPaths(workspaceScope, paths));
 
     const [uncontrolledSearchQuery, setUncontrolledSearchQuery] = React.useState('');
     const searchQuery = props.searchQuery ?? uncontrolledSearchQuery;
@@ -150,10 +150,12 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         const handle = setTimeout(() => {
             void (async () => {
                 try {
+                    // One scope: the index's key and the server it is read through can no
+                    // longer name different workspaces. This call site is why the owner's
+                    // signature was contracted — it used to pass the server-scoped key while
+                    // routing without the server.
                     const results = await searchWorkspaceFiles({
-                        workspaceCacheKey: props.workspaceCacheKey,
-                        machineId: props.machineId,
-                        rootPath: props.rootPath,
+                        scope: workspaceScope,
                         query: q,
                         limit: 200,
                     });
@@ -170,7 +172,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             cancelled = true;
             clearTimeout(handle);
         };
-    }, [props.machineId, props.rootPath, props.workspaceCacheKey, searchQuery, showChangedOnly, treeReloadNonce]);
+    }, [searchQuery, showChangedOnly, treeReloadNonce, workspaceScope]);
 
     const shouldShowSearchResults = !showChangedOnly && searchQuery.trim().length > 0;
     const canClearSearch = searchQuery.length > 0;
@@ -182,23 +184,24 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     }, [shouldShowSearchResults, showChangedOnly]);
 
     const refresh = React.useCallback(() => {
-        workspaceFileSearchCache.clearCache(props.workspaceCacheKey);
-        clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey: props.workspaceCacheKey });
+        workspaceFileSearchCache.clearCache(workspaceScope);
+        const workspaceCacheKey = tryBuildWorkspaceCacheKey(workspaceScope);
+        if (workspaceCacheKey) {
+            clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey });
+        }
         setTreeReloadNonce((n) => n + 1);
         if (props.scmSnapshot === undefined) {
             void workspaceScmController.refresh();
         }
-    }, [props.scmSnapshot, props.workspaceCacheKey, workspaceScmController]);
+    }, [props.scmSnapshot, workspaceScmController, workspaceScope]);
 
     const collapseAll = React.useCallback(() => {
         setExpandedPaths([]);
     }, [setExpandedPaths]);
 
-    const allowCreateActions = React.useMemo(() => {
-        const machineId = String(props.machineId ?? '').trim();
-        const rootPath = String(props.rootPath ?? '').trim();
-        return Boolean(machineId && rootPath);
-    }, [props.machineId, props.rootPath]);
+    const allowCreateActions = React.useMemo(() => (
+        Boolean(workspaceScope.machineId.trim() && workspaceScope.rootPath.trim())
+    ), [workspaceScope]);
     const webDropState = useWorkspaceRepositoryTreeWebDropState({
         enabled: transferActionsAvailable && Platform.OS === 'web',
         expandedPaths,
@@ -221,11 +224,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 return;
             }
 
-            const res = await workspaceWriteFile({
-                machineId: props.machineId,
-                rootPath: props.rootPath,
-                serverId: props.serverId,
-            }, path, '', null);
+            const res = await workspaceWriteFile(workspaceScope, path, '', null);
             if (!res.success) {
                 Modal.alert(t('common.error'), res.error || t('files.createFileFailed'));
                 return;
@@ -239,7 +238,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             refresh();
             (props.onOpenFilePinned ?? props.onOpenFile)(path);
         })();
-    }, [allowCreateActions, expandedPaths, props.machineId, props.onOpenFile, props.onOpenFilePinned, props.rootPath, props.serverId, refresh, setExpandedPaths]);
+    }, [allowCreateActions, expandedPaths, props.onOpenFile, props.onOpenFilePinned, refresh, setExpandedPaths, workspaceScope]);
 
     const createFolder = React.useCallback(() => {
         if (!allowCreateActions) return;
@@ -257,11 +256,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 return;
             }
 
-            const res = await workspaceCreateDirectory({
-                machineId: props.machineId,
-                rootPath: props.rootPath,
-                serverId: props.serverId,
-            }, directoryPath);
+            const res = await workspaceCreateDirectory(workspaceScope, directoryPath);
             if (!res.success) {
                 Modal.alert(t('common.error'), res.error || t('files.createFolderFailed'));
                 return;
@@ -275,7 +270,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             setExpandedPaths(withDir);
             refresh();
         })();
-    }, [allowCreateActions, expandedPaths, props.machineId, props.rootPath, props.serverId, refresh, setExpandedPaths]);
+    }, [allowCreateActions, expandedPaths, refresh, setExpandedPaths, workspaceScope]);
 
     const transfers = useWorkspaceFileTransfers({
         workspaceScope,
@@ -338,7 +333,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             title: t('settingsAttachments.workspaceDirectory.uploadsDirectory.title'),
             subtitle: uploadDestinationDir || t('files.projectRoot'),
             category: t('common.path'),
-            icon: <Ionicons name="folder-open-outline" size={16} color={theme.colors.text.secondary} />,
+            icon: <Icon name="folder-open" size={16} color={theme.colors.text.secondary} />,
             disabled: !transferActionsAvailable,
         },
         ...uploadMenuConfig.items.map((item) => ({
@@ -346,7 +341,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             title: t(item.titleKey),
             subtitle: uploadDestinationDir || t('files.projectRoot'),
             category: t('files.toolbar.upload'),
-            icon: <Ionicons name={item.iconName} size={16} color={theme.colors.text.secondary} />,
+            icon: <Icon name={item.iconName} size={16} color={theme.colors.text.secondary} />,
             disabled: item.disabled,
         })),
     ], [theme.colors.text.secondary, transferActionsAvailable, uploadDestinationDir, uploadMenuConfig.items]);
@@ -412,8 +407,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-filter-changed',
                 priority: 1,
                 order: 0,
-                icon: <Ionicons name="filter" size={16} color={showChangedOnly ? theme.colors.text.link : theme.colors.text.secondary} />,
-                menuIcon: 'funnel-outline',
+                icon: <Icon name="funnel-simple" size={16} color={showChangedOnly ? theme.colors.text.link : theme.colors.text.secondary} />,
+                menuIcon: 'funnel-simple',
                 accessibilityLabel: t('files.toolbar.changedFiles'),
                 selected: showChangedOnly,
                 onPress: () => setShowChangedOnly((prev) => !prev),
@@ -422,8 +417,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-toggle-details',
                 priority: 2,
                 order: 1,
-                icon: <Ionicons name={detailsMode ? 'list' : 'list-outline'} size={16} color={detailsMode ? theme.colors.text.link : theme.colors.text.secondary} />,
-                menuIcon: 'list-outline',
+                icon: <Icon name="list" size={16} color={detailsMode ? theme.colors.text.link : theme.colors.text.secondary} />,
+                menuIcon: 'list',
                 accessibilityLabel: t('common.details'),
                 selected: detailsMode,
                 onPress: () => setDetailsMode((v) => !v),
@@ -432,8 +427,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-upload',
                 priority: 3,
                 order: 2,
-                icon: <Ionicons name="cloud-upload-outline" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'cloud-upload-outline',
+                icon: <Icon name="cloud-arrow-up" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'cloud-arrow-up',
                 accessibilityLabel: t('files.toolbar.upload'),
                 disabled: !transferActionsAvailable,
                 selected: uploadDestinationDir.length > 0,
@@ -443,8 +438,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-create-file',
                 priority: 5,
                 order: 3,
-                icon: <Ionicons name="document-text-outline" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'document-text-outline',
+                icon: <Icon name="file-text" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'file-text',
                 accessibilityLabel: t('files.createFileA11y'),
                 disabled: !allowCreateActions,
                 onPress: createFile,
@@ -453,8 +448,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-create-folder',
                 priority: 6,
                 order: 4,
-                icon: <Ionicons name="folder-outline" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'folder-outline',
+                icon: <Icon name="folder" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'folder',
                 accessibilityLabel: t('files.createFolderA11y'),
                 disabled: !allowCreateActions,
                 onPress: createFolder,
@@ -466,9 +461,9 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 icon: treeRootLoading ? (
                     <ActivitySpinner testID="workspace-repository-tree-refresh-loading" size="small" color={theme.colors.text.secondary} />
                 ) : (
-                    <Octicons name="sync" size={16} color={theme.colors.text.secondary} />
+                    <Icon name="arrows-clockwise" size={16} color={theme.colors.text.secondary} />
                 ),
-                menuIcon: 'refresh-outline',
+                menuIcon: 'arrow-clockwise',
                 accessibilityLabel: t('common.refresh'),
                 onPress: refresh,
             },
@@ -479,8 +474,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-collapse-all',
                 priority: 0,
                 order: 6,
-                icon: <Ionicons name="contract-outline" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'contract-outline',
+                icon: <Icon name="arrows-in" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'arrows-in',
                 accessibilityLabel: t('files.repositoryCollapseAll'),
                 onPress: collapseAll,
             });
@@ -491,8 +486,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-close',
                 priority: 8,
                 order: 7,
-                icon: <Octicons name="x" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'close-outline',
+                icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'x',
                 accessibilityLabel: t('common.close'),
                 onPress: props.onRequestClose,
             });
@@ -503,8 +498,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 id: 'workspace-repository-tree-clear-search',
                 priority: 4,
                 order: 8,
-                icon: <Octicons name="x" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'close-outline',
+                icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'x',
                 accessibilityLabel: t('files.clearSearchA11y'),
                 onPress: () => setSearchQuery(''),
             });
@@ -548,7 +543,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             {
                 id: 'repository-tree-upload-destination-select',
                 title: t('settingsAttachments.workspaceDirectory.uploadsDirectory.title'),
-                icon: 'folder-open-outline',
+                icon: 'folder-open',
                 disabled: !transferActionsAvailable,
                 onPress: () => onSelectUploadMenuItem('repository-tree-upload-destination-select'),
             },
@@ -695,10 +690,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                     ) : (
                         <WorkspaceRepositoryTreeList
                             theme={theme}
-                            workspaceCacheKey={props.workspaceCacheKey}
-                            machineId={props.machineId}
-                            rootPath={props.rootPath}
-                            serverId={props.serverId}
+                            scope={workspaceScope}
                             reloadToken={treeReloadNonce}
                             detailsMode={detailsMode}
                             expandedPaths={expandedPaths}

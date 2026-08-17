@@ -1,4 +1,3 @@
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 import { isMachineReplaced, type MachineWithReplacement } from './machineIdentityTypes';
@@ -16,9 +15,18 @@ export type MachineSpawnReadiness =
 
 type MachineReadinessProbeState = boolean | 'unknown' | 'probing' | null | undefined;
 
+/** The picker needs display/presence facts, not daemon-owned machine state. */
+export type MachineSpawnReadinessMachine = Readonly<{
+    id: string;
+    active: boolean;
+    activeAt?: number | null;
+    revokedAt?: number | null;
+    replacedByMachineId?: string | null;
+}>;
+
 export function resolveMachineSpawnReadiness(params: Readonly<{
     selectedMachineId?: string | null;
-    machine?: Machine | null;
+    machine?: MachineSpawnReadinessMachine | null;
     rpcAvailable?: MachineReadinessProbeState;
     keyAvailable?: MachineReadinessProbeState;
     requireExactSpawnReadiness?: boolean;

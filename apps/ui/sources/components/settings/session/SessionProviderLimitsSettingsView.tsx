@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -11,6 +10,7 @@ import { TextInput } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const SessionProviderLimitsSettingsView = React.memo(function SessionProviderLimitsSettingsView() {
     const { theme } = useUnistyles();
@@ -93,7 +93,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                         subtitle={t(usageLimitRecoveryAutoWait
                             ? 'settingsSession.usageLimitRecovery.autoWaitEnabledSubtitle'
                             : 'settingsSession.usageLimitRecovery.autoWaitDisabledSubtitle')}
-                        icon={<Ionicons name="time-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="clock" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={usageLimitRecoveryAutoWait} onValueChange={(next) => writeUsageLimitRecoverySettings({ mode: next ? 'auto_wait' : 'ask', resumePromptMode: usageLimitRecoveryResumePromptMode, customResumePrompt: usageLimitRecoveryCustomResumePrompt })} />}
                         showChevron={false}
                         onPress={() => writeUsageLimitRecoverySettings({ mode: usageLimitRecoveryAutoWait ? 'ask' : 'auto_wait', resumePromptMode: usageLimitRecoveryResumePromptMode, customResumePrompt: usageLimitRecoveryCustomResumePrompt })}
@@ -112,7 +112,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                         itemTrigger={{
                             title: t('settingsSession.usageLimitRecovery.resumePromptTitle'),
                             subtitle: resumePromptOptions.find((option) => option.id === usageLimitRecoveryResumePromptMode)?.title,
-                            icon: <Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.accent.blue} />,
+                            icon: <Icon name="chat-circle-dots" size={29} color={theme.colors.accent.blue} />,
                             showSelectedSubtitle: false,
                             itemProps: { testID: 'settings-session-usage-limit-recovery-resume-prompt' },
                         }}
@@ -141,7 +141,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                                 />
                             )}
                             subtitleLines={0}
-                            icon={<Ionicons name="create-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="pencil-simple" size={29} color={theme.colors.accent.blue} />}
                             mode="info"
                             showChevron={false}
                         />
@@ -154,7 +154,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                         testID="settings-session-providerUsageGauge-visibility"
                         title={t('settingsSession.providerUsageGauge.visibilityTitle')}
                         subtitle={providerUsageGaugeVisible ? t('settingsSession.providerUsageGauge.visibilityEnabledSubtitle') : t('settingsSession.providerUsageGauge.visibilityHiddenSubtitle')}
-                        icon={<Ionicons name="speedometer-outline" size={29} color={theme.colors.accent.indigo} />}
+                        icon={<Icon name="speedometer" size={29} color={theme.colors.accent.indigo} />}
                         rightElement={<Switch testID="settings-session-providerUsageGauge-visibility-toggle" value={providerUsageGaugeVisible} onValueChange={(next) => setSessionProviderUsageGaugeMode(next ? 'auto' : 'hidden')} />}
                         showChevron={false}
                         onPress={() => setSessionProviderUsageGaugeMode(providerUsageGaugeVisible ? 'hidden' : 'auto')}
@@ -173,7 +173,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                         itemTrigger={{
                             title: t('settingsSession.providerUsageGauge.windowTitle'),
                             subtitle: providerUsageGaugeWindowOptions.find((option) => option.id === providerUsageGaugeWindowMode)?.title,
-                            icon: <Ionicons name="analytics-outline" size={29} color={theme.colors.accent.blue} />,
+                            icon: <Icon name="chart-line" size={29} color={theme.colors.accent.blue} />,
                             showSelectedSubtitle: false,
                             itemProps: { testID: 'settings-session-providerUsageGauge-window-trigger' },
                         }}

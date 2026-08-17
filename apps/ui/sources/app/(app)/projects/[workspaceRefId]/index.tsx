@@ -28,7 +28,12 @@ import {
 import { useProjectRouteRouterRef } from '@/components/projects/detail/useProjectRouteRouterRef';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import {
+    useLocalSetting,
+    useLocalSettingMutable,
+    usePersistProjectLastMobileSurface,
+    useProjectLastMobileSurface,
+} from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 type ClassicProjectHostedSurface = Extract<ProjectMobileSurface, 'browser' | 'services'>;
@@ -67,10 +72,10 @@ export default React.memo(() => {
         workspaceExperienceToggleLabelKey,
         toggleWorkspaceExperience,
     } = useMobileWorkspaceExperienceState();
-    const lastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
+    const lastMobileSurface = useProjectLastMobileSurface(workspaceRefId || null);
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
-    const [, setLastMobileSurfaceByWorkspaceRefId] = useLocalSettingMutable('projectLastMobileSurfaceByWorkspaceRefId');
+    const persistProjectLastMobileSurface = usePersistProjectLastMobileSurface();
     const [, setLastActiveRootPathByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveRootPathByWorkspaceRefId');
     const [, setLastActiveWorktreeIdByWorkspaceRefId] = useLocalSettingMutable('projectLastActiveWorktreeIdByWorkspaceRefId');
     const scopeId = buildProjectPaneScopeId(workspaceRefId);
@@ -161,11 +166,7 @@ export default React.memo(() => {
         onOpenTerminal: handleOpenTerminal,
     });
 
-    const persistedSurface = migrateProjectRouteSegmentToMobileSurface(
-        typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === 'string'
-            ? lastMobileSurfaceByWorkspaceRefId[workspaceRefId]
-            : null,
-    );
+    const persistedSurface = migrateProjectRouteSegmentToMobileSurface(lastMobileSurface);
     const rootMobileSurface = resolveProjectMobileSurfaceIntent({
         routeKind: 'index',
         activeRightTabId: pane.scopeState?.right?.activeTabId,
@@ -221,16 +222,13 @@ export default React.memo(() => {
     React.useEffect(() => {
         if (!isFocused) return;
         if (!workspaceRefId) return;
-        if (lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === rootMobileSurface) return;
-        setLastMobileSurfaceByWorkspaceRefId({
-            ...(lastMobileSurfaceByWorkspaceRefId ?? {}),
-            [workspaceRefId]: rootMobileSurface,
-        });
+        if (lastMobileSurface === rootMobileSurface) return;
+        persistProjectLastMobileSurface(workspaceRefId, rootMobileSurface);
     }, [
         isFocused,
-        lastMobileSurfaceByWorkspaceRefId,
+        lastMobileSurface,
+        persistProjectLastMobileSurface,
         rootMobileSurface,
-        setLastMobileSurfaceByWorkspaceRefId,
         workspaceRefId,
     ]);
 
@@ -298,9 +296,7 @@ export default React.memo(() => {
                     })
                     : resolveProjectRouteSegment(
                         pane.scopeState?.right?.activeTabId,
-                        typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === 'string'
-                            ? lastMobileSurfaceByWorkspaceRefId[workspaceRefId]
-                            : null,
+                        lastMobileSurface,
                     )
             ) as Href;
             if (cockpitEnabled) {
@@ -308,9 +304,7 @@ export default React.memo(() => {
             }
             const legacySegment = resolveProjectRouteSegment(
                 pane.scopeState?.right?.activeTabId,
-                typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === 'string'
-                    ? lastMobileSurfaceByWorkspaceRefId[workspaceRefId]
-                    : null,
+                lastMobileSurface,
             );
             const queryParams = new URLSearchParams();
             if (rawWorktreeId) {
@@ -335,9 +329,7 @@ export default React.memo(() => {
                 ? 'files'
                 : resolveProjectRouteSegment(
                     pane.scopeState?.right?.activeTabId,
-                    typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] === 'string'
-                        ? lastMobileSurfaceByWorkspaceRefId[workspaceRefId]
-                        : null,
+                    lastMobileSurface,
                 ),
             activeRootPath: activeRootPath ?? fallbackRootPath,
             defaultRootPath: workspaceRef?.rootPath ?? '',

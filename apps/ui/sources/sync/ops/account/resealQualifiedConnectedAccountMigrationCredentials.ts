@@ -125,6 +125,11 @@ export async function resealQualifiedConnectedAccountMigrationCredentials(
   const items: MigrationItem[] = [];
 
   for (const account of params.accounts) {
+    if (account.revisionSemantics !== 'revisioned') {
+      throw new Error(
+        'Qualified connected-account credential revision is unavailable for migration',
+      );
+    }
     if (!account.authenticationModeId) {
       throw new Error(
         'Qualified connected-account authentication mode is unavailable for migration',
@@ -134,6 +139,11 @@ export async function resealQualifiedConnectedAccountMigrationCredentials(
       QualifiedConnectedAccountCredentialSnapshotV4Schema.parse(
         await params.fetchCredential(account.ref),
       );
+    if (credential.revisionSemantics !== 'revisioned') {
+      throw new Error(
+        'Qualified connected-account credential revision is unavailable for migration',
+      );
+    }
     if (
       !sameRef(credential.ref, account.ref)
       || credential.authenticationModeId !== account.authenticationModeId
@@ -175,6 +185,11 @@ export async function resealQualifiedConnectedAccountMigrationCredentials(
         QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse(
           await params.fetchConfiguration(account.ref),
         );
+      if (configuration.revisionSemantics !== 'revisioned') {
+        throw new Error(
+          'Qualified connected-account credential revision is unavailable for migration',
+        );
+      }
       if (
         configuration.target.kind !== 'account'
         || !sameRef(configuration.target.ref, account.ref)

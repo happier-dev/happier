@@ -108,7 +108,7 @@ describe('SelectMessageButton', () => {
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityRole).toBe('checkbox');
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityState).toEqual({ checked: true });
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityLabel).toBe('assistant: hello from assistant');
-        expect(screen.findByType('Ionicons').props.name).toBe('checkbox-outline');
+        expect(screen.findByType('Icon').props.name).toBe('checkbox-outline');
     });
 
     it('toggles the message when pressed during active selection mode', async () => {
@@ -123,7 +123,7 @@ describe('SelectMessageButton', () => {
         expect(uncheckedSelectionToggle.props.accessibilityState).toEqual({ checked: false });
         expect(uncheckedSelectionToggle.props.accessibilityLabel).toBe('assistant: hello from assistant');
         expect(resolvePressableStyle(uncheckedSelectionToggle).backgroundColor).toEqual(expect.any(String));
-        expect(screen.findByType('Ionicons').props.name).toBe('square-outline');
+        expect(screen.findByType('Icon').props.name).toBe('square-outline');
 
         await act(async () => {
             findPressableByTestId(screen, 'select-m1').props.onPress();
@@ -149,7 +149,7 @@ describe('SelectMessageButton', () => {
         const screen = await renderButton();
 
         expect(findPressableByTestId(screen, 'select-m1').props.hitSlop).toBeUndefined();
-        expect(screen.findByType('Ionicons').props.size).toBe(12);
+        expect(screen.findByType('Icon').props.size).toBe(12);
 
         await act(async () => {
             findPressableByTestId(screen, 'select-m1').props.onPress();
@@ -157,7 +157,7 @@ describe('SelectMessageButton', () => {
 
         const selectionToggle = findPressableByTestId(screen, 'select-m1');
         expect(selectionToggle.props.hitSlop).toBeUndefined();
-        expect(screen.findByType('Ionicons').props.size).toBe(18);
+        expect(screen.findByType('Icon').props.size).toBe(18);
         expect(resolvePressableStyle(selectionToggle)).toMatchObject({
             minHeight: 44,
             minWidth: 44,

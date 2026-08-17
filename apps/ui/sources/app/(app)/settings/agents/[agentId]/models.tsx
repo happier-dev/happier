@@ -12,14 +12,12 @@ export default function AgentModelsRoute() {
         agentId?: string | string[];
         agentTargetKey?: string | string[];
         runtimeAgentId?: string | string[];
-        machineId?: string | string[];
     }>();
     const agentId = one(params.agentId);
     return (
         <AgentModelsScreen
             agentTargetKey={one(params.agentTargetKey) || `backend:${agentId}`}
             runtimeAgentId={one(params.runtimeAgentId) || agentId || null}
-            preferredMachineId={one(params.machineId) || null}
         />
     );
 }

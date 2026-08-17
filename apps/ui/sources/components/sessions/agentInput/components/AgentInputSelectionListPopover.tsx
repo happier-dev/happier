@@ -27,6 +27,8 @@ export type AgentInputSelectionListPopoverProps = Readonly<{
     maxHeightCap?: number;
     maxWidthCap?: number;
     heightBehavior?: SelectionListHeightBehavior;
+    /** Preserve the list primitive's declared grid semantics for interactive expanded content. */
+    optionsHostInlineControls?: boolean;
     testID?: string;
 }>;
 
@@ -84,6 +86,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                         onRequestClose={props.onRequestClose}
                         maxHeight={maxHeight}
                         heightBehavior={resolvePopoverSelectionListHeightBehavior(props.heightBehavior)}
+                        optionsHostInlineControls={props.optionsHostInlineControls}
                     />
                 </AgentInputPopoverSurface>
             )}

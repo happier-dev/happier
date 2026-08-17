@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -14,6 +13,7 @@ import {
     type NewSessionWizardSelectionSectionId,
 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import { t } from '@/text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type WizardPresentationSectionDefinition = Readonly<{
     id: NewSessionWizardSelectionSectionId;
@@ -24,16 +24,16 @@ type WizardPresentationSectionDefinition = Readonly<{
         | 'newSession.selectMachineTitle'
         | 'newSession.selectWorkingDirectoryTitle'
         | 'newSession.selectPermissionModeTitle';
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
 }>;
 
 const SECTION_DEFINITIONS: readonly WizardPresentationSectionDefinition[] = [
-    { id: 'profiles', titleKey: 'newSession.selectAiProfileTitle', iconName: 'person-outline' },
-    { id: 'backends', titleKey: 'newSession.selectAiBackendTitle', iconName: 'hardware-chip-outline' },
-    { id: 'models', titleKey: 'newSession.selectModelTitle', iconName: 'sparkles-outline' },
-    { id: 'machines', titleKey: 'newSession.selectMachineTitle', iconName: 'desktop-outline' },
-    { id: 'paths', titleKey: 'newSession.selectWorkingDirectoryTitle', iconName: 'folder-outline' },
-    { id: 'permissions', titleKey: 'newSession.selectPermissionModeTitle', iconName: 'shield-outline' },
+    { id: 'profiles', titleKey: 'newSession.selectAiProfileTitle', iconName: 'person' },
+    { id: 'backends', titleKey: 'newSession.selectAiBackendTitle', iconName: 'cpu' },
+    { id: 'models', titleKey: 'newSession.selectModelTitle', iconName: 'sparkle' },
+    { id: 'machines', titleKey: 'newSession.selectMachineTitle', iconName: 'desktop' },
+    { id: 'paths', titleKey: 'newSession.selectWorkingDirectoryTitle', iconName: 'folder' },
+    { id: 'permissions', titleKey: 'newSession.selectPermissionModeTitle', iconName: 'shield' },
 ];
 
 function isWizardPresentation(value: string): value is NewSessionWizardSectionPresentation {
@@ -81,7 +81,7 @@ function WizardPresentationDropdown(props: Readonly<{
             itemTrigger={{
                 title: t(props.section.titleKey),
                 subtitle: selectedPresentation.title,
-                icon: <Ionicons name={props.section.iconName} size={29} color={theme.colors.text.secondary} />,
+                icon: <Icon name={props.section.iconName} size={29} color={theme.colors.text.secondary} />,
                 showSelectedDetail: false,
                 showSelectedSubtitle: false,
                 itemProps: { testID: `settings-new-session-wizard-${props.section.id}` },
@@ -142,7 +142,7 @@ export const NewSessionWizardSettingsView = React.memo(function NewSessionWizard
                             ? 'settingsSession.sessionCreation.wizardColumnsEnabledSubtitle'
                             : 'settingsSession.sessionCreation.wizardColumnsDisabledSubtitle',
                     )}
-                    icon={<Ionicons name="grid-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="grid-four" size={29} color={theme.colors.text.secondary} />}
                     rightElement={(
                         <Switch
                             value={columnsEnabled === true}

@@ -125,6 +125,24 @@ const machinesState = vi.hoisted(() => ({
         };
     }>,
 }));
+const administrationTargetState = vi.hoisted(() => ({
+    current: {
+        target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+        serverId: 'server-1',
+        machine: {
+            id: 'machine-1',
+            metadata: {
+                displayName: 'Laptop',
+                host: 'laptop.local',
+                homeDir: '/Users/test',
+            },
+        },
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        serverId: string;
+        machine: { id: string; metadata: { displayName: string; host: string; homeDir: string } };
+    } | null,
+}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -141,6 +159,8 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
+    useLayoutMaxWidth: () => 1000,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -161,6 +181,18 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 
 vi.mock('@/components/settings/contextBar/ContextBar', () => ({
     ContextBar: (props: any) => React.createElement('ContextBar', props),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: any) => React.createElement('MachineAdministrationTargetSelector', props),
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.current?.target ?? null,
+        canExecute: administrationTargetState.current !== null,
+        resolveExecutionTarget: () => administrationTargetState.current,
+    }),
 }));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
@@ -237,10 +269,6 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
-    usePrimaryMachineFromActiveSelection: () => machinesState.value[0]?.id ?? null,
-}));
-
 describe('PromptAssetsScreen', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -273,6 +301,18 @@ describe('PromptAssetsScreen', () => {
                 },
             },
         ];
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+            serverId: 'server-1',
+            machine: {
+                id: 'machine-1',
+                metadata: {
+                    displayName: 'Laptop',
+                    host: 'laptop.local',
+                    homeDir: '/Users/test',
+                },
+            },
+        };
     });
 
     it('auto-loads external project skills on mount and imports them into the prompt library', async () => {
@@ -291,11 +331,11 @@ describe('PromptAssetsScreen', () => {
         tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
-        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-1', undefined);
+        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-1', { serverId: 'server-1' });
         expect(machinePromptAssetsDiscoverMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({ assetTypeId: 'agents.skill', scope: 'project', directory: '/Users/test/repo' }),
-            undefined,
+            { serverId: 'server-1' },
         );
 
         const importedItem = tree.findByTestId('promptAssets.item.project.agents.skill.0');
@@ -308,7 +348,7 @@ describe('PromptAssetsScreen', () => {
         expect(machinePromptAssetsDownloadMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({ assetTypeId: 'agents.skill', scope: 'project', externalRef: { name: 'refactor' }, directory: '/Users/test/repo' }),
-            undefined,
+            { serverId: 'server-1' },
         );
         expect(createPromptBundleArtifactMock).toHaveBeenCalledWith(expect.objectContaining({
             title: 'Refactor',
@@ -336,7 +376,7 @@ describe('PromptAssetsScreen', () => {
         expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-1');
     });
 
-    it('clears project-scoped discovery after the selected machine changes until a workspace path is chosen again', async () => {
+    it('clears project-scoped discovery after the Administration target changes until a workspace path is chosen again', async () => {
         contextSelectionsState.value = {
             v: 1,
             selectionsByKey: {
@@ -352,19 +392,28 @@ describe('PromptAssetsScreen', () => {
         tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
         await act(async () => {});
 
-        const contextBar = tree.findByType('ContextBar' as any);
-        expect(contextBar.props.machine.selectedId).toBe('machine-1');
-
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-2', machineId: 'machine-2' },
+            serverId: 'server-2',
+            machine: {
+                id: 'machine-2',
+                metadata: {
+                    displayName: 'Desktop',
+                    host: 'desktop.local',
+                    homeDir: '/Users/desktop',
+                },
+            },
+        };
         await act(async () => {
-            contextBar.props.machine.onSelect('machine-2');
+            tree.update(React.createElement(PromptAssetsScreen));
         });
         await act(async () => {});
 
-        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-2', undefined);
+        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-2', { serverId: 'server-2' });
         expect(machinePromptAssetsDiscoverMock).not.toHaveBeenCalledWith(
             'machine-2',
             expect.anything(),
-            undefined,
+            { serverId: 'server-2' },
         );
     });
 
@@ -378,6 +427,7 @@ describe('PromptAssetsScreen', () => {
         const contextBar = tree.findByType('ContextBar' as any);
         expect(contextBar.props.workspace.browse).toEqual({
             machineId: 'machine-1',
+            serverId: 'server-1',
             enabled: true,
         });
     });
@@ -479,7 +529,7 @@ describe('PromptAssetsScreen', () => {
         expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs/doc-1');
     });
 
-    it('uses the persisted context selection when refreshing external assets', async () => {
+    it('uses the Administration target rather than the persisted ContextBar machine selection when refreshing external assets', async () => {
         contextSelectionsState.value = {
             v: 1,
             selectionsByKey: {
@@ -503,15 +553,15 @@ describe('PromptAssetsScreen', () => {
             await pressTestInstanceAsync(refreshItem);
         });
 
-        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-2', undefined);
+        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-1', { serverId: 'server-1' });
         expect(machinePromptAssetsDiscoverMock).toHaveBeenCalledWith(
-            'machine-2',
+            'machine-1',
             expect.objectContaining({
                 assetTypeId: 'agents.skill',
                 scope: 'project',
                 directory: '/persisted/project',
             }),
-            undefined,
+            { serverId: 'server-1' },
         );
     });
 
@@ -523,6 +573,18 @@ describe('PromptAssetsScreen', () => {
         await renderScreen(React.createElement(PromptAssetsScreen));
 
         expect(setContextSelectionsMock).not.toHaveBeenCalled();
+    });
+
+    it('fails closed without a fresh Administration target instead of using a context-machine fallback', async () => {
+        administrationTargetState.current = null;
+
+        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
+        await renderScreen(React.createElement(PromptAssetsScreen));
+        await act(async () => {});
+
+        expect(machinePromptAssetsListTypesMock).not.toHaveBeenCalled();
+        expect(machinePromptAssetsDiscoverMock).not.toHaveBeenCalled();
+        expect(machinePromptAssetsDownloadMock).not.toHaveBeenCalled();
     });
 
     it('shows manage and delete actions for linked external assets', async () => {

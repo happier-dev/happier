@@ -29,6 +29,7 @@ export type NativePcmFrameSource = Readonly<{
             aec: 'preferred';
         }>;
         onFrame: (frame: NativePcmFrame) => void;
+        onError?: (error: unknown) => void;
     }>) => NativePcmCaptureLease | Promise<NativePcmCaptureLease>;
 }>;
 
@@ -213,6 +214,7 @@ export async function resolveNativeSileroVadBridge(
                         aec: 'preferred',
                     },
                     onFrame,
+                    onError: () => stopAfterFrameFailure(),
                 });
             } catch (error) {
                 stopped = true;

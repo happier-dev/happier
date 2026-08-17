@@ -91,7 +91,7 @@ describe('PermissionPromptCard interactive targets', () => {
                 minWidth: minimumSize,
                 minHeight: minimumSize,
             });
-            expect(viewToolAction.findByType('Ionicons' as any).props.size).toBe(18);
+            expect(viewToolAction.findByType('Icon' as any).props.size).toBe(18);
         },
     );
 });

@@ -39,8 +39,8 @@ vi.mock('@/voice/agent/voiceAgentRunState', () => ({
             },
         };
     },
-    resolveVoiceRunMetadataSessionId: (_managedSessionId: string, backend: 'daemon' | 'openai_compat', conversationSessionId?: string | null) =>
-        backend === 'daemon' ? (conversationSessionId ?? 'sys_voice') : null,
+    resolveVoiceRunMetadataSessionId: (_managedSessionId: string, _backend: 'daemon', conversationSessionId?: string | null) =>
+        conversationSessionId ?? 'sys_voice',
 }));
 
 vi.mock('@/voice/persistence/voiceAgentRunMetadata', () => ({

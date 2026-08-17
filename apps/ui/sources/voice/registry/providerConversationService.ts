@@ -1,4 +1,4 @@
-import type { PluginVoiceProviderConversationService } from '@happier-dev/plugin-sdk/runtime';
+import type { VoiceProviderConversationService } from '@happier-dev/plugin-sdk/voice/client';
 
 type ProviderConversationSession = {
   mutationTail: Promise<void>;
@@ -9,7 +9,10 @@ type ProviderConversationSession = {
 };
 
 export type ProviderConversationServiceFactory = Readonly<{
-  createAttempt(conversationSessionId: string): PluginVoiceProviderConversationService;
+  createAttempt(
+    conversationSessionId: string,
+    options?: Readonly<{ writeForgottenState(): Promise<void> }>,
+  ): VoiceProviderConversationService;
 }>;
 
 function normalizeConversationId(value: string | null): string | null {
@@ -52,7 +55,10 @@ export function createProviderConversationServiceFactory(input: Readonly<{
   };
 
   return Object.freeze({
-    createAttempt(conversationSessionId: string): PluginVoiceProviderConversationService {
+    createAttempt(
+      conversationSessionId: string,
+      options?: Readonly<{ writeForgottenState(): Promise<void> }>,
+    ): VoiceProviderConversationService {
       const session = getSession(conversationSessionId);
       const attemptEpoch = ++nextAttemptEpoch;
       session.activeAttemptEpoch = attemptEpoch;
@@ -83,7 +89,11 @@ export function createProviderConversationServiceFactory(input: Readonly<{
           if (session.forgetDurable) return;
           if (session.forgetPromise) return await session.forgetPromise;
           const operation = enqueue(session, async () => {
-            await input.write(null, conversationSessionId);
+            if (options) {
+              await options.writeForgottenState();
+            } else {
+              await input.write(null, conversationSessionId);
+            }
             if (isCurrent()) session.forgetDurable = true;
           });
           session.forgetPromise = operation;
@@ -98,7 +108,10 @@ export function createProviderConversationServiceFactory(input: Readonly<{
   });
 }
 
-const factoriesByHost = new WeakMap<object, Map<string, ProviderConversationServiceFactory>>();
+const factoriesByPersistenceBoundary = new WeakMap<
+  object,
+  WeakMap<object, Map<string, ProviderConversationServiceFactory>>
+>();
 
 export function getProviderConversationServiceFactory(
   host: Readonly<{
@@ -114,18 +127,23 @@ export function getProviderConversationServiceFactory(
   }>,
   providerId: string,
 ): ProviderConversationServiceFactory {
-  let byProvider = factoriesByHost.get(host);
-  if (!byProvider) {
-    byProvider = new Map();
-    factoriesByHost.set(host, byProvider);
-  }
-  const existing = byProvider.get(providerId);
-  if (existing) return existing;
   const readProviderConversationState = host.readProviderConversationState;
   const writeProviderConversationState = host.writeProviderConversationState;
   if (!readProviderConversationState || !writeProviderConversationState) {
     throw new Error('voice_provider_conversation_persistence_unavailable');
   }
+  let byWrite = factoriesByPersistenceBoundary.get(readProviderConversationState);
+  if (!byWrite) {
+    byWrite = new WeakMap();
+    factoriesByPersistenceBoundary.set(readProviderConversationState, byWrite);
+  }
+  let byProvider = byWrite.get(writeProviderConversationState);
+  if (!byProvider) {
+    byProvider = new Map();
+    byWrite.set(writeProviderConversationState, byProvider);
+  }
+  const existing = byProvider.get(providerId);
+  if (existing) return existing;
   const created = createProviderConversationServiceFactory({
     async read(conversationSessionId) {
       return (await readProviderConversationState({

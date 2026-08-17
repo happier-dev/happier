@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -11,6 +10,7 @@ import { t } from '@/text';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import type { ActiveSelectionMachineGroup } from '@/components/settings/machines/hooks/useActiveSelectionMachineGroups';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 type ThemeColors = Readonly<{
@@ -98,7 +98,7 @@ export const ActiveSelectionMachinesSection = React.memo(function ActiveSelectio
                                 <Item
                                     title={t('newSession.noMachinesFound')}
                                     subtitle={serverStatusLabel ?? undefined}
-                                    icon={<Ionicons name="desktop-outline" size={29} color={props.themeColors.textSecondary} />}
+                                    icon={<Icon name="desktop" size={29} color={props.themeColors.textSecondary} />}
                                     showChevron={false}
                                 />
                             ) : null}
@@ -118,8 +118,8 @@ export const ActiveSelectionMachinesSection = React.memo(function ActiveSelectio
                                             textSecondaryColor: props.themeColors.textSecondary,
                                         })}
                                         icon={
-                                            <Ionicons
-                                                name="desktop-outline"
+                                            <Icon
+                                                name="desktop"
                                                 size={29}
                                                 color={isOnline ? props.themeColors.status.connected : props.themeColors.status.disconnected}
                                             />
@@ -150,8 +150,8 @@ export const ActiveSelectionMachinesSection = React.memo(function ActiveSelectio
                                     textSecondaryColor: props.themeColors.textSecondary,
                                 })}
                                 icon={
-                                    <Ionicons
-                                        name="desktop-outline"
+                                    <Icon
+                                        name="desktop"
                                         size={29}
                                         color={isOnline ? props.themeColors.status.connected : props.themeColors.status.disconnected}
                                     />

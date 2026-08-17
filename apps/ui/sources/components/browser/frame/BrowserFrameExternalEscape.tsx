@@ -1,10 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     escape: {
@@ -52,7 +52,7 @@ export function BrowserFrameExternalEscape(props: Readonly<{
             onPress={props.onOpenInSystemBrowser}
             style={stylesheet.escape}
         >
-            <Ionicons name="open-outline" size={14} color={theme.colors.text.secondary} />
+            <Icon name="arrow-square-out" size={14} color={theme.colors.text.secondary} />
             <Text style={stylesheet.label}>{t('browserShell.nonFramable.openInSystemBrowser')}</Text>
         </Pressable>
     );

@@ -7,6 +7,7 @@ import type { SessionMobileSurface } from './sessionCockpitState';
 export function usePersistSessionMobileSurface(params: Readonly<{
     sessionId: string | null;
     surface: SessionMobileSurface | null;
+    serverId?: string | null;
     enabled?: boolean;
 }>): void {
     const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
@@ -14,10 +15,11 @@ export function usePersistSessionMobileSurface(params: Readonly<{
     React.useEffect(() => {
         if (params.enabled === false) return;
         if (!params.sessionId || !params.surface) return;
-        persistSessionLastMobileSurface(params.sessionId, params.surface);
+        persistSessionLastMobileSurface(params.sessionId, params.surface, params.serverId);
     }, [
         params.enabled,
         params.sessionId,
+        params.serverId,
         params.surface,
         persistSessionLastMobileSurface,
     ]);

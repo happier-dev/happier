@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -13,6 +12,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { resolveProfileBackendTargetKeyForEntry } from '../profileBackendEntryStorage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function LegacyProfileBackendCompatibilitySection(props: Readonly<{
     entries: readonly ResolvedBackendCatalogEntry[];
@@ -52,7 +52,7 @@ export function LegacyProfileBackendCompatibilitySection(props: Readonly<{
                 key={entry.backendTargetKey}
                 title={entry.title}
                 subtitle={subtitle}
-                leftElement={<Ionicons name={props.getDisplayAgentIconName(entry) as never} size={24} color={theme.colors.text.secondary} />}
+                leftElement={<Icon name={props.getDisplayAgentIconName(entry) as never} size={24} color={theme.colors.text.secondary} />}
                 rightElement={<Switch value={enabled} onValueChange={() => props.toggleCompatibility(targetKey)} />}
                 showChevron={false}
                 onPress={() => props.toggleCompatibility(targetKey)}

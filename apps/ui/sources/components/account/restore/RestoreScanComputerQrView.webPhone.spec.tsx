@@ -32,7 +32,7 @@ const modalAlertSpy = vi.hoisted(() => vi.fn(async (
 ) => {}));
 
 const restoreScanSuccessState = vi.hoisted(() => ({
-    loginSpy: vi.fn(async () => {}),
+    loginSpy: vi.fn(async () => ({ kind: 'completed' as const })),
     trackAccountRestoredSpy: vi.fn(),
     pairingRequestSpy: vi.fn<(params: PairingRequestParams) => Promise<PairingRequestResult>>(async (_params) => ({
         ok: false,

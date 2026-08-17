@@ -7,6 +7,16 @@ import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTest
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastMultiPaneLayout: any = null;
+const rightPaneBuiltinAdapter = {
+    destinationIds: ['right'],
+    defaultDestinationId: 'right',
+    render: () => <div />,
+};
+const detailsPaneBuiltinAdapter = {
+    destinationIds: ['details'],
+    defaultDestinationId: 'details',
+    render: () => <div />,
+};
 
 installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: 1200, height: 800 }),
@@ -41,6 +51,7 @@ vi.mock('./AppPaneProvider', () => ({
                 scope1: {
                     right: { isOpen: true },
                     details: { isOpen: true },
+                    bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
                 },
             },
         },
@@ -58,8 +69,8 @@ describe('AppPaneScopeHost', () => {
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
-                rightPane={<div />}
-                detailsPane={<div />}
+                rightPaneBuiltinAdapter={rightPaneBuiltinAdapter}
+                detailsPaneBuiltinAdapter={detailsPaneBuiltinAdapter}
             />,
         );
 

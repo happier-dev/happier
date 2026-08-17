@@ -154,6 +154,33 @@ describe('preserveSessionListRenderableStaleFields', () => {
         expect((next as { metadataUnavailable?: boolean }).metadataUnavailable).not.toBe(true);
     });
 
+    it('does not preserve stale metadata across an explicit unavailable contraction', () => {
+        const previous = buildRenderable({
+            id: 's_locked',
+            metadata: {
+                path: '/private/repo',
+                host: 'private-host',
+            },
+            metadataVersion: 4,
+        });
+        const next = preserveSessionListRenderableStaleFields(
+            previous,
+            buildRenderable({
+                id: 's_locked',
+                metadata: null,
+                metadataVersion: 5,
+                metadataUnavailable: true,
+            } as Partial<SessionListRenderableSession> & {
+                id: string;
+                metadataUnavailable: true;
+            }),
+        );
+
+        expect(next.metadata).toBeNull();
+        expect(next.metadataVersion).toBe(5);
+        expect(next.metadataUnavailable).toBe(true);
+    });
+
     it('preserves ready metadata and known unread across unread-unknown replacements', () => {
         const previous = buildRenderable({
             id: 's_ready',

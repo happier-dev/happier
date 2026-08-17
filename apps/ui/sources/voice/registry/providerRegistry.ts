@@ -1,17 +1,16 @@
 import {
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
   createRecipientContractDigestV1,
   normalizeRecipientContractV1,
-  PluginVoiceProviderContributionV1Schema,
+  VoiceProviderContributionSchema,
   VoiceProviderSettingsJsonValueV1Schema,
-  VoiceBundledUiDescriptorV1Schema,
   type RecipientContractV1,
-  type VoiceBundledUiDescriptorV1,
+  type VoiceProviderContribution,
+  type VoiceReadinessRequirement,
+  type VoiceReadinessRole,
+  type VoiceRuntimePlatform,
 } from '@happier-dev/protocol';
-import type {
-  BundledVoiceConversationUiEntry,
-  BundledVoiceSpeechEngineUiEntry,
-  BundledVoiceUiEntry,
-} from '@happier-dev/bundled-voice-runtime-contract';
 import { z } from 'zod';
 
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
@@ -21,6 +20,12 @@ import {
   projectExternalVoiceProviderSettings,
 } from '@/voice/settings/externalProviderSettings';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
+import type { VoiceConnectedAccountTargetEligibility } from '@/voice/credentials/sourceEligibility';
+import type { BundledVoiceManifestContribution } from './bundledVoiceManifestProjection';
+import {
+  indexVoiceProviderPresentations,
+} from './bundledVoiceManifestProjection';
+import type { VoiceProviderPresentation } from './voiceProviderPresentation';
 
 const VoiceProviderSettingsProjectionSchema = z.object({
   status: z.enum([
@@ -45,10 +50,6 @@ const VoiceProviderSettingsProjectionSchema = z.object({
   }).optional(),
 }).strict();
 
-const VoiceProviderSettingsReadinessProjectionSchema = z.object({
-  status: z.enum(['ready', 'missing_required_setting']),
-}).strict();
-
 const VoiceProviderSettingsJsonObjectV1Schema = z.record(
   z.string(),
   VoiceProviderSettingsJsonValueV1Schema,
@@ -70,33 +71,66 @@ export type VoiceProviderCredentialReadinessProjection = Readonly<{
 }>;
 
 export type VoiceProviderCredentialReadinessContext = Readonly<{
-  accountProfile: unknown;
+  sourceSelection: Readonly<{
+    kind: 'none' | 'savedSecret' | 'connectedAccount';
+    connectedAccountEligibility: VoiceConnectedAccountTargetEligibility;
+  }> | null;
   savedSecret: Readonly<{
-    status: 'ready' | 'missing';
+    /**
+     * `unknown` when the account-settings snapshot could not be resolved at
+     * all. It is not absence: reporting `missing` there accuses a SavedSecret
+     * that may be stored and working.
+     */
+    status: 'ready' | 'missing' | 'unknown';
   }>;
 }>;
 
+type VoiceProviderSelectionOption = Readonly<{
+  id: string;
+  modeId: string | null;
+  order: number;
+  titleKey: string;
+  subtitleKey: string;
+  configPatch?: Readonly<Record<string, unknown>>;
+}>;
+
 type VoiceUiRuntimeContributionBase = Readonly<{
+  pluginId: string;
+  providerId: string;
+  settingsSectionId: string;
+  roles: readonly VoiceReadinessRole[];
+  requirements: readonly VoiceReadinessRequirement[];
+  requirementsByMode?: Readonly<Record<string, readonly VoiceReadinessRequirement[]>>;
+  supportedPlatforms?: readonly VoiceRuntimePlatform[];
+  selectionOptions?: readonly VoiceProviderSelectionOption[];
   projectSettings?: (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => VoiceProviderSettingsProjection;
+  /** Trusted host-only readiness source; never projected from public plugin manifests. */
+  localReadiness?: Readonly<{
+    kind: 'device_speech';
+  }>;
+  /** Trusted host-owned processing truth for built-in speech roles. */
+  processingDisclosures?: Readonly<Partial<Record<'stt' | 'tts', Readonly<{
+    titleKey: string;
+    disclosureKey: string;
+  }>>>>;
 }>;
 
 export type VoiceUiRuntimeContribution =
-  | (Extract<VoiceBundledUiDescriptorV1, Readonly<{ kind: 'voice.conversation-provider.v1' }>>
-    & VoiceUiRuntimeContributionBase
-    & Readonly<{
-      declaration?: BundledVoiceConversationUiEntry['declaration'];
-      /** Trusted build-time first-party behavior; never projected from public plugin manifests. */
-      internal?: Partial<BundledVoiceConversationUiEntry['internal']>;
+  | (VoiceUiRuntimeContributionBase & Readonly<{
+      kind: 'voice.conversation-provider.v1';
+      declaration?: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>;
+      presentation?: VoiceProviderPresentation;
     }>)
-  | (Extract<VoiceBundledUiDescriptorV1, Readonly<{ kind: 'voice.speech-engine.v1' }>>
-    & VoiceUiRuntimeContributionBase
-    & Readonly<{
-      /** Trusted build-time first-party behavior; never projected from public plugin manifests. */
-      internal?: Partial<BundledVoiceSpeechEngineUiEntry['internal']>;
+  | (VoiceUiRuntimeContributionBase & Readonly<{
+      kind: 'voice.speech-engine.v1';
+      role: 'stt' | 'tts' | 'both';
+      declaration?: Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>;
+      catalogs?: Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>['catalogs'];
+      limits?: Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>['limits'];
+      presentation?: VoiceProviderPresentation;
     }>)
-  | (Extract<VoiceBundledUiDescriptorV1, Readonly<{ kind: 'voice.turn-support.v1' }>>
-    & VoiceUiRuntimeContributionBase
-    & Readonly<{
+  | (VoiceUiRuntimeContributionBase & Readonly<{
+      kind: 'voice.turn-support.v1';
       internal?: never;
     }>);
 
@@ -157,26 +191,46 @@ export function projectVoiceProviderCredentialReadiness(
   context: VoiceProviderCredentialReadinessContext,
 ): VoiceProviderCredentialReadinessProjection | null {
   if (entry.kind !== 'voice.conversation-provider.v1') return null;
-  const projectCredentialReadiness = entry.internal?.projectCredentialReadiness;
-  const owner = entry.providerSettings ?? entry.internal?.providerSettings;
-  if (!projectCredentialReadiness || !owner) return null;
+  const credentials = entry.declaration?.credentials;
+  if (!credentials || credentials.requirement.kind === 'optional') return null;
   try {
-    const rawConfig = envelope?.config ?? owner.defaultConfig;
-    const config = owner.parseConfig(rawConfig);
-    if (!config) return null;
-    const projection = projectCredentialReadiness(config, context);
-    if (!projection
-      || (projection.status !== 'ready'
-        && projection.status !== 'missing'
-        && projection.status !== 'unknown')
-      || typeof projection.detailKey !== 'string'
-      || !projection.detailKey.trim()) return null;
+    if (credentials.requirement.kind === 'when_setting_equals') {
+      const owner = entry.providerSettings;
+      const config = owner?.parseConfig(envelope?.config ?? owner.defaultConfig);
+      if (!config || (config as Readonly<Record<string, unknown>>)[credentials.requirement.settingId]
+        !== credentials.requirement.value) return null;
+    }
+    if (!context.sourceSelection) {
+      return Object.freeze({
+        status: 'unknown',
+        detailKey: 'voice.readiness.credential_unknown',
+      });
+    }
+    const status: VoiceProviderCredentialReadinessProjection['status'] = context.sourceSelection.kind === 'savedSecret'
+      ? context.savedSecret.status
+      : context.sourceSelection.kind === 'connectedAccount'
+        ? context.sourceSelection.connectedAccountEligibility === 'usable'
+          ? 'ready'
+          // A bound account whose descriptor is unavailable is unverified, not
+          // absent. Reporting it as missing would tell the user to add a
+          // credential that already exists.
+          : context.sourceSelection.connectedAccountEligibility === 'unknown'
+            ? 'unknown'
+            : 'missing'
+        : 'missing';
     return Object.freeze({
-      status: projection.status,
-      detailKey: projection.detailKey,
+      status,
+      detailKey: status === 'ready'
+        ? 'settingsVoice.externalCredentials.ready'
+        : status === 'unknown'
+          ? 'voice.readiness.credential_unknown'
+          : 'settingsVoice.externalCredentials.missing',
     });
   } catch {
-    return null;
+    return Object.freeze({
+      status: 'unknown',
+      detailKey: 'voice.readiness.credential_unknown',
+    });
   }
 }
 
@@ -197,18 +251,15 @@ function isConfigPatchMatch(config: unknown, patch: unknown): boolean {
 
 function projectBundledAccountCredentialSlot(
   pluginId: string,
-  declaration: Extract<
-    NonNullable<BundledVoiceConversationUiEntry['declaration']>,
-    Readonly<{ kind: 'conversation' }>
-  >,
+  declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>,
 ): NonNullable<VoiceProviderRegistryEntry['accountCredentialSlot']> | null {
-  const mediation = declaration.accountMediation;
-  if (!mediation || mediation.credentialSlots.length !== 1) return null;
-  const slot = mediation.credentialSlots[0]!;
-  if (
-    slot.scope !== 'account'
-    || mediation.operations.some((operation) => operation.credentialSlotId !== slot.id)
-  ) return null;
+  const credentials = declaration.credentials;
+  if (!credentials?.hostMediated
+    || !credentials.sources.some((source) => (
+      source.kind === 'savedSecret' && source.secretKinds.includes('apiKey')
+    ))) return null;
+  const slot = credentials.slot;
+  if (credentials.hostMediated.operations.some((operation) => operation.credentialSlotId !== slot.id)) return null;
   const recipientContract = createBundledVoiceRecipientContract({
     pluginId,
     declaration,
@@ -225,186 +276,164 @@ function projectBundledAccountCredentialSlot(
   });
 }
 
-function createBundledDisclosureSettingsOverlay(
-  declared: ExternalVoiceProviderSettingsDescriptor,
-  internal: NonNullable<BundledVoiceConversationUiEntry['internal']['providerSettings']>,
-): ExternalVoiceProviderSettingsDescriptor | null {
-  if (
-    declared.fields.length !== 0
-    || declared.connectedServicesBinding !== null
-    || declared.privacyDisclosure === null
-    || internal.schemaVersion !== declared.schemaVersion
-  ) return null;
-  const parsedDefault = VoiceProviderSettingsJsonObjectV1Schema.safeParse(internal.defaultConfig);
-  if (!parsedDefault.success) return null;
-  return Object.freeze({
-    schemaVersion: declared.schemaVersion,
-    fields: Object.freeze([]),
-    privacyDisclosure: declared.privacyDisclosure,
-    connectedServicesBinding: null,
-    defaultConfig: parsedDefault.data,
-    parseConfig(config: unknown) {
-      const parsed = VoiceProviderSettingsJsonValueV1Schema.safeParse(internal.parseConfig(config));
-      return parsed.success ? parsed.data : null;
-    },
-  });
+function isNonEmptySetting(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === 'object') return Object.keys(value).length > 0;
+  return value !== null && value !== undefined;
 }
 
-function normalizeContribution(
-  raw: VoiceUiRuntimeContribution | BundledVoiceUiEntry,
-  sourceKind: 'built_in' | 'bundled',
-): VoiceProviderRegistryEntry {
-  const projectSettings = 'projectSettings' in raw
-    ? raw.projectSettings
-    : undefined;
-  const declaration = raw.kind === 'voice.conversation-provider.v1'
-    && 'declaration' in raw
-    ? raw.declaration
-    : undefined;
-  const publicDeclaration = PluginVoiceProviderContributionV1Schema.safeParse(
-    declaration,
-  );
-  const descriptorCandidate = {
-    kind: raw.kind,
-    pluginId: raw.pluginId,
-    providerId: raw.providerId,
-    settingsSectionId: raw.settingsSectionId,
-    roles: raw.roles,
-    requirements: raw.requirements,
-    ...('requirementsByMode' in raw && raw.requirementsByMode
-      ? { requirementsByMode: raw.requirementsByMode }
-      : {}),
-    ...('supportedPlatforms' in raw && raw.supportedPlatforms
-      ? { supportedPlatforms: raw.supportedPlatforms }
-      : {}),
-    ...('selectionOptions' in raw && raw.selectionOptions
-      ? { selectionOptions: raw.selectionOptions }
-      : {}),
-    ...(raw.kind === 'voice.speech-engine.v1' ? { role: raw.role } : {}),
+function projectDeclaredSettingsReadiness(
+  declaration: VoiceProviderContribution,
+  config: Readonly<Record<string, unknown>>,
+): 'ready' | 'missing_required_setting' {
+  const readiness = declaration.settings?.readiness ?? [];
+  for (const requirement of readiness) {
+    if (requirement.when
+      && config[requirement.when.settingId] !== requirement.when.equals) continue;
+    if (!isNonEmptySetting(config[requirement.settingId])) return 'missing_required_setting';
+  }
+  return 'ready';
+}
+
+export function projectVoiceProviderDeclarationRequirements(
+  declaration: VoiceProviderContribution,
+): readonly VoiceReadinessRequirement[] {
+  const requirements: VoiceReadinessRequirement[] = [];
+  if (declaration.kind === 'speech') requirements.push('execution_machine');
+  if (declaration.kind === 'conversation'
+    && declaration.execution?.kind === 'experimental_agent_session_realtime') {
+    requirements.push('execution_machine', 'runtime');
+  }
+  if (declaration.kind === 'speech'
+    && declaration.settings?.fields.some((field) => field.id === 'baseUrl')) {
+    requirements.push('endpoint');
+  }
+  if (declaration.credentials && declaration.credentials.requirement.kind !== 'optional') {
+    requirements.push('credential');
+  }
+  return Object.freeze(requirements);
+}
+
+function deriveRequirementsByMode(
+  declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>,
+  selectionOptions: readonly VoiceProviderSelectionOption[],
+): Readonly<Record<string, readonly VoiceReadinessRequirement[]>> | undefined {
+  const requirement = declaration.credentials?.requirement;
+  if (requirement?.kind !== 'when_setting_equals') return undefined;
+  return Object.freeze(Object.fromEntries(selectionOptions.flatMap((option) => option.modeId
+    ? [[option.modeId, Object.freeze([
+        ...(option.configPatch?.[requirement.settingId] === requirement.value ? ['credential' as const] : []),
+      ])] as const]
+    : [])));
+}
+
+function createDeclaredSettingsProjector(
+  declaration: VoiceProviderContribution,
+  providerSettings: ExternalVoiceProviderSettingsDescriptor,
+  selectionOptions: readonly VoiceProviderSelectionOption[],
+) {
+  return (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => {
+    const projection = projectExternalVoiceProviderSettings(envelope, providerSettings);
+    if (!isVoiceProviderSettingsProjectionCurrent(projection)) return projection;
+    const parsedConfig = providerSettings.parseConfig(envelope?.config);
+    const parsedConfigObject = VoiceProviderSettingsJsonObjectV1Schema.safeParse(parsedConfig);
+    if (!parsedConfigObject.success) return INVALID_SETTINGS_PROJECTION;
+    const selectedMode = selectionOptions.find(
+      (option) => option.configPatch && isConfigPatchMatch(parsedConfigObject.data, option.configPatch),
+    )?.modeId ?? selectionOptions[0]?.modeId ?? projection.modeId;
+    return Object.freeze({
+      ...projection,
+      status: projection.status === 'ready'
+        ? projectDeclaredSettingsReadiness(declaration, parsedConfigObject.data)
+        : projection.status,
+      modeId: selectedMode,
+    });
   };
-  const descriptor = VoiceBundledUiDescriptorV1Schema.safeParse(descriptorCandidate);
-  if (!descriptor.success) {
+}
+
+function normalizeBuiltInContribution(raw: VoiceUiRuntimeContribution): VoiceProviderRegistryEntry {
+  const providerId = normalizeNonEmptyString(raw.providerId);
+  const pluginId = normalizeNonEmptyString(raw.pluginId);
+  const settingsSectionId = normalizeNonEmptyString(raw.settingsSectionId);
+  if (!providerId || !pluginId || !settingsSectionId || raw.roles.length === 0) {
     throw Object.assign(new Error('invalid_voice_provider_descriptor'), {
       code: 'invalid_voice_provider_descriptor',
     });
   }
-  if (projectSettings !== undefined && typeof projectSettings !== 'function') {
-    throw Object.assign(new Error('invalid_voice_provider_settings_projector'), {
-      code: 'invalid_voice_provider_settings_projector',
+  return deepFreeze({
+    ...raw,
+    providerId,
+    pluginId,
+    settingsSectionId,
+    source: Object.freeze({ kind: 'built_in' as const }),
+  }) as VoiceProviderRegistryEntry;
+}
+
+function normalizeBundledContribution(
+  raw: BundledVoiceManifestContribution,
+  presentation: VoiceProviderPresentation,
+): VoiceProviderRegistryEntry {
+  const declaration = VoiceProviderContributionSchema.parse(raw.declaration);
+  const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+    pluginId: raw.pluginId,
+    localId: declaration.id,
+  }));
+  if (providerId !== raw.providerId || presentation.providerId !== providerId) {
+    throw Object.assign(new Error('invalid_voice_provider_presentation_identity'), {
+      code: 'invalid_voice_provider_presentation_identity',
     });
   }
-  const frozenDescriptor = deepFreeze(descriptor.data);
-  const publicConversationDeclaration = publicDeclaration.success
-    && publicDeclaration.data.kind === 'conversation'
-    ? publicDeclaration.data
+  const providerSettings = declaration.settings
+    ? createExternalVoiceProviderSettingsDescriptor(declaration.settings)
     : null;
-  const declaredProviderSettings = publicConversationDeclaration?.settings
-    ? createExternalVoiceProviderSettingsDescriptor(publicConversationDeclaration.settings)
-    : null;
-  const internalProviderSettings = raw.kind === 'voice.conversation-provider.v1'
-    && 'internal' in raw
-    ? raw.internal?.providerSettings ?? null
-    : null;
-  const projectSettingsReadiness = raw.kind === 'voice.conversation-provider.v1'
-    && 'internal' in raw
-    ? raw.internal?.projectSettingsReadiness
-    : undefined;
-  if (projectSettingsReadiness !== undefined && typeof projectSettingsReadiness !== 'function') {
-    throw Object.assign(new Error('invalid_voice_provider_settings_readiness_projector'), {
-      code: 'invalid_voice_provider_settings_readiness_projector',
-    });
-  }
-  const hasDisclosureOnlyInternalSettings = Boolean(publicConversationDeclaration?.settings
-    && publicConversationDeclaration.settings.fields.length === 0
-    && !publicConversationDeclaration.settings.connectedServicesBinding
-    && publicConversationDeclaration.settings.privacyDisclosure
-    && declaredProviderSettings
-    && internalProviderSettings);
-  const disclosureOnlySettings = hasDisclosureOnlyInternalSettings
-    && declaredProviderSettings
-    && internalProviderSettings
-    ? createBundledDisclosureSettingsOverlay(declaredProviderSettings, internalProviderSettings)
-    : null;
-  if (hasDisclosureOnlyInternalSettings && !disclosureOnlySettings) {
-    throw Object.assign(new Error('invalid_voice_provider_settings'), {
-      code: 'invalid_voice_provider_settings',
-    });
-  }
-  const publicProviderSettings = hasDisclosureOnlyInternalSettings
-    ? disclosureOnlySettings
-    : declaredProviderSettings;
-  const accountCredentialSlot = sourceKind === 'bundled' && publicConversationDeclaration
-    ? projectBundledAccountCredentialSlot(raw.pluginId, publicConversationDeclaration)
-    : null;
-  const effectiveProjectSettings = publicProviderSettings && !disclosureOnlySettings
-    ? (
-        envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
-      ) => {
-        const projection = projectExternalVoiceProviderSettings(envelope, publicProviderSettings);
-        if (projection.status !== 'ready') return projection;
-        const parsedConfig = publicProviderSettings.parseConfig(envelope?.config);
-        const parsedConfigObject = VoiceProviderSettingsJsonObjectV1Schema.safeParse(parsedConfig);
-        if (!parsedConfigObject.success) return INVALID_SETTINGS_PROJECTION;
-        const selectedMode = frozenDescriptor.selectionOptions?.find(
-          (option) => option.configPatch && isConfigPatchMatch(parsedConfigObject.data, option.configPatch),
-        )?.modeId;
-        const readinessProjection = projectSettingsReadiness
-          ? VoiceProviderSettingsReadinessProjectionSchema.safeParse(
-              projectSettingsReadiness(parsedConfigObject.data),
-            )
-          : null;
-        if (readinessProjection && !readinessProjection.success) return INVALID_SETTINGS_PROJECTION;
-        return Object.freeze({
-          ...projection,
-          ...(readinessProjection?.success
-            ? { status: readinessProjection.data.status }
-            : {}),
-          modeId: selectedMode ?? frozenDescriptor.selectionOptions?.[0]?.modeId ?? projection.modeId,
-        });
-      }
-    : typeof projectSettings === 'function'
-      ? projectSettings
-      : null;
-  const source = sourceKind === 'built_in'
-    ? Object.freeze({ kind: 'built_in' as const })
-    : Object.freeze({ kind: 'bundled' as const, pluginId: descriptor.data.pluginId });
+  const selectionOptions = declaration.kind === 'conversation'
+    ? deepFreeze([...(presentation.selectionOptions ?? [])])
+    : Object.freeze([]);
+  const requirements = projectVoiceProviderDeclarationRequirements(declaration);
   const common = {
-    ...(effectiveProjectSettings
-      ? { projectSettings: effectiveProjectSettings }
+    pluginId: raw.pluginId,
+    providerId,
+    settingsSectionId: presentation.settingsSectionId,
+    roles: deepFreeze([...declaration.roles]),
+    requirements,
+    supportedPlatforms: deepFreeze([...declaration.platforms]),
+    ...(selectionOptions.length > 0 ? { selectionOptions } : {}),
+    ...(providerSettings
+      ? {
+          providerSettings,
+          projectSettings: createDeclaredSettingsProjector(
+            declaration,
+            providerSettings,
+            selectionOptions,
+          ),
+        }
       : {}),
-    ...(publicProviderSettings
-      ? { providerSettings: publicProviderSettings }
-      : {}),
-    ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
-    source,
+    declaration,
+    source: Object.freeze({ kind: 'bundled' as const, pluginId: raw.pluginId }),
   };
-  if (frozenDescriptor.kind === 'voice.conversation-provider.v1'
-    && raw.kind === 'voice.conversation-provider.v1') {
-    const internal = 'internal' in raw ? raw.internal : undefined;
-    return Object.freeze({
-      ...frozenDescriptor,
+  if (declaration.kind === 'conversation') {
+    const requirementsByMode = deriveRequirementsByMode(declaration, selectionOptions);
+    const accountCredentialSlot = projectBundledAccountCredentialSlot(raw.pluginId, declaration);
+    return deepFreeze({
+      kind: 'voice.conversation-provider.v1' as const,
       ...common,
-      ...(publicConversationDeclaration
-        ? { declaration: publicConversationDeclaration }
-        : {}),
-      ...(internal === undefined ? {} : { internal }),
-    });
+      ...(requirementsByMode ? { requirementsByMode } : {}),
+      ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
+      presentation,
+    }) as VoiceProviderRegistryEntry;
   }
-  if (frozenDescriptor.kind === 'voice.speech-engine.v1'
-    && raw.kind === 'voice.speech-engine.v1') {
-    const internal = 'internal' in raw ? raw.internal : undefined;
-    return Object.freeze({
-      ...frozenDescriptor,
+  if (declaration.kind === 'speech') {
+    const hasStt = declaration.roles.some((role) => role.endsWith('_stt'));
+    const hasTts = declaration.roles.some((role) => role.endsWith('_tts'));
+    return deepFreeze({
+      kind: 'voice.speech-engine.v1' as const,
       ...common,
-      ...(internal === undefined ? {} : { internal }),
-    });
-  }
-  if (frozenDescriptor.kind === 'voice.turn-support.v1'
-    && raw.kind === 'voice.turn-support.v1') {
-    return Object.freeze({
-      ...frozenDescriptor,
-      ...common,
-    });
+      role: hasStt && hasTts ? 'both' : hasTts ? 'tts' : 'stt',
+      catalogs: declaration.catalogs,
+      limits: declaration.limits,
+      presentation,
+    }) as VoiceProviderRegistryEntry;
   }
   throw Object.assign(new Error('invalid_voice_provider_descriptor'), {
     code: 'invalid_voice_provider_descriptor',
@@ -412,15 +441,25 @@ function normalizeContribution(
 }
 
 export function createVoiceProviderRegistry(input: Readonly<{
-  builtIn?: readonly (VoiceUiRuntimeContribution | BundledVoiceUiEntry)[];
-  bundled?: readonly (VoiceUiRuntimeContribution | BundledVoiceUiEntry)[];
+  builtIn?: readonly VoiceUiRuntimeContribution[];
+  bundledContributions?: readonly BundledVoiceManifestContribution[];
+  bundledPresentations?: readonly VoiceProviderPresentation[];
   enabledPluginIds?: ReadonlySet<string> | null;
 }>): VoiceProviderRegistry {
   const enabledPluginIds = input.enabledPluginIds ?? null;
+  const bundledPresentations = indexVoiceProviderPresentations(input.bundledPresentations ?? []);
   const normalized = [
-    ...(input.builtIn ?? []).map((entry) => normalizeContribution(entry, 'built_in')),
-    ...(input.bundled ?? [])
-      .map((entry) => normalizeContribution(entry, 'bundled'))
+    ...(input.builtIn ?? []).map(normalizeBuiltInContribution),
+    ...(input.bundledContributions ?? [])
+      .map((entry) => {
+        const presentation = bundledPresentations.get(entry.providerId);
+        if (!presentation) {
+          throw Object.assign(new Error(`missing_voice_provider_presentation:${entry.providerId}`), {
+            code: 'missing_voice_provider_presentation',
+          });
+        }
+        return normalizeBundledContribution(entry, presentation);
+      })
       .filter((entry) => enabledPluginIds === null || enabledPluginIds.has(entry.pluginId)),
   ].sort((left, right) => left.providerId.localeCompare(right.providerId));
 

@@ -1,2 +1,11 @@
-export { resolveReasonCopy } from './resolveReasonCopy';
-export type { ReasonCopyKind, ResolvedReasonCopy } from './resolveReasonCopy';
+export {
+    resolvePluginSurfaceStatePresentation,
+    resolveReasonCopy,
+} from './resolveReasonCopy';
+export type {
+    PluginSurfacePresentationCopyVariant,
+    PluginSurfacePresentationState,
+    PluginSurfaceStatePresentation,
+    ReasonCopyKind,
+    ResolvedReasonCopy,
+} from './resolveReasonCopy';

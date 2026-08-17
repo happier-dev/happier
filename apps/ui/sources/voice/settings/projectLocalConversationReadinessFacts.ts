@@ -1,17 +1,27 @@
+import type { Settings } from '@/sync/domains/settings/settings';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import {
   parseLocalVoiceSttSettings,
   parseLocalVoiceTtsSettings,
   resolveLocalVoiceAdapterSettings,
 } from '@/voice/local/localVoiceSettings';
-import { resolveOpenAiCompatEndpointConsent } from '@/voice/local/openaiCompat/endpoint';
-import type { VoiceReadinessFact } from '@/voice/registry/readiness';
+import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
+import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { projectVoiceSpeechCredentialReadiness } from '@/voice/registry/speechCredentialReadiness';
+import { projectVoiceSpeechEndpointReadiness } from '@/voice/registry/speechEndpointReadiness';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 
-import type {
-  ResolveVoiceProviderAvailabilityInput,
-  VoiceLocalProviderModeAvailability,
+import {
+  resolveVoiceDeviceSpeechRolePath,
+  type ResolveVoiceProviderAvailabilityInput,
+  type VoiceLocalProviderModeAvailability,
 } from './resolveVoiceProviderAvailability';
+import {
+  projectVoiceDaemonExecutionMachineReadinessFact,
+  projectVoiceDaemonModelReadinessFact,
+  projectVoiceDaemonRuntimeReadinessFact,
+  resolveVoiceDaemonHeavyAudioReadiness,
+} from './voiceProviderLocalAvailability';
 
 type VoiceReadinessPlatform = 'web' | 'ios' | 'android' | 'macos' | 'windows' | 'linux' | 'unknown';
 
@@ -26,37 +36,9 @@ function projectPathFact(
   return 'missing';
 }
 
-function projectOpenAiCompatEndpointFact(
-  config: Readonly<{
-    baseUrl: string | null;
-    insecureLocalOriginConsent: string | null;
-    insecureLocalConsentMachineId: string | null;
-  }>,
-  executionMachineId: string | null | undefined,
-): VoiceReadinessFact {
-  const baseUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
-  if (!baseUrl) return 'missing';
-  try {
-    const endpoint = resolveOpenAiCompatEndpointConsent(
-      baseUrl,
-      config.insecureLocalOriginConsent,
-      config.insecureLocalConsentMachineId,
-      executionMachineId ?? null,
-    );
-    return endpoint.requiresInsecureConsent
-      && endpoint.insecureLocalOriginConsent === null
-      ? 'missing'
-      : 'ready';
-  } catch {
-    return 'incompatible';
-  }
-}
-
 function projectUnselectedRuntimeFact(
   local: VoiceLocalProviderModeAvailability,
-  input: ResolveVoiceProviderAvailabilityInput['local'],
 ): VoiceReadinessFact {
-  if (input?.daemon?.runtimeState === 'available') return 'ready';
   if (local.runnable) return 'ready';
   if (Object.values(local.paths).some((path) => path.readiness === 'installing')) return 'installing';
   if (local.enabled) return 'missing';
@@ -65,27 +47,91 @@ function projectUnselectedRuntimeFact(
 }
 
 export function projectLocalConversationReadinessFacts(input: Readonly<{
+  registry: VoiceProviderRegistry;
   voice: VoiceSettings;
+  voiceSettingsV1: Settings['voiceSettingsV1'];
+  secrets: Settings['secrets'];
   platform: VoiceReadinessPlatform;
   local: VoiceLocalProviderModeAvailability;
   localInput: ResolveVoiceProviderAvailabilityInput['local'];
   executionMachineId: string | null | undefined;
+  executionMachineSelectionKind?: 'resolved' | 'selected_unreachable' | 'none';
+  voiceAgentEnabled: boolean;
 }>): Readonly<{
+  serverFeature: VoiceReadinessFact;
+  executionMachine: VoiceReadinessFact;
   runtime: VoiceReadinessFact;
   model: VoiceReadinessFact;
   endpoint: VoiceReadinessFact;
+  credential: VoiceReadinessFact;
+  daemonRouteReadiness: VoiceRoleReadiness | null;
 }> {
-  if (input.voice.providerId !== 'local_conversation') {
-    return {
-      runtime: projectUnselectedRuntimeFact(input.local, input.localInput),
-      model: 'ready',
-      endpoint: 'ready',
-    };
-  }
-
   const local = resolveLocalVoiceAdapterSettings({ voice: input.voice });
   const stt = parseLocalVoiceSttSettings(local.config.stt);
   const tts = parseLocalVoiceTtsSettings(local.config.tts);
+  const endpointFacts = [
+    projectVoiceSpeechEndpointReadiness({
+      registry: input.registry,
+      role: 'conversation_stt',
+      providerId: stt.provider,
+      providerEnvelope: input.voice.providers[stt.provider] ?? null,
+      executionMachineId: input.executionMachineId ?? null,
+    }),
+    projectVoiceSpeechEndpointReadiness({
+      registry: input.registry,
+      role: 'conversation_tts',
+      providerId: tts.provider,
+      providerEnvelope: input.voice.providers[tts.provider] ?? null,
+      executionMachineId: input.executionMachineId ?? null,
+    }),
+  ];
+  const endpoint: VoiceReadinessFact = endpointFacts.includes('missing')
+    ? 'missing'
+    : endpointFacts.includes('incompatible')
+      ? 'incompatible'
+      : endpointFacts.includes('unknown')
+        ? 'unknown'
+        : 'ready';
+  const credentialFacts = [
+    projectVoiceSpeechCredentialReadiness({
+      registry: input.registry,
+      role: 'conversation_stt',
+      providerId: stt.provider,
+      settings: { voiceSettingsV1: input.voiceSettingsV1, secrets: input.secrets },
+      executionMachineId: input.executionMachineId,
+      providerEnvelope: input.voice.providers[stt.provider] ?? null,
+    }),
+    projectVoiceSpeechCredentialReadiness({
+      registry: input.registry,
+      role: 'conversation_tts',
+      providerId: tts.provider,
+      settings: { voiceSettingsV1: input.voiceSettingsV1, secrets: input.secrets },
+      executionMachineId: input.executionMachineId,
+      providerEnvelope: input.voice.providers[tts.provider] ?? null,
+    }),
+  ];
+  const credential: VoiceReadinessFact = credentialFacts.includes('missing')
+    ? 'missing'
+    : credentialFacts.includes('unknown')
+      ? 'unknown'
+      : 'ready';
+  const serverFeature: VoiceReadinessFact = local.config.conversationMode !== 'agent'
+    || input.voiceAgentEnabled
+    ? 'ready'
+    : 'missing';
+
+  if (input.voice.providerId !== 'local_conversation') {
+    return {
+      serverFeature,
+      executionMachine: input.executionMachineId != null ? 'ready' : 'missing',
+      runtime: projectUnselectedRuntimeFact(input.local),
+      model: 'ready',
+      endpoint: 'ready',
+      credential,
+      daemonRouteReadiness: null,
+    };
+  }
+
   const selectedExecutions = [
     stt.provider === 'local_neural' ? stt.localNeural.execution : null,
     tts.provider === 'local_neural' ? tts.localNeural.execution : null,
@@ -96,48 +142,52 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       platformOs: input.platform,
     }).preferredExecution === 'daemon'
   ));
+  const executionMachine: VoiceReadinessFact = requiresDaemon
+    ? input.executionMachineSelectionKind === 'selected_unreachable'
+      ? 'incompatible'
+      : projectVoiceDaemonExecutionMachineReadinessFact(
+        input.localInput?.daemon,
+        input.executionMachineId,
+      )
+    : input.executionMachineId != null ? 'ready' : 'missing';
+  const daemonRouteReadiness = requiresDaemon
+    ? resolveVoiceDaemonHeavyAudioReadiness({
+        role: 'conversation_stt',
+        providerId: 'local_conversation',
+        daemon: input.localInput?.daemon,
+        executionMachineId: input.executionMachineId,
+        executionMachineSelectionKind: input.executionMachineSelectionKind,
+      })
+    : null;
 
   let runtime: VoiceReadinessFact;
   if (requiresDaemon) {
-    runtime = input.localInput?.daemon?.runtimeState === 'available'
-      ? 'ready'
-      : input.localInput?.daemon?.runtimeState === 'unavailable'
-        ? 'missing'
-        : 'unknown';
+    runtime = projectVoiceDaemonRuntimeReadinessFact(input.localInput?.daemon);
   } else if (stt.provider === 'device') {
-    runtime = projectPathFact(
-      input.platform === 'web'
-        ? input.local.paths.browserSpeech
-        : input.local.paths.nativeDevice,
-    );
+    const path = resolveVoiceDeviceSpeechRolePath({
+      role: 'conversation_stt',
+      platformOs: input.platform,
+      local: input.localInput,
+    });
+    runtime = path ? projectPathFact(path) : 'unknown';
   } else {
-    runtime = projectUnselectedRuntimeFact(input.local, input.localInput);
+    runtime = projectUnselectedRuntimeFact(input.local);
   }
 
   let model: VoiceReadinessFact = 'ready';
   if (selectedExecutions.length > 0) {
     model = !requiresDaemon
       ? 'unknown'
-      : input.localInput?.daemon?.modelState === 'ready'
-        ? 'ready'
-        : input.localInput?.daemon?.modelState === 'missing'
-          ? 'missing'
-          : input.localInput?.daemon?.modelState === 'installing'
-            ? 'installing'
-            : input.localInput?.daemon?.modelState === 'error'
-              ? 'incompatible'
-              : 'unknown';
+      : projectVoiceDaemonModelReadinessFact(input.localInput?.daemon);
   }
 
-  let endpoint: VoiceReadinessFact = 'ready';
-  const selectedEndpoints = [
-    stt.provider === 'openai_compat' ? stt.openaiCompat : null,
-    tts.provider === 'openai_compat' ? tts.openaiCompat : null,
-  ].filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
-  for (const selectedEndpoint of selectedEndpoints) {
-    endpoint = projectOpenAiCompatEndpointFact(selectedEndpoint, input.executionMachineId);
-    if (endpoint !== 'ready') break;
-  }
-
-  return { runtime, model, endpoint };
+  return {
+    serverFeature,
+    executionMachine,
+    runtime,
+    model,
+    endpoint,
+    credential,
+    daemonRouteReadiness,
+  };
 }

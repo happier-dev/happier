@@ -40,7 +40,10 @@ const authEntryOptionsState = vi.hoisted(() => ({
         providerKeylessTitle: '',
         anonymousSignupTitle: 'welcome.createAccount',
         mtlsTitle: '',
-        primarySignupTitle: 'welcome.createAccount',
+        primaryAction: {
+            kind: 'anonymous' as const,
+            title: 'welcome.createAccount',
+        },
         mtlsPrimary: false,
         keylessPrimary: false,
         autoRedirect: {
@@ -250,10 +253,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/auth/flows/getToken', () => ({
     authGetToken: vi.fn(async () => 'account-token'),
-}));
-
-vi.mock('@/auth/flows/buildDataKeyCredentialsForToken', () => ({
-    buildDataKeyCredentialsForToken: vi.fn(async (token: string) => ({ token, secret: 'secret' })),
 }));
 
 vi.mock('@/auth/providers/registry', () => ({

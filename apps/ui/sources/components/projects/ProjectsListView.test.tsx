@@ -21,6 +21,7 @@ let pinnedWorkspaceRefIdsV1Mock: string[] = [];
 let deviceTypeMock: 'phone' | 'tablet' = 'tablet';
 let paneScopesMock: Record<string, { right?: { activeTabId?: string | null } }> = {};
 let localSettingsMock: Record<string, unknown> = {};
+let projectLastMobileSurfacesByWorkspaceRefIdMock: Record<string, string> = {};
 let accountSettingsMock: Record<string, unknown> = {};
 const setWorkspaceRefsV1Spy = vi.hoisted(() => vi.fn());
 const setPinnedWorkspaceRefIdsV1Spy = vi.hoisted(() => vi.fn());
@@ -106,6 +107,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         useAllMachines: () => machinesMock,
         useSetting: (key: string) => accountSettingsMock[key],
         useLocalSetting: (key: string) => localSettingsMock[key],
+        useProjectLastMobileSurfacesByWorkspaceRefId: () => projectLastMobileSurfacesByWorkspaceRefIdMock,
         useSettingMutable: (key: string) => {
             if (key === 'workspaceRefsV1') return [workspaceRefsV1Mock, setWorkspaceRefsV1Spy];
             if (key === 'pinnedWorkspaceRefIdsV1') return [pinnedWorkspaceRefIdsV1Mock, setPinnedWorkspaceRefIdsV1Spy];
@@ -165,6 +167,7 @@ describe('ProjectsListView', () => {
         deviceTypeMock = 'tablet';
         paneScopesMock = {};
         localSettingsMock = {};
+        projectLastMobileSurfacesByWorkspaceRefIdMock = {};
         accountSettingsMock = {};
         translationPrefixMock = '';
         openMachinePathBrowserModalSpy.mockReset();
@@ -282,12 +285,7 @@ describe('ProjectsListView', () => {
         const firstItems = firstDropdown?.props?.items;
         const firstOnSelect = firstDropdown?.props?.onSelect;
 
-        localSettingsMock = {
-            ...localSettingsMock,
-            projectLastMobileSurfaceByWorkspaceRefId: {
-                wr_1: 'git',
-            },
-        };
+        projectLastMobileSurfacesByWorkspaceRefIdMock = { wr_1: 'git' };
 
         await act(async () => {
             screen.tree.update(<ProjectsListView />);
@@ -335,10 +333,10 @@ describe('ProjectsListView', () => {
         }];
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
         };
+        projectLastMobileSurfacesByWorkspaceRefIdMock = { wr_1: 'overview' };
 
         const { ProjectsListView } = await import('./ProjectsListView');
         const screen = await renderScreen(<ProjectsListView />);
@@ -360,10 +358,10 @@ describe('ProjectsListView', () => {
         }];
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'terminal' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
         };
+        projectLastMobileSurfacesByWorkspaceRefIdMock = { wr_1: 'terminal' };
 
         const { ProjectsListView } = await import('./ProjectsListView');
         const screen = await renderScreen(<ProjectsListView />);

@@ -55,6 +55,7 @@ describe('ActivitySpinner', () => {
         if (!spinner) {
             throw new Error('Expected CSS spinner to render');
         }
+        expect(spinner.props.accessibilityRole).toBe('progressbar');
         const style = flattenStyle(spinner.props.style);
         expect(style.animationName).toBe('happierActivitySpinnerSpin');
         expect(style.animationTimingFunction).toBe('steps(6, end)');

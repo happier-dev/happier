@@ -1,4 +1,5 @@
 import type { FeatureDecision } from '@happier-dev/protocol';
+import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
 
 import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
 
@@ -60,7 +61,7 @@ export type SessionBulkMutationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
-    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
+    recovery?: SessionStopRecovery;
 }>;
 
 export type SessionBulkOperation<T = SessionBulkMutationResult> = (

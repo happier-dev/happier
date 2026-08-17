@@ -192,10 +192,15 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machineContributionRegistryProjectionDescribe(...args),
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 920 },
+    useLayoutMaxWidth: () => 920,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 920 }),
 }));
 
 vi.mock('@/constants/Typography', () => ({

@@ -1112,6 +1112,132 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         });
     });
 
+    it.each(['plain', 'e2ee'] as const)(
+        'does not restore a cross-device-deleted %s session from an older in-flight by-id hydration',
+        async (encryptionMode) => {
+            const sessionId = `voice_history_deleted_during_${encryptionMode}_hydration`;
+            storage.getState().applySessions([{
+                ...createSession({ sessionId }),
+                encryptionMode,
+            }]);
+
+            const { sync } = await import('./sync');
+            const syncInternals = sync as any;
+            let resolveInitializationStarted!: () => void;
+            let releaseInitialization!: () => void;
+            const initializationStarted = new Promise<void>((resolve) => {
+                resolveInitializationStarted = resolve;
+            });
+            const initializationRelease = new Promise<void>((resolve) => {
+                releaseInitialization = resolve;
+            });
+            let sessionEncryptionInstalled = false;
+            const initializeSessions = vi.fn(async (
+                _keys: Map<string, Uint8Array | null>,
+                options?: Readonly<{ shouldContinue?: () => boolean }>,
+            ) => {
+                resolveInitializationStarted();
+                await initializationRelease;
+                if (options?.shouldContinue?.() === false) return;
+                sessionEncryptionInstalled = true;
+            });
+            const removeSessionEncryption = vi.fn(() => {
+                sessionEncryptionInstalled = false;
+            });
+            syncInternals.credentials = { token: 't', secret: 's' };
+            syncInternals.activeServerSessionIds = new Set<string>([sessionId]);
+            syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+            syncInternals.sessionDataKeys = new Map([
+                [sessionId, new Uint8Array([9, 9, 9])],
+            ]);
+            syncInternals.sessionDataKeyEnvelopes = new Map([
+                [sessionId, 'stale-envelope'],
+            ]);
+            syncInternals.encryption = {
+                decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
+                initializeSessions,
+                getSessionEncryption: vi.fn(() => sessionEncryptionInstalled
+                    ? {
+                        decryptMetadata: vi.fn(async () => ({ readStateV1: null })),
+                        decryptAgentState: vi.fn(async () => ({ controlledByUser: true })),
+                    }
+                    : null),
+                removeSessionEncryption,
+            };
+
+            let resolveHydration!: (response: Response) => void;
+            requestMock.mockReturnValueOnce(new Promise<Response>((resolve) => {
+                resolveHydration = resolve;
+            }));
+            const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, {
+                forceRefresh: true,
+            });
+            await waitForAssertion(() => {
+                expect(requestMock).toHaveBeenCalledWith(
+                    `/v2/sessions/${sessionId}`,
+                    expect.objectContaining({ method: 'GET' }),
+                );
+            });
+
+            const staleResponse = new Response(JSON.stringify({
+                session: {
+                    id: sessionId,
+                    createdAt: 1,
+                    updatedAt: 2,
+                    seq: 3,
+                    active: false,
+                    activeAt: 2,
+                    encryptionMode,
+                    ...(encryptionMode === 'e2ee'
+                        ? { dataEncryptionKey: 'stale-envelope' }
+                        : {}),
+                    metadataVersion: 1,
+                    metadata: encryptionMode === 'plain'
+                        ? JSON.stringify({})
+                        : 'encrypted-metadata',
+                    agentStateVersion: 1,
+                    agentState: encryptionMode === 'plain'
+                        ? JSON.stringify({})
+                        : 'encrypted-agent-state',
+                    share: null,
+                },
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (encryptionMode === 'e2ee') {
+                resolveHydration(staleResponse);
+                await initializationStarted;
+            }
+            await syncInternals.handleUpdate({
+                id: `delete-${encryptionMode}`,
+                seq: 10,
+                createdAt: 10,
+                body: { t: 'delete-session', sid: sessionId },
+            });
+            expect(storage.getState().sessions[sessionId]).toBeUndefined();
+            expect(removeSessionEncryption).toHaveBeenCalledWith(sessionId);
+
+            if (encryptionMode === 'plain') {
+                resolveHydration(staleResponse);
+            } else {
+                releaseInitialization();
+            }
+
+            await expect(hydration).resolves.toMatchObject({
+                kind: 'retryable_failure',
+                sessionId,
+            });
+            expect(storage.getState().sessions[sessionId]).toBeUndefined();
+            expect(syncInternals.sessionDataKeys.has(sessionId)).toBe(false);
+            expect(syncInternals.sessionDataKeyEnvelopes.has(sessionId)).toBe(false);
+            expect(sessionEncryptionInstalled).toBe(false);
+            expect(initializeSessions).toHaveBeenCalledTimes(
+                encryptionMode === 'e2ee' ? 1 : 0,
+            );
+        },
+    );
+
     it('initializes session encryption on the current encryption instance when it changes mid-hydration', async () => {
         const sessionId = 'deep_link_session_swap';
         storage.getState().applySessions([createSession({ sessionId })]);

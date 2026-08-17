@@ -1,13 +1,12 @@
-import type {
-  BundledVoiceConversationUiEntry,
-  BundledVoiceUiEntry,
-} from '@happier-dev/bundled-voice-runtime-contract';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { VoiceProviderContribution } from '@happier-dev/plugin-sdk/voice';
+
+import { projectBundledVoiceManifestContributions } from './bundledVoiceManifestProjection';
 
 export type BundledConversationRuntimeEntry = Readonly<{
-  uiEntry: BundledVoiceConversationUiEntry & Readonly<{
-    declaration: NonNullable<BundledVoiceConversationUiEntry['declaration']>;
-  }>;
+  pluginId: string;
+  providerId: string;
+  declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>;
   activate(api: Pick<PluginApi, 'voiceProviders'>): void;
 }>;
 
@@ -16,13 +15,15 @@ export type BundledConversationRuntimeEntry = Readonly<{
  * composition so settings initialization never imports the live Voice host.
  */
 export function createBundledConversationRuntimeEntries(
-  entries: readonly BundledVoiceUiEntry[],
+  manifest: unknown,
   activate: BundledConversationRuntimeEntry['activate'],
 ): readonly BundledConversationRuntimeEntry[] {
-  return Object.freeze(entries.flatMap((entry) => (
-    entry.kind === 'voice.conversation-provider.v1' && entry.declaration
+  return Object.freeze(projectBundledVoiceManifestContributions(manifest).flatMap((entry) => (
+    entry.declaration.kind === 'conversation'
       ? [Object.freeze({
-          uiEntry: entry as BundledConversationRuntimeEntry['uiEntry'],
+          pluginId: entry.pluginId,
+          providerId: entry.providerId,
+          declaration: entry.declaration,
           activate,
         })]
       : []

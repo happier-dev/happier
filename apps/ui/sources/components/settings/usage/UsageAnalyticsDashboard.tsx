@@ -1,7 +1,7 @@
 import React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { ConnectedServiceQuotaSummaryCardSection } from '@/components/settings/connectedServices/ConnectedServiceQuotaSummaryCardSection';
 import type { ConnectedServiceQuotaSummaryCard } from '@/components/settings/connectedServices/buildConnectedServiceQuotaSummaryCards';
 import { t } from '@/text';
@@ -67,7 +67,6 @@ const styles = StyleSheet.create((theme) => ({
     commandBarInner: {
         alignSelf: 'center',
         width: '100%',
-        maxWidth: layout.maxWidth,
         paddingTop: 8,
         paddingBottom: 4,
     },
@@ -77,7 +76,6 @@ const styles = StyleSheet.create((theme) => ({
         gap: 12,
         alignSelf: 'center',
         width: '100%',
-        maxWidth: layout.maxWidth,
     },
     // C-2: gap between the composition strip and the pivot control so the
     // wrapped token-mix legend never overlaps the pivot's segmented tab bar.
@@ -103,6 +101,9 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
     onRetry,
 }) => {
     const [pivotDimension, setPivotDimension] = React.useState<UsagePivotDimension>('model');
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
     const { openSession, resolveDisplayLabel } = useUsageSessionResolvers();
 
     const hasTrendData = viewModel.trend.length > 0;
@@ -127,7 +128,7 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
     return (
         <ScrollView style={styles.screen} stickyHeaderIndices={[0]} testID="usage-dashboard-scroll">
             <View style={styles.commandBar} testID="usage-command-bar">
-                <View style={styles.commandBarInner}>
+                <View style={[styles.commandBarInner, contentMaxWidthStyle]}>
                     <FiltersSection
                         viewModel={viewModel}
                         filters={filters}
@@ -142,7 +143,7 @@ export const UsageAnalyticsDashboard: React.FC<UsageAnalyticsDashboardProps> = (
                     />
                 </View>
             </View>
-            <View style={[styles.content, contentBottomInset > 0 ? { paddingBottom: 28 + contentBottomInset } : null]}>
+            <View style={[styles.content, contentMaxWidthStyle, contentBottomInset > 0 ? { paddingBottom: 28 + contentBottomInset } : null]}>
                 {errorMessage ? (
                     <UsageErrorCard message={errorMessage} onRetry={onRetry} />
                 ) : null}

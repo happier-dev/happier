@@ -3,27 +3,68 @@ import {
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
 import type {
-  VoiceConnectionCloseReason,
-  VoiceConnectionDriver,
-  VoicePcmConnectionMedia,
   VoiceRealtimeConnection,
-  VoiceRealtimeConnectionKind,
-  VoiceRealtimeConnectionState,
-  VoiceRealtimeTransportEvent,
+} from '@happier-dev/plugin-sdk/voice/client';
+import type {
   VoicePlaybackInterruptionMode,
   VoicePlaybackInterruptionResolution,
-  VoiceHostNegotiatedWebRtcInput,
-} from '@happier-dev/bundled-voice-runtime-contract';
+} from '@/voice/runtime/playback/VoicePlaybackController';
 
-export type {
-  VoiceConnectionCloseReason,
-  VoiceConnectionDriver,
-  VoicePcmConnectionMedia,
-  VoiceRealtimeConnection,
-  VoiceRealtimeConnectionKind,
-  VoiceRealtimeConnectionState,
-  VoiceRealtimeTransportEvent,
-} from '@happier-dev/bundled-voice-runtime-contract';
+type AsyncIterableValue<Value> = Value extends AsyncIterable<infer Item> ? Item : never;
+
+export type VoiceConnectionCloseReason = Parameters<VoiceRealtimeConnection['close']>[0];
+export type VoiceRealtimeConnectionKind = VoiceRealtimeConnection['kind'];
+export type VoiceRealtimeConnectionState = ReturnType<VoiceRealtimeConnection['state']>;
+export type VoiceRealtimeTransportEvent = AsyncIterableValue<
+  ReturnType<VoiceRealtimeConnection['transportEvents']>
+>;
+
+export type VoiceConnectionDriver = Readonly<{
+  open(input: Readonly<{
+    signal: AbortSignal;
+    onControl(event: unknown): void;
+    onTransport(event: VoiceRealtimeTransportEvent): void;
+    onRemoteClose(reason: string): void;
+  }>): Promise<void>;
+  sendControl(event: VoiceRealtimeJsonValue): Promise<void>;
+  beginOutputInterruptionCandidate?(): VoicePlaybackInterruptionMode;
+  resolveOutputInterruptionCandidate?(resolution: VoicePlaybackInterruptionResolution): void;
+  close(reason: VoiceConnectionCloseReason): Promise<void>;
+}>;
+
+export type VoiceNegotiatedWebRtcInput = Readonly<{
+  signaling: Readonly<{
+    exchangeOffer(input: Readonly<{
+      offerSdp: string;
+      signal: AbortSignal;
+    }>): Promise<Readonly<{
+      answerSdp: string;
+    }>>;
+  }>;
+  control: Readonly<{
+    label: string;
+    onOpen(input: Readonly<{
+      sendJson(value: VoiceRealtimeJsonValue): Promise<void>;
+    }>): void | Promise<void>;
+  }>;
+}>;
+
+export type VoiceHostNegotiatedWebRtcInput = VoiceNegotiatedWebRtcInput & Readonly<{
+  micStream: MediaStream;
+  duckGain: number;
+  onClosed?(reason: VoiceConnectionCloseReason): void | Promise<void>;
+}>;
+
+export type VoicePcmConnectionMedia = Readonly<{
+  start(signal: AbortSignal): Promise<void>;
+  stop(): Promise<void>;
+  subscribeTerminal?(listener: (error: Error) => void): Readonly<{ remove: () => void }>;
+  playbackCursorMs?(): number;
+  beginOutputInterruptionCandidate?(): VoicePlaybackInterruptionMode;
+  resolveOutputInterruptionCandidate?(resolution: VoicePlaybackInterruptionResolution): void;
+}>;
+
+export type { VoiceRealtimeConnection };
 
 // The largest currently admitted Codex final is 394,440 B when its
 // 192-code-unit id and 64-Ki-code-unit transcript both require six-byte JSON
@@ -220,6 +261,7 @@ function createConnection(input: Readonly<{
   let retainedSendBytes = 0;
   let terminalSendFailure: Error | null = null;
   let providerSessionId: string | null = null;
+  let pcmTerminalSubscription: Readonly<{ remove: () => void }> | null = null;
   const lifecycleController = new AbortController();
   let controlQueue!: ReturnType<typeof createEventQueue<VoiceRealtimeJsonValue>>;
   let transportQueue!: ReturnType<typeof createEventQueue<VoiceRealtimeTransportEvent>>;
@@ -241,6 +283,8 @@ function createConnection(input: Readonly<{
     controlQueue.finish();
     transportQueue.finish();
     closePromise = (async () => {
+      pcmTerminalSubscription?.remove();
+      pcmTerminalSubscription = null;
       await input.pcm?.stop().catch(() => {});
       await input.driver.close(reason).catch(() => {});
     })();
@@ -281,6 +325,10 @@ function createConnection(input: Readonly<{
         throw abortError();
       }
       currentState = 'connecting';
+      pcmTerminalSubscription = input.pcm?.subscribeTerminal?.((error) => {
+        terminalSendFailure ??= error;
+        void close({ code: 'error', detail: error.message });
+      }) ?? null;
       const abortLifecycle = (): void => lifecycleController.abort();
       signal.addEventListener('abort', abortLifecycle, { once: true });
       try {
@@ -374,7 +422,7 @@ export function createWebSocketPcmConnection(input: Readonly<{
   return createConnection({ ...input, kind: 'websocket_pcm' });
 }
 
-type VoiceWebRtcRemoteOutputAttachment = Readonly<{
+export type VoiceWebRtcRemoteOutputAttachment = Readonly<{
   playbackStarted?: Promise<void>;
   dispose(): void;
   beginOutputInterruptionCandidate(): VoicePlaybackInterruptionMode;
@@ -389,6 +437,8 @@ export function createWebRtcConnection(input: Readonly<{
   onClosed?: VoiceHostNegotiatedWebRtcInput['onClosed'];
   maxQueuedControlEvents?: number;
   attachRemoteStream?: (stream: MediaStream | null) => VoiceWebRtcRemoteOutputAttachment;
+  createPeerConnection?: () => RTCPeerConnection;
+  createMediaStream?: (tracks: MediaStreamTrack[]) => MediaStream | null;
 }>): VoiceRealtimeConnection {
   const remoteAudioPlaybackFailureCode = 'voice_webrtc_remote_audio_playback_failed';
   const maxQueuedControlEvents = Math.max(1, Math.floor(input.maxQueuedControlEvents ?? 256));
@@ -399,7 +449,6 @@ export function createWebRtcConnection(input: Readonly<{
   let channel: RTCDataChannel | null = null;
   let remoteOutput: VoiceWebRtcRemoteOutputAttachment | null = null;
   let remotePlayback: Readonly<{
-    settlement: Promise<void>;
     abandon(): void;
   }> | null = null;
   let connectingRemotePlaybackFailure: Error | null = null;
@@ -667,10 +716,10 @@ export function createWebRtcConnection(input: Readonly<{
         ) {
           throw new Error('voice_webrtc_control_label_invalid');
         }
-        if (typeof RTCPeerConnection !== 'function') {
+        if (!input.createPeerConnection && typeof RTCPeerConnection !== 'function') {
           throw new Error('voice_webrtc_unavailable');
         }
-        const nextPeer = new RTCPeerConnection();
+        const nextPeer = input.createPeerConnection?.() ?? new RTCPeerConnection();
         peer = nextPeer;
         const nextChannel = nextPeer.createDataChannel(input.control.label);
         channel = nextChannel;
@@ -679,6 +728,7 @@ export function createWebRtcConnection(input: Readonly<{
         }
         listen(nextPeer, 'track', (event) => {
           const stream = event.streams[0]
+            ?? input.createMediaStream?.([event.track])
             ?? (typeof MediaStream === 'function' ? new MediaStream([event.track]) : null);
           disposeRemoteOutput();
           let nextRemoteOutput: VoiceWebRtcRemoteOutputAttachment;
@@ -702,7 +752,6 @@ export function createWebRtcConnection(input: Readonly<{
               abandoned,
             ]);
             remotePlayback = Object.freeze({
-              settlement: playbackSettlement,
               abandon: abandonPlayback,
             });
             void playbackSettlement.catch(() => {});
@@ -846,15 +895,6 @@ export function createWebRtcConnection(input: Readonly<{
           lifecycleController.signal,
           connectInterruptionError,
         );
-        while (remotePlayback) {
-          const pendingPlayback = remotePlayback;
-          await raceWithAbort(
-            pendingPlayback.settlement,
-            lifecycleController.signal,
-            connectInterruptionError,
-          );
-          if (remotePlayback === pendingPlayback) break;
-        }
         if (lifecycleController.signal.aborted) throw abortError();
         currentState = 'open';
       } catch (error) {

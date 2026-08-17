@@ -11,6 +11,12 @@ const legacyToolNameToCanonical: Record<string, string> = {
     TaskList: 'SubAgent',
     TaskUpdate: 'SubAgent',
 
+    // Background-task control tools. Deliberately NOT part of the subagent family above: they act
+    // on a detached process. The snake_case spellings mirror the CLI's `canonicalizeToolNameV2` so
+    // the two normalizers cannot disagree about the same tool.
+    task_output: 'TaskOutput',
+    task_stop: 'TaskStop',
+
     // Legacy lowercase names (ACP + older sessions).
     edit: 'Edit',
     execute: 'Bash',

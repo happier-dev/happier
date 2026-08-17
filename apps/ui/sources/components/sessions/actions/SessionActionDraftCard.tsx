@@ -1,54 +1,23 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { buildBackendTargetKey, getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol';
 import { useRouter } from 'expo-router';
 
 import { storage } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
-import { buildAvailableReviewEngineOptions } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
-import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import { ActionInputFields } from './ActionInputFields';
+import { resolveSessionActionDraftHeightBearingPaint } from './sessionActionDraftPresentation';
+import { useSessionActionFieldOptions } from './useSessionActionFieldOptions';
 import { normalizeActionInput, normalizeActionInputPatch } from '@/sync/domains/actions/normalizeActionInputPatch';
 
-
-type EngineOption = Readonly<{ id: string; label: string; disabled?: boolean }>;
-
-function useReviewEngineOptions(sessionId: string, serverId?: string | null): readonly EngineOption[] {
-  const enabledAgentIds = useEnabledAgentIds();
-  const backends = useExecutionRunsBackendsForSession(sessionId, serverId);
-
-  return React.useMemo(() => {
-    const opts = buildAvailableReviewEngineOptions({
-      enabledAgentIds,
-      executionRunsBackends: backends,
-      resolveAgentLabel: (id) => t(getAgentCore(id as AgentId).displayNameKey),
-    });
-    return opts;
-  }, [backends, enabledAgentIds]);
-}
-
-function useExecutionBackendOptions(): readonly EngineOption[] {
-  const enabledAgentIds = useEnabledAgentIds();
-  return React.useMemo(
-    () =>
-      enabledAgentIds.map((id) => ({
-        id: buildBackendTargetKey({ kind: 'builtInAgent', agentId: id }),
-        label: t(getAgentCore(id as AgentId).displayNameKey),
-      })),
-    [enabledAgentIds],
-  );
-}
 
 export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draft: SessionActionDraft }>) {
   const { theme } = useUnistyles();
@@ -69,32 +38,12 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
   );
 
   const input: Record<string, unknown> = props.draft.input ?? {};
-  const engineOptions = useReviewEngineOptions(props.sessionId, sessionServerId);
-  const backendOptions = useExecutionBackendOptions();
+  // F-4 (2026-08-11): ONE owner for "which options does this field show". This card used to resolve
+  // it inline; the transcript row's size key now needs the same answer for an OFFSCREEN row, and two
+  // implementations of it would be exactly the drift the height-bearing descriptor exists to prevent.
+  const resolveFieldOptions = useSessionActionFieldOptions(props.sessionId, sessionServerId);
   const submitInFlightRef = React.useRef(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-
-  const resolveFieldOptions = React.useCallback(
-    (field: any): ReadonlyArray<Readonly<{ value: string; label: string; disabled?: boolean }>> => {
-      const sourceId = typeof field?.optionsSourceId === 'string' ? field.optionsSourceId : '';
-      if (sourceId === 'review.engines.available') {
-        return engineOptions.map((o) => ({ value: o.id, label: o.label, ...(o.disabled ? { disabled: true } : {}) }));
-      }
-      if (sourceId === 'execution.backends.enabled') {
-        return backendOptions.map((o) => ({ value: o.id, label: o.label }));
-      }
-      const opts = Array.isArray(field?.options) ? field.options : [];
-      return opts
-        .map((o: any) => {
-          const value = typeof o?.value === 'string' ? o.value : '';
-          const label = typeof o?.label === 'string' ? o.label : value;
-          if (!value) return null;
-          return { value, label };
-        })
-        .filter(Boolean) as any;
-    },
-    [backendOptions, engineOptions],
-  );
 
   const setInputPatch = React.useCallback(
     (patch: Record<string, unknown>) => {
@@ -116,19 +65,21 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
     storage.getState().deleteSessionActionDraft(props.sessionId, props.draft.id);
   }, [props.draft.id, props.sessionId]);
 
-  const fields = React.useMemo(() => {
-    return resolveEffectiveActionInputFields(spec as any, { sessionId: props.sessionId, ...(props.draft.input ?? {}) });
-  }, [props.draft.input, props.sessionId, spec]);
-
-  const validationError = React.useMemo(
-    () => resolveActionInputValidationError({
+  // The row's height-bearing paint is resolved by its painter and consumed by BOTH this card and
+  // `transcriptRowShellSignature` (F-P6), so the size key can never disagree with what is rendered.
+  const paint = React.useMemo(
+    () => resolveSessionActionDraftHeightBearingPaint({
+      draft: { actionId: props.draft.actionId, input: props.draft.input ?? {}, error: props.draft.error },
       sessionId: props.sessionId,
-      input,
-      spec: spec as any,
-      fields: fields as any,
+      resolveFieldOptions,
     }),
-    [fields, input, props.sessionId, spec],
+    [props.draft.actionId, props.draft.error, props.draft.input, props.sessionId, resolveFieldOptions],
   );
+  const fields = React.useMemo(() => paint.fields.map((entry) => entry.field), [paint]);
+
+  // V-4: the descriptor resolves the in-flow notice, so the transcript row's size key and this card
+  // paint the same line. The card must not re-derive it.
+  const validationError = paint.validationError;
 
   const submit = React.useCallback(async () => {
     if (submitInFlightRef.current) return;
@@ -172,7 +123,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
   }, [cancel, executor, props.draft.actionId, props.draft.input, props.sessionId, setStatus, validationError]);
 
   const title = spec.title;
-  const error = validationError ?? (props.draft.error ? String(props.draft.error) : '');
+  const error = paint.errorLine;
   const startDisabled = props.draft.status === 'running' || isSubmitting || validationError !== null;
 
   return (

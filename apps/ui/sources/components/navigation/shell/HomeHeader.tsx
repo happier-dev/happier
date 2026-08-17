@@ -3,7 +3,6 @@ import { Header } from '@/components/navigation/Header';
 import { Platform, Pressable, View } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useSegments } from 'expo-router';
 import { getServerInfo } from '@/sync/domains/server/serverConfig';
 import { Image } from 'expo-image';
@@ -13,6 +12,7 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 import { AppUpdateStatusTag } from '@/components/ui/feedback/AppUpdateStatusTag';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -114,7 +114,7 @@ function HeaderRight() {
             hitSlop={15}
             style={styles.headerButton}
         >
-            <Ionicons name="add-outline" size={28} color={theme.colors.chrome.header.foreground} />
+            <Icon name="plus" size={29} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 }
@@ -132,7 +132,7 @@ function HeaderRightNotAuth() {
             hitSlop={15}
             style={styles.headerButton}
         >
-            <Ionicons name="server-outline" size={24} color={theme.colors.chrome.header.foreground} />
+            <Icon name="hard-drives" size={24} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 }
@@ -165,7 +165,7 @@ function HeaderLeft(props: { showAutomations: boolean }) {
                     accessibilityRole="button"
                     accessibilityLabel={t('automations.openA11y')}
                 >
-                    <Ionicons name="timer-outline" size={22} color={theme.colors.chrome.header.foreground} />
+                    <Icon name="timer" size={20} color={theme.colors.chrome.header.foreground} />
                 </Pressable>
             ) : null}
         </View>

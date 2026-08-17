@@ -1,13 +1,12 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
 
 import { journeyBeatById } from '../state/journeyBeats';
 import { NarrationBeat } from './NarrationBeat';
-import { NarrationColumn, NARRATION_REVEAL_SETTLE_MS } from './NarrationColumn';
+import { NarrationColumn } from './NarrationColumn';
 
 afterEach(() => {
     standardCleanup();
@@ -41,32 +40,16 @@ describe('NarrationColumn', () => {
         expect(screen.findByType(NarrationBeat).props.reducedMotion).toBe(true);
     });
 
-    it('opens the reveal gate immediately when reduced motion is enabled', async () => {
+    it('leaves the reveal timing to the beat instead of holding a JS visibility flag', async () => {
         const beat = journeyBeatById.get('A2');
         const screen = await renderScreen(
-            <NarrationColumn beat={beat!} reducedMotion testID="journey-narration" />,
+            <NarrationColumn beat={beat!} testID="journey-narration" />,
         );
 
-        expect(screen.findByType(NarrationBeat).props.revealGate).toBe(true);
-    });
-
-    it('holds the reveal gate closed until the beat pane transition settles', async () => {
-        vi.useFakeTimers();
-        try {
-            const beat = journeyBeatById.get('A2');
-            const screen = await renderScreen(
-                <NarrationColumn beat={beat!} testID="journey-narration" />,
-            );
-
-            expect(screen.findByType(NarrationBeat).props.revealGate).toBe(false);
-
-            await act(async () => {
-                vi.advanceTimersByTime(NARRATION_REVEAL_SETTLE_MS);
-            });
-
-            expect(screen.findByType(NarrationBeat).props.revealGate).toBe(true);
-        } finally {
-            vi.useRealTimers();
-        }
+        // The settle hold used to be a `setTimeout`-driven boolean here; while it
+        // was closed every headline word sat at opacity 0 with no animation
+        // scheduled, so a gate that never opened rendered the headline absent.
+        // The column now owns only the pane transition.
+        expect(screen.findByType(NarrationBeat).props).not.toHaveProperty('revealGate');
     });
 });

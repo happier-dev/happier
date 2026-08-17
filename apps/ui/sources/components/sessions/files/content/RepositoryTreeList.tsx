@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View, type ScrollViewProps, type ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
 import type { FilesystemBrowserRowRenderInput } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
@@ -22,6 +21,7 @@ import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import { useSessionFileTransferAvailabilityState } from '@/components/sessions/files/useSessionFileTransferAvailability';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type RepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -86,18 +86,18 @@ function renderEntryIcon(node: { type: 'file' | 'directory' | 'error' | 'info'; 
     if (node.type === 'directory') {
         // Keep icons small so the compact Item density actually stays compact.
         return (
-            <Ionicons
-                name={node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
+            <Icon
+                name={node.isExpanded ? 'folder-open' : 'folder'}
                 size={16}
                 color={theme.colors.text.link}
             />
         );
     }
     if (node.type === 'error') {
-        return <Ionicons name="alert-circle-outline" size={16} color={theme.colors.text.secondary} />;
+        return <Icon name="warning-circle" size={16} color={theme.colors.text.secondary} />;
     }
     if (node.type === 'info') {
-        return <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.secondary} />;
+        return <Icon name="info" size={16} color={theme.colors.text.secondary} />;
     }
     return <FileIcon fileName={node.name} size={16} />;
 }

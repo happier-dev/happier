@@ -10,12 +10,11 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { trackFriendsConnect } from '@/track';
-import { Ionicons } from '@expo/vector-icons';
 import { useAllSessions } from '@/sync/domains/state/storage';
 import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSupport';
 import { HappyError } from '@/utils/errors/errors';
@@ -23,10 +22,18 @@ import { getAuthProvider } from '@/auth/providers/registry';
 import { isSafeBadgeUrl } from '@/utils/url/urlSafety';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const USERNAME_PREFIX = '@';
 
 export default function UserProfileScreen() {
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const headerMaxWidthStyle = useLayoutMaxWidthStyle();
+    const headerContainerStyle = React.useMemo(
+        () => [styles.headerContainer, headerMaxWidthStyle],
+        [headerMaxWidthStyle],
+    );
     const { id } = useLocalSearchParams<{ id: string }>();
     const { credentials } = useAuth();
     const router = useRouter();
@@ -145,7 +152,7 @@ export default function UserProfileScreen() {
             case 'friend':
                 return [{
                     title: t('friends.removeFriend'),
-                    icon: <Ionicons name="person-remove-outline" size={29} color={theme.colors.state.danger.foreground} />,
+                    icon: <Icon name="user-minus" size={29} color={theme.colors.state.danger.foreground} />,
                     onPress: handleRemoveFriend,
                     loading: removingFriend,
                 }];
@@ -154,13 +161,13 @@ export default function UserProfileScreen() {
                 return [
                     {
                         title: t('friends.acceptRequest'),
-                        icon: <Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />,
+                        icon: <Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />,
                         onPress: addFriend,
                         loading: addingFriend,
                     },
                     {
                         title: t('friends.denyRequest'),
-                        icon: <Ionicons name="close-circle-outline" size={29} color={theme.colors.state.danger.foreground} />,
+                        icon: <Icon name="x-circle" size={29} color={theme.colors.state.danger.foreground} />,
                         onPress: handleRemoveFriend,
                         loading: removingFriend,
                     }
@@ -169,7 +176,7 @@ export default function UserProfileScreen() {
                 // User has sent a friend request
                 return [{
                     title: t('friends.cancelRequest'),
-                    icon: <Ionicons name="close-outline" size={29} color={theme.colors.accent.orange} />,
+                    icon: <Icon name="x" size={29} color={theme.colors.accent.orange} />,
                     onPress: handleRemoveFriend,
                     loading: removingFriend,
                 }];
@@ -178,7 +185,7 @@ export default function UserProfileScreen() {
             default:
                 return [{
                     title: t('friends.requestFriendship'),
-                    icon: <Ionicons name="person-add-outline" size={29} color={theme.colors.accent.blue} />,
+                    icon: <Icon name="user-plus" size={29} color={theme.colors.accent.blue} />,
                     onPress: addFriend,
                     loading: addingFriend,
                 }];
@@ -193,7 +200,7 @@ export default function UserProfileScreen() {
     return (
         <ItemList style={{ paddingTop: 0 }}>
             {/* User Info Header */}
-            <View style={styles.headerContainer}>
+            <View style={headerContainerStyle}>
                 <View style={styles.profileCard}>
                     <View style={{ marginBottom: 16 }}>
                         <Avatar
@@ -216,7 +223,7 @@ export default function UserProfileScreen() {
                     {/* Friend Status Badge */}
                     {userProfile.status === 'friend' && (
                         <View style={styles.statusBadge}>
-                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.state.success.foreground} />
+                            <Icon name="check-circle" size={16} color={theme.colors.state.success.foreground} />
                             <Text style={styles.statusText}>{t('friends.alreadyFriends')}</Text>
                         </View>
                     )}
@@ -246,14 +253,14 @@ export default function UserProfileScreen() {
                                 key={session.id}
                                 title={getSessionName(session)}
                                 subtitle={t('session.sharing.viewOnly')}
-                                icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.accent.blue} />}
+                                icon={<Icon name="chat-circle-dots" size={29} color={theme.colors.accent.blue} />}
                                 onPress={() => router.push(`/session/${session.id}`)}
                             />
                         ))
                     ) : (
                         <Item
                             title={t('friends.noSharedSessions')}
-                            icon={<Ionicons name="chatbubble-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="chat-circle" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                         />
                     )}
@@ -271,7 +278,7 @@ export default function UserProfileScreen() {
                                 key={`${badge.id}:${badge.url}`}
                                 title={title}
                                 detail={badge.label}
-                                icon={<Ionicons name={iconName as any} size={29} color={theme.colors.text.primary} />}
+                                icon={<Icon name={iconName as any} size={29} color={theme.colors.text.primary} />}
                                 onPress={async () => {
                                     try {
                                         if (!isSafeBadgeUrl(badge.url)) {
@@ -341,7 +348,6 @@ const styles = StyleSheet.create((theme) => ({
         textAlign: 'center',
     },
     headerContainer: {
-        maxWidth: layout.maxWidth,
         alignSelf: 'center',
         width: '100%',
     },

@@ -3,10 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
-import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { installSessionHooksCommonModuleMocks } from '@/hooks/session/sessionHooksTestHelpers';
 
 const createDefaultActionExecutorSpy = vi.fn((..._args: unknown[]) => ({
@@ -49,18 +46,23 @@ let mockSession = {
 };
 
 installSessionHooksCommonModuleMocks({
-    reactNative: async () => createReactNativeWebMock(),
-    router: async () => createExpoRouterMock({
-        router: {
-            push: routerPushSpy,
-            replace: vi.fn(),
-            back: vi.fn(),
-            setParams: vi.fn(),
-        },
-    }).module,
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: {
+                push: routerPushSpy,
+                replace: vi.fn(),
+                back: vi.fn(),
+                setParams: vi.fn(),
+            },
+        }).module;
+    },
 });
 
-vi.mock('react-native-unistyles', async () => createUnistylesMock());
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),

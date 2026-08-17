@@ -98,6 +98,24 @@ const activeServerSnapshotState = vi.hoisted(() => ({
         generation: 1,
     },
 }));
+const administrationTargetState = vi.hoisted(() => {
+    const state: {
+        current: {
+            target: { serverIdentityId: string; machineId: string };
+            serverId: string;
+            machine: { id: string };
+        } | null;
+    } = {
+        current: {
+            target: { serverIdentityId: 'identity-pets', machineId: 'machine-pets' },
+            serverId: 'server-pets',
+            machine: { id: 'machine-pets' },
+        },
+    };
+    return Object.assign(state, {
+        resolveExecutionTarget: () => state.current,
+    });
+});
 let translationPrefix = 'en';
 
 const petManifest = {
@@ -241,6 +259,23 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => activeServerSnapshotState.current,
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => {
+        const target = administrationTargetState.current;
+        return {
+            selectedTarget: target?.target ?? null,
+            canExecute: target !== null,
+            resolveExecutionTarget: administrationTargetState.resolveExecutionTarget,
+        };
+    },
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
 }));
 
 vi.mock('@/utils/platform/tauri', () => ({
@@ -412,6 +447,11 @@ describe('PetsSettingsScreen', () => {
             serverId: 'server-pets',
             serverUrl: 'https://pets.example.test',
             generation: 1,
+        };
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-pets', machineId: 'machine-pets' },
+            serverId: 'server-pets',
+            machine: { id: 'machine-pets' },
         };
         translationPrefix = 'en';
     });
@@ -681,6 +721,34 @@ describe('PetsSettingsScreen', () => {
         expect(screen.findByTestId('settings-pets-detected-source-blink-e2e-fixture')).not.toBeNull();
     });
 
+    it('does not apply discovery results after their Administration target stops being current', async () => {
+        const discovery = createDeferred<{ ok: true; pets: DiscoveredPetPackageV1[] }>();
+        machineRpcWithServerScopeMock.mockReturnValueOnce(discovery.promise);
+
+        const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
+        const screen = await renderScreen(<PetsSettingsScreen />);
+
+        await act(async () => {
+            void screen.findByTestId('settings-pets-detect-codex-pets')?.props.onPress?.();
+        });
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-next', machineId: 'machine-next' },
+            serverId: 'server-next',
+            machine: { id: 'machine-next' },
+        };
+        await act(async () => {
+            await screen.update(<PetsSettingsScreen />);
+        });
+
+        await act(async () => {
+            discovery.resolve({ ok: true, pets: [detectedPet] });
+            await discovery.promise;
+        });
+
+        expect(upsertLocalPetSourcesSpy).not.toHaveBeenCalled();
+        expect(screen.findByTestId('settings-pets-detected-source-blink-e2e-fixture')).toBeNull();
+    });
+
     it('keeps previously detected pets visible while a refresh is in flight and replaces them when the refresh completes empty', async () => {
         const refresh = createDeferred<{ ok: true; pets: DiscoveredPetPackageV1[] }>();
         const refreshDetectedPet = alternateDetectedPet;
@@ -853,11 +921,16 @@ describe('PetsSettingsScreen', () => {
         expect(screen.findByTestId('settings-pets-detected-codex-pets-list')).toBeNull();
     });
 
-    it('detects Codex pets against an active daemon machine instead of the first listed machine', async () => {
+    it('detects Codex pets against the exact Administration target rather than an active or first machine', async () => {
         machinesState.current = [
             createMachineFixture({ id: 'machine-inactive', active: false }),
             createMachineFixture({ id: 'machine-active', active: true }),
         ];
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-admin', machineId: 'machine-admin' },
+            serverId: 'server-admin',
+            machine: { id: 'machine-admin' },
+        };
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
             pets: [detectedPet],
@@ -869,13 +942,14 @@ describe('PetsSettingsScreen', () => {
         await screen.pressByTestIdAsync('settings-pets-detect-codex-pets');
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-active',
-            serverId: 'server-pets',
+            machineId: 'machine-admin',
+            serverId: 'server-admin',
         }));
     });
 
-    it('shows a no-target state when no daemon machine is available for detection', async () => {
+    it('shows a no-target state when Administration has no executable target for detection', async () => {
         machinesState.current = [];
+        administrationTargetState.current = null;
 
         const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
         const screen = await renderScreen(<PetsSettingsScreen />);
@@ -948,7 +1022,7 @@ describe('PetsSettingsScreen', () => {
         });
     });
 
-    it('detects daemon pets from the active machine and server scope', async () => {
+    it('detects daemon pets from the selected Administration machine and server scope', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
             pets: [detectedPet],
@@ -1062,6 +1136,46 @@ describe('PetsSettingsScreen', () => {
         expect(screen.findByTestId('settings-pets-select-source-local-milo-e2e-fixture')).not.toBeNull();
     });
 
+    it('does not persist a local import after its Administration target stops being current', async () => {
+        const localImport = createDeferred<{ importedPet: ImportedLocalPetPackageV1 }>();
+        machineRpcWithServerScopeMock.mockImplementation(({ method }: { method: string }) => {
+            if (method === PET_DAEMON_RPC_METHODS.DISCOVER_PACKAGES) {
+                return Promise.resolve({ ok: true, pets: [detectedPet] });
+            }
+            if (method === PET_DAEMON_RPC_METHODS.IMPORT_LOCAL_PACKAGE) {
+                return localImport.promise;
+            }
+            return Promise.resolve(null);
+        });
+
+        const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
+        const screen = await renderScreen(<PetsSettingsScreen />);
+        await screen.pressByTestIdAsync('settings-pets-detect-codex-pets');
+        upsertLocalPetSourcesSpy.mockClear();
+        applyLocalSettingsSpy.mockClear();
+
+        await act(async () => {
+            void screen.findByTestId('settings-pets-use-on-this-device-blink-e2e-fixture')?.props.onPress?.();
+        });
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-next', machineId: 'machine-next' },
+            serverId: 'server-next',
+            machine: { id: 'machine-next' },
+        };
+        await act(async () => {
+            await screen.update(<PetsSettingsScreen />);
+        });
+
+        await act(async () => {
+            localImport.resolve({ importedPet: importedLocalPet });
+            await localImport.promise;
+        });
+
+        expect(upsertLocalPetSourcesSpy).not.toHaveBeenCalled();
+        expect(applyLocalSettingsSpy).not.toHaveBeenCalled();
+        expect(screen.findByTestId('settings-pets-select-source-local-blink-e2e-fixture')).toBeNull();
+    });
+
     it('shows an error when a discovered daemon pet cannot be imported locally', async () => {
         machineRpcWithServerScopeMock.mockImplementation(({ method }: { method: string }) => {
             if (method === PET_DAEMON_RPC_METHODS.DISCOVER_PACKAGES) {
@@ -1115,9 +1229,20 @@ describe('PetsSettingsScreen', () => {
         expect(screen.findByTestId('settings-pets-remove-from-device-blink-e2e-fixture')).not.toBeNull();
     });
 
-    it('removes a persisted imported Codex pet from this device and clears the local selection', async () => {
+    it('removes a persisted imported Codex pet through its stored daemon target, not the Administration target', async () => {
         localPetSourcesState.current = {
             [importedLocalPetMetadata.sourceKey]: importedLocalPetMetadata,
+        };
+        machinesState.current = [createMachineFixture({ id: 'machine-active', active: true })];
+        activeServerSnapshotState.current = {
+            serverId: 'server-active',
+            serverUrl: 'https://active.example.test',
+            generation: 1,
+        };
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-admin', machineId: 'machine-admin' },
+            serverId: 'server-admin',
+            machine: { id: 'machine-admin' },
         };
         localSettingsState.petsSelectedPetOverride = {
             kind: 'happierManagedLocal',

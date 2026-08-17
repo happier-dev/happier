@@ -34,6 +34,7 @@ export async function createPromptRegistrySkillArtifactFromFetchedItem(
 
 export async function importPromptRegistrySkillItem(args: Readonly<{
   machineId: string;
+  serverId?: string | null;
   configuredSources: PromptRegistryConfiguredSourceV1[];
   sourceId: string;
   itemId: string;
@@ -42,7 +43,7 @@ export async function importPromptRegistrySkillItem(args: Readonly<{
     sourceId: args.sourceId,
     itemId: args.itemId,
     configuredSources: args.configuredSources,
-  });
+  }, { serverId: args.serverId });
 
   if (!response.ok) {
     return {

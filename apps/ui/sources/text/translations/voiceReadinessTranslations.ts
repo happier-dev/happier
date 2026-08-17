@@ -18,6 +18,9 @@ type VoiceReadinessCopy = {
   execution_machine_installing: string;
   execution_machine_incompatible: string;
   execution_machine_unknown: string;
+  daemon_unreachable: string;
+  daemon_relay_disabled: string;
+  daemon_relay_capped: string;
   credential_missing: string;
   credential_approval_required: string;
   credential_installing: string;
@@ -35,6 +38,8 @@ type VoiceReadinessCopy = {
   model_installing: string;
   model_incompatible: string;
   model_unknown: string;
+  device_stt_unavailable: string;
+  device_stt_availability_unknown: string;
   actions: {
     select_provider: string;
     open_provider_settings: string;
@@ -72,6 +77,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: 'The selected Voice execution machine is still being prepared.',
     execution_machine_incompatible: 'The selected machine is incompatible with this Voice provider.',
     execution_machine_unknown: 'The Voice execution machine could not be checked.',
+    daemon_unreachable: 'The selected machine has no available route for Voice audio.',
+    daemon_relay_disabled: 'The selected machine needs the Voice audio relay, but relay use is disabled.',
+    daemon_relay_capped: 'Voice audio relay capacity is currently unavailable for the selected machine.',
     credential_missing: 'Add the credential required by this Voice provider.',
     credential_approval_required: 'Review credential access before using this Voice provider.',
     credential_installing: 'The provider credential is still being prepared.',
@@ -89,6 +97,8 @@ export const voiceReadinessTranslations = {
     model_installing: 'The selected Voice model is still being installed.',
     model_incompatible: 'The selected model is incompatible with this Voice provider.',
     model_unknown: 'The Voice provider model could not be checked.',
+    device_stt_unavailable: 'Speech recognition is not available on this device.',
+    device_stt_availability_unknown: 'Speech recognition availability is still being checked.',
     actions: {
       select_provider: 'Choose a provider',
       open_provider_settings: 'Review provider settings',
@@ -98,6 +108,59 @@ export const voiceReadinessTranslations = {
       configure_endpoint: 'Configure endpoint',
       install_model: 'Install a model',
       switch_provider: 'Choose another provider',
+    },
+  }),
+  fr: defineVoiceReadinessTranslation({
+    ready: 'Prêt pour Voice.',
+    provider_unselected: 'Choisis un provider Voice.',
+    contribution_unavailable: 'Ce provider Voice n’est plus disponible.',
+    role_unsupported: 'Ce provider ne prend pas en charge le mode Voice sélectionné.',
+    platform_unsupported: 'Ce provider Voice n’est pas disponible sur cette plateforme.',
+    settings_unsupported_version: 'Mets ce provider à jour avant de l’utiliser avec Voice.',
+    settings_unknown: 'Les réglages du provider n’ont pas pu être vérifiés.',
+    settings_needs_migration: 'Vérifie les réglages mis à jour de ce provider.',
+    settings_invalid: 'Vérifie les réglages de provider invalides.',
+    settings_missing_required_setting: 'Termine les réglages de provider requis avant de démarrer Voice.',
+    provider_mode_unknown: 'Choisis un mode pris en charge pour ce provider.',
+    server_feature_disabled: 'Ce provider Voice est désactivé par le serveur.',
+    server_feature_installing: 'La prise en charge de Voice est en cours de préparation par le serveur.',
+    server_feature_incompatible: 'Le serveur est incompatible avec ce provider Voice.',
+    server_feature_unknown: 'La prise en charge de ce provider Voice par le serveur n’a pas pu être vérifiée.',
+    execution_machine_missing: 'Choisis une machine capable d’exécuter ce provider Voice.',
+    execution_machine_installing: 'La machine d’exécution Voice sélectionnée est encore en préparation.',
+    execution_machine_incompatible: 'La machine sélectionnée est incompatible avec ce provider Voice.',
+    execution_machine_unknown: 'La machine d’exécution Voice n’a pas pu être vérifiée.',
+    daemon_unreachable: 'La machine sélectionnée n’a aucune route disponible pour l’audio Voice.',
+    daemon_relay_disabled: 'La machine sélectionnée a besoin du relay audio Voice, mais l’usage du relay est désactivé.',
+    daemon_relay_capped: 'La capacité du relay audio Voice est actuellement indisponible pour la machine sélectionnée.',
+    credential_missing: 'Ajoute les identifiants requis par ce provider Voice.',
+    credential_approval_required: 'Vérifie l’accès aux identifiants avant d’utiliser ce provider Voice.',
+    credential_installing: 'Les identifiants du provider sont encore en préparation.',
+    credential_incompatible: 'Les identifiants sélectionnés sont incompatibles avec ce provider Voice.',
+    credential_unknown: 'Les identifiants du provider n’ont pas pu être vérifiés.',
+    endpoint_missing: 'Configure l’endpoint requis par ce provider Voice.',
+    endpoint_installing: 'L’endpoint du provider Voice est encore en préparation.',
+    endpoint_incompatible: 'L’endpoint configuré est incompatible avec ce provider Voice.',
+    endpoint_unknown: 'L’endpoint du provider Voice n’a pas pu être vérifié.',
+    runtime_missing: 'Installe le runtime requis par ce provider Voice.',
+    runtime_installing: 'Le runtime du provider Voice est encore en cours d’installation.',
+    runtime_incompatible: 'Le runtime installé est incompatible avec ce provider Voice.',
+    runtime_unknown: 'Le runtime du provider Voice n’a pas pu être vérifié.',
+    model_missing: 'Installe ou choisis un modèle pour ce provider Voice.',
+    model_installing: 'Le modèle Voice sélectionné est encore en cours d’installation.',
+    model_incompatible: 'Le modèle sélectionné est incompatible avec ce provider Voice.',
+    model_unknown: 'Le modèle du provider Voice n’a pas pu être vérifié.',
+    device_stt_unavailable: 'La reconnaissance vocale n’est pas disponible sur cet appareil.',
+    device_stt_availability_unknown: 'La disponibilité de la reconnaissance vocale est en cours de vérification.',
+    actions: {
+      select_provider: 'Choisir un provider',
+      open_provider_settings: 'Vérifier les réglages du provider',
+      select_execution_machine: 'Choisir une machine',
+      configure_credential: 'Ajouter des identifiants',
+      review_credential_access: 'Vérifier l’accès aux identifiants',
+      configure_endpoint: 'Configurer l’endpoint',
+      install_model: 'Installer un modèle',
+      switch_provider: 'Choisir un autre provider',
     },
   }),
   ru: defineVoiceReadinessTranslation({
@@ -120,6 +183,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: 'Выбранная машина для голосового режима ещё подготавливается.',
     execution_machine_incompatible: 'Выбранная машина несовместима с этим голосовым провайдером.',
     execution_machine_unknown: 'Не удалось проверить машину для голосового режима.',
+    daemon_unreachable: 'Для выбранной машины нет доступного маршрута голосового аудио.',
+    daemon_relay_disabled: 'Выбранной машине требуется ретранслятор голосового аудио, но его использование отключено.',
+    daemon_relay_capped: 'Ёмкость ретранслятора голосового аудио для выбранной машины сейчас недоступна.',
     credential_missing: 'Добавьте учётные данные, необходимые этому голосовому провайдеру.',
     credential_approval_required: 'Проверьте доступ к учётным данным перед использованием этого голосового провайдера.',
     credential_installing: 'Учётные данные провайдера ещё подготавливаются.',
@@ -137,6 +203,8 @@ export const voiceReadinessTranslations = {
     model_installing: 'Выбранная голосовая модель ещё устанавливается.',
     model_incompatible: 'Выбранная модель несовместима с этим голосовым провайдером.',
     model_unknown: 'Не удалось проверить модель голосового провайдера.',
+    device_stt_unavailable: 'Распознавание речи недоступно на этом устройстве.',
+    device_stt_availability_unknown: 'Доступность распознавания речи всё ещё проверяется.',
     actions: {
       select_provider: 'Выбрать провайдера',
       open_provider_settings: 'Проверить настройки провайдера',
@@ -168,6 +236,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: 'Wybrana maszyna do obsługi głosowej jest nadal przygotowywana.',
     execution_machine_incompatible: 'Wybrana maszyna jest niezgodna z tym dostawcą obsługi głosowej.',
     execution_machine_unknown: 'Nie udało się sprawdzić maszyny do obsługi głosowej.',
+    daemon_unreachable: 'Wybrana maszyna nie ma dostępnej trasy dla dźwięku głosowego.',
+    daemon_relay_disabled: 'Wybrana maszyna wymaga przekaźnika dźwięku głosowego, ale jego użycie jest wyłączone.',
+    daemon_relay_capped: 'Pojemność przekaźnika dźwięku głosowego jest obecnie niedostępna dla wybranej maszyny.',
     credential_missing: 'Dodaj dane uwierzytelniające wymagane przez tego dostawcę obsługi głosowej.',
     credential_approval_required: 'Sprawdź dostęp do danych uwierzytelniających przed użyciem tego dostawcy obsługi głosowej.',
     credential_installing: 'Dane uwierzytelniające dostawcy są nadal przygotowywane.',
@@ -185,6 +256,8 @@ export const voiceReadinessTranslations = {
     model_installing: 'Wybrany model głosowy jest nadal instalowany.',
     model_incompatible: 'Wybrany model jest niezgodny z tym dostawcą obsługi głosowej.',
     model_unknown: 'Nie udało się sprawdzić modelu dostawcy obsługi głosowej.',
+    device_stt_unavailable: 'Rozpoznawanie mowy nie jest dostępne na tym urządzeniu.',
+    device_stt_availability_unknown: 'Dostępność rozpoznawania mowy jest nadal sprawdzana.',
     actions: {
       select_provider: 'Wybierz dostawcę',
       open_provider_settings: 'Sprawdź ustawienia dostawcy',
@@ -216,6 +289,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: 'La máquina de ejecución de voz seleccionada aún se está preparando.',
     execution_machine_incompatible: 'La máquina seleccionada no es compatible con este proveedor de voz.',
     execution_machine_unknown: 'No se ha podido comprobar la máquina de ejecución de voz.',
+    daemon_unreachable: 'La máquina seleccionada no tiene una ruta disponible para el audio de voz.',
+    daemon_relay_disabled: 'La máquina seleccionada necesita el relé de audio de voz, pero su uso está desactivado.',
+    daemon_relay_capped: 'La capacidad del relé de audio de voz no está disponible actualmente para la máquina seleccionada.',
     credential_missing: 'Añade la credencial que necesita este proveedor de voz.',
     credential_approval_required: 'Revisa el acceso a la credencial antes de usar este proveedor de voz.',
     credential_installing: 'La credencial del proveedor aún se está preparando.',
@@ -233,6 +309,8 @@ export const voiceReadinessTranslations = {
     model_installing: 'El modelo de voz seleccionado aún se está instalando.',
     model_incompatible: 'El modelo seleccionado no es compatible con este proveedor de voz.',
     model_unknown: 'No se ha podido comprobar el modelo del proveedor de voz.',
+    device_stt_unavailable: 'El reconocimiento de voz no está disponible en este dispositivo.',
+    device_stt_availability_unknown: 'Todavía se está comprobando la disponibilidad del reconocimiento de voz.',
     actions: {
       select_provider: 'Elegir un proveedor',
       open_provider_settings: 'Revisar la configuración del proveedor',
@@ -264,6 +342,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: 'La macchina di esecuzione Voce selezionata è ancora in preparazione.',
     execution_machine_incompatible: 'La macchina selezionata non è compatibile con questo provider vocale.',
     execution_machine_unknown: 'Non è stato possibile controllare la macchina di esecuzione Voce.',
+    daemon_unreachable: 'La macchina selezionata non ha un percorso disponibile per l’audio vocale.',
+    daemon_relay_disabled: 'La macchina selezionata richiede il relay audio vocale, ma il suo utilizzo è disabilitato.',
+    daemon_relay_capped: 'La capacità del relay audio vocale non è attualmente disponibile per la macchina selezionata.',
     credential_missing: 'Aggiungi la credenziale richiesta da questo provider vocale.',
     credential_approval_required: 'Controlla l’accesso alla credenziale prima di usare questo provider vocale.',
     credential_installing: 'La credenziale del provider è ancora in preparazione.',
@@ -281,6 +362,8 @@ export const voiceReadinessTranslations = {
     model_installing: 'Il modello vocale selezionato è ancora in fase di installazione.',
     model_incompatible: 'Il modello selezionato non è compatibile con questo provider vocale.',
     model_unknown: 'Non è stato possibile controllare il modello del provider vocale.',
+    device_stt_unavailable: 'Il riconoscimento vocale non è disponibile su questo dispositivo.',
+    device_stt_availability_unknown: 'La disponibilità del riconoscimento vocale è ancora in fase di verifica.',
     actions: {
       select_provider: 'Scegli un provider',
       open_provider_settings: 'Controlla le impostazioni del provider',
@@ -312,6 +395,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: 'A máquina de execução de Voz selecionada ainda está sendo preparada.',
     execution_machine_incompatible: 'A máquina selecionada não é compatível com este provedor de Voz.',
     execution_machine_unknown: 'Não foi possível verificar a máquina de execução de Voz.',
+    daemon_unreachable: 'A máquina selecionada não tem uma rota disponível para o áudio de Voz.',
+    daemon_relay_disabled: 'A máquina selecionada precisa do retransmissor de áudio de Voz, mas seu uso está desativado.',
+    daemon_relay_capped: 'A capacidade do retransmissor de áudio de Voz está indisponível para a máquina selecionada no momento.',
     credential_missing: 'Adicione a credencial exigida por este provedor de Voz.',
     credential_approval_required: 'Revise o acesso à credencial antes de usar este provedor de Voz.',
     credential_installing: 'A credencial do provedor ainda está sendo preparada.',
@@ -329,6 +415,8 @@ export const voiceReadinessTranslations = {
     model_installing: 'O modelo de Voz selecionado ainda está sendo instalado.',
     model_incompatible: 'O modelo selecionado não é compatível com este provedor de Voz.',
     model_unknown: 'Não foi possível verificar o modelo do provedor de Voz.',
+    device_stt_unavailable: 'O reconhecimento de fala não está disponível neste dispositivo.',
+    device_stt_availability_unknown: 'A disponibilidade do reconhecimento de fala ainda está sendo verificada.',
     actions: {
       select_provider: 'Escolher um provedor',
       open_provider_settings: 'Revisar as configurações do provedor',
@@ -360,6 +448,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: 'La màquina d’execució de veu seleccionada encara s’està preparant.',
     execution_machine_incompatible: 'La màquina seleccionada no és compatible amb aquest proveïdor de veu.',
     execution_machine_unknown: 'No s’ha pogut comprovar la màquina d’execució de veu.',
+    daemon_unreachable: 'La màquina seleccionada no té cap ruta disponible per a l’àudio de veu.',
+    daemon_relay_disabled: 'La màquina seleccionada necessita el relé d’àudio de veu, però el seu ús està desactivat.',
+    daemon_relay_capped: 'La capacitat del relé d’àudio de veu no està disponible ara per a la màquina seleccionada.',
     credential_missing: 'Afegeix la credencial que necessita aquest proveïdor de veu.',
     credential_approval_required: 'Revisa l’accés a la credencial abans d’utilitzar aquest proveïdor de veu.',
     credential_installing: 'La credencial del proveïdor encara s’està preparant.',
@@ -377,6 +468,8 @@ export const voiceReadinessTranslations = {
     model_installing: 'El model de veu seleccionat encara s’està instal·lant.',
     model_incompatible: 'El model seleccionat no és compatible amb aquest proveïdor de veu.',
     model_unknown: 'No s’ha pogut comprovar el model del proveïdor de veu.',
+    device_stt_unavailable: 'El reconeixement de veu no està disponible en aquest dispositiu.',
+    device_stt_availability_unknown: 'Encara s’està comprovant la disponibilitat del reconeixement de veu.',
     actions: {
       select_provider: 'Triar un proveïdor',
       open_provider_settings: 'Revisar la configuració del proveïdor',
@@ -408,6 +501,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: '所选语音执行机器仍在准备中。',
     execution_machine_incompatible: '所选机器与此语音提供商不兼容。',
     execution_machine_unknown: '无法检查语音执行机器。',
+    daemon_unreachable: '所选机器没有可用的语音音频路由。',
+    daemon_relay_disabled: '所选机器需要语音音频中继，但中继已被禁用。',
+    daemon_relay_capped: '所选机器当前无法使用语音音频中继容量。',
     credential_missing: '请添加此语音提供商所需的凭据。',
     credential_approval_required: '请先检查凭据访问权限，再使用此语音提供商。',
     credential_installing: '提供商凭据仍在准备中。',
@@ -425,6 +521,8 @@ export const voiceReadinessTranslations = {
     model_installing: '所选语音模型仍在安装中。',
     model_incompatible: '所选模型与此语音提供商不兼容。',
     model_unknown: '无法检查语音提供商模型。',
+    device_stt_unavailable: '此设备无法使用语音识别。',
+    device_stt_availability_unknown: '仍在检查语音识别是否可用。',
     actions: {
       select_provider: '选择提供商',
       open_provider_settings: '检查提供商设置',
@@ -456,6 +554,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: '所選語音執行機器仍在準備中。',
     execution_machine_incompatible: '所選機器與此語音提供者不相容。',
     execution_machine_unknown: '無法檢查語音執行機器。',
+    daemon_unreachable: '所選機器沒有可用的語音音訊路由。',
+    daemon_relay_disabled: '所選機器需要語音音訊中繼，但中繼已停用。',
+    daemon_relay_capped: '所選機器目前無法使用語音音訊中繼容量。',
     credential_missing: '請新增此語音提供者所需的憑證。',
     credential_approval_required: '請先檢查憑證存取權，再使用此語音提供者。',
     credential_installing: '提供者憑證仍在準備中。',
@@ -473,6 +574,8 @@ export const voiceReadinessTranslations = {
     model_installing: '所選語音模型仍在安裝中。',
     model_incompatible: '所選模型與此語音提供者不相容。',
     model_unknown: '無法檢查語音提供者模型。',
+    device_stt_unavailable: '此裝置無法使用語音辨識。',
+    device_stt_availability_unknown: '仍在檢查語音辨識是否可用。',
     actions: {
       select_provider: '選擇提供者',
       open_provider_settings: '檢查提供者設定',
@@ -504,6 +607,9 @@ export const voiceReadinessTranslations = {
     execution_machine_installing: '選択した音声実行マシンはまだ準備中です。',
     execution_machine_incompatible: '選択したマシンはこの音声プロバイダーに対応していません。',
     execution_machine_unknown: '音声実行マシンを確認できませんでした。',
+    daemon_unreachable: '選択したマシンには音声オーディオに利用できる経路がありません。',
+    daemon_relay_disabled: '選択したマシンには音声オーディオリレーが必要ですが、リレーの使用は無効です。',
+    daemon_relay_capped: '選択したマシンでは現在、音声オーディオリレーの容量を利用できません。',
     credential_missing: 'この音声プロバイダーに必要な認証情報を追加してください。',
     credential_approval_required: 'この音声プロバイダーを使用する前に、認証情報へのアクセスを確認してください。',
     credential_installing: 'プロバイダーの認証情報はまだ準備中です。',
@@ -521,6 +627,8 @@ export const voiceReadinessTranslations = {
     model_installing: '選択した音声モデルはまだインストール中です。',
     model_incompatible: '選択したモデルはこの音声プロバイダーに対応していません。',
     model_unknown: '音声プロバイダーのモデルを確認できませんでした。',
+    device_stt_unavailable: 'このデバイスでは音声認識を利用できません。',
+    device_stt_availability_unknown: '音声認識を利用できるか確認しています。',
     actions: {
       select_provider: 'プロバイダーを選択',
       open_provider_settings: 'プロバイダー設定を確認',

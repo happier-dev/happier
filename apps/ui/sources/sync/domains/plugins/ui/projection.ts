@@ -2,16 +2,36 @@ import type {
     DaemonContributionRegistryProjection,
 } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import {
-    PluginSessionHeaderActionDescriptorV1Schema,
-    PluginVoiceProviderContributionV1Schema,
+    PluginLocalizedStringV2Schema,
+    PluginContributionLocalIdSchema,
+    PluginUiIconTokenV1Schema,
+    PluginContributionIdentityV1Schema,
+    OpenableContentViewerSelectorV1Schema,
     RecipientContractV1Schema,
+    VoiceProviderContributionSchema,
     buildQualifiedPluginContributionKey,
+    compilePluginJsonSchema,
     createRecipientContractDigestV1,
     createPluginContributionIdentity,
     type PluginLocalizedStringV2,
-    type PluginSessionHeaderActionDescriptorV1,
-    type PluginVoiceProviderContributionV1,
+    type OpenableContentViewerSelectorV1,
+    type PluginContributionIdentityV1,
+    type PluginProjectionInstalledPackageV2,
+    type PluginJsonSchemaValidator,
+    type PluginProjectedComposerAttachmentEntryV1,
+    type PluginProjectedComposerControlEntryV1,
+    type PluginProjectedComposerRegionEntryV1,
+    type PluginUiIconTokenV1,
+    type VoiceProviderContribution,
 } from '@happier-dev/protocol';
+import {
+    PluginUiResolvedSemanticCommandV1Schema,
+    PluginUiDestinationBindingV1Schema,
+    PluginUiDestinationReferenceV1Schema,
+    type PluginUiDestinationBindingV1,
+    type PluginUiDestinationReferenceV1,
+    type PluginUiResolvedSemanticCommandV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import {
     addStructuredMessageToKindMap,
@@ -35,9 +55,15 @@ export type PluginUiSessionHeaderActionProjection = UnknownRecord & Readonly<{
     pluginId: string;
     contributionKind: 'sessionHeaderAction';
     descriptorId: string;
-    title: PluginSessionHeaderActionDescriptorV1['title'];
-    action: PluginSessionHeaderActionDescriptorV1['action'];
-    qualifiedActionId: string;
+    title: PluginLocalizedStringV2;
+    /** Closed semantic icon token admitted by the Registry projection. */
+    icon?: PluginUiIconTokenV1;
+    /**
+     * The registry resolves authored local identifiers before this projection
+     * reaches UI. Consumers retain that qualified semantic command verbatim,
+     * rather than recreating action or destination qualification locally.
+     */
+    command: PluginUiResolvedSemanticCommandV1;
 }>;
 
 export type PluginUiHostedWebProjection = UnknownRecord & Readonly<{
@@ -60,33 +86,109 @@ export type PluginUiSurfaceAvailabilityProjection = Readonly<{
     diagnostics: readonly string[];
 }>;
 
+/**
+ * Static app-page header metadata from the daemon-normalized V2 placement.
+ *
+ * The command is already qualified by the Registry producer. UI validates the
+ * strict projected shape here so chrome consumers cannot reinterpret local
+ * action or destination ids while rendering a fragile host header.
+ */
+export type PluginUiPageHeaderActionProjection = Readonly<{
+    id: string;
+    title: PluginLocalizedStringV2;
+    description?: PluginLocalizedStringV2;
+    icon?: PluginUiIconTokenV1;
+    order?: number;
+    command: PluginUiResolvedSemanticCommandV1;
+}>;
+
 export type PluginUiSurfacePlacementProjection = UnknownRecord & Readonly<{
     id: string;
     pluginId: string;
     contributionKind: 'surfacePlacement';
     descriptorId: string;
-    placement: string;
+    /**
+     * The V2 producer publishes this binding verbatim. It is deliberately not
+     * re-normalized or reconstructed by UI consumers: the registry/CLI
+     * projection owns admission and target/container pairing, while collision
+     * admission remains at the registry before projection.
+     */
+    binding: PluginUiDestinationBindingV1;
     target: UnknownRecord;
     renderer: UnknownRecord;
     display: UnknownRecord;
+    /**
+     * Admitted runtime facts projected by the daemon (including Resource
+     * capability). UI retains this record verbatim; it is not a second runtime
+     * capability normalizer.
+     */
+    runtime?: UnknownRecord;
     availability: PluginUiSurfaceAvailabilityProjection;
+    headerActions: readonly PluginUiPageHeaderActionProjection[];
     rightSidebar?: UnknownRecord;
-    order?: number;
 }>;
 
-export type PluginUiArtifactProjection = UnknownRecord & Readonly<{
+/**
+ * One daemon-admitted openable-content viewer declaration. This preserves the
+ * projected selector and qualified destination; the file-details owner joins
+ * that destination to the current surface placement before it can mount.
+ */
+export type PluginUiOpenableContentViewerProjection = UnknownRecord & Readonly<{
     id: string;
     pluginId: string;
-    contributionKind: 'uiArtifact';
-    artifactId: string;
+    contributionKind: 'openableContentViewer';
+    descriptorId: string;
+    identity: PluginContributionIdentityV1;
+    viewer: OpenableContentViewerSelectorV1;
+    destination: PluginUiDestinationReferenceV1;
 }>;
 
-export type PluginUiDigestProjection = UnknownRecord & Readonly<{
+/**
+ * A V2 Settings group as admitted by the daemon Registry. The UI keeps the
+ * authored metadata as projected data and lets the Settings catalog own group
+ * placement and display resolution; it does not reconstruct a Settings group
+ * from a legacy placement or a local route.
+ */
+export type PluginUiSettingsGroupProjection = UnknownRecord & Readonly<{
     id: string;
     pluginId: string;
-    contributionKind: 'digest';
-    digest: string;
-    families?: UnknownRecord;
+    contributionKind: 'settingsGroup';
+    group: UnknownRecord;
+}>;
+
+/**
+ * A real V2 Settings destination. Its `binding` is the Registry-produced
+ * `settingsPage × app` binding, carried verbatim so both the Settings catalog
+ * and generic route consume the same canonical destination identity.
+ */
+export type PluginUiSettingsPageProjection = UnknownRecord & Readonly<{
+    id: string;
+    pluginId: string;
+    contributionKind: 'settingsPage';
+    descriptorId: string;
+    page: UnknownRecord;
+    binding: PluginUiDestinationBindingV1;
+    renderer: UnknownRecord;
+    availability: PluginUiSurfaceAvailabilityProjection;
+}>;
+
+/**
+ * One Registry-normalized destination projection that the qualified host
+ * navigation resolver may admit. Settings pages are not surface placements,
+ * but retain the same binding, availability, and stamped-origin contract.
+ */
+export type PluginUiDestinationProjection =
+    | PluginUiSurfacePlacementProjection
+    | PluginUiSettingsPageProjection;
+
+/** One daemon-admitted, same-plugin dynamic Resource profile for the synthetic transcript tail. */
+export type PluginUiTranscriptActivityProjection = UnknownRecord & Readonly<{
+    id: string;
+    pluginId: string;
+    contributionKind: 'transcriptActivity';
+    descriptorId: string;
+    resource: Readonly<{ pluginId: string; localId: string }>;
+    actions: readonly Readonly<{ pluginId: string; localId: string }>[];
 }>;
 
 export type PluginVoiceProviderProjection = UnknownRecord & Readonly<{
@@ -94,37 +196,69 @@ export type PluginVoiceProviderProjection = UnknownRecord & Readonly<{
     pluginId: string;
     generation: number;
     contributionKey: string;
-    definition: PluginVoiceProviderContributionV1;
+    definition: VoiceProviderContribution;
     recipientContract?: import('@happier-dev/protocol').RecipientContractV1;
     recipientContractDigest?: string;
 }>;
 
+/**
+ * One daemon-admitted Composer attachment declaration plus the exact
+ * validator compiled for this UI projection's schema/generation lifetime.
+ * The executable validator is host-private projection state, not a new wire
+ * shape or Composer-local catalog.
+ */
+export type PluginUiComposerAttachmentProjection = Readonly<
+    PluginProjectedComposerAttachmentEntryV1 & {
+        valueValidator: PluginJsonSchemaValidator | null;
+    }
+>;
+
 export type PluginUiProjectionModel = Readonly<{
     generation: number | null;
+    /**
+     * Daemon-admitted package facts needed by the presentation host. The UI
+     * carries this record verbatim enough to preserve the package/Artifact
+     * owner's brand identity; it never derives a mark from plugin metadata.
+     */
+    installedPackagesById: Readonly<Record<string, PluginProjectionInstalledPackageV2>>;
     translationsByPluginId: Readonly<Record<string, PluginUiTranslationsProjection>>;
     structuredMessagesByKind: Readonly<Record<string, PluginUiStructuredMessageProjection>>;
     sessionHeaderActionsById: Readonly<Record<string, PluginUiSessionHeaderActionProjection>>;
     hostedWebById: Readonly<Record<string, PluginUiHostedWebProjection>>;
     reactNativeBundlesById: Readonly<Record<string, PluginUiReactNativeBundleProjection>>;
     surfacePlacementsById: Readonly<Record<string, PluginUiSurfacePlacementProjection>>;
-    surfacePlacementsByPlacement: Readonly<Record<string, readonly PluginUiSurfacePlacementProjection[]>>;
-    uiArtifactsById: Readonly<Record<string, PluginUiArtifactProjection>>;
-    digestsByPluginId: Readonly<Record<string, PluginUiDigestProjection>>;
+    openableContentViewersById: Readonly<Record<string, PluginUiOpenableContentViewerProjection>>;
+    settingsGroupsById: Readonly<Record<string, PluginUiSettingsGroupProjection>>;
+    settingsPagesById: Readonly<Record<string, PluginUiSettingsPageProjection>>;
+    transcriptActivitiesById: Readonly<Record<string, PluginUiTranscriptActivityProjection>>;
+    /**
+     * The three Composer maps retain only daemon-admitted static declarations.
+     * Document state, picker state, effect dispatch, and surface lifecycle stay
+     * with their existing owners; this model is the one UI catalog projection.
+     */
+    composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>>;
+    composerControlsById: Readonly<Record<string, PluginProjectedComposerControlEntryV1>>;
+    composerRegionsById: Readonly<Record<string, PluginProjectedComposerRegionEntryV1>>;
     voiceProvidersById: Readonly<Record<string, PluginVoiceProviderProjection>>;
     unknownEntriesById: Readonly<Record<string, UnknownRecord>>;
 }>;
 
 export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze({
     generation: null,
+    installedPackagesById: Object.freeze({}),
     translationsByPluginId: Object.freeze({}),
     structuredMessagesByKind: Object.freeze({}),
     sessionHeaderActionsById: Object.freeze({}),
     hostedWebById: Object.freeze({}),
     reactNativeBundlesById: Object.freeze({}),
     surfacePlacementsById: Object.freeze({}),
-    surfacePlacementsByPlacement: Object.freeze({}),
-    uiArtifactsById: Object.freeze({}),
-    digestsByPluginId: Object.freeze({}),
+    openableContentViewersById: Object.freeze({}),
+    settingsGroupsById: Object.freeze({}),
+    settingsPagesById: Object.freeze({}),
+    transcriptActivitiesById: Object.freeze({}),
+    composerAttachmentsById: Object.freeze({}),
+    composerControlsById: Object.freeze({}),
+    composerRegionsById: Object.freeze({}),
     voiceProvidersById: Object.freeze({}),
     unknownEntriesById: Object.freeze({}),
 });
@@ -145,13 +279,42 @@ function readStringArray(value: unknown): readonly string[] {
         : [];
 }
 
+function normalizeInstalledPackagesById(
+    installedPackagesById: Readonly<Record<string, PluginProjectionInstalledPackageV2>>,
+): Readonly<Record<string, PluginProjectionInstalledPackageV2>> {
+    return Object.freeze(Object.fromEntries(Object.entries(installedPackagesById).map(([pluginId, installedPackage]) => [
+        pluginId,
+        Object.freeze({
+            ...installedPackage,
+            source: Object.freeze({ ...installedPackage.source }),
+            ...(installedPackage.brand === undefined
+                ? {}
+                : {
+                    brand: Object.freeze({
+                        ...installedPackage.brand,
+                        ...(installedPackage.brand.state === 'available'
+                            ? { resource: Object.freeze({ ...installedPackage.brand.resource }) }
+                            : {}),
+                    }),
+                }),
+        }),
+    ])));
+}
+
 function isTranslations(entry: UnknownRecord): entry is PluginUiTranslationsProjection {
     return entry.contributionKind === 'translations'
         && readString(entry.id) !== null
         && readString(entry.pluginId) !== null;
 }
 
-function isSessionHeaderAction(entry: UnknownRecord): entry is PluginUiSessionHeaderActionProjection {
+type PluginUiSessionHeaderActionProjectionCandidate = UnknownRecord & Readonly<{
+    id: string;
+    pluginId: string;
+    contributionKind: 'sessionHeaderAction';
+    descriptorId: string;
+}>;
+
+function isSessionHeaderAction(entry: UnknownRecord): entry is PluginUiSessionHeaderActionProjectionCandidate {
     return entry.contributionKind === 'sessionHeaderAction'
         && readString(entry.id) !== null
         && readString(entry.pluginId) !== null
@@ -160,41 +323,74 @@ function isSessionHeaderAction(entry: UnknownRecord): entry is PluginUiSessionHe
 
 function resolveSessionHeaderAction(
     entry: UnknownRecord,
-    projection: Extract<DaemonContributionRegistryProjection, { v: 2 }>,
 ): PluginUiSessionHeaderActionProjection | null {
     if (!isSessionHeaderAction(entry)) {
         return null;
     }
-    const descriptor = PluginSessionHeaderActionDescriptorV1Schema.safeParse({
-        id: entry.descriptorId,
-        title: entry.title,
-        action: entry.action,
-    });
-    if (!descriptor.success) {
-        return null;
-    }
-    const identity = createPluginContributionIdentity(
-        typeof descriptor.data.action === 'string'
-            ? { pluginId: entry.pluginId, localId: descriptor.data.action }
-            : descriptor.data.action,
-    );
-    const qualifiedActionId = buildQualifiedPluginContributionKey(identity);
-    const target = projection.actionsById[qualifiedActionId];
-    if (
-        !target
-        || target.pluginId !== identity.pluginId
-        || target.id !== identity.localId
-        || !target.surfaces.includes('ui')
-        || target.available === false
-    ) {
+    const title = PluginLocalizedStringV2Schema.safeParse(entry.title);
+    const icon = entry.icon === undefined
+        ? null
+        : PluginUiIconTokenV1Schema.safeParse(entry.icon);
+    const command = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.command);
+    if (!title.success || (icon !== null && !icon.success) || !command.success) {
         return null;
     }
     return Object.freeze({
         ...entry,
-        title: descriptor.data.title,
-        action: descriptor.data.action,
-        qualifiedActionId,
+        title: title.data,
+        ...(icon?.success ? { icon: icon.data } : {}),
+        command: command.data,
     });
+}
+
+function resolvePluginUiPageHeaderAction(
+    value: unknown,
+): PluginUiPageHeaderActionProjection | null {
+    const entry = asRecord(value);
+    if (!entry) return null;
+    // The daemon projection is strict at ingress. This consumer validates its
+    // public field leaves again but leaves the resolved command itself to the
+    // Protocol schema; it never recreates local-id qualification here.
+    const id = PluginContributionLocalIdSchema.safeParse(entry.id);
+    const title = PluginLocalizedStringV2Schema.safeParse(entry.title);
+    const description = entry.description === undefined
+        ? null
+        : PluginLocalizedStringV2Schema.safeParse(entry.description);
+    const icon = entry.icon === undefined
+        ? null
+        : PluginUiIconTokenV1Schema.safeParse(entry.icon);
+    const order = entry.order === undefined
+        ? null
+        : typeof entry.order === 'number' && Number.isInteger(entry.order)
+            ? entry.order
+            : false;
+    const command = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.command);
+    if (
+        !id.success
+        || !title.success
+        || (description !== null && !description.success)
+        || (icon !== null && !icon.success)
+        || order === false
+        || !command.success
+    ) {
+        return null;
+    }
+    return Object.freeze({
+        id: id.data,
+        title: title.data,
+        ...(description?.success ? { description: description.data } : {}),
+        ...(icon?.success ? { icon: icon.data } : {}),
+        ...(order === null ? {} : { order }),
+        command: command.data,
+    });
+}
+
+function resolvePluginUiPageHeaderActions(value: unknown): readonly PluginUiPageHeaderActionProjection[] {
+    if (!Array.isArray(value)) return Object.freeze([]);
+    return Object.freeze(value.flatMap((entry) => {
+        const action = resolvePluginUiPageHeaderAction(entry);
+        return action ? [action] : [];
+    }));
 }
 
 function isHostedWeb(entry: UnknownRecord): entry is PluginUiHostedWebProjection {
@@ -228,30 +424,147 @@ function readSurfaceAvailability(value: unknown): PluginUiSurfaceAvailabilityPro
     });
 }
 
+function isNormalizedPluginUiDestinationBinding(
+    value: unknown,
+): value is PluginUiDestinationBindingV1 {
+    return PluginUiDestinationBindingV1Schema.safeParse(value).success;
+}
+
 function isSurfacePlacement(entry: UnknownRecord): entry is PluginUiSurfacePlacementProjection {
     return entry.contributionKind === 'surfacePlacement'
         && readString(entry.id) !== null
         && readString(entry.pluginId) !== null
         && readString(entry.descriptorId) !== null
-        && readString(entry.placement) !== null
+        // The CLI projection has one already-admitted binding. Do not call a
+        // client-side normalizer here: the daemon projection owns that
+        // normalization and consumers retain its exact object identity.
+        && isNormalizedPluginUiDestinationBinding(entry.binding)
         && asRecord(entry.target) !== null
         && asRecord(entry.renderer) !== null
         && asRecord(entry.display) !== null
         && readSurfaceAvailability(entry.availability) !== null;
 }
 
-function isUiArtifact(entry: UnknownRecord): entry is PluginUiArtifactProjection {
-    return entry.contributionKind === 'uiArtifact'
-        && readString(entry.id) !== null
-        && readString(entry.pluginId) !== null
-        && readString(entry.artifactId) !== null;
+function resolveOpenableContentViewer(
+    entry: UnknownRecord,
+): PluginUiOpenableContentViewerProjection | null {
+    const pluginId = readString(entry.pluginId);
+    const descriptorId = readString(entry.descriptorId);
+    if (
+        entry.contributionKind !== 'openableContentViewer'
+        || pluginId === null
+        || descriptorId === null
+        || readString(entry.id) !== `openableContentViewer:${pluginId}:${descriptorId}`
+    ) {
+        return null;
+    }
+    const identity = PluginContributionIdentityV1Schema.safeParse(entry.identity);
+    const viewer = OpenableContentViewerSelectorV1Schema.safeParse(entry.viewer);
+    const destination = PluginUiDestinationReferenceV1Schema.safeParse(entry.destination);
+    if (
+        !identity.success
+        || identity.data.pluginId !== pluginId
+        || identity.data.localId !== descriptorId
+        || !viewer.success
+        || !destination.success
+        || destination.data.pluginId !== pluginId
+    ) {
+        return null;
+    }
+    return Object.freeze({
+        ...entry,
+        identity: Object.freeze({ ...identity.data }),
+        viewer: Object.freeze({
+            contentClasses: Object.freeze([...viewer.data.contentClasses]),
+            ...(viewer.data.mimeTypes === undefined ? {} : { mimeTypes: Object.freeze([...viewer.data.mimeTypes]) }),
+            ...(viewer.data.extensions === undefined ? {} : { extensions: Object.freeze([...viewer.data.extensions]) }),
+        }),
+        destination: Object.freeze({ ...destination.data }),
+    }) as PluginUiOpenableContentViewerProjection;
 }
 
-function isDigest(entry: UnknownRecord): entry is PluginUiDigestProjection {
-    return entry.contributionKind === 'digest'
+function isProjectedIdentityForPlugin(
+    value: unknown,
+    pluginId: string,
+    localId?: string,
+): boolean {
+    const identity = asRecord(value);
+    const projectedPluginId = readString(identity?.pluginId);
+    const projectedLocalId = readString(identity?.localId);
+    return projectedPluginId === pluginId
+        && projectedLocalId !== null
+        && (localId === undefined || projectedLocalId === localId);
+}
+
+function isSettingsGroup(entry: UnknownRecord): entry is PluginUiSettingsGroupProjection {
+    const pluginId = readString(entry.pluginId);
+    const group = asRecord(entry.group);
+    return entry.contributionKind === 'settingsGroup'
         && readString(entry.id) !== null
-        && readString(entry.pluginId) !== null
-        && readString(entry.digest) !== null;
+        && pluginId !== null
+        && group !== null
+        && isProjectedIdentityForPlugin(group.id, pluginId);
+}
+
+function isSettingsPage(entry: UnknownRecord): entry is PluginUiSettingsPageProjection {
+    const pluginId = readString(entry.pluginId);
+    const descriptorId = readString(entry.descriptorId);
+    const page = asRecord(entry.page);
+    const group = asRecord(page?.group);
+    const groupKind = readString(group?.kind);
+    const pluginGroupMatches = groupKind === 'plugin'
+        && isProjectedIdentityForPlugin(group?.id, pluginId ?? '');
+    const hostGroupMatches = groupKind === 'host' && readString(group?.id) !== null;
+    return entry.contributionKind === 'settingsPage'
+        && readString(entry.id) !== null
+        && pluginId !== null
+        && descriptorId !== null
+        && page !== null
+        && isProjectedIdentityForPlugin(page.id, pluginId, descriptorId)
+        && (pluginGroupMatches || hostGroupMatches)
+        // As with surface placements, the UI verifies the daemon's already
+        // admitted binding but never creates its own replacement.
+        && isNormalizedPluginUiDestinationBinding(entry.binding)
+        && asRecord(entry.renderer) !== null
+        && readSurfaceAvailability(entry.availability) !== null;
+}
+
+function isTranscriptActivity(entry: UnknownRecord): entry is PluginUiTranscriptActivityProjection {
+    const pluginId = readString(entry.pluginId);
+    const descriptorId = readString(entry.descriptorId);
+    if (
+        entry.contributionKind !== 'transcriptActivity'
+        || readString(entry.id) !== `transcriptActivity:${pluginId}:${descriptorId}`
+        || pluginId === null
+        || descriptorId === null
+    ) {
+        return false;
+    }
+    const resource = PluginContributionIdentityV1Schema.safeParse(entry.resource);
+    if (!resource.success || resource.data.pluginId !== pluginId) return false;
+    if (!Array.isArray(entry.actions)) return false;
+    return entry.actions.every((action) => {
+        const parsed = PluginContributionIdentityV1Schema.safeParse(action);
+        return parsed.success && parsed.data.pluginId === pluginId;
+    });
+}
+
+function normalizeComposerAttachmentEntriesById(
+    entriesById: Readonly<Record<string, PluginProjectedComposerAttachmentEntryV1>> | undefined,
+): Readonly<Record<string, PluginUiComposerAttachmentProjection>> {
+    const normalized: Record<string, PluginUiComposerAttachmentProjection> = {};
+    for (const [entryId, entry] of Object.entries(entriesById ?? {})) {
+        let valueValidator: PluginJsonSchemaValidator | null = null;
+        try {
+            valueValidator = compilePluginJsonSchema(entry.definition.valueSchema);
+        } catch {
+            // The daemon-admitted declaration remains available as a visible
+            // fallback, but a malformed static schema cannot make a persisted
+            // attachment sendable.
+        }
+        normalized[entryId] = Object.freeze({ ...entry, valueValidator });
+    }
+    return Object.freeze(normalized);
 }
 
 export function normalizePluginUiProjection(
@@ -260,6 +573,21 @@ export function normalizePluginUiProjection(
     if (!projection || projection.v !== 2) {
         return EMPTY_PLUGIN_UI_PROJECTION;
     }
+
+    const installedPackagesById = normalizeInstalledPackagesById(projection.installedPackagesById);
+    // The daemon Registry has already admitted, qualified, and generation-bound
+    // these static families. Preserve those exact maps through the one UI
+    // projection normalizer instead of reconstructing descriptors or creating
+    // a Composer-local catalog.
+    const composerAttachmentsById = normalizeComposerAttachmentEntriesById(
+        projection.familiesById.composerAttachments?.entriesById,
+    );
+    const composerControlsById = Object.freeze({
+        ...(projection.familiesById.composerControls?.entriesById ?? {}),
+    });
+    const composerRegionsById = Object.freeze({
+        ...(projection.familiesById.composerRegions?.entriesById ?? {}),
+    });
 
     const voiceProvidersById: Record<string, PluginVoiceProviderProjection> = {};
     const voiceProviderFamily = projection.familiesById.voiceProviders;
@@ -270,7 +598,7 @@ export function normalizePluginUiProjection(
             const id = readString(entry?.id);
             const contributionKey = readString(entry?.contributionKey);
             const generation = entry?.generation;
-            const definition = PluginVoiceProviderContributionV1Schema.safeParse(entry?.definition);
+            const definition = VoiceProviderContributionSchema.safeParse(entry?.definition);
             const recipientContract = entry?.recipientContract === undefined
                 ? null
                 : RecipientContractV1Schema.safeParse(entry.recipientContract);
@@ -313,6 +641,10 @@ export function normalizePluginUiProjection(
         return Object.freeze({
             ...EMPTY_PLUGIN_UI_PROJECTION,
             generation: projection.generation,
+            installedPackagesById,
+            composerAttachmentsById,
+            composerControlsById,
+            composerRegionsById,
             voiceProvidersById: Object.freeze(voiceProvidersById),
         });
     }
@@ -324,9 +656,10 @@ export function normalizePluginUiProjection(
     const hostedWebById: Record<string, PluginUiHostedWebProjection> = {};
     const reactNativeBundlesById: Record<string, PluginUiReactNativeBundleProjection> = {};
     const surfacePlacementsById: Record<string, PluginUiSurfacePlacementProjection> = {};
-    const surfacePlacementsByPlacement: Record<string, PluginUiSurfacePlacementProjection[]> = {};
-    const uiArtifactsById: Record<string, PluginUiArtifactProjection> = {};
-    const digestsByPluginId: Record<string, PluginUiDigestProjection> = {};
+    const openableContentViewersById: Record<string, PluginUiOpenableContentViewerProjection> = {};
+    const settingsGroupsById: Record<string, PluginUiSettingsGroupProjection> = {};
+    const settingsPagesById: Record<string, PluginUiSettingsPageProjection> = {};
+    const transcriptActivitiesById: Record<string, PluginUiTranscriptActivityProjection> = {};
     const unknownEntriesById: Record<string, UnknownRecord> = {};
 
     for (const rawEntry of Object.values(family.entriesById)) {
@@ -350,7 +683,7 @@ export function normalizePluginUiProjection(
             }
             addStructuredMessageToKindMap(structuredMessagesByKind, entry);
         } else if (isSessionHeaderAction(entry)) {
-            const action = resolveSessionHeaderAction(entry, projection);
+            const action = resolveSessionHeaderAction(entry);
             if (action) {
                 sessionHeaderActionsById[action.id] = action;
             }
@@ -361,26 +694,58 @@ export function normalizePluginUiProjection(
         } else if (isSurfacePlacement(entry)) {
             const availability = readSurfaceAvailability(entry.availability);
             if (availability) {
-                const placement = readString(entry.placement) ?? 'unknown';
+                const binding = entry.binding as PluginUiDestinationBindingV1;
                 const target = asRecord(entry.target) ?? {};
                 const renderer = asRecord(entry.renderer) ?? {};
                 const display = asRecord(entry.display) ?? {};
+                const runtime = asRecord(entry.runtime);
                 const rightSidebar = asRecord(entry.rightSidebar);
+                const headerActions = resolvePluginUiPageHeaderActions(entry.headerActions);
                 const normalized = Object.freeze({
                     ...entry,
+                    // Preserve the CLI-normalized object verbatim. No UI
+                    // parser, clone, or legacy placement reconstruction may
+                    // become a competing binding owner.
+                    binding,
                     target: Object.freeze({ ...target }),
                     renderer: Object.freeze({ ...renderer }),
                     display: Object.freeze({ ...display }),
+                    headerActions,
+                    ...(runtime ? { runtime } : {}),
                     ...(rightSidebar ? { rightSidebar: Object.freeze({ ...rightSidebar }) } : {}),
                     availability,
                 }) as PluginUiSurfacePlacementProjection;
                 surfacePlacementsById[entry.id] = normalized;
-                (surfacePlacementsByPlacement[placement] ??= []).push(normalized);
             }
-        } else if (isUiArtifact(entry)) {
-            uiArtifactsById[entry.id] = Object.freeze(entry);
-        } else if (isDigest(entry)) {
-            digestsByPluginId[entry.pluginId] = Object.freeze(entry);
+        } else if (entry.contributionKind === 'openableContentViewer') {
+            const viewer = resolveOpenableContentViewer(entry);
+            if (viewer) {
+                openableContentViewersById[viewer.id] = viewer;
+            }
+        } else if (isSettingsGroup(entry)) {
+            settingsGroupsById[entry.id] = Object.freeze({
+                ...entry,
+                group: Object.freeze({ ...(asRecord(entry.group) ?? {}) }),
+            }) as PluginUiSettingsGroupProjection;
+        } else if (isSettingsPage(entry)) {
+            const availability = readSurfaceAvailability(entry.availability);
+            if (availability) {
+                settingsPagesById[entry.id] = Object.freeze({
+                    ...entry,
+                    // The binding is Registry-normalized and must retain its
+                    // exact identity across catalog and route consumers.
+                    binding: entry.binding as PluginUiDestinationBindingV1,
+                    page: Object.freeze({ ...(asRecord(entry.page) ?? {}) }),
+                    renderer: Object.freeze({ ...(asRecord(entry.renderer) ?? {}) }),
+                    availability,
+                }) as PluginUiSettingsPageProjection;
+            }
+        } else if (isTranscriptActivity(entry)) {
+            transcriptActivitiesById[entry.id] = Object.freeze({
+                ...entry,
+                resource: Object.freeze({ ...entry.resource }),
+                actions: Object.freeze(entry.actions.map((action) => Object.freeze({ ...action }))),
+            });
         } else {
             const id = readString(entry.id);
             if (id !== null) {
@@ -389,31 +754,22 @@ export function normalizePluginUiProjection(
         }
     }
 
-    const frozenSurfacePlacementsByPlacement = Object.freeze(Object.fromEntries(
-        Object.entries(surfacePlacementsByPlacement).map(([placement, placements]) => [
-            placement,
-            Object.freeze([...placements].sort((left, right) => {
-                const leftOrder = typeof left.order === 'number' ? left.order : Number.MAX_SAFE_INTEGER;
-                const rightOrder = typeof right.order === 'number' ? right.order : Number.MAX_SAFE_INTEGER;
-                if (leftOrder !== rightOrder) {
-                    return leftOrder - rightOrder;
-                }
-                return left.id.localeCompare(right.id);
-            })),
-        ]),
-    ));
-
     return Object.freeze({
         generation: projection.generation,
+        installedPackagesById,
         translationsByPluginId: Object.freeze(translationsByPluginId),
         structuredMessagesByKind: Object.freeze(structuredMessagesByKind),
         sessionHeaderActionsById: Object.freeze(sessionHeaderActionsById),
         hostedWebById: Object.freeze(hostedWebById),
         reactNativeBundlesById: Object.freeze(reactNativeBundlesById),
         surfacePlacementsById: Object.freeze(surfacePlacementsById),
-        surfacePlacementsByPlacement: frozenSurfacePlacementsByPlacement,
-        uiArtifactsById: Object.freeze(uiArtifactsById),
-        digestsByPluginId: Object.freeze(digestsByPluginId),
+        openableContentViewersById: Object.freeze(openableContentViewersById),
+        settingsGroupsById: Object.freeze(settingsGroupsById),
+        settingsPagesById: Object.freeze(settingsPagesById),
+        transcriptActivitiesById: Object.freeze(transcriptActivitiesById),
+        composerAttachmentsById,
+        composerControlsById,
+        composerRegionsById,
         voiceProvidersById: Object.freeze(voiceProvidersById),
         unknownEntriesById: Object.freeze(unknownEntriesById),
     });
@@ -422,6 +778,7 @@ export function normalizePluginUiProjection(
 export function resolvePluginUiProjectionState(
     previous: PluginUiProjectionModel,
     projection: DaemonContributionRegistryProjection | null,
+    options?: Readonly<{ reuseSameGeneration?: boolean }>,
 ): PluginUiProjectionModel {
     if (projection === null) {
         return previous;
@@ -429,7 +786,11 @@ export function resolvePluginUiProjectionState(
     if (projection.v !== 2) {
         return EMPTY_PLUGIN_UI_PROJECTION;
     }
-    if (previous.generation !== null && projection.generation === previous.generation) {
+    if (
+        options?.reuseSameGeneration === true
+        && previous.generation !== null
+        && projection.generation === previous.generation
+    ) {
         return previous;
     }
     return normalizePluginUiProjection(projection);

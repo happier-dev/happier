@@ -1,6 +1,5 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -9,6 +8,7 @@ import { t } from '@/text';
 import type { BugReportSimilarIssue } from './bugReportServiceClient';
 import { bugReportComposerStyles } from './bugReportComposerStyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function BugReportSimilarIssuesSection(props: Readonly<{
   loading: boolean;
@@ -48,7 +48,7 @@ export function BugReportSimilarIssuesSection(props: Readonly<{
             <Text style={styles.similarIssueTitle}>{t('bugReports.composer.similarIssues.selectedTitle', { number: props.selectedIssueNumber })}</Text>
             <Text style={styles.helperText}>{t('bugReports.composer.similarIssues.selectedSubtitle')}</Text>
           </View>
-          <Ionicons name="close-circle" size={18} color={theme.colors.text.secondary} />
+          <Icon name="x-circle" size={16} color={theme.colors.text.secondary} />
         </Pressable>
       )}
 
@@ -67,7 +67,7 @@ export function BugReportSimilarIssuesSection(props: Readonly<{
                   <Text style={styles.similarIssueTitle}>{`#${issue.number} ${issue.title}`}</Text>
                   <Text style={styles.helperText}>{issue.state === 'open' ? t('bugReports.composer.similarIssues.issueState.open') : t('bugReports.composer.similarIssues.issueState.closed')}</Text>
                 </View>
-                <Ionicons name="arrow-forward-circle-outline" size={18} color={theme.colors.text.secondary} />
+                <Icon name="arrow-circle-right" size={16} color={theme.colors.text.secondary} />
               </Pressable>
             ))}
         </View>

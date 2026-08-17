@@ -214,6 +214,31 @@ describe('MultiTextInputHandle (web)', () => {
         return { ref, tree: tree!, mockTextarea };
     }
 
+    it('forwards the complete combobox relationship to the textarea', async () => {
+        const { MultiTextInput } = await import('../MultiTextInput.web');
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(MultiTextInput, {
+                value: '/help',
+                onChangeText: () => {},
+                accessibilityRole: 'combobox',
+                accessibilityState: { expanded: true },
+                'aria-haspopup': 'listbox',
+                'aria-autocomplete': 'list',
+                'aria-controls': 'composer-suggestions',
+                'aria-activedescendant': 'composer-suggestion-help',
+            }));
+        });
+
+        const textarea = tree.root.findByType('textarea');
+        expect(textarea.props.role).toBe('combobox');
+        expect(textarea.props['aria-expanded']).toBe(true);
+        expect(textarea.props['aria-haspopup']).toBe('listbox');
+        expect(textarea.props['aria-autocomplete']).toBe('list');
+        expect(textarea.props['aria-controls']).toBe('composer-suggestions');
+        expect(textarea.props['aria-activedescendant']).toBe('composer-suggestion-help');
+    });
+
     it('measureInWindow fires callback with 4 numeric arguments from getBoundingClientRect', async () => {
         const { ref, mockTextarea } = await renderWebWithHandle();
         expect(ref.current).toBeTruthy();

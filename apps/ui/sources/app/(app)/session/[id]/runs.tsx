@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
@@ -21,6 +20,7 @@ import { Text } from '@/components/ui/text/Text';
 import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 import { useSession } from '@/sync/domains/state/storage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 type LoadState =
@@ -165,7 +165,7 @@ function SessionRunsScreenContent(props: Readonly<{
                   hitSlop={10}
                   style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
                 >
-                  <Ionicons name={iconName as any} size={20} color={headerTint} />
+                  <Icon name={iconName as any} size={20} color={headerTint} />
                 </Pressable>
               );
             })}
@@ -178,7 +178,7 @@ function SessionRunsScreenContent(props: Readonly<{
           hitSlop={10}
           style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
         >
-          <Ionicons name="refresh" size={20} color={headerTint} />
+          <Icon name="arrow-clockwise" size={20} color={headerTint} />
         </Pressable>
       </View>
     );

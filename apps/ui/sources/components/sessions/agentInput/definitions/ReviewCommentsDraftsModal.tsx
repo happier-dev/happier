@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -16,6 +15,7 @@ import { formatReviewCommentAnchorLabel } from '@/sync/domains/input/reviewComme
 import { t } from '@/text';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function renderSnippetLines(params: {
     draftId: string;
@@ -132,7 +132,7 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
                                     testID={`review-comment-draft-include:${draft.id}`}
                                 >
                                     {included ? (
-                                        <Ionicons name="checkmark" size={14} color={theme.colors.button.primary.tint} />
+                                        <Icon name="check" size={14} color={theme.colors.button.primary.tint} />
                                     ) : null}
                                 </Pressable>
                                 <View style={styles.titleColumn}>
@@ -160,7 +160,7 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
                                     onPress={() => deleteDraft(draft.id)}
                                     testID={`review-comment-draft-delete:${draft.id}`}
                                 >
-                                    <Ionicons name="trash-outline" size={16} color={theme.colors.state.danger.foreground ?? theme.colors.text.secondary} />
+                                    <Icon name="trash" size={16} color={theme.colors.state.danger.foreground ?? theme.colors.text.secondary} />
                                 </Pressable>
                             </View>
 

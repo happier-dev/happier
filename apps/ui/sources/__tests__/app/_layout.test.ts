@@ -450,7 +450,7 @@ describe('RootLayout stack options', () => {
 
             const settingsScreen = tree.root
                 .findAllByType('StackScreen')
-                .find((node) => node.props?.name === 'settings');
+                .find((node) => node.props?.name === 'sliders-horizontal');
             expect(settingsScreen?.props?.options).toMatchObject({ presentation: 'modal' });
             expect(settingsScreen?.props?.options?.animation).toBeUndefined();
         } finally {

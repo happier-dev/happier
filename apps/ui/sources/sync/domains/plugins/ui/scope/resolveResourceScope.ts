@@ -8,8 +8,8 @@ import type { PluginSurfaceTargetKind } from '@/sync/domains/plugins/ui/surfaceP
  * Phase 1.2 — the canonical surface-target → resource-scope resolver.
  *
  * Replaces the three hardcoded `resourceScope: []` at the host/embedded/RN/
- * hosted-web mounts. A surface declares a `target` (`session`/`workspace`/
- * `project`/`app`/`browser`/`services`, from `surfaceTargets.ts`); this owner
+ * hosted-web mounts. A surface declares a `target` (`session`/`project`/`app`/
+ * `browser`/`services`, from `surfaceTargets.ts`); this owner
  * derives BOTH the `targetKind` and the `resourceScope` — the set of resource
  * targets the surface is permitted to `requestSessionResource`/`subscribeResource`
  * against. The same scope is used for ALL render modes (embedded/RN/hostedWeb/
@@ -19,19 +19,40 @@ import type { PluginSurfaceTargetKind } from '@/sync/domains/plugins/ui/surfaceP
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
-export type PluginSurfaceResourceScopeResolution = Readonly<{
-    targetKind: PluginSurfaceTargetKind;
-    resourceScope: readonly PluginSessionResourceTargetV1[];
-}>;
+/**
+ * Why a descriptor has no resolvable surface target. There is one reason because
+ * the host can do only one thing with either shape: a descriptor that names no
+ * `kind`, and one that names a `kind` this host does not implement, have both
+ * failed to DECLARE a target this host can bind — a different failure from the
+ * declared-but-unbindable identity reasons in `pluginSurfaceContext.ts`, and one
+ * the surface-placement projection normalizer (`projection.ts`, which already
+ * drops any entry whose `target` is not a record) should make unreachable.
+ */
+export type PluginSurfaceTargetUndeclaredReason = 'surface_target_undeclared';
 
-const SURFACE_TARGET_KINDS: ReadonlySet<PluginSurfaceTargetKind> = new Set<PluginSurfaceTargetKind>([
-    'session',
-    'workspace',
-    'project',
-    'app',
-    'browser',
-    'services',
-]);
+export type PluginSurfaceResourceScopeResolution =
+    | Readonly<{
+        declared: true;
+        targetKind: PluginSurfaceTargetKind;
+        resourceScope: readonly PluginSessionResourceTargetV1[];
+    }>
+    | Readonly<{ declared: false; reason: PluginSurfaceTargetUndeclaredReason }>;
+
+/**
+ * Closure-bound to the target vocabulary: the record below must name every member
+ * of `PluginSurfaceTargetKind` (itself derived from the protocol schema), so a kind
+ * added to the manifest contract fails to compile here rather than falling into a
+ * silent default.
+ */
+const SURFACE_TARGET_KINDS: ReadonlySet<PluginSurfaceTargetKind> = new Set(
+    Object.keys({
+        session: true,
+        project: true,
+        app: true,
+        browser: true,
+        services: true,
+    } satisfies Record<PluginSurfaceTargetKind, true>) as readonly PluginSurfaceTargetKind[],
+);
 
 function asRecord(value: unknown): UnknownRecord | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -61,10 +82,6 @@ function deriveResourceScope(
                 idPath ? { kind: 'session', idPath } : { kind: 'session' },
             ]);
         }
-        case 'workspace': {
-            const idPath = readPath(target, 'workspaceRefIdPath');
-            return idPath ? Object.freeze([{ kind: 'workspace', idPath }]) : Object.freeze([]);
-        }
         case 'project': {
             // A project surface reaches both its workspace ref and (optionally) its
             // owning session context.
@@ -85,7 +102,6 @@ function deriveResourceScope(
         }
         case 'browser':
         case 'app':
-        default:
             // App + browser surfaces have no derivable session-resource scope from
             // the surface target alone (browser scope is the browser-view, handled
             // by the browser host-action scope; app surfaces are global).
@@ -94,23 +110,28 @@ function deriveResourceScope(
 }
 
 /**
- * Resolve the `{ targetKind, resourceScope }` for a surface descriptor's declared
- * `target`. Fails closed to an `app`-scoped, empty-resource-scope resolution for
- * a missing/unknown target (the safe default — no session-resource reach).
+ * Resolve the `{ targetKind, resourceScope }` a surface descriptor's declared
+ * `target` allows.
+ *
+ * A missing or unrecognized `kind` resolves to `declared: false` — it is NOT read
+ * as `app`. `app` is a real, reachable public target: reporting it for a descriptor
+ * that never declared it would make a surface the host cannot place look exactly
+ * like a genuine global app surface, which is the same untruth §3.2 r0.9 removed
+ * from the identity-binding layer that consumes this value. The host withholds
+ * admission instead (see `PluginSurfaceHost`), and no resource scope is ever
+ * derived from an undeclared target.
  */
 export function resolveResourceScope(
     surfaceTarget: unknown,
 ): PluginSurfaceResourceScopeResolution {
     const target = asRecord(surfaceTarget);
     const rawKind = target && typeof target.kind === 'string' ? target.kind : null;
-    const targetKind: PluginSurfaceTargetKind =
-        rawKind && SURFACE_TARGET_KINDS.has(rawKind as PluginSurfaceTargetKind)
-            ? (rawKind as PluginSurfaceTargetKind)
-            : 'app';
-    if (!target || targetKind === 'app') {
-        return Object.freeze({ targetKind, resourceScope: Object.freeze([]) });
+    if (!target || !rawKind || !SURFACE_TARGET_KINDS.has(rawKind as PluginSurfaceTargetKind)) {
+        return Object.freeze({ declared: false as const, reason: 'surface_target_undeclared' as const });
     }
+    const targetKind = rawKind as PluginSurfaceTargetKind;
     return Object.freeze({
+        declared: true as const,
         targetKind,
         resourceScope: deriveResourceScope(targetKind, target),
     });

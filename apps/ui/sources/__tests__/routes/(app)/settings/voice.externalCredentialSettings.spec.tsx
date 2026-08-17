@@ -3,8 +3,8 @@ import { act } from 'react-test-renderer';
 import {
   PluginContributesV2Schema,
   createRecipientContractDigestV1,
-  createVoiceProviderRecipientContractV1,
-  type PluginVoiceProviderContributionV1,
+  createVoiceProviderRecipientContractFromCredentialsV1,
+  type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -119,7 +119,7 @@ vi.mock('@/voice/settings/voiceProviderLocalAvailability', async (importOriginal
 });
 
 function requireConversationDeclaration(
-  declaration: PluginVoiceProviderContributionV1,
+  declaration: VoiceProviderContribution,
 ) {
   if (declaration.kind !== 'conversation') throw new Error('expected conversation declaration');
   return declaration;
@@ -127,6 +127,7 @@ function requireConversationDeclaration(
 
 function createProviderLeaf() {
   return {
+    kind: 'conversation' as const,
     protocol: {
       async prepare() {
         return { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } };
@@ -153,7 +154,7 @@ function createProviderLeaf() {
     encodeToolContinuation: () => null,
     encodeContextUpdate: () => [],
     encodeTextTurn: () => [],
-    requiresMicForConnection: false,
+    microphoneMode: 'provider_managed' as const,
   };
 }
 
@@ -165,12 +166,22 @@ const declaration = requireConversationDeclaration(PluginContributesV2Schema.par
     roles: ['realtime_conversation'],
     platforms: ['web'],
     capabilities: {
-      readiness: { requirements: ['credential'] },
       turn: { cancelResponse: true, bargeIn: false },
     },
-    accountMediation: {
-      credentialSlots: [{ id: 'api_key', scope: 'account' }],
-      operations: [{
+    credentials: {
+      slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'API key' },
+      requirement: { kind: 'always' },
+      sources: [{
+        kind: 'savedSecret',
+        secretKinds: ['apiKey'],
+        operationProjections: [{
+          kind: 'recipientCredential',
+          operation: 'client-auth',
+          phase: 'prepare',
+          format: 'bearer',
+        }],
+      }],
+      hostMediated: { operations: [{
         id: 'client-auth',
         purpose: 'voice.client-auth',
         credentialSlotId: 'api_key',
@@ -192,7 +203,7 @@ const declaration = requireConversationDeclaration(PluginContributesV2Schema.par
           mapping: [],
         },
         response: { maxBytes: 64 * 1024, contentTypes: ['application/json'] },
-      }],
+      }] },
     },
     client: {
       artifactId: 'voice-runtime-web',
@@ -202,7 +213,7 @@ const declaration = requireConversationDeclaration(PluginContributesV2Schema.par
   }],
 }).voiceProviders[0]!);
 
-const recipientContract = createVoiceProviderRecipientContractV1({
+const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1({
   package: {
     pluginId: 'acme.voice',
     source: { kind: 'package', locator: 'acme.voice' },
@@ -215,7 +226,10 @@ const recipientContract = createVoiceProviderRecipientContractV1({
     pluginId: 'acme.voice',
     localId: declaration.id,
   },
-  accountMediation: declaration.accountMediation!,
+  credentials: {
+    slot: declaration.credentials!.slot,
+    hostMediated: declaration.credentials!.hostMediated!,
+  },
   presentation: { title: declaration.title },
 });
 const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
@@ -251,7 +265,7 @@ function setRouteSettings(input: Readonly<{
     voice: {
       providerId,
       providers: {
-        [providerId]: { schemaVersion: 1, config: { mode: 'default' } },
+        [providerId]: { schemaVersion: 1, config: {} },
       },
       credentialBindings: input.credentialBindings ?? [],
     },
@@ -270,14 +284,14 @@ describe('VoiceSettingsScreen external provider credentials', () => {
     await activateCredentialProvider();
     setRouteSettings({});
 
-    const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+    const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
     const screen = await renderSettingsView(<VoiceSettingsScreen />);
     await act(async () => undefined);
 
     const credential = screen.tree.findByType('VoiceCredentialItem' as never);
     expect(credential.props).toMatchObject({
       testID: 'settings.voice.externalCredential.acme.voice%2Fconversation.api_key',
-      providerId,
+      contribution: { pluginId: 'acme.voice', localId: 'conversation' },
       credentialSlotId: 'api_key',
       disclosePlainStorage: true,
     });
@@ -303,7 +317,9 @@ describe('VoiceSettingsScreen external provider credentials', () => {
     setRouteSettings({
       secrets: [accountSecret, machineSecret],
       credentialBindings: [{
-        providerId,
+        contribution: { pluginId: 'acme.voice', localId: 'conversation' },
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'savedSecret' },
         approvedRecipientContractDigest: recipientContractDigest,
         credentialBindings: {
           account: { api_key: 'account-secret' },
@@ -314,7 +330,7 @@ describe('VoiceSettingsScreen external provider credentials', () => {
       }],
     });
 
-    const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+    const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
     const screen = await renderSettingsView(<VoiceSettingsScreen />);
     const providerRowTestId = `settings.voice.provider.${encodeURIComponent(providerId)}.default`;
     expect(screen.findByTestId(providerRowTestId)?.props.detail)
@@ -323,7 +339,9 @@ describe('VoiceSettingsScreen external provider credentials', () => {
     setRouteSettings({
       secrets: [machineSecret],
       credentialBindings: [{
-        providerId,
+        contribution: { pluginId: 'acme.voice', localId: 'conversation' },
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'savedSecret' },
         approvedRecipientContractDigest: recipientContractDigest,
         credentialBindings: {
           byMachineId: {
@@ -344,51 +362,4 @@ describe('VoiceSettingsScreen external provider credentials', () => {
       .not.toHaveProperty('machineId');
   });
 
-  it('does not render a credential editor for a credential requirement without an exact slot declaration', async () => {
-    const { createExternalVoiceProviderActivationScope } = await import('@/voice/registry/externalVoiceProviderActivation');
-    const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
-    const undeclared = requireConversationDeclaration(PluginContributesV2Schema.parse({
-      voiceProviders: [{
-        ...declaration,
-        id: 'undeclared-credential',
-        capabilities: {
-          ...declaration.capabilities,
-          readiness: { requirements: ['credential'] },
-        },
-        accountMediation: undefined,
-      }],
-    }).voiceProviders[0]!);
-    const hostLease = createBundledConversationRuntimeHostLease();
-    const scope = createExternalVoiceProviderActivationScope({
-      pluginId: 'acme.undeclared-voice',
-      declarations: [undeclared],
-      hostPlatform: 'web',
-    });
-    onTestFinished(async () => {
-      await scope.unwind();
-      hostLease.revoke();
-    });
-    scope.api.voiceProviders.register(undeclared.id, createProviderLeaf());
-    await scope.commit();
-
-    const undeclaredProviderId = 'acme.undeclared-voice/undeclared-credential';
-    routeState.settings = settingsParse({
-      voice: {
-        providerId: undeclaredProviderId,
-        providers: {
-          [undeclaredProviderId]: { schemaVersion: 1, config: { mode: 'default' } },
-        },
-      },
-    });
-    routeState.voice = routeState.settings.voice;
-
-    const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
-    const screen = await renderSettingsView(<VoiceSettingsScreen />);
-    expect(screen.tree.findAllByType('VoiceCredentialItem' as never)).toHaveLength(0);
-    const providerDetail = screen.findByTestId(
-      `settings.voice.provider.${encodeURIComponent(undeclaredProviderId)}.default`,
-    )?.props.detail;
-    expect(providerDetail).toContain('settingsVoice.externalCredentials.unavailable');
-    expect(providerDetail).toContain('voice.readiness.credential_unknown');
-  });
 });

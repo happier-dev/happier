@@ -27,4 +27,27 @@ describe('nativePickFiles', () => {
 
         expect(picked).toEqual([{ kind: 'web', file }]);
     });
+
+    it('forwards a caller-scoped MIME picker filter without changing the generic-file default', async () => {
+        const DocumentPicker = await import('expo-document-picker');
+        vi.clearAllMocks();
+        (DocumentPicker.getDocumentAsync as any).mockResolvedValueOnce({ canceled: true });
+        (DocumentPicker.getDocumentAsync as any).mockResolvedValueOnce({ canceled: true });
+
+        const { nativePickFiles } = await import('./nativePickFiles');
+        await nativePickFiles({
+            multiple: false,
+            type: ['image/png', 'video/webm'],
+        });
+        await nativePickFiles({ multiple: false });
+
+        expect(DocumentPicker.getDocumentAsync).toHaveBeenNthCalledWith(1, {
+            multiple: false,
+            type: ['image/png', 'video/webm'],
+        });
+        expect(DocumentPicker.getDocumentAsync).toHaveBeenNthCalledWith(2, {
+            multiple: false,
+            type: '*/*',
+        });
+    });
 });

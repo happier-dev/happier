@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildExistingSessionAuthoringDraftFromSessionSnapshot } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { updateExistingSessionAutomationTemplateMessage } from './automationExistingSessionTemplateUpdate';
 import { sealAutomationTemplateForTransport } from './automationTemplateTransport';
+import { AutomationTemplateEncryptionMaterialUnavailableError } from './automationTemplateAvailability';
 
 describe('updateExistingSessionAutomationTemplateMessage', () => {
     it('decrypts, updates prompt/displayText, and reseals the envelope', async () => {
@@ -43,7 +44,7 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
         const envelope = JSON.parse(nextCiphertext);
         expect(envelope.kind).toBe('happier_automation_template_encrypted_v1');
         expect(envelope.payloadCiphertext).toBe('ciphertext-new');
-        expect(envelope.existingSessionId).toBe('s1');
+        expect(envelope).not.toHaveProperty('existingSessionId');
 
         expect(encryptedPayloads).toHaveLength(1);
         expect(encryptedPayloads[0]).toEqual(
@@ -84,7 +85,26 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
         const envelope = JSON.parse(nextCiphertext);
         expect(envelope.kind).toBe('happier_automation_template_plain_v1');
         expect(envelope.payload).toEqual(expect.objectContaining({ prompt: 'New message', displayText: 'New message', existingSessionId: 's1' }));
-        expect(envelope.existingSessionId).toBe('s1');
+        expect(envelope).not.toHaveProperty('existingSessionId');
+    });
+
+    it('fails closed when an encrypted template is edited without account encryption material', async () => {
+        const originalCiphertext = await sealAutomationTemplateForTransport({
+            template: {
+                directory: '/tmp/project',
+                prompt: 'Old',
+                displayText: 'Old',
+                existingSessionId: 's1',
+                sessionEncryptionKeyBase64: 'dek',
+                sessionEncryptionVariant: 'dataKey',
+            },
+            encryptRaw: async () => 'ciphertext-old',
+        });
+
+        await expect(updateExistingSessionAutomationTemplateMessage({
+            templateCiphertext: originalCiphertext,
+            message: 'New message',
+        })).rejects.toBeInstanceOf(AutomationTemplateEncryptionMaterialUnavailableError);
     });
 
     it('backfills missing inherited session runtime fields when a fallback draft is provided', async () => {
@@ -149,7 +169,7 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
 
         const envelope = JSON.parse(nextCiphertext);
         expect(envelope.kind).toBe('happier_automation_template_encrypted_v1');
-        expect(envelope.existingSessionId).toBe('s1');
+        expect(envelope).not.toHaveProperty('existingSessionId');
         expect(encryptedPayloads).toHaveLength(1);
         expect(encryptedPayloads[0]).toEqual(expect.objectContaining({
             prompt: 'New message',

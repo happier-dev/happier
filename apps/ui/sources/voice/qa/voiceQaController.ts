@@ -11,6 +11,7 @@ import {
 } from '@/voice/binding/sendVoiceSessionComposerText';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import type { VoiceAgentSendTurnOptions } from '@/voice/agent/types';
+import type { DaemonSpeechStreamQaRouteRequirement } from '@/voice/runtime/daemonInference/daemonSpeechStreamQaRouteRequirement';
 
 import { formatVoiceQaErrorMessage } from './formatVoiceQaErrorMessage';
 import { createDefaultVoiceQaControllerDeps } from './voiceQaRuntimeDeps';
@@ -74,6 +75,10 @@ export type VoiceQaControllerDeps = Readonly<{
     }> | null;
   }>) => Promise<string | null>;
   /** Dev-route media QA delegates to the same lifecycle owner as VoiceSurface. */
+  installMediaTransportRouteRequirement?: (input: Readonly<{
+    sessionId: string;
+    routeKind: DaemonSpeechStreamQaRouteRequirement;
+  }>) => () => void;
   startMedia?: (sessionId: string) => Promise<void>;
   stopMedia?: (sessionId: string, adapterId: string | null) => Promise<void>;
   getMediaSnapshot?: () => VoiceSessionSnapshot;
@@ -82,16 +87,30 @@ export type VoiceQaControllerDeps = Readonly<{
 
 export type VoiceQaStartMode = 'text' | 'media';
 
+type VoiceQaStartParams = Readonly<{
+  sessionId?: string | null;
+  initialContext?: string | null;
+  mode?: VoiceQaStartMode;
+  transportRouteRequirement?: DaemonSpeechStreamQaRouteRequirement;
+}>;
+
+type VoiceQaStartResult = Readonly<{
+  provider: ReturnType<typeof resolveConfiguredVoiceQaProvider>;
+  sessionId: string;
+}>;
+
 export function createVoiceQaController(
   deps: VoiceQaControllerDeps = createDefaultVoiceQaControllerDeps(),
 ) {
-  let activeMediaSession: Readonly<{ sessionId: string; adapterId: string | null }> | null = null;
+  let activeMediaSession: Readonly<{
+    provider: VoiceQaStartResult['provider'];
+    sessionId: string;
+    adapterId: string | null;
+    releaseTransportRouteRequirement: (() => void) | null;
+  }> | null = null;
+  let activeMediaStart: Promise<VoiceQaStartResult> | null = null;
 
-  const start = async (params?: Readonly<{
-    sessionId?: string | null;
-    initialContext?: string | null;
-    mode?: VoiceQaStartMode;
-  }>) => {
+  const startAttempt = async (params?: VoiceQaStartParams): Promise<VoiceQaStartResult> => {
     const settings = deps.getSettings();
     const provider = resolveConfiguredVoiceQaProvider(settings);
     const targetSessionId = resolveEffectiveVoiceQaSessionId(params?.sessionId, deps.getVoiceTargetState);
@@ -99,11 +118,21 @@ export function createVoiceQaController(
     beginVoiceQaRun(deps.qaStore, provider, controlSessionId);
     deps.qaStore.getState().setResolvedSessions({ targetSessionId, runtimeSessionId: null });
     deps.qaStore.getState().appendSystem(`Starting ${provider} QA session for ${formatVoiceQaTargetLabel(targetSessionId, settings)}`);
+    let pendingMediaTransportRouteRelease: (() => void) | null = null;
 
     try {
       if (params?.mode === 'media') {
         if (!deps.startMedia || !deps.stopMedia || !deps.getMediaSnapshot) {
           throw new Error('voice_qa_media_mode_unavailable');
+        }
+        if (params.transportRouteRequirement) {
+          if (!deps.installMediaTransportRouteRequirement) {
+            throw new Error('voice_qa_media_transport_route_requirement_unavailable');
+          }
+          pendingMediaTransportRouteRelease = deps.installMediaTransportRouteRequirement({
+            sessionId: targetSessionId,
+            routeKind: params.transportRouteRequirement,
+          });
         }
 
         await deps.startMedia(targetSessionId);
@@ -122,9 +151,12 @@ export function createVoiceQaController(
         }
 
         activeMediaSession = {
+          provider,
           sessionId: snapshot.sessionId,
           adapterId: snapshot.adapterId,
+          releaseTransportRouteRequirement: pendingMediaTransportRouteRelease,
         };
+        pendingMediaTransportRouteRelease = null;
         deps.qaStore.getState().setResolvedSessions({
           targetSessionId,
           runtimeSessionId: snapshot.sessionId,
@@ -227,11 +259,39 @@ export function createVoiceQaController(
       deps.qaStore.getState().setStatus('running');
       return { provider, sessionId: targetSessionId };
     } catch (error) {
+      pendingMediaTransportRouteRelease?.();
       const message = formatVoiceQaErrorMessage(error, 'voice_qa_start_failed');
       deps.qaStore.getState().setStatus('error');
       deps.qaStore.getState().appendError(message);
       throw error;
     }
+  };
+
+  const start = (params?: VoiceQaStartParams): Promise<VoiceQaStartResult> => {
+    if (params?.mode !== 'media') {
+      return startAttempt(params);
+    }
+    if (activeMediaSession) {
+      return Promise.resolve({
+        provider: activeMediaSession.provider,
+        sessionId: activeMediaSession.sessionId,
+      });
+    }
+    if (activeMediaStart) {
+      return activeMediaStart;
+    }
+
+    const mediaStart = startAttempt(params);
+    activeMediaStart = mediaStart;
+    void mediaStart.then(
+      () => {
+        if (activeMediaStart === mediaStart) activeMediaStart = null;
+      },
+      () => {
+        if (activeMediaStart === mediaStart) activeMediaStart = null;
+      },
+    );
+    return mediaStart;
   };
 
   const sendPrompt = async (params: Readonly<{ prompt: string; sessionId?: string | null; autoStart?: boolean }>) => {
@@ -290,7 +350,7 @@ export function createVoiceQaController(
             conversationSessionId,
             text: prompt,
             pendingPort: deps.pendingPort,
-            dispatch: async ({ localId }) => {
+            dispatch: async ({ localId, onAccepted }) => {
               try {
                 result = await runVoiceAgentTurnWithTools({
                   sessionId: runtimeSessionId,
@@ -303,6 +363,7 @@ export function createVoiceQaController(
                       : {}),
                     sendTurn: deps.sendLocalTurn,
                   },
+                  onUserTranscriptAccepted: onAccepted,
                   onAssistantTurn: async ({ assistantText }) => {
                     deps.qaStore.getState().appendAssistant(assistantText);
                     if (normalizeVoiceQaText(assistantText)) appendedAssistantTurn = true;
@@ -339,10 +400,10 @@ export function createVoiceQaController(
           if (interruptedFollowUpText) {
             return { assistantText: interruptedFollowUpText, actions: [] };
           }
-          if (durableResult.disposition === 'settled') {
-            return { assistantText: '', actions: [] };
-          }
-          if (durableResult.disposition !== 'handoff_acknowledged' || result === null) {
+          if (result === null) {
+            if (durableResult.disposition === 'settled') {
+              return { assistantText: '', actions: [] };
+            }
             throw new Error(
               durableResult.disposition === 'ambiguous'
                 ? 'voice_turn_dispatch_ambiguous'
@@ -468,8 +529,12 @@ export function createVoiceQaController(
         if (!deps.stopMedia) {
           throw new Error('voice_qa_media_mode_unavailable');
         }
-        await deps.stopMedia(mediaSession.sessionId, mediaSession.adapterId);
-        activeMediaSession = null;
+        try {
+          await deps.stopMedia(mediaSession.sessionId, mediaSession.adapterId);
+        } finally {
+          mediaSession.releaseTransportRouteRequirement?.();
+          activeMediaSession = null;
+        }
         deps.qaStore.getState().appendSystem('Stopped media QA session');
         deps.qaStore.getState().setStatus('idle');
         return;

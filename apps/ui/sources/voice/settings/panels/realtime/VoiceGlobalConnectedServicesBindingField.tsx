@@ -67,6 +67,8 @@ function VoiceGlobalConnectedServicesPicker(props: PickerProps) {
     bindingsByServiceId={bindingsByServiceId}
     setBindingForService={setBindingForService}
     defaultProfileIdByServiceId={props.defaultProfileIdByServiceId}
+    includeNativeAuthOption={false}
+    allowDefaultProfileFallback={false}
     onOpenSettings={props.onOpenSettings}
     requestClose={props.onClose}
     maxHeight={PICKER_MAX_HEIGHT}

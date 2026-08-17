@@ -11,6 +11,22 @@ import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 installUiListsCommonModuleMocks();
 
+/**
+ * `installUiListsCommonModuleMocks()` registers its `react-native` mock from
+ * inside a function, so it is NOT hoisted above this file's imports. Anything
+ * already evaluated by those imports — `@/components/ui/text/Text` reaches the
+ * shared `@happier-dev/plugin-ui` presentation layer — therefore binds the
+ * setup-level stub (`Platform.OS === 'node'`) while this file's own modules see
+ * the web mock. A shared component that branches on the platform then renders
+ * its NATIVE variant inside a web test. This hoisted declaration pins one
+ * react-native for the whole graph; it is redundant with the helper's default
+ * and deliberately identical to it.
+ */
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
 vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
     normalizeNodeForView: (node: unknown) => node,
 }));
@@ -186,5 +202,26 @@ describe('Item web testID forwarding', () => {
         expect(row?.props['aria-disabled']).toBe(true);
         expect(row?.props.onPress).toBeUndefined();
         expect(row?.props.tabIndex).toBe(-1);
+    });
+
+    it('exposes loading on the row while keeping its visual spinner out of accessibility traversal', async () => {
+        const { Item } = await import('./Item');
+        const screen = await renderScreen(
+            <Item
+                testID="external-session-pending"
+                title="Importing session"
+                loading
+                onPress={() => {}}
+            />,
+        );
+
+        const row = screen.findByTestId('external-session-pending');
+        expect(row?.props.accessibilityState).toEqual({ disabled: true, busy: true });
+
+        const spinners = row?.findAll((node) => node.props.accessibilityRole === 'progressbar') ?? [];
+        expect(spinners).toHaveLength(1);
+        expect(spinners[0]?.props['aria-hidden']).toBe(true);
+        expect(spinners[0]?.props.accessibilityElementsHidden).toBe(true);
+        expect(spinners[0]?.props.importantForAccessibility).toBe('no-hide-descendants');
     });
 });

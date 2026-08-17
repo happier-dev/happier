@@ -1,4 +1,5 @@
 import { findActiveWord } from './findActiveWord';
+import type { ComposerSuggestionKindId } from './composerSuggestionGrammar';
 
 interface Selection {
     start: number;
@@ -6,40 +7,40 @@ interface Selection {
 }
 
 /**
- * Applies a suggestion by replacing the active word with the provided suggestion text
+ * Replaces the active suggestion token with the selected suggestion text.
+ *
  * @param content The full text content
  * @param selection The current cursor position/selection
- * @param suggestion The suggestion text to insert (e.g., "@john_smith")
- * @param prefixes Array of prefix characters to look for (e.g., ['@', ':', '/'])
+ * @param suggestion The token to insert, already formatted by the producing kind
+ * @param kinds The host's eligible suggestion kinds (never raw trigger characters)
  * @param addSpace Whether to add a space after the suggestion (default: true)
- * @returns An object containing the new text and cursor position
  */
 export function applySuggestion(
     content: string,
     selection: Selection,
     suggestion: string,
-    prefixes: string[] = ['@', ':', '/'],
+    kinds: readonly ComposerSuggestionKindId[],
     addSpace: boolean = true
 ): { text: string; cursorPosition: number } {
     // Find the active word at the current position
-    const activeWord = findActiveWord(content, selection, prefixes);
-    
+    const activeWord = findActiveWord(content, selection, kinds);
+
     if (!activeWord) {
         // No active word found, just insert the suggestion at cursor position
         const beforeCursor = content.substring(0, selection.start);
         const afterCursor = content.substring(selection.end);
         const suggestionWithSpace = addSpace ? suggestion + ' ' : suggestion;
-        
+
         return {
             text: beforeCursor + suggestionWithSpace + afterCursor,
             cursorPosition: selection.start + suggestionWithSpace.length
         };
     }
-    
+
     // Replace the complete word (from offset to endOffset) with the suggestion
     const beforeWord = content.substring(0, activeWord.offset);
     const afterWord = content.substring(activeWord.endOffset);
-    
+
     // Add space after suggestion if requested
     let suggestionToInsert = suggestion;
     if (addSpace) {
@@ -50,10 +51,10 @@ export function applySuggestion(
             suggestionToInsert += ' ';
         }
     }
-    
+
     const newText = beforeWord + suggestionToInsert + afterWord;
     const newCursorPosition = activeWord.offset + suggestionToInsert.length;
-    
+
     return {
         text: newText,
         cursorPosition: newCursorPosition

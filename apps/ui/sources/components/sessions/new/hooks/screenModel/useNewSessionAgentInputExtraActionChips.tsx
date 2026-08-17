@@ -6,6 +6,7 @@ import {
     getNewSessionAgentInputExtraActionChips,
 } from '@/agents/catalog/catalog';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import type { PluginEventAutomationComposerModel } from '@/components/automations/editor/usePluginEventAutomationComposer';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createAutomationToggleActionChip } from '@/components/sessions/agentInput/definitions/createAutomationToggleActionChip';
 import { createServerActionChip } from '@/components/sessions/agentInput/definitions/createServerActionChip';
@@ -25,6 +26,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     automationDraft: NewSessionAutomationDraft;
     automationLabel: string;
     onAutomationChange: (next: NewSessionAutomationDraft) => void;
+    eventComposer?: PluginEventAutomationComposerModel | null;
     checkoutActionChip?: AgentInputExtraActionChip | null;
     showServerPickerChip: boolean;
     targetServerId: string | null;
@@ -63,8 +65,9 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
             label: params.automationLabel,
             value: params.automationDraft,
             onChange: params.onAutomationChange,
+            eventComposer: params.eventComposer,
         });
-    }, [params.automationDraft, params.automationLabel, params.onAutomationChange]);
+    }, [params.automationDraft, params.automationLabel, params.eventComposer, params.onAutomationChange]);
 
     const storageActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!params.externalSessionsFeatureEnabled || !params.supportsDirectTranscriptStorage) return null;

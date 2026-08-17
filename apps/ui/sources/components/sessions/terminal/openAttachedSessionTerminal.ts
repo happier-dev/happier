@@ -4,7 +4,7 @@ import { isAttachedSessionTerminalAvailableForSession } from '@/agents/registry/
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
-import { useMachine, useSession } from '@/sync/domains/state/storage';
+import { getStorage, useMachine } from '@/sync/domains/state/storage';
 
 import { openEmbeddedTerminalInDockLocation } from './embeddedTerminalDocking';
 import { setSessionTerminalMode } from './sessionTerminalMode';
@@ -25,17 +25,23 @@ export function useOpenAttachedSessionTerminal(sessionId: string | null): Readon
     const normalizedSessionId = sessionId?.trim() ?? '';
     const pane = useAppPaneScope(`session:${normalizedSessionId}`);
     const cockpitChrome = useSessionCockpitChromeRegistration();
-    const session = useSession(normalizedSessionId);
+    // Subscription width: this hook feeds `SessionHeaderRightElement`, whose
+    // `onSelectExtraItem` identity gates `SessionHeaderActionMenu`'s comparator. Subscribing
+    // to the whole `Session` record re-rendered the header chrome on every turn-lifecycle
+    // field a send touches (thinking, agentState, agentStateVersion, updatedAt, seq), none of
+    // which can change attachability. Select the decision itself, not the record.
+    const sessionAttachability = getStorage()((state): 'missing_session' | 'session_not_attachable' | null => {
+        if (!normalizedSessionId) return 'missing_session';
+        const session = state.sessions[normalizedSessionId];
+        if (!session) return 'missing_session';
+        return isAttachedSessionTerminalAvailableForSession(session) ? null : 'session_not_attachable';
+    });
     const machineTarget = useSessionMachineTarget(normalizedSessionId);
     const machine = useMachine(machineTarget?.machineId ?? '');
     const terminalAvailability = useSessionTerminalAvailability();
-    const unavailableReason: AttachedSessionTerminalUnavailableReason | null = !normalizedSessionId
-        ? 'missing_session'
-        : !session
-            ? 'missing_session'
-            : !isAttachedSessionTerminalAvailableForSession(session)
-                ? 'session_not_attachable'
-                : !machineTarget
+    const unavailableReason: AttachedSessionTerminalUnavailableReason | null = sessionAttachability !== null
+        ? sessionAttachability
+        : !machineTarget
                     ? 'missing_machine'
                     : !terminalAvailability.terminalEnabled
                         ? 'terminal_disabled'

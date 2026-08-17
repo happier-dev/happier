@@ -6,43 +6,45 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
-const cacheIdentity = {
-    pluginId: 'acme.preview',
-    contributionId: 'native-preview',
+const token = {
+    mount: {
+        kind: 'destination',
+        destination: {
+            pluginId: 'acme.preview',
+            localId: 'preview-destination',
+        },
+    },
+    renderer: {
+        pluginId: 'acme.preview',
+        localId: 'native-preview',
+    },
     artifactDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    hostAppVersion: '2.0.0',
-    hostUiApiVersion: '1.0.0',
-    reactVersion: '19.2.0',
-    reactNativeVersion: '0.83.4',
-    platform: 'ios',
-    channel: 'internal',
-    nativeCapabilitiesDigest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-    projectionGeneration: 12,
+    crashStateEpoch: 4,
 } as const;
 
-describe('React Native crash-disable report machine RPC client', () => {
-    it('sends typed crash-disable reports to the owning daemon', async () => {
+describe('React Native crash-state machine RPC client', () => {
+    it('sends one exact failure occurrence to the daemon and returns its current binding state', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             protocolVersion: 1,
             ok: true,
-            contributionKey: 'acme.preview:native-preview',
-            disabled: true,
+            token,
+            disabled: false,
         });
-        const { reportReactNativeCrashDisableViaMachineRpc } = await import('./reactNativeCrashReports');
+        const { submitReactNativeCrashReportViaMachineRpc } = await import('./reactNativeCrashReports');
 
-        await expect(reportReactNativeCrashDisableViaMachineRpc({
+        await expect(submitReactNativeCrashReportViaMachineRpc({
             machineId: 'machine-1',
             serverId: 'server-1',
-            surfaceId: 'surface_1',
-            cacheIdentity,
-            disabledReason: 'render_error_threshold',
-            crashCount: 2,
-            startupFailureCount: 0,
-            observedAtMs: 1_000,
-            diagnostics: ['threshold_reached'],
+            report: {
+                kind: 'reportFailure',
+                token,
+                failureOccurrenceId: '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+                failure: 'render_error',
+            },
         })).resolves.toEqual({
             ok: true,
-            disabled: true,
+            token,
+            disabled: false,
         });
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
@@ -53,32 +55,45 @@ describe('React Native crash-disable report machine RPC client', () => {
                 protocolVersion: 1,
                 machineId: 'machine-1',
                 report: {
-                    surfaceId: 'surface_1',
-                    cacheIdentity,
-                    disabledReason: 'render_error_threshold',
-                    crashCount: 2,
-                    startupFailureCount: 0,
-                    observedAtMs: 1_000,
-                    diagnostics: ['threshold_reached'],
+                    kind: 'reportFailure',
+                    token,
+                    failureOccurrenceId: '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+                    failure: 'render_error',
                 },
             },
         });
     });
 
-    it('returns unavailable when the daemon does not support crash reports yet', async () => {
+    it('preserves the exact binding token for an explicit daemon reset', async () => {
+        const resetToken = { ...token, crashStateEpoch: 5 } as const;
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            protocolVersion: 1,
+            ok: true,
+            token: resetToken,
+            disabled: false,
+        });
+        const { submitReactNativeCrashReportViaMachineRpc } = await import('./reactNativeCrashReports');
+
+        await expect(submitReactNativeCrashReportViaMachineRpc({
+            machineId: 'machine-1',
+            report: { kind: 'reset', token },
+        })).resolves.toEqual({
+            ok: true,
+            token: resetToken,
+            disabled: false,
+        });
+    });
+
+    it('returns unavailable when the daemon does not support crash reports', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             errorCode: 'RPC_METHOD_NOT_FOUND',
             error: 'Method not found',
         });
-        const { reportReactNativeCrashDisableViaMachineRpc } = await import('./reactNativeCrashReports');
+        const { submitReactNativeCrashReportViaMachineRpc } = await import('./reactNativeCrashReports');
 
-        await expect(reportReactNativeCrashDisableViaMachineRpc({
+        await expect(submitReactNativeCrashReportViaMachineRpc({
             machineId: 'machine-1',
-            surfaceId: 'surface_1',
-            cacheIdentity,
-            disabledReason: 'startup_ack_timeout_threshold',
-            crashCount: 0,
-            startupFailureCount: 1,
+            report: { kind: 'reset', token },
         })).resolves.toEqual({
             ok: false,
             reason: 'unavailable',

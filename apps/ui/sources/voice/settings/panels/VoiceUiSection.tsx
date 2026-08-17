@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -9,10 +8,21 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
+/**
+ * Presentational only.
+ *
+ * `voice`/`setVoice` carry the **synced** Voice settings; `voiceOrbEnabled`/`setVoiceOrbEnabled`
+ * carry a **device-local** preference. The section renders both and owns neither — the Voice
+ * settings route reads MMKV through `useLocalSettingMutable` and hands the pair down. Reading
+ * storage here would put a second owner behind the same switch.
+ */
 export function VoiceUiSection(props: {
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
+  voiceOrbEnabled: boolean;
+  setVoiceOrbEnabled: (next: boolean) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
 }) {
   const { theme } = useUnistyles();
@@ -45,6 +55,7 @@ export function VoiceUiSection(props: {
         <Item
           title={t('settingsVoice.ui.activityFeedEnabled')}
           subtitle={t('settingsVoice.ui.activityFeedEnabledSubtitle')}
+          subtitleLines={0}
           rightElement={
             <Switch
               testID="settings.voice.ui.activityFeedEnabled"
@@ -59,6 +70,7 @@ export function VoiceUiSection(props: {
           <Item
             title={t('settingsVoice.ui.activityFeedAutoExpandOnStart')}
             subtitle={t('settingsVoice.ui.activityFeedAutoExpandOnStartSubtitle')}
+            subtitleLines={0}
             rightElement={
               <Switch
                 accessibilityLabel={t('settingsVoice.ui.activityFeedAutoExpandOnStart')}
@@ -68,6 +80,20 @@ export function VoiceUiSection(props: {
             }
           />
         ) : null}
+
+        <Item
+          title={t('settingsVoice.ui.orbEnabled')}
+          subtitle={t('settingsVoice.ui.orbEnabledSubtitle')}
+          subtitleLines={0}
+          rightElement={
+            <Switch
+              testID="settings.voice.ui.orbEnabled"
+              accessibilityLabel={t('settingsVoice.ui.orbEnabled')}
+              value={props.voiceOrbEnabled}
+              onValueChange={props.setVoiceOrbEnabled}
+            />
+          }
+        />
 
         <DropdownMenu
           open={openMenu === 'scopeDefault'}
@@ -84,6 +110,7 @@ export function VoiceUiSection(props: {
             title: t('settingsVoice.ui.scopeTitle'),
             subtitle: t('settingsVoice.ui.scopeSubtitle'),
             showSelectedSubtitle: false,
+            itemProps: { subtitleLines: 0 },
           }}
           items={[
             {
@@ -92,7 +119,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.scopeGlobalSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="globe-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="globe" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -102,7 +129,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.scopeSessionSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="file-text" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -129,6 +156,7 @@ export function VoiceUiSection(props: {
             title: t('settingsVoice.ui.surfaceLocationTitle'),
             subtitle: t('settingsVoice.ui.surfaceLocationSubtitle'),
             showSelectedSubtitle: false,
+            itemProps: { subtitleLines: 0 },
           }}
           items={[
             {
@@ -138,7 +166,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.surfaceLocation.autoSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="sparkle" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -149,7 +177,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.surfaceLocation.sidebarSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="albums-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="stack" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -160,7 +188,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.surfaceLocation.sessionSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="chatbubble-ellipses-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="chat-circle-dots" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -188,6 +216,7 @@ export function VoiceUiSection(props: {
             title: t('settingsVoice.ui.updates.activeSessionTitle'),
             subtitle: t('settingsVoice.ui.updates.activeSessionSubtitle'),
             showSelectedSubtitle: false,
+            itemProps: { subtitleLines: 0 },
           }}
           items={[
             {
@@ -196,7 +225,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.noneSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="remove-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="minus" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -206,7 +235,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.activitySubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="flash-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="lightning" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -216,7 +245,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.summariesSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="document-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="file" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -226,7 +255,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.snippetsSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="code-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="code" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -252,6 +281,7 @@ export function VoiceUiSection(props: {
             title: t('settingsVoice.ui.updates.otherSessionsTitle'),
             subtitle: t('settingsVoice.ui.updates.otherSessionsSubtitle'),
             showSelectedSubtitle: false,
+            itemProps: { subtitleLines: 0 },
           }}
           items={[
             {
@@ -260,7 +290,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.noneSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="remove-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="minus" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -270,7 +300,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.activitySubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="flash-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="lightning" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -280,7 +310,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.summariesSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="document-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="file" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -290,7 +320,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.snippetsSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="code-outline" size={22} color={theme.colors.text.secondary} />
+                  <Icon name="code" size={20} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -318,6 +348,7 @@ export function VoiceUiSection(props: {
                 title: t('settingsVoice.ui.updates.snippetsMaxMessagesTitle'),
                 subtitle: t('settingsVoice.ui.updates.snippetsMaxMessagesSubtitle'),
                 showSelectedSubtitle: false,
+                itemProps: { subtitleLines: 0 },
               }}
               items={Array.from({ length: 10 }, (_, idx) => {
                 const n = idx + 1;
@@ -327,7 +358,7 @@ export function VoiceUiSection(props: {
                   subtitle: undefined,
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="list-outline" size={22} color={theme.colors.text.secondary} />
+                      <Icon name="list" size={20} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 };
@@ -343,6 +374,7 @@ export function VoiceUiSection(props: {
             <Item
               title={t('settingsVoice.ui.updates.includeUserMessagesInSnippetsTitle')}
               subtitle={t('settingsVoice.ui.updates.includeUserMessagesInSnippetsSubtitle')}
+              subtitleLines={0}
               rightElement={
                 <Switch
                   accessibilityLabel={t('settingsVoice.ui.updates.includeUserMessagesInSnippetsTitle')}
@@ -371,6 +403,7 @@ export function VoiceUiSection(props: {
                 title: t('settingsVoice.ui.updates.otherSessionsSnippetsModeTitle'),
                 subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsModeSubtitle'),
                 showSelectedSubtitle: false,
+                itemProps: { subtitleLines: 0 },
               }}
               items={[
                 {
@@ -379,7 +412,7 @@ export function VoiceUiSection(props: {
                   subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.neverSubtitle'),
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="remove-outline" size={22} color={theme.colors.text.secondary} />
+                      <Icon name="minus" size={20} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 },
@@ -389,7 +422,7 @@ export function VoiceUiSection(props: {
                   subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.onDemandSubtitle'),
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="hand-left-outline" size={22} color={theme.colors.text.secondary} />
+                      <Icon name="hand" size={20} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 },
@@ -399,7 +432,7 @@ export function VoiceUiSection(props: {
                   subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.autoSubtitle'),
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />
+                      <Icon name="sparkle" size={20} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 },

@@ -1,7 +1,7 @@
 import type { TodoState } from '@/sync/domains/todos/todoOps';
 
 import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
-import type { Automation, AutomationRun } from '../domains/automations/automationTypes';
+import type { AutomationDefinition, AutomationDefinitionRun } from '../domains/automations/automationTypes';
 import type { FeedItem } from '../domains/social/feedTypes';
 import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
@@ -30,8 +30,6 @@ import type {
     EndpointConnectivitySnapshot,
     EndpointConnectivityStatus,
     NativeUpdateStatus,
-    RealtimeMode,
-    RealtimeStatus,
     SocketStatus,
     SyncError,
 } from './domains/realtime';
@@ -41,6 +39,8 @@ import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import type { WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 import type { SessionOrganizationDomain } from './domains/sessionOrganization';
 import type { SessionListRenderableDelta } from './domains/sessionListIndexFinalization';
+import type { SessionTranscriptLoadIssue } from './domains/transcriptLoading';
+import type { SessionComposerTextMutationToken } from '../domains/input/draftValues/sessionDraftValueStore';
 
 export type KnownEntitlements = 'voice' | 'pro';
 export type SessionModelMode = NonNullable<Session['modelMode']>;
@@ -74,6 +74,13 @@ export interface ProfileDomainSlice {
 export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
+    /**
+     * Ids this viewer has watched be deleted. Neither session map can answer "does this session
+     * exist" — both are list-scoped caches that an ordinary refresh evicts from — so anything
+     * holding a durable pointer to a session reads this rather than inferring gone-ness from a
+     * cache miss. Written only by `deleteSession`. See `SessionsDomain` for the full note.
+     */
+    deletedSessionIds: Record<string, true>;
     sessionListRenderableDelta: SessionListRenderableDelta;
     sessionListRowStateByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
@@ -106,7 +113,11 @@ export interface SessionsDomainSlice {
     getWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => string[];
     setWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
     clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => void;
-    updateSessionDraft: (sessionId: string, draft: string | null) => void;
+    updateSessionDraft: (
+        sessionId: string,
+        draft: string | null,
+        options?: Readonly<{ composerTextMutationToken?: SessionComposerTextMutationToken }>,
+    ) => void;
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     setSessionReviewCommentDraftIncluded: (sessionId: string, commentId: string, included: boolean) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
@@ -130,6 +141,7 @@ export interface SessionsDomainSlice {
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionResuming: (sessionId: string) => void;
+    armSessionResumingFallback: (sessionId: string) => void;
     clearSessionResuming: (sessionId: string) => void;
     clearSessionThinkingGrace: (sessionId: string) => void;
     applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
@@ -155,6 +167,7 @@ export interface MachinesDomainSlice {
 export interface MessagesDomainSlice {
     sessionMessages: Record<string, SessionMessages>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
+    replaceSessionMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
     applyMessagesLoaded: (sessionId: string) => void;
     evictSessionMessages: (sessionId: string) => void;
     resetSessionMessages: (sessionId: string) => void;
@@ -178,16 +191,17 @@ export interface PendingDomainSlice {
 export interface TranscriptLoadingDomainSlice {
     sessionCatchUpNewerInFlight: Record<string, number>;
     sessionTailContiguousFloorSeq: Record<string, number>;
+    sessionTranscriptLoadIssues: Record<string, SessionTranscriptLoadIssue>;
     isSessionCatchingUpNewer: (sessionId: string) => boolean;
     beginSessionCatchUpNewer: (sessionId: string) => void;
     endSessionCatchUpNewer: (sessionId: string) => void;
     getSessionTailContiguousFloorSeq: (sessionId: string) => number | null;
     setSessionTailContiguousFloorSeq: (sessionId: string, floorSeq: number | null) => void;
+    getSessionTranscriptLoadIssue: (sessionId: string) => SessionTranscriptLoadIssue | null;
+    setSessionTranscriptLoadIssue: (sessionId: string, issue: SessionTranscriptLoadIssue | null) => void;
 }
 
 export interface RealtimeDomainSlice {
-    realtimeStatus: RealtimeStatus;
-    realtimeMode: RealtimeMode;
     socketStatus: SocketStatus;
     socketLastConnectedAt: number | null;
     socketLastDisconnectedAt: number | null;
@@ -205,9 +219,6 @@ export interface RealtimeDomainSlice {
     endpointLastErrorMessage: string | null;
     isDataReady: boolean;
     nativeUpdateStatus: NativeUpdateStatus;
-    setRealtimeStatus: (status: RealtimeStatus) => void;
-    setRealtimeMode: (mode: RealtimeMode, immediate?: boolean) => void;
-    clearRealtimeModeDebounce: () => void;
     setSocketStatus: (status: SocketStatus) => void;
     setSocketError: (message: string | null) => void;
     setSyncError: (error: SyncError) => void;
@@ -235,13 +246,20 @@ export interface ArtifactsDomainSlice {
 }
 
 export interface AutomationsDomainSlice {
-    automations: Record<string, Automation>;
-    automationRunsByAutomationId: Record<string, AutomationRun[]>;
-    applyAutomations: (automations: Automation[]) => void;
-    upsertAutomation: (automation: Automation) => void;
+    automations: Record<string, AutomationDefinition>;
+    automationRunsByAutomationId: Record<string, AutomationDefinitionRun[]>;
+    automationRunNextCursorByAutomationId: Record<string, string | null>;
+    applyAutomations: (automations: AutomationDefinition[]) => void;
+    upsertAutomation: (automation: AutomationDefinition) => void;
     removeAutomation: (automationId: string) => void;
-    setAutomationRuns: (automationId: string, runs: AutomationRun[]) => void;
-    upsertAutomationRun: (run: AutomationRun) => void;
+    setAutomationRuns: (automationId: string, runs: AutomationDefinitionRun[], nextCursor: string | null) => void;
+    appendAutomationRuns: (
+        automationId: string,
+        expectedCursor: string,
+        runs: AutomationDefinitionRun[],
+        nextCursor: string | null,
+    ) => void;
+    upsertAutomationRun: (run: AutomationDefinitionRun) => void;
 }
 
 export interface PetsDomainSlice {

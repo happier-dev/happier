@@ -725,6 +725,14 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         };
     }, [estimatedItemSize, jumpToMessageId, loadOlder]);
 
+    // Stable identity is load-bearing, not hygiene: `useLegendHeldIntent` derives
+    // `resolveHeldIntentIndex`/`resolveAnchorHoldDataIndex` -> `readHeldIntentLanding` ->
+    // `requestHeldIntentSettle` from it, and the renderer's dataset layout effect depends on that
+    // chain. An inline arrow advanced a movement epoch and re-opened a full 1500 ms held-intent
+    // settle window on EVERY re-render of this transcript, including ones that changed no row. The
+    // main transcript already passes a stable one (`useTranscriptItemsPipeline`, `TranscriptList`).
+    const keyExtractor = React.useCallback((item: ChainTranscriptListItem) => item.id, []);
+
     const renderItem = React.useCallback(({ item }: { item: ChainTranscriptListItem }) => {
         if (item.kind === 'tool-group-header') {
             const headerGroupId = item.groupId;
@@ -886,7 +894,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                     data={renderedItems}
                     dataKey={datasetKey}
                     extraData={transcriptMessageSelection.selectionVersion}
-                    keyExtractor={(item: ChainTranscriptListItem) => item.id}
+                    keyExtractor={keyExtractor}
                     renderItem={renderItem}
                     frame={shellFrame}
                     webDomObservation={webDomObservation}

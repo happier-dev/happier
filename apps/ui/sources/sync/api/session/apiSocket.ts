@@ -41,6 +41,14 @@ import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUr
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 import { isSocketIoAckTimeoutError, raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
 import { registerExternalSessionStatusDemandTransport } from '@/sync/runtime/orchestration/externalSessions/externalSessionStatusDemandCoordinator';
+import {
+    createSocketRpcAbortError,
+    createSocketRpcRequestId,
+    issueSocketRpcCallWithCancellation,
+} from '@/sync/runtime/socketRpcCallCancellation';
+import {
+    requireCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
 
 const STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS =
     process.env.EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS;
@@ -70,6 +78,19 @@ function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | '
         if (!row || typeof row !== 'object') return null;
         if (row.encryptionMode === 'plain') return 'plain';
         if (row.encryptionMode === 'e2ee') return 'e2ee';
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function readMachineStorageModeFromLocalState(machineId: string): 'plain' | 'e2ee' | null {
+    const normalizedMachineId = String(machineId ?? '').trim();
+    if (!normalizedMachineId) return null;
+    try {
+        const row = storage.getState().machines[normalizedMachineId] ?? null;
+        if (row?.storageMode === 'plain') return 'plain';
+        if (row?.storageMode === 'e2ee') return 'e2ee';
         return null;
     } catch {
         return null;
@@ -150,12 +171,14 @@ function getGlobalInFlightHttpRequestsByKey(): Map<string, Promise<Response>> {
 function buildSocketRpcCallPayload(params: Readonly<{
     method: string;
     payload: unknown;
-    timeoutMs?: number;
+    timeoutMs?: number | null;
+    requestId?: string;
     authorization?: SocketRpcAuthorizationContext;
 }>): Readonly<{
     method: string;
     params: unknown;
     timeoutMs?: number;
+    requestId?: string;
     authorization?: SocketRpcAuthorizationContext;
 }> {
     if (typeof params.timeoutMs === 'number' && params.timeoutMs > 0) {
@@ -163,12 +186,14 @@ function buildSocketRpcCallPayload(params: Readonly<{
             method: params.method,
             params: params.payload,
             timeoutMs: params.timeoutMs,
+            ...(params.requestId ? { requestId: params.requestId } : {}),
             ...(params.authorization ? { authorization: params.authorization } : {}),
         };
     }
     return {
         method: params.method,
         params: params.payload,
+        ...(params.requestId ? { requestId: params.requestId } : {}),
         ...(params.authorization ? { authorization: params.authorization } : {}),
     };
 }
@@ -239,7 +264,7 @@ class ApiSocket {
     // Initialization
     //
 
-    initialize(config: SyncSocketConfig, encryption: Encryption) {
+    initialize(config: SyncSocketConfig, encryption: Encryption | null) {
         this.config = config;
         this.encryption = encryption;
         this.connect();
@@ -297,6 +322,17 @@ class ApiSocket {
         void transport?.disconnect({ intentional: true });
         void transport?.destroy();
         this.socket = null;
+        // Unsubscribing above means the supervisor's own teardown state can no longer reach our listeners, so the
+        // last state we published would stay `online` for the whole background window. Consumers would then read
+        // "endpoint online, socket down" on resume and surface it as a server outage. A diagnosed problem
+        // (offline / auth_failed) is left untouched: an intentional teardown must not erase it either.
+        if (this.currentConnectionState.phase === 'online' || this.currentConnectionState.phase === 'connecting') {
+            this.applyManagedConnectionState({
+                ...this.currentConnectionState,
+                phase: 'shutting_down',
+                lastDisconnectedAt: Date.now(),
+            });
+        }
         this.updateStatus('disconnected');
     }
 
@@ -372,8 +408,9 @@ class ApiSocket {
         sessionId: string,
         method: string,
         params: A,
-        options?: { timeoutMs?: number; onIssued?: () => void },
+        options?: { timeoutMs?: number | null; onIssued?: () => void; signal?: AbortSignal },
     ): Promise<R> {
+        if (options?.signal?.aborted) throw createSocketRpcAbortError();
         const sessionEncryptionMode = readSessionEncryptionModeFromLocalState(sessionId);
         const usePlaintextParams = sessionEncryptionMode === 'plain';
         const sessionEncryption = usePlaintextParams ? null : this.encryption?.getSessionEncryption(sessionId);
@@ -392,14 +429,19 @@ class ApiSocket {
             if (!sessionEncryption) throw new Error(`Session encryption not found for ${sessionId}`);
             encryptedParams = await sessionEncryption.encryptRaw(params);
         }
+        const requestId = options?.signal ? createSocketRpcRequestId() : undefined;
         const result: any = await this.emitWithAck(
             SOCKET_RPC_EVENTS.CALL,
             buildSocketRpcCallPayload({
                 method: `${sessionId}:${method}`,
                 payload: encryptedParams,
                 timeoutMs: options?.timeoutMs,
+                requestId,
             }),
-            options,
+            {
+                ...options,
+                ...(requestId ? { cancelRequestId: requestId } : {}),
+            },
         );
         if (scmDebug) {
             const rawResult = result?.result;
@@ -442,7 +484,7 @@ class ApiSocket {
     }
 
     /**
-     * RPC call for machines - uses legacy/global encryption (for now)
+     * RPC call for machines using the Machine's persisted content mode.
      */
     async machineRPC<R, A>(
         machineId: string,
@@ -452,30 +494,45 @@ class ApiSocket {
             timeoutMs?: number;
             authorization?: SocketRpcAuthorizationContext;
             onIssued?: () => void;
+            signal?: AbortSignal;
         },
     ): Promise<R> {
-        const encryption = this.encryption;
-        if (!encryption) {
-            throw new Error(`Machine encryption not found for ${machineId}`);
+        if (options?.signal?.aborted) throw createSocketRpcAbortError();
+        const usePlaintextParams =
+            readMachineStorageModeFromLocalState(machineId) === 'plain';
+        if (usePlaintextParams) {
+            await requireCurrentAccountStoredContentServerCompatibility();
         }
-        const machineEncryption = encryption.getMachineEncryption(machineId);
-        if (!machineEncryption) {
+        const machineEncryption = usePlaintextParams
+            ? null
+            : this.encryption?.getMachineEncryption(machineId) ?? null;
+        if (!usePlaintextParams && !machineEncryption) {
             throw new Error(`Machine encryption not found for ${machineId}`);
         }
 
+        const encodedParams = usePlaintextParams
+            ? params
+            : await machineEncryption!.encryptRaw(params);
+        const requestId = options?.signal ? createSocketRpcRequestId() : undefined;
         const result: any = await this.emitWithAck(
             SOCKET_RPC_EVENTS.CALL,
             buildSocketRpcCallPayload({
                 method: `${machineId}:${method}`,
-                payload: await machineEncryption.encryptRaw(params),
+                payload: encodedParams,
                 timeoutMs: options?.timeoutMs,
+                requestId,
                 authorization: options?.authorization,
             }),
-            options,
+            {
+                ...options,
+                ...(requestId ? { cancelRequestId: requestId } : {}),
+            },
         );
 
         if (result.ok) {
-            return await machineEncryption.decryptRaw(result.result) as R;
+            return usePlaintextParams
+                ? result.result as R
+                : await machineEncryption!.decryptRaw(result.result) as R;
         }
         throw createRpcCallError({
             error: typeof result.error === 'string' ? result.error : 'RPC call failed',
@@ -550,25 +607,40 @@ class ApiSocket {
     async emitWithAck<T = any>(
         event: string,
         data: any,
-        opts?: { timeoutMs?: number; onIssued?: () => void },
+        opts?: {
+            timeoutMs?: number | null;
+            onIssued?: () => void;
+            signal?: AbortSignal;
+            cancelRequestId?: string;
+        },
     ): Promise<T> {
         if (this.currentConnectionState.phase === 'auth_failed') {
             throw createNotAuthenticatedError();
         }
-        if (!this.socket) {
+        const socket = this.socket;
+        if (!socket) {
             throw new Error('Socket not connected');
         }
-        if (this.socket.connected === false) {
+        if (socket.connected === false) {
             throw new Error('Socket not connected');
         }
         const timeoutMs = opts?.timeoutMs;
         try {
             const socketEmission = typeof timeoutMs === 'number' && timeoutMs > 0
-                ? this.socket.timeout(timeoutMs)
-                : this.socket;
-            opts?.onIssued?.();
-            const ackPromise = socketEmission.emitWithAck(event, data) as Promise<T>;
-            return await raceSocketIoAckTimeout(ackPromise, timeoutMs);
+                ? socket.timeout(timeoutMs)
+                : socket;
+            return await issueSocketRpcCallWithCancellation({
+                signal: opts?.signal,
+                requestId: opts?.cancelRequestId,
+                onIssued: opts?.onIssued,
+                issue: async () => await raceSocketIoAckTimeout(
+                    socketEmission.emitWithAck(event, data) as Promise<T>,
+                    timeoutMs ?? undefined,
+                ),
+                emitCancel: (requestId) => {
+                    socket.emit(SOCKET_RPC_EVENTS.CANCEL, { requestId });
+                },
+            });
         } catch (error) {
             throw await this.coerceAckTimeoutAuthError(error);
         }
@@ -859,10 +931,30 @@ class ApiSocket {
         const method = typeof request?.method === 'string' ? request.method : '';
         const separatorIndex = method.indexOf(':');
         const machineId = separatorIndex > 0 ? method.slice(0, separatorIndex) : '';
-        const machineEncryption = machineId
+        const usePlaintextParams =
+            readMachineStorageModeFromLocalState(machineId) === 'plain';
+        if (usePlaintextParams) {
+            try {
+                await requireCurrentAccountStoredContentServerCompatibility();
+            } catch (error) {
+                return {
+                    error: error instanceof Error
+                        ? error.message
+                        : 'Client upgrade required',
+                    errorCode:
+                        error
+                        && typeof error === 'object'
+                        && typeof (error as { code?: unknown }).code === 'string'
+                            ? (error as { code: string }).code
+                            : 'client-upgrade-required',
+                    retryable: false,
+                };
+            }
+        }
+        const machineEncryption = machineId && !usePlaintextParams
             ? this.encryption?.getMachineEncryption(machineId) ?? null
             : null;
-        if (!machineEncryption) {
+        if (!usePlaintextParams && !machineEncryption) {
             // Cannot speak the machine-scoped e2ee envelope — fail closed. The daemon cannot decrypt
             // this non-encrypted body and treats it as an unavailable UI.
             return { error: 'Machine encryption not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
@@ -870,25 +962,38 @@ class ApiSocket {
 
         const handler = this.inboundMachineRpcHandlers.get(method);
         if (!handler) {
-            return await machineEncryption.encryptRaw({
+            const response = {
                 error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND,
                 errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
-            });
+            };
+            return usePlaintextParams
+                ? response
+                : await machineEncryption!.encryptRaw(response);
         }
 
         try {
-            const decryptedParams = typeof request.params === 'string'
-                ? await machineEncryption.decryptRaw(request.params)
-                : null;
+            const decryptedParams = usePlaintextParams
+                ? request.params
+                : typeof request.params === 'string'
+                    ? await machineEncryption!.decryptRaw(request.params)
+                    : null;
             if (decryptedParams === null) {
-                return await machineEncryption.encryptRaw({ error: 'Invalid RPC params' });
+                const response = { error: 'Invalid RPC params' };
+                return usePlaintextParams
+                    ? response
+                    : await machineEncryption!.encryptRaw(response);
             }
             const result = await handler(decryptedParams);
-            return await machineEncryption.encryptRaw(result);
+            return usePlaintextParams
+                ? result
+                : await machineEncryption!.encryptRaw(result);
         } catch (error) {
-            return await machineEncryption.encryptRaw({
+            const response = {
                 error: error instanceof Error ? error.message : 'Unknown error',
-            });
+            };
+            return usePlaintextParams
+                ? response
+                : await machineEncryption!.encryptRaw(response);
         }
     }
 

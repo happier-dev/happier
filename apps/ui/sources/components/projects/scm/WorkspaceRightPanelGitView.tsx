@@ -138,7 +138,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         if (snapshot.capabilities?.writeRemoteFetch === true) {
             actions.push({
                 key: 'fetch',
-                iconName: 'sync',
+                iconName: 'arrows-clockwise',
                 label: t('files.sourceControlOperations.actions.fetch'),
                 disabled: scmOperationBusy,
                 onPress: () => {

@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
@@ -8,6 +7,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type {
+    AgentInputExtraActionPresentation,
     AgentInputExtraActionChip,
     AgentInputExtraActionChipRenderContext,
 } from '@/components/sessions/agentInput/agentInputContracts';
@@ -18,6 +18,8 @@ import {
     type BrowserContextState,
 } from '@/sync/domains/browser/context';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_OPTION_ICON_SIZE_PX, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 
 function resolveContextTitle(item: BrowserContextItemV1 | undefined): string {
     if (item?.kind !== 'browserPageReference') {
@@ -67,37 +69,41 @@ export function createBrowserContextActionChip(params: Readonly<{
     onAttachPageReference?: () => void;
     onRemoveAttachment?: (attachmentId: string) => void;
     disabledReason?: string | null;
-}>): AgentInputExtraActionChip {
+}>): AgentInputExtraActionPresentation {
     const attachments = selectBrowserContextComposerAttachments(params.state);
     const disabled = Boolean(params.disabledReason) || !params.onAttachPageReference;
     const label = disabled
         ? t('browserContext.composer.contextUnavailable')
         : t('browserContext.composer.attachPageReference');
-    const icon = (tint: string, size = 16) =>
-        normalizeNodeForView(<Ionicons name="globe-outline" size={size} color={tint} />);
+    // Honours its own size argument: this helper feeds three surfaces (badge, collapsed menu, and the
+    // chip itself), which do not share a size.
+    const icon = (tint: string, size: number = AGENT_INPUT_MENU_ICON_SIZE_PX) =>
+        normalizeNodeForView(<Icon name="globe" size={size} color={tint} />);
 
-    return {
+    const attachmentRowItem = attachments.length > 0 ? {
+        kind: 'badge' as const,
+        key: 'browser-context',
+        label: resolveBadgeLabel({
+            attachments,
+            itemsById: params.state.itemsById,
+        }),
+        testID: 'agent-input-browser-context-attachment-badge',
+        accessibilityLabel: resolveBadgeLabel({
+            attachments,
+            itemsById: params.state.itemsById,
+        }),
+        icon: (tint: string) => icon(tint, AGENT_INPUT_CHIP_OPTION_ICON_SIZE_PX),
+        onRemove: params.onRemoveAttachment ? () => {
+            for (const attachment of attachments) {
+                params.onRemoveAttachment?.(attachment.attachmentId);
+            }
+        } : undefined,
+        removeAccessibilityLabel: t('browserContext.composer.removeAttachedContext'),
+    } : undefined;
+
+    const actionChip: AgentInputExtraActionChip = {
         key: 'browser-context',
         controlId: 'shortcuts',
-        composerAttachmentBadge: attachments.length > 0 ? {
-            key: 'browser-context',
-            label: resolveBadgeLabel({
-                attachments,
-                itemsById: params.state.itemsById,
-            }),
-            testID: 'agent-input-browser-context-attachment-badge',
-            accessibilityLabel: resolveBadgeLabel({
-                attachments,
-                itemsById: params.state.itemsById,
-            }),
-            icon: (tint) => icon(tint, 14),
-            onRemove: params.onRemoveAttachment ? () => {
-                for (const attachment of attachments) {
-                    params.onRemoveAttachment?.(attachment.attachmentId);
-                }
-            } : undefined,
-            removeAccessibilityLabel: t('browserContext.composer.removeAttachedContext'),
-        } : undefined,
         collapsedAction: ({ tint, dismiss }) => ({
             id: 'browser-context',
             label,
@@ -123,7 +129,7 @@ export function createBrowserContextActionChip(params: Readonly<{
                 style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    {icon(ctx.iconColor, 16)}
+                    {icon(ctx.iconColor, AGENT_INPUT_CHIP_ICON_SIZE_PX)}
                     {ctx.showLabel ? (
                         <Text numberOfLines={1} style={ctx.textStyle}>
                             {label}
@@ -133,4 +139,6 @@ export function createBrowserContextActionChip(params: Readonly<{
             </Pressable>
         ),
     };
+
+    return { actionChip, attachmentRowItem };
 }

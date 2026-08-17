@@ -20,10 +20,13 @@ const routerMocks = vi.hoisted(() => ({
     back: vi.fn(),
 }));
 
-const loginMock = vi.hoisted(() => vi.fn());
-const loginWithCredentialsMock = vi.hoisted(() => vi.fn());
+const loginMock = vi.hoisted(() =>
+    vi.fn(async () => ({ kind: 'completed' as const })),
+);
+const loginWithCredentialsMock = vi.hoisted(() =>
+    vi.fn(async () => ({ kind: 'completed' as const })),
+);
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const buildDataKeyCredentialsForTokenMock = vi.hoisted(() => vi.fn(async (token: string) => ({ token, secret: 'secret' })));
 const serverRuntimeState = vi.hoisted(() => ({
     serverUrl: null as string | null,
 }));
@@ -98,9 +101,10 @@ const authEntryOptionsState = vi.hoisted(() => ({
         providerKeylessTitle: '',
         anonymousSignupTitle: '',
         mtlsTitle: '',
-        primarySignupTitle: '',
+        primaryAction: null,
         mtlsPrimary: false,
         keylessPrimary: false,
+        retentionSummary: null as string | null,
         autoRedirect: {
             enabled: false,
             providerId: null,
@@ -166,10 +170,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
         login: loginMock,
         loginWithCredentials: loginWithCredentialsMock,
     }),
-}));
-
-vi.mock('@/auth/flows/buildDataKeyCredentialsForToken', () => ({
-    buildDataKeyCredentialsForToken: (token: string) => buildDataKeyCredentialsForTokenMock(token),
 }));
 
 vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
@@ -329,9 +329,10 @@ describe('PreAuthOnboardingWizardEntry', () => {
             providerKeylessTitle: '',
             anonymousSignupTitle: '',
             mtlsTitle: '',
-            primarySignupTitle: '',
+            primaryAction: null,
             mtlsPrimary: false,
             keylessPrimary: false,
+            retentionSummary: null,
             autoRedirect: {
                 enabled: false,
                 providerId: null,
@@ -343,9 +344,12 @@ describe('PreAuthOnboardingWizardEntry', () => {
             retryServerCheck: () => {},
         };
         loginMock.mockReset();
+        loginMock.mockResolvedValue({ kind: 'completed' });
         loginWithCredentialsMock.mockReset();
+        loginWithCredentialsMock.mockResolvedValue({
+            kind: 'completed',
+        });
         runtimeFetchMock.mockReset();
-        buildDataKeyCredentialsForTokenMock.mockClear();
         applyBrandHeroSeenMock.mockReset();
         onboardingTourFeatureState.state = 'disabled';
         onboardingTourFeatureState.calls = [];
@@ -417,13 +421,20 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(screen.findByType('OnboardingWizardSurfacePresentation' as never)).toBeTruthy();
     });
 
-    it('renders only a neutral hold surface while the onboardingTour decision is resolving', async () => {
+    it('renders an accessible progress status while the onboardingTour decision is resolving', async () => {
         onboardingTourFeatureState.state = null;
 
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
-        expect(screen.findByTestId('onboarding-journey-loading')).toBeTruthy();
+        const loadingSurface = screen.findByTestId('onboarding-journey-loading');
+        expect(loadingSurface?.props.accessibilityRole).toBe('progressbar');
+        expect(loadingSurface?.props.accessibilityLabel).toBeTruthy();
+        expect(loadingSurface?.props.accessibilityLiveRegion).toBe('polite');
+        expect(loadingSurface?.props.role).toBe('status');
+        expect(loadingSurface?.props['aria-live']).toBe('polite');
+        expect(screen.findByTestId('onboarding-journey-loading-spinner')).toBeTruthy();
+        expect(screen.findByTestId('onboarding-journey-loading-label')).toBeTruthy();
         expect(screen.findAllByType('UnauthenticatedSplitShell' as never)).toHaveLength(0);
         expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(0);
         expect(journeyHostState.moduleLoads).toBe(0);
@@ -470,6 +481,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
 
     it('renders the lazy journey host as the unauth shell replacement when onboardingTour is enabled', async () => {
         onboardingTourFeatureState.state = 'enabled';
+        authEntryOptionsState.current.retentionSummary = 'This relay cleans up subagent transcripts after 7 days.';
 
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
@@ -481,6 +493,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         expect(journeyHostState.lastProps).toMatchObject({
             isDesktopShell: false,
             surface: 'web',
+            retentionSummary: 'This relay cleans up subagent transcripts after 7 days.',
             preAuthController: wizardControllerMock.current,
         });
     });
@@ -695,8 +708,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
             method: 'POST',
             signal: expect.any(AbortSignal),
         });
-        expect(buildDataKeyCredentialsForTokenMock).toHaveBeenCalledWith('mtls-token');
-        expect(loginWithCredentialsMock).toHaveBeenCalledWith({ token: 'mtls-token', secret: 'secret' });
+        expect(loginWithCredentialsMock).toHaveBeenCalledWith({ token: 'mtls-token' });
     });
 
     it('auto-starts web mtls login when auth auto-redirect targets mtls', async () => {
@@ -725,7 +737,6 @@ describe('PreAuthOnboardingWizardEntry', () => {
             method: 'POST',
             signal: expect.any(AbortSignal),
         });
-        expect(buildDataKeyCredentialsForTokenMock).toHaveBeenCalledWith('mtls-token');
-        expect(loginWithCredentialsMock).toHaveBeenCalledWith({ token: 'mtls-token', secret: 'secret' });
+        expect(loginWithCredentialsMock).toHaveBeenCalledWith({ token: 'mtls-token' });
     });
 });

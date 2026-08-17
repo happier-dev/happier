@@ -1,17 +1,17 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 
 export type HeaderTitleWithActionProps = {
     title: string;
     tintColor?: string;
     actionLabel: string;
-    actionIconName: React.ComponentProps<typeof Ionicons>['name'];
+    actionIconName: IconName;
     actionColor?: string;
     actionDisabled?: boolean;
     actionLoading?: boolean;
@@ -43,7 +43,7 @@ export const HeaderTitleWithAction = React.memo((props: HeaderTitleWithActionPro
             >
                 {props.actionLoading === true
                     ? <ActivitySpinner size="small" color={resolvedActionColor} />
-                    : <Ionicons name={props.actionIconName} size={18} color={resolvedActionColor} />}
+                    : <Icon name={props.actionIconName} size={16} color={resolvedActionColor} />}
             </Pressable>
         </View>
     );

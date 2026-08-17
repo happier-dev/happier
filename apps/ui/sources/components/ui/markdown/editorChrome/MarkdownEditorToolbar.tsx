@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
@@ -8,6 +7,7 @@ import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/Keyboard
 import { Text } from '@/components/ui/text/Text';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import type {
     MarkdownEditorCommand,
     MarkdownEditorController,
@@ -46,7 +46,7 @@ export type MarkdownEditorToolbarProps = Readonly<{
     testID?: string;
 }>;
 
-type OcticonName = React.ComponentProps<typeof Octicons>['name'];
+type OcticonName = IconName;
 
 const DEFAULT_SELECTION_STATE: MarkdownSelectionState = {
     marks: { bold: false, italic: false, strike: false, code: false },
@@ -77,7 +77,7 @@ function buildChipSpecs(): ToolbarChipSpec[] {
     return [
         {
             id: 'heading1',
-            icon: 'heading',
+            icon: 'text-h',
             label: t('markdownEditorToolbar.heading1'),
             command: { kind: 'setHeading', level: 1 },
             isActive: (s) => s.blockType === 'heading1',
@@ -85,7 +85,7 @@ function buildChipSpecs(): ToolbarChipSpec[] {
         },
         {
             id: 'heading2',
-            icon: 'heading',
+            icon: 'text-h',
             label: t('markdownEditorToolbar.heading2'),
             command: { kind: 'setHeading', level: 2 },
             isActive: (s) => s.blockType === 'heading2',
@@ -93,7 +93,7 @@ function buildChipSpecs(): ToolbarChipSpec[] {
         },
         {
             id: 'heading3',
-            icon: 'heading',
+            icon: 'text-h',
             label: t('markdownEditorToolbar.heading3'),
             command: { kind: 'setHeading', level: 3 },
             isActive: (s) => s.blockType === 'heading3',
@@ -101,21 +101,21 @@ function buildChipSpecs(): ToolbarChipSpec[] {
         },
         {
             id: 'bold',
-            icon: 'bold',
+            icon: 'text-b',
             label: t('markdownEditorToolbar.bold'),
             command: { kind: 'toggleBold' },
             isActive: (s) => s.marks.bold,
         },
         {
             id: 'italic',
-            icon: 'italic',
+            icon: 'text-italic',
             label: t('markdownEditorToolbar.italic'),
             command: { kind: 'toggleItalic' },
             isActive: (s) => s.marks.italic,
         },
         {
             id: 'strike',
-            icon: 'strikethrough',
+            icon: 'text-strikethrough',
             label: t('markdownEditorToolbar.strikethrough'),
             command: { kind: 'toggleStrike' },
             isActive: (s) => s.marks.strike,
@@ -129,28 +129,28 @@ function buildChipSpecs(): ToolbarChipSpec[] {
         },
         {
             id: 'bulletList',
-            icon: 'list-unordered',
+            icon: 'list-bullets',
             label: t('markdownEditorToolbar.bulletList'),
             command: { kind: 'toggleBulletList' },
             isActive: (s) => s.blockType === 'bulletList',
         },
         {
             id: 'orderedList',
-            icon: 'list-ordered',
+            icon: 'list-numbers',
             label: t('markdownEditorToolbar.orderedList'),
             command: { kind: 'toggleOrderedList' },
             isActive: (s) => s.blockType === 'orderedList',
         },
         {
             id: 'taskList',
-            icon: 'tasklist',
+            icon: 'list-checks',
             label: t('markdownEditorToolbar.taskList'),
             command: { kind: 'toggleTaskList' },
             isActive: (s) => s.blockType === 'taskList',
         },
         {
             id: 'blockquote',
-            icon: 'quote',
+            icon: 'quotes',
             label: t('markdownEditorToolbar.blockquote'),
             command: { kind: 'toggleBlockquote' },
             isActive: (s) => s.blockType === 'blockquote',
@@ -164,7 +164,7 @@ function buildChipSpecs(): ToolbarChipSpec[] {
         },
         {
             id: 'horizontalRule',
-            icon: 'horizontal-rule',
+            icon: 'minus',
             label: t('markdownEditorToolbar.horizontalRule'),
             command: { kind: 'setHorizontalRule' },
             isActive: () => false,
@@ -236,7 +236,7 @@ function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.Re
                     },
                 ]}
             >
-                <Octicons
+                <Icon
                     name={spec.icon}
                     size={ICON_SIZE}
                     color={active ? activeForeground : inactiveForeground}
@@ -289,7 +289,7 @@ function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.Re
                             },
                         ]}
                     >
-                        <Octicons name="link-external" size={ICON_SIZE} color={inactiveForeground} />
+                        <Icon name="arrow-square-out" size={ICON_SIZE} color={inactiveForeground} />
                     </Pressable>
                     <Pressable
                         testID={testID ? `${testID}:unlink` : undefined}
@@ -306,7 +306,7 @@ function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.Re
                             },
                         ]}
                     >
-                        <Octicons name="unlink" size={ICON_SIZE} color={inactiveForeground} />
+                        <Icon name="link-break" size={ICON_SIZE} color={inactiveForeground} />
                     </Pressable>
                 </View>
             ) : null}

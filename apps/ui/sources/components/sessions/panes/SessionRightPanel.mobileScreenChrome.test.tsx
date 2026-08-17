@@ -127,8 +127,8 @@ describe('SessionRightPanel (mobile screen chrome)', () => {
         expect(closeButton.props.hitSlop).toBe(15);
         expect(getStyleValue(closeButton, 'borderWidth')).toBeUndefined();
         expect(getStyleValue(closeButton, 'backgroundColor')).toBeUndefined();
-        expect(findTestInstanceByTypeWithProps(closeButton, 'Ionicons', {
-            name: 'chevron-back',
+        expect(findTestInstanceByTypeWithProps(closeButton, 'Icon', {
+            name: 'caret-left',
             size: 24,
             color: '#18171C',
         })).toBeTruthy();

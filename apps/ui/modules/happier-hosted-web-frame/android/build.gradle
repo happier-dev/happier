@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.happier.hostedwebframe'
+version = '0.0.0'
+
+android {
+  namespace "dev.happier.hostedwebframe"
+  defaultConfig {
+    versionCode 1
+    versionName version
+  }
+}
+
+dependencies {
+  implementation "androidx.webkit:webkit:1.14.0"
+  testImplementation "junit:junit:4.13.2"
+}

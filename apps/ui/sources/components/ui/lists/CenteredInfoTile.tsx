@@ -1,5 +1,5 @@
+import { HappierInfoTile } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -14,20 +14,23 @@ type CenteredInfoTileProps = Readonly<{
     paddingHorizontal?: number;
 }>;
 
+/**
+ * Happier core's centered-info-tile adapter.
+ *
+ * The layout — the full-width centered column, the 32/16 padding pair and the
+ * 520pt readable measure — is the shared presentation owner (UI-T27), which the
+ * plugin loading/empty/error states render too. This adapter supplies the one
+ * thing core owns: its Unistyles typography, rendered through core's own `Text`
+ * so the `uiFontScale` local setting still applies (§3.10.8).
+ */
 export const CenteredInfoTile = React.memo((props: CenteredInfoTileProps) => {
     const { theme } = useUnistyles();
 
     return (
-        <View
-            style={{
-                width: '100%',
-                alignItems: 'center',
-                paddingVertical: 32,
-                paddingHorizontal: props.paddingHorizontal ?? 16,
-            }}
-        >
-            {props.icon}
-            <View style={{ width: '100%', maxWidth: 520 }}>
+        <HappierInfoTile
+            icon={props.icon}
+            paddingHorizontal={props.paddingHorizontal}
+            title={
                 <Text
                     testID={props.titleTestID}
                     style={{
@@ -40,6 +43,8 @@ export const CenteredInfoTile = React.memo((props: CenteredInfoTileProps) => {
                 >
                     {props.title}
                 </Text>
+            }
+            description={
                 <Text
                     testID={props.descriptionTestID}
                     style={{
@@ -52,7 +57,9 @@ export const CenteredInfoTile = React.memo((props: CenteredInfoTileProps) => {
                 >
                     {props.description}
                 </Text>
-            </View>
-        </View>
+            }
+        />
     );
 });
+
+CenteredInfoTile.displayName = 'CenteredInfoTile';

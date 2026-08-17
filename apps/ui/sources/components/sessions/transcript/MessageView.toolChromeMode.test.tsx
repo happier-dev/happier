@@ -95,8 +95,8 @@ vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => 
     extractWorkspaceFileMentions: () => [],
 }));
 
-vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
-    LinkedWorkspaceFilesRow: () => null,
+vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({
+    StructuredReferencesRow: () => null,
 }));
 
 afterEach(() => {

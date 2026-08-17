@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -11,6 +10,7 @@ import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript
 
 import { WorkflowAgentDetail } from './WorkflowAgentDetail';
 import { WorkflowStatusIcon } from './workflowStatusIcon';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * One workflow agent row (UIW3/UIW4). Props are PRIMITIVE so this memoized row re-renders only when
@@ -87,8 +87,8 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
                 ) : null}
             </View>
             {hasDetail ? (
-                <Ionicons
-                    name={expanded ? 'chevron-up' : 'chevron-down'}
+                <Icon
+                    name={expanded ? 'caret-up' : 'caret-down'}
                     size={14}
                     color={theme.colors.text.secondary}
                 />

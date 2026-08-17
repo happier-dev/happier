@@ -1,7 +1,5 @@
 import React from 'react';
 
-import type { Message } from '@/sync/domains/messages/messageTypes';
-import { readStructuredUserMessageText } from '@/components/sessions/transcript/structured/readStructuredUserMessageText';
 import { t } from '@/text';
 import type { SubagentCommandV1 } from '@happier-dev/protocol';
 
@@ -20,15 +18,12 @@ function describeCommandTarget(payload: SubagentCommandV1): string {
     });
 }
 
-export function SubagentCommandMessageCard(props: Readonly<{ payload: SubagentCommandV1; message: Message }>) {
-    const messageText = readStructuredUserMessageText(props.message);
-    if (!messageText) return null;
-
+export function SubagentCommandMessageCard(props: Readonly<{ payload: SubagentCommandV1; messageText: string }>) {
     return (
         <SubagentStructuredMessageCard
             title={describeCommandTitle(props.payload)}
             targetLabel={describeCommandTarget(props.payload)}
-            messageText={messageText}
+            messageText={props.messageText}
         />
     );
 }

@@ -5,37 +5,29 @@ import {
     useConnectedServiceQuotaSnapshot,
     type UseConnectedServiceQuotaSnapshotResult,
 } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshot';
-import type { ComposedGesture, GestureType } from 'react-native-gesture-handler';
-
 import { buildQuotaResetRows } from '@/sync/domains/connectedServices/buildQuotaResetRows';
-import {
-    computeConnectedServiceQuotaGaugeViewModel,
-    type ConnectedServiceQuotaGaugeLabelFormatter,
-} from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
+import { computeConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { deriveAccountCapacityPct } from '@/sync/domains/connectedServices/deriveAccountCapacityPct';
-import { type ResetCountdownDaysFormatter } from '@/sync/domains/connectedServices/formatResetCountdown';
+import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
-import {
-    ConnectedServiceCredentialHealthStatusV1Schema,
-    type ConnectedServiceCredentialHealthStatusV1,
-    type ConnectedServiceId,
-} from '@happier-dev/protocol';
-import { t } from '@/text';
+import { type ConnectedServiceId } from '@happier-dev/protocol';
 
 import { resolveAccountUsageRows } from './accountBlockModel';
+import {
+    ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER,
+    ACCOUNT_BLOCK_RESET_COUNTDOWN_DAYS_FORMATTER,
+} from './accountBlockFormatters';
 import {
     AccountBlockView,
     defaultAccountBlockTestID,
     type AccountBlockQuotaView,
-    type AccountBlockVariant,
 } from './AccountBlockView';
 
-export type { AccountBlockVariant } from './AccountBlockView';
-
 /**
- * Public, shared connected-service account block. ONE block renders every account
- * surface (account detail + pool member) so connected-service facts (health,
- * capacity, tone, resets) stop drifting across screens.
+ * Legacy (v3) connected-service account block. Renders the account-DETAIL surface
+ * of the shared `AccountBlockView`; the pool-member surface is V4-only and belongs
+ * to `QualifiedAccountBlock`, so connected-service facts (health, capacity, tone,
+ * resets) stay single-owner across both identity models.
  *
  * This container owns the FEATURE GATE + quota-snapshot wiring and hands a single
  * `AccountBlockQuotaView` to the presentational `AccountBlockView`. When the
@@ -63,57 +55,10 @@ export interface AccountBlockProps {
     poolLabels?: ReadonlyArray<string>;
     /** Header kebab actions. */
     actions?: React.ComponentProps<typeof AccountBlockView>['actions'];
-    variant?: AccountBlockVariant;
-    /** poolMember: owning pool id (namespaces collapse + reorder). */
-    groupId?: string | null;
-    /** poolMember: member enabled state + toggle. */
-    enabled?: boolean;
-    onToggleEnabled?: (next: boolean) => void;
-    /** poolMember: whether this member is the pool's currently-active account. */
-    isActive?: boolean;
-    /** poolMember: select this member as the active account (leading radio). */
-    onSetActive?: () => void;
-    /** poolMember: inline drag-reorder pan gesture (rendered INLINE in the view). */
-    reorderGesture?: GestureType | ComposedGesture;
-    showDivider?: boolean;
     testID?: string;
 }
 
-/**
- * Real `t()`-backed gauge formatter so the USAGE rows carry localized
- * remaining/used/reset labels through the canonical domain formatter.
- */
-const GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter = {
-    remaining: ({ percent }) => t('connectedServices.quota.remaining', { percent }),
-    remainingWithReset: ({ percent, reset }) =>
-        t('connectedServices.quota.remainingWithReset', { percent, reset }),
-    used: ({ used, limit }) => t('connectedServices.account.usedDetail', { used, limit }),
-    durationNow: () => t('connectedServices.quota.duration.now'),
-    durationOutdated: () => t('connectedServices.quota.duration.outdated'),
-    durationDaysHours: ({ days, hours }) => t('connectedServices.quota.duration.daysHours', { days, hours }),
-    durationHoursMinutes: ({ hours, minutes }) =>
-        t('connectedServices.quota.duration.hoursMinutes', { hours, minutes }),
-    durationHours: ({ hours }) => t('connectedServices.quota.duration.hours', { hours }),
-    durationMinutes: ({ minutes }) => t('connectedServices.quota.duration.minutes', { minutes }),
-};
-
-const RESET_COUNTDOWN_DAYS_FORMATTER: ResetCountdownDaysFormatter = {
-    now: () => t('connectedServices.account.resets.now'),
-    inDays: ({ days }) => t('connectedServices.account.resets.inDays', { days }),
-};
-
 type SharedViewProps = Omit<React.ComponentProps<typeof AccountBlockView>, 'quota'>;
-
-/**
- * Fail-OPEN display parse: a recognized enum value passes through; `null`,
- * `undefined`, `''`, or any unrecognized string becomes `null` (no pill, no
- * hidden usage). The fail-CLOSED normalizer (`unknown -> needs_reauth`) is for
- * reauth-prompting actions/ordering at the callers, never for display (UI-1).
- */
-function parseRecognizedCredentialStatus(status: unknown): ConnectedServiceCredentialHealthStatusV1 | null {
-    const parsed = ConnectedServiceCredentialHealthStatusV1Schema.safeParse(status);
-    return parsed.success ? parsed.data : null;
-}
 
 /**
  * Build the single `AccountBlockQuotaView` consumed by the header signals,
@@ -128,18 +73,17 @@ function buildQuotaView(hook: UseConnectedServiceQuotaSnapshotResult): AccountBl
             snapshot,
             windowMode: 'most_constrained',
             nowMs,
-            formatter: GAUGE_LABEL_FORMATTER,
+            formatter: ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER,
         })
         : null;
 
     const usageRows = resolveAccountUsageRows(gauge?.allMeterRows);
     const capacityPct = gauge ? deriveAccountCapacityPct(gauge.allMeterRows) : null;
-    const resetRows = buildQuotaResetRows(snapshot?.recoveryCredits, nowMs, RESET_COUNTDOWN_DAYS_FORMATTER);
+    const resetRows = buildQuotaResetRows(snapshot?.recoveryCredits, nowMs, ACCOUNT_BLOCK_RESET_COUNTDOWN_DAYS_FORMATTER);
 
     return {
         loading: hook.loading,
         hasSnapshot: snapshot != null,
-        isStale: hook.isStale,
         canRefresh: hook.canRefresh,
         isRefreshing: hook.isRefreshing,
         error: hook.error,
@@ -154,8 +98,9 @@ function buildQuotaView(hook: UseConnectedServiceQuotaSnapshotResult): AccountBl
         consumeRecoveryCredit: hook.consumeRecoveryCredit,
         consumeRecoveryCreditPending: hook.consumeRecoveryCreditPending,
         consumeRecoveryCreditPendingTarget: hook.consumeRecoveryCreditPendingTarget,
-        // A reset can only be consumed when a target machine is resolved.
-        canConsume: hook.recoveryCreditMachineId != null,
+        // Redemption exists here; the only reachable blocker is a missing target
+        // machine, which the view explains inline next to the inert action.
+        consumeUnavailableReason: hook.recoveryCreditMachineId != null ? null : 'machine',
     };
 }
 
@@ -186,8 +131,6 @@ export const AccountBlock = React.memo(function AccountBlock(props: AccountBlock
     const testID = props.testID ?? defaultAccountBlockTestID({
         serviceId: props.serviceId,
         profileId: props.profileId,
-        variant: props.variant,
-        groupId: props.groupId,
     });
 
     const shared: SharedViewProps = {
@@ -199,19 +142,11 @@ export const AccountBlock = React.memo(function AccountBlock(props: AccountBlock
         // view (pill shows solely for explicit needs_reauth); absent/unknown raw
         // values render as no-status. The raw value keeps flowing to the fail-open
         // usage gate + snapshot hook below.
-        status: parseRecognizedCredentialStatus(props.status),
+        status: parseDisplayableCredentialHealthStatus(props.status),
         isDefault: props.isDefault,
         onToggleDefault: props.onToggleDefault,
         poolLabels: props.poolLabels,
         actions: props.actions,
-        variant: props.variant,
-        groupId: props.groupId,
-        enabled: props.enabled,
-        onToggleEnabled: props.onToggleEnabled,
-        isActive: props.isActive,
-        onSetActive: props.onSetActive,
-        reorderGesture: props.reorderGesture,
-        showDivider: props.showDivider,
         testID,
     };
 

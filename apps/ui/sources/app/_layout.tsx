@@ -7,7 +7,7 @@ import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import {
     PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolveAndroidNotificationSoundName, } from '@happier-dev/protocol';
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -30,6 +30,7 @@ import {
 import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
+import { VoiceEnergyAppProvider } from '@/components/voice/light/VoiceEnergyAppProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
@@ -53,6 +54,8 @@ import { consumeRestartBugReportIntent } from '@/utils/system/restartBugReportIn
 import { getCurrentReactOwnerHint, getUnexpectedPrimitiveViewChildInfo } from '@/utils/system/debugUnexpectedTextNodeCapture';
 import { resolveForegroundNotificationBehavior } from '@/activity/notifications/resolveForegroundNotificationBehavior';
 import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
+import { runAppBootSequence, type AppBootReadyState } from '@/boot/runAppBootSequence';
+import { prepareWarmCacheStorage } from '@/sync/domains/state/warmCachePersistence';
 import { installTauriMcpBridgeOnce } from '@/desktop/mcp/maybeInstallTauriMcpBridge';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/desktopChrome/DesktopShellUpdateIndicatorHost';
@@ -63,10 +66,12 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
+import { isDesktopOverlayWindowContext } from '@/desktop/window/isDesktopOverlayWindowContext';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
+import { AppPresentationPlatformProvider } from '@/components/ui/presentation/AppPresentationPlatformProvider';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -623,7 +628,7 @@ async function loadFonts() {
 
 function RootLayout() {
     const { theme } = useUnistyles();
-    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
     useWebUiFontScale();
     useWebBackdropBlurPreference();
     usePierreDiffWorkerPoolWarmup();
@@ -663,12 +668,14 @@ function RootLayout() {
     }, []);
 
     return (
-        <WebCryptoStartupGate>
-            <AppBoot
-                navigationTheme={navigationTheme}
-                onRestart={onRestart}
-            />
-        </WebCryptoStartupGate>
+        <AppPresentationPlatformProvider>
+            <WebCryptoStartupGate>
+                <AppBoot
+                    navigationTheme={navigationTheme}
+                    onRestart={onRestart}
+                />
+            </WebCryptoStartupGate>
+        </AppPresentationPlatformProvider>
     );
 }
 
@@ -683,8 +690,9 @@ function AppBoot(props: {
     const pathname = usePathname();
     const chromeSafeArea = useChromeSafeAreaInsets();
     const isTablet = useIsTablet();
-    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
-    const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(null);
+    const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
+    const isDesktopActivityOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const [initState, setInitState] = React.useState<AppBootReadyState | null>(null);
     const restartBugReportCheckedRef = React.useRef(false);
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
 
@@ -694,37 +702,21 @@ function AppBoot(props: {
 
     React.useEffect(() => {
         let cancelled = false;
-        (async () => {
-            let credentials: AuthCredentials | null = null;
-            try {
-                try {
-                    await loadFonts();
-                } catch (error) {
-                    // Font loading failures should not brick startup.
-                    console.error('Failed to load fonts during init, continuing startup:', error);
-                }
-                await sodium.ready;
-                credentials = await resolveBootCredentials(Platform.OS);
-                if (credentials && !isDesktopOverlayWindow) {
-                    try {
-                        await syncRestore(credentials);
-                    } catch (error) {
-                        // Preserve app usability even if sync restore fails during boot.
-                        console.error('Failed to restore sync during init, continuing startup:', error);
-                    }
-                }
-            } catch (error) {
-                console.error('Error initializing:', error);
-            } finally {
-                if (!cancelled) {
-                    setInitState({ credentials });
-                }
-            }
-        })();
+        void runAppBootSequence({
+            loadFonts,
+            sodiumReady: sodium.ready,
+            resolveCredentials: () => resolveBootCredentials(Platform.OS),
+            prepareWarmCache: prepareWarmCacheStorage,
+            restoreSync: isDesktopActivityOverlayWindow ? null : syncRestore,
+            onReady: (state) => {
+                if (cancelled) return;
+                setInitState(state);
+            },
+        });
         return () => {
             cancelled = true;
         };
-    }, [isDesktopOverlayWindow]);
+    }, [isDesktopActivityOverlayWindow]);
 
     React.useEffect(() => {
         if (!initState) return;
@@ -819,24 +811,48 @@ function AppBoot(props: {
         </DesktopMainContentDragSurface>
     ) : appShell;
 
+    const appContent = (
+        <ThemePreferenceTransitionHost>
+            <HorizontalSafeAreaWrapper>
+                <MainAppTabStateProvider>
+                    {appShellWithRootDesktopDragSurface}
+                </MainAppTabStateProvider>
+            </HorizontalSafeAreaWrapper>
+        </ThemePreferenceTransitionHost>
+    );
+    /*
+     * The Voice energy bus wraps the ROOT layout, not the `(app)` route layout.
+     *
+     * `SidebarNavigator` is mounted here at :810 and its drawer content renders
+     * `<VoiceSurface variant="sidebar" />`, which sits STRICTLY ABOVE the nested
+     * route layout. Mounting the provider there left the sidebar surface outside
+     * it, so `useVoiceEnergy` threw and took the whole app to the crash boundary
+     * on desktop web — while the phone mount (inside the route layout) worked,
+     * which is exactly what hid it. Every unit test supplies the provider itself,
+     * so none of them could catch a missing production mount site.
+     */
     let providers = (
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
             <KeyboardProvider>
                 <GestureHandlerRootView style={{ flex: 1 }}>
-                    <AuthProvider initialCredentials={initState.credentials}>
+                    {/*
+                      * Keyed on the boot auth generation: `0` on every normal boot, so the key never
+                      * changes and nothing remounts. It only advances when a keychain read that missed
+                      * its boot deadline lands afterwards, which is how a recovered session is adopted
+                      * instead of the user silently appearing signed out.
+                      */}
+                    <AuthProvider key={initState.authGeneration} initialCredentials={initState.credentials}>
                         <ThemeProvider value={props.navigationTheme}>
                             <StatusBarProvider />
                             <AppPaneModalProvider>
                                 <CommandPaletteProvider>
-                                    <RealtimeProvider>
-                                        <ThemePreferenceTransitionHost>
-                                            <HorizontalSafeAreaWrapper>
-                                                <MainAppTabStateProvider>
-                                                    {appShellWithRootDesktopDragSurface}
-                                                </MainAppTabStateProvider>
-                                            </HorizontalSafeAreaWrapper>
-                                        </ThemePreferenceTransitionHost>
-                                    </RealtimeProvider>
+                                    {isDesktopOverlayWindow ? appContent : (
+                                        <RealtimeProvider>
+                                            <VoiceEnergyAppProvider>
+                                                {appContent}
+                                            </VoiceEnergyAppProvider>
+                                        </RealtimeProvider>
+                                    )}
                                 </CommandPaletteProvider>
                             </AppPaneModalProvider>
                         </ThemeProvider>

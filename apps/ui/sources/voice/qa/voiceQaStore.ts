@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import type { BundledVoiceProviderDiagnosticEvent } from '@happier-dev/bundled-voice-runtime-contract';
 
 import { randomUUID } from '@/platform/randomUUID';
 
@@ -7,7 +6,7 @@ const MAX_VOICE_QA_ENTRIES = 500;
 
 export type VoiceQaProvider = 'local_voice_agent' | 'realtime_conversation';
 export type VoiceQaStatus = 'idle' | 'starting' | 'running' | 'stopping' | 'error';
-export type VoiceQaEntryKind = 'system' | 'user' | 'assistant' | 'provider.event' | 'error';
+export type VoiceQaEntryKind = 'system' | 'user' | 'assistant' | 'error';
 
 export type VoiceQaEntry = Readonly<{
   id: string;
@@ -35,20 +34,10 @@ type VoiceQaState = Readonly<{
   appendUser: (text: string) => void;
   appendAssistant: (text: string) => void;
   appendError: (text: string) => void;
-  appendRealtimeProviderEvent: (event: BundledVoiceProviderDiagnosticEvent) => void;
 }>;
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function createProviderEventSummary(event: BundledVoiceProviderDiagnosticEvent): string {
-  return [
-    `provider=${event.providerId}`,
-    `event=${event.eventType}`,
-    `bytes=${event.payloadBytes ?? 'unknown'}`,
-    `class=${event.redactionClass}`,
-  ].join(' ');
 }
 
 function createEntry(kind: VoiceQaEntryKind, text: string): VoiceQaEntry {
@@ -125,11 +114,6 @@ export const useVoiceQaStore = create<VoiceQaState>((set) => ({
       const normalized = normalizeText(text);
       if (!normalized) return state;
       return appendEntry(state, createEntry('error', normalized));
-    }),
-  appendRealtimeProviderEvent: (event) =>
-    set((state) => {
-      if (state.provider !== 'realtime_conversation') return state;
-      return appendEntry(state, createEntry('provider.event', createProviderEventSummary(event)));
     }),
 }));
 

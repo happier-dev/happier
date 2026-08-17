@@ -93,6 +93,28 @@ describe('WebPcmCapture', () => {
     await capture.stop();
   });
 
+  it('invokes AudioWorklet.addModule with its native receiver', async () => {
+    let receiver: unknown = null;
+    const addModule = vi.fn(async function (this: unknown) {
+      receiver = this;
+    });
+    const { context } = createContext({ worklet: true, addModule });
+    installWorklet();
+    const capture = createWebPcmCapture({
+      mic: createMic(context).mic,
+      format: { sampleRate: 24_000, channels: 1, encoding: 'pcm16le' },
+      chunkMs: 20,
+      fallback: 'allow_script_processor',
+      onChunk: vi.fn(),
+    });
+
+    await capture.start();
+
+    expect(receiver).toBe(context.audioWorklet);
+    expect(context.createScriptProcessor).not.toHaveBeenCalled();
+    await capture.stop();
+  });
+
   it.each([[16_000, 320], [24_000, 480]] as const)(
     'resamples 48k input to exact %i Hz 10ms PCM16 chunks',
     async (targetRate, targetBytes) => {
@@ -147,7 +169,7 @@ describe('WebPcmCapture', () => {
     });
     await capture.start();
     expect(capture.isActive()).toBe(false);
-    expect(onError).toHaveBeenCalledWith('web_pcm_capture_resume_failed');
+    expect(onError).toHaveBeenCalledWith('pcm_capture_resume_failed');
     expect(source.connect).not.toHaveBeenCalled();
   });
 
@@ -181,7 +203,7 @@ describe('WebPcmCapture', () => {
     await capture.start();
     processor.onaudioprocess?.(processEvent(new Float32Array(480)));
     processor.onaudioprocess?.(processEvent(new Float32Array(480)));
-    expect(onError).toHaveBeenCalledWith('web_pcm_capture_backpressure');
+    expect(onError).toHaveBeenCalledWith('pcm_capture_backpressure');
     expect(capture.isActive()).toBe(false);
     release();
     await capture.waitForDrain();
@@ -258,7 +280,7 @@ describe('WebPcmCapture', () => {
     track.end(); track.end();
     await vi.waitFor(() => expect(capture.isActive()).toBe(false));
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenCalledWith('web_pcm_capture_device_lost');
+    expect(onError).toHaveBeenCalledWith('pcm_capture_device_lost');
   });
 
   it('reports microphone acquisition failure separately from later capture setup', async () => {
@@ -275,7 +297,7 @@ describe('WebPcmCapture', () => {
       onError,
     });
     await capture.start();
-    expect(onError).toHaveBeenCalledWith('web_pcm_capture_mic_acquisition_failed');
+    expect(onError).toHaveBeenCalledWith('pcm_capture_mic_acquisition_failed');
   });
 
   it('reports missing stream or audio context separately from microphone acquisition', async () => {
@@ -292,7 +314,7 @@ describe('WebPcmCapture', () => {
       onError,
     });
     await capture.start();
-    expect(onError).toHaveBeenCalledWith('web_pcm_capture_mic_state_unavailable');
+    expect(onError).toHaveBeenCalledWith('pcm_capture_mic_state_unavailable');
   });
 
   it('reports media-source construction failure separately and removes device listeners', async () => {
@@ -310,7 +332,7 @@ describe('WebPcmCapture', () => {
     });
     await capture.start();
     expect(capture.isActive()).toBe(false);
-    expect(onError).toHaveBeenCalledWith('web_pcm_capture_media_source_failed');
+    expect(onError).toHaveBeenCalledWith('pcm_capture_media_source_failed');
     expect(track.removeEventListener).toHaveBeenCalledWith('ended', expect.any(Function));
   });
 

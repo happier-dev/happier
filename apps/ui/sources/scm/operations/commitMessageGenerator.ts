@@ -1,7 +1,14 @@
-import { sessionExecutionRunGet, sessionExecutionRunStart } from '@/sync/ops/sessionExecutionRuns';
+import {
+    ExecutionRunGetResponseSchema,
+    ExecutionRunStartResponseSchema,
+    type ActionExecuteResult,
+    type ActionExecutorContext,
+} from '@happier-dev/protocol';
 
-const COMMIT_MESSAGE_RESULT_POLL_ATTEMPTS = 80;
-const COMMIT_MESSAGE_RESULT_POLL_INTERVAL_MS = 150;
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+
+const COMMIT_MESSAGE_WAIT_TIMEOUT_SECONDS = 12;
+const executeAction = createFrontDoorActionExecute();
 
 export type ScmCommitMessageGeneratorResult =
     | { ok: true; message: string }
@@ -11,14 +18,32 @@ function readObject(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function readOperationError(value: unknown): { ok: false; error: string; errorCode?: string } | null {
-    const record = readObject(value);
-    if (record?.ok !== false || typeof record.error !== 'string') return null;
+function readActionError(
+    value: Extract<ActionExecuteResult, Readonly<{ ok: false }>>,
+): { ok: false; error: string; errorCode?: string } {
     return {
         ok: false,
-        error: record.error,
-        ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
+        error: value.error,
+        ...(typeof value.errorCode === 'string' ? { errorCode: value.errorCode } : {}),
     };
+}
+
+function commitMessageActionContext(sessionId: string): ActionExecutorContext {
+    return {
+        actionCaller: { kind: 'host' },
+        defaultSessionId: sessionId,
+        surface: 'ui',
+    };
+}
+
+function waitObservationFailure(code: string): ScmCommitMessageGeneratorResult {
+    if (code === 'timeout') {
+        return { ok: false, error: 'Commit message generation timed out', errorCode: code };
+    }
+    if (code === 'cancelled') {
+        return { ok: false, error: 'Commit message generation was cancelled', errorCode: code };
+    }
+    return { ok: false, error: 'Commit message generation failed', errorCode: code };
 }
 
 export async function generateScmCommitMessage(params: Readonly<{
@@ -36,9 +61,11 @@ export async function generateScmCommitMessage(params: Readonly<{
         .map((v) => (typeof v === 'string' ? v.trim() : ''))
         .filter((v) => v.length > 0);
 
-    const started = await sessionExecutionRunStart(
-        params.sessionId,
+    const context = commitMessageActionContext(params.sessionId);
+    const startResult = await executeAction(
+        'execution.run.start',
         {
+            sessionId: params.sessionId,
             kind: 'scm_commit_message.v1',
             intent: 'scm_commit_message',
             backendTarget: { kind: 'backend', backendId, sourceKind: 'built_in' },
@@ -53,49 +80,56 @@ export async function generateScmCommitMessage(params: Readonly<{
                     : {}),
                 scope: { kind: 'paths', include },
             },
+            waitForCompletion: true,
+            waitTimeoutSeconds: COMMIT_MESSAGE_WAIT_TIMEOUT_SECONDS,
         },
+        context,
     );
 
-    const startError = readOperationError(started);
-    if (startError) return startError;
+    if (!startResult.ok) return readActionError(startResult);
 
-    const startedRecord = readObject(started);
-    const runId = typeof startedRecord?.runId === 'string' ? startedRecord.runId.trim() : '';
-    if (!runId) {
+    const started = ExecutionRunStartResponseSchema.safeParse(startResult.result);
+    if (!started.success || !started.data.wait) {
         return { ok: false, error: 'Commit message generation failed' };
     }
 
-    for (let attempt = 0; attempt < COMMIT_MESSAGE_RESULT_POLL_ATTEMPTS; attempt += 1) {
-        const res = await sessionExecutionRunGet(params.sessionId, { runId, includeStructured: true });
-        const getError = readOperationError(res);
-        if (getError) return getError;
-
-        const responseRecord = readObject(res);
-        const runRecord = readObject(responseRecord?.run);
-        const status = typeof runRecord?.status === 'string' ? runRecord.status : '';
-        if (status === 'running') {
-            await new Promise((resolve) => setTimeout(resolve, COMMIT_MESSAGE_RESULT_POLL_INTERVAL_MS));
-            continue;
-        }
-        if (status !== 'succeeded') {
-            const runError = readObject(runRecord?.error);
-            return {
-                ok: false,
-                error: typeof runError?.message === 'string' ? runError.message : 'Commit message generation failed',
-                ...(typeof runError?.code === 'string' ? { errorCode: runError.code } : {}),
-            };
-        }
-
-        const structuredMeta = readObject(responseRecord?.structuredMeta);
-        const result = readObject(responseRecord?.latestToolResult) ?? readObject(structuredMeta?.payload);
-        const message = result?.message;
-        const normalized = typeof message === 'string' ? message.trim() : '';
-        if (!normalized) {
-            return { ok: false, error: 'Empty commit message suggestion' };
-        }
-
-        return { ok: true, message: normalized };
+    const wait = started.data.wait;
+    if (!wait.ok) return waitObservationFailure(wait.code);
+    if (
+        wait.result.run.runId !== started.data.runId
+        || wait.result.run.status !== wait.status
+    ) {
+        return { ok: false, error: 'Commit message generation failed' };
     }
 
-    return { ok: false, error: 'Commit message generation timed out' };
+    const terminalResult = await executeAction(
+        'execution.run.get',
+        { sessionId: params.sessionId, runId: started.data.runId, includeStructured: true },
+        context,
+    );
+    if (!terminalResult.ok) return readActionError(terminalResult);
+
+    const terminal = ExecutionRunGetResponseSchema.safeParse(terminalResult.result);
+    if (
+        !terminal.success
+        || terminal.data.run.runId !== started.data.runId
+        || terminal.data.run.status !== wait.status
+    ) {
+        return { ok: false, error: 'Commit message generation failed' };
+    }
+    if (wait.status !== 'succeeded') {
+        const runError = terminal.data.run.error;
+        return {
+            ok: false,
+            error: runError?.message ?? 'Commit message generation failed',
+            ...(runError?.code ? { errorCode: runError.code } : {}),
+        };
+    }
+
+    const result = readObject(terminal.data.latestToolResult) ?? readObject(terminal.data.structuredMeta?.payload);
+    const message = result?.message;
+    const normalized = typeof message === 'string' ? message.trim() : '';
+    return normalized
+        ? { ok: true, message: normalized }
+        : { ok: false, error: 'Empty commit message suggestion' };
 }

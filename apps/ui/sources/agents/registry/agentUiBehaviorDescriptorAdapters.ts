@@ -1,4 +1,8 @@
 import type { ExternalSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import {
+    isSupportedRuntimeDescriptorProviderId,
+    readSessionMetadataRuntimeDescriptor,
+} from '@happier-dev/agents';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
@@ -46,7 +50,6 @@ type EnvironmentDescriptor = Readonly<{
         runtimeDescriptorExplicitField: string;
         allowedProtocols?: readonly string[];
         rejectCredentials?: boolean;
-        httpLoopbackOnly?: boolean;
         originOnly?: boolean;
     }>;
     agentExtra?: RuntimeDescriptorAgentExtraDescriptor;
@@ -90,18 +93,13 @@ type SourceFromCandidateLinkExtrasDescriptor = Readonly<{
     optionalFields: readonly string[];
 }>;
 
-type CandidatePathDescriptor = readonly string[];
-
 type RuntimeDescriptorLinkExtrasDescriptor = Readonly<{
     providerId: string;
     runtimeDescriptorOutputKey: string;
     legacyModeOutputKey?: string;
     backendMode: Readonly<{
         values: readonly string[];
-        aliases?: Readonly<Record<string, string>>;
-        candidatePaths: readonly CandidatePathDescriptor[];
     }>;
-    providerSessionIdPaths: readonly CandidatePathDescriptor[];
     sourceFields: readonly string[];
     agentExtra?: RuntimeDescriptorAgentExtraDescriptor;
 }>;
@@ -140,14 +138,6 @@ function normalizeDescriptorUrl(value: unknown, config: NonNullable<EnvironmentD
             : ['http:', 'https:'];
         if (!allowedProtocols.includes(parsed.protocol)) return null;
         if (config.rejectCredentials === true && (parsed.username || parsed.password)) return null;
-        if (config.httpLoopbackOnly === true && parsed.protocol === 'http:') {
-            const hostname = parsed.hostname.trim().toLowerCase();
-            const isLoopback = hostname === 'localhost'
-                || hostname === '127.0.0.1'
-                || hostname === '::1'
-                || hostname === '[::1]';
-            if (!isLoopback) return null;
-        }
         const normalized = config.originOnly === false ? parsed.toString() : parsed.origin;
         return normalized.endsWith('/') ? normalized : `${normalized}/`;
     } catch {
@@ -356,7 +346,6 @@ function readEnvironmentDescriptor(value: unknown, diagnostics: UiProjectionDiag
             runtimeDescriptorExplicitField: readString(serverBaseUrl.runtimeDescriptorExplicitField) ?? '',
             allowedProtocols: readStringArray(serverBaseUrl.allowedProtocols),
             rejectCredentials: serverBaseUrl.rejectCredentials === true,
-            httpLoopbackOnly: serverBaseUrl.httpLoopbackOnly === true,
             originOnly: serverBaseUrl.originOnly !== false,
         }
         : null;
@@ -540,14 +529,6 @@ function readSourceFromCandidateLinkExtrasDescriptor(value: unknown): SourceFrom
     };
 }
 
-function readCandidatePaths(value: unknown): readonly CandidatePathDescriptor[] {
-    if (!Array.isArray(value)) return [];
-    return value.flatMap((entry): CandidatePathDescriptor[] => {
-        const path = readStringArray(entry);
-        return path.length > 0 ? [path] : [];
-    });
-}
-
 function readRuntimeDescriptorLinkExtrasDescriptor(value: unknown): RuntimeDescriptorLinkExtrasDescriptor | null {
     if (!isRecord(value)) return null;
     const providerId = readString(value.providerId);
@@ -555,10 +536,8 @@ function readRuntimeDescriptorLinkExtrasDescriptor(value: unknown): RuntimeDescr
     const legacyModeOutputKey = readString(value.legacyModeOutputKey);
     const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
     const backendModeValues = readStringArray(backendMode?.values);
-    const candidatePaths = readCandidatePaths(backendMode?.candidatePaths);
-    const providerSessionIdPaths = readCandidatePaths(value.providerSessionIdPaths);
     const sourceFields = readStringArray(value.sourceFields);
-    if (!providerId || !runtimeDescriptorOutputKey || backendModeValues.length === 0 || candidatePaths.length === 0) {
+    if (!providerId || !runtimeDescriptorOutputKey || backendModeValues.length === 0) {
         return null;
     }
 
@@ -575,10 +554,7 @@ function readRuntimeDescriptorLinkExtrasDescriptor(value: unknown): RuntimeDescr
         ...(legacyModeOutputKey ? { legacyModeOutputKey } : {}),
         backendMode: {
             values: backendModeValues,
-            aliases: readStringRecord(backendMode?.aliases),
-            candidatePaths,
         },
-        providerSessionIdPaths,
         sourceFields,
         ...(agentExtraOwner && agentExtraSchemaId && agentExtraVersion && runtimeHandleFields.length > 0
             ? {
@@ -613,8 +589,7 @@ function normalizeDescriptorEnumValue(
 ): string | null {
     const raw = normalizeOptionalString(value);
     if (!raw) return null;
-    const normalized = descriptor.aliases?.[raw] ?? raw;
-    return descriptor.values.includes(normalized) ? normalized : null;
+    return descriptor.values.includes(raw) ? raw : null;
 }
 
 function normalizeRuntimeDescriptorBackendMode(
@@ -622,32 +597,6 @@ function normalizeRuntimeDescriptorBackendMode(
     descriptor: RuntimeDescriptorLinkExtrasDescriptor['backendMode'],
 ): string | null {
     return normalizeDescriptorEnumValue(value, descriptor);
-}
-
-function isProviderRuntimeDescriptorPathAllowed(
-    root: unknown,
-    path: readonly string[],
-    providerId: string,
-): boolean {
-    const [descriptorKey] = path;
-    if (descriptorKey !== 'runtimeDescriptorV1' && descriptorKey !== 'agentRuntimeDescriptorV1') {
-        return true;
-    }
-    const descriptor = readValueAtPath(root, [descriptorKey]);
-    return isRecord(descriptor) && descriptor.v === 1 && descriptor.agentId === providerId;
-}
-
-function readFirstStringAtPaths(
-    root: unknown,
-    paths: readonly CandidatePathDescriptor[],
-    providerId: string,
-): string | null {
-    for (const path of paths) {
-        if (!isProviderRuntimeDescriptorPathAllowed(root, path, providerId)) continue;
-        const value = normalizeOptionalString(readValueAtPath(root, path));
-        if (value) return value;
-    }
-    return null;
 }
 
 function buildRuntimeDescriptorAgentExtra(
@@ -747,24 +696,15 @@ function buildRuntimeDescriptorLinkExtras(opts: Readonly<{
     source: ExternalSessionsSource | null;
 }>): Record<string, unknown> {
     const details = opts.candidate.details ?? {};
-    const backendMode = (() => {
-        for (const path of opts.descriptor.backendMode.candidatePaths) {
-            if (!isProviderRuntimeDescriptorPathAllowed(details, path, opts.descriptor.providerId)) continue;
-            const normalized = normalizeDescriptorEnumValue(
-                readValueAtPath(details, path),
-                opts.descriptor.backendMode,
-            );
-            if (normalized) return normalized;
-        }
-        return null;
-    })();
+    if (!isSupportedRuntimeDescriptorProviderId(opts.descriptor.providerId)) return {};
+    const projectedDescriptor = readSessionMetadataRuntimeDescriptor(details, opts.descriptor.providerId);
+    const backendMode = normalizeDescriptorEnumValue(
+        projectedDescriptor?.runtimeKind,
+        opts.descriptor.backendMode,
+    );
     if (!backendMode) return {};
 
-    const providerSessionId = readFirstStringAtPaths(
-        details,
-        opts.descriptor.providerSessionIdPaths,
-        opts.descriptor.providerId,
-    );
+    const providerSessionId = projectedDescriptor?.providerSessionId ?? null;
     const provider: Record<string, unknown> = {
         backendMode,
         ...(providerSessionId ? { providerSessionId } : {}),
@@ -798,15 +738,12 @@ function readRuntimeDescriptorLinkDescriptorFromUiDescriptor(
     return readRuntimeDescriptorLinkExtrasDescriptor(linkEnsureRequestExtras?.runtimeDescriptorFromCandidate);
 }
 
-function readAgentPayloadFromRuntimeDescriptor(
+function readProjectedRuntimeDescriptorInput(
     runtimeDescriptor: unknown,
     providerId: string,
 ): Record<string, unknown> | null {
-    const descriptor = isRecord(runtimeDescriptor) ? runtimeDescriptor : null;
-    if (!descriptor || descriptor.v !== 1 || descriptor.agentId !== providerId) return null;
-    // legacy `provider` payload-key read-compat (pre-rename persisted/imported descriptors)
-    if (isRecord(descriptor.agent)) return descriptor.agent;
-    return isRecord(descriptor.provider) ? descriptor.provider : null;
+    if (!isSupportedRuntimeDescriptorProviderId(providerId)) return null;
+    return readSessionMetadataRuntimeDescriptor({ runtimeDescriptorV1: runtimeDescriptor }, providerId);
 }
 
 function normalizeHandoffUrl(value: unknown): string | null {
@@ -828,23 +765,18 @@ function buildHandoffRuntimeDescriptorFromLinkDescriptor(opts: Readonly<{
 }>): AgentSessionHandoffProviderPatch | null {
     if (opts.ctx.agentId !== opts.descriptor.providerId) return null;
 
-    const importedProvider = readAgentPayloadFromRuntimeDescriptor(
+    const importedProvider = readProjectedRuntimeDescriptorInput(
         opts.ctx.targetRuntimeDescriptor,
         opts.descriptor.providerId,
     );
     const backendMode = importedProvider
-        ? normalizeRuntimeDescriptorBackendMode(importedProvider.backendMode, opts.descriptor.backendMode)
-        : (() => {
-            for (const path of opts.descriptor.backendMode.candidatePaths) {
-                if (!isProviderRuntimeDescriptorPathAllowed(opts.ctx.metadata, path, opts.descriptor.providerId)) continue;
-                const normalized = normalizeRuntimeDescriptorBackendMode(
-                    readValueAtPath(opts.ctx.metadata, path),
-                    opts.descriptor.backendMode,
-                );
-                if (normalized) return normalized;
-            }
-            return null;
-        })();
+        ? normalizeRuntimeDescriptorBackendMode(importedProvider.runtimeKind, opts.descriptor.backendMode)
+        : isSupportedRuntimeDescriptorProviderId(opts.descriptor.providerId)
+            ? normalizeRuntimeDescriptorBackendMode(
+                readSessionMetadataRuntimeDescriptor(opts.ctx.metadata, opts.descriptor.providerId)?.runtimeKind,
+                opts.descriptor.backendMode,
+            )
+            : null;
     if (!backendMode) return null;
 
     const provider: Record<string, unknown> = {
@@ -859,8 +791,8 @@ function buildHandoffRuntimeDescriptorFromLinkDescriptor(opts: Readonly<{
         }
     }
     if (importedProvider) {
-        for (const [key, value] of Object.entries(importedProvider)) {
-            if (key === 'agentExtra' || key === 'providerExtra') continue;
+        for (const key of opts.descriptor.sourceFields) {
+            const value = importedProvider[key];
             if (value !== undefined && value !== null) provider[key] = value;
         }
     }
@@ -886,7 +818,7 @@ function buildHandoffRuntimeDescriptorFromEnvironment(opts: Readonly<{
 }>): AgentSessionHandoffProviderPatch | null {
     if (opts.ctx.agentId !== opts.descriptor.providerId) return null;
 
-    const importedProvider = readAgentPayloadFromRuntimeDescriptor(
+    const importedProvider = readProjectedRuntimeDescriptorInput(
         opts.ctx.targetRuntimeDescriptor,
         opts.descriptor.providerId,
     );

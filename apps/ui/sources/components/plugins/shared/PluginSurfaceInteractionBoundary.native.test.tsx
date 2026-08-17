@@ -29,6 +29,29 @@ vi.mock('react-native', async () => {
 });
 
 describe('PluginSurfaceInteractionBoundary.native', () => {
+    it('keeps an enabled but presentation-ineligible snapshot inert without an offline announcement', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
+        const screen = await renderScreen(
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-presentation-ineligible"
+                snapshotTitle="Build summary"
+                enabled
+                focusEligible={false}
+            >
+                <PluginNativeSnapshot testID="plugin-native-presentation-ineligible-snapshot" />
+            </PluginSurfaceInteractionBoundary>,
+        );
+
+        expect(screen.findByTestId('plugin-native-presentation-ineligible-snapshot')).toBeTruthy();
+        expect(screen.findByTestId('plugin-surface-snapshot:surface-native-presentation-ineligible')?.props)
+            .toMatchObject({
+                pointerEvents: 'none',
+                accessibilityElementsHidden: true,
+                importantForAccessibility: 'no-hide-descendants',
+            });
+        expect(screen.findByTestId('plugin-surface-offline-summary:surface-native-presentation-ineligible')).toBeNull();
+    });
+
     it('keeps the snapshot mounted while native input and accessibility descendants are disabled', async () => {
         const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
         const element = (enabled: boolean) => (
@@ -92,6 +115,69 @@ describe('PluginSurfaceInteractionBoundary.native', () => {
         expect(nativeFocus.focusTextInput).toHaveBeenCalledWith(nativeFocus.input);
         expect(nativeFocus.setAccessibilityFocus).not.toHaveBeenCalled();
         expect(screen.findByTestId('plugin-native-focus-snapshot')).toBeTruthy();
+    });
+
+    it('blurs a captured native input when presentation eligibility falls without restoring it when eligibility returns', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
+        const element = (focusEligible: boolean) => (
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-presentation-focus"
+                snapshotTitle="Build summary"
+                enabled
+                focusEligible={focusEligible}
+            >
+                <PluginNativeSnapshot testID="plugin-native-presentation-focus-snapshot" />
+            </PluginSurfaceInteractionBoundary>
+        );
+        nativeFocus.blurTextInput.mockClear();
+        nativeFocus.focusTextInput.mockClear();
+        nativeFocus.setAccessibilityFocus.mockClear();
+        nativeFocus.focusedInput = nativeFocus.input;
+        const screen = await renderScreen(element(true));
+        screen.findByTestId('plugin-surface-snapshot:surface-native-presentation-focus')?.props.onFocusCapture({
+            nativeEvent: { target: 42 },
+        });
+
+        await screen.update(element(false));
+        expect(nativeFocus.blurTextInput).toHaveBeenCalledWith(nativeFocus.input);
+        expect(nativeFocus.focusTextInput).not.toHaveBeenCalled();
+
+        await screen.update(element(true));
+        expect(nativeFocus.focusTextInput).not.toHaveBeenCalled();
+        expect(nativeFocus.setAccessibilityFocus).not.toHaveBeenCalled();
+    });
+
+    it('does not restore an offline return target while the retained surface remains presentation-ineligible', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
+        const element = (enabled: boolean, focusEligible: boolean) => (
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-presentation-return"
+                snapshotTitle="Build summary"
+                enabled={enabled}
+                focusEligible={focusEligible}
+            >
+                <PluginNativeSnapshot testID="plugin-native-presentation-return-snapshot" />
+            </PluginSurfaceInteractionBoundary>
+        );
+        nativeFocus.blurTextInput.mockClear();
+        nativeFocus.focusTextInput.mockClear();
+        nativeFocus.setAccessibilityFocus.mockClear();
+        nativeFocus.focusedInput = nativeFocus.input;
+        const screen = await renderScreen(element(true, true));
+        screen.findByTestId('plugin-surface-snapshot:surface-native-presentation-return')?.props.onFocusCapture({
+            nativeEvent: { target: 42 },
+        });
+
+        await screen.update(element(false, true));
+        expect(nativeFocus.blurTextInput).toHaveBeenCalledWith(nativeFocus.input);
+
+        await screen.update(element(true, false));
+        expect(nativeFocus.focusTextInput).not.toHaveBeenCalled();
+        expect(nativeFocus.setAccessibilityFocus).not.toHaveBeenCalled();
+
+        await screen.update(element(true, true));
+        expect(nativeFocus.focusTextInput).not.toHaveBeenCalled();
+        expect(nativeFocus.setAccessibilityFocus).not.toHaveBeenCalled();
     });
 });
 

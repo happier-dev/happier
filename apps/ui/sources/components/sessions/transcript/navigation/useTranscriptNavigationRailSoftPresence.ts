@@ -8,27 +8,49 @@ import { Platform, type ViewStyle } from 'react-native';
  */
 export const TRANSCRIPT_NAVIGATION_RAIL_SOFT_EXIT_MS = 120;
 
+export type TranscriptNavigationRailSoftFadeOptions = Readonly<{
+    /**
+     * Offset the element rests at while hidden; it travels to 0 as it appears,
+     * so a positive value enters upward and a negative value enters downward.
+     * Dropped entirely under reduced motion, which leaves the plain cross-fade.
+     */
+    hiddenTranslateYPx?: number;
+}>;
+
 /**
- * Opacity-only soft fade paired with the presence hook: enter eases out over
- * 140ms, exit eases in within the `TRANSCRIPT_NAVIGATION_RAIL_SOFT_EXIT_MS`
- * unmount window. Reduced motion (and native, where the rail never renders)
- * snaps instantly. Apply this on the element that owns any backdrop-filter —
- * an opacity-animated ancestor of a glass surface silently defeats its blur
- * on web.
+ * Soft fade paired with the presence hook: enter eases out over 140ms, exit
+ * eases in within the `TRANSCRIPT_NAVIGATION_RAIL_SOFT_EXIT_MS` unmount
+ * window. Reduced motion (and native, where the rail never renders) snaps
+ * instantly. Apply this on the element that owns any backdrop-filter — an
+ * opacity-animated ancestor of a glass surface silently defeats its blur on
+ * web, which is why `hiddenTranslateYPx` stays opt-in rather than default.
+ *
+ * This is the rail family's only fade/translate grammar; callers pass an
+ * offset here instead of hand-rolling a second set of durations and curves.
  */
 export function resolveTranscriptNavigationRailSoftFadeStyle(
     shown: boolean,
     reducedMotion: boolean,
+    options?: TranscriptNavigationRailSoftFadeOptions,
 ): ViewStyle {
     if (reducedMotion || Platform.OS !== 'web') {
         return { opacity: shown ? 1 : 0 };
     }
+    const hiddenTranslateYPx = typeof options?.hiddenTranslateYPx === 'number' && Number.isFinite(options.hiddenTranslateYPx)
+        ? options.hiddenTranslateYPx
+        : 0;
     // react-native-web supports transition* style props; cast at this web boundary.
-    return {
+    const fade = {
         opacity: shown ? 1 : 0,
-        transitionProperty: 'opacity',
+        // Never a blanket `transition: all` — only the properties that move.
+        transitionProperty: hiddenTranslateYPx === 0 ? 'opacity' : 'opacity, transform',
         transitionDuration: shown ? '140ms' : '110ms',
         transitionTimingFunction: shown ? 'ease-out' : 'ease-in',
+    };
+    if (hiddenTranslateYPx === 0) return fade as unknown as ViewStyle;
+    return {
+        ...fade,
+        transform: [{ translateY: shown ? 0 : hiddenTranslateYPx }],
     } as unknown as ViewStyle;
 }
 

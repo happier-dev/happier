@@ -98,14 +98,70 @@ describe('VoiceConversationRuntimeMachine', () => {
     it('keeps micMuted as an orthogonal snapshot attribute', async () => {
         const machine = createVoiceConversationRuntimeMachine();
 
-        machine.setMuted(true);
-        machine.transitionToSpeaking({ controlSessionId: 's1' });
+        machine.transitionToListening({ controlSessionId: 's1', adapterId: null, attemptId: null });
+        machine.setMuted({
+            controlSessionId: 's1',
+            adapterId: null,
+            attemptId: null,
+            micMuted: true,
+        });
+        machine.transitionToSpeaking({ controlSessionId: 's1', adapterId: null, attemptId: null });
 
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
             state: 'speaking',
             micMuted: true,
         });
+    });
+
+    it('does not let a replaced realtime owner retain or restore its mute projection', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+
+        machine.transitionToConnecting({
+            controlSessionId: 'voice-session',
+            adapterId: 'happier.voice.openai/realtime-openai',
+            attemptId: 1,
+        });
+        machine.setMuted({
+            controlSessionId: 'voice-session',
+            adapterId: 'happier.voice.openai/realtime-openai',
+            attemptId: 1,
+            micMuted: true,
+        });
+
+        machine.transitionToConnecting({
+            controlSessionId: 'voice-session',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+            attemptId: 2,
+        });
+
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 'voice-session',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+            state: 'connecting',
+            micMuted: false,
+        });
+
+        // This represents a delayed provider-side mute settlement from the
+        // replaced OpenAI attempt. It must not overwrite ElevenLabs' current
+        // physical/projected microphone state.
+        machine.setMuted({
+            controlSessionId: 'voice-session',
+            adapterId: 'happier.voice.openai/realtime-openai',
+            attemptId: 1,
+            micMuted: true,
+        });
+
+        expect(machine.getSnapshot().micMuted).toBe(false);
+
+        machine.setMuted({
+            controlSessionId: 'voice-session',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+            attemptId: 2,
+            micMuted: true,
+        });
+
+        expect(machine.getSnapshot().micMuted).toBe(true);
     });
 
     it('supports explicit listening and disconnected lifecycle transitions', () => {
@@ -149,11 +205,11 @@ describe('VoiceConversationRuntimeMachine', () => {
     it('records the owning adapter for an entry transition and clears it on disconnect', () => {
         const machine = createVoiceConversationRuntimeMachine();
 
-        machine.transitionToConnecting({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
+        machine.transitionToConnecting({ controlSessionId: 's1', adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' });
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
             state: 'connecting',
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         });
 
         // A non-owner mid-pipeline transition is rejected (owner guard).
@@ -161,7 +217,7 @@ describe('VoiceConversationRuntimeMachine', () => {
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
             state: 'connecting',
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         });
 
         machine.transitionToDisconnected({ controlSessionId: 's1' });
@@ -175,43 +231,43 @@ describe('VoiceConversationRuntimeMachine', () => {
     it('projects reconnecting only for the current adapter and control-session owner', () => {
         const machine = createVoiceConversationRuntimeMachine();
 
-        machine.transitionToConnecting({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
-        machine.transitionToConnected({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
+        machine.transitionToConnecting({ controlSessionId: 's1', adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' });
+        machine.transitionToConnected({ controlSessionId: 's1', adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' });
         machine.setReconnecting({
             controlSessionId: 's1',
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             reconnecting: true,
         });
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             state: 'connected',
             reconnecting: true,
         });
 
         machine.setReconnecting({
             controlSessionId: 'stale-session',
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             reconnecting: false,
         });
         machine.setReconnecting({
             controlSessionId: 's1',
-            adapterId: 'realtime_openai',
+            adapterId: 'happier.voice.openai/realtime-openai',
             reconnecting: false,
         });
         expect(machine.getSnapshot().reconnecting).toBe(true);
 
-        machine.transitionToDisconnected({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
+        machine.transitionToDisconnected({ controlSessionId: 's1', adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' });
         expect(machine.getSnapshot().reconnecting).toBe(false);
     });
 
     it('clears a stale realtime owner when a local entry transition starts after a declined realtime attempt', () => {
         const machine = createVoiceConversationRuntimeMachine();
 
-        machine.transitionToConnecting({ controlSessionId: 'realtime-s1', adapterId: 'realtime_elevenlabs' });
+        machine.transitionToConnecting({ controlSessionId: 'realtime-s1', adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' });
         machine.transitionToDisconnected({
             controlSessionId: 'realtime-s1',
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             error: createVoiceMachineError({ kind: 'provider_error', reason: 'realtime_declined' }),
         });
 

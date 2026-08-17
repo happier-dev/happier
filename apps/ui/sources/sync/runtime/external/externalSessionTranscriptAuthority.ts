@@ -1,4 +1,12 @@
-import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol';
+import type {
+    ExternalSessionOperationProgressV1,
+    ExternalSessionOperationSharedPresentationV1,
+} from '@happier-dev/protocol';
+
+import {
+    createExternalSessionOperationPresentationIdentity,
+    matchesExternalSessionOperationPresentation,
+} from './externalSessionOperationPresentationIdentity';
 
 export type ExternalSessionTranscriptStorageState =
     | 'machine_only'
@@ -7,9 +15,20 @@ export type ExternalSessionTranscriptStorageState =
     | 'hosted'
     | 'legacy_external_unknown';
 
+export type ExternalSessionTranscriptUnavailableReason =
+    | 'machine_offline'
+    | 'initial_partial_not_permitted'
+    | 'invalid_publication'
+    | 'legacy_external_unknown'
+    | 'invalid_authority_state';
+
 export type ExternalSessionTranscriptAuthority =
     | Readonly<{ kind: 'live_agent'; sourceKey: string }>
-    | Readonly<{ kind: 'server_partial'; maxServerSeq: number }>
+    | Readonly<{
+        kind: 'server_partial';
+        maxServerSeq: number;
+        operationKey: string;
+    }>
     | Readonly<{
         kind: 'server_snapshot';
         maxServerSeq: number;
@@ -18,12 +37,7 @@ export type ExternalSessionTranscriptAuthority =
     | Readonly<{ kind: 'hosted' }>
     | Readonly<{
         kind: 'unavailable';
-        reason:
-            | 'machine_offline'
-            | 'initial_partial_not_permitted'
-            | 'invalid_publication'
-            | 'legacy_external_unknown'
-            | 'invalid_authority_state';
+        reason: ExternalSessionTranscriptUnavailableReason;
     }>;
 
 export type ExternalSessionTranscriptSharingDecision =
@@ -56,10 +70,12 @@ export type ExternalSessionTranscriptAuthorityInput = Readonly<{
     acceptedThroughServerSeq: number | null;
     publishedThroughServerSeq: number | null;
     materializedThroughSourceAt: number | null;
+    transcriptShareable: boolean | null;
     /**
      * Initial partial rows are admitted only when the pushed public operation
      * projection agrees with the session's current storage facts and accepted bound.
      */
+    operationPresentation: ExternalSessionOperationSharedPresentationV1 | null;
     operationProgress: ExternalSessionOperationProgressV1 | null;
 }>;
 
@@ -245,7 +261,7 @@ export function externalSessionTranscriptAuthorityKey(
         case 'server_snapshot':
             return `${authority.kind}:${authority.maxServerSeq}:${authority.materializedThroughSourceAt}`;
         case 'server_partial':
-            return `${authority.kind}:${authority.maxServerSeq}`;
+            return `${authority.kind}:${authority.maxServerSeq}:${authority.operationKey}`;
         case 'unavailable':
             return `${authority.kind}:${authority.reason}`;
         case 'hosted':
@@ -288,15 +304,28 @@ function resolveAuthority(
             return { kind: 'unavailable', reason: 'invalid_publication' };
         }
         const progress = input.operationProgress;
+        const presentation = input.operationPresentation;
         if (
-            progress?.currentStorageState !== 'server_partial'
+            !progress
+            || !presentation
+            || !matchesExternalSessionOperationPresentation(
+                progress,
+                presentation,
+            )
+            || progress.currentStorageState !== 'server_partial'
             || progress.checkpoint.acceptedThroughServerSeq !== maxServerSeq
             || progress.fence.kind !== 'initial_server_partial'
             || progress.fence.acceptedThroughServerSeq !== maxServerSeq
         ) {
             return { kind: 'unavailable', reason: 'initial_partial_not_permitted' };
         }
-        return { kind: 'server_partial', maxServerSeq };
+        return {
+            kind: 'server_partial',
+            maxServerSeq,
+            operationKey: createExternalSessionOperationPresentationIdentity(
+                presentation,
+            ),
+        };
     }
 
     const maxServerSeq = readServerSequence(input.publishedThroughServerSeq);
@@ -332,7 +361,11 @@ function resolveSharingDecision(
 
     const publishedThroughServerSeq = readServerSequence(input.publishedThroughServerSeq);
     const materializedThroughSourceAt = readObservedAt(input.materializedThroughSourceAt);
-    if (publishedThroughServerSeq === null || materializedThroughSourceAt === null) {
+    if (
+        input.transcriptShareable !== true
+        || publishedThroughServerSeq === null
+        || materializedThroughSourceAt === null
+    ) {
         return { kind: 'unavailable', reason: 'invalid_publication' };
     }
     return {

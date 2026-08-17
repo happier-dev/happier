@@ -63,7 +63,7 @@ import {
     createPluginUiPolicyEvaluationContext,
     type PluginUiPolicyEvaluationContext,
 } from '@/sync/domains/plugins/ui/policy';
-import { resolvePluginUiIoniconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
+import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import {
     resolveExternalUrlTargetFromInput,
     selectActiveBrowserView,
@@ -787,7 +787,7 @@ export function BrowserShell(props: Readonly<{
         if (desktopNativeDevtoolsAvailable) {
             items.push({
                 id: 'open-devtools',
-                iconName: 'bug-outline',
+                iconName: 'bug',
                 label: t('browserShell.toolbar.openNativeDevtools'),
                 onPress: openDesktopDevtools,
             });
@@ -795,7 +795,7 @@ export function BrowserShell(props: Readonly<{
         if (props.browserContext) {
             items.push({
                 id: 'attach-context',
-                iconName: 'globe-outline',
+                iconName: 'globe',
                 label: t('browserContext.composer.attachPageReference'),
                 onPress: attachBrowserContext,
                 disabled: browserContextButtonDisabled,
@@ -805,7 +805,7 @@ export function BrowserShell(props: Readonly<{
                 if (activeAnnotation) {
                     items.push({
                         id: 'capture-annotation',
-                        iconName: 'checkmark-outline',
+                        iconName: 'check',
                         label: t('browserContext.composer.attachAnnotation'),
                         onPress: () => { void captureAnnotation(); },
                         disabled: browserContextButtonDisabled || !annotationDraftAvailable,
@@ -818,7 +818,7 @@ export function BrowserShell(props: Readonly<{
                     });
                     items.push({
                         id: 'cancel-annotation',
-                        iconName: 'close-outline',
+                        iconName: 'x',
                         label: t('browserContext.composer.cancelAnnotation'),
                         onPress: cancelAnnotation,
                         disabled: browserContextButtonDisabled,
@@ -827,7 +827,7 @@ export function BrowserShell(props: Readonly<{
                 } else {
                     items.push({
                         id: 'start-annotation',
-                        iconName: 'create-outline',
+                        iconName: 'pencil-simple',
                         label: t('browserContext.composer.startAnnotation'),
                         onPress: startAnnotation,
                         disabled: browserContextButtonDisabled || annotationCaptureProducerUnavailable,
@@ -848,7 +848,7 @@ export function BrowserShell(props: Readonly<{
                 );
                 items.push({
                     id: action.id,
-                    iconName: resolvePluginUiIoniconName(action.display.iconToken),
+                    iconName: resolvePluginUiIconName(action.display.iconToken),
                     label: action.display.title,
                     onPress: () => invokePluginBrowserAction(action),
                     disabled: !policyDecision.enabled,

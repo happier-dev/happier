@@ -9,6 +9,7 @@ const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const prepareAccountSettingsForDaemonSpawnIfNeededMock = vi.hoisted(() => vi.fn(async () => ({})));
+const apiRequestMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -29,6 +30,7 @@ vi.mock('./sessionMachineTarget', async () => {
 
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {
+        request: apiRequestMock,
         machineRPC: vi.fn(),
         sessionRPC: vi.fn(),
     },
@@ -41,6 +43,15 @@ vi.mock('./accountSettingsDaemonSpawnPreparation', async (importOriginal) => ({
 }));
 
 const sessionsModulePromise = import('./sessions');
+
+function makeResponse(opts: Readonly<{ ok: boolean; status?: number; json?: unknown; text?: string }>): Response {
+    return {
+        ok: opts.ok,
+        status: opts.status ?? (opts.ok ? 200 : 500),
+        json: async () => opts.json ?? {},
+        text: async () => opts.text ?? '',
+    } as Response;
+}
 
 describe('sessions ops server-scoped routing', () => {
     const initialStorageState = storage.getInitialState();
@@ -80,6 +91,88 @@ describe('sessions ops server-scoped routing', () => {
         prepareAccountSettingsForDaemonSpawnIfNeededMock.mockReset();
         prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValue({});
         readMachineTargetForSessionMock.mockReturnValue(null);
+        apiRequestMock.mockReset();
+    });
+
+    it('restores an archived session before issuing its resume spawn', async () => {
+        const lifecycle: string[] = [];
+        storage.setState((state) => ({
+            sessions: {
+                ...state.sessions,
+                'session-1': createSessionFixture({ id: 'session-1', archivedAt: 123 }),
+            },
+        }));
+        apiRequestMock.mockImplementationOnce(async () => {
+            lifecycle.push('unarchive');
+            return makeResponse({ ok: true, json: { success: true, archivedAt: null } });
+        });
+        machineRpcWithServerScopeMock.mockImplementationOnce(async () => {
+            lifecycle.push('resume');
+            return { type: 'success', sessionId: 'session-1' };
+        });
+        const { resumeSession } = await sessionsModulePromise;
+
+        const result = await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        });
+
+        expect(result).toEqual({ type: 'success', sessionId: 'session-1' });
+        expect(apiRequestMock).toHaveBeenCalledWith('/v2/sessions/session-1/unarchive', { method: 'POST' });
+        expect(lifecycle).toEqual(['unarchive', 'resume']);
+    });
+
+    it('does not issue a resume spawn when restoring an archived session fails', async () => {
+        storage.setState((state) => ({
+            sessions: {
+                ...state.sessions,
+                'session-1': createSessionFixture({ id: 'session-1', archivedAt: 123 }),
+            },
+        }));
+        apiRequestMock.mockResolvedValueOnce(makeResponse({
+            ok: false,
+            status: 403,
+            text: 'Forbidden',
+        }));
+        const { resumeSession } = await sessionsModulePromise;
+
+        const result = await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        });
+
+        expect(result).toMatchObject({
+            type: 'error',
+            errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorMessage: 'Forbidden',
+        });
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('does not unarchive an already-unarchived session before resuming it', async () => {
+        storage.setState((state) => ({
+            sessions: {
+                ...state.sessions,
+                'session-1': createSessionFixture({ id: 'session-1', archivedAt: null }),
+            },
+        }));
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-1' });
+        const { resumeSession } = await sessionsModulePromise;
+
+        const result = await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        });
+
+        expect(result).toEqual({ type: 'success', sessionId: 'session-1' });
+        expect(apiRequestMock).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
     });
 
     it('uses one current-only Provider-safe RPC so an older daemon refuses resume before side effects', async () => {
@@ -404,6 +497,7 @@ describe('sessions ops server-scoped routing', () => {
 
     it('owns the resume lifecycle marker across successful spawn and clears it on eager validation failure', async () => {
         const markSessionResumingSpy = vi.spyOn(storage.getState(), 'markSessionResuming');
+        const armSessionResumingFallbackSpy = vi.spyOn(storage.getState(), 'armSessionResumingFallback');
         const clearSessionResumingSpy = vi.spyOn(storage.getState(), 'clearSessionResuming');
         try {
             machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
@@ -419,6 +513,7 @@ describe('sessions ops server-scoped routing', () => {
 
             expect(success.type).toBe('success');
             expect(markSessionResumingSpy).toHaveBeenCalledWith('session-success');
+            expect(armSessionResumingFallbackSpy).toHaveBeenCalledWith('session-success');
             expect(clearSessionResumingSpy).not.toHaveBeenCalledWith('session-success');
 
             const invalid = await resumeSession({
@@ -431,9 +526,11 @@ describe('sessions ops server-scoped routing', () => {
 
             expect(invalid.type).toBe('error');
             expect(markSessionResumingSpy).toHaveBeenCalledWith('session-invalid');
+            expect(armSessionResumingFallbackSpy).not.toHaveBeenCalledWith('session-invalid');
             expect(clearSessionResumingSpy).toHaveBeenCalledWith('session-invalid');
         } finally {
             markSessionResumingSpy.mockRestore();
+            armSessionResumingFallbackSpy.mockRestore();
             clearSessionResumingSpy.mockRestore();
         }
     });

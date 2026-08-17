@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -48,6 +47,11 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { buildApprovalToolCallLocation, doesApprovalMatchToolCall } from './toolApprovalPromptMatching';
 import { isAskUserQuestionToolName } from '@happier-dev/protocol';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
+import { Icon } from '@/components/ui/icons/Icon';
+import {
+    TranscriptRowSeqProvider,
+    useHistoricalTranscriptAgentId,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 const TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS = 10;
 
@@ -71,6 +75,13 @@ export const ToolTimelineRow = React.memo((props: {
 }) => {
     const { theme } = useUnistyles();
     const router = useRouter();
+    // The canonical transcript row sequence. It already reaches this component
+    // for jump targeting; historical Agent attribution is its second reader, and
+    // it is published to the whole tool subtree so the body, the permission
+    // footer and the full view resolve the same Agent without six layers of
+    // prop drilling.
+    const transcriptSeq = props.jumpHighlightSeq ?? null;
+    const historicalAgentId = useHistoricalTranscriptAgentId(transcriptSeq);
 
     const toolForSession = React.useMemo(() => {
         return resolveInactiveSessionToolCallFailure({
@@ -86,8 +97,9 @@ export const ToolTimelineRow = React.memo((props: {
             iconSize: 18,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         });
-    }, [props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [historicalAgentId, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
     const toolForRendering = headerModel.toolForRendering;
 
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
@@ -240,8 +252,9 @@ export const ToolTimelineRow = React.memo((props: {
             iconSize,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         }).icon;
-    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [headerModel.icon, historicalAgentId, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const showTaskRunningIndicator = isSubAgentTranscriptTool;
@@ -255,6 +268,7 @@ export const ToolTimelineRow = React.memo((props: {
                         tool: toolForRendering,
                         metadata: props.metadata,
                         permissionDisabledReason: props.interaction?.permissionDisabledReason,
+                        historicalAgentId,
                     }) ?? t('errors.permissionDenied')
                 )
                 : null;
@@ -267,9 +281,9 @@ export const ToolTimelineRow = React.memo((props: {
                     accessibilityLabel={terminalStatusSummary}
                     style={styles.headerTerminalStatus}
                 >
-                    <Ionicons
-                        name={statusKind === 'permission_blocked' ? 'remove-circle-outline' : 'alert-circle'}
-                        size={18}
+                    <Icon
+                        name={statusKind === 'permission_blocked' ? 'minus-circle' : 'warning-circle'}
+                        size={16}
                         color={theme.colors.state.danger.foreground}
                     />
                     <Text style={styles.headerTerminalStatusText} numberOfLines={1}>
@@ -383,10 +397,11 @@ export const ToolTimelineRow = React.memo((props: {
     ]);
 
     return (
+        <TranscriptRowSeqProvider value={transcriptSeq}>
         <TranscriptJumpAttention
             sessionId={props.sessionId ?? ''}
             routeMessageId={routeMessageId}
-            seq={props.jumpHighlightSeq ?? null}
+            seq={transcriptSeq}
             radius={TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS}
             style={styles.container}
         >
@@ -435,6 +450,7 @@ export const ToolTimelineRow = React.memo((props: {
             {permissionFooter}
             {approvalCards}
         </TranscriptJumpAttention>
+        </TranscriptRowSeqProvider>
     );
 });
 

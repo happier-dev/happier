@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 describe('settings registry completeness', () => {
     it('builds the account settings schema entirely from schema metadata and canonical account artifacts', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS, SettingsSchema } = await import('./settings');
+        const { LOCAL_ACCOUNT_SETTING_ARTIFACTS } = await import('./registry/local/localAccountSettingDefinitions');
         const expectedSchemaKeys = new Set([
-            'schemaVersion',
             ...Object.keys(ACCOUNT_SETTING_ARTIFACTS.shape),
+            ...Object.keys(LOCAL_ACCOUNT_SETTING_ARTIFACTS.shape),
         ]);
 
         expect(new Set(Object.keys(SettingsSchema.shape))).toEqual(expectedSchemaKeys);
@@ -13,12 +14,23 @@ describe('settings registry completeness', () => {
 
     it('builds account settings defaults entirely from schema metadata and canonical account artifacts', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS, settingsDefaults } = await import('./settings');
+        const { LOCAL_ACCOUNT_SETTING_ARTIFACTS } = await import('./registry/local/localAccountSettingDefinitions');
+        const { MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS } = await import('./parse/accountSettingsLegacyCleanup');
         const expectedDefaultKeys = new Set([
-            'schemaVersion',
-            ...Object.keys(ACCOUNT_SETTING_ARTIFACTS.defaults),
+            ...Object.entries(ACCOUNT_SETTING_ARTIFACTS.defaults).flatMap(([key, value]) => (
+                value === undefined || MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS.has(key)
+                    ? []
+                    : [key]
+            )),
+            ...Object.keys(LOCAL_ACCOUNT_SETTING_ARTIFACTS.defaults),
         ]);
 
         expect(new Set(Object.keys(settingsDefaults))).toEqual(expectedDefaultKeys);
+        for (const key of MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS) {
+            expect(settingsDefaults).not.toHaveProperty(key);
+        }
+        expect(settingsDefaults).not.toHaveProperty('providerSettingsV1');
+        expect(settingsDefaults).not.toHaveProperty('scmIncludeCoAuthoredBy');
     });
 
     it('owns featureToggles in the canonical account settings artifacts', async () => {
@@ -27,12 +39,13 @@ describe('settings registry completeness', () => {
         expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('featureToggles', {});
     });
 
-    it('owns lastUsedAgent in canonical account settings instead of the legacy compatibility bucket', async () => {
+    it('keeps last-used session creation state in the device-local Account catalog', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
-        const { ACCOUNT_LEGACY_SETTING_ARTIFACTS } = await import('./registry/account/accountLegacySettingDefinitions');
+        const { LOCAL_ACCOUNT_SETTING_ARTIFACTS } = await import('./registry/local/localAccountSettingDefinitions');
 
-        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('lastUsedAgent');
-        expect(ACCOUNT_LEGACY_SETTING_ARTIFACTS.definitions).not.toHaveProperty('lastUsedAgent');
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).not.toHaveProperty('lastUsedAgent');
+        expect(LOCAL_ACCOUNT_SETTING_ARTIFACTS.definitions.lastUsedAgent.storageScope).toBe('local');
+        expect(LOCAL_ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('lastUsedAgent', null);
     });
 
     it('enables remembered project session selections by default as an account-scoped setting', async () => {

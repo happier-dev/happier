@@ -5,8 +5,13 @@ import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plu
 import {
     createReactNativeInstalledArtifactDiskGc,
     createReactNativeInstalledArtifactFileMaterializer,
+    createReactNativePersistentArtifactStore,
+    resolveMaterializedArtifactDirectoryName,
 } from './artifactFileMaterializer';
-import type { PluginReactNativeBundleCacheIdentity } from './bundleCache';
+import {
+    createPluginReactNativeBundleCache,
+    type PluginReactNativeBundleCacheIdentity,
+} from './bundleCache';
 
 function buildIdentity(overrides: Partial<PluginReactNativeBundleCacheIdentity> = {}): PluginReactNativeBundleCacheIdentity {
     const bytes = new Uint8Array([47, 47, 32, 105, 110, 115, 116, 97, 108, 108, 101, 100]);
@@ -168,6 +173,22 @@ function joinUris(uris: Array<{ uri: string } | string>): string {
 }
 
 describe('React Native installed artifact file materializer', () => {
+    it('uses the same materialized path across compatibility and projection changes for identical bytes', () => {
+        const bytes = new Uint8Array([1, 2, 3]);
+        const artifactDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const before = buildIdentity({ artifactDigest });
+        const after = buildIdentity({
+            artifactDigest,
+            hostAppVersion: '9.0.0',
+            hostUiApiVersion: '4.0.0',
+            projectionGeneration: 999,
+            nativeCapabilitiesDigest: computePluginUiArtifactSha256DigestV1(new Uint8Array([15])),
+        });
+
+        expect(resolveMaterializedArtifactDirectoryName(after))
+            .toBe(resolveMaterializedArtifactDirectoryName(before));
+    });
+
     it('materializes verified bytes to a stable sanitized file URL and avoids a needless rewrite', async () => {
         const bytes = new Uint8Array([47, 47, 32, 105, 110, 115, 116, 97, 108, 108, 101, 100]);
         const identity = buildIdentity({ artifactDigest: computePluginUiArtifactSha256DigestV1(bytes) });
@@ -273,7 +294,252 @@ describe('React Native installed artifact file materializer', () => {
     });
 });
 
+describe('React Native persistent artifact store', () => {
+    it('commits the manifest last and restores bytes after a new store instance starts', async () => {
+        const fake = createFakeExpoFileSystemWithDirectoryDeletion();
+        const bytes = new TextEncoder().encode('// persistent native bytes');
+        const artifactDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const persistentIdentity = {
+            accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            releaseVersion: '1.2.3',
+            pluginId: 'acme.plugin',
+            contributionId: 'native',
+            tier: 'reactNative' as const,
+            platform: 'ios',
+            artifactDigest,
+        };
+        const first = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+
+        await first.write({
+            persistentIdentity,
+            bytes,
+        });
+
+        expect(fake.writes.at(-1)).toMatch(/\/record\.v1\.json$/u);
+        const restarted = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await expect(restarted.read(persistentIdentity)).resolves.toMatchObject({
+            persistentIdentity,
+            bytes,
+        });
+    });
+
+    it('removes an incomplete record directory instead of retaining unreadable cache files', async () => {
+        const fake = createFakeExpoFileSystemWithDirectoryDeletion();
+        const entryBytes = new TextEncoder().encode('// persistent entry');
+        const chunkBytes = new TextEncoder().encode('// persistent chunk');
+        const persistentIdentity = {
+            accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            releaseVersion: '1.2.3',
+            pluginId: 'acme.plugin',
+            contributionId: 'native',
+            tier: 'reactNative' as const,
+            platform: 'ios',
+            artifactDigest: computePluginUiArtifactSha256DigestV1(entryBytes),
+        };
+        const store = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await store.write({
+            persistentIdentity,
+            bytes: entryBytes,
+            entryRelativePath: 'entry.js',
+            files: [
+                {
+                    relativePath: 'entry.js',
+                    digest: computePluginUiArtifactSha256DigestV1(entryBytes),
+                    byteSize: entryBytes.byteLength,
+                    bytes: entryBytes,
+                },
+                {
+                    relativePath: 'chunk.js',
+                    digest: computePluginUiArtifactSha256DigestV1(chunkBytes),
+                    byteSize: chunkBytes.byteLength,
+                    bytes: chunkBytes,
+                },
+            ],
+        });
+        const chunkPath = [...fake.files.keys()].find((path) => path.endsWith('.bin') && !path.endsWith('record.v1.json'));
+        if (!chunkPath) throw new Error('Fixture must contain a persisted file.');
+        fake.files.delete(chunkPath);
+
+        await expect(store.read(persistentIdentity)).resolves.toBeNull();
+        expect(fake.directoryDeletes).toHaveLength(1);
+        expect(fake.files).toEqual(new Map());
+    });
+
+    it('treats a non-canonical manifest file digest as an incomplete record', async () => {
+        const fake = createFakeExpoFileSystemWithDirectoryDeletion();
+        const bytes = new TextEncoder().encode('// persistent entry');
+        const artifactDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const persistentIdentity = {
+            accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            releaseVersion: '1.2.3',
+            pluginId: 'acme.plugin',
+            contributionId: 'native',
+            tier: 'reactNative' as const,
+            platform: 'ios',
+            artifactDigest,
+        };
+        const store = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await store.write({ persistentIdentity, bytes });
+
+        const manifestPath = [...fake.files.keys()].find((path) => path.endsWith('/record.v1.json'));
+        if (!manifestPath) throw new Error('Fixture must contain the persistent manifest.');
+        const manifestBytes = fake.files.get(manifestPath);
+        if (!manifestBytes) throw new Error('Fixture must contain the persistent manifest bytes.');
+        const writtenManifest = new TextDecoder().decode(manifestBytes);
+        const malformedManifest = writtenManifest.replace(
+            `"digest":"${artifactDigest}"`,
+            '"digest":"sha256:not-a-digest"',
+        );
+        expect(malformedManifest).not.toBe(writtenManifest);
+        fake.files.set(manifestPath, new TextEncoder().encode(malformedManifest));
+
+        await expect(store.read(persistentIdentity)).resolves.toBeNull();
+        expect(fake.directoryDeletes).toHaveLength(1);
+        expect(fake.files).toEqual(new Map());
+    });
+
+    it('describes a committed hosted Artifact through opaque native storage coordinates only', async () => {
+        const fake = createFakeExpoFileSystem();
+        const entryPath = 'hosted-web/acme/index.html';
+        const scriptPath = 'hosted-web/acme/assets/app.js';
+        const entryBytes = new TextEncoder().encode('<!doctype html><script src="assets/app.js"></script>');
+        const scriptBytes = new TextEncoder().encode('export const mounted = true;');
+        const persistentIdentity = {
+            accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            releaseVersion: '1.2.3',
+            pluginId: 'acme.plugin',
+            contributionId: 'hosted',
+            tier: 'hostedWeb' as const,
+            platform: 'android',
+            artifactDigest: computePluginUiArtifactSha256DigestV1(entryBytes),
+        };
+        const files = [
+            {
+                relativePath: entryPath,
+                digest: computePluginUiArtifactSha256DigestV1(entryBytes),
+                byteSize: entryBytes.byteLength,
+                bytes: entryBytes,
+            },
+            {
+                relativePath: scriptPath,
+                digest: computePluginUiArtifactSha256DigestV1(scriptBytes),
+                byteSize: scriptBytes.byteLength,
+                bytes: scriptBytes,
+            },
+        ] as const;
+        const store = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+
+        await store.write({
+            persistentIdentity,
+            bytes: entryBytes,
+            entryRelativePath: entryPath,
+            files,
+        });
+
+        const described = await store.describeNativeResource({
+            identity: persistentIdentity,
+            files: files.map(({ relativePath, digest, byteSize }) => ({ relativePath, digest, byteSize })),
+        });
+
+        expect(described).toEqual({
+            locator: {
+                namespace: 'happier-plugin-ui-artifacts-v1',
+                accountKeyHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+                artifactKeyHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            },
+            resources: [
+                {
+                    storedFileName: expect.stringMatching(/^[a-f0-9]{64}\.bin$/u),
+                    digest: files[0].digest,
+                    byteSize: files[0].byteSize,
+                },
+                {
+                    storedFileName: expect.stringMatching(/^[a-f0-9]{64}\.bin$/u),
+                    digest: files[1].digest,
+                    byteSize: files[1].byteSize,
+                },
+            ],
+        });
+        const nativeDescriptor = JSON.stringify(described);
+        expect(nativeDescriptor).not.toContain(entryPath);
+        expect(nativeDescriptor).not.toContain(scriptPath);
+        expect(nativeDescriptor).not.toContain(persistentIdentity.accountScope.serverId);
+        expect(nativeDescriptor).not.toContain(persistentIdentity.accountScope.accountId);
+        expect(nativeDescriptor).not.toContain(persistentIdentity.pluginId);
+
+        await expect(store.describeNativeResource({
+            identity: persistentIdentity,
+            files: [{ ...files[0], digest: computePluginUiArtifactSha256DigestV1(new Uint8Array([0])) }],
+        })).resolves.toBeNull();
+    });
+
+    it('removes only the selected Account directory', async () => {
+        const fake = createFakeExpoFileSystemWithDirectoryDeletion();
+        const bytes = new Uint8Array([4, 5, 6]);
+        const artifactDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const base = {
+            releaseVersion: '1.2.3',
+            pluginId: 'acme.plugin',
+            contributionId: 'native',
+            tier: 'reactNative' as const,
+            platform: 'ios',
+            artifactDigest,
+        };
+        const accountA = { ...base, accountScope: { serverId: 'server-a', accountId: 'account-a' } };
+        const accountB = { ...base, accountScope: { serverId: 'server-a', accountId: 'account-b' } };
+        const store = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await store.write({ persistentIdentity: accountA, bytes });
+        await store.write({ persistentIdentity: accountB, bytes });
+
+        await store.removeAccount(accountA.accountScope);
+
+        await expect(store.read(accountA)).resolves.toBeNull();
+        await expect(store.read(accountB)).resolves.toMatchObject({ bytes });
+    });
+});
+
 describe('React Native installed artifact disk GC', () => {
+    it('keeps the current stable materialized directory across a compatibility generation replacement', async () => {
+        const bytes = new Uint8Array([47, 47, 32, 105, 110, 115, 116, 97, 108, 108, 101, 100]);
+        const artifactDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const retiringIdentity = buildIdentity({ artifactDigest });
+        const currentIdentity = buildIdentity({
+            artifactDigest,
+            hostAppVersion: '9.0.0',
+            hostUiApiVersion: '4.0.0',
+            nativeCapabilitiesDigest: computePluginUiArtifactSha256DigestV1(new Uint8Array([15])),
+            projectionGeneration: 13,
+        });
+        const fake = createFakeExpoFileSystemWithDirectoryDeletion();
+        const materialize = createReactNativeInstalledArtifactFileMaterializer({ fileSystem: fake.fileSystem });
+        const cache = createPluginReactNativeBundleCache({
+            diskGc: createReactNativeInstalledArtifactDiskGc({ fileSystem: fake.fileSystem }),
+        });
+
+        const retiringUrl = await materialize({
+            identity: retiringIdentity,
+            bytes,
+            scriptId: 'script:retiring',
+        });
+        const currentUrl = await materialize({
+            identity: currentIdentity,
+            bytes,
+            scriptId: 'script:current',
+        });
+        const stableDirectoryName = resolveMaterializedArtifactDirectoryName(currentIdentity);
+        expect(resolveMaterializedArtifactDirectoryName(retiringIdentity)).toBe(stableDirectoryName);
+        expect(retiringUrl).toContain(`/${stableDirectoryName}/`);
+        expect(currentUrl).toContain(`/${stableDirectoryName}/`);
+
+        cache.putInstalledArtifact({ identity: retiringIdentity, bytes, format: 'plainJs' });
+        cache.putInstalledArtifact({ identity: currentIdentity, bytes, format: 'plainJs' });
+        cache.reconcileActiveProjectionIdentities([currentIdentity]);
+        await Promise.resolve();
+
+        expect(fake.files.has(currentUrl)).toBe(true);
+        expect(fake.directoryDeletes).toEqual([]);
+    });
+
     it('deletes the materialized on-disk bundle directory for an evicted identity', async () => {
         const bytes = new Uint8Array([47, 47, 32, 105, 110, 115, 116, 97, 108, 108, 101, 100]);
         const identity = buildIdentity({ artifactDigest: computePluginUiArtifactSha256DigestV1(bytes) });

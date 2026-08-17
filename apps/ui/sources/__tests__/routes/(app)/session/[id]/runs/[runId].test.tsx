@@ -243,6 +243,7 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 999 },
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 999 }),
     useLayoutMaxWidth: () => 999,
 }));
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({

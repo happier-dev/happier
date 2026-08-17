@@ -1,6 +1,6 @@
 import { storage } from '@/sync/domains/state/storage';
 import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
-import { resolveVoiceExecutionMachineIdFromState } from '@/voice/settings/executionMachine';
+import { resolveVoiceExecutionMachineSelectionFromState } from '@/voice/settings/executionMachine';
 
 /**
  * The single UI projection of the selected voice execution machine.
@@ -9,12 +9,18 @@ import { resolveVoiceExecutionMachineIdFromState } from '@/voice/settings/execut
 export function useVoiceExecutionMachinePresentation(): Readonly<{
   machineId: string | null;
   machineLabel: string | null;
+  selectionKind: 'resolved' | 'selected_unreachable' | 'none';
 }> {
-  const machineId = storage(resolveVoiceExecutionMachineIdFromState);
-  const machineLabel = storage((state) => {
-    if (!machineId) return null;
-    const machine = resolveMachineForActiveServerFromState(state, machineId);
-    return machine?.metadata?.displayName || machine?.metadata?.host || machineId;
+  const selectionKind = storage((state) => resolveVoiceExecutionMachineSelectionFromState(state).kind);
+  const selectedMachineId = storage((state) => {
+    const selection = resolveVoiceExecutionMachineSelectionFromState(state);
+    return selection.kind === 'none' ? null : selection.machineId;
   });
-  return { machineId, machineLabel };
+  const machineId = selectionKind === 'resolved' ? selectedMachineId : null;
+  const machineLabel = storage((state) => {
+    if (!selectedMachineId) return null;
+    const machine = resolveMachineForActiveServerFromState(state, selectedMachineId);
+    return machine?.metadata?.displayName || machine?.metadata?.host || selectedMachineId;
+  });
+  return { machineId, machineLabel, selectionKind };
 }

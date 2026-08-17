@@ -1,8 +1,8 @@
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export function ToolError(props: { message: string }) {
@@ -13,7 +13,7 @@ export function ToolError(props: { message: string }) {
     return (
         <View style={[styles.errorContainer, isToolUseError && styles.toolUseErrorContainer]}>
             {isToolUseError && (
-                <Ionicons name="warning" size={16} color={theme.colors.state.warning.foreground} />
+                <Icon name="warning" size={16} color={theme.colors.state.warning.foreground} />
             )}
             <Text style={[styles.errorText, isToolUseError && styles.toolUseErrorText]}>
                 {displayMessage}

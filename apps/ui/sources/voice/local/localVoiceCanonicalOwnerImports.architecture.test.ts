@@ -11,10 +11,10 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
     {
         filePath: 'sources/voice/local/localVoiceRuntimeController.ts',
         requiredImports: [
-            "./createLocalVoiceRuntimeControllerImpl",
+            "./localVoiceEngine",
         ],
         forbiddenImports: [
-            "./localVoiceEngine",
+            "./createLocalVoiceRuntimeControllerImpl",
         ],
     },
     {
@@ -83,5 +83,11 @@ describe('local voice canonical owner imports', () => {
 
         expect(source).not.toContain('./localVoiceState');
         await expect(access('sources/voice/local/localVoiceState.ts')).rejects.toBeDefined();
+    });
+
+    it('keeps the public local runtime facade directly bound to the engine owner', async () => {
+        await expect(
+            access('sources/voice/local/createLocalVoiceRuntimeControllerImpl.ts'),
+        ).rejects.toBeDefined();
     });
 });

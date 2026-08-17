@@ -79,6 +79,35 @@ describe('newSessionLaunchAttempt', () => {
         });
     });
 
+    it('keeps the persisted attempt identity stable across retries', () => {
+        const first = launchAttemptModule.createNewSessionLaunchAttempt({
+            prompt: 'Investigate checkout failures',
+            displayText: 'Investigate checkout failures',
+            scopeKey: 'machine:m1|server:server-a|path:/repo',
+            attemptId: 'retryable-attempt',
+        });
+        const retry = launchAttemptModule.createNewSessionLaunchAttempt({
+            prompt: 'Investigate checkout failures',
+            displayText: 'Investigate checkout failures',
+            scopeKey: 'machine:m1|server:server-a|path:/repo',
+            attemptId: 'retryable-attempt',
+        });
+        const newIntent = launchAttemptModule.createNewSessionLaunchAttempt({
+            prompt: 'Investigate checkout failures',
+            displayText: 'Investigate checkout failures',
+            scopeKey: 'machine:m1|server:server-a|path:/repo',
+            attemptId: 'new-attempt',
+        });
+
+        expect(first.attemptId).toBe('retryable-attempt');
+        expect(retry.attemptId).toBe(first.attemptId);
+        expect(newIntent.attemptId).toBe('new-attempt');
+        expect(newIntent.attemptId).not.toBe(first.attemptId);
+        // A fresh explicit submission owns a fresh spawn nonce and therefore
+        // must not borrow the first turn identity of an older attempt.
+        expect(newIntent.firstTurnLocalId).not.toBe(first.firstTurnLocalId);
+    });
+
     it('does not spawn again after a session id has been created', () => {
         const attempt = launchAttemptModule.markNewSessionLaunchAttemptCreated(
             launchAttemptModule.createNewSessionLaunchAttempt({

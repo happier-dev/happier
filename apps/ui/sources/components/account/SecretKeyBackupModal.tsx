@@ -1,7 +1,6 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -13,6 +12,7 @@ import { Text } from '@/components/ui/text/Text';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -123,9 +123,9 @@ export function SecretKeyBackupModal(props: Props) {
             <View style={styles.keyContainer}>
                 <View style={styles.keyLabelRow}>
                     <Text style={styles.keyLabel}>{t('settingsAccount.secretKeyLabel')}</Text>
-                    <Ionicons
-                        name={revealed ? 'eye-off-outline' : 'eye-outline'}
-                        size={18}
+                    <Icon
+                        name={revealed ? 'eye-slash' : 'eye'}
+                        size={16}
                         color={theme.colors.text.secondary}
                     />
                 </View>

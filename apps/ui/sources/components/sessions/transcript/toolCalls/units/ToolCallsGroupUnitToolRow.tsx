@@ -16,10 +16,8 @@ import { resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/message
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 
-import {
-    renderGroupedToolCallRowContent,
-    resolveGroupedPreviewSidechainIds,
-} from './groupedToolCallRowContent';
+import { renderGroupedToolCallRowContent } from './groupedToolCallRowContent';
+import { resolveGroupedPreviewSidechainIds } from './groupedToolCallRowRenderDecision';
 import {
     resolveToolCallMessageForSession,
     resolveToolCallsGroupChromeVariant,

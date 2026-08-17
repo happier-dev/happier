@@ -93,10 +93,10 @@ function resolveTranscriptEntryId(message: unknown): string | null {
     const record = readRecord(message);
     if (!record) return null;
     return normalizeNonEmptyString(
-        typeof record.realID === 'string'
-            ? record.realID
-            : typeof record.localId === 'string'
+        typeof record.localId === 'string'
                 ? record.localId
+            : typeof record.realID === 'string'
+                ? record.realID
                 : typeof record.id === 'string'
                     ? record.id
                     : null,
@@ -121,7 +121,7 @@ export function selectVoiceTranscriptEntriesForConversationSession(
         return cached.result;
     }
 
-    const messages = readStoredSessionMessages(state as any, resolvedConversationSessionId);
+    const messages = readStoredSessionMessages<unknown, unknown>(state, resolvedConversationSessionId);
     const entries: VoiceTranscriptEntry[] = [];
     for (const message of messages) {
         const record = readRecord(message);

@@ -52,6 +52,8 @@ vi.mock('@/constants/Typography', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800 },
+    useLayoutMaxWidth: () => 800,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 800 }),
 }));
 
 type ChatFooterProps = React.ComponentProps<typeof ChatFooter>;

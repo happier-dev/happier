@@ -165,6 +165,9 @@ vi.mock('@/sync/store/hooks', () => ({
     useSessionServerId: () => 'server-1',
     useSessionMessages: () => ({ messages: [] }),
     useSessionMessagesReducerState: () => reducerState.current,
+    // The narrow projection both roster widths derive from. The roster itself is supplied by the
+    // `useSessionSubagents` mock below, so this stays empty on purpose.
+    useSessionSubagentSourceMessages: () => [],
 }));
 
 const subagents: readonly SessionSubagent[] = [
@@ -597,5 +600,65 @@ describe('SessionRightPanelAgentsView', () => {
             screen.pressByTestId('session-subagents-launch-section-toggle');
         });
         expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeTruthy();
+    });
+
+    // The published agent-activity headline owns EXISTENCE and STATUS. The transcript is the only
+    // source with detail, but it lags: a tool call whose result has not arrived still reads as
+    // running long after the agent behind it finished. Splitting the roster on the local status
+    // therefore leaves finished work sitting in ACTIVE until the transcript catches up.
+    it('places a subagent the published headline reports as finished in the recent section', async () => {
+        sessionState.session = {
+            id: 's1',
+            metadata: {
+                flavor: 'claude',
+                sessionAgentActivityHeadlineV1: {
+                    v: 1,
+                    backendId: 'claude',
+                    updatedAt: 4_000,
+                    activeEntries: [],
+                    recentEntries: [{
+                        // Joined to the local row on the provider tool-use id underneath, which is
+                        // the only identifier both sides can produce for the same agent.
+                        entryId: 'workflow_agent:wf_1:toolu_1',
+                        kind: 'workflow_agent',
+                        title: 'alpha',
+                        status: 'succeeded',
+                        updatedAt: 4_000,
+                    }],
+                },
+            },
+        };
+
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+
+        const activeSection = screen.findByTestId('session-agents-section-active');
+        const recentSection = screen.findByTestId('session-agents-section-recent');
+        if (!activeSection || !recentSection) throw new Error('expected both roster sections');
+
+        const rowTestId = 'session-subagent-row:agent_team_member:team-1:alpha';
+        expect(activeSection.findAllByProps({ testID: rowTestId })).toHaveLength(0);
+        expect(recentSection.findAllByProps({ testID: rowTestId }).length).toBeGreaterThan(0);
+    });
+
+    // The other half of the same rule, in the direction that would be dangerous to get wrong: a
+    // row the headline has not reached yet must keep rendering from local detail alone.
+    it('keeps rendering a locally derived agent the headline does not mention', async () => {
+        sessionState.session = {
+            id: 's1',
+            metadata: {
+                flavor: 'claude',
+                sessionAgentActivityHeadlineV1: {
+                    v: 1,
+                    backendId: 'claude',
+                    updatedAt: 4_000,
+                    activeEntries: [],
+                },
+            },
+        };
+
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+
+        expect(screen.findByTestId('session-subagent-row:agent_team_member:team-1:alpha')).toBeTruthy();
+        expect(screen.findByTestId('session-subagent-row:execution_run:run_1')).toBeTruthy();
     });
 });

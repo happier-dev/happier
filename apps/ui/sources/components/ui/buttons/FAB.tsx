@@ -1,10 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -51,7 +51,7 @@ export const FAB = React.memo((props: { onPress: () => void; accessibilityLabel?
                         borderRadius={20}
                         style={styles.surface}
                     >
-                        <Ionicons name="add" size={24} color={theme.colors.fab.icon} />
+                        <Icon name="plus" size={24} color={theme.colors.fab.icon} />
                     </GradientSurface>
                 )}
             </Pressable>

@@ -13,6 +13,7 @@ import {
 import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/account/accountSettingArtifacts';
+import { LOCAL_ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/local/localAccountSettingDefinitions';
 import { isModelMode, isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/registry/registryCore';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
@@ -36,7 +37,9 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     AcpConfigOptionOverridesV1Schema,
+    ComposerAttachmentDraftV1Schema,
     ExternalSessionRefreshCursorV1Schema,
+    MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
     SessionModelSelectionV1Schema,
     SessionModelSelectionResolutionError,
     SessionMcpSelectionV1Schema,
@@ -46,6 +49,7 @@ import {
     writePersistedBackendTargetRefV2,
     normalizeCodexBackendMode,
     type CodexBackendMode,
+    type ComposerAttachmentDraftV1,
     type AcpConfigOptionOverridesV1,
     type BackendTargetRefV2,
     type SessionMcpSelectionV1,
@@ -97,6 +101,7 @@ export {
 
 const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Object.freeze({
     ...ACCOUNT_SETTING_ARTIFACTS.shape,
+    ...LOCAL_ACCOUNT_SETTING_ARTIFACTS.shape,
 });
 
 function deviceAnalyticsIdKey(): string {
@@ -141,6 +146,11 @@ function sessionModelModeUpdatedAtsKey(): string {
 
 export interface NewSessionDraft {
     input: string;
+    /**
+     * Canonical contentless plugin attachment drafts for the new-Session
+     * composer. The submission owner prepares them after a Session exists.
+     */
+    composerAttachments?: readonly ComposerAttachmentDraftV1[];
     /** Opaque identity of the unresolved user launch intent. */
     launchUserAttemptId?: string;
     selectedMachineId: string | null;
@@ -550,6 +560,12 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         }
 
         const input = typeof parsed.input === 'string' ? parsed.input : '';
+        const parsedComposerAttachments = z.array(ComposerAttachmentDraftV1Schema)
+            .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)
+            .safeParse((parsed as Record<string, unknown>).composerAttachments);
+        const composerAttachments = parsedComposerAttachments.success
+            ? parsedComposerAttachments.data
+            : undefined;
         const launchUserAttemptId = parseDraftTrimmedString((parsed as any).launchUserAttemptId);
         const selectedMachineId = typeof parsed.selectedMachineId === 'string' ? parsed.selectedMachineId : null;
         const selectedPath = typeof parsed.selectedPath === 'string' ? parsed.selectedPath : null;
@@ -685,6 +701,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
 
         return {
             input,
+            ...(composerAttachments !== undefined ? { composerAttachments } : {}),
             ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
             selectedMachineId,
             selectedPath,

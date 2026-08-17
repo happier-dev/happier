@@ -295,6 +295,28 @@ const internalWorkspacePackages = collectInternalWorkspacePackages(path.resolve(
 const internalWorkspaceSourceRoots = [...internalWorkspacePackages.values()]
   .map((packageRoot) => path.resolve(packageRoot, "src"));
 const internalWorkspaceWatchFolders = resolveInternalWorkspaceWatchFolders();
+const internalWorkspaceBundledPluginUiArtifactRoots = internalWorkspaceWatchFolders.flatMap((packageRoot) => {
+  const packageJson = safeReadJson(path.resolve(packageRoot, "package.json"));
+  return typeof packageJson?.name === "string" && packageJson.name.startsWith("@happier-dev/plugins-")
+    ? [path.resolve(packageRoot, "dist", "happier-plugin-ui")]
+    : [];
+});
+const internalWorkspaceDistBlockList = internalWorkspaceWatchFolders.map((packageRoot) => {
+  const normalizedDistPath = path.resolve(packageRoot, "dist").replace(/\\/g, "/");
+  const pattern = normalizedDistPath
+    .split("/")
+    .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[\\\\/]");
+  const keepsBundledPluginUiArtifactRoot = internalWorkspaceBundledPluginUiArtifactRoots.includes(
+    path.resolve(packageRoot, "dist", "happier-plugin-ui"),
+  );
+  return new RegExp(keepsBundledPluginUiArtifactRoot
+    // Metro evaluates directory paths before descending. Keep `dist` itself
+    // crawlable for plugin packages, then prune every child except the
+    // canonical bundled Plugin UI artifact tree.
+    ? `${pattern}[\\\\/](?!happier-plugin-ui(?:[\\\\/]|$))`
+    : `${pattern}(?:[\\\\/]|$)`);
+});
 
 function addInternalWorkspaceWatchFolders() {
   if (!(process.env.CI || isStackRun)) return;
@@ -310,9 +332,14 @@ function addInternalWorkspaceWatchFolders() {
   }
 }
 
-// Add support for .wasm files (required by Skia for all platforms)
-// Source: https://shopify.github.io/react-native-skia/docs/getting-started/installation/
-config.resolver.assetExts.push('wasm');
+// Add support for binary/runtime artifacts that are imported as packaged assets.
+// - `.wasm` is required by Skia on every platform.
+// - `.bundle` and `.map` are part of bundled native Plugin UI artifact trees. Metro's
+//   file map only hashes configured source/asset extensions, so watched native chunks
+//   and source maps are otherwise still invisible to `require()` and fail with
+//   "Failed to get the SHA-1".
+// Skia source: https://shopify.github.io/react-native-skia/docs/getting-started/installation/
+config.resolver.assetExts.push('wasm', 'bundle', 'map');
 
 // Enable inlineRequires for proper Skia and Reanimated loading
 // Source: https://shopify.github.io/react-native-skia/docs/getting-started/web/
@@ -336,6 +363,13 @@ const hstackWebArtifactExportBlockList = /[\\/]\.expo[\\/]hstack[\\/]web-artifac
 // never compete with the canonical workspace `src/**` and `dist/**` trees.
 const packTransientPublicationBlockList =
   /[\\/](?:\.tmp\.|\.backup\.|\.restore\.|\.dist\.build\.|\.dist\.hstack-stage-|dist\.staging\.|dist\.probe\.)[^\\/]*(?:[\\/]|$)/;
+// The CLI's isolated runtime-snapshot staging area can retain multi-gigabyte native artifacts.
+// It is not a Metro input, but `apps/cli` is an Expo workspace watch root in stack runs.
+const cliRunnerSnapshotsBlockList = /[\\/]apps[\\/]cli[\\/]\.runner-snapshots(?:[\\/]|$)/;
+// Package-manager executable shims are never bundle inputs. Excluding them also prevents a retained
+// Metro file-map entry for a symlink from being read as a symlink after a synced install replaces it
+// with a regular wrapper script.
+const packageManagerBinBlockList = /[\\/]node_modules[\\/]\.bin(?:[\\/]|$)/;
 // Avoid scanning duplicate workspace-local `node_modules/**` trees (typically symlink-heavy) when Metro falls back
 // to the native `find` crawler (no Watchman). We still keep the monorepo root `node_modules` and `apps/ui/node_modules`.
 const workspaceNodeModulesBlockList =
@@ -349,10 +383,10 @@ const nestedDependencyNodeModulesBlockList =
   /[\\/]node_modules[\\/](?!react-native[\\/]node_modules[\\/]@react-native[\\/])(?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
   config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
+  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, cliRunnerSnapshotsBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList];
+    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, cliRunnerSnapshotsBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
+    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, cliRunnerSnapshotsBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList];
 
 addInternalWorkspaceWatchFolders();
 
@@ -360,10 +394,24 @@ const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFo
 config.watchFolders = existingWatchFolders.filter(
   (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
 );
-
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
 const appNodeModules = path.resolve(__dirname, "node_modules");
 const reactNativePrivateNodeModules = path.resolve(appNodeModules, "react-native/node_modules");
+const patchedEnrichedMarkdownStreamingRevealModule =
+  "react-native-enriched-markdown/lib/module/web/streamingReveal.js";
+
+function resolvePatchedEnrichedMarkdownModule(moduleName) {
+  if (moduleName !== patchedEnrichedMarkdownStreamingRevealModule) return null;
+  for (const nodeModulesRoot of [appNodeModules, rootNodeModules]) {
+    const candidate = path.resolve(nodeModulesRoot, ...moduleName.split("/"));
+    if (fs.existsSync(candidate)) {
+      return { type: "sourceFile", filePath: candidate };
+    }
+  }
+  throw new Error(
+    `[Metro] Patched module "${moduleName}" is missing. Run the repository postinstall so the react-native-enriched-markdown patch is installed.`,
+  );
+}
 const generatedWorkletsWatchFolders = resolveGeneratedWorkletsWatchFolders() || [];
 for (const generatedWorkletsWatchFolder of generatedWorkletsWatchFolders) {
   if (!config.watchFolders.includes(generatedWorkletsWatchFolder)) {
@@ -615,6 +663,87 @@ function resolveInternalWorkspaceSourceExport(packageRoot, exportTarget, blockLi
   return resolveExistingSourceCandidate(sourceBasePath, blockList);
 }
 
+function resolveInternalWorkspaceAbsoluteDistImport(moduleName, blockList) {
+  if (typeof moduleName !== "string" || !path.isAbsolute(moduleName)) return null;
+
+  const absoluteModuleName = path.resolve(moduleName);
+  for (const [packageName, packageRoot] of internalWorkspacePackages) {
+    const visiblePackageRoots = new Set([
+      path.resolve(packageRoot),
+      path.resolve(rootNodeModules, ...packageName.split("/")),
+      path.resolve(appNodeModules, ...packageName.split("/")),
+    ]);
+
+    for (const visiblePackageRoot of visiblePackageRoots) {
+      const distRoot = path.resolve(visiblePackageRoot, "dist");
+      const relativeTarget = path.relative(distRoot, absoluteModuleName);
+      if (
+        relativeTarget.length === 0 ||
+        relativeTarget === ".." ||
+        relativeTarget.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relativeTarget)
+      ) {
+        continue;
+      }
+
+      const sourceCandidate = resolveInternalWorkspaceSourceExport(
+        packageRoot,
+        `dist/${relativeTarget.replace(/\\/g, "/")}`,
+        blockList,
+      );
+      if (sourceCandidate) return sourceCandidate;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Generated app-bundled Plugin UI inventories use this deliberately private
+ * package-exported specifier shape for static bytes. The package remains
+ * private and this resolver never resolves source code: only a real file under
+ * one bundled plugin's verified `dist/happier-plugin-ui` tree can become a
+ * Metro asset.
+ */
+function resolveBundledPluginUiArtifactAsset(moduleName) {
+  if (typeof moduleName !== "string") return null;
+  const segments = moduleName.split("/");
+  if (
+    segments.length < 4
+    || segments[0] !== "@happier-dev"
+    || !segments[1].startsWith("plugins-")
+    || segments[2] !== "happier-plugin-ui"
+  ) {
+    return null;
+  }
+
+  const relativeSegments = segments.slice(3);
+  if (relativeSegments.some((segment) => !segment || segment === "." || segment === ".." || segment.includes("\\"))) {
+    return null;
+  }
+
+  const packageName = `${segments[0]}/${segments[1]}`;
+  const packageRoot = internalWorkspacePackages.get(packageName);
+  if (!packageRoot) return null;
+
+  const artifactRoot = path.resolve(packageRoot, "dist", "happier-plugin-ui");
+  const candidatePath = path.resolve(artifactRoot, ...relativeSegments);
+  try {
+    const realArtifactRoot = fs.realpathSync(artifactRoot);
+    const realCandidatePath = fs.realpathSync(candidatePath);
+    if (
+      realCandidatePath === realArtifactRoot
+      || !realCandidatePath.startsWith(`${realArtifactRoot}${path.sep}`)
+      || !fs.statSync(realCandidatePath).isFile()
+    ) {
+      return null;
+    }
+    return { type: "assetFiles", filePaths: [realCandidatePath] };
+  } catch {
+    return null;
+  }
+}
+
 function resolveInternalWorkspacePackageExport(moduleName, blockList, platform) {
   if (typeof moduleName !== "string" || !moduleName.startsWith("@happier-dev/")) return null;
 
@@ -650,6 +779,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   const generatedWorkletResolution = resolveGeneratedWorkletModule(moduleName);
   if (generatedWorkletResolution) return generatedWorkletResolution;
 
+  // This is an intentionally patched private file, not a package export. Resolve it by its
+  // verified install path before Metro applies package-export validation (which fails on Windows).
+  const patchedEnrichedMarkdownResolution = resolvePatchedEnrichedMarkdownModule(moduleName);
+  if (patchedEnrichedMarkdownResolution) return patchedEnrichedMarkdownResolution;
+
   // Fix event-target-shim/index import - exports define "." not "./index"
   let resolvedModuleName = moduleName;
   if (moduleName === "event-target-shim/index") {
@@ -662,6 +796,17 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (path.normalize(String(moduleName)) === path.resolve(rootNodeModules, "@noble/hashes/crypto.js")) {
     resolvedModuleName = "@noble/hashes/crypto";
+  }
+
+  const bundledPluginUiArtifactAsset = resolveBundledPluginUiArtifactAsset(resolvedModuleName);
+  if (bundledPluginUiArtifactAsset) return bundledPluginUiArtifactAsset;
+
+  const internalWorkspaceAbsoluteDistImport = resolveInternalWorkspaceAbsoluteDistImport(
+    resolvedModuleName,
+    config.resolver.blockList,
+  );
+  if (internalWorkspaceAbsoluteDistImport) {
+    return { type: "sourceFile", filePath: internalWorkspaceAbsoluteDistImport };
   }
 
   const internalWorkspaceRelativeSourceImport = resolveInternalWorkspaceRelativeSourceImportFromOrigin({

@@ -18,6 +18,11 @@ let mockedSettings: Record<string, any> = {
     bottomPaneHeightPx: 320,
     bottomPaneHeightBasisPx: 900,
 };
+const rightPaneBuiltinAdapter = {
+    destinationIds: ['right'],
+    defaultDestinationId: 'right',
+    render: () => <div />,
+};
 
 installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
@@ -44,6 +49,7 @@ vi.mock('./AppPaneProvider', () => ({
                 scope1: {
                     right: { isOpen: true },
                     details: { isOpen: false },
+                    bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
                 },
             },
         },
@@ -70,8 +76,7 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
-                    rightPane={<div />}
-                    detailsPane={null}
+                    rightPaneBuiltinAdapter={rightPaneBuiltinAdapter}
                 />);
 
         expect(lastProps).not.toBeNull();
@@ -100,8 +105,7 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
-                    rightPane={<div />}
-                    detailsPane={null}
+                    rightPaneBuiltinAdapter={rightPaneBuiltinAdapter}
                 />);
 
         expect(lastProps).not.toBeNull();

@@ -1,6 +1,7 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
 
 export type SessionActionSurface =
     | 'rowMenu'
@@ -13,6 +14,7 @@ export type SessionActionId =
     | 'ui.session.mark-read'
     | 'ui.session.mark-unread'
     | 'ui.session.rename'
+    | 'ui.session.resume'
     | 'ui.session.stop'
     | 'ui.session.archive'
     | 'ui.session.unarchive'
@@ -38,6 +40,7 @@ export type SessionActionTarget = Readonly<{
     canStop: boolean;
     canArchive: boolean;
     canRename: boolean;
+    canResume: boolean;
     canDelete: boolean;
     readStateAction: SessionReadStateAction;
 }>;
@@ -46,7 +49,7 @@ export type SessionActionOperationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
-    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
+    recovery?: SessionStopRecovery;
 }>;
 
 export type SessionActionExecutionInput = Readonly<{
@@ -71,6 +74,7 @@ export type SessionActionExecutionOperations = Readonly<{
     archiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     unarchiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     renameSession?: (sessionId: string, title: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
+    resumeSession?: (sessionId: string) => void | Promise<void>;
     deleteSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     setPinned?: (
         sessionId: string,

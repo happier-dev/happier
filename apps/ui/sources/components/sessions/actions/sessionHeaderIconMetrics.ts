@@ -1,18 +1,18 @@
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+
 /**
  * One size for the session header's icon actions.
  *
- * The cluster had grown to 22 / 21 / 22 / 22 across four separately-owned buttons, which reads as
- * misalignment rather than as variety — nobody chose those numbers together.
- */
-export const SESSION_HEADER_ICON_SIZE_PX = 20;
-
-/**
- * The optical correction, not an exception to the rule above.
+ * This file used to carry three tiers — a base size plus two hand-measured optical corrections for
+ * glyphs that painted more ink than their neighbours at the same number. Those corrections existed
+ * because the header mixed Ionicons and Octicons: two families drawn to different grids, so matching
+ * the numbers did not match the ink.
  *
- * A declared icon size is an em box, not the ink inside it. Outline glyphs that fill their box edge
- * to edge — `terminal-outline` is a full-bleed rectangle — paint noticeably more area than the
- * mostly-empty boxes of `ellipsis-horizontal` or `list-outline` at the same number. Matching the
- * numbers would leave the terminal glyph looking the largest in the row, which is exactly what it
- * looked like. Matching the ink means giving the boxy glyph a smaller box.
+ * Behind a single-family seam that problem leaves this file entirely. The header asks for one size,
+ * and any glyph that still diverges optically is corrected once, per glyph, inside `Icon` — the only
+ * place that can reasonably know about a glyph's ink.
  */
-export const SESSION_HEADER_BOXY_ICON_SIZE_PX = 18;
+export const SESSION_HEADER_ICON_SIZE_PX = ICON_SIZE.md;
+
+/** The shared accessible hit target for each direct session-header action. */
+export const SESSION_HEADER_ACTION_TAP_TARGET_PX = 44;

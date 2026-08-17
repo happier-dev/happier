@@ -18,7 +18,7 @@ import {
     removeServerProfile,
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
-import { setActiveServer } from '@/sync/domains/server/serverRuntime';
+import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import {
     filterServerSelectionGroupsToAvailableServers,
     normalizeStoredServerSelectionGroups,
@@ -32,7 +32,6 @@ import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/serv
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isInsecureRemoteHttpServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { useSettingMutable } from '@/sync/domains/state/storage';
@@ -166,18 +165,22 @@ export function useServerSettingsScreenController(): ServerSettingsController {
     const switchServerById = React.useCallback(async (serverId: string, opts?: SwitchServerByIdOptions) => {
         const targetProfile = getServerProfileById(serverId);
         const targetServerId = targetProfile ? resolveServerProfileScopeId(targetProfile) : serverId;
+        const switched = await setActiveServerAndSwitch({
+            serverId: targetServerId,
+            scope: 'device',
+            refreshAuth: auth.refreshFromActiveServer,
+        });
+        if (!switched) return false;
         if (opts?.preserveSelectionTarget !== true) {
             writeServerSelectionActiveTargetToServer({
                 setServerSelectionActiveTargetKind,
                 setServerSelectionActiveTargetId,
             }, targetServerId);
         }
-        setActiveServer({ serverId: targetServerId, scope: 'device' });
-        await switchConnectionToActiveServer();
-        await auth.refreshFromActiveServer();
         if (opts?.normalizeRoute ?? true) {
             router.replace('/server');
         }
+        return true;
     }, [auth, router, setServerSelectionActiveTargetId, setServerSelectionActiveTargetKind]);
 
     const validateServerReachable = React.useCallback(async (url: string): Promise<boolean> => {
@@ -275,7 +278,9 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         url: route.url,
         validateServerReachable,
         setError,
-        onSwitchServerById: async (serverId, opts) => switchServerById(serverId, opts),
+        onSwitchServerById: async (serverId, opts) => {
+            await switchServerById(serverId, opts);
+        },
         onAfterSuccess: () => {
             setRevision((r) => r + 1);
             router.replace('/');
@@ -423,7 +428,9 @@ export function useServerSettingsScreenController(): ServerSettingsController {
 
     const profileActions = useServerSettingsServerProfileActions({
         authStatusByServerId,
-        onSwitchServerById: async (serverId) => switchServerById(serverId),
+        onSwitchServerById: async (serverId) => {
+            return await switchServerById(serverId);
+        },
         onAfterSignedOutSwitch: () => router.replace('/'),
         setRevision,
     });
@@ -437,7 +444,11 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         activeGroupId: activeMultiServerProfileId,
         groupPresentation: (activeGroupProfile?.presentation ?? 'grouped') === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
         setRevision,
-        onSwitchServerById: async (serverId) => switchServerById(serverId, { preserveSelectionTarget: true }),
+        onSwitchServerById: async (serverId) => {
+            await switchServerById(serverId, {
+                preserveSelectionTarget: true,
+            });
+        },
         onAfterSignedOutSwitch: () => router.replace('/'),
         setServerSelectionActiveTargetKind,
         setServerSelectionActiveTargetId,
@@ -470,11 +481,16 @@ export function useServerSettingsScreenController(): ServerSettingsController {
 
         const normalized = normalizeUrl(inputUrl);
         const name = inputName.trim() ? inputName.trim() : defaultServerName(normalized);
+        const preexistingProfileIds = new Set(
+            listServerProfiles().map((profile) => profile.id),
+        );
         const created = upsertServerProfile({
             serverUrl: normalized,
             name,
             source: 'manual',
         });
+        const createdForThisAttempt =
+            !preexistingProfileIds.has(created.id);
 
         let profile = created;
         try {
@@ -494,7 +510,10 @@ export function useServerSettingsScreenController(): ServerSettingsController {
                             name: created.name,
                             source: 'manual',
                         });
-                        if (canonical.id !== created.id) {
+                        if (
+                            createdForThisAttempt
+                            && canonical.id !== created.id
+                        ) {
                             try {
                                 removeServerProfile(created.id);
                             } catch {
@@ -523,10 +542,11 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             if (!shouldContinue) return;
         }
 
-        retargetPendingTerminalConnectToServerUrl(profile.serverUrl);
-        await switchServerById(resolveServerProfileScopeId(profile), {
+        const switched = await switchServerById(resolveServerProfileScopeId(profile), {
             normalizeRoute: targetAuthStatus === 'signedOut' ? false : route.source !== 'notification',
         });
+        if (!switched) return;
+        retargetPendingTerminalConnectToServerUrl(profile.serverUrl);
         setRevision((r) => r + 1);
 
         if (targetAuthStatus === 'signedOut') {

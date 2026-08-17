@@ -6,7 +6,7 @@ import type {
 import * as React from 'react';
 
 import type { PluginHostedWebSandboxPolicy } from '@/components/plugins/hostedWeb/sandbox';
-import { validatePluginHostedWebBridgeMessage } from '@/components/plugins/hostedWeb/bridge';
+import { createPluginHostedWebNativeMessageBridge } from '@/components/plugins/hostedWeb/nativeMessageBridge';
 import { resolveUrlOrigin } from '@/sync/domains/browser/adapters/targets/localPreview';
 
 import { BrowserViewFrame } from '../frame/BrowserViewFrame.native';
@@ -55,12 +55,24 @@ export function HostedPluginTarget(props: Readonly<{
         onMessage: (
             envelope: PluginHostedWebBridgeEnvelopeV1,
         ) => void | PluginHostedWebBridgeResponseEnvelopeV1 | Promise<PluginHostedWebBridgeResponseEnvelopeV1 | void>;
+        /** EU-8: this WebView's host->frame delivery primitive, lent while mounted. */
+        attachHostMessages?: (send: (message: unknown) => void) => () => void;
     }> | null;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
 }>): React.ReactElement {
     const sandbox = props.sandbox ?? DEFAULT_HOSTED_PLUGIN_SANDBOX;
     const security = props.security ?? DEFAULT_HOSTED_PLUGIN_SECURITY;
     const origin = resolveUrlOrigin(props.url);
+    const nativeMessageBridge = React.useMemo(() => {
+        const bridge = props.bridge;
+        if (!bridge) return undefined;
+        return {
+            ...(bridge.attachHostMessages ? { attachHostMessages: bridge.attachHostMessages } : {}),
+            onMessage: createPluginHostedWebNativeMessageBridge({
+                bridge,
+            }),
+        };
+    }, [props.bridge]);
     if (!origin || !canLoadHostedPluginTargetUrl({ security, url: props.url })) {
         return (
             <BrowserViewFrame
@@ -72,40 +84,6 @@ export function HostedPluginTarget(props: Readonly<{
             />
         );
     }
-
-    const nativeMessageBridge = React.useMemo(() => {
-        const bridge = props.bridge;
-        if (!bridge) return undefined;
-        return {
-            onMessage: (event: Readonly<{ nativeEvent?: Readonly<{ data?: string; url?: string }> }>) => {
-                const rawData = event.nativeEvent?.data;
-                if (typeof rawData !== 'string') return;
-                let message: unknown;
-                try {
-                    message = JSON.parse(rawData);
-                } catch {
-                    return;
-                }
-                const messageOrigin = resolveUrlOrigin(event.nativeEvent?.url ?? props.url);
-                if (!messageOrigin) return;
-                const result = validatePluginHostedWebBridgeMessage({
-                    message,
-                    origin: messageOrigin,
-                    expectedOrigin: bridge.expectedOrigin,
-                    expectedPluginId: bridge.expectedPluginId,
-                    expectedContributionId: bridge.expectedContributionId,
-                    expectedSurfaceId: bridge.expectedSurfaceId,
-                    expectedNonce: bridge.expectedNonce,
-                    expectedSessionId: bridge.expectedSessionId,
-                    allowedMessageKinds: bridge.allowedMessageKinds,
-                });
-                if (result.ok) {
-                    return bridge.onMessage(result.envelope);
-                }
-                return undefined;
-            },
-        };
-    }, [props.bridge, props.url]);
 
     return (
         <BrowserViewFrame

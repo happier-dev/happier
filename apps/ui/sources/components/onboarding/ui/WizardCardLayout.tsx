@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform, ScrollView, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
@@ -123,6 +124,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     const styles = stylesheet;
     const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
     const { width: windowWidth } = useWindowDimensions();
+    const isFocused = useIsFocused();
     const modalPortalTarget = useModalPortalTarget();
     const [portalRetryNonce, bumpPortalRetryNonce] = React.useReducer((value: number) => value + 1, 0);
     const dimensions = useModalCardDimensions({
@@ -142,7 +144,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
     // When the wizard renders as a standalone overlay, it must escape any transformed ancestors so its
     // scrim can cover the full viewport. Use `showScrim=false` as the signal that an outer BaseModal
     // owns the backdrop and fullscreen positioning.
-    const shouldUseWebFixedOverlay = Platform.OS === 'web' && props.showScrim !== false;
+    const shouldUseWebFixedOverlay = Platform.OS === 'web' && props.showScrim !== false && isFocused;
     const portalRetryCountRef = React.useRef(0);
     const webBackdropStyle = Platform.OS === 'web' && !wantsFullscreen && shouldUseWebFixedOverlay
         ? (createBackdropWebStyle({
@@ -227,7 +229,7 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
         </View>
     );
 
-    const shouldPortalWeb = Platform.OS === 'web' && props.showScrim !== false && portalRetryNonce >= 0;
+    const shouldPortalWeb = Platform.OS === 'web' && props.showScrim !== false && isFocused && portalRetryNonce >= 0;
     const webPortal = tryRenderWebPortal({
         shouldPortalWeb,
         portalTargetOnWeb: 'body',
@@ -262,6 +264,10 @@ export function WizardCardLayout(props: WizardCardLayoutProps) {
             return () => clearTimeout(timer);
         }
     }, [shouldPortalWeb, webPortal]);
+
+    // A blurred route can remain mounted in the web navigation stack. Its fixed, body-level
+    // wizard portal must not outlive route focus or it will overlay the active route.
+    if (Platform.OS === 'web' && !isFocused) return null;
 
     return webPortal ?? content;
 }

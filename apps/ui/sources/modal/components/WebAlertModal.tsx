@@ -92,7 +92,9 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
     const handleButtonPress = (buttonIndex: number) => {
         if (isConfirm && onConfirm) {
             onConfirm(buttonIndex === 1);
-        } else if (!isConfirm && config.buttons?.[buttonIndex]?.onPress) {
+            return;
+        }
+        if (!isConfirm && config.buttons?.[buttonIndex]?.onPress) {
             config.buttons[buttonIndex].onPress!();
         }
         onClose();

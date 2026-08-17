@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 
@@ -13,6 +12,7 @@ import {
     shouldShowTranscriptRowPinAction,
 } from '@/components/sessions/transcript/transcriptRowActionVisibility';
 import { ToolTimelineIconFrame } from './ToolTimelineIconFrame';
+import { ICON_SIZE, Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export const TOOL_TIMELINE_ROW_REVEAL_SLOT_TEST_ID = 'tool-timeline-row-reveal-slot';
 export const TOOL_TIMELINE_ROW_PIN_SLOT_TEST_ID = 'tool-timeline-row-pin-slot';
@@ -22,7 +22,7 @@ const TOOL_TIMELINE_ROW_REVEAL_ACTION_WIDTH = 28;
 
 export type ToolTimelineRowDensity = 'comfortable' | 'compact';
 
-type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+type IoniconName = IconName;
 
 export type ToolTimelineRowHeaderDisclosure =
     | { behavior: 'hover'; state: 'collapsed' | 'expanded' }
@@ -85,7 +85,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
 
     const chevronSize = props.density === 'compact' ? 16 : 18;
     const disclosureChevronName: IoniconName | null =
-        disclosure?.state === 'expanded' ? 'chevron-up' : disclosure?.state === 'collapsed' ? 'chevron-down' : null;
+        disclosure?.state === 'expanded' ? 'caret-up' : disclosure?.state === 'collapsed' ? 'caret-down' : null;
 
     return (
         <View style={styles.container}>
@@ -103,7 +103,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
             >
                 <View style={styles.icon}>
                     {disclosure?.behavior === 'persistent' && disclosureChevronName ? (
-                        <Ionicons name={disclosureChevronName} size={chevronSize} color={theme.colors.text.secondary} />
+                        <Icon name={disclosureChevronName} size={chevronSize} color={theme.colors.text.secondary} />
                     ) : hoverEnabled && disclosureChevronName ? (
                         <View style={styles.iconStack}>
                             <View
@@ -121,7 +121,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                                     isHovered ? null : styles.iconLayerHidden,
                                 ]}
                             >
-                                <Ionicons
+                                <Icon
                                     name={disclosureChevronName}
                                     size={chevronSize}
                                     color={theme.colors.text.secondary}
@@ -184,7 +184,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                                 accessibilityLabel={t('toolView.open')}
                                 style={({ pressed }) => [styles.open, pressed && styles.openPressed]}
                             >
-                                <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
+                                <Icon name="arrow-square-out" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
                             </Pressable>
                         </RowActionRevealSlot>
                     ) : null}

@@ -7,15 +7,13 @@ import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
+    readVoiceProviderSettingsConfig,
     readLocalConversationVoiceSettings,
     voiceSettingsParse,
+    writeVoiceProviderSettingsConfig,
     writeLocalConversationVoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
-import {
-    readBundledConversationProviderSettings,
-    writeBundledConversationProviderSettings,
-} from '@/voice/credentials/bundledConversationClient';
 import { storage } from '@/sync/domains/state/storage';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -85,8 +83,8 @@ type VoiceSurfaceFixtureEntry = Readonly<{
 }>;
 
 type VoiceSurfaceFixtureOptions = Readonly<{
-    bindingAdapterId: 'realtime_elevenlabs' | 'local_conversation';
-    providerId: 'realtime_elevenlabs' | 'local_conversation';
+    bindingAdapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' | 'local_conversation';
+    providerId: 'happier.voice.elevenlabs/realtime-elevenlabs' | 'local_conversation';
     surfaceLocation?: 'auto' | 'sidebar';
     featureToggles?: Record<string, boolean>;
     localConversationOverrides?: Record<string, unknown>;
@@ -141,8 +139,8 @@ function buildFixtureMessages(entries: ReadonlyArray<VoiceSurfaceFixtureEntry>):
 
 function installSidebarHiddenConversationFixture(
     options: VoiceSurfaceFixtureOptions = {
-        bindingAdapterId: 'realtime_elevenlabs',
-        providerId: 'realtime_elevenlabs',
+        bindingAdapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
     },
     voiceSessionSnapshot: VoiceSurfaceE2eFixtureVoiceSessionSnapshot = {
         status: 'connected',
@@ -159,7 +157,9 @@ function installSidebarHiddenConversationFixture(
             ? existingSettings.featureToggles
             : {};
 
-    const existingBundledProvider = readBundledConversationProviderSettings(existingVoice, options.providerId);
+    const existingBundledProvider = options.providerId === 'happier.voice.elevenlabs/realtime-elevenlabs'
+        ? readVoiceProviderSettingsConfig(existingVoice, options.providerId)
+        : null;
     const nextFeatureToggles = {
         ...existingFeatureToggles,
         voice: true,
@@ -170,7 +170,7 @@ function installSidebarHiddenConversationFixture(
 
     let nextVoice = existingVoice;
     if (existingBundledProvider) {
-        nextVoice = writeBundledConversationProviderSettings(nextVoice, options.providerId, {
+        nextVoice = writeVoiceProviderSettingsConfig(nextVoice, options.providerId, {
             ...existingBundledProvider,
             billingMode: 'byo',
         });
@@ -303,8 +303,8 @@ function installSidebarHiddenConversationFixture(
 function installRealtimeRecoverableDisconnectFixture(): void {
     installSidebarHiddenConversationFixture(
         {
-            bindingAdapterId: 'realtime_elevenlabs',
-            providerId: 'realtime_elevenlabs',
+            bindingAdapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+            providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
         {
             status: 'disconnected',
@@ -334,7 +334,7 @@ function installLocalAutoReturnListeningFixture(): void {
         // The UI surface reads from the active voice session snapshot; keep it aligned with the
         // web realtime clamp so the fixture converges to `listening` deterministically.
         setVoiceSessionSnapshot({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
             status: 'connected',
             mode: 'listening',
@@ -347,7 +347,7 @@ function installWelcomeResumePersistenceFixture(): void {
     installSidebarHiddenConversationFixture(
         {
             bindingAdapterId: 'local_conversation',
-            providerId: 'realtime_elevenlabs',
+            providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             localConversationOverrides: {
                 conversationMode: 'agent',
                 agent: {
@@ -439,8 +439,8 @@ function installCancelDuringAssistantSpeechFixture(): void {
 }
 
 function hasSidebarHiddenConversationFixtureState(params: Readonly<{
-    providerId?: 'realtime_elevenlabs' | 'local_conversation';
-    bindingAdapterId?: 'realtime_elevenlabs' | 'local_conversation';
+    providerId?: 'happier.voice.elevenlabs/realtime-elevenlabs' | 'local_conversation';
+    bindingAdapterId?: 'happier.voice.elevenlabs/realtime-elevenlabs' | 'local_conversation';
     transcriptTexts?: ReadonlyArray<string>;
     requiredFeatureToggles?: ReadonlyArray<string>;
     surfaceLocation?: 'auto' | 'sidebar';
@@ -452,7 +452,7 @@ function hasSidebarHiddenConversationFixtureState(params: Readonly<{
         settings.featureToggles && typeof settings.featureToggles === 'object'
             ? settings.featureToggles
             : {};
-    const providerId = params.providerId ?? 'realtime_elevenlabs';
+    const providerId = params.providerId ?? 'happier.voice.elevenlabs/realtime-elevenlabs';
     const bindingAdapterId = params.bindingAdapterId ?? providerId;
     const transcriptTexts = params.transcriptTexts ?? ['first', 'second'];
     const binding = voiceConversationBindingResolver.resolveByControlSessionId({
@@ -468,7 +468,9 @@ function hasSidebarHiddenConversationFixtureState(params: Readonly<{
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
 
     const expectedSurfaceLocation = params.surfaceLocation ?? 'auto';
-    const bundledProviderSettings = readBundledConversationProviderSettings(voice, providerId);
+    const bundledProviderSettings = providerId === 'happier.voice.elevenlabs/realtime-elevenlabs'
+        ? readVoiceProviderSettingsConfig(voice, providerId)
+        : null;
     return (
         settings.experiments === true
         && featureToggles.voice === true
@@ -513,7 +515,7 @@ function ensureSidebarHiddenConversationFixtureInstalled(): void {
 function hasRealtimeRecoverableDisconnectFixtureState(): boolean {
     if (!hasSidebarHiddenConversationFixtureState()) return false;
     return hasVoiceSessionFixtureState({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         status: 'disconnected',
         mode: 'idle',
         canStop: false,
@@ -532,7 +534,7 @@ function hasLocalAutoReturnListeningFixtureState(): boolean {
     })) return false;
     const snapshot = getVoiceSessionSnapshot();
     const expectedAdapterIds = Platform.OS === 'web'
-        ? ['realtime_elevenlabs', 'local_conversation']
+        ? ['happier.voice.elevenlabs/realtime-elevenlabs', 'local_conversation']
         : ['local_conversation'];
     return (
         snapshot.adapterId !== null
@@ -551,7 +553,7 @@ function ensureLocalAutoReturnListeningFixtureInstalled(): void {
 
 function hasWelcomeResumePersistenceFixtureState(): boolean {
     if (!hasSidebarHiddenConversationFixtureState({
-        providerId: 'realtime_elevenlabs',
+        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         bindingAdapterId: 'local_conversation',
         transcriptTexts: ['Welcome back'],
     })) return false;
@@ -714,7 +716,7 @@ export function useVoiceSurfaceE2eFixtureComposition(): Readonly<{ shouldSuppres
             // initial fixture snapshot while sync is hydrating; keep a short, bounded repair loop.
             const repairListening = () => {
                 const snap = getVoiceSessionSnapshot();
-                const webListeningAdapterId = 'realtime_elevenlabs';
+                const webListeningAdapterId = 'happier.voice.elevenlabs/realtime-elevenlabs';
                 if (snap.adapterId === webListeningAdapterId) {
                     if (snap.status !== 'connected') return;
                     if (snap.mode === 'listening') return;

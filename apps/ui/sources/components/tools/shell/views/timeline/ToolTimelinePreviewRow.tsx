@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
@@ -20,6 +20,7 @@ import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/r
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow(props: {
     toolMessage: ToolCallMessage;
@@ -27,6 +28,7 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
     onPress?: (() => void) | null;
 }) {
     const { theme } = useUnistyles();
+    const historicalAgentId = useHistoricalTranscriptAgentId(props.toolMessage.seq ?? null);
 
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
     const toolViewDetailLevelDefaultLocalControl = useSetting('toolViewDetailLevelDefaultLocalControl');
@@ -39,8 +41,9 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
             iconSize: 18,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         });
-    }, [props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
+    }, [historicalAgentId, props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
 
     const collapsedDetailLevel = React.useMemo(() => {
         const normalizedToolViewDetailLevelDefaultSetting: ToolViewDetailLevelSetting =
@@ -88,8 +91,9 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
             iconSize,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         }).icon;
-    }, [iconSize, model.icon, props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
+    }, [historicalAgentId, iconSize, model.icon, props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
 
     const statusKind = resolveToolStatusIndicatorKind(model.toolForRendering);
     const terminalStatusSummary =
@@ -100,6 +104,7 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
                     resolveToolPermissionTerminalErrorMessage({
                         tool: model.toolForRendering,
                         metadata: props.metadata,
+                        historicalAgentId,
                     }) ?? t('errors.permissionDenied')
                 )
                 : null;
@@ -113,8 +118,8 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
                 accessibilityLabel={terminalStatusSummary}
                 style={styles.terminalStatusContainer}
             >
-                <Ionicons
-                    name={statusKind === 'permission_blocked' ? 'remove-circle-outline' : 'alert-circle'}
+                <Icon
+                    name={statusKind === 'permission_blocked' ? 'minus-circle' : 'warning-circle'}
                     size={16}
                     color={theme.colors.state.danger.foreground}
                 />

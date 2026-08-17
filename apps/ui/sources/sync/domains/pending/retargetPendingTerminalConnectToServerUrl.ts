@@ -15,5 +15,7 @@ export function retargetPendingTerminalConnectToServerUrl(serverUrl: string): vo
     setPendingTerminalConnect({
         publicKeyB64Url: pending.publicKeyB64Url,
         serverUrl: targetServerUrl,
+        ...(pending.pairing ? { pairing: pending.pairing } : {}),
+        ...(pending.supportsTokenOnly ? { supportsTokenOnly: true } : {}),
     });
 }

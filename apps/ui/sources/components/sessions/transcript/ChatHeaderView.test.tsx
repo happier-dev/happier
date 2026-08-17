@@ -14,7 +14,23 @@ const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web',
 }));
 
+const headerMocks = vi.hoisted(() => ({
+    identityMode: 'avatar' as 'avatar' | 'agentLogo' | 'none',
+}));
+
 installTranscriptCommonModuleMocks({
+    // Only this one key is steered; every other setting still resolves through the real module, or
+    // the rest of the tree renders against undefined and the suite falls over.
+    storage: async (importOriginal: <T>() => Promise<T>) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const base = await createPartialStorageModuleMock(importOriginal, {});
+        return {
+            ...base,
+            useSetting: ((key: string) => (key === 'sessionHeaderIdentityDisplay'
+                ? headerMocks.identityMode
+                : (base.useSetting as (k: string) => unknown)(key))) as typeof base.useSetting,
+        };
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -73,6 +89,10 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: any) => React.createElement('Avatar', props),
 }));
 
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: (props: any) => React.createElement('AgentIcon', props),
+}));
+
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
@@ -112,6 +132,45 @@ describe('ChatHeaderView', () => {
         safeAreaState.initial.insets.bottom = 0;
         safeAreaState.initial.insets.left = 0;
         safeAreaState.initial.insets.right = 0;
+    });
+
+    // The header's leading slot is a user preference. `agentLogo` with no resolvable agent renders
+    // nothing rather than quietly falling back to the avatar, which would override a choice the user
+    // already made.
+    async function renderWithIdentity(
+        mode: 'avatar' | 'agentLogo' | 'none',
+        props: { avatarId?: string; agentId?: string } = { avatarId: 'avatar-1', agentId: 'claude' },
+    ) {
+        headerMocks.identityMode = mode;
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+        return renderScreen(<ChatHeaderView title="Title" {...(props as object)} />);
+    }
+
+    it('leads with the generated avatar by default', async () => {
+        const screen = await renderWithIdentity('avatar');
+        expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(1);
+        expect(screen.root.findAllByType('AgentIcon' as never)).toHaveLength(0);
+    });
+
+    it('leads with the agent logo when the user picks it', async () => {
+        const screen = await renderWithIdentity('agentLogo');
+        expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(0);
+        const icons = screen.root.findAllByType('AgentIcon' as never);
+        expect(icons).toHaveLength(1);
+        expect((icons[0] as unknown as { props: { agentId: string } }).props.agentId).toBe('claude');
+    });
+
+    it('leads with the title when the user picks none', async () => {
+        const screen = await renderWithIdentity('none');
+        expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(0);
+        expect(screen.findAllByTestId('session-header-avatar')).toHaveLength(0);
+    });
+
+    it('shows nothing rather than the avatar when the agent logo is picked but no agent resolves', async () => {
+        const screen = await renderWithIdentity('agentLogo', { avatarId: 'avatar-1' });
+        expect(screen.root.findAllByType('Avatar' as never)).toHaveLength(0);
+        expect(screen.root.findAllByType('AgentIcon' as never)).toHaveLength(0);
+        expect(screen.findAllByTestId('session-header-avatar')).toHaveLength(0);
     });
 
     it('uses elevation to keep the header above scroll content on Android', async () => {

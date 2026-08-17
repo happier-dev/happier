@@ -51,6 +51,7 @@ type ModelOptionEntry = Readonly<{
     value: string;
     label: string;
     description: string;
+    extendedContextModelId?: string;
     modelOptions?: ReadonlyArray<AgentInputOptionControl>;
 }>;
 
@@ -339,7 +340,6 @@ describe('NewSessionEngineOptionDetail', () => {
             refreshWithResult: vi.fn(async () => null),
         });
         const onSelectionChange = vi.fn();
-        const onModelSelectionChange = vi.fn();
         const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
 
         await renderScreen(<NewSessionEngineOptionDetail
@@ -351,7 +351,6 @@ describe('NewSessionEngineOptionDetail', () => {
             selectedSessionModeId="default"
             selectedConfigOverrides={{}}
             onSelectionChange={onSelectionChange}
-            onModelSelectionChange={onModelSelectionChange}
         />);
 
         expect(lastOptionPickerOverlayProps?.options).toEqual([]);
@@ -371,7 +370,6 @@ describe('NewSessionEngineOptionDetail', () => {
                 ref: expect.objectContaining({ providerConnectionId: null, modelId: 'preset-fast' }),
             }),
         }));
-        expect(onModelSelectionChange).toHaveBeenCalledTimes(1);
     });
 
     it.each([
@@ -497,8 +495,11 @@ describe('NewSessionEngineOptionDetail', () => {
 
         const favoriteAction = screen.findByTestId('new-session-engine-favorite-toggle');
         const targetStyle = resolveInteractiveStyle(favoriteAction?.props.style);
-        expect(targetStyle.width ?? targetStyle.minWidth).toBeGreaterThanOrEqual(44);
+        // The press frame carries the target; the drawn box stays compact. Vertical is
+        // the free axis, horizontal is capped at half the header cluster's gap so the
+        // star cannot overlap the refresh control beside it (WCAG 2.2 AA SC 2.5.8).
         expect(targetStyle.height ?? targetStyle.minHeight).toBeGreaterThanOrEqual(44);
+        expect(targetStyle.width ?? targetStyle.minWidth).toBeGreaterThanOrEqual(24);
         expect(favoriteAction?.props.accessibilityLabel).toBe('profiles.actions.removeFromFavorites');
         expect(typeof favoriteAction?.props.onFocus).toBe('function');
 
@@ -840,6 +841,79 @@ describe('NewSessionEngineOptionDetail', () => {
             modelSelection: { ref: { providerConnectionId: null, modelId: 'custom-model' } },
             sessionModeId: 'default',
             configOverrides: {},
+        });
+    });
+
+    it('canonicalizes a unique provider-qualified native alias and retains its model controls', async () => {
+        modelOptionsState.value = [{
+            value: 'openai-codex/gpt-5.6-luna',
+            label: 'GPT-5.6 Luna',
+            description: 'OpenAI Codex',
+            modelOptions: [{
+                id: 'reasoning_effort',
+                name: 'Thinking',
+                type: 'select',
+                currentValue: 'medium',
+                options: [
+                    { value: 'low', name: 'Low' },
+                    { value: 'medium', name: 'Medium' },
+                    { value: 'high', name: 'High' },
+                    { value: 'xhigh', name: 'Max' },
+                ],
+            }],
+        }];
+        preflightModelsState.value = {
+            availableModels: [{ id: 'openai-codex/gpt-5.6-luna', name: 'GPT-5.6 Luna' }],
+            supportsFreeform: true,
+        };
+        let latestSelection: {
+            modelId: string;
+            modelSelection: unknown;
+            sessionModeId: string;
+            configOverrides: Readonly<Record<string, string>>;
+        } | null = null;
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={{ kind: 'backend', backendId: 'pi' }}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="gpt-5.6-luna"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={(selection) => {
+                latestSelection = selection;
+            }}
+        />);
+
+        expect(lastOptionPickerOverlayProps?.selectedValue).toMatchObject({
+            providerConnectionId: null,
+            modelId: 'openai-codex/gpt-5.6-luna',
+        });
+        expect(lastOptionPickerOverlayProps?.selectedOptionControls).toEqual([
+            expect.objectContaining({
+                option: expect.objectContaining({
+                    id: 'reasoning_effort',
+                    options: expect.arrayContaining([{ value: 'low', name: 'Low' }]),
+                }),
+            }),
+        ]);
+
+        act(() => {
+            lastOptionPickerOverlayProps.onSelectOptionControlValue('reasoning_effort', 'low');
+        });
+
+        expect(latestSelection).toMatchObject({
+            modelId: 'openai-codex/gpt-5.6-luna',
+            modelSelection: {
+                ref: {
+                    providerConnectionId: null,
+                    modelId: 'openai-codex/gpt-5.6-luna',
+                },
+            },
+            sessionModeId: 'default',
+            configOverrides: { reasoning_effort: 'low' },
         });
     });
 

@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -10,6 +9,7 @@ import { t } from '@/text';
 import type { TranslationKey } from '@/text';
 
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type ActivitySurfaceChoice<T extends string | number> = Readonly<{
     value: T;
@@ -27,12 +27,12 @@ const ACTIVITY_SURFACE_TAP_TARGET_OPTIONS: readonly ActivitySurfaceChoice<'open_
     {
         value: 'open_session',
         titleKey: 'settingsNotifications.activitySurfaces.tapTargetOpenSessionTitle',
-        icon: 'arrow-forward-outline',
+        icon: 'arrow-right',
     },
     {
         value: 'open_sessions',
         titleKey: 'settingsNotifications.activitySurfaces.tapTargetOpenSessionsTitle',
-        icon: 'albums-outline',
+        icon: 'stack',
     },
 ];
 
@@ -40,17 +40,17 @@ const ACTIVITY_SURFACE_PRIVACY_OPTIONS: readonly ActivitySurfaceChoice<'status_o
     {
         value: 'status_only',
         titleKey: 'settingsNotifications.activitySurfaces.privacyStatusOnlyTitle',
-        icon: 'shield-checkmark-outline',
+        icon: 'shield-check',
     },
     {
         value: 'title_only',
         titleKey: 'settingsNotifications.activitySurfaces.privacyTitleOnlyTitle',
-        icon: 'text-outline',
+        icon: 'text-aa',
     },
     {
         value: 'include_preview',
         titleKey: 'settingsNotifications.activitySurfaces.privacyIncludePreviewTitle',
-        icon: 'chatbubble-ellipses-outline',
+        icon: 'chat-circle-dots',
     },
 ];
 
@@ -58,17 +58,17 @@ const LIVE_ACTIVITY_MODE_OPTIONS: readonly ActivitySurfaceChoice<'focused' | 'at
     {
         value: 'focused',
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.focusedTitle',
-        icon: 'locate-outline',
+        icon: 'crosshair',
     },
     {
         value: 'attention',
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.attentionTitle',
-        icon: 'alert-circle-outline',
+        icon: 'warning-circle',
     },
     {
         value: 'running',
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.runningTitle',
-        icon: 'pulse-outline',
+        icon: 'pulse',
     },
 ];
 
@@ -76,17 +76,17 @@ const LIVE_ACTIVITY_STRATEGY_OPTIONS: readonly ActivitySurfaceChoice<'dynamic_pr
     {
         value: 'dynamic_primary',
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.dynamicPrimaryTitle',
-        icon: 'swap-horizontal-outline',
+        icon: 'arrows-left-right',
     },
     {
         value: 'pinned_primary',
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.pinnedPrimaryTitle',
-        icon: 'pin-outline',
+        icon: 'push-pin',
     },
     {
         value: 'session_specific',
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.sessionSpecificTitle',
-        icon: 'layers-outline',
+        icon: 'stack-simple',
     },
 ];
 
@@ -94,17 +94,17 @@ const LIVE_ACTIVITY_MAX_CONCURRENT_OPTIONS: readonly ActivitySurfaceChoice<1 | 2
     {
         value: 1,
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.maxConcurrentOneTitle',
-        icon: 'ellipse-outline',
+        icon: 'circle',
     },
     {
         value: 2,
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.maxConcurrentTwoTitle',
-        icon: 'layers-outline',
+        icon: 'stack-simple',
     },
     {
         value: 4,
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.maxConcurrentFourTitle',
-        icon: 'grid-outline',
+        icon: 'grid-four',
     },
 ];
 
@@ -112,17 +112,17 @@ const HOME_SCREEN_WIDGET_MODE_OPTIONS: readonly ActivitySurfaceChoice<'summary' 
     {
         value: 'summary',
         titleKey: 'settingsNotifications.activitySurfaces.widgets.summaryTitle',
-        icon: 'list-outline',
+        icon: 'list',
     },
     {
         value: 'attention',
         titleKey: 'settingsNotifications.activitySurfaces.widgets.attentionTitle',
-        icon: 'alert-circle-outline',
+        icon: 'warning-circle',
     },
     {
         value: 'running',
         titleKey: 'settingsNotifications.activitySurfaces.widgets.runningTitle',
-        icon: 'pulse-outline',
+        icon: 'pulse',
     },
 ];
 
@@ -139,7 +139,7 @@ function renderChoiceRows<T extends string | number>(
         <Item
             key={String(choice.value)}
             title={t(choice.titleKey)}
-            icon={<Ionicons name={choice.icon as keyof typeof Ionicons.glyphMap} size={29} color={params.color} />}
+            icon={<Icon name={choice.icon as IconName} size={29} color={params.color} />}
             selected={params.selectedValue === choice.value}
             disabled={params.disabled}
             onPress={() => params.onSelect(choice.value)}
@@ -174,7 +174,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                     testID="settings-notifications-activity-surfaces-enabled"
                     title={t('common.enabled')}
                     subtitle={t('settingsNotifications.activitySurfaces.enabledSubtitle')}
-                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="sparkle" size={29} color={theme.colors.accent.blue} />}
                     rightElement={(
                         <Switch
                             value={activitySurfacesEnabled}
@@ -191,7 +191,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
             >
                 <Item
                     title={t('settingsNotifications.activitySurfaces.tapTargetTitle')}
-                    icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="arrow-right" size={29} color={theme.colors.text.secondary} />}
                     disabled={!activitySurfacesEnabled}
                     showChevron={false}
                 />
@@ -203,7 +203,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                 })}
                 <Item
                     title={t('settingsNotifications.activitySurfaces.privacyTitle')}
-                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="shield-check" size={29} color={theme.colors.text.secondary} />}
                     disabled={!activitySurfacesEnabled}
                     showChevron={false}
                 />
@@ -225,7 +225,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                             testID="settings-notifications-live-activities-enabled"
                             title={t('common.enabled')}
                             subtitle={t('settingsNotifications.activitySurfaces.liveActivities.enabledSubtitle')}
-                            icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="device-mobile" size={29} color={theme.colors.accent.blue} />}
                             rightElement={(
                                 <Switch
                                     value={liveActivitiesEnabled}
@@ -238,7 +238,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.strategyTitle')}
                             subtitle={t('settingsNotifications.activitySurfaces.liveActivities.strategySubtitle')}
-                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="git-branch" size={29} color={theme.colors.text.secondary} />}
                             disabled={!activitySurfacesEnabled || !liveActivitiesEnabled}
                             showChevron={false}
                         />
@@ -251,7 +251,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.presentationTitle')}
                             subtitle={t('settingsNotifications.activitySurfaces.liveActivities.presentationSubtitle')}
-                            icon={<Ionicons name="eye-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="eye" size={29} color={theme.colors.text.secondary} />}
                             disabled={!activitySurfacesEnabled || !liveActivitiesEnabled}
                             showChevron={false}
                         />
@@ -263,7 +263,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         })}
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.maxConcurrentTitle')}
-                            icon={<Ionicons name="layers-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="stack-simple" size={29} color={theme.colors.text.secondary} />}
                             disabled={!liveActivitiesConcurrencyEnabled}
                             showChevron={false}
                         />
@@ -275,7 +275,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         })}
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.previewTextTitle')}
-                            icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="chat-circle-dots" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesShowPreviewText !== false}
@@ -287,7 +287,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.actionButtonsTitle')}
-                            icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="hand" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesAllowActionButtons !== false}
@@ -299,7 +299,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.includeReadyTitle')}
-                            icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="check-circle" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesIncludeReady !== false}
@@ -311,7 +311,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.includeThinkingTitle')}
-                            icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="pulse" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesIncludeThinking !== false}
@@ -331,7 +331,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                             testID="settings-notifications-home-screen-widgets-enabled"
                             title={t('common.enabled')}
                             subtitle={t('settingsNotifications.activitySurfaces.widgets.enabledSubtitle')}
-                            icon={<Ionicons name="grid-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="grid-four" size={29} color={theme.colors.accent.blue} />}
                             rightElement={(
                                 <Switch
                                     value={widgetsEnabled}
@@ -349,7 +349,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         })}
                         <Item
                             title={t('settingsNotifications.activitySurfaces.widgets.previewTextTitle')}
-                            icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="chat-circle-dots" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.widgetsShowPreviewText !== false}
@@ -361,7 +361,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.widgets.machinePathTitle')}
-                            icon={<Ionicons name="folder-open-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="folder-open" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.widgetsShowMachinePath !== false}

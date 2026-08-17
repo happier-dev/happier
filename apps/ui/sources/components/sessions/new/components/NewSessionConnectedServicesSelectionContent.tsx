@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ConnectedServiceId } from '@happier-dev/protocol';
@@ -21,6 +20,7 @@ import type {
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { buildNewSessionConnectedServicesSelectionListModel } from './buildNewSessionConnectedServicesSelectionListModel';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
@@ -29,6 +29,8 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
+    includeNativeAuthOption?: boolean;
+    allowDefaultProfileFallback?: boolean;
     resolveOptionAvailability?: (params: Readonly<{
         serviceId: string;
         optionId: string;
@@ -49,8 +51,8 @@ function SelectionStateIcon(props: Readonly<{ selected: boolean; variant?: 'defa
     const color = props.selected ? theme.colors.text.primary : theme.colors.text.secondary;
 
     return normalizeNodeForView(
-        <Ionicons
-            name={props.selected ? 'checkmark-circle' : 'ellipse-outline'}
+        <Icon
+            name={props.selected ? 'check-circle' : 'circle'}
             size={20}
             color={color}
         />,
@@ -60,7 +62,7 @@ function SelectionStateIcon(props: Readonly<{ selected: boolean; variant?: 'defa
 function SettingsActionIcon() {
     const { theme } = useUnistyles();
     return normalizeNodeForView(
-        <Ionicons name="settings-outline" size={20} color={theme.colors.text.tertiary} />,
+        <Icon name="sliders-horizontal" size={20} color={theme.colors.text.tertiary} />,
     );
 }
 
@@ -88,10 +90,47 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
 
     const quotaBadgesByKey = useConnectedServiceQuotaBadges(requestedProfiles, { fetchPolicy: 'cache_only' });
 
+    // The row handlers are BEHAVIOUR, not data, so they are held in a ref and
+    // invoked through stable wrappers instead of being memo dependencies.
+    //
+    // Every host builds this content through a render callback that the hosting
+    // surface re-invokes with a freshly created element on each render while it
+    // is open (the popover hosts at minimum once more when the measured
+    // placement lands). Two of them cannot hoist their handlers at all —
+    // `useSessionConnectedServicesAuthSwitch` closes each one over the
+    // per-invocation `requestClose` — so with the raw handlers in the dependency
+    // list, every one of those passes rebuilt the whole step tree: each option
+    // object plus its `icon` and `rightAccessory` elements. React then lost
+    // element identity for every row and re-rendered each row's icon, quota
+    // badges and reauth pill instead of skipping them. Only the DATA inputs
+    // below may invalidate the model; a replaced handler is picked up through
+    // the ref on the next activation.
+    const handlersRef = React.useRef({
+        setBindingForService: props.setBindingForService,
+        onOpenSettings: props.onOpenSettings,
+        onReconnectProfile: props.onReconnectProfile,
+    });
+    handlersRef.current = {
+        setBindingForService: props.setBindingForService,
+        onOpenSettings: props.onOpenSettings,
+        onReconnectProfile: props.onReconnectProfile,
+    };
+
     const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding) => {
         setBindingsByServiceId((prev) => ({ ...prev, [serviceId]: binding }));
-        props.setBindingForService(serviceId, binding);
-    }, [props.setBindingForService]);
+        handlersRef.current.setBindingForService(serviceId, binding);
+    }, []);
+    const openSettings = React.useCallback((serviceId: string) => {
+        handlersRef.current.onOpenSettings(serviceId);
+    }, []);
+    const reconnectProfileHandler = React.useCallback((serviceId: string, profileId: string) => {
+        handlersRef.current.onReconnectProfile?.(serviceId, profileId);
+    }, []);
+    // Presence (not identity) of the reconnect handler is a real render input:
+    // without one the builder routes the reauth row to the settings action.
+    const reconnectProfile = typeof props.onReconnectProfile === 'function'
+        ? reconnectProfileHandler
+        : undefined;
 
     const listModel = React.useMemo(() => {
         return buildNewSessionConnectedServicesSelectionListModel({
@@ -100,9 +139,11 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             groupOptionsByServiceId: props.groupOptionsByServiceId,
             bindingsByServiceId,
             defaultProfileIdByServiceId: props.defaultProfileIdByServiceId,
+            includeNativeAuthOption: props.includeNativeAuthOption,
+            allowDefaultProfileFallback: props.allowDefaultProfileFallback,
             quotaBadgesByKey,
             setBindingForService,
-            onOpenSettings: props.onOpenSettings,
+            onOpenSettings: openSettings,
             translate: t,
             resolveServiceTitle: (serviceId) => resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t),
             renderSelectionIcon: ({ selected, variant }) => <SelectionStateIcon selected={selected} variant={variant} />,
@@ -115,19 +156,25 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
                     hideDot
                 />
             ),
-            onReconnectProfile: props.onReconnectProfile,
+            onReconnectProfile: reconnectProfile,
             resolveOptionAvailability: props.resolveOptionAvailability,
         });
     }, [
         bindingsByServiceId,
+        openSettings,
+        props.allowDefaultProfileFallback,
         props.defaultProfileIdByServiceId,
+        props.includeNativeAuthOption,
         props.groupOptionsByServiceId,
-        props.onOpenSettings,
-        props.onReconnectProfile,
         props.profileOptionsByServiceId,
+        // Kept as a dependency on purpose: unlike the handlers above, this one is
+        // INVOKED during the build and its result is baked into every option's
+        // `disabled` / `subtitle` / icon variant, so a stale reference would
+        // freeze availability. Each host supplies it as a memoised callback.
         props.resolveOptionAvailability,
         props.supportedServiceIds,
         quotaBadgesByKey,
+        reconnectProfile,
         setBindingForService,
     ]);
 

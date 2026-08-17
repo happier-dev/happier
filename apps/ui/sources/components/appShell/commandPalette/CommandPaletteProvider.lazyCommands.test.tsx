@@ -9,6 +9,7 @@ const testState = vi.hoisted(() => ({
     routerPush: vi.fn(),
     keyboardHandlers: null as KeyboardShortcutHandlers | null,
     sessions: {} as Record<string, unknown>,
+    enabledFeatures: new Set<string>(),
     settings: {
         commandPaletteEnabled: true,
         keyboardShortcutsV2Enabled: true,
@@ -73,7 +74,7 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
+    useFeatureEnabled: (featureId: string) => testState.enabledFeatures.has(featureId),
 }));
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
@@ -135,6 +136,7 @@ describe('CommandPaletteProvider lazy command building', () => {
         testState.routerPush.mockClear();
         testState.keyboardHandlers = null;
         testState.sessions = {};
+        testState.enabledFeatures.clear();
         testState.settings = {
             commandPaletteEnabled: true,
             keyboardShortcutsV2Enabled: true,
@@ -176,5 +178,26 @@ describe('CommandPaletteProvider lazy command building', () => {
 
         const showProps = vi.mocked(Modal.show).mock.calls[0]?.[0]?.props as { commands?: Array<{ id: string }> } | undefined;
         expect(showProps?.commands?.some((command) => command.id === 'session-session-late')).toBe(true);
+    });
+
+    it('opens the canonical Browse Existing Sessions compact destination from the web palette', async () => {
+        const { Modal } = await import('@/modal');
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+        testState.enabledFeatures.add('sessions.direct');
+
+        await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
+
+        testState.keyboardHandlers?.['commandPalette.open']?.();
+
+        const showProps = vi.mocked(Modal.show).mock.calls[0]?.[0]?.props as {
+            commands?: Array<{ id: string; action: () => void | Promise<void> }>;
+        } | undefined;
+        const browse = showProps?.commands?.find((command) => (
+            command.id === 'app-destination:browseExistingSessions'
+        ));
+        expect(browse).toBeTruthy();
+
+        await browse!.action();
+        expect(testState.routerPush).toHaveBeenCalledWith('/external/browse');
     });
 });

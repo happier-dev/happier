@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   connectedServiceProfileKey,
-  pruneConnectedServiceProfilePreferencesForDeletedProfile,
   pruneQualifiedConnectedAccountPreferences,
   resolveConnectedServiceDefaultProfileId,
   resolveConnectedServiceProfileLabel,
@@ -13,7 +12,7 @@ import {
 } from './connectedServiceProfilePreferences';
 
 const qualifiedGithubService = {
-  pluginId: 'happier.scm.hosting.github',
+  pluginId: 'happier.scm.forge.github',
   localId: 'github-account',
 };
 
@@ -71,29 +70,6 @@ describe('connectedServiceProfilePreferences', () => {
     expect(selected).toBe('personal');
   });
 
-  it('prunes stale default and profile labels for a deleted profile without touching unrelated preferences', () => {
-    const pruned = pruneConnectedServiceProfilePreferencesForDeletedProfile({
-      serviceId: 'anthropic',
-      profileId: 'work/team',
-      connectedServicesDefaultProfileByServiceId: {
-        anthropic: 'work/team',
-        openai: 'codex',
-      },
-      connectedServicesProfileLabelByKey: {
-        'anthropic/work%2Fteam': 'Encoded label',
-        'anthropic/work/team': 'Legacy label',
-        'anthropic/personal': 'Personal',
-        'openai/codex': 'Codex',
-      },
-    });
-
-    expect(pruned.connectedServicesDefaultProfileByServiceId).toEqual({ openai: 'codex' });
-    expect(pruned.connectedServicesProfileLabelByKey).toEqual({
-      'anthropic/personal': 'Personal',
-      'openai/codex': 'Codex',
-    });
-  });
-
   it('prefers qualified account preferences and falls back only to its mapped built-in key', () => {
     expect(resolveQualifiedConnectedAccountLabel({
       service: qualifiedGithubService,
@@ -101,7 +77,7 @@ describe('connectedServiceProfilePreferences', () => {
       accountId: 'work',
       labelsByKey: {
         'github/work': 'Legacy',
-        'happier.scm.hosting.github%2Fgithub-account/work': 'Qualified',
+        'happier.scm.forge.github%2Fgithub-account/work': 'Qualified',
       },
     })).toBe('Qualified');
     expect(resolveQualifiedConnectedAccountDefaultId({
@@ -125,7 +101,7 @@ describe('connectedServiceProfilePreferences', () => {
         'openai/voice': 'Voice',
       },
     })).toEqual({
-      'happier.scm.hosting.github%2Fgithub-account/work': 'Team',
+      'happier.scm.forge.github%2Fgithub-account/work': 'Team',
       'openai/voice': 'Voice',
     });
     expect(updateQualifiedConnectedAccountDefaultId({
@@ -137,7 +113,7 @@ describe('connectedServiceProfilePreferences', () => {
         openai: 'voice',
       },
     })).toEqual({
-      'happier.scm.hosting.github/github-account': 'work',
+      'happier.scm.forge.github/github-account': 'work',
       openai: 'voice',
     });
   });
@@ -148,18 +124,18 @@ describe('connectedServiceProfilePreferences', () => {
       legacyServiceId: 'github',
       accountId: 'work',
       defaultAccountByServiceKey: {
-        'happier.scm.hosting.github/github-account': 'personal',
+        'happier.scm.forge.github/github-account': 'personal',
         github: 'work',
         openai: 'voice',
       },
       labelsByKey: {
-        'happier.scm.hosting.github%2Fgithub-account/work': 'Qualified',
+        'happier.scm.forge.github%2Fgithub-account/work': 'Qualified',
         'github/work': 'Legacy',
         'github/personal': 'Personal',
       },
     })).toEqual({
       connectedServicesDefaultProfileByServiceId: {
-        'happier.scm.hosting.github/github-account': 'personal',
+        'happier.scm.forge.github/github-account': 'personal',
         openai: 'voice',
       },
       connectedServicesProfileLabelByKey: {

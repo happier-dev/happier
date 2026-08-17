@@ -11,9 +11,9 @@ use tauri::{Manager, Runtime, State, Window};
 use types::{
     DesktopBrowserAvailability, DesktopBrowserBoundsPayload, DesktopBrowserCaptureClipRect,
     DesktopBrowserCaptureErrorCode, DesktopBrowserCaptureRecordingFrameRequest,
-    DesktopBrowserCaptureRecordingFrameResult,
-    DesktopBrowserCaptureSnapshotRequest, DesktopBrowserCaptureSnapshotResult,
-    DesktopBrowserCapturedRecordingFrame, DesktopBrowserCapturedSnapshot, DesktopBrowserCommandResult,
+    DesktopBrowserCaptureRecordingFrameResult, DesktopBrowserCaptureSnapshotRequest,
+    DesktopBrowserCaptureSnapshotResult, DesktopBrowserCapturedRecordingFrame,
+    DesktopBrowserCapturedSnapshot, DesktopBrowserCommandResult,
     DesktopBrowserDispatchNavigationRequest, DesktopBrowserDrainDiagnosticsResult,
     DesktopBrowserEvalScriptRequest, DesktopBrowserNavigationDispatchKind,
     DesktopBrowserOpenViewRequest, DesktopBrowserPageInfo, DesktopBrowserPageInfoResult,
@@ -574,19 +574,16 @@ impl DesktopBrowserState {
                 .lock()
                 .expect("browser profile root lock poisoned"),
         );
-        let output_path = match write_recording_frame_file(
-            &recording_root,
-            &request.output_path,
-            &png_bytes,
-        ) {
-            Ok(path) => path,
-            Err(_) => {
-                return DesktopBrowserCaptureRecordingFrameResult::unavailable(
-                    self.availability(),
-                    DesktopBrowserCaptureErrorCode::CaptureWriteFailed,
-                );
-            }
-        };
+        let output_path =
+            match write_recording_frame_file(&recording_root, &request.output_path, &png_bytes) {
+                Ok(path) => path,
+                Err(_) => {
+                    return DesktopBrowserCaptureRecordingFrameResult::unavailable(
+                        self.availability(),
+                        DesktopBrowserCaptureErrorCode::CaptureWriteFailed,
+                    );
+                }
+            };
 
         DesktopBrowserCaptureRecordingFrameResult::success(
             self.availability(),

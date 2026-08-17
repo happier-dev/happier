@@ -251,6 +251,20 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
     let providerSafeRpcRequired = false;
     storage.getState().markSessionResuming(options.sessionId);
     try {
+        const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+        const session = storage.getState().sessions[options.sessionId];
+        if (session?.archivedAt != null) {
+            const unarchiveResult = await sessionUnarchiveWithServerScope(options.sessionId, { serverId });
+            if (!unarchiveResult.success) {
+                storage.getState().clearSessionResuming(options.sessionId);
+                return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                    errorMessage: unarchiveResult.message ?? 'Failed to unarchive session',
+                };
+            }
+        }
+
         const {
             sessionId,
             machineId: rawMachineId,
@@ -275,7 +289,6 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             preferRequestedMachineTarget,
             preferScopedMachineRpc,
         } = options;
-        const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
 
         const machineTarget = readMachineControlTargetForSession(sessionId);
         const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
@@ -345,6 +358,8 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         const normalizedResult = normalizeSpawnSessionResult(result);
         if (normalizedResult.type === 'error') {
             storage.getState().clearSessionResuming(sessionId);
+        } else {
+            storage.getState().armSessionResumingFallback(sessionId);
         }
         return normalizedResult;
     } catch (error) {
@@ -475,6 +490,13 @@ export type ForkSessionOptions = Readonly<{
     strategy?: SessionForkStrategy;
     replaySummaryRunner?: LlmTaskRunnerConfigV1;
     replayMaxSeedChars?: number;
+    /**
+     * Stable idempotency key for one user-visible fork attempt. Retries of the
+     * SAME attempt must reuse it so the daemon coalesces them onto the in-flight
+     * fork instead of committing a second provider-side fork. Callers that have
+     * no attempt identity omit it and keep today's behavior.
+     */
+    requestId?: string;
 }>;
 
 export async function forkSession(options: ForkSessionOptions): Promise<SessionForkRpcResult> {
@@ -511,6 +533,9 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
                 strategy: options.strategy,
                 replaySummaryRunner: options.replaySummaryRunner,
                 replayMaxSeedChars: options.replayMaxSeedChars,
+                ...(typeof options.requestId === 'string' && options.requestId.trim().length > 0
+                    ? { requestId: options.requestId }
+                    : {}),
             },
             serverId,
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
@@ -985,8 +1010,8 @@ export async function sessionReadLogTail(
 export interface SessionStopResponse {
     success: boolean;
     message?: string;
-    code?: 'session_stop_requested' | 'session_stop_not_found' | 'session_stop_unsupported' | 'session_stop_failed';
-    recovery?: 'wait_for_inactive' | 'upgrade_runtime';
+    code?: import('./sessionStopContract').SessionStopResponseCode;
+    recovery?: import('./sessionStopContract').SessionStopRecovery;
 }
 
 /**
@@ -994,7 +1019,7 @@ export interface SessionStopResponse {
  *
  * Primary behavior: stop through the supervising daemon when the hosting machine is reachable.
  * Compatibility fallback: ask the runner to terminate via session RPC.
- * If neither lifecycle owner supports Stop, return explicit upgrade recovery without changing reachability.
+ * If neither lifecycle owner is reachable, report unavailable control without changing reachability.
  */
 export async function sessionStop(sessionId: string): Promise<SessionStopResponse> {
     return await sessionStopWithServerScope(sessionId, {
@@ -1027,11 +1052,11 @@ export async function sessionStopWithServerScope(
         return { success: false, message: stopResult.message, code: 'session_stop_not_found' };
     }
 
-    if (stopResult.reason === 'unsupported') {
+    if (stopResult.reason === 'control_unavailable') {
         return {
             success: false,
             message: stopResult.message,
-            code: 'session_stop_unsupported',
+            code: 'session_stop_control_unavailable',
             recovery: stopResult.recovery,
         };
     }

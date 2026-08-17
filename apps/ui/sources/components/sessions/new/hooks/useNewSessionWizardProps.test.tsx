@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol';
@@ -91,14 +92,14 @@ describe('useNewSessionWizardProps', () => {
                 usePathPickerSearch: false,
                 favoriteDirectories: [],
                 setFavoriteDirectories: () => {},
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: false,
                 isCreating: false,
                 providerLaunchError: props.providerLaunchError,
                 retryProviderLaunch: props.retryProviderLaunch,
-                emptyAutocompletePrefixes: [],
+                emptyAutocompleteKinds: [],
                 emptyAutocompleteSuggestions: vi.fn(),
                 resumeSessionId: '',
                 isResumeSupportChecking: false,

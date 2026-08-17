@@ -117,6 +117,9 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machineContributionRegistryProjectionDescribe(...args),
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 describe('SecretRequirementPickerScreen replace fallback', () => {

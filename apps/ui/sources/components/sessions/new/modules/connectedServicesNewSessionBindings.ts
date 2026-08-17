@@ -17,12 +17,12 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 function resolveUnsupportedProfileSubtitleKey(serviceId: ConnectedServiceId):
   | 'connectedServices.defaultAuth.warning.connected_service_unsupported'
   | 'connectedServices.detail.connectSetupTokenSubtitle' {
-  const entry = getConnectedServiceRegistryEntry(serviceId);
+  const entry = getLegacyConnectedServiceRegistryEntry(serviceId);
   return entry.supportsToken && entry.tokenKind === 'setup-token'
     ? 'connectedServices.detail.connectSetupTokenSubtitle'
     : 'connectedServices.defaultAuth.warning.connected_service_unsupported';

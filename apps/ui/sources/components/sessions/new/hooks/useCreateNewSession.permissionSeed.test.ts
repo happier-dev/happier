@@ -1,4 +1,5 @@
 import React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { buildNewSessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
@@ -9,33 +10,69 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvP
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import {
     buildBackendTargetKey,
+    DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
+    PluginMachineMaterializationV1Schema,
     SessionModelSelectionV1Schema,
+    type AutomationV3DefinitionDetail,
+    type AutomationV3PluginEventDefinitionCreateRequest,
+    type AutomationV3PluginEventDefinitionPatchRequest,
+    type PluginMachineExecutionOriginV1,
     type SessionMcpSelectionV1,
+    type SessionServerStartSpawnDraftV1,
+    type SessionSpawnNewInputV2,
+    type SessionSpawnNewResultV1,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { renderScreen } from '@/dev/testkit';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
+import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
+import { createPluginEventAutomationAuthoringDraft } from '@/components/automations/editor/pluginEventAutomationDraft';
+import type { PluginEventAutomationAuthoringDraft } from '@/components/automations/editor/pluginEventAutomationDraft';
+import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import type { PluginEventAutomationResolvedTarget } from '@/components/automations/editor/pluginEventAutomationTarget';
+import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
+import type {
+    HandleCreateSessionOptions,
+    NewSessionAfterCreatedSettlement,
+} from './useCreateNewSession';
 
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+async function invokeHandleCreateSession(
+    handleCreateSession: null | ((options?: HandleCreateSessionOptions) => void),
+    options?: HandleCreateSessionOptions,
+): Promise<void> {
+    // The UI handler intentionally exposes a void callback to production callers,
+    // while its async implementation remains observable to this hook test.
+    await Promise.resolve(handleCreateSession?.(options));
+}
+
 const routerSearchParamsState = vi.hoisted(() => ({
     value: {} as Record<string, string | string[] | undefined>,
 }));
 
-type SpawnPayloadCapture = {
-    serverId?: string;
-    permissionMode?: string;
-    permissionModeUpdatedAt?: number;
-    connectedServices?: unknown;
-    mcpSelection?: unknown;
-    resume?: string;
-    transcriptStorage?: 'persisted' | 'direct';
-    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';
-    windowsTerminalWindowName?: string;
-} | null;
+const accountEncryptionModeMock = vi.hoisted(() => ({
+    value: 'e2ee' as 'plain' | 'e2ee',
+    fetchAccountEncryptionMode: vi.fn<() => Promise<{
+        mode: 'plain' | 'e2ee';
+        updatedAt: number;
+    }>>(),
+}));
+
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+    // Account encryption currentness crosses the network boundary; every
+    // session-writer test must use this deterministic boundary double.
+    fetchAccountEncryptionMode: accountEncryptionModeMock.fetchAccountEncryptionMode,
+}));
+
+type SpawnPayloadCapture = SessionSpawnNewInputV2 | null;
+type SessionSpawnNewRpcRequest = ServerScopedMachineRpcParams<SessionSpawnNewInputV2>;
+type SessionSpawnNewSuccessResult = Extract<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>;
 
 type AutomationCreateCapture = {
     name: string;
@@ -46,10 +83,239 @@ type AutomationCreateCapture = {
     assignments?: Array<{ machineId: string; enabled?: boolean; priority?: number }>;
 } | null;
 
+type PluginEventAutomationCreateCapture = AutomationV3PluginEventDefinitionCreateRequest | null;
+type PluginEventAutomationPatchCapture = Readonly<{
+    automationId: string;
+    input: AutomationV3PluginEventDefinitionPatchRequest;
+}> | null;
+
+function resolveNewSessionEventTarget(input: Readonly<{
+    newSessionSpawn?: SessionServerStartSpawnDraftV1 | null;
+}>): PluginEventAutomationResolvedTarget | null {
+    const spawn = input.newSessionSpawn;
+    return spawn
+        ? {
+            target: { kind: 'newSession', spawn },
+            assignmentMachineId: spawn.executionTarget.machineId,
+        }
+        : null;
+}
+
+function createRetainedScheduleAutomationDefinition(id: string) {
+    return createAutomationDefinitionFromDetail({
+        id,
+        name: 'Retained schedule automation',
+        description: null,
+        enabled: true,
+        trigger: {
+            kind: 'schedule',
+            schedule: {
+                kind: 'interval',
+                everyMs: 60_000,
+                scheduleExpr: null,
+                timezone: null,
+            },
+        },
+        targetType: 'newSession',
+        templateVersion: 1,
+        nextRunAt: null,
+        lastRunAt: null,
+        createdAt: 1,
+        updatedAt: 1,
+        assignments: [],
+        triggerDefinitionEnvelope: null,
+        templateCiphertext: '{"kind":"happier_automation_template_plain_v1","payload":{"directory":"/tmp"}}',
+    } satisfies AutomationV3DefinitionDetail);
+}
+
+function createStrictPluginEventAutomationDefinition(
+    id: string,
+    templateVersion = 1,
+    enabled = true,
+    assignments: AutomationV3DefinitionDetail['assignments'] = [],
+) {
+    return createAutomationDefinitionFromDetail({
+        id,
+        name: 'Current event automation',
+        description: null,
+        enabled,
+        trigger: {
+            kind: 'pluginEvent',
+            eventRef: {
+                pluginId: 'plugin-test',
+                localId: 'repository-event',
+            },
+            sourceSelectorId: 'source-selector',
+            sourceContractVersion: 1,
+            observation: {
+                kind: 'checkpointedPull',
+                watcher: null,
+            },
+        },
+        targetType: 'existingSession',
+        templateVersion,
+        nextRunAt: null,
+        lastRunAt: null,
+        createdAt: 1,
+        updatedAt: templateVersion,
+        assignments,
+        triggerDefinitionEnvelope: 'opaque-event-definition',
+        executionRecipe: {
+            v: 1,
+            templateVersion,
+            template: { t: 'plain', v: { v: 1, prompt: 'Seeded Event prompt' } },
+            triggerEvidence: null,
+            target: {
+                kind: 'newSession',
+                spawn: {
+                    executionTarget: { serverId: 'seeded-server', machineId: 'seeded-machine' },
+                    directory: '/seeded/project',
+                    organizationPlacement: { folderId: 'seeded-folder', tagIds: ['seeded-tag'] },
+                    agentTarget: {
+                        kind: 'agent',
+                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    },
+                    permissionMode: 'safe-yolo',
+                    configuration: {
+                        mode: { value: null, updatedAtMs: 1 },
+                        model: { value: null, updatedAtMs: 1 },
+                        permissionIntent: { value: 'safe-yolo', updatedAtMs: 1 },
+                        options: {},
+                    },
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: {
+                            github: { source: 'connected', selection: 'profile', profileId: 'seeded-github' },
+                        },
+                    },
+                    terminal: { mode: 'integrated' },
+                },
+            },
+        },
+    } satisfies AutomationV3DefinitionDetail);
+}
+
+function createPluginEventEligibleEvent(immutableGenerationId = 'github-generation-a') {
+    return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+        event: {
+            id: 'acme.github/events/repository',
+            identity: { pluginId: 'acme.github', localId: 'events/repository' },
+            immutableGenerationId,
+            title: 'Repository updates',
+            description: null,
+            payloadSchema: {
+                type: 'object',
+                properties: { action: { type: 'string' } },
+                required: ['action'],
+                additionalProperties: false,
+            },
+            automation: {
+                v: 1,
+                eligible: true,
+                source: {
+                    sourceContractVersion: 3,
+                    supportedObservationTransports: ['checkpointedPull'],
+                    sourceConfigSchema: {
+                        type: 'object',
+                        properties: { repositoryId: { type: 'string', minLength: 1 } },
+                        required: ['repositoryId'],
+                        additionalProperties: false,
+                    },
+                    setupActionRef: {
+                        pluginId: 'acme.github',
+                        localId: 'setup/repository-source',
+                    },
+                },
+            },
+        },
+        setupAction: {
+            id: 'acme.github/actions/setup/repository-source',
+            identity: { pluginId: 'acme.github', localId: 'setup/repository-source' },
+            immutableGenerationId,
+            title: 'Configure repository source',
+            description: null,
+            inputSchema: {
+                type: 'object',
+                properties: { repository: { type: 'string', minLength: 1 } },
+                required: ['repository'],
+                additionalProperties: false,
+            },
+            inputHints: null,
+        },
+    });
+}
+
+function projectionInputsForPluginEvent(
+    event: ReturnType<typeof createPluginEventEligibleEvent>,
+): DaemonMergedProjectionInputs {
+    return {
+        mergedProviderProjectionById: {},
+        mergedBackendProjectionById: {},
+        discoveredBackendIds: [],
+        pluginProjectionById: {},
+        pluginProjectionV2: null,
+        automationEligibleEvents: [event],
+        registryDiagnostics: [],
+    };
+}
+
+function freshPluginEventExecutionOrigin(
+    origin: PluginMachineExecutionOriginV1,
+): FreshPluginMachineExecutionOriginV1 {
+    const materialization = PluginMachineMaterializationV1Schema.parse({
+        serverIdentityId: origin.serverIdentityId,
+        machineId: origin.materializationRef.machineId,
+        materializationId: origin.materializationRef.materializationId,
+        pluginId: origin.materializationRef.pluginId,
+        version: '1.0.0',
+        sourceClass: 'registryPackage',
+        portableRelease: true,
+        uiArtifacts: [],
+        enabled: true,
+        trustState: 'trusted',
+        observedAt: 1_700_000_000_000,
+    });
+    return {
+        origin,
+        materialization,
+        machineTarget: {
+            kind: 'resolved',
+            target: {
+                serverIdentityId: origin.serverIdentityId,
+                machineId: origin.materializationRef.machineId,
+            },
+            serverId: 'server-a',
+            profile: {
+                id: 'server-a',
+                name: 'Server A',
+                serverUrl: 'https://server-a.invalid',
+                serverIdentityId: origin.serverIdentityId,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: 1,
+            },
+            machine: {
+                id: origin.materializationRef.machineId,
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: null,
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 1,
+            },
+        },
+    };
+}
+
 function buildAutomationAuthoringDraft(params: Readonly<{
     prompt: string;
     modelMode: ModelMode;
     permissionMode: PermissionMode;
+    permissionModeUpdatedAt?: number | null;
+    backendTarget?: Readonly<{ kind: 'backend'; backendId: string }> | null;
     automation: NewSessionAutomationDraft;
     connectedServices?: unknown;
     mcpSelection?: SessionMcpSelectionV1 | null;
@@ -67,13 +333,13 @@ function buildAutomationAuthoringDraft(params: Readonly<{
         prompt: params.prompt,
         displayText: params.prompt,
         agentId: 'codex',
-        backendTarget: null,
+        backendTarget: params.backendTarget ?? null,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: null,
         environmentVariables: null,
         resumeSessionId: null,
         permissionMode: params.permissionMode,
-        permissionModeUpdatedAt: null,
+        permissionModeUpdatedAt: params.permissionModeUpdatedAt ?? null,
         modelId: params.modelMode === 'default' ? null : params.modelMode,
         modelUpdatedAt: null,
         mcpSelection: params.mcpSelection ?? null,
@@ -90,8 +356,22 @@ function buildAutomationAuthoringDraft(params: Readonly<{
 
 async function setupUseCreateNewSessionHarness() {
     const captured: { value: SpawnPayloadCapture } = { value: null };
+    const sessionSpawnNewRpcRequest: { value: SessionSpawnNewRpcRequest | null } = { value: null };
     const buildSpawnEnvironmentVariablesCapture: { value: Record<string, unknown> | null } = { value: null };
     const automationCaptured: { value: AutomationCreateCapture } = { value: null };
+    const pluginEventAutomationCaptured: { value: PluginEventAutomationCreateCapture } = { value: null };
+    const pluginEventAutomationCreateError: { value: unknown | null } = { value: null };
+    const pluginEventAutomationPatchCaptured: { value: PluginEventAutomationPatchCapture } = { value: null };
+    const pluginEventAutomationPatchError: { value: unknown | null } = { value: null };
+    const currentPluginEventProjection: { value: DaemonMergedProjectionInputs | null } = { value: null };
+    const loadDaemonMergedProjectionInputsSpy = vi.fn(async () => currentPluginEventProjection.value);
+    const accountEncryptionMode = accountEncryptionModeMock;
+    accountEncryptionMode.value = 'e2ee';
+    accountEncryptionMode.fetchAccountEncryptionMode.mockReset();
+    accountEncryptionMode.fetchAccountEncryptionMode.mockImplementation(async () => ({
+        mode: accountEncryptionMode.value,
+        updatedAt: 1,
+    }));
     const sessions: Record<string, { id: string }> = {};
     const encryptRawSpy = vi.fn(async (value: unknown) => {
         return `cipher:${Buffer.from(JSON.stringify(value)).toString('base64')}`;
@@ -103,8 +383,14 @@ async function setupUseCreateNewSessionHarness() {
     const switchConnectionToActiveServerSpy = vi.fn(async (..._args: unknown[]) => ({ token: 'next-token', secret: 'next-secret' }));
     const refreshMachinesSpy = vi.fn(async () => {});
     const refreshSessionsSpy = vi.fn(async () => {});
-    const ensureSessionVisibleForMessageRouteSpy = vi.fn(async (_sessionId: string) => {});
+    const ensureSessionVisibleForMessageRouteSpy = vi.fn(async (sessionId: string) => {
+        sessions[sessionId] ??= { id: sessionId };
+        return { kind: 'available' };
+    });
     const refreshAutomationsSpy = vi.fn(async () => {});
+    const refreshAutomationDefinitionDetailSpy = vi.fn(async (automationId: string) => (
+        createRetainedScheduleAutomationDefinition(automationId)
+    ));
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
     const updateAutomationSpy = vi.fn(async () => {});
     const updateSessionDraftSpy = vi.fn();
@@ -115,42 +401,37 @@ async function setupUseCreateNewSessionHarness() {
     const prefetchMachineCapabilitiesSpy = vi.fn(async () => {});
     const captureExceptionIfEnabledSpy = vi.fn();
     const syncSendMessageSpy = vi.fn<(...args: unknown[]) => Promise<void>>(async (..._args: unknown[]) => {});
-    const followUpSpawnedSessionWithServerScopeSpy = vi.fn(async (params: {
-        sessionId: string;
-        targetServerId?: string | null;
-        initialMessageText?: string | null;
-        profileId?: string | null;
-    }) => {
-        const targetServerId = typeof params.targetServerId === 'string' && params.targetServerId.trim().length > 0
-            ? params.targetServerId
-            : 'server-a';
-        if (targetServerId !== 'server-a') {
-            return;
-        }
-
-        await refreshSessionsSpy();
-
-        if (typeof params.initialMessageText === 'string' && params.initialMessageText.trim().length > 0) {
-            await syncSendMessageSpy(
-                params.sessionId,
-                params.initialMessageText,
-                undefined,
-                undefined,
-                params.profileId ? { profileId: params.profileId } : undefined,
-            );
-        }
-    });
     const materializeNewSessionCheckoutSpy = vi.fn(async () => ({
         success: true as const,
         path: '/tmp/materialized-worktree',
         sessionPath: '/tmp/materialized-worktree',
         repositoryRootPath: '/tmp/materialized-worktree',
     }));
-    const machineSpawnNewSessionSpy = vi.fn<(...args: unknown[]) => Promise<any>>(async (...args: unknown[]) => {
-        const opts = args[0] as SpawnPayloadCapture;
-        captured.value = opts;
-        return { type: 'error', errorCode: 'unexpected', errorMessage: 'stop' };
+    const captureSessionSpawnNewRequest = (request: SessionSpawnNewRpcRequest): void => {
+        sessionSpawnNewRpcRequest.value = request;
+        captured.value = request.payload;
+    };
+    const sessionSpawnNewRpcSpy = vi.fn(async (request: SessionSpawnNewRpcRequest): Promise<SessionSpawnNewResultV1> => {
+        captureSessionSpawnNewRequest(request);
+        return { type: 'error', code: 'spawn_failed', retryable: false };
     });
+    const mockSessionSpawnSuccess = (sessionId: string): void => {
+        sessionSpawnNewRpcSpy.mockImplementationOnce(async (
+            request: SessionSpawnNewRpcRequest,
+        ): Promise<SessionSpawnNewSuccessResult> => {
+            captureSessionSpawnNewRequest(request);
+            return {
+                type: 'success',
+                disposition: 'created',
+                sessionId,
+                executionTarget: request.payload.executionTarget,
+                organizationPlacement: request.payload.organizationPlacement ?? { folderId: null, tagIds: [] },
+                initialInput: request.payload.initialMessage
+                    ? { status: 'accepted', localId: `input-${sessionId}` }
+                    : { status: 'notRequested' },
+            };
+        });
+    };
     const machineBashSpy = vi.fn<(...args: unknown[]) => Promise<{
         success: boolean;
         stderr: string;
@@ -207,7 +488,25 @@ async function setupUseCreateNewSessionHarness() {
                 automationCaptured.value = input;
                 return { id: 'auto_1', ...input };
             }),
+            createPluginEventAutomationDefinition: vi.fn(async (input: AutomationV3PluginEventDefinitionCreateRequest) => {
+                pluginEventAutomationCaptured.value = input;
+                if (pluginEventAutomationCreateError.value !== null) {
+                    throw pluginEventAutomationCreateError.value;
+                }
+                return { id: 'event_auto_1', ...input };
+            }),
+            updatePluginEventAutomationDefinition: vi.fn(async (
+                automationId: string,
+                input: AutomationV3PluginEventDefinitionPatchRequest,
+            ) => {
+                pluginEventAutomationPatchCaptured.value = { automationId, input };
+                if (pluginEventAutomationPatchError.value !== null) {
+                    throw pluginEventAutomationPatchError.value;
+                }
+                return { id: 'event_auto_1', ...input };
+            }),
             updateAutomation: updateAutomationSpy,
+            refreshAutomationDefinitionDetail: refreshAutomationDefinitionDetailSpy,
             getCredentials: vi.fn(() => ({ token: 't' })),
             encryption: {
                 encryptRaw: encryptRawSpy,
@@ -228,7 +527,7 @@ async function setupUseCreateNewSessionHarness() {
         serverFetch: vi.fn(async () => ({
             ok: true,
             status: 200,
-            json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
+            json: async () => ({ mode: accountEncryptionMode.value, updatedAt: 1 }),
         })),
     }));
     vi.doMock('@/sync/domains/state/persistence', () => ({
@@ -341,8 +640,10 @@ async function setupUseCreateNewSessionHarness() {
         formatResumeSupportDetailCode: vi.fn(() => ''),
     }));
     vi.doMock('@/sync/ops', () => ({
-        machineSpawnNewSession: (...args: unknown[]) => machineSpawnNewSessionSpy(...args),
         machineBash: (...args: unknown[]) => machineBashSpy(...args),
+    }));
+    vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+        machineRpcWithServerScope: (request: SessionSpawnNewRpcRequest) => sessionSpawnNewRpcSpy(request),
     }));
     vi.doMock('@/components/sessions/new/modules/materializeNewSessionCheckout', () => ({
         materializeNewSessionCheckout: materializeNewSessionCheckoutSpy,
@@ -350,10 +651,9 @@ async function setupUseCreateNewSessionHarness() {
     vi.doMock('@/sync/ops/workspaces', () => ({
         deleteWorkspaceCheckout: vi.fn(async () => ({ success: true, workspace: { id: 'ws_generated', locationIds: ['loc_generated'], checkoutIds: [], defaultLocationId: 'loc_generated', defaultCheckoutId: null, displayName: 'workspace' } })),
     }));
-    vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
-        followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
+    vi.doMock('@/agents/backendCatalog/loadDaemonMergedProjectionInputs', () => ({
+        loadDaemonMergedProjectionInputs: loadDaemonMergedProjectionInputsSpy,
     }));
-
     const { useCreateNewSession } = await import('./useCreateNewSession');
     return {
         useCreateNewSession,
@@ -363,6 +663,13 @@ async function setupUseCreateNewSessionHarness() {
         captured,
         buildSpawnEnvironmentVariablesCapture,
         automationCaptured,
+        pluginEventAutomationCaptured,
+        pluginEventAutomationCreateError,
+        pluginEventAutomationPatchCaptured,
+        pluginEventAutomationPatchError,
+        currentPluginEventProjection,
+        loadDaemonMergedProjectionInputsSpy,
+        accountEncryptionMode,
         sessions,
         encryptRawSpy,
         modalAlertSpy,
@@ -374,6 +681,7 @@ async function setupUseCreateNewSessionHarness() {
         refreshSessionsSpy,
         ensureSessionVisibleForMessageRouteSpy,
         refreshAutomationsSpy,
+        refreshAutomationDefinitionDetailSpy,
         updateAutomationSpy,
         updateSessionDraftSpy,
         upsertPendingMessageSpy,
@@ -385,8 +693,9 @@ async function setupUseCreateNewSessionHarness() {
         prefetchMachineCapabilitiesSpy,
         captureExceptionIfEnabledSpy,
         syncSendMessageSpy,
-        followUpSpawnedSessionWithServerScopeSpy,
-        machineSpawnNewSessionSpy,
+        sessionSpawnNewRpcSpy,
+        sessionSpawnNewRpcRequest,
+        mockSessionSpawnSuccess,
     };
 }
 
@@ -400,7 +709,7 @@ describe('useCreateNewSession permission seeding', () => {
         vi.restoreAllMocks();
     });
 
-    it('passes a canonical permission mode and timestamp into machineSpawnNewSession', async () => {
+    it('passes a canonical permission mode and timestamp into the strict Action request', async () => {
         const { useCreateNewSession, captured } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -430,7 +739,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -455,9 +764,9 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(captured.value).not.toBeNull();
         expect(captured.value?.permissionMode).toBe('safe-yolo');
-        expect(typeof captured.value?.permissionModeUpdatedAt).toBe('number');
-        expect(Number.isFinite(captured.value?.permissionModeUpdatedAt)).toBe(true);
-        expect((captured.value?.permissionModeUpdatedAt ?? 0)).toBeGreaterThan(0);
+        expect(typeof captured.value?.configuration?.permissionIntent.updatedAtMs).toBe('number');
+        expect(Number.isFinite(captured.value?.configuration?.permissionIntent.updatedAtMs)).toBe(true);
+        expect((captured.value?.configuration?.permissionIntent.updatedAtMs ?? 0)).toBeGreaterThan(0);
     });
 
     it('preserves persisted last-used agent settings when the draft has no canonical backendTarget', async () => {
@@ -490,10 +799,10 @@ describe('useCreateNewSession permission seeding', () => {
                 selectedProfileId: null,
                 profileMap: new Map(),
                 recentMachinePaths: [],
-                agentType: 'customAcp' as any,
+                agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -555,7 +864,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'opencode' as any,
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: 'sess_old',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -578,21 +887,19 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(captured.value?.resume).toBe('sess_old');
+        expect(captured.value?.configuration?.providerSessionResume?.providerSessionId).toBe('sess_old');
         expect(prefetchMachineCapabilitiesSpy).toHaveBeenCalledTimes(0);
     });
 
-    it('passes the selected model as initial message metaOverrides so next-prompt model backends can apply it on the first turn', async () => {
+    it('includes the selected model and initial message in the strict Action request', async () => {
         const {
             useCreateNewSession,
-            followUpSpawnedSessionWithServerScopeSpy,
-            machineSpawnNewSessionSpy,
+            captured,
+            mockSessionSpawnSuccess,
+            syncSendMessageSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({
-            type: 'success',
-            sessionId: 'sess_target',
-        });
+        mockSessionSpawnSuccess('sess_target');
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false } as unknown as Settings;
@@ -621,7 +928,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'opencode' as any,
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'gpt' as any,
-                sessionPrompt: 'hello',
+                promptStore: createNewSessionPromptStore('hello'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -644,24 +951,24 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_target',
-            initialMessageText: 'hello',
-            metaOverrides: { model: 'gpt' },
+        expect(captured.value).toEqual(expect.objectContaining({
+            initialMessage: 'hello',
+            configuration: expect.objectContaining({
+                model: expect.objectContaining({ value: 'gpt' }),
+            }),
         }));
+        expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
-    it('uses canonical provider selection for next-prompt metadata even when presentation mode is Automatic', async () => {
+    it('uses canonical provider selection in the strict Action request when presentation mode is Automatic', async () => {
         const {
             useCreateNewSession,
-            followUpSpawnedSessionWithServerScopeSpy,
-            machineSpawnNewSessionSpy,
+            captured,
+            mockSessionSpawnSuccess,
+            syncSendMessageSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({
-            type: 'success',
-            sessionId: 'sess_target',
-        });
+        mockSessionSpawnSuccess('sess_target');
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false } as unknown as Settings;
@@ -722,7 +1029,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'opencode' as any,
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'hello',
+                promptStore: createNewSessionPromptStore('hello'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -745,25 +1052,22 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+        expect(captured.value).toEqual(expect.objectContaining({
+            initialMessage: 'hello',
             modelSelection: authoringDraft.modelSelection,
         }));
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_target',
-            initialMessageText: 'hello',
-            metaOverrides: { model: 'default' },
-        }));
+        expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
     it('runs local slash actions for the created session without sending the slash text as the first message', async () => {
         const {
             useCreateNewSession,
-            followUpSpawnedSessionWithServerScopeSpy,
-            machineSpawnNewSessionSpy,
+            captured,
+            mockSessionSpawnSuccess,
             syncSendMessageSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_runs' });
+        mockSessionSpawnSuccess('sess_runs');
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false, featureToggles: { 'execution.runs': true } } as unknown as Settings;
@@ -792,7 +1096,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex' as any,
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '/h.runs',
+                promptStore: createNewSessionPromptStore('/h.runs'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -815,14 +1119,11 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_runs',
-            initialMessageText: '',
-        }));
+        expect(captured.value?.initialMessage).toBeUndefined();
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
-    it('passes connectedServices bindings into machineSpawnNewSession when provided', async () => {
+    it('passes connectedServices bindings into the strict Action request when provided', async () => {
         const { useCreateNewSession, captured } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -852,7 +1153,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: {
                     connectedServices: {
@@ -886,12 +1187,12 @@ describe('useCreateNewSession permission seeding', () => {
         expect(captured.value?.connectedServices).toEqual({
             v: 1,
             bindingsByServiceId: {
-                anthropic: { source: 'connected', profileId: 'work' },
+                anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
             },
         });
     });
 
-    it('passes mcpSelection into machineSpawnNewSession when provided', async () => {
+    it('passes mcpSelection into the strict Action request when provided', async () => {
         const { useCreateNewSession, captured } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -921,7 +1222,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 mcpSelection: {
@@ -958,7 +1259,7 @@ describe('useCreateNewSession permission seeding', () => {
         });
     });
 
-    it('passes transcriptStorage through to machineSpawnNewSession when requested', async () => {
+    it('passes transcriptStorage through to the strict Action request when requested', async () => {
         const { useCreateNewSession, captured } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -988,7 +1289,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'claude',
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 transcriptStorage: 'direct',
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
@@ -1021,6 +1322,7 @@ describe('useCreateNewSession permission seeding', () => {
             getMachineCapabilitiesSnapshotSpy,
             captured,
             buildSpawnEnvironmentVariablesCapture,
+            sessionSpawnNewRpcRequest,
         } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -1050,7 +1352,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -1073,7 +1375,15 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(captured.value?.serverId).toBe('server-b');
+        expect(captured.value?.executionTarget.serverId).toBe('server-b');
+        expect(sessionSpawnNewRpcRequest.value).toEqual(expect.objectContaining({
+            serverId: 'server-b',
+            machineId: 'm1',
+            method: RPC_METHODS.SESSION_SPAWN_NEW,
+            payload: expect.objectContaining({
+                executionTarget: { serverId: 'server-b', machineId: 'm1' },
+            }),
+        }));
         expect(getMachineCapabilitiesSnapshotSpy).toHaveBeenCalledWith('m1', 'server-b');
         expect(buildSpawnEnvironmentVariablesCapture.value).toMatchObject({
             newSessionOptions: {
@@ -1116,7 +1426,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -1141,22 +1451,18 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'newSession.serverSelectionUnavailable');
         expect(captured.value).not.toBeNull();
-        expect(captured.value?.serverId).toBe('server-a');
+        expect(captured.value?.executionTarget.serverId).toBe('server-a');
     });
 
-    it('routes scoped repo-native first prompts through daemon spawn and post-spawn hydration', async () => {
+    it('admits scoped repo-native first prompts atomically through the strict Action', async () => {
         const {
             useCreateNewSession,
-            refreshSessionsSpy,
+            captured,
             syncSendMessageSpy,
-            followUpSpawnedSessionWithServerScopeSpy,
-            machineSpawnNewSessionSpy,
+            mockSessionSpawnSuccess,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({
-            type: 'success',
-            sessionId: 'sess_target',
-        });
+        mockSessionSpawnSuccess('sess_target');
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false } as unknown as Settings;
@@ -1190,7 +1496,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'Ship the scoped follow-up fix',
+                promptStore: createNewSessionPromptStore('Ship the scoped follow-up fix'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -1213,214 +1519,19 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-b',
+        expect(captured.value).toEqual(expect.objectContaining({
+            executionTarget: { serverId: 'server-b', machineId: 'm1' },
+            checkoutCreationDraft: {
+                kind: 'git_worktree',
+                displayName: 'feature/scope-fix',
+                baseRef: 'main',
+            },
+            initialMessage: 'Ship the scoped follow-up fix',
         }));
-        expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_target',
-            targetServerId: 'server-b',
-            initialMessageText: 'Ship the scoped follow-up fix',
-            messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
-            profileId: null,
-        }));
-        expect(refreshSessionsSpy).not.toHaveBeenCalled();
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
-    it('preserves the /new draft without hydrating or opening the created session when a repo-native first-turn follow-up fails', async () => {
-        const {
-            useCreateNewSession,
-            captureExceptionIfEnabledSpy,
-            modalAlertSpy,
-            clearNewSessionDraftSpy,
-            ensureSessionVisibleForMessageRouteSpy,
-            followUpSpawnedSessionWithServerScopeSpy,
-            machineSpawnNewSessionSpy,
-            updateSessionDraftSpy,
-            saveSessionDraftsSpy,
-        } = await setupUseCreateNewSessionHarness();
-
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({
-            type: 'success',
-            sessionId: 'sess_target',
-        });
-        followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
-
-        let handleCreateSession: null | (() => Promise<void>) = null;
-        const routerReplace = vi.fn();
-        const disableDraftPersistence = vi.fn();
-        const settings = { experiments: false } as unknown as Settings;
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-        launchIntentSignature: 'test-launch-intent',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                checkoutCreationDraft: {
-                    kind: 'git_worktree',
-                    displayName: 'feature/scope-fix',
-                    baseRef: 'main',
-                },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                sessionPrompt: 'Ship the scoped follow-up fix',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-b',
-                allowedTargetServerIds: ['server-a', 'server-b'],
-                disableDraftPersistence,
-            });
-
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
-        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-b',
-        }));
-        expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_target',
-            targetServerId: 'server-b',
-            initialMessageText: 'Ship the scoped follow-up fix',
-            messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
-        }));
-        expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
-        expect(updateSessionDraftSpy).not.toHaveBeenCalled();
-        expect(disableDraftPersistence).not.toHaveBeenCalled();
-        expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-    });
-
-    it('preserves the /new draft without opening even when created-session hydration could succeed after a first-turn failure', async () => {
-        const {
-            useCreateNewSession,
-            setLocalSearchParams,
-            modalAlertSpy,
-            clearNewSessionDraftSpy,
-            ensureSessionVisibleForMessageRouteSpy,
-            sessions,
-            followUpSpawnedSessionWithServerScopeSpy,
-            machineSpawnNewSessionSpy,
-            updateSessionDraftSpy,
-            saveSessionDraftsSpy,
-        } = await setupUseCreateNewSessionHarness();
-        setLocalSearchParams({ server: 'http://localhost:3014' });
-
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({
-            type: 'success',
-            sessionId: 'sess_target',
-        });
-        followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
-        ensureSessionVisibleForMessageRouteSpy.mockImplementationOnce(async (sessionId: string) => {
-            sessions[sessionId] = { id: sessionId };
-        });
-
-        let handleCreateSession: null | (() => Promise<void>) = null;
-        const routerReplace = vi.fn();
-        const disableDraftPersistence = vi.fn();
-        const settings = { experiments: false } as unknown as Settings;
-        const machineEnvPresence: UseMachineEnvPresenceResult = {
-            isPreviewEnvSupported: false,
-            isLoading: false,
-            meta: {},
-            refreshedAt: null,
-            refresh: () => {},
-        };
-
-        function Test() {
-            const hook = useCreateNewSession({
-        launchIntentSignature: 'test-launch-intent',
-                router: { push: vi.fn(), replace: routerReplace },
-                selectedMachineId: 'm1',
-                selectedPath: '/tmp',
-                selectedMachine: { metadata: {} },
-                setIsCreating: vi.fn(),
-                setIsResumeSupportChecking: vi.fn(),
-                settings,
-                useProfiles: false,
-                selectedProfileId: null,
-                profileMap: new Map(),
-                recentMachinePaths: [],
-                agentType: 'codex',
-                permissionMode: 'acceptEdits' as unknown as PermissionMode,
-                modelMode: 'default' as ModelMode,
-                sessionPrompt: 'Ship the scoped follow-up fix',
-                resumeSessionId: '',
-                agentNewSessionOptions: null,
-                machineEnvPresence,
-                secrets: [],
-                secretBindingsByProfileId: {},
-                selectedSecretIdByProfileIdByEnvVarName: {},
-                sessionOnlySecretValueByProfileIdByEnvVarName: {},
-                selectedMachineCapabilities: null,
-                targetServerId: 'server-b',
-                allowedTargetServerIds: ['server-a', 'server-b'],
-                disableDraftPersistence,
-            });
-
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
-            return React.createElement('View');
-        }
-
-        await renderScreen(React.createElement(Test));
-
-        await act(async () => {
-            await handleCreateSession?.();
-        });
-
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
-        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-b',
-        }));
-        expect(machineSpawnNewSessionSpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'sess_target',
-            targetServerId: 'server-b',
-            initialMessageText: 'Ship the scoped follow-up fix',
-            messageLocalId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
-        }));
-        expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
-        expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
-        expect(updateSessionDraftSpy).not.toHaveBeenCalled();
-        expect(disableDraftPersistence).not.toHaveBeenCalled();
-        expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
-        expect(routerReplace).not.toHaveBeenCalled();
-    });
-
-    it('creates an automation instead of spawning immediately when automation mode is enabled', async () => {
+    it('creates an automation instead of spawning immediately when automation mode is enabled without Composer attachments', async () => {
         const {
             useCreateNewSession,
             captured,
@@ -1429,7 +1540,7 @@ describe('useCreateNewSession permission seeding', () => {
             materializeNewSessionCheckoutSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        let handleCreateSession: null | (() => Promise<void>) = null;
+        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
         const routerPush = vi.fn();
         const routerReplace = vi.fn();
         const disableDraftPersistence = vi.fn();
@@ -1480,7 +1591,7 @@ describe('useCreateNewSession permission seeding', () => {
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
                 acpSessionModeId: 'plan',
-                sessionPrompt: 'Run the nightly maintenance checklist',
+                promptStore: createNewSessionPromptStore('Run the nightly maintenance checklist'),
                 transcriptStorage: 'direct',
                 resumeSessionId: '',
                 agentNewSessionOptions: { connectedServices },
@@ -1521,14 +1632,14 @@ describe('useCreateNewSession permission seeding', () => {
                 }),
             });
 
-            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            handleCreateSession = hook.handleCreateSession;
             return React.createElement('View');
         }
 
         await renderScreen(React.createElement(Test));
 
         await act(async () => {
-            await handleCreateSession?.();
+            await invokeHandleCreateSession(handleCreateSession, { hasComposerAttachments: false });
         });
 
         expect(captured.value).toBeNull();
@@ -1565,6 +1676,1160 @@ describe('useCreateNewSession permission seeding', () => {
             baseRef: 'main',
             branchMode: 'new',
         });
+    });
+
+    it('rejects Composer attachments before scheduled automation creation and retains the New Session draft', async () => {
+        const {
+            useCreateNewSession,
+            captured,
+            automationCaptured,
+            clearNewSessionDraftSpy,
+            refreshAutomationsSpy,
+            modalAlertSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
+        const routerReplace = vi.fn();
+        const disableDraftPersistence = vi.fn();
+        const setIsCreating = vi.fn();
+        const settlements: NewSessionAfterCreatedSettlement[] = [];
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Nightly',
+            description: 'desc',
+            scheduleKind: 'interval',
+            everyMinutes: 15,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'scheduled-automation-composer-attachment',
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating,
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Run the nightly maintenance checklist'),
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                disableDraftPersistence,
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Run the nightly maintenance checklist',
+                    modelMode: 'default' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await invokeHandleCreateSession(handleCreateSession, {
+                hasComposerAttachments: true,
+                onAfterCreatedSettled: (settlement) => settlements.push(settlement),
+            });
+        });
+
+        expect(captured.value).toBeNull();
+        expect(automationCaptured.value).toBeNull();
+        expect(disableDraftPersistence).not.toHaveBeenCalled();
+        expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
+        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
+        expect(settlements).toEqual([{ status: 'rejected' }]);
+        expect(setIsCreating).toHaveBeenLastCalledWith(false);
+    });
+
+    it.each([
+        {
+            title: 'creates an exact current Plugin Event Automation through V3 instead of the retained V2 writer',
+            writerErrorCode: null,
+            expectedAlert: null,
+        },
+        {
+            title: 'renders stored-content unavailable when the V3 Event writer rejects unavailable stored content',
+            writerErrorCode: 'automation_stored_content_unavailable',
+            expectedAlert: [
+                'settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle',
+                'settingsPlugins.eventAutomationComposer.storedContentUnavailableBody',
+            ],
+        },
+    ] as const)('$title', async ({ writerErrorCode, expectedAlert }) => {
+        const {
+            useCreateNewSession,
+            captured,
+            automationCaptured,
+            pluginEventAutomationCaptured,
+            pluginEventAutomationCreateError,
+            accountEncryptionMode,
+            currentPluginEventProjection,
+            loadDaemonMergedProjectionInputsSpy,
+            refreshAutomationsSpy,
+            modalAlertSpy,
+        } = await setupUseCreateNewSessionHarness();
+        accountEncryptionMode.value = 'plain';
+        if (writerErrorCode) {
+            const { AutomationApiError } = await import('@/sync/api/automations/apiAutomations');
+            pluginEventAutomationCreateError.value = new AutomationApiError({
+                code: writerErrorCode,
+                status: 409,
+            });
+        }
+
+        const event = createPluginEventEligibleEvent();
+        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
+        const eventDraft = createPluginEventAutomationAuthoringDraft({
+            eligibleEvent: event,
+            setupResult: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+            watcherOrigin: {
+                serverIdentityId: 'srv_account_a',
+                materializationRef: {
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization-a',
+                    pluginId: 'acme.github',
+                },
+            },
+            filter: {
+                v: 1,
+                all: [{ op: 'eq', field: '/action', value: 'opened' }],
+            },
+            maximumObservationAgeMs: 30_000,
+        });
+        expect(eventDraft).not.toBeNull();
+        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
+        const verifiedEventDraft = eventDraft;
+
+        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
+        const routerReplace = vi.fn();
+        const disableDraftPersistence = vi.fn();
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Repository triage',
+            description: 'Run on repository updates',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'event-automation-create',
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Triage {{input}}'),
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                disableDraftPersistence,
+                eventAutomationDraft: {
+                    draft: verifiedEventDraft,
+                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
+                },
+                eventAutomationTargetKind: 'newSession',
+                resolveEventAutomationTarget: resolveNewSessionEventTarget,
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Triage {{input}}',
+                    modelMode: 'default' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await invokeHandleCreateSession(handleCreateSession);
+        });
+
+        expect(captured.value).toBeNull();
+        expect(automationCaptured.value).toBeNull();
+        expect(pluginEventAutomationCaptured.value).toEqual(expect.objectContaining({
+            name: 'Repository triage',
+            description: 'Run on repository updates',
+            enabled: true,
+            trigger: expect.objectContaining({
+                kind: 'pluginEvent',
+                eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
+                sourceInstanceId: 'repository:42',
+                maximumObservationAgeMs: 30_000,
+            }),
+            executionRecipe: expect.objectContaining({
+                templateVersion: 1,
+                template: { t: 'plain', v: { v: 1, prompt: 'Triage {{input}}' } },
+                target: expect.objectContaining({ kind: 'newSession' }),
+            }),
+        }));
+        expect(loadDaemonMergedProjectionInputsSpy).toHaveBeenCalledWith({
+            machineId: 'watcher-machine',
+            serverId: 'server-a',
+            staleMs: 0,
+        });
+        if (expectedAlert) {
+            expect(refreshAutomationsSpy).not.toHaveBeenCalled();
+            expect(routerReplace).not.toHaveBeenCalled();
+            expect(modalAlertSpy).toHaveBeenCalledWith(...expectedAlert);
+        } else {
+            expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
+            expect(routerReplace).toHaveBeenCalledWith('/automations');
+        }
+    });
+
+    it('rejects Composer attachments before Event Automation creation and retains the New Session draft', async () => {
+        const {
+            useCreateNewSession,
+            captured,
+            automationCaptured,
+            pluginEventAutomationCaptured,
+            accountEncryptionMode,
+            currentPluginEventProjection,
+            loadDaemonMergedProjectionInputsSpy,
+            refreshAutomationsSpy,
+            modalAlertSpy,
+            clearNewSessionDraftSpy,
+        } = await setupUseCreateNewSessionHarness();
+        accountEncryptionMode.value = 'plain';
+
+        const event = createPluginEventEligibleEvent();
+        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
+        const eventDraft = createPluginEventAutomationAuthoringDraft({
+            eligibleEvent: event,
+            setupResult: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+            watcherOrigin: {
+                serverIdentityId: 'srv_account_a',
+                materializationRef: {
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization-a',
+                    pluginId: 'acme.github',
+                },
+            },
+            filter: {
+                v: 1,
+                all: [{ op: 'eq', field: '/action', value: 'opened' }],
+            },
+            maximumObservationAgeMs: 30_000,
+        });
+        expect(eventDraft).not.toBeNull();
+        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
+        const verifiedEventDraft = eventDraft;
+
+        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
+        const routerReplace = vi.fn();
+        const disableDraftPersistence = vi.fn();
+        const setIsCreating = vi.fn();
+        const settlements: NewSessionAfterCreatedSettlement[] = [];
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Repository triage',
+            description: 'Run on repository updates',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'event-automation-composer-attachment',
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating,
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Triage {{input}}'),
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                disableDraftPersistence,
+                eventAutomationDraft: {
+                    draft: verifiedEventDraft,
+                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
+                },
+                eventAutomationTargetKind: 'newSession',
+                resolveEventAutomationTarget: resolveNewSessionEventTarget,
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Triage {{input}}',
+                    modelMode: 'default' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await invokeHandleCreateSession(handleCreateSession, {
+                hasComposerAttachments: true,
+                onAfterCreatedSettled: (settlement) => settlements.push(settlement),
+            });
+        });
+
+        expect(captured.value).toBeNull();
+        expect(automationCaptured.value).toBeNull();
+        expect(pluginEventAutomationCaptured.value).toBeNull();
+        expect(loadDaemonMergedProjectionInputsSpy).not.toHaveBeenCalled();
+        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(disableDraftPersistence).not.toHaveBeenCalled();
+        expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
+        expect(settlements).toEqual([{ status: 'rejected' }]);
+        expect(setIsCreating).toHaveBeenLastCalledWith(false);
+    });
+
+    it('fails closed when the same Event setup Action is replaced after setup but before V3 creation', async () => {
+        const {
+            useCreateNewSession,
+            captured,
+            automationCaptured,
+            pluginEventAutomationCaptured,
+            currentPluginEventProjection,
+            loadDaemonMergedProjectionInputsSpy,
+            modalAlertSpy,
+            refreshAutomationsSpy,
+            accountEncryptionMode,
+        } = await setupUseCreateNewSessionHarness();
+        accountEncryptionMode.value = 'plain';
+
+        const setupEvent = createPluginEventEligibleEvent('github-generation-a');
+        const replacement = createPluginEventEligibleEvent('github-generation-b');
+        currentPluginEventProjection.value = projectionInputsForPluginEvent(replacement);
+        const eventDraft = createPluginEventAutomationAuthoringDraft({
+            eligibleEvent: setupEvent,
+            setupResult: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+            watcherOrigin: {
+                serverIdentityId: 'srv_account_a',
+                materializationRef: {
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization-a',
+                    pluginId: 'acme.github',
+                },
+            },
+            filter: null,
+            maximumObservationAgeMs: null,
+        });
+        expect(eventDraft).not.toBeNull();
+        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
+        const verifiedEventDraft = eventDraft;
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const routerReplace = vi.fn();
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Repository triage',
+            description: 'Run on repository updates',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'event-automation-replaced-before-create',
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Triage {{input}}'),
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                eventAutomationDraft: {
+                    draft: verifiedEventDraft,
+                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
+                },
+                eventAutomationTargetKind: 'newSession',
+                resolveEventAutomationTarget: resolveNewSessionEventTarget,
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Triage {{input}}',
+                    modelMode: 'default' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(loadDaemonMergedProjectionInputsSpy).toHaveBeenCalledWith({
+            machineId: 'watcher-machine',
+            serverId: 'server-a',
+            staleMs: 0,
+        });
+        expect(captured.value).toBeNull();
+        expect(automationCaptured.value).toBeNull();
+        expect(pluginEventAutomationCaptured.value).toBeNull();
+        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
+    });
+
+    it('patches an exact current disabled Plugin Event Automation through V3 with the direct-detail version fence', async () => {
+        const {
+            useCreateNewSession,
+            captured,
+            automationCaptured,
+            pluginEventAutomationCaptured,
+            pluginEventAutomationPatchCaptured,
+            refreshAutomationDefinitionDetailSpy,
+            refreshAutomationsSpy,
+            updateAutomationSpy,
+            accountEncryptionMode,
+            currentPluginEventProjection,
+            loadDaemonMergedProjectionInputsSpy,
+        } = await setupUseCreateNewSessionHarness();
+        accountEncryptionMode.value = 'plain';
+        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
+            createStrictPluginEventAutomationDefinition('event_current', 3, false, [
+                { machineId: 'assignment-primary', enabled: true, priority: 100, updatedAt: 30 },
+                { machineId: 'assignment-disabled', enabled: false, priority: -20, updatedAt: 31 },
+                { machineId: 'assignment-secondary', enabled: true, priority: 7, updatedAt: null },
+            ]),
+        );
+
+        const event = createPluginEventEligibleEvent();
+        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
+        const eventDraft = createPluginEventAutomationAuthoringDraft({
+            eligibleEvent: event,
+            setupResult: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+            watcherOrigin: {
+                serverIdentityId: 'srv_account_a',
+                materializationRef: {
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization-a',
+                    pluginId: 'acme.github',
+                },
+            },
+            filter: null,
+            maximumObservationAgeMs: 60_000,
+        });
+        expect(eventDraft).not.toBeNull();
+        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
+        const verifiedEventDraft = eventDraft;
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const routerReplace = vi.fn();
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: false,
+            name: 'Repository triage update',
+            description: 'Updated repository automation',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'event-automation-patch',
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Triage changed {{input}}'),
+                automationEditId: 'event_current',
+                eventAutomationEdit: {
+                    automationId: 'event_current',
+                    expectedTemplateVersion: 3,
+                },
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                eventAutomationDraft: {
+                    draft: verifiedEventDraft,
+                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
+                },
+                eventAutomationTargetKind: 'newSession',
+                resolveEventAutomationTarget: resolveNewSessionEventTarget,
+                authoringDraft: buildNewSessionAuthoringDraft({
+                    directory: '/hydrated/project',
+                    checkoutCreationDraft: {
+                        kind: 'git_worktree',
+                        displayName: 'Hydrated Event checkout',
+                        baseRef: 'main',
+                    },
+                    prompt: 'Triage changed {{input}}',
+                    displayText: 'Triage changed {{input}}',
+                    agentId: 'codex',
+                    backendTarget: { kind: 'backend', backendId: 'codex' },
+                    transcriptStorage: 'direct',
+                    profileId: 'profile-hydrated',
+                    environmentVariables: null,
+                    resumeSessionId: 'provider-session-hydrated',
+                    permissionMode: 'plan',
+                    permissionModeUpdatedAt: 99,
+                    modelSelection: SessionModelSelectionV1Schema.parse({
+                        v: 1,
+                        updatedAt: 100,
+                        ref: {
+                            agentTargetKey: 'backend:codex',
+                            providerConnectionId: null,
+                            modelId: 'gpt-5',
+                        },
+                    }),
+                    mcpSelection: {
+                        v: 1,
+                        managedServersEnabled: false,
+                        forceIncludeServerIds: ['hydrated-mcp'],
+                        forceExcludeServerIds: ['legacy-mcp'],
+                    },
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: {
+                            github: { source: 'connected', selection: 'profile', profileId: 'hydrated-github' },
+                        },
+                    },
+                    terminal: {
+                        mode: 'tmux',
+                        tmux: { sessionName: 'hydrated-event' },
+                        windows: { launchMode: 'windows_terminal', console: 'visible', windowName: 'hydrated' },
+                    },
+                    windowsRemoteSessionLaunchMode: 'windows_terminal',
+                    windowsRemoteSessionConsole: 'visible',
+                    windowsTerminalWindowName: 'hydrated',
+                    experimentalCodexAcp: null,
+                    codexBackendMode: null,
+                    acpSessionModeId: 'plan',
+                    sessionConfigOptionOverrides: {
+                        v: 1,
+                        updatedAt: 102,
+                        overrides: {
+                            reasoning: { value: 'high', updatedAt: 102 },
+                        },
+                    },
+                    automation: automationDraft,
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledWith('event_current');
+        expect(captured.value).toBeNull();
+        expect(automationCaptured.value).toBeNull();
+        expect(pluginEventAutomationCaptured.value).toBeNull();
+        expect(updateAutomationSpy).not.toHaveBeenCalled();
+        expect(pluginEventAutomationPatchCaptured.value).toEqual(expect.objectContaining({
+            automationId: 'event_current',
+            input: expect.objectContaining({
+                expectedTemplateVersion: 3,
+                name: 'Current event automation',
+                description: null,
+                enabled: false,
+                trigger: expect.objectContaining({
+                    kind: 'pluginEvent',
+                    eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
+                    sourceInstanceId: 'repository:42',
+                }),
+                executionRecipe: expect.objectContaining({
+                    templateVersion: 4,
+                    template: { t: 'plain', v: { v: 1, prompt: 'Triage changed {{input}}' } },
+                    target: {
+                        kind: 'newSession',
+                        spawn: expect.objectContaining({
+                            executionTarget: { serverId: 'seeded-server', machineId: 'seeded-machine' },
+                            organizationPlacement: { folderId: 'seeded-folder', tagIds: ['seeded-tag'] },
+                            directory: '/hydrated/project',
+                            profileId: 'profile-hydrated',
+                            permissionMode: 'plan',
+                            configuration: expect.objectContaining({
+                                mode: { value: 'plan', updatedAtMs: 99 },
+                                permissionIntent: { value: 'plan', updatedAtMs: 99 },
+                            }),
+                            connectedServices: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    github: { source: 'connected', selection: 'profile', profileId: 'hydrated-github' },
+                                },
+                            },
+                            terminal: {
+                                mode: 'tmux',
+                                tmux: { sessionName: 'hydrated-event' },
+                                windows: { launchMode: 'windows_terminal', console: 'visible', windowName: 'hydrated' },
+                            },
+                        }),
+                    },
+                }),
+                assignments: [
+                    { machineId: 'assignment-primary', enabled: true, priority: 100 },
+                    { machineId: 'assignment-disabled', enabled: false, priority: -20 },
+                    { machineId: 'assignment-secondary', enabled: true, priority: 7 },
+                ],
+            }),
+        }));
+        expect(loadDaemonMergedProjectionInputsSpy).toHaveBeenCalledWith({
+            machineId: 'watcher-machine',
+            serverId: 'server-a',
+            staleMs: 0,
+        });
+        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
+        expect(routerReplace).toHaveBeenCalledWith('/automations/event_current');
+    });
+
+    it('handles a typed stale V3 Event patch conflict without falling through to either V2 writer', async () => {
+        const {
+            useCreateNewSession,
+            captured,
+            automationCaptured,
+            pluginEventAutomationCaptured,
+            pluginEventAutomationPatchCaptured,
+            pluginEventAutomationPatchError,
+            modalAlertSpy,
+            refreshAutomationDefinitionDetailSpy,
+            refreshAutomationsSpy,
+            updateAutomationSpy,
+            accountEncryptionMode,
+            currentPluginEventProjection,
+        } = await setupUseCreateNewSessionHarness();
+        accountEncryptionMode.value = 'plain';
+        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
+            createStrictPluginEventAutomationDefinition('event_current', 3),
+        );
+        const { AutomationApiError } = await import('@/sync/api/automations/apiAutomations');
+        pluginEventAutomationPatchError.value = new AutomationApiError({
+            code: 'automation_template_version_conflict',
+            status: 409,
+        });
+
+        const event = createPluginEventEligibleEvent();
+        currentPluginEventProjection.value = projectionInputsForPluginEvent(event);
+        const eventDraft = createPluginEventAutomationAuthoringDraft({
+            eligibleEvent: event,
+            setupResult: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+            watcherOrigin: {
+                serverIdentityId: 'srv_account_a',
+                materializationRef: {
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization-a',
+                    pluginId: 'acme.github',
+                },
+            },
+            filter: null,
+            maximumObservationAgeMs: null,
+        });
+        expect(eventDraft).not.toBeNull();
+        if (!eventDraft) throw new Error('Expected a valid Event Automation draft');
+        const verifiedEventDraft = eventDraft;
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const routerReplace = vi.fn();
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Repository triage update',
+            description: 'Updated repository automation',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'event-automation-patch-conflict',
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Triage changed {{input}}'),
+                automationEditId: 'event_current',
+                eventAutomationEdit: {
+                    automationId: 'event_current',
+                    expectedTemplateVersion: 3,
+                },
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                eventAutomationDraft: {
+                    draft: verifiedEventDraft,
+                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(verifiedEventDraft.watcherOrigin),
+                },
+                eventAutomationTargetKind: 'newSession',
+                resolveEventAutomationTarget: resolveNewSessionEventTarget,
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Triage changed {{input}}',
+                    modelMode: 'default' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    permissionModeUpdatedAt: 1,
+                    backendTarget: { kind: 'backend', backendId: 'codex' },
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(pluginEventAutomationPatchCaptured.value).toEqual(expect.objectContaining({
+            automationId: 'event_current',
+            input: expect.objectContaining({ expectedTemplateVersion: 3 }),
+        }));
+        expect(captured.value).toBeNull();
+        expect(automationCaptured.value).toBeNull();
+        expect(pluginEventAutomationCaptured.value).toBeNull();
+        expect(updateAutomationSpy).not.toHaveBeenCalled();
+        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'automations.edit.updateFailed');
+    });
+
+    it('fails closed when the direct Event detail version advanced since the edit was opened', async () => {
+        const {
+            useCreateNewSession,
+            captured,
+            automationCaptured,
+            pluginEventAutomationCaptured,
+            pluginEventAutomationPatchCaptured,
+            modalAlertSpy,
+            refreshAutomationDefinitionDetailSpy,
+            refreshAutomationsSpy,
+            updateAutomationSpy,
+            accountEncryptionMode,
+        } = await setupUseCreateNewSessionHarness();
+        accountEncryptionMode.value = 'plain';
+        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
+            createStrictPluginEventAutomationDefinition('event_current', 4),
+        );
+
+        const eventDraft: PluginEventAutomationAuthoringDraft = {
+            eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
+            expectedEventImmutableGenerationId: 'github-generation-a',
+            setupActionRef: { pluginId: 'acme.github', localId: 'setup/repository-source' },
+            expectedSetupActionImmutableGenerationId: 'github-generation-a',
+            source: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+            watcherOrigin: {
+                serverIdentityId: 'srv_account_a',
+                materializationRef: {
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization-a',
+                    pluginId: 'acme.github',
+                },
+            },
+            filter: null,
+            maximumObservationAgeMs: null,
+        };
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Repository triage update',
+            description: 'Updated repository automation',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const routerReplace = vi.fn();
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'event-automation-stale-detail',
+                router: { push: vi.fn(), replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Triage changed {{input}}'),
+                automationEditId: 'event_current',
+                eventAutomationEdit: {
+                    automationId: 'event_current',
+                    expectedTemplateVersion: 3,
+                },
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                eventAutomationDraft: {
+                    draft: eventDraft,
+                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(eventDraft.watcherOrigin),
+                },
+                eventAutomationTargetKind: 'newSession',
+                resolveEventAutomationTarget: resolveNewSessionEventTarget,
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Triage changed {{input}}',
+                    modelMode: 'default' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledWith('event_current');
+        expect(captured.value).toBeNull();
+        expect(automationCaptured.value).toBeNull();
+        expect(pluginEventAutomationCaptured.value).toBeNull();
+        expect(pluginEventAutomationPatchCaptured.value).toBeNull();
+        expect(updateAutomationSpy).not.toHaveBeenCalled();
+        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'automations.edit.updateFailed');
+    });
+
+    it('fails closed for an E2EE Account before either Automation writer can persist an Event draft', async () => {
+        const {
+            useCreateNewSession,
+            automationCaptured,
+            pluginEventAutomationCaptured,
+            pluginEventAutomationPatchCaptured,
+            accountEncryptionMode,
+            modalAlertSpy,
+            refreshAutomationDefinitionDetailSpy,
+            updateAutomationSpy,
+        } = await setupUseCreateNewSessionHarness();
+        accountEncryptionMode.value = 'e2ee';
+
+        const eventDraft: PluginEventAutomationAuthoringDraft = {
+            eventRef: { pluginId: 'acme.github', localId: 'events/repository' },
+            expectedEventImmutableGenerationId: 'github-generation-a',
+            setupActionRef: { pluginId: 'acme.github', localId: 'setup/repository-source' },
+            expectedSetupActionImmutableGenerationId: 'github-generation-a',
+            source: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repositoryId: '42' },
+                displayLabel: 'acme/widgets',
+            },
+            watcherOrigin: {
+                serverIdentityId: 'srv_account_a',
+                materializationRef: {
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization-a',
+                    pluginId: 'acme.github',
+                },
+            },
+            filter: null,
+            maximumObservationAgeMs: null,
+        };
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Repository triage',
+            description: '',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+        let handleCreateSession: null | (() => Promise<void>) = null;
+
+        function Test() {
+            const hook = useCreateNewSession({
+                launchIntentSignature: 'event-automation-e2ee',
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings: { experiments: false } as unknown as Settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                promptStore: createNewSessionPromptStore('Triage {{input}}'),
+                automationEditId: 'event_current',
+                eventAutomationEdit: {
+                    automationId: 'event_current',
+                    expectedTemplateVersion: 3,
+                },
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+                eventAutomationDraft: {
+                    draft: eventDraft,
+                    resolveFreshWatcherOrigin: () => freshPluginEventExecutionOrigin(eventDraft.watcherOrigin),
+                },
+                eventAutomationTargetKind: 'newSession',
+                resolveEventAutomationTarget: resolveNewSessionEventTarget,
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Triage {{input}}',
+                    modelMode: 'default' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(automationCaptured.value).toBeNull();
+        expect(pluginEventAutomationCaptured.value).toBeNull();
+        expect(pluginEventAutomationPatchCaptured.value).toBeNull();
+        expect(updateAutomationSpy).not.toHaveBeenCalled();
+        expect(refreshAutomationDefinitionDetailSpy).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'settingsPlugins.eventAutomationComposer.storedContentUnavailableTitle',
+            'settingsPlugins.eventAutomationComposer.storedContentUnavailableBody',
+        );
     });
 
     it('updates an existing automation instead of creating a new one when automationEditId is provided', async () => {
@@ -1615,7 +2880,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'gpt-5' as ModelMode,
-                sessionPrompt: 'Update the scheduled work',
+                promptStore: createNewSessionPromptStore('Update the scheduled work'),
                 automationEditId: 'auto_existing',
                 transcriptStorage: 'direct',
                 resumeSessionId: '',
@@ -1666,6 +2931,98 @@ describe('useCreateNewSession permission seeding', () => {
         expect(routerReplace).toHaveBeenCalledWith('/automations/auto_existing');
     });
 
+    it('rejects a current Event definition from automationEditId before the retained V2 update', async () => {
+        const {
+            useCreateNewSession,
+            automationCaptured,
+            modalAlertSpy,
+            refreshAutomationDefinitionDetailSpy,
+            refreshAutomationsSpy,
+            updateAutomationSpy,
+        } = await setupUseCreateNewSessionHarness();
+        refreshAutomationDefinitionDetailSpy.mockResolvedValueOnce(
+            createStrictPluginEventAutomationDefinition('event_current'),
+        );
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const routerPush = vi.fn();
+        const routerReplace = vi.fn();
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+        const automationDraft: NewSessionAutomationDraft = {
+            enabled: true,
+            name: 'Attempted legacy write',
+            description: 'must not reach V2',
+            scheduleKind: 'interval',
+            everyMinutes: 30,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
+                router: { push: routerPush, replace: routerReplace },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'gpt-5' as ModelMode,
+                promptStore: createNewSessionPromptStore('Attempted legacy write'),
+                automationEditId: 'event_current',
+                transcriptStorage: 'direct',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                mcpSelection: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+                authoringDraft: buildAutomationAuthoringDraft({
+                    prompt: 'Attempted legacy write',
+                    modelMode: 'gpt-5' as ModelMode,
+                    permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                    automation: automationDraft,
+                    transcriptStorage: 'direct',
+                }),
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledWith('event_current');
+        expect(updateAutomationSpy).not.toHaveBeenCalled();
+        expect(automationCaptured.value).toBeNull();
+        expect(refreshAutomationsSpy).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'automations.edit.updateFailed');
+    });
+
     it('uses the latest automation draft values after rerendering before save', async () => {
         const {
             useCreateNewSession,
@@ -1711,7 +3068,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'gpt-5' as ModelMode,
-                sessionPrompt: 'Update the scheduled work',
+                promptStore: createNewSessionPromptStore('Update the scheduled work'),
                 automationEditId: 'auto_existing',
                 transcriptStorage: 'direct',
                 resumeSessionId: '',
@@ -1813,7 +3170,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'gpt-5' as ModelMode,
-                sessionPrompt: 'Update the scheduled work',
+                promptStore: createNewSessionPromptStore('Update the scheduled work'),
                 automationEditId: 'auto_existing',
                 transcriptStorage: 'direct',
                 resumeSessionId: '',
@@ -1878,16 +3235,15 @@ describe('useCreateNewSession permission seeding', () => {
         }));
     });
 
-    it('does not apply Happier replay when resume is requested but vendor resume is unavailable (new-session flow)', async () => {
+    it('keeps vendor resume and the first message in the strict Action request', async () => {
         const {
             useCreateNewSession,
-            modalConfirmSpy,
+            captured,
             syncSendMessageSpy,
-            machineSpawnNewSessionSpy,
+            mockSessionSpawnSuccess,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_new' });
-        modalConfirmSpy.mockResolvedValueOnce(true);
+        mockSessionSpawnSuccess('sess_new');
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const routerReplace = vi.fn();
@@ -1923,7 +3279,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'PROMPT',
+                promptStore: createNewSessionPromptStore('PROMPT'),
                 resumeSessionId: 'sess_old',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -1948,20 +3304,27 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
-        expect(syncSendMessageSpy).toHaveBeenCalledTimes(1);
-        expect(syncSendMessageSpy).toHaveBeenCalledWith('sess_new', 'PROMPT', undefined, undefined, undefined);
+        expect(captured.value).toEqual(expect.objectContaining({
+            initialMessage: 'PROMPT',
+            configuration: expect.objectContaining({
+                providerSessionResume: {
+                    kind: 'provider_session.v1',
+                    providerSessionId: 'sess_old',
+                },
+            }),
+        }));
+        expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
-    it('passes the selected profile id through when sending the first prompt for a new profiled session', async () => {
+    it('passes the selected profile id through the strict Action request', async () => {
         const {
             useCreateNewSession,
+            captured,
             syncSendMessageSpy,
-            machineSpawnNewSessionSpy,
-            sessions,
+            mockSessionSpawnSuccess,
         } = await setupUseCreateNewSessionHarness();
 
-        sessions.sess_new = { id: 'sess_new' };
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_new' });
+        mockSessionSpawnSuccess('sess_new');
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const routerReplace = vi.fn();
@@ -2015,7 +3378,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'PROMPT',
+                promptStore: createNewSessionPromptStore('PROMPT'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -2038,21 +3401,18 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(syncSendMessageSpy).toHaveBeenCalledTimes(1);
-        expect(syncSendMessageSpy).toHaveBeenCalledWith(
-            'sess_new',
-            'PROMPT',
-            undefined,
-            undefined,
-            { profileId: 'profile-test' },
-        );
+        expect(captured.value).toEqual(expect.objectContaining({
+            profileId: 'profile-test',
+            initialMessage: 'PROMPT',
+        }));
+        expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
     it('blocks creation when the selected profile is incompatible with the current backend target', async () => {
         const {
             useCreateNewSession,
             modalAlertSpy,
-            machineSpawnNewSessionSpy,
+            sessionSpawnNewRpcSpy,
             syncSendMessageSpy,
         } = await setupUseCreateNewSessionHarness();
 
@@ -2108,7 +3468,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'PROMPT',
+                promptStore: createNewSessionPromptStore('PROMPT'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -2132,22 +3492,21 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.aiBackendNotCompatibleWithSelectedProfile');
-        expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+        expect(sessionSpawnNewRpcSpy).not.toHaveBeenCalled();
         expect(syncSendMessageSpy).not.toHaveBeenCalled();
     });
 
     it('can skip sending the initial message when requested', async () => {
         const {
             useCreateNewSession,
+            captured,
             syncSendMessageSpy,
-            machineSpawnNewSessionSpy,
-            sessions,
+            mockSessionSpawnSuccess,
         } = await setupUseCreateNewSessionHarness();
 
-        sessions.sess_new = { id: 'sess_new' };
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_new' });
+        mockSessionSpawnSuccess('sess_new');
 
-        let handleCreateSession: null | ((opts?: any) => Promise<void>) = null;
+        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
         const routerReplace = vi.fn();
         const settings = {
             experiments: false,
@@ -2178,7 +3537,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'PROMPT',
+                promptStore: createNewSessionPromptStore('PROMPT'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -2191,33 +3550,28 @@ describe('useCreateNewSession permission seeding', () => {
                 allowedTargetServerIds: ['server-a'],
             });
 
-            handleCreateSession = hook.handleCreateSession as any;
+            handleCreateSession = hook.handleCreateSession;
             return React.createElement('View');
         }
 
         await renderScreen(React.createElement(Test));
 
         await act(async () => {
-            await handleCreateSession?.({ initialMessage: 'skip' });
+            await invokeHandleCreateSession(handleCreateSession, { initialMessage: 'skip' });
         });
 
+        expect(captured.value?.initialMessage).toBeUndefined();
         expect(syncSendMessageSpy).toHaveBeenCalledTimes(0);
         expect(routerReplace).toHaveBeenCalledWith('/session/sess_new?serverId=server-a', expect.anything());
     });
 
-    it('passes the per-session Windows launch-mode override into machineSpawnNewSession', async () => {
+    it('passes the per-session Windows launch-mode override into the strict Action request', async () => {
         const {
             useCreateNewSession,
             captured,
-            machineSpawnNewSessionSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockImplementationOnce(async (...args: unknown[]) => {
-            captured.value = args[0] as SpawnPayloadCapture;
-            return { type: 'success', sessionId: 'sess_new' };
-        });
-
-        let handleCreateSession: null | ((opts?: any) => Promise<void>) = null;
+        let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
         const settings = {
             experiments: false,
             sessionWindowsRemoteSessionLaunchMode: 'hidden',
@@ -2248,7 +3602,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'codex',
                 permissionMode: 'acceptEdits' as unknown as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 windowsRemoteSessionLaunchModeOverride: 'windows_terminal',
@@ -2262,17 +3616,17 @@ describe('useCreateNewSession permission seeding', () => {
                 allowedTargetServerIds: ['server-a'],
             });
 
-            handleCreateSession = hook.handleCreateSession as any;
+            handleCreateSession = hook.handleCreateSession;
             return React.createElement('View');
         }
 
         await renderScreen(React.createElement(Test));
 
         await act(async () => {
-            await handleCreateSession?.({ initialMessage: 'skip' });
+            await invokeHandleCreateSession(handleCreateSession, { initialMessage: 'skip' });
         });
 
-        expect(captured.value?.windowsRemoteSessionLaunchMode).toBe('windows_terminal');
-        expect(captured.value?.windowsTerminalWindowName).toBe('happier-qa');
+        expect(captured.value?.terminal?.windows?.launchMode).toBe('windows_terminal');
+        expect(captured.value?.terminal?.windows?.windowName).toBe('happier-qa');
     });
 });

@@ -50,10 +50,15 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
                 ?? routeSessionId
                 ?? (typeof lastFocusedSessionId === 'string' ? lastFocusedSessionId : null)
             );
+    // An in-session composer always starts against the exact session it is rendered for. The
+    // global default controls Voice Home/sidebar starts only; applying it here would discard the
+    // direct Codex target before the canonical attempt projection can admit it.
     const bindingScope: VoiceAssistantScope =
-        scopeDefault === 'global' && allowsGlobalStart
-            ? 'global'
-            : 'session';
+        params.variant === 'session'
+            ? 'session'
+            : scopeDefault === 'global' && allowsGlobalStart
+                ? 'global'
+                : 'session';
     const startSessionId = bindingScope === 'global' ? null : exactSessionId;
     const displayedBindingSessionMetadata = useSessionListPreferredMetadata(startSessionId);
     const voiceAgentEnabled = useFeatureEnabled('voice.agent');

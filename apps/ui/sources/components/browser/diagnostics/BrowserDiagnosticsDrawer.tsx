@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import Animated, {
@@ -22,6 +21,7 @@ import type {
 import { t } from '@/text';
 
 import { BrowserDiagnosticsPanel } from './BrowserDiagnosticsPanel';
+import { Icon } from '@/components/ui/icons/Icon';
 import type {
     BrowserDiagnosticsInteractionControls,
     BrowserDiagnosticsInteractionSurface,
@@ -312,14 +312,14 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
     return (
         <View testID={`${testID}-container-${drawerState}`} style={stylesheet.root}>
             <View style={stylesheet.handleRow}>
-                <Ionicons name="bug-outline" size={16} color={theme.colors.text.secondary} />
+                <Icon name="bug" size={16} color={theme.colors.text.secondary} />
                 <View style={stylesheet.titleColumn}>
                     <Text style={stylesheet.title}>{t('browserShell.devtools.title')}</Text>
                 </View>
                 {drawerState === 'closed' ? (
                     <IconButton
                         testID={`${testID}-open`}
-                        iconName="chevron-up"
+                        iconName="caret-up"
                         accessibilityLabel={t('browserShell.devtools.open')}
                         tooltip={t('browserShell.devtools.open')}
                         size={30}
@@ -331,7 +331,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                         {drawerState === 'expanded' ? (
                             <IconButton
                                 testID={`${testID}-collapse`}
-                                iconName="chevron-down"
+                                iconName="caret-down"
                                 accessibilityLabel={t('browserShell.devtools.collapse')}
                                 tooltip={t('browserShell.devtools.collapse')}
                                 size={30}
@@ -341,7 +341,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                         ) : (
                             <IconButton
                                 testID={`${testID}-expand`}
-                                iconName="chevron-up"
+                                iconName="caret-up"
                                 accessibilityLabel={t('browserShell.devtools.expand')}
                                 tooltip={t('browserShell.devtools.expand')}
                                 size={30}
@@ -351,7 +351,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                         )}
                         <IconButton
                             testID={`${testID}-close`}
-                            iconName="close"
+                            iconName="x"
                             accessibilityLabel={t('browserShell.devtools.close')}
                             tooltip={t('browserShell.devtools.close')}
                             size={30}

@@ -63,6 +63,38 @@ function buildChange(params: {
 }
 
 describe('changesApplier', () => {
+    it('hands closed plugin collection invalidations to the Data-owned direct-client producer before advancing the cursor', async () => {
+        const publishPluginCollectionChanges = vi.fn();
+        const change = buildChange({
+            cursor: 1,
+            kind: 'pluginDomain',
+            entityId: 'pluginDomain/example.tasks/data-collection/tasks',
+            hint: {
+                pluginDomain: 'dataCollection',
+                pluginId: 'example.tasks',
+                collectionId: 'tasks',
+                contractDigest: 'a'.repeat(43),
+                revision: 1,
+                full: true,
+            },
+        });
+
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({ changes: [change] }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: {},
+            publishPluginCollectionChanges,
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(publishPluginCollectionChanges).toHaveBeenCalledWith([change]);
+        expect(result).toMatchObject({ status: 'complete', safeAdvanceCursor: '1' });
+    });
+
     it('invalidates friend requests when friends invalidation is planned', async () => {
         const invalidateFriends = vi.fn(async () => {});
         const invalidateFriendRequests = vi.fn(async () => {});

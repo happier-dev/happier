@@ -9,6 +9,10 @@ function createFeatures(allowedPorts: readonly number[]) {
     features: {
       machines: {
         enabled: true,
+        rpc: {
+          enabled: true,
+          directPeer: { enabled: true },
+        },
         tunnel: {
           enabled: true,
           directPeer: { enabled: true },
@@ -47,6 +51,7 @@ describe('resolveVoiceQaTransportReadiness', () => {
       machineId: 'machine-1',
       daemonHttpPort: 43123,
       directEndpoint,
+      credentials: { token: 'token-1', secret: 'secret-1' },
       accountProfileId: 'account-1',
       socketStatus: 'connected',
       activeSocketId: 'socket-1',
@@ -65,6 +70,7 @@ describe('resolveVoiceQaTransportReadiness', () => {
       machineId: 'machine-1',
       daemonHttpPort: 43123,
       directEndpoint: null,
+      credentials: { token: 'token-1', secret: 'secret-1' },
       accountProfileId: '',
       socketStatus: 'connected',
       activeSocketId: '',

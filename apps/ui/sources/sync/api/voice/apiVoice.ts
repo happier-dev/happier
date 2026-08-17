@@ -88,8 +88,8 @@ export async function fetchHappierVoiceToken(
 
 async function postHappierVoiceSessionLifecycle(
     credentials: AuthCredentials,
-    path: '/v1/voice/session/complete',
-    params: { leaseId: string; providerConversationId: string },
+    path: '/v1/voice/session/complete' | '/v1/voice/session/release',
+    params: { leaseId: string; providerConversationId?: string },
     errorPrefix: string,
     options?: { timeoutMs?: number },
 ): Promise<void> {
@@ -129,6 +129,20 @@ export async function completeHappierVoiceSession(
         '/v1/voice/session/complete',
         params,
         'Voice session complete failed',
+        options,
+    );
+}
+
+export async function releaseHappierVoiceSession(
+    credentials: AuthCredentials,
+    params: { leaseId: string },
+    options?: { timeoutMs?: number },
+): Promise<void> {
+    return postHappierVoiceSessionLifecycle(
+        credentials,
+        '/v1/voice/session/release',
+        params,
+        'Voice session release failed',
         options,
     );
 }

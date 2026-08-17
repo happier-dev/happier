@@ -14,6 +14,7 @@ const desktopWindowBridgeState = vi.hoisted(() => ({
 
 const itemRowActionsState = vi.hoisted(() => ({
     lastActionIds: [] as string[],
+    lastActionControlSizePx: null as number | null,
     overflowOpen: false,
 }));
 
@@ -65,6 +66,7 @@ vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: {
         actions: Array<{ id: string }>;
+        actionControlSizePx?: number;
         renderOverflowTrigger?: (params: {
             open: boolean;
             toggle: () => void;
@@ -74,6 +76,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
         }) => React.ReactNode;
     }) => {
         itemRowActionsState.lastActionIds = props.actions.map((action) => action.id);
+        itemRowActionsState.lastActionControlSizePx = props.actionControlSizePx ?? null;
         return React.createElement(
             View,
             { testID: 'desktop-sidebar-item-actions' },
@@ -124,8 +127,33 @@ describe('DesktopSidebarChrome', () => {
     beforeEach(() => {
         desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
         itemRowActionsState.lastActionIds = [];
+        itemRowActionsState.lastActionControlSizePx = null;
         itemRowActionsState.overflowOpen = false;
     });
+
+    // The header cluster owns the sidebar's density, not the inline-row default: at that default
+    // every control became a 44px box and four of them spread across the whole sidebar width.
+    it('draws the header action cluster at the sidebar chrome control size', async () => {
+        const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
+        const { DESKTOP_SIDEBAR_CHROME_ACTION_CONTROL_SIZE_PX } = await import('./desktopChromeMetrics');
+        await renderScreen(
+            <DesktopSidebarChrome
+                sidebarWidthPx={600}
+                headerHeightPx={56}
+                onPressHome={vi.fn()}
+                environmentBadge={null}
+                headerActions={[
+                    { id: 'projects', title: 'Projects', icon: 'folder', onPress: vi.fn() },
+                    { id: 'settings', title: 'Settings', icon: 'gear', onPress: vi.fn() },
+                    { id: 'newSession', title: 'New session', icon: 'plus', onPress: vi.fn() },
+                ]}
+                renderHeaderOverflowVisual={() => React.createElement(View, { testID: 'desktop-sidebar-overflow-visual' })}
+                popoverBoundaryRef={{ current: null }}
+            />,
+        );
+
+        expect(itemRowActionsState.lastActionControlSizePx).toBe(DESKTOP_SIDEBAR_CHROME_ACTION_CONTROL_SIZE_PX);
+    }, 120_000);
 
     it('places the branded sidebar row below the desktop window controls row', async () => {
         const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
@@ -142,7 +170,7 @@ describe('DesktopSidebarChrome', () => {
                 id: 'settings',
                 title: 'settings.title',
                 inlineTestID: 'nav-settings',
-                icon: 'cog-outline',
+                icon: 'gear',
                 onPress: vi.fn(),
             }],
             renderHeaderOverflowVisual: () => React.createElement(View, { testID: 'desktop-sidebar-overflow-visual' }),
@@ -370,9 +398,9 @@ describe('DesktopSidebarChrome', () => {
                 onPressForward={vi.fn()}
                 environmentBadge={null}
                 headerActions={[
-                    { id: 'projects', title: 'Projects', icon: 'folder-outline', onPress: vi.fn() },
-                    { id: 'settings', title: 'Settings', icon: 'cog-outline', onPress: vi.fn() },
-                    { id: 'newSession', title: 'New session', icon: 'add-outline', onPress: vi.fn() },
+                    { id: 'projects', title: 'Projects', icon: 'folder', onPress: vi.fn() },
+                    { id: 'settings', title: 'Settings', icon: 'gear', onPress: vi.fn() },
+                    { id: 'newSession', title: 'New session', icon: 'plus', onPress: vi.fn() },
                 ]}
                 topUtilityActions={[
                     {
@@ -386,7 +414,7 @@ describe('DesktopSidebarChrome', () => {
                         id: 'settings',
                         title: 'Settings',
                         inlineTestID: 'nav-settings',
-                        icon: 'cog-outline',
+                        icon: 'gear',
                         onPress: vi.fn(),
                     },
                 ]}
@@ -474,7 +502,7 @@ describe('DesktopSidebarChrome', () => {
                 headerHeightPx={56}
                 onPressHome={vi.fn()}
                 environmentBadge={null}
-                headerActions={[{ id: 'settings', title: 'Settings', icon: 'cog-outline', onPress: vi.fn() }]}
+                headerActions={[{ id: 'settings', title: 'Settings', icon: 'gear', onPress: vi.fn() }]}
                 renderHeaderOverflowVisual={() => React.createElement(View, { testID: 'desktop-sidebar-overflow-visual' })}
                 popoverBoundaryRef={{ current: null }}
             />,
@@ -489,5 +517,71 @@ describe('DesktopSidebarChrome', () => {
         expect(overflowTrigger.props.accessibilityElementsHidden).toBe(true);
         expect(overflowTrigger.props.importantForAccessibility).toBe('no-hide-descendants');
         expect(overflowTrigger.props.accessibilityState).toEqual({ expanded: true, disabled: true });
+    }, 120_000);
+
+    // This strip sits beside the traffic lights, which are 12px. Every glyph in it moved to the app's
+    // default 20 during the icon-family migration — a 33-54% jump on controls that had been measured
+    // at 13-18 — and at 20 they exactly filled their 20px buttons, so the row had no air in it at all.
+    it('draws the whole top strip at one compact chrome size', async () => {
+        const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
+        const { DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX } = await import('./desktopChromeMetrics');
+        const screen = await renderScreen(
+            <DesktopSidebarChrome
+                sidebarWidthPx={600}
+                headerHeightPx={56}
+                onPressHome={vi.fn()}
+                onPressCollapse={vi.fn()}
+                onPressBack={vi.fn()}
+                onPressForward={vi.fn()}
+                environmentBadge={null}
+                headerActions={[]}
+                topUtilityActions={[{
+                    id: 'settings',
+                    title: 'Settings',
+                    inlineTestID: 'nav-settings',
+                    icon: 'sliders-horizontal',
+                    onPress: vi.fn(),
+                }]}
+                renderHeaderOverflowVisual={() => React.createElement(View, { testID: 'desktop-sidebar-overflow-visual' })}
+                popoverBoundaryRef={{ current: null }}
+                desktopWindowControls={<View testID="injected-desktop-window-controls" />}
+            />,
+        );
+
+        const utilityRow = requireTestInstance(screen.findByTestId('desktop-sidebar-chrome-utility-row'), 'utility row');
+        const sizes = utilityRow.findAll((node) => node.type === ('Icon' as never)).map((icon) => icon.props.size);
+
+        expect(sizes.length).toBeGreaterThanOrEqual(4);
+        expect(new Set(sizes).size, 'the strip should read as one size').toBe(1);
+        expect(sizes[0]).toBeLessThan(DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX);
+    }, 120_000);
+
+    // The expanded chrome is the sidebar's OPEN state, so its button collapses. It reached that
+    // drawing through a `scaleX: -1` on a wrapper View, which flipped the resolved glyph into the
+    // opposite edge's — the icon seam said one thing and the screen showed another.
+    it('shows the collapse glyph unflipped in the expanded chrome', async () => {
+        const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
+        const screen = await renderScreen(
+            <DesktopSidebarChrome
+                sidebarWidthPx={600}
+                headerHeightPx={56}
+                onPressHome={vi.fn()}
+                onPressCollapse={vi.fn()}
+                environmentBadge={null}
+                headerActions={[]}
+                renderHeaderOverflowVisual={() => React.createElement(View, { testID: 'desktop-sidebar-overflow-visual' })}
+                popoverBoundaryRef={{ current: null }}
+                desktopWindowControls={<View testID="injected-desktop-window-controls" />}
+            />,
+        );
+
+        const collapseButton = requireTestInstance(screen.findByTestId('sidebar-collapse-button'), 'collapse button');
+        expect(collapseButton.findByType('Icon' as never).props.name).toBe('sidebar-left-close');
+
+        const flipped = collapseButton.findAll((node) => {
+            const transform = (mergeStyle(node.props?.style) as { transform?: Array<Record<string, number>> }).transform;
+            return Array.isArray(transform) && transform.some((step) => step.scaleX === -1);
+        });
+        expect(flipped, 'nothing should mirror the glyph the seam already chose').toHaveLength(0);
     }, 120_000);
 });

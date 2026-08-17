@@ -19,7 +19,7 @@ const RememberedEngineSelectionV1Schema = z.object({
     acpSessionModeId: z.string().trim().min(1).nullable().optional(),
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.nullable().optional(),
     updatedAt: z.number().finite().nonnegative(),
-});
+}).strict();
 
 export type RememberedEngineSelectionV1 = z.infer<typeof RememberedEngineSelectionV1Schema>;
 
@@ -44,7 +44,8 @@ function readTargetKeyFromScopeKey(scopeKey: string): BackendTargetKeyV2 | null 
     return normalizeTargetKey(scopeKey.slice(markerIndex + 1));
 }
 
-function normalizeScopeKey(scopeKey: string): string | null {
+/** Canonical identity owner for persisted remembered-selection scope keys. */
+export function normalizeRememberedEngineSelectionScopeKey(scopeKey: string): string | null {
     const markerIndex = Math.max(
         scopeKey.lastIndexOf(':backend:'),
         scopeKey.lastIndexOf(':agent:'),
@@ -76,16 +77,24 @@ function normalizeRememberedSelectionForScope(scopeKey: string, raw: unknown): u
             },
         };
     }
-    if (typeof record.modelId !== 'string') return raw;
+    if (record.modelId !== null && typeof record.modelId !== 'string') return raw;
+    const legacyKeys = new Set([
+        'v',
+        'modelId',
+        'acpSessionModeId',
+        'sessionConfigOptionOverrides',
+        'updatedAt',
+    ]);
+    if (!Object.keys(record).every((key) => legacyKeys.has(key))) return raw;
+    if (record.v !== undefined && record.v !== 1) return raw;
     const targetKey = readTargetKeyFromScopeKey(scopeKey);
     if (!targetKey) return null;
-    const modelId = record.modelId.trim();
+    const modelId = typeof record.modelId === 'string' ? record.modelId.trim() : '';
     const updatedAt = typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt)
         ? Math.max(0, record.updatedAt)
         : 0;
-    const { modelId: _legacyModelId, ...rest } = record;
     return {
-        ...rest,
+        v: 1,
         modelSelection: !modelId || modelId === 'default'
             ? null
             : {
@@ -97,6 +106,13 @@ function normalizeRememberedSelectionForScope(scopeKey: string, raw: unknown): u
                     modelId,
                 },
             },
+        ...(record.acpSessionModeId !== undefined
+            ? { acpSessionModeId: record.acpSessionModeId }
+            : {}),
+        ...(record.sessionConfigOptionOverrides !== undefined
+            ? { sessionConfigOptionOverrides: record.sessionConfigOptionOverrides }
+            : {}),
+        updatedAt,
     };
 }
 
@@ -107,7 +123,7 @@ export const RememberedEngineSelectionsByScopeV1Schema = z.preprocess((value) =>
 
     return Object.fromEntries(
         Object.entries(record).flatMap(([scopeKey, raw]) => {
-            const normalizedScopeKey = normalizeScopeKey(scopeKey.trim());
+            const normalizedScopeKey = normalizeRememberedEngineSelectionScopeKey(scopeKey.trim());
             if (!normalizedScopeKey) return [];
             const normalized = normalizeRememberedSelectionForScope(normalizedScopeKey, raw);
             if (normalized === null) return [];

@@ -4,6 +4,8 @@ import { useSessionMachineTarget } from '@/components/sessions/model/useSessionM
 import { useSessionBrowserContextRuntimeContext } from '@/components/sessions/browser/sessionBrowserContextRuntime';
 import { useSessionBrowserRecordingRuntime } from '@/components/sessions/browser/sessionBrowserRecordingRuntime';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { resolveBrowserSurfacePlatform, useBrowserSurfaceHostProps } from './useBrowserSurfaceHostProps';
 
 import { BrowserScopedWorkspace } from './BrowserScopedWorkspace';
@@ -16,11 +18,22 @@ import { BrowserScopedWorkspace } from './BrowserScopedWorkspace';
 export function BrowserMobileSurfaceScreen(props: Readonly<{
     sessionId: string;
     scopeId?: string;
+    /**
+     * An enclosing cockpit supplies its one admitted projection. Standalone
+     * Browser routes retain the incumbent scoped lookup below.
+     */
+    pluginProjection?: PluginUiProjectionCurrentness;
 }>): React.ReactElement {
     const machineTarget = useSessionMachineTarget(props.sessionId);
     const serverId = usePreferredServerIdForSession(props.sessionId);
     const machineId = machineTarget?.machineId ?? null;
     const scopeId = props.scopeId ?? `session:${props.sessionId}:mobile-browser`;
+    const scopedPluginProjection = useScopedPluginUiProjection({
+        machineId,
+        serverId,
+        enabled: props.pluginProjection === undefined,
+    });
+    const pluginProjection = props.pluginProjection ?? scopedPluginProjection;
     // Assemble the live workspace-ranked launchpad feed so the mobile new-tab page shows running
     // services + recents (not only URL entry). The shared bootstrap also resolves the preview
     // state used to seed access URLs when a launchpad row is opened.
@@ -60,6 +73,8 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
             launchpadRefreshStatus={hostProps.launchpadRefreshStatus}
             launchpadRefreshError={hostProps.launchpadRefreshError}
             productModels={productModels}
+            pluginProjection={pluginProjection}
+            pluginBrowserActionSessionId={props.sessionId}
             testID="session-mobile-browser"
         />
     );

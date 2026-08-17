@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Ionicons } from '@expo/vector-icons';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import {
@@ -13,6 +12,7 @@ import { resolveExternalUrlTargetFromInput } from '@/sync/domains/browser/shell'
 import { t } from '@/text';
 
 import type { BrowserLaunchpadOpenTargetOptions } from './BrowserLaunchpad';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -139,7 +139,7 @@ export function BrowserLaunchpadUrlEntry(props: Readonly<{
                     onPress={handleSubmit}
                     style={[stylesheet.openButton, disabled ? stylesheet.openButtonDisabled : null]}
                 >
-                    <Ionicons name="arrow-forward" size={18} color={theme.colors.button.primary.tint} />
+                    <Icon name="arrow-right" size={16} color={theme.colors.button.primary.tint} />
                 </Pressable>
             </View>
             {invalid ? (

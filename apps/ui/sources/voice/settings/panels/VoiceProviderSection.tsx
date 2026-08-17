@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -10,12 +9,16 @@ import {
   PluginSettingSelectField,
   PluginSettingSwitchField,
 } from '@/components/settings/plugins/detail/PluginSettingChoiceFields';
+import { PluginSettingTextField } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol';
 import type {
   PluginProjectionEditableSettingField,
   PluginProjectionEditableSettingsGroup,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { useSettings } from '@/sync/domains/state/storage';
-import { useProfile } from '@/sync/store/hooks';
+import { useMachineCliDetectionTarget, useProfile } from '@/sync/store/hooks';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import {
   readVoiceProviderSettingsConfig,
   voiceSettingsParse,
@@ -24,10 +27,20 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import { t, tLoose } from '@/text';
 import {
-  isAccountVoiceCredentialRecipientApprovalRequired,
-  resolveAccountVoiceCredential,
+  resolveAccountVoiceCredentialSourceSelection,
+  resolveAccountVoiceCredentialStatus,
+  shouldUseVoiceCredentialSourceMutationForSavedSecret,
 } from '@/voice/credentials/accountVoiceCredential';
-import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
+import {
+  resolveVoiceConnectedAccountTargetEligibility,
+  type VoiceConnectedAccountTargetEligibility,
+} from '@/voice/credentials/sourceEligibility';
+import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import {
+  VoiceCredentialItem,
+  voiceCredentialDeclarationHasRawGrants,
+} from '@/voice/credentials/CredentialItem';
+import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import {
   isVoiceProviderSettingsProjectionCurrent,
@@ -42,19 +55,90 @@ import {
 } from '@/voice/registry/providerSelection';
 import {
   isVoiceRoleSelectableForConfiguration,
+  type VoiceProviderCredentialSourceKind,
+  resolveVoicePassiveSetupReadiness,
   resolveVoiceRoleReadiness,
   type VoiceCredentialReadinessFact,
-  type VoiceReadinessFact,
+  type VoiceRoleReadiness,
 } from '@/voice/registry/readiness';
 import {
   resolveVoiceProviderAvailability,
   type ResolveVoiceProviderAvailabilityInput,
 } from '@/voice/settings/resolveVoiceProviderAvailability';
 import { projectLocalConversationReadinessFacts } from '@/voice/settings/projectLocalConversationReadinessFacts';
+import {
+  projectVoiceProviderAgentRealtimePassiveSetup,
+  projectVoiceProviderConnectedServicesCredentialFact,
+  projectVoiceProviderPassiveSetupFacts,
+} from '@/voice/settings/passiveSetup';
 import { VoiceGlobalConnectedServicesBindingField } from './realtime/VoiceGlobalConnectedServicesBindingField';
+import { VoiceCredentialSourceField } from './realtime/VoiceCredentialSourceField';
 import { resolveVoiceProviderReadinessPresentation } from './voiceProviderReadinessPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
+import { ExternalSessionOperationAccessibilityStatus } from '@/components/sessions/external/progress/ExternalSessionOperationAccessibilityStatus';
 
 const registry = createDefaultVoiceProviderRegistry();
+
+function serializeDeclarativeSettingDraft(control: string, value: unknown): string {
+  if (control === 'json') {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return '';
+    }
+  }
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function VoiceDeclarativeTextSettingField(props: Readonly<{
+  pluginId: string;
+  group: PluginProjectionEditableSettingsGroup;
+  field: PluginProjectionEditableSettingField;
+  value: unknown;
+  onChangeValue: (value: unknown) => void;
+}>) {
+  const serializedValue = serializeDeclarativeSettingDraft(props.field.control, props.value);
+  const [draft, setDraft] = React.useState(serializedValue);
+  const [invalid, setInvalid] = React.useState(false);
+  React.useEffect(() => {
+    setDraft(serializedValue);
+    setInvalid(false);
+  }, [serializedValue]);
+
+  return (
+    <PluginSettingTextField
+      pluginId={props.pluginId}
+      group={props.group}
+      field={props.field}
+      value={draft}
+      dirty={draft !== serializedValue}
+      saving={false}
+      saveFailed={false}
+      persistenceDisabled={false}
+      errorMessage={invalid ? t('settingsVoice.realtimeProviders.invalidValue') : null}
+      onChangeText={(value) => {
+        setDraft(value);
+        setInvalid(false);
+      }}
+      onCommit={() => {
+        let nextValue: unknown = draft;
+        try {
+          if (props.field.control === 'number') nextValue = Number(draft);
+          if (props.field.control === 'json') nextValue = JSON.parse(draft);
+          const validate = compilePluginJsonSchema(props.field.valueSchema);
+          if (!isValidPluginJsonSchemaValue(validate, nextValue)) {
+            setInvalid(true);
+            return;
+          }
+        } catch {
+          setInvalid(true);
+          return;
+        }
+        props.onChangeValue(nextValue);
+      }}
+    />
+  );
+}
 
 function normalizePlatform(platform: string): 'web' | 'ios' | 'android' | 'macos' | 'windows' | 'linux' | 'unknown' {
   return platform === 'web'
@@ -77,6 +161,23 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function projectHostedModeAvailabilityReadiness(input: Readonly<{
+  providerId: string;
+  role: VoiceRoleReadiness['role'];
+  modeId: string | null;
+  hostedEnabled: boolean;
+}>): VoiceRoleReadiness | null {
+  if (input.modeId !== 'happier' || input.hostedEnabled) return null;
+  return Object.freeze({
+    role: input.role,
+    providerId: input.providerId,
+    status: 'unavailable',
+    code: 'server_feature_disabled',
+    reasonKey: 'voice.readiness.server_feature_disabled',
+    recoveryAction: 'switch_provider',
+  });
+}
+
 export function resolveVoiceProviderCredentialFact(input: Readonly<{
   sourceKind: 'built_in' | 'bundled' | 'external';
   projectedCredential: Pick<VoiceProviderCredentialReadinessProjection, 'status'> | null;
@@ -84,14 +185,19 @@ export function resolveVoiceProviderCredentialFact(input: Readonly<{
   hasAccountCredentialReference: boolean;
   accountCredentialApprovalRequired?: boolean;
 }>): VoiceCredentialReadinessFact {
+  // The account-credential fallback is for an external row that produced *no*
+  // projection. An explicit `unknown` is a produced fact — the account-settings
+  // snapshot could not be read — and re-deriving it from the reference lookup
+  // turns "I could not check" into "add a credential" for a credential that may
+  // be stored and working.
   const usesExternalAccountCredentialFallback = input.sourceKind === 'external'
     && input.hasAccountCredentialSlot
-    && (!input.projectedCredential || input.projectedCredential.status === 'unknown');
+    && !input.projectedCredential;
   if (input.accountCredentialApprovalRequired
     && (input.projectedCredential?.status === 'missing' || usesExternalAccountCredentialFallback)) {
     return 'approval_required';
   }
-  if (input.projectedCredential && input.projectedCredential.status !== 'unknown') {
+  if (input.projectedCredential) {
     return input.projectedCredential.status;
   }
   if (input.sourceKind !== 'external') return 'unknown';
@@ -107,7 +213,10 @@ export function VoiceProviderSection(props: {
   platformOs?: string;
   localAvailability?: ResolveVoiceProviderAvailabilityInput['local'];
   executionMachineId?: string | null;
+  executionMachineSelectionKind?: 'resolved' | 'selected_unreachable' | 'none';
   popoverBoundaryRef?: React.RefObject<any> | null;
+  showProcessingDisclosure?: boolean;
+  onRecoveryAction?: (action: VoiceRoleReadiness['recoveryAction']) => void;
 }) {
   React.useSyncExternalStore(
     registry.subscribe ?? (() => () => {}),
@@ -117,8 +226,9 @@ export function VoiceProviderSection(props: {
   const { theme } = useUnistyles();
   const accountSettings = useSettings();
   const accountProfile = useProfile();
+  const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
+  const voiceAgentEnabled = useFeatureEnabled('voice.agent');
   const [checkedReadiness, setCheckedReadiness] = React.useState<Readonly<{
-    code: string;
     providerId: string;
   }> | null>(null);
   const select = (next: VoiceSettings) => {
@@ -132,41 +242,95 @@ export function VoiceProviderSection(props: {
     platformOs: props.platformOs,
     local: props.localAvailability,
   });
-  const localExecutionMachineFact: VoiceReadinessFact = props.executionMachineId != null ? 'ready' : 'missing';
   const platform = normalizePlatform(props.platformOs ?? Platform.OS);
+  const executionMachineTarget = useMachineCliDetectionTarget(props.executionMachineId ?? null);
   const localConversationReadinessFacts = projectLocalConversationReadinessFacts({
+    registry,
     voice,
+    voiceSettingsV1: accountSettings.voiceSettingsV1,
+    secrets: accountSettings.secrets,
     platform,
     local: availability.local,
     localInput: props.localAvailability,
     executionMachineId: props.executionMachineId,
+    executionMachineSelectionKind: props.executionMachineSelectionKind,
+    voiceAgentEnabled,
   });
   const rows = projectVoiceProviderSelectionRows(voice, registry).map((row) => {
     const settingsProjection = projectVoiceProviderSettings(row.entry, row.envelope);
-    const accountCredentialReference = row.entry.accountCredentialSlot
-      ? resolveAccountVoiceCredential(
-        { ...accountSettings, voice },
-        row.providerId,
-        row.entry.accountCredentialSlot.id,
-        undefined,
-        row.entry.accountCredentialSlot.recipientContractDigest,
-      )
+    const contribution = row.entry.kind === 'voice.conversation-provider.v1'
+      && row.entry.declaration?.kind === 'conversation'
+      ? {
+          pluginId: row.entry.pluginId,
+          localId: row.entry.declaration.id,
+        }
       : null;
-    const accountCredentialApprovalRequired = row.entry.accountCredentialSlot
-      ? isAccountVoiceCredentialRecipientApprovalRequired({
-          settings: { ...accountSettings, voice },
-          providerId: row.providerId,
+    const accountCredentialStatus = row.entry.accountCredentialSlot && contribution
+      ? resolveAccountVoiceCredentialStatus({
+          settings: accountSettings,
+          contribution,
           credentialSlotId: row.entry.accountCredentialSlot.id,
           requiredRecipientContractDigest: row.entry.accountCredentialSlot.recipientContractDigest,
         })
-      : false;
+      : null;
+    const accountCredentialReference = accountCredentialStatus?.status === 'ready'
+      ? accountCredentialStatus.reference
+      : null;
+    const accountCredentialApprovalRequired = accountCredentialStatus?.status === 'review_required';
+    const credentialDeclaration = row.entry.kind === 'voice.conversation-provider.v1'
+      && row.entry.declaration?.kind === 'conversation'
+      ? row.entry.declaration.credentials ?? null
+      : null;
+    let sourceSelection: Readonly<{
+      kind: 'none' | 'savedSecret' | 'connectedAccount';
+      connectedAccountEligibility: VoiceConnectedAccountTargetEligibility;
+    }> | null = null;
+    if (contribution && credentialDeclaration) {
+      try {
+        const resolvedSource = resolveAccountVoiceCredentialSourceSelection({
+          settings: accountSettings,
+          contribution,
+          credentialSlotId: credentialDeclaration.slot.id,
+          purpose: {
+            consumer: contribution,
+            purpose: credentialDeclaration.slot.purpose,
+          },
+          machineId: null,
+        });
+        sourceSelection = Object.freeze({
+          kind: resolvedSource.selection.kind,
+          connectedAccountEligibility: resolvedSource.selection.kind === 'connectedAccount'
+            ? resolveVoiceConnectedAccountTargetEligibility({
+              target: resolvedSource.selection.target,
+              declaredServices: credentialDeclaration.sources.flatMap((source) => (
+                source.kind === 'connectedAccount'
+                  ? [typeof source.service === 'string'
+                      ? { pluginId: contribution.pluginId, localId: source.service }
+                      : source.service]
+                  : []
+              )),
+              accounts: accountProfile.connectedAccountsV4 ?? [],
+              groups: accountProfile.connectedAccountGroupsV4 ?? [],
+              resolveAuthenticationMode: (candidate) => getConnectedAccountAuthenticationMode(
+                candidate.ref.service,
+                candidate.authenticationModeId,
+              ),
+            })
+            : 'unusable',
+        });
+      } catch {
+        sourceSelection = null;
+      }
+    }
     const projectedCredential = projectVoiceProviderCredentialReadiness(
       row.entry,
       row.envelope,
       {
-        accountProfile,
+        sourceSelection,
         savedSecret: {
-          status: accountCredentialReference ? 'ready' : 'missing',
+          status: accountCredentialStatus?.status === 'unknown'
+            ? 'unknown'
+            : accountCredentialReference ? 'ready' : 'missing',
         },
       },
     );
@@ -177,30 +341,84 @@ export function VoiceProviderSection(props: {
       hasAccountCredentialReference: Boolean(accountCredentialReference),
       accountCredentialApprovalRequired,
     });
-    const readiness = resolveVoiceRoleReadiness({
+    const declaredExecution = row.entry.kind === 'voice.conversation-provider.v1'
+      && row.entry.declaration?.kind === 'conversation'
+      ? row.entry.declaration.execution ?? null
+      : null;
+    const declaredPassiveSetup = projectVoiceProviderAgentRealtimePassiveSetup(declaredExecution);
+    const declaredPassiveSetupFacts = projectVoiceProviderPassiveSetupFacts({
+      execution: declaredExecution,
+      executionMachineId: props.executionMachineId ?? null,
+      executionMachineOnline: executionMachineTarget.isOnline,
+      runtimeCapabilityResult: null,
+    });
+    const selectedMachineReady = typeof props.executionMachineId === 'string'
+      && props.executionMachineId.trim().length > 0
+      && executionMachineTarget.isOnline;
+    const credentialSourceKind: VoiceProviderCredentialSourceKind | null = sourceSelection?.kind ?? null;
+    const readinessFacts = {
+      settings: settingsProjection?.status ?? 'unknown',
+      serverFeature: row.providerId === 'local_conversation'
+        ? localConversationReadinessFacts.serverFeature
+        : props.happierVoiceSupported ? 'ready' : 'missing',
+      executionMachine:
+        row.providerId === 'local_conversation'
+          ? props.executionMachineSelectionKind === 'selected_unreachable'
+            ? 'incompatible'
+            : localConversationReadinessFacts.executionMachine
+          : credentialSourceKind === 'connectedAccount'
+            ? selectedMachineReady
+              ? 'ready'
+              : props.executionMachineSelectionKind === 'selected_unreachable'
+                ? 'incompatible'
+                : 'missing'
+            : declaredPassiveSetupFacts.executionMachine ?? 'missing',
+      credential: row.providerId === 'local_conversation'
+        ? localConversationReadinessFacts.credential
+        : credentialFact,
+      endpoint: localConversationReadinessFacts.endpoint,
+      runtime: row.providerId === 'local_conversation'
+        ? localConversationReadinessFacts.runtime
+        : declaredPassiveSetupFacts.runtime ?? localConversationReadinessFacts.runtime,
+      model: localConversationReadinessFacts.model,
+    } as const;
+    const projectedReadiness = resolveVoiceRoleReadiness({
       registry,
       role: row.entry.roles[0]!,
       providerId: row.providerId,
       platform,
       modeId: row.modeId,
-      facts: {
-        settings: settingsProjection?.status ?? 'unknown',
-        serverFeature: props.happierVoiceSupported ? 'ready' : 'missing',
-        executionMachine:
-          row.providerId === 'local_conversation'
-            ? localExecutionMachineFact
-            : 'missing',
-        credential: credentialFact,
-        endpoint: localConversationReadinessFacts.endpoint,
-        runtime: localConversationReadinessFacts.runtime,
-        model: localConversationReadinessFacts.model,
-      },
+      credentialSourceKind,
+      facts: readinessFacts,
     });
+    const descriptorReadiness = row.providerId === 'local_conversation'
+      && localConversationReadinessFacts.daemonRouteReadiness
+      && (
+        localConversationReadinessFacts.daemonRouteReadiness.code === 'server_feature_disabled'
+        || localConversationReadinessFacts.daemonRouteReadiness.code === 'execution_machine_missing'
+        || localConversationReadinessFacts.daemonRouteReadiness.code === 'execution_machine_incompatible'
+        || projectedReadiness.code === 'execution_machine_missing'
+      )
+      ? localConversationReadinessFacts.daemonRouteReadiness
+      : projectedReadiness;
+    const readiness = projectHostedModeAvailabilityReadiness({
+      providerId: row.providerId,
+      role: row.entry.roles[0]!,
+      modeId: row.modeId,
+      hostedEnabled: availability.happier.enabled,
+    }) ?? descriptorReadiness;
+    const credentialConfigurationAvailable = row.entry.source.kind === 'bundled'
+      && row.entry.kind === 'voice.conversation-provider.v1'
+      && (
+        typeof row.entry.presentation?.createSettingsSection === 'function'
+        || credentialDeclaration?.sources.some((source) => (
+          source.kind === 'savedSecret' || source.kind === 'connectedAccount'
+        )) === true
+      );
     const selectable = isVoiceRoleSelectableForConfiguration({
       readiness,
-      credentialConfigurationAvailable: row.entry.source.kind === 'bundled'
-        && row.entry.kind === 'voice.conversation-provider.v1'
-        && typeof row.entry.internal?.createSettingsSection === 'function',
+      credentialConfigurationAvailable,
+      passiveRuntimeCheckAvailable: declaredPassiveSetup !== null,
     });
     const readinessPresentation = resolveVoiceProviderReadinessPresentation(readiness, tLoose);
     const projectedCredentialGuidance = row.entry.source.kind === 'bundled'
@@ -210,7 +428,7 @@ export function VoiceProviderSection(props: {
       : null;
     const credentialDetail = row.entry.source.kind === 'external'
       && row.entry.requirements.includes('credential')
-      ? projectedCredential && projectedCredential.status !== 'unknown'
+      ? projectedCredential
         ? tLoose(projectedCredential.detailKey)
         : row.entry.accountCredentialSlot
             ? accountCredentialReference
@@ -232,6 +450,9 @@ export function VoiceProviderSection(props: {
       detail,
       projectedCredential,
       projectedCredentialGuidance,
+      readinessFacts,
+      sourceSelection,
+      credentialSourceKind,
     };
   });
   const selectedUnavailableProvider = projectSelectedUnavailableVoiceProvider(voice, registry);
@@ -257,10 +478,73 @@ export function VoiceProviderSection(props: {
       ].filter((value): value is string => typeof value === 'string' && value.length > 0).join(' · ') || undefined
     : undefined;
   const selectedProviderRow = rows.find((row) => row.selected) ?? null;
+  const selectedAgentRealtimeExecution = selectedProviderRow?.entry.kind === 'voice.conversation-provider.v1'
+    && selectedProviderRow.entry.declaration?.kind === 'conversation'
+    ? selectedProviderRow.entry.declaration.execution ?? null
+    : null;
+  const selectedPassiveSetup = projectVoiceProviderAgentRealtimePassiveSetup(
+    selectedAgentRealtimeExecution,
+  );
+  const passiveCapabilityRequest = React.useMemo(() => ({
+    requests: selectedPassiveSetup
+      ? [{
+          id: selectedPassiveSetup.capabilityId,
+          params: { bypassCache: true },
+        }]
+      : [],
+  }), [selectedPassiveSetup]);
+  const passiveCapability = useDaemonScopedMachineCapabilitiesCache({
+    machineId: props.executionMachineId ?? null,
+    enabled: checkedReadiness?.providerId === voice.providerId
+      && selectedPassiveSetup !== null
+      && executionMachineTarget.isOnline,
+    request: passiveCapabilityRequest,
+  });
+  const passiveCapabilitySnapshot = passiveCapability.state.status === 'loaded'
+    ? passiveCapability.state.snapshot
+    : null;
+  const runtimeCapabilityResult = selectedPassiveSetup
+    ? passiveCapabilitySnapshot?.response.results[selectedPassiveSetup.capabilityId] ?? null
+    : null;
+  const passiveSetupFacts = projectVoiceProviderPassiveSetupFacts({
+    execution: selectedAgentRealtimeExecution,
+    executionMachineId: props.executionMachineId ?? null,
+    executionMachineOnline: executionMachineTarget.isOnline,
+    runtimeCapabilityResult,
+  });
+  const selectedProviderConfig = selectedProviderRow
+    ? readVoiceProviderSettingsConfig(voice, selectedProviderRow.providerId)
+    : null;
+  const passiveConnectedServicesCredential = selectedProviderRow
+    ? projectVoiceProviderConnectedServicesCredentialFact({
+        providerSettings: selectedProviderRow.entry.providerSettings ?? null,
+        providerConfig: selectedProviderConfig,
+        accountProfileConnectedServicesV2: accountProfile.connectedServicesV2 ?? [],
+        labelsByKey: accountSettings.connectedServicesProfileLabelByKey ?? {},
+        accountGroupsEnabled,
+      })
+    : undefined;
+  const checkedProviderReadiness = selectedProviderRow
+    ? resolveVoicePassiveSetupReadiness({
+        registry,
+        role: selectedProviderRow.entry.roles[0]!,
+        providerId: selectedProviderRow.providerId,
+        platform,
+        modeId: selectedProviderRow.modeId,
+        credentialSourceKind: selectedProviderRow.credentialSourceKind,
+        facts: {
+          ...selectedProviderRow.readinessFacts,
+          ...passiveSetupFacts,
+          ...(passiveConnectedServicesCredential
+            ? { credential: passiveConnectedServicesCredential }
+            : {}),
+        },
+      })
+    : selectedUnavailableReadiness;
   const selectedProviderReadiness = selectedProviderRow?.readiness
     ?? selectedUnavailableReadiness;
-  const selectedProviderReadinessPresentation = selectedProviderReadiness
-    ? resolveVoiceProviderReadinessPresentation(selectedProviderReadiness, tLoose)
+  const selectedProviderReadinessPresentation = checkedProviderReadiness
+    ? resolveVoiceProviderReadinessPresentation(checkedProviderReadiness, tLoose)
     : null;
   const selectedProviderReadinessDetail = selectedProviderRow?.projectedCredentialGuidance
     ?? (selectedProviderReadinessPresentation ? [
@@ -270,19 +554,44 @@ export function VoiceProviderSection(props: {
       : undefined);
   const showCheckedReadiness = checkedReadiness !== null
     && checkedReadiness.providerId === voice.providerId
-    && checkedReadiness.code === selectedProviderReadiness?.code;
+    && checkedProviderReadiness !== null
+    && passiveCapability.state.status !== 'loading';
   const visibleRows = selectedUnavailableProvider
     ? rows.filter((row) => row.providerId !== selectedUnavailableProvider.providerId)
     : rows;
   const isOff = voice.providerId === null;
   const selectedExternalRow = rows.find((row) => (
     row.providerId === voice.providerId
-    && row.entry.source.kind === 'external'
+    && row.entry.kind === 'voice.conversation-provider.v1'
+    && typeof row.entry.presentation?.createSettingsSection !== 'function'
     && projectVoiceProviderSettings(row.entry, voice.providers[row.providerId] ?? null)?.status === 'ready'
   ));
+  const selectedExternalDeclaration = selectedExternalRow?.entry.kind === 'voice.conversation-provider.v1'
+    && selectedExternalRow.entry.declaration?.kind === 'conversation'
+    ? selectedExternalRow.entry.declaration
+    : null;
+  const selectedExternalCredentials = selectedExternalDeclaration?.credentials ?? null;
+  const selectedExternalContribution = selectedExternalDeclaration && selectedExternalRow
+    ? Object.freeze({
+        pluginId: selectedExternalRow.entry.pluginId,
+        localId: selectedExternalDeclaration.id,
+      })
+    : null;
+  const selectedExternalHasSavedSecret = selectedExternalCredentials?.sources.some(
+    (source) => source.kind === 'savedSecret',
+  ) === true;
+  const selectedExternalHasConnectedAccount = selectedExternalCredentials?.sources.some(
+    (source) => source.kind === 'connectedAccount',
+  ) === true;
+  const selectedExternalCredentialAccessIsRaw = voiceCredentialDeclarationHasRawGrants(
+    selectedExternalDeclaration ?? undefined,
+  );
+  const selectedExternalCredentialSlot = selectedExternalRow?.entry.accountCredentialSlot;
   const selectedDeclarativeSettingsRow = rows.find((row) => (
     row.providerId === voice.providerId
+    && row.entry.kind === 'voice.conversation-provider.v1'
     && row.entry.providerSettings
+    && typeof row.entry.presentation?.createSettingsSection !== 'function'
     && row.entry.source.kind !== 'built_in'
     && isVoiceProviderSettingsProjectionCurrent(
       projectVoiceProviderSettings(row.entry, voice.providers[row.providerId] ?? null),
@@ -304,7 +613,7 @@ export function VoiceProviderSection(props: {
       pluginId: selectedDeclarativeSettingsSource.pluginId,
       version: 1,
       title: tLoose(selectedDeclarativeSettingsRow.titleKey),
-      storageScope: 'synced',
+      scope: { kind: 'account' },
       presentation: { sections: [], subagentSections: [] },
       target: { kind: 'plugin' },
       fields: [],
@@ -317,7 +626,8 @@ export function VoiceProviderSection(props: {
       [fieldId]: value,
     }));
   };
-  const selectedDeclarativeDisclosureOnly = selectedDeclarativeSettings?.privacyDisclosure
+  const showProcessingDisclosure = props.showProcessingDisclosure ?? true;
+  const selectedDeclarativeDisclosureOnly = showProcessingDisclosure && selectedDeclarativeSettings?.privacyDisclosure
     && selectedDeclarativeSettings.fields.length === 0
     && !selectedDeclarativeSettings.connectedServicesBinding
     ? selectedDeclarativeSettings.privacyDisclosure
@@ -337,7 +647,7 @@ export function VoiceProviderSection(props: {
         accessibilityRole="radio"
         webRole="radio"
         selected={isOff}
-        rightElement={isOff ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} /> : null}
+        rightElement={isOff ? <Icon name="check-circle" size={24} color={theme.colors.accent.blue} /> : null}
         onPress={() => select({ ...voice, providerId: null })}
         showChevron={false}
       />
@@ -353,7 +663,7 @@ export function VoiceProviderSection(props: {
           accessibilityRole="radio"
           webRole="radio"
           selected={true}
-          rightElement={<Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} />}
+          rightElement={<Icon name="check-circle" size={24} color={theme.colors.accent.blue} />}
           disabled={true}
           showChevron={false}
         />
@@ -370,7 +680,7 @@ export function VoiceProviderSection(props: {
           webRole="radio"
           selected={row.selected}
           rightElement={row.selected
-            ? <Ionicons name="checkmark-circle" size={24} color={theme.colors.accent.blue} />
+            ? <Icon name="check-circle" size={24} color={theme.colors.accent.blue} />
             : null}
           disabled={!row.selectable}
           onPress={row.selectable
@@ -393,39 +703,93 @@ export function VoiceProviderSection(props: {
             title={t('settingsVoice.setupCheck.check')}
             subtitle={t('settingsVoice.setupCheck.checkSubtitle')}
             accessibilityRole="button"
-            onPress={() => setCheckedReadiness({
-              providerId: voice.providerId!,
-              code: selectedProviderReadiness.code,
-            })}
+            onPress={() => {
+              setCheckedReadiness({ providerId: voice.providerId! });
+              if (selectedPassiveSetup && executionMachineTarget.isOnline) {
+                passiveCapability.refresh({
+                  request: passiveCapabilityRequest,
+                  bypassCache: true,
+                });
+              }
+            }}
           />
           {showCheckedReadiness ? (
-            <Item
-              testID="settings.voice.provider.readiness"
-              mode="info"
-              title={t('settingsVoice.setupCheck.result')}
-              subtitle={selectedProviderReadinessDetail}
-            />
+            <>
+              <Item
+                testID="settings.voice.provider.readiness"
+                mode="info"
+                title={t('settingsVoice.setupCheck.result')}
+                subtitle={selectedProviderReadinessDetail}
+                accessibilityRole={selectedProviderReadiness.recoveryAction === 'none' ? undefined : 'button'}
+                onPress={selectedProviderReadiness.recoveryAction === 'none'
+                  ? undefined
+                  : () => props.onRecoveryAction?.(selectedProviderReadiness.recoveryAction)}
+              />
+              <ExternalSessionOperationAccessibilityStatus
+                announcement={selectedProviderReadinessDetail ?? t('settingsVoice.setupCheck.result')}
+                statusTestID="settings.voice.provider.readiness-status"
+                transitionKey={`${checkedReadiness?.providerId ?? ''}:${selectedProviderReadinessDetail ?? ''}`}
+              />
+            </>
           ) : null}
         </ItemGroup>
       ) : null}
-      {!selectedExternalRow?.entry.accountCredentialSlot
-        || (selectedExternalRow.projectedCredential
-          && selectedExternalRow.projectedCredential.status !== 'unknown') ? null : (
+      {!selectedExternalRow
+        || !selectedExternalDeclaration
+        || !selectedExternalCredentials
+        || !selectedExternalContribution
+        || (!selectedExternalHasSavedSecret && !selectedExternalHasConnectedAccount) ? null : (
         <ItemGroup
           title={tLoose(selectedExternalRow.titleKey)}
-          footer={t('settingsVoice.externalCredentials.footer')}
+          footer={t(
+            selectedExternalCredentialAccessIsRaw
+              ? 'settingsVoice.externalCredentials.rawFooter'
+              : 'settingsVoice.externalCredentials.footer',
+          )}
         >
-          <VoiceCredentialItem
-            testID={`settings.voice.externalCredential.${encodeURIComponent(selectedExternalRow.providerId)}.${encodeURIComponent(selectedExternalRow.entry.accountCredentialSlot.id)}`}
+          {!selectedExternalHasConnectedAccount ? null : <VoiceCredentialSourceField
+            contribution={selectedExternalContribution}
+            declaration={selectedExternalDeclaration}
+            credentials={selectedExternalCredentials}
+            popoverBoundaryRef={props.popoverBoundaryRef}
+            isCurrent={() => {
+              const current = registry.get(selectedExternalRow.providerId);
+              return current?.kind === 'voice.conversation-provider.v1'
+                && current.pluginId === selectedExternalContribution.pluginId
+                && current.declaration?.id === selectedExternalContribution.localId;
+            }}
+          />}
+          {!selectedExternalHasSavedSecret ? null : <VoiceCredentialItem
+            testID={`settings.voice.externalCredential.${encodeURIComponent(selectedExternalRow.providerId)}.${encodeURIComponent(selectedExternalCredentials.slot.id)}`}
             title={t('settingsVoice.externalCredentials.apiKeyTitle')}
             promptTitle={t('settingsVoice.externalCredentials.promptTitle')}
-            promptDescription={t('settingsVoice.externalCredentials.promptDescription')}
-            providerId={selectedExternalRow.providerId}
-            credentialSlotId={selectedExternalRow.entry.accountCredentialSlot.id}
-            recipientContract={selectedExternalRow.entry.accountCredentialSlot.recipientContract}
-            recipientContractDigest={selectedExternalRow.entry.accountCredentialSlot.recipientContractDigest}
+            promptDescription={t(
+              selectedExternalCredentialAccessIsRaw
+                ? 'settingsVoice.externalCredentials.rawPromptDescription'
+                : 'settingsVoice.externalCredentials.promptDescription',
+            )}
+            contribution={selectedExternalContribution}
+            credentialSlotId={selectedExternalCredentials.slot.id}
+            credentialSourcePurpose={shouldUseVoiceCredentialSourceMutationForSavedSecret(
+              selectedExternalRow.sourceSelection,
+            )
+              ? selectedExternalCredentials.slot.purpose
+              : undefined}
+            credentialSourceDeclaration={selectedExternalDeclaration}
+            recipientContract={selectedExternalCredentialSlot?.id === selectedExternalCredentials.slot.id
+              ? selectedExternalCredentialSlot.recipientContract
+              : null}
+            recipientContractDigest={selectedExternalCredentialSlot?.id === selectedExternalCredentials.slot.id
+              ? selectedExternalCredentialSlot.recipientContractDigest
+              : null}
             disclosePlainStorage={true}
-          />
+          />}
+          {selectedExternalHasSavedSecret || !selectedExternalCredentialAccessIsRaw ? null : (
+            <VoiceRawCredentialAccessReview
+              contribution={selectedExternalContribution}
+              testID={`settings.voice.externalCredential.${encodeURIComponent(selectedExternalRow.providerId)}.rawAccess`}
+            />
+          )}
         </ItemGroup>
       )}
       {!selectedDeclarativeSettings
@@ -434,12 +798,12 @@ export function VoiceProviderSection(props: {
         || !isRecord(selectedDeclarativeConfig)
         || (selectedDeclarativeSettings.fields.length === 0
           && !selectedDeclarativeSettings.connectedServicesBinding
-          && !selectedDeclarativeSettings.privacyDisclosure)
+          && !(showProcessingDisclosure && selectedDeclarativeSettings.privacyDisclosure))
         ? null
         : (
           <ItemGroup
             title={tLoose(selectedDeclarativeSettingsRow.titleKey)}
-            footer={!selectedDeclarativeDisclosureOnly && selectedDeclarativeSettings.privacyDisclosure
+            footer={showProcessingDisclosure && !selectedDeclarativeDisclosureOnly && selectedDeclarativeSettings.privacyDisclosure
               ? localizedText(selectedDeclarativeSettings.privacyDisclosure)
               : undefined}
           >
@@ -478,14 +842,30 @@ export function VoiceProviderSection(props: {
               : null}
             {selectedDeclarativeSettings.fields.map((field) => {
               const control = field.presentation?.control;
-              if (control !== 'select' && control !== 'switch') return null;
+              if (!control || field.presentation?.hidden === true) return null;
+              const schemaType = field.schema.type;
+              const valueType: PluginProjectionEditableSettingField['valueType'] =
+                schemaType === 'boolean'
+                  || schemaType === 'number'
+                  || schemaType === 'integer'
+                  || schemaType === 'object'
+                  || schemaType === 'array'
+                  || schemaType === 'null'
+                  || schemaType === 'string'
+                  ? schemaType
+                  : control === 'switch'
+                    ? 'boolean'
+                    : control === 'number'
+                      ? 'number'
+                      : 'string';
               const projectedField: PluginProjectionEditableSettingField = {
                 key: field.id,
                 control,
-                valueType: control === 'switch' ? 'boolean' : 'string',
+                valueType,
                 valueSchema: field.schema,
                 title: localizedText(field.title),
                 subtitle: field.description ? localizedText(field.description) : null,
+                secretCustody: null,
                 redaction: 'none',
                 clearWhenEmpty: 'persist',
                 defaultValue: field.default,
@@ -494,7 +874,7 @@ export function VoiceProviderSection(props: {
                   : {}),
                 ...(field.presentation ? { presentation: field.presentation } : {}),
               };
-              return control === 'select' ? (
+              if (control === 'select') return (
                 <PluginSettingSelectField
                   key={field.id}
                   pluginId={selectedDeclarativeSettingsSource.pluginId}
@@ -505,7 +885,8 @@ export function VoiceProviderSection(props: {
                   popoverBoundaryRef={props.popoverBoundaryRef}
                   onChangeValue={(value) => writeExternalSetting(field.id, value)}
                 />
-              ) : (
+              );
+              if (control === 'switch') return (
                 <PluginSettingSwitchField
                   key={field.id}
                   pluginId={selectedDeclarativeSettingsSource.pluginId}
@@ -514,6 +895,16 @@ export function VoiceProviderSection(props: {
                   value={selectedDeclarativeConfig[field.id] === true}
                   disabled={false}
                   onChangeValue={(_field, value) => writeExternalSetting(field.id, value)}
+                />
+              );
+              return (
+                <VoiceDeclarativeTextSettingField
+                  key={field.id}
+                  pluginId={selectedDeclarativeSettingsSource.pluginId}
+                  group={declarativeSettingsGroup}
+                  field={projectedField}
+                  value={selectedDeclarativeConfig[field.id]}
+                  onChangeValue={(value) => writeExternalSetting(field.id, value)}
                 />
               );
             })}

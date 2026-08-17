@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -316,12 +317,12 @@ function buildWizardProps(): NewSessionWizardTestProps {
             setFavoriteDirectories: () => {},
         },
         footer: {
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: () => {},
             handleCreateSession: () => {},
             canCreate: true,
             isCreating: false,
-            emptyAutocompletePrefixes: [],
+            emptyAutocompleteKinds: [],
             emptyAutocompleteSuggestions: async () => [],
             agentInputExtraActionChips: [],
             submitAccessibilityLabel: 'Create',

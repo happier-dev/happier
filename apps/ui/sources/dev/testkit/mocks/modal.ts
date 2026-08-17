@@ -18,7 +18,19 @@ export type ModalModuleMockOptions = Readonly<{
 
 export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
     const confirmResult = options.confirmResult ?? false;
-    const showImplementation = options.spies?.show ?? (() => 'modal-id');
+    const showImplementation = options.spies?.show ?? ((config: Parameters<IModal['show']>[0]) => {
+        const candidate = config as Readonly<{
+            chrome?: Readonly<{ testID?: string }>;
+            props?: Readonly<{ onConfirm?(): void; onCancel?(): void }>;
+        }>;
+        if (candidate.chrome?.testID === 'app-shell-transient-interaction-dialog') {
+            queueMicrotask(() => {
+                if (confirmResult) candidate.props?.onConfirm?.();
+                else candidate.props?.onCancel?.();
+            });
+        }
+        return 'modal-id';
+    });
     const hideImplementation = options.spies?.hide ?? (() => {});
     const updateImplementation = options.spies?.update ?? (() => {});
     const hideAllImplementation = options.spies?.hideAll ?? (() => {});

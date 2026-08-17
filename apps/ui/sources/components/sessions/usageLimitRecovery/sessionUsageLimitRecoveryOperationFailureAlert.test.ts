@@ -81,7 +81,7 @@ describe('sessionUsageLimitRecoveryOperationFailureAlert', () => {
         expect(dismiss).toHaveBeenCalledTimes(1);
     });
 
-    it('translates diagnostic body params and falls back when no diagnostic is available', () => {
+    it('keeps raw diagnostic detail out of usage-limit recovery copy and falls back when no diagnostic is available', () => {
         const diagnosticAlert = buildSessionUsageLimitRecoveryOperationFailureAlert({
             result: {
                 ok: false,
@@ -94,7 +94,7 @@ describe('sessionUsageLimitRecoveryOperationFailureAlert', () => {
                     agentId: 'codex',
                     retryable: false,
                     suggestedActions: [CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.openConnectedAccounts],
-                    diagnostics: { reason: 'missing_resume_target' },
+                    diagnostics: { reason: '/private/runner?token=never-render-this' },
                 },
             },
             fallbackMessage: 'fallback',
@@ -106,7 +106,7 @@ describe('sessionUsageLimitRecoveryOperationFailureAlert', () => {
         });
 
         expect(diagnosticAlert.body).toBe(
-            'connectedServices.diagnostics.body.resume_reachability_inputs_missing:{"reason":"missing_resume_target","agentId":"codex"}',
+            'connectedServices.diagnostics.body.resume_reachability_inputs_missing',
         );
 
         const fallbackAlert = buildSessionUsageLimitRecoveryOperationFailureAlert({

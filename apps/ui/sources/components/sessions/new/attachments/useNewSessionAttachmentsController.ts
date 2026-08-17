@@ -4,8 +4,24 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createReviewCommentsActionChip } from '@/components/sessions/agentInput/definitions/createReviewCommentsActionChip';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type {
+    AgentInputAttachmentsRowItem,
+    AgentInputExtraActionChip,
+    AgentInputExtraActionPresentation,
+} from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputSendOptions } from '@/components/sessions/agentInput/agentInputSendOptions';
+import {
+    buildStructuredInputMetaOverrides,
+    mergeMessageMetaOverrides,
+} from '@/components/sessions/agentInput/structuredInputMentions';
+import {
+    composerAttachmentViewToDraft,
+    composerStructuredMentionsFromReferences,
+} from '@/components/sessions/composer/composerScopeAdapters';
+import {
+    submitComposerSnapshot,
+    type ComposerSubmissionSnapshot,
+} from '@/components/sessions/composer/composerSubmissionCoordinator';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { attachRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
@@ -26,6 +42,7 @@ import {
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
     clearNewSessionAttachmentDrafts,
@@ -33,15 +50,44 @@ import {
     writeNewSessionAttachmentDrafts,
 } from './newSessionAttachmentDraftStore';
 import { resolveNewSessionReviewCommentsScope } from './resolveNewSessionReviewCommentsScope';
+import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
+import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 type NewSessionAgentInputSendOptions = AgentInputSendOptions;
 
 type HandleCreateSession = (opts?: HandleCreateSessionOptions) => void;
 
+function buildDetachedComposerSnapshotMetaOverrides(input: Readonly<{
+    snapshot: ComposerSubmissionSnapshot;
+    options?: Record<string, unknown>;
+}>): Record<string, unknown> | undefined {
+    const snapshotMetaOverrides = buildStructuredInputMetaOverrides({
+        mentions: composerStructuredMentionsFromReferences({
+            references: input.snapshot.references,
+            existing: [],
+        }),
+        text: input.snapshot.text,
+        ...(input.snapshot.attachments.length > 0
+            ? { composerAttachments: input.snapshot.attachments.map(composerAttachmentViewToDraft) }
+            : {}),
+    });
+    const {
+        // A mounted Composer document is the only authority for generic
+        // references and attachments. Retaining this live envelope would
+        // duplicate or stale the exact detached submission snapshot.
+        happierStructuredInputV1: _liveComposerSemanticMeta,
+        ...preservedOptionMetaOverrides
+    } = input.options ?? {};
+    return mergeMessageMetaOverrides(
+        Object.keys(preservedOptionMetaOverrides).length > 0 ? preservedOptionMetaOverrides : undefined,
+        Object.keys(snapshotMetaOverrides).length > 0 ? snapshotMetaOverrides : undefined,
+    );
+}
+
 export function useNewSessionAttachmentsController(params: Readonly<{
     flowId?: string | null;
     isCreating: boolean;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     handleCreateSession: HandleCreateSession;
     selectedProfileId: string | null;
     targetServerId?: string | null;
@@ -49,6 +95,14 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     selectedMachineHomeDir?: string | null;
     selectedPath?: string | null;
     baseActionChips?: readonly AgentInputExtraActionChip[];
+    /**
+     * The removable "continue from this Session" chip, when this draft was
+     * seeded from another Session. Both halves arrive together so the composer
+     * chip and its attachment row never drift apart.
+     */
+    sourceContextPresentation?: AgentInputExtraActionPresentation | null;
+    /** The canonical New Session semantic document and exact-snapshot clear owner. */
+    composerDocument?: NewSessionComposerDocument;
 }>): Readonly<{
     attachmentsUploadsEnabled: boolean;
     filePickerRef: ReturnType<typeof useAttachmentDraftManager>['filePickerRef'];
@@ -57,7 +111,8 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     agentInputAttachments: ReturnType<typeof useAttachmentDraftManager>['agentInputAttachments'];
     addWebFiles: ReturnType<typeof useAttachmentDraftManager>['addWebFiles'];
     addPickedAttachments: ReturnType<typeof useAttachmentDraftManager>['addPickedAttachments'];
-    extraActionChips: readonly AgentInputExtraActionChip[];
+    actionChips: readonly AgentInputExtraActionChip[];
+    attachmentRowItems: readonly AgentInputAttachmentsRowItem[];
     handleSend: (options?: NewSessionAgentInputSendOptions) => void;
 }> {
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
@@ -158,8 +213,9 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         })();
     }, [addPickedAttachments]);
 
-    const extraActionChips = React.useMemo(() => {
+    const actionPresentation = React.useMemo(() => {
         const chips: AgentInputExtraActionChip[] = [];
+        const attachmentRowItems: AgentInputAttachmentsRowItem[] = [];
 
         if (attachmentsUploadsEnabled) {
             chips.push(createAttachmentActionChip({
@@ -171,7 +227,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         }
 
         if (hasDiscoverableReviewCommentDrafts) {
-            const reviewCommentsChip = createReviewCommentsActionChip({
+            const reviewCommentsPresentation = createReviewCommentsActionChip({
                 reviewScope: discoverableReviewCommentsScope,
                 reviewCommentDrafts: discoverableReviewCommentDrafts,
                 onSetDraftIncluded: setReviewCommentDraftIncluded,
@@ -179,18 +235,33 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                 onDeleteDraft: deleteReviewCommentDraft,
                 onClearDrafts: discardReviewCommentDrafts,
             });
-            if (reviewCommentsChip) {
-                chips.push(reviewCommentsChip);
+            if (reviewCommentsPresentation) {
+                chips.push(reviewCommentsPresentation.actionChip);
+                if (reviewCommentsPresentation.attachmentRowItem) {
+                    attachmentRowItems.push(reviewCommentsPresentation.attachmentRowItem);
+                }
             }
         }
 
-        return [...chips, ...(params.baseActionChips ?? [])] as const;
+        const sourceContextPresentation = params.sourceContextPresentation ?? null;
+        if (sourceContextPresentation) {
+            chips.push(sourceContextPresentation.actionChip);
+            if (sourceContextPresentation.attachmentRowItem) {
+                attachmentRowItems.push(sourceContextPresentation.attachmentRowItem);
+            }
+        }
+
+        return {
+            actionChips: [...chips, ...(params.baseActionChips ?? [])],
+            attachmentRowItems,
+        };
     }, [
         attachmentsUploadsEnabled,
         discoverableReviewCommentDrafts,
         filePickerRef,
         hasDiscoverableReviewCommentDrafts,
         params.baseActionChips,
+        params.sourceContextPresentation,
         params.isCreating,
         pasteAttachmentImage,
         setReviewCommentDraftIncluded,
@@ -200,7 +271,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     ]);
 
     const handleSend = React.useCallback((options?: NewSessionAgentInputSendOptions) => {
-        const promptText = options?.inputTextOverride ?? String(params.sessionPrompt ?? '');
+        const promptText = options?.inputTextOverride ?? params.promptStore.getPrompt();
         const submit = (opts?: HandleCreateSessionOptions) => {
             blurActiveElementOnWeb();
             deferOnWeb(() => {
@@ -210,84 +281,170 @@ export function useNewSessionAttachmentsController(params: Readonly<{
 
         const draftSnapshot = getDraftsSnapshot();
         const hasAttachments = attachmentsUploadsEnabled && draftSnapshot.length > 0;
-        if (!hasAttachments && !hasReviewCommentDrafts) {
+        const submitAfterCreated = (input: Readonly<{
+            initialPrompt: string;
+            structuredInputMetaOverrides?: Record<string, unknown>;
+            onAfterCreatedSettled?: HandleCreateSessionOptions['onAfterCreatedSettled'];
+            deferAcceptedDraftClearToDocument?: boolean;
+            hasComposerAttachments?: boolean;
+        }>) => {
+            submit({
+                initialMessage: 'skip',
+                ...(input.onAfterCreatedSettled
+                    ? { onAfterCreatedSettled: input.onAfterCreatedSettled }
+                    : {}),
+                ...(input.deferAcceptedDraftClearToDocument
+                    ? { deferAcceptedDraftClearToDocument: true }
+                    : {}),
+                ...(input.hasComposerAttachments
+                    ? { hasComposerAttachments: true }
+                    : {}),
+                afterCreated: async ({ sessionId, effectiveSpawnServerId, launchAttempt }) => {
+                    const attachmentMessageLocalId = launchAttempt.attachmentMessageLocalId;
+                    // A coordinator-submitted first turn has no upload/review
+                    // envelope to supply a message id. Reuse the launch
+                    // attempt's incumbent first-turn identity so a post-create
+                    // retry cannot invent a second Message.
+                    const messageLocalId = input.deferAcceptedDraftClearToDocument && !hasAttachments && !hasReviewCommentDrafts
+                        ? launchAttempt.firstTurnLocalId
+                        : (hasAttachments || hasReviewCommentDrafts ? attachmentMessageLocalId : undefined);
+                    const trimmed = input.initialPrompt.trim();
+                    let attachmentsBlock = '';
+                    let attachmentsMetaOverrides: Record<string, unknown> | undefined;
+
+                    if (hasAttachments) {
+                        const { uploaded } = await uploadAttachmentDraftsToSession({
+                            sessionId,
+                            drafts: draftSnapshot,
+                            config: attachmentsUploadConfig,
+                            applyDraftPatch,
+                            messageLocalId: attachmentMessageLocalId,
+                        });
+                        attachmentsBlock = formatAttachmentsBlock(uploaded);
+                        attachmentsMetaOverrides = buildAttachmentMessageMeta(uploaded);
+                    }
+
+                    const resolvedReviewCommentDrafts = hasReviewCommentDrafts
+                        ? await resolveReviewCommentDraftAnchorsForPrompt({
+                            drafts: includedReviewCommentDrafts,
+                            reviewScope: discoverableReviewCommentsScope,
+                        })
+                        : [];
+
+                    const outbound = hasReviewCommentDrafts
+                        ? buildReviewCommentsOutboundMessage({
+                            sessionId,
+                            drafts: resolvedReviewCommentDrafts,
+                            additionalMessage: attachmentsBlock
+                                ? (trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock)
+                                : trimmed,
+                            displayTextSuffix: attachmentsBlock || null,
+                            metaOverrides: mergeMessageMetaOverrides(
+                                attachmentsMetaOverrides,
+                                input.structuredInputMetaOverrides,
+                            ),
+                        })
+                        : {
+                            text: attachmentsBlock
+                                ? (trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock)
+                                : trimmed,
+                            displayText: trimmed || undefined,
+                            metaOverrides: mergeMessageMetaOverrides(
+                                attachmentsMetaOverrides,
+                                input.structuredInputMetaOverrides,
+                            ),
+                        };
+
+                    try {
+                        await followUpSpawnedSessionWithServerScope({
+                            sessionId,
+                            targetServerId: effectiveSpawnServerId ?? params.targetServerId,
+                            initialMessageText: outbound.text,
+                            displayText: outbound.displayText,
+                            profileId: params.selectedProfileId,
+                            metaOverrides: outbound.metaOverrides,
+                            ...(messageLocalId
+                                ? { messageLocalId }
+                                : {}),
+                        });
+                        if (hasAttachments) {
+                            clearDraftsForFlow();
+                        }
+                        if (hasReviewCommentDrafts) {
+                            clearReviewCommentsForFlow();
+                        }
+                    } catch (error) {
+                        if (!hasAttachments) {
+                            throw error;
+                        }
+                        throw attachRecoverableAttachmentDrafts(error, {
+                            draftText: outbound.text,
+                            displayText: outbound.displayText,
+                            profileId: params.selectedProfileId,
+                            metaOverrides: outbound.metaOverrides,
+                            attachmentDrafts: draftSnapshot,
+                        });
+                    }
+                },
+            });
+        };
+
+        const composerDocument = params.composerDocument;
+        if (composerDocument) {
+            const composerSnapshot = composerDocument.captureSubmissionSnapshot(options?.inputTextOverride);
+            if (!composerSnapshot || composerSnapshot.ref.kind !== 'newSession') {
+                // A mounted Composer document is the submission snapshot owner.
+                // Do not fall back to the legacy create path when its exact
+                // document has already become unavailable.
+                return;
+            }
+            fireAndForget(submitComposerSnapshot({
+                snapshot: composerSnapshot,
+                route: {
+                    kind: 'newSession',
+                    ref: composerSnapshot.ref,
+                    readCurrentExecutionTarget: () => composerDocument.readCurrentExecutionTarget?.() ?? null,
+                    admit: (submittedSnapshot) => new Promise((resolve) => {
+                        submitAfterCreated({
+                            initialPrompt: submittedSnapshot.text,
+                            structuredInputMetaOverrides: buildDetachedComposerSnapshotMetaOverrides({
+                                snapshot: submittedSnapshot,
+                                options: options?.structuredInputMetaOverrides,
+                            }),
+                            deferAcceptedDraftClearToDocument: true,
+                            hasComposerAttachments: submittedSnapshot.attachments.length > 0,
+                            onAfterCreatedSettled: (settlement) => {
+                                resolve(settlement.status === 'accepted'
+                                    ? { status: 'accepted' }
+                                    : { status: 'rejected' });
+                            },
+                        });
+                    }),
+                },
+                clearAcceptedSnapshot: composerDocument.clearAcceptedSnapshot,
+            }).then((result) => {
+                if (
+                    result.status === 'blocked'
+                    && (result.reason === 'attachmentUnavailable' || result.reason === 'mediaContentUnavailable')
+                ) {
+                    Modal.alert(t('common.error'), t('common.unavailable'));
+                }
+            }), { tag: 'NewSessionAttachmentsController.submitComposerSnapshot' });
+            return;
+        }
+
+        const structuredInputMetaOverrides = options?.structuredInputMetaOverrides;
+        const hasStructuredInputMetaOverrides = Boolean(
+            structuredInputMetaOverrides && Object.keys(structuredInputMetaOverrides).length > 0,
+        );
+        if (!hasAttachments && !hasReviewCommentDrafts && !hasStructuredInputMetaOverrides) {
             submit(options?.inputTextOverride ? { inputTextOverride: options.inputTextOverride } : undefined);
             return;
         }
 
-        const initialPrompt = promptText;
-        submit({
-            initialMessage: 'skip',
-            afterCreated: async ({ sessionId, effectiveSpawnServerId, launchAttempt }) => {
-                const attachmentMessageLocalId = launchAttempt.attachmentMessageLocalId;
-                const trimmed = initialPrompt.trim();
-                let attachmentsBlock = '';
-                let attachmentsMetaOverrides: Record<string, unknown> | undefined;
-
-                if (hasAttachments) {
-                    const { uploaded } = await uploadAttachmentDraftsToSession({
-                        sessionId,
-                        drafts: draftSnapshot,
-                        config: attachmentsUploadConfig,
-                        applyDraftPatch,
-                        messageLocalId: attachmentMessageLocalId,
-                    });
-                    attachmentsBlock = formatAttachmentsBlock(uploaded);
-                    attachmentsMetaOverrides = buildAttachmentMessageMeta(uploaded);
-                }
-
-                const resolvedReviewCommentDrafts = hasReviewCommentDrafts
-                    ? await resolveReviewCommentDraftAnchorsForPrompt({
-                        drafts: includedReviewCommentDrafts,
-                        reviewScope: discoverableReviewCommentsScope,
-                    })
-                    : [];
-
-                const outbound = hasReviewCommentDrafts
-                    ? buildReviewCommentsOutboundMessage({
-                        sessionId,
-                        drafts: resolvedReviewCommentDrafts,
-                        additionalMessage: attachmentsBlock
-                            ? (trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock)
-                            : trimmed,
-                        displayTextSuffix: attachmentsBlock || null,
-                        metaOverrides: attachmentsMetaOverrides,
-                    })
-                    : {
-                        text: trimmed.length > 0 ? `${trimmed}\n\n${attachmentsBlock}` : attachmentsBlock,
-                        displayText: trimmed || undefined,
-                        metaOverrides: attachmentsMetaOverrides,
-                    };
-
-                try {
-                    await followUpSpawnedSessionWithServerScope({
-                        sessionId,
-                        targetServerId: effectiveSpawnServerId ?? params.targetServerId,
-                        initialMessageText: outbound.text,
-                        displayText: outbound.displayText,
-                        profileId: params.selectedProfileId,
-                        metaOverrides: outbound.metaOverrides,
-                        messageLocalId: attachmentMessageLocalId,
-                    });
-                    if (hasAttachments) {
-                        clearDraftsForFlow();
-                    }
-                    if (hasReviewCommentDrafts) {
-                        clearReviewCommentsForFlow();
-                    }
-                } catch (error) {
-                    if (!hasAttachments) {
-                        throw error;
-                    }
-                    throw attachRecoverableAttachmentDrafts(error, {
-                        draftText: outbound.text,
-                        displayText: outbound.displayText,
-                        profileId: params.selectedProfileId,
-                        metaOverrides: outbound.metaOverrides,
-                        attachmentDrafts: draftSnapshot,
-                    });
-                }
-            },
+        submitAfterCreated({
+            initialPrompt: promptText,
+            structuredInputMetaOverrides,
         });
     }, [
         applyDraftPatch,
@@ -299,9 +456,11 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         getDraftsSnapshot,
         hasReviewCommentDrafts,
         includedReviewCommentDrafts,
+        params.composerDocument,
         params.handleCreateSession,
         params.selectedProfileId,
-        params.sessionPrompt,
+        params.promptStore,
+        params.selectedMachineId,
         params.targetServerId,
     ]);
 
@@ -313,7 +472,8 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         agentInputAttachments,
         addWebFiles,
         addPickedAttachments,
-        extraActionChips,
+        actionChips: actionPresentation.actionChips,
+        attachmentRowItems: actionPresentation.attachmentRowItems,
         handleSend,
     };
 }

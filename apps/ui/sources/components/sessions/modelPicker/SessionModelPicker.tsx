@@ -135,6 +135,8 @@ export function SessionModelPicker(props: Readonly<{
     autoFocusInputOnWeb?: boolean;
     onRequestClose?: () => void;
     favoriteActionVisibility?: 'selected-or-favorite' | 'all';
+    /** Forwarded verbatim; the hosting surface decides, this adapter never does. */
+    multiColumn?: boolean;
     onSelect: (ref: SessionModelPickerValue) => void;
 }>) {
     const canConfirmExperimental = Boolean(props.experimentalConfirmation);
@@ -287,6 +289,7 @@ export function SessionModelPicker(props: Readonly<{
             autoFocusInputOnWeb={props.autoFocusInputOnWeb}
             onRequestClose={props.onRequestClose}
             favoriteActionVisibility={props.favoriteActionVisibility}
+            multiColumn={props.multiColumn}
             title={t('agentInput.model.title')}
             effectiveLabel={props.effectiveLabel}
             notes={notes}
@@ -309,12 +312,23 @@ export function SessionModelPicker(props: Readonly<{
             } : { canEnterCustomValue: false as const })}
             favoriteOptions={favoriteOptions}
             probe={props.probe}
+            // A provider-connection model has no ACP config options, so the
+            // CONTROL SET is withdrawn for it. That suppression lives here, on
+            // the data, because "which options does this model expose" is a
+            // fact about the selection.
+            //
+            // The HANDLER is not withdrawn with it. It states that this surface
+            // is WIRED for inline row controls, which is a fact about the
+            // surface and never about the current selection — and it is what
+            // `OptionPickerOverlay` declares the popup's ARIA pattern from. A
+            // handler that appeared and disappeared with the selection made
+            // that declaration selection-derived, so picking a provider-
+            // connection model flipped a live popup from `grid` to `listbox`.
+            // With no controls to render, the handler is simply never called.
             selectedOptionControls={props.selected?.providerConnectionId
                 ? undefined
                 : props.selectedOptionControls}
-            onSelectOptionControlValue={props.selected?.providerConnectionId
-                ? undefined
-                : props.onSelectOptionControlValue}
+            onSelectOptionControlValue={props.onSelectOptionControlValue}
             summary={reportedModelPresentation.label
                 || currentSelectionRecovery
                 || props.projectionError

@@ -4,7 +4,7 @@ import { DropdownMenu, type DropdownMenuItem, type DropdownMenuProps } from '@/c
 
 export type ContextMenuItem = DropdownMenuItem;
 
-export type ContextMenuProps = Omit<DropdownMenuProps, 'trigger' | 'itemTrigger' | 'popoverAnchorRef'> & Readonly<{
+export type ContextMenuProps = Omit<DropdownMenuProps, 'trigger' | 'itemTrigger' | 'popoverAnchorRef' | 'popoverAnchor'> & Readonly<{
     anchorRef: React.RefObject<unknown>;
 }>;
 

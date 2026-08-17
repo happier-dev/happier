@@ -4,6 +4,7 @@ import {
     buildVoiceTranscriptHistorySessionMetadata,
     isVoiceTranscriptHistorySession,
     resolveDirectMediaTranscriptSession,
+    runVoiceTranscriptHistoryCarrierOperation,
     VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
 } from './voiceTranscriptHistorySession';
 
@@ -56,5 +57,15 @@ describe('voice transcript history session', () => {
 
         expect(ensureTargetSession).not.toHaveBeenCalled();
         expect(ensureHistorySession).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases same-device carrier serialization after an operation rejects', async () => {
+        await expect(runVoiceTranscriptHistoryCarrierOperation(async () => {
+            throw new Error('delete failed');
+        })).rejects.toThrow('delete failed');
+
+        await expect(runVoiceTranscriptHistoryCarrierOperation(async () => (
+            'later acquisition'
+        ))).resolves.toBe('later acquisition');
     });
 });

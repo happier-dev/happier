@@ -1,15 +1,16 @@
 import * as React from 'react';
+import { VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
 import { View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { TactilePressable } from '../ConceptControls';
-import { PlanetOrb, VoiceWaveform } from '../VoiceLight';
-import { TranscriptStream } from '../TranscriptStream';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
-import { VOICE_MOTION, light, onPlanetInk, useVoiceLabTokens } from '../voiceLabTokens';
+import { TactilePressable } from '@/components/voice/controls/VoiceControls';
+import { PlanetOrb, VoiceWaveform } from '@/components/voice/light/VoiceLight';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
+import { VOICE_MOTION, light, onPlanetInk, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 const EASE = Easing.bezier(...(VOICE_MOTION.local.bezier as [number, number, number, number]));
@@ -55,8 +56,8 @@ const ACTION = 32;
  * folds into the Voice control as a long-press. That is a product call.
  */
 export function ComposerConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const { state } = props;
     const dormant = state.id === 'ready' || state.id === 'unavailable';
     const live = !dormant && state.id !== 'error' && state.id !== 'ended';
@@ -88,7 +89,7 @@ export function ComposerConcept(props: VoiceConceptProps) {
     return (
         <View style={{ flex: 1, alignSelf: 'stretch' }}>
             <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 8 }}>
-                <TranscriptStream />
+                <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} />
             </View>
 
             <View style={{ paddingHorizontal: 12, paddingBottom: 12, paddingTop: 6 }}>
@@ -198,7 +199,10 @@ export function ComposerConcept(props: VoiceConceptProps) {
                                 justifyContent: 'center',
                                 borderWidth: live ? 0 : 1,
                                 borderColor: tokens.rule,
-                                overflow: 'hidden',
+                                // Deliberately unclipped: the planet fills this slot, so
+                                // `overflow: hidden` would eat every inhale and the body
+                                // would read as static. The row's gap absorbs the ~2pt
+                                // overshoot.
                             }}
                         >
                             {live ? (
@@ -279,7 +283,7 @@ export function ComposerConcept(props: VoiceConceptProps) {
                             }}
                         />
                         <Text numberOfLines={1} style={{ ...Typography.default(), fontSize: 11, color: tokens.inkFaint }}>
-                            {props.provider.id === 'realtime_codex'
+                            {props.provider.id === 'happier.agent.codex/realtime-codex'
                                 ? 'Speaking directly into this session'
                                 : 'Global voice · bound to this session'}
                         </Text>
@@ -316,7 +320,6 @@ const MiniWave = React.memo(function MiniWave(props: Readonly<{ color: string }>
         </View>
     );
 });
-
 /** The submit arrow, so send reads as send and nothing else. */
 const Arrow = React.memo(function Arrow(props: Readonly<{ color: string }>) {
     return (
@@ -333,26 +336,6 @@ const Arrow = React.memo(function Arrow(props: Readonly<{ color: string }>) {
                     borderColor: props.color,
                     borderTopLeftRadius: 2,
                     transform: [{ rotate: '45deg' }],
-                }}
-            />
-        </View>
-    );
-});
-
-const MicMark = React.memo(function MicMark(props: Readonly<{ color: string }>) {
-    return (
-        <View style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 6, height: 9, borderRadius: 3, backgroundColor: props.color, marginTop: -2 }} />
-            <View
-                style={{
-                    width: 10,
-                    height: 5,
-                    borderBottomLeftRadius: 6,
-                    borderBottomRightRadius: 6,
-                    borderWidth: 1.4,
-                    borderTopWidth: 0,
-                    borderColor: props.color,
-                    marginTop: 1,
                 }}
             />
         </View>

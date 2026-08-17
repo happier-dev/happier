@@ -113,6 +113,8 @@ vi.mock('@react-navigation/native', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
+    useLayoutMaxWidth: () => 960,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
 }));
 
 vi.mock('@/components/ui/markdown/editor/MarkdownCodeEditorField', () => ({

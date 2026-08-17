@@ -130,6 +130,7 @@ describe('review comments panel components', () => {
                     pluginName: 'CodeRabbit',
                     capability: 'reviews.comments.write.direct',
                     targetScope: { kind: 'workspace', workspaceId: 'workspace-1' },
+                    subject: { kind: 'general' },
                     requester: { kind: 'plugin', pluginId: 'review-coderabbit', sessionId: 'session-1' },
                     authoritySource: { kind: 'bundled' },
                     reason: 'Write approved comments.',

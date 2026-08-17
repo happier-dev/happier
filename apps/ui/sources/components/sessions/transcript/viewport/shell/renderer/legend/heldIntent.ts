@@ -55,6 +55,22 @@ export type LegendHeldScrollIntent =
         kind: 'anchor';
     }>;
 
+/**
+ * A PLACEMENT hold (jump landing, `restore-anchor`, entry restore) names where a row must
+ * sit and may write an absolute target. Every web anchor hold is one: web stabilization —
+ * keeping a parked reader still while content above them changes — is Legend's
+ * `maintainVisibleContentPosition`, not this transaction's.
+ *
+ * The one keyed hold that is NOT a placement is the NATIVE visible-row capture
+ * (`armVisibleAnchorHold`), which arms an index hold with no entry anchor; the web
+ * `scrollToIndex` jump BOOTSTRAP arms the same shape and is likewise not a landing.
+ */
+export function isPlacementHeldIntent(intent: LegendHeldScrollIntent | null): boolean {
+    if (intent == null || intent.kind === 'end') return false;
+    if (intent.kind === 'index') return intent.entryAnchor != null;
+    return true;
+}
+
 export type LegendHeldIntentLanding = Readonly<{
     basis: 'legend-state' | 'native-physical' | 'web-dom';
     currentOffset: number;

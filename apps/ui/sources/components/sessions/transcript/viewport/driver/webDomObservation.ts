@@ -210,6 +210,13 @@ export function createWebDomScrollObservation(params?: Readonly<{
                 // of an in-progress wheel scroll unclassified, bottom-follow unreleased, and the
                 // auto-pin free to snap them back to the tail. A command/geometry boundary still
                 // revokes everything through `invalidateUserMovementAuthority`.
+                //
+                // ONE RULE FOR ALL SEVEN PROGRAMMATIC WRITERS: a write RELOCATES the reader
+                // (jump, restore, entry placement, resize re-pin, gap nudge), so with their raw
+                // input already stale it revokes a stale movement chain. The one writer that
+                // used to be excluded was the stabilization corrector re-asserting a target the
+                // reader's own hold already owned; that writer no longer exists — Legend's
+                // `maintainVisibleContentPosition` keeps a parked reader still.
                 streak = null;
                 if (!userScrollIntent.isLive(Date.now())) {
                     invalidateUserMovementAuthority();

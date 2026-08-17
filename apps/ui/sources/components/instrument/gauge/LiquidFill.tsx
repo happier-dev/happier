@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { AppState } from 'react-native';
 import { Canvas, Fill, Shader, Skia } from '@shopify/react-native-skia';
 import {
     useDerivedValue,
@@ -7,6 +6,8 @@ import {
     useSharedValue,
     type SharedValue,
 } from 'react-native-reanimated';
+
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import { resolveUsageTone } from './gaugeMath';
 
@@ -115,15 +116,13 @@ export const LiquidFill = React.memo(function LiquidFill(props: LiquidFillProps)
     const { size, isStreaming } = props;
     const radius = size / 2;
 
-    const [appActive, setAppActive] = React.useState(AppState.currentState !== 'background');
-    React.useEffect(() => {
-        const subscription = AppState.addEventListener('change', (state) => {
-            setAppActive(state === 'active');
-        });
-        return () => subscription.remove();
-    }, []);
+    // One host watch for the whole app, not one subscription per gauge — and it
+    // treats `inactive` as not viewed, which a private `!== 'background'` sample
+    // did not: a gauge mounted behind Control Centre used to start a shader
+    // nobody could see.
+    const hostViewed = useHostActivelyViewed();
 
-    const running = isStreaming && appActive;
+    const running = isStreaming && hostViewed;
     const timeSeconds = useSharedValue(0);
     const frame = useFrameCallback((info) => {
         timeSeconds.value += (info.timeSincePreviousFrame ?? 0) / 1000;

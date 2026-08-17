@@ -44,24 +44,19 @@ function createRecoveryProgress(
 
 describe('resolveSessionViewExternalControlFooter', () => {
     it.each([
-        ['working', 'status.workingExternally', 'live', 'working'],
-        ['waiting', 'status.needsInputExternally', 'attention', 'action'],
-        ['idle', 'status.ready', 'ready', 'ready'],
-        ['unknown', 'status.externalStatusUnknown', 'muted', 'none'],
+        ['working', 'status.workingExternally'],
+        ['waiting', 'status.needsInputExternally'],
+        ['idle', 'status.ready'],
+        ['unknown', 'status.externalStatusUnknown'],
     ] as const)(
         'uses pushed %s presentation and canonical Agent/machine identity for descriptive status',
-        (state, labelKey, tone, indicator) => {
+        (state, labelKey) => {
             const footer = resolveFooter({
                 externalSessionLink: { machineId: 'machine-1' },
                 externalSessionRuntimePresentation: {
-                    controlConnectivity: 'offline',
-                    detachedActivity: 'unknown',
                     externalAgent: {
                         state,
                         labelKey,
-                        tone,
-                        indicator,
-                        nextExpiryAtMs: null,
                     },
                 },
                 externalSessionIdentity: {
@@ -72,7 +67,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 externalSessionTakeover: {
                     takeoverInFlight: null,
                     takeoverPreflightInFlight: false,
-                    requestTakeover: vi.fn(),
                     requestTakeoverPreflight: vi.fn(),
                 },
                 isHiddenSystemSessionSession: false,
@@ -103,7 +97,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: vi.fn(),
             },
             externalSessionMaterialize: {
@@ -129,7 +122,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: vi.fn(),
             },
             externalSessionMaterialize: {
@@ -154,7 +146,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: vi.fn(),
             },
             externalSessionMaterialize: {
@@ -196,7 +187,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 externalSessionTakeover: {
                     takeoverInFlight: null,
                     takeoverPreflightInFlight: false,
-                    requestTakeover: vi.fn(),
                     requestTakeoverPreflight,
                 },
                 externalSessionMaterialize: {
@@ -236,7 +226,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: vi.fn(),
             },
             isHiddenSystemSessionSession: false,
@@ -262,7 +251,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: vi.fn(),
             },
             isHiddenSystemSessionSession: false,
@@ -283,7 +271,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight,
             },
             isHiddenSystemSessionSession: false,
@@ -322,7 +309,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: firstRequestTakeoverPreflight,
             },
             isHiddenSystemSessionSession: false,
@@ -344,7 +330,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: secondRequestTakeoverPreflight,
             },
             isHiddenSystemSessionSession: false,
@@ -374,7 +359,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight,
             },
             isHiddenSystemSessionSession: false,
@@ -407,7 +391,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: firstRequestTakeoverPreflight,
             },
             isHiddenSystemSessionSession: false,
@@ -429,7 +412,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: secondRequestTakeoverPreflight,
             },
             isHiddenSystemSessionSession: false,
@@ -460,7 +442,6 @@ describe('resolveSessionViewExternalControlFooter', () => {
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
-                requestTakeover: vi.fn(),
                 requestTakeoverPreflight: vi.fn(),
             },
             isHiddenSystemSessionSession: false,

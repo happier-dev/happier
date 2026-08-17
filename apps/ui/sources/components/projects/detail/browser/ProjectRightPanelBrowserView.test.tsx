@@ -9,6 +9,9 @@ import {
 } from '@/components/appShell/panes/details/workspace/detailsWorkspaceReducer';
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 import { createBrowserViewDetailsTab } from '@/components/browser/surfaces/browserSurfaceDetailsTabModel';
+import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { EMPTY_PLUGIN_BROWSER_PROJECTION } from '@/sync/domains/plugins/browser/targets';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
@@ -21,6 +24,18 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 
 vi.mock('@/components/projects/detail/useWorkspaceRefById', () => ({
     useWorkspaceRefById: () => ({ machineId: 'machine_1', serverId: 'server_1' }),
+}));
+
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
+    useScopedPluginUiProjection: () => ({
+        pluginUiProjection: null,
+        pluginBrowserProjection: null,
+        phase: 'unavailable',
+        interactionEnabled: false,
+        machineId: null,
+        serverId: null,
+        platform: 'ios',
+    }),
 }));
 
 const paneStub = vi.hoisted(() => ({ current: null as AppPaneScopeApi | null }));
@@ -43,6 +58,16 @@ const target = {
     machineId: 'machine_1',
     display: { title: 'Preview' },
 } as const;
+
+const currentPluginProjection = {
+    pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 19 },
+    pluginBrowserProjection: { ...EMPTY_PLUGIN_BROWSER_PROJECTION, generation: 19 },
+    phase: 'current',
+    interactionEnabled: true,
+    machineId: 'machine-projection',
+    serverId: 'server-projection',
+    platform: 'ios',
+} satisfies PluginUiProjectionCurrentness;
 
 function basePane(): AppPaneScopeApi {
     return {
@@ -87,5 +112,64 @@ describe('ProjectRightPanelBrowserView (scoped workspace)', () => {
         );
 
         expect(screen.root.findAllByType('BrowserSurfaceHostMock').length).toBeGreaterThan(0);
+    });
+
+    it('threads an admitted projection through the project Browser host without inventing a Session id', async () => {
+        const tab = createBrowserViewDetailsTab({ target, scope: 'mobile' });
+        const details = applyOpenDetailsTab(createEmptyPaneDetailsState(), { tab, openAs: 'pinned' });
+        paneStub.current = {
+            ...basePane(),
+            scopeState: { details: buildDetailsWorkspaceStateView(details) },
+        } as AppPaneScopeApi;
+        const { ProjectRightPanelBrowserView } = await import('./ProjectRightPanelBrowserView');
+        const ScreenWithProjection = ProjectRightPanelBrowserView as unknown as React.ComponentType<
+            React.ComponentProps<typeof ProjectRightPanelBrowserView> & Readonly<{
+                pluginProjection: PluginUiProjectionCurrentness;
+            }>
+        >;
+
+        const screen = await renderScreen(
+            <ScreenWithProjection
+                workspaceRefId="workspace_1"
+                scopeId="project:workspace_1:mobile-browser"
+                pluginProjection={currentPluginProjection}
+            />,
+        );
+
+        const host = screen.root.findAllByType('BrowserSurfaceHostMock')[0];
+        expect(host?.props.pluginUiProjection).toBe(currentPluginProjection.pluginUiProjection);
+        expect(host?.props.pluginUiInteractionEnabled).toBe(true);
+        expect(host?.props.pluginBrowserProjection).toBe(currentPluginProjection.pluginBrowserProjection);
+        expect(host?.props.pluginBrowserActionContext).toEqual({
+            machineId: 'machine-projection',
+            serverId: 'server-projection',
+            sessionId: null,
+        });
+    });
+
+    it('keeps a retained project Browser projection visible but noninteractive despite a stale boolean', async () => {
+        const tab = createBrowserViewDetailsTab({ target, scope: 'mobile' });
+        const details = applyOpenDetailsTab(createEmptyPaneDetailsState(), { tab, openAs: 'pinned' });
+        paneStub.current = {
+            ...basePane(),
+            scopeState: { details: buildDetailsWorkspaceStateView(details) },
+        } as AppPaneScopeApi;
+        const { ProjectRightPanelBrowserView } = await import('./ProjectRightPanelBrowserView');
+        const ScreenWithProjection = ProjectRightPanelBrowserView as unknown as React.ComponentType<
+            React.ComponentProps<typeof ProjectRightPanelBrowserView> & Readonly<{
+                pluginProjection: PluginUiProjectionCurrentness;
+            }>
+        >;
+
+        const screen = await renderScreen(
+            <ScreenWithProjection
+                workspaceRefId="workspace_1"
+                scopeId="project:workspace_1:mobile-browser"
+                pluginProjection={{ ...currentPluginProjection, phase: 'retainedOffline' }}
+            />,
+        );
+
+        expect(screen.root.findAllByType('BrowserSurfaceHostMock')[0]?.props
+            .pluginUiInteractionEnabled).toBe(false);
     });
 });

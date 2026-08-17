@@ -74,7 +74,12 @@ describe('estimateTranscriptRowHeightFromCache', () => {
         expect(estimateTranscriptRowHeightFromCache({ reconciler, signature: pending })).toBe(214);
     });
 
-    it('does not serve a shrink-capable row a height measured from a DIFFERENT shape', () => {
+    // RE-AUTHORED (W-1). The previous title — "does not serve a shrink-capable row a height
+    // measured from a DIFFERENT shape" — pinned the RESERVATION rule onto the ESTIMATE, which are
+    // opposite contracts (see the module doc). The reservation half is the real blank-space guard
+    // and is asserted here verbatim; the estimate half is what sent already scrolled-past rows —
+    // and the row at the streaming -> stable settle boundary — to the flat content heuristic.
+    it('releases the FORCING floor on a shape change but still predicts from the row\'s own measurement', () => {
         const reconciler = createTranscriptMeasurementReconciler({
             cache: createTestTranscriptItemHeightCache(),
         });
@@ -84,9 +89,15 @@ describe('estimateTranscriptRowHeightFromCache', () => {
             rowState: 'pending-action',
         });
         reconciler.recordMeasuredHeight({ signature: pending, heightPx: 214 });
-        // The queue drained 3 -> 1: same item, new content shape. The stale 214px must not be served.
+        // The queue drained 3 -> 1: same item, new content shape.
         const drained = { ...pending, structuralKey: 'structural-2' };
-        expect(estimateTranscriptRowHeightFromCache({ reconciler, signature: drained })).toBeUndefined();
+        // Reservation (a forcing `minHeight` that self-fulfils): still released. Do not weaken —
+        // re-serving it here is exactly the stranded-blank-space defect E-3 fixed.
+        expect(reconciler.resolveReservation(drained)).toBeUndefined();
+        // Estimate (a prediction the renderer replaces on the row's next onLayout): the row's own
+        // last measurement at this width/font is the best available predictor. `undefined` here
+        // sends the renderer to the flat content heuristic and moves every row below it.
+        expect(estimateTranscriptRowHeightFromCache({ reconciler, signature: drained })).toBe(214);
     });
 });
 
@@ -192,74 +203,11 @@ describe('estimateTranscriptRowHeightFromContent', () => {
         } as unknown as TranscriptRowShellItem)).toBeUndefined();
     });
 
-    // E-28: the pending-queue row is the row a send creates. Estimating it flat means every send
-    // lays it out at the compact constant and then corrects to the real height one frame later.
-    it('scales a pending-queue estimate with the queued message text', () => {
-        const pendingQueue = (text: string): TranscriptRowShellItem => ({
-            kind: 'pending-queue',
-            id: 'pending-queue',
-            pendingMessages: [{ id: 'p1', localId: null, createdAt: 1, updatedAt: 1, text }],
-            discardedMessages: [],
-        } as unknown as TranscriptRowShellItem);
-        const short = estimateTranscriptRowHeightFromContent({
-            toolCallsGroupChromeVariant: 'feed_background',
-            getMessageById: () => null,
-            item: pendingQueue('ok'),
-        });
-        const long = estimateTranscriptRowHeightFromContent({
-            toolCallsGroupChromeVariant: 'feed_background',
-            getMessageById: () => null,
-            item: pendingQueue('x'.repeat(600)),
-        });
-        // 600 chars ≈ 9 wrapped lines: a real multi-line send is far taller than the compact constant.
-        expect(long).toBeGreaterThan(150);
-        expect(long).toBeGreaterThan(short as number);
-        expect(short).toBeGreaterThan(0);
-    });
-
-    it('sums a pending-queue estimate over every queued and discarded message', () => {
-        const estimate = estimateTranscriptRowHeightFromContent({
-            toolCallsGroupChromeVariant: 'feed_background',
-            getMessageById: () => null,
-            item: {
-                kind: 'pending-queue',
-                id: 'pending-queue',
-                pendingMessages: [
-                    { id: 'p1', localId: null, createdAt: 1, updatedAt: 1, text: 'a'.repeat(300) },
-                    { id: 'p2', localId: null, createdAt: 2, updatedAt: 2, text: 'b'.repeat(300) },
-                ],
-                discardedMessages: [
-                    { id: 'd1', localId: null, createdAt: 3, updatedAt: 3, text: 'c'.repeat(300), discardedAt: 4, discardedReason: null },
-                ],
-            } as unknown as TranscriptRowShellItem,
-        });
-        // Three ~5-line entries; a flat compact constant undercounts this by roughly 5x.
-        expect(estimate).toBeGreaterThan(350);
-    });
-
-    it('estimates a pending message from the string the row actually renders (displayText)', () => {
-        // `PendingMessagesTranscriptBlock` renders `displayText ?? text`. A message whose stored
-        // text is a short command but whose display form is long (or vice versa) must be sized
-        // from the DISPLAYED string, or the estimate is wrong for exactly the rows it covers.
-        const estimate = estimateTranscriptRowHeightFromContent({
-            toolCallsGroupChromeVariant: 'feed_background',
-            getMessageById: () => null,
-            item: {
-                kind: 'pending-queue',
-                id: 'pending-queue',
-                pendingMessages: [{
-                    id: 'p1',
-                    localId: null,
-                    createdAt: 1,
-                    updatedAt: 1,
-                    text: 'hi',
-                    displayText: 'z'.repeat(600),
-                }],
-                discardedMessages: [],
-            } as unknown as TranscriptRowShellItem,
-        });
-        expect(estimate).toBeGreaterThan(150);
-    });
+    // The `pending-queue` estimate lives in
+    // `estimateTranscriptRowHeightFromCache.pendingChrome.test.ts`. The E-28 cases that used to sit
+    // here asserted the SCROLL CONTENT height (`> 150`, `> 350`) for a row whose ScrollView is
+    // capped at `transcriptPendingQueueMaxHeightPx` (default 80), so they certified an unbounded
+    // overshoot; the measured painted heights replaced them (J/D2, 2026-07-30).
 
     it('returns undefined for unknown item shapes so the renderer fallback applies', () => {
         const estimate = estimateTranscriptRowHeightFromContent({

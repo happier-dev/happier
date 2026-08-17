@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -17,6 +16,7 @@ import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function normalizeParam(value: unknown): string | null {
     if (typeof value === 'string' && value.trim().length > 0) return value.trim();
@@ -54,7 +54,7 @@ export default function SessionRunDetailsScreen() {
             hitSlop={10}
             style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
         >
-            <Ionicons name="refresh" size={20} color={headerTint} />
+            <Icon name="arrow-clockwise" size={20} color={headerTint} />
         </Pressable>
     ), [headerTint]);
 
@@ -71,7 +71,7 @@ export default function SessionRunDetailsScreen() {
             hitSlop={10}
             style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
         >
-            <Ionicons name="arrow-back" size={20} color={headerTint} />
+            <Icon name="arrow-left" size={20} color={headerTint} />
         </Pressable>
     ), [headerTint, navigation, parentSessionHref, router]);
 

@@ -158,3 +158,35 @@ export function useSessionListRuntimeWake(
         };
     }, [clock, enabled, wakeAtMs]);
 }
+
+export const SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS = 60_000;
+
+/**
+ * Read the shared timestamp that relative session-list labels ("5m ago") are
+ * rendered from.
+ *
+ * Relative labels need the clock to advance on a cadence of its own, because
+ * nothing in the store moves when a minute passes. That cadence is expressed
+ * as a rolling wake request on the SAME clock every other session-list layer
+ * reads, rather than as a timer of its own: a list of N rows then costs one
+ * timer and renders one instant, instead of N timers each carrying their own
+ * `Date.now()`. A tick requested by any other consumer also refreshes the
+ * label and pushes this horizon forward, so a label is never more than one
+ * cadence stale.
+ *
+ * While `enabled` is false the consumer neither subscribes nor requests a
+ * wake, so an inactive or backgrounded surface stops the cadence instead of
+ * ticking unobserved.
+ */
+export function useSessionListRelativeNowMs(
+    enabled = true,
+    clock: SessionListRuntimeClock = sessionListRuntimeClock,
+): number {
+    const nowMs = useSessionListRuntimeNowMs(enabled, clock);
+    useSessionListRuntimeWake(
+        enabled ? nowMs + SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS : null,
+        enabled,
+        clock,
+    );
+    return nowMs;
+}

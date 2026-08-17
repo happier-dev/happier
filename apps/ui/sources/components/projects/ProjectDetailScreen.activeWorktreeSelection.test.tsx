@@ -13,10 +13,19 @@ const projectDetailsMainPanelSpy = vi.hoisted(() => vi.fn());
 const setLocalSettingSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
+const openRightSpy = vi.hoisted(() => vi.fn());
+const setRightTabSpy = vi.hoisted(() => vi.fn());
 let localSettingsMock: Record<string, unknown> = {};
 const workspaceScmSnapshotControllerSpy = vi.hoisted(() => vi.fn());
 let paneScopeStateMock: {
-    right: { isOpen: boolean; activeTabId: string | null };
+    right: {
+        isOpen: boolean;
+        activeTabId: string | null;
+        selectedDestination?: Readonly<{
+            kind: 'plugin';
+            destination: Readonly<{ pluginId: string; localId: string }>;
+        }> | null;
+    };
     details?: { isOpen: boolean; tabs: Array<{ key: string }> };
 } = {
     right: { isOpen: true, activeTabId: 'git' },
@@ -94,6 +103,17 @@ vi.mock('@/utils/platform/responsive', () => ({
     useHeaderHeight: () => 48,
 }));
 
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
+    useScopedPluginUiProjection: () => ({
+        pluginUiProjection: null,
+        pluginBrowserProjection: null,
+        interactionEnabled: false,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+        platform: 'web',
+    }),
+}));
+
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => {
         const scopeState = React.useSyncExternalStore(
@@ -108,9 +128,9 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
         );
         return {
             scopeState,
-            openRight: vi.fn(),
+            openRight: openRightSpy,
             closeRight: vi.fn(),
-            setRightTab: vi.fn(),
+            setRightTab: setRightTabSpy,
             openDetailsTab: vi.fn(),
         };
     },
@@ -120,7 +140,20 @@ vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: Record<string, unknown> & {
         main?: React.ReactNode;
         rightPane?: React.ReactNode;
-    }) => React.createElement('AppPaneScopeHost', props, props.main, props.rightPane),
+        rightPaneBuiltinAdapter?: Readonly<{
+            defaultDestinationId?: string;
+            render: (context: Readonly<{ scopeId: string; destinationId: string }>) => React.ReactNode;
+        }>;
+        scopeId?: string;
+    }) => React.createElement(
+        'AppPaneScopeHost',
+        props,
+        props.main,
+        props.rightPane ?? props.rightPaneBuiltinAdapter?.render({
+            scopeId: props.scopeId ?? '',
+            destinationId: props.rightPaneBuiltinAdapter.defaultDestinationId ?? 'files',
+        }),
+    ),
 }));
 
 const workspaceRef: WorkspaceRefV1 = {
@@ -174,6 +207,29 @@ vi.mock('./detail/ProjectDetailsMainPanel', () => ({
 }));
 
 describe('ProjectDetailScreen active worktree selection', () => {
+    it('reopens a closed project pane without overwriting its restored plugin destination', async () => {
+        setPaneScopeState({
+            right: {
+                isOpen: false,
+                activeTabId: 'files',
+                selectedDestination: {
+                    kind: 'plugin',
+                    destination: { pluginId: 'acme.review', localId: 'project-review' },
+                },
+            },
+            details: { isOpen: false, tabs: [] },
+        });
+        localSettingsMock = {};
+        openRightSpy.mockClear();
+        setRightTabSpy.mockClear();
+        const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+
+        await renderScreen(<ProjectDetailScreen workspaceRefId="wr_1" />);
+
+        expect(openRightSpy).toHaveBeenCalledWith();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
+    });
+
     it('keeps the main panel and right panel in sync when the active worktree changes', async () => {
         setPaneScopeState({
             right: { isOpen: true, activeTabId: 'git' },

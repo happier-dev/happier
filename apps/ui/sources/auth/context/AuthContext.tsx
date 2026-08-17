@@ -11,13 +11,36 @@ import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/con
 import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { subscribeAuthCredentialsInvalidation } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import {
+    guardAccountEncryptionFirstKeyCredentialMutation,
+    isAccountEncryptionFirstKeyCredentialPersistenceAuthorized,
+    type AccountEncryptionFirstKeyCredentialPersistenceOptions,
+    type AccountEncryptionFirstKeyRecoveryHandle,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+
+export type AuthCredentialLifecycleResult =
+    | Readonly<{ kind: 'completed' }>
+    | Readonly<{
+        kind: 'finish_encryption_setup';
+        recovery: AccountEncryptionFirstKeyRecoveryHandle;
+    }>
+    | Readonly<{ kind: 'recovery_failed' }>;
+
+type AuthLogoutOptions = Readonly<{
+    beforeMutation?: () => void;
+}>;
 
 interface AuthContextType {
     isAuthenticated: boolean;
     credentials: AuthCredentials | null;
-    login: (token: string, secret: string) => Promise<void>;
-    loginWithCredentials: (credentials: AuthCredentials) => Promise<void>;
-    logout: () => Promise<void>;
+    login: (token: string, secret: string) => Promise<AuthCredentialLifecycleResult>;
+    loginWithCredentials: (
+        credentials: AuthCredentials,
+        options?: AccountEncryptionFirstKeyCredentialPersistenceOptions,
+    ) => Promise<AuthCredentialLifecycleResult>;
+    logout: (
+        options?: AuthLogoutOptions,
+    ) => Promise<AuthCredentialLifecycleResult>;
     refreshFromActiveServer: () => Promise<void>;
 }
 
@@ -49,7 +72,22 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         setIsAuthenticated(Boolean(nextCredentials));
     }, []);
 
-    const loginWithCredentials = React.useCallback(async (newCredentials: AuthCredentials) => {
+    const loginWithCredentials = React.useCallback(async (
+        newCredentials: AuthCredentials,
+        options?: AccountEncryptionFirstKeyCredentialPersistenceOptions,
+    ): Promise<AuthCredentialLifecycleResult> => {
+        if (
+            !isAccountEncryptionFirstKeyCredentialPersistenceAuthorized(
+                options,
+                newCredentials,
+            )
+        ) {
+            const guard =
+                await guardAccountEncryptionFirstKeyCredentialMutation();
+            if (guard.kind !== 'allowed') {
+                return guard;
+            }
+        }
         const success = await TokenStorage.setCredentials(newCredentials);
         if (!success) {
             throw new Error('Failed to save credentials');
@@ -79,17 +117,29 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             })(),
             { tag: 'AuthContext.login.syncSwitchServer' },
         );
+        return { kind: 'completed' };
     }, [applyLocalSettings, refreshFromActiveServer]);
 
     const login = React.useCallback(
-        async (token: string, secret: string) => {
+        async (
+            token: string,
+            secret: string,
+        ) => {
             const newCredentials: AuthCredentials = { token, secret };
-            await loginWithCredentials(newCredentials);
+            return await loginWithCredentials(newCredentials);
         },
         [loginWithCredentials],
     );
 
-    const logout = React.useCallback(async () => {
+    const logout = React.useCallback(async (
+        options?: AuthLogoutOptions,
+    ): Promise<AuthCredentialLifecycleResult> => {
+        const guard =
+            await guardAccountEncryptionFirstKeyCredentialMutation();
+        if (guard.kind !== 'allowed') {
+            return guard;
+        }
+        options?.beforeMutation?.();
         trackLogout();
         // Preserve device-local flags across logout — the user is signing out of
         // an account but the device itself has still seen the brand hero and
@@ -109,6 +159,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         loginSyncServerKeyRef.current = null;
         setCredentials(null);
         setIsAuthenticated(false);
+        return { kind: 'completed' };
     }, []);
 
     // Single source of truth for the context value so consumers (and the non-React
@@ -140,7 +191,21 @@ export function AuthProvider({ children, initialCredentials }: { children: React
     }, [refreshFromActiveServer]);
 
     useEffect(() => {
-        return subscribeAuthCredentialsInvalidation(() => {
+        return subscribeAuthCredentialsInvalidation((event) => {
+            if (
+                event.kind
+                === 'first_key_recovery_required'
+            ) {
+                fireAndForget((async () => {
+                    await syncSwitchServer(null);
+                    loginSyncServerKeyRef.current = null;
+                    setCredentials(null);
+                    setIsAuthenticated(false);
+                })(), {
+                    tag: 'AuthContext.authCredentialsInvalidated.firstKeyRecovery',
+                });
+                return;
+            }
             fireAndForget(refreshFromActiveServer(), {
                 tag: 'AuthContext.authCredentialsInvalidated.refreshFromActiveServer',
             });

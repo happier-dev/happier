@@ -18,6 +18,7 @@ import {
     readSessionDraftValue,
     writeSessionDraftValue,
 } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import { structuredInputMentionSurvivesText } from '@/components/sessions/agentInput/structuredInputMentions';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import {
     areServerAccountScopesEqual,
@@ -116,16 +117,14 @@ function readInputState(
     return readAgentInputLocalUiState(scope, owner, context);
 }
 
-function tokenSurvives(text: string, mention: ComposerStructuredInputMention): boolean {
-    return text.slice(mention.start, mention.end) === mention.tokenText;
-}
-
 function filterMentionsForText(
     mentions: readonly ComposerStructuredInputMention[],
     text: string | undefined,
 ): readonly ComposerStructuredInputMention[] {
     if (typeof text !== 'string') return mentions;
-    return mentions.filter((mention) => tokenSurvives(text, mention));
+    // The composer owns the rule; this module used to carry its own copy of it, which is one
+    // rule with two owners the moment either side changes.
+    return mentions.filter((mention) => structuredInputMentionSurvivesText(text, mention));
 }
 
 function areMentionListsEqual(

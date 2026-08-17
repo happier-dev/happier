@@ -176,8 +176,9 @@ function resolveSessionReachableMachineIdWithContext(input: Readonly<{
     const machineId = normalizeNonEmptyString(input.machineId);
     if (!machineId || machineId.startsWith('host:')) return null;
 
-    const machines = Array.from(input.machineResolutionContext.machineById.values()) as Machine[];
-    const canonical = resolveCanonicalMachineId(machineId, machines);
+    // The context already *is* the id index this resolution needs; flattening it back into a list
+    // per session made every call rebuild the index it was handed.
+    const canonical = resolveCanonicalMachineId(machineId, input.machineResolutionContext.machineById);
     const resolvedMachineId = canonical?.machineId ?? machineId;
     const machine = input.machineResolutionContext.machineById.get(resolvedMachineId);
     if (!machine || machine.active !== true) return null;

@@ -99,6 +99,8 @@ vi.mock('@/agents/catalog/catalog', () => ({
 vi.mock('@/sync/store/hooks', () => ({
   useLocalSetting: () => 1,
   useSessionServerId: (sessionId: string) => useSessionServerIdMock(sessionId),
+  // Only the transcript's row-height resolver reads this; the card's own resolver never calls it.
+  useSessionHasActionDrafts: () => false,
 }));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
@@ -116,6 +118,30 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: (...args: unknown[]) => createDefaultActionExecutorMock(...args),
 }));
+
+/**
+ * The resolver the card's own `useSessionActionFieldOptions` produces under this file's mocks
+ * (`useEnabledAgentIds` -> `['claude']`, no capabilities snapshot, `t` returning the key). Built
+ * through the SAME `buildSessionActionFieldOptionLists` / `buildSessionActionFieldOptionsResolver`
+ * the hook uses, so the guards below compare the descriptor against the paint rather than against a
+ * hand-written option list.
+ */
+async function buildMockedFieldOptionsResolver() {
+  const {
+    buildSessionActionFieldOptionLists,
+    buildSessionActionFieldOptionsResolver,
+  } = await import('./sessionActionFieldOptions');
+  const { getAgentCore } = await import('@/agents/catalog/catalog');
+  const { t } = await import('@/text');
+  // `t`'s overloads require a params argument for parameterised keys; an agent display name key
+  // never is one, so this narrows to the single-argument form the hook actually calls.
+  const translate = t as unknown as (key: string) => string;
+  return buildSessionActionFieldOptionsResolver(buildSessionActionFieldOptionLists({
+    enabledAgentIds: ['claude'],
+    executionRunsBackends: null,
+    resolveAgentLabel: (agentId) => translate(String(getAgentCore(agentId as never).displayNameKey)),
+  }));
+}
 
 describe('SessionActionDraftCard', () => {
   beforeEach(() => {
@@ -510,5 +536,150 @@ describe('SessionActionDraftCard', () => {
     });
 
     expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { sessionIds: ['a.yml', 'b.yml'] });
+  });
+
+  /**
+   * F-P6 (2026-08-11) — anti-drift guard for `resolveSessionActionDraftHeightBearingPaint`, which is
+   * what `transcriptRowShellSignature` keys this row's height on. The descriptor is only trustworthy
+   * while it describes THE PAINT, so this asserts the painted text-field values ARE the descriptor's
+   * `textBox.text`, in order, for a draft whose conditional field is open.
+   *
+   * V-1 (2026-08-11) extends it to the part F-P6 got wrong: `textBox.maxLines` must agree with the
+   * painted `multiline` prop of the SAME field. A descriptor that claims a box grows when the card
+   * paints a one-line field is exactly how the row's size version came to move on every keystroke.
+   */
+  it('paints exactly the text and the box shape the height-bearing descriptor reports', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+    const { resolveSessionActionDraftHeightBearingPaint } = await import('./sessionActionDraftPresentation');
+
+    const input = {
+      engineIds: ['codex'],
+      instructions: 'Review\nthis carefully.',
+      changeType: 'committed',
+      base: { kind: 'branch', baseBranch: 'release/2026-08-11' },
+    };
+    const draft = { id: 'd1', sessionId: 's1', actionId: 'review.start', createdAt: 1, status: 'editing', input } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+
+    const paint = resolveSessionActionDraftHeightBearingPaint({
+      draft,
+      sessionId: 's1',
+      resolveFieldOptions: await buildMockedFieldOptionsResolver(),
+    });
+    const textBoxes = paint.fields
+      .map((entry) => entry.textBox)
+      .filter((box): box is NonNullable<typeof box> => box !== null);
+
+    // The conditional base-branch field is open here, so this is the textarea plus that text field.
+    expect(textBoxes.map((box) => box.text)).toEqual(['Review\nthis carefully.', 'release/2026-08-11']);
+    // `instructions` is a textarea and grows; `base.baseBranch` is a one-line field whose height
+    // cannot move with its value.
+    expect(textBoxes.map((box) => box.maxLines)).toEqual([null, 1]);
+
+    const inputs = screen.tree.findAllByType('TextInput');
+    expect(inputs.map((node: any) => node.props.value)).toEqual(textBoxes.map((box) => box.text));
+    expect(inputs.map((node: any) => (node.props.multiline === true ? null : 1)))
+      .toEqual(textBoxes.map((box) => box.maxLines));
+  });
+
+  /**
+   * F-4 (2026-08-11) — the other half of the same guard, for the input the size key gained last: the
+   * option list. `transcriptRowShellSignature` keys an `action-draft` row on
+   * `paint.fields[].options`, and that is only trustworthy while it IS the option rows the card
+   * paints. A descriptor that reported option VALUES, or dropped a `select` field, or folded the
+   * non-height-bearing `disabled` flag into the label would pass every key-level test and be wrong
+   * here.
+   */
+  it('reports exactly the option rows it paints as the descriptor option list', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+    const { resolveSessionActionDraftHeightBearingPaint } = await import('./sessionActionDraftPresentation');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { engineIds: ['claude'], instructions: 'Review', changeType: 'all', base: { kind: 'none' } },
+    } as const;
+
+    const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+
+    const paint = resolveSessionActionDraftHeightBearingPaint({
+      draft,
+      sessionId: 's1',
+      resolveFieldOptions: await buildMockedFieldOptionsResolver(),
+    });
+    const describedOptionLabels = paint.fields.flatMap((entry) => (entry.options ?? []).map((option) => option.label));
+
+    // `HappierSelect` emits every option row through `HappierPressable` with a `checked` state; the
+    // card's own Cancel / Start buttons are plain `Pressable`s with no `accessibilityState` at all,
+    // which is what separates option rows from the rest of the pressables.
+    const paintedOptionLabels = screen.tree
+      .findAllByType('Pressable')
+      .filter((node: any) => node.props?.accessibilityState?.checked !== undefined)
+      .map((node: any) => node.findAllByType('Text').map((text: any) => text.props.children).join(''));
+
+    expect(paintedOptionLabels.length).toBeGreaterThan(0);
+    expect(describedOptionLabels).toEqual(paintedOptionLabels);
+  });
+
+  /**
+   * F-P3 (2026-08-10) — this is the invariant `buildActionDraftPresentationKey` depends on when it
+   * leaves `draft.status` OUT of the transcript row's structural key. Status currently reaches only
+   * `editable`, `disabled` and `opacity`, none of which moves a box; if that ever stops being true,
+   * this test fails first and the key must grow a height-bearing descriptor.
+   *
+   * The comparison strips exactly the three non-height-bearing channels and keeps everything that
+   * can move the card: node structure, text content, and every layout style field.
+   */
+  it('paints byte-identical in-flow chrome for every draft status', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const heightBearingShape = (node: any): any => {
+      if (node === null || node === undefined || typeof node === 'boolean') return null;
+      if (typeof node === 'string' || typeof node === 'number') return String(node);
+      if (Array.isArray(node)) return node.map(heightBearingShape);
+
+      const style = Array.isArray(node.props?.style)
+        ? Object.assign({}, ...node.props.style.filter(Boolean))
+        : (node.props?.style ?? null);
+      const layoutStyle = style
+        ? Object.fromEntries(
+          Object.entries(style)
+            // `opacity` is the one status-driven style, and it cannot change a layout.
+            .filter(([key, value]) => key !== 'opacity' && typeof value !== 'function')
+            .sort(([a], [b]) => (a < b ? -1 : 1)),
+        )
+        : null;
+
+      return {
+        type: node.type,
+        // `editable` / `disabled` are the other two status-driven props; both are interaction-only.
+        multiline: node.props?.multiline ?? null,
+        numberOfLines: node.props?.numberOfLines ?? null,
+        style: layoutStyle,
+        children: (node.children ?? []).map(heightBearingShape),
+      };
+    };
+
+    const shapeForStatus = async (status: string) => {
+      const draft = {
+        id: 'd1',
+        sessionId: 's1',
+        actionId: 'subagents.delegate.start',
+        createdAt: 1,
+        status,
+        input: { backendTargetKeys: ['agent:claude'], instructions: 'Delegate this.' },
+      };
+      const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+      return JSON.stringify(heightBearingShape(screen.tree.toJSON()));
+    };
+
+    const editing = await shapeForStatus('editing');
+    for (const status of ['running', 'succeeded', 'failed', 'cancelled'] as const) {
+      expect(await shapeForStatus(status), status).toBe(editing);
+    }
   });
 });

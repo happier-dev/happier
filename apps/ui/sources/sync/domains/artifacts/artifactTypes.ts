@@ -47,10 +47,12 @@ export interface ArtifactBody {
     body: string | null;
 }
 
-/**
- * Decrypted artifact for UI
- */
-export interface DecryptedArtifact {
+export type ArtifactLockedReason =
+    | 'encryption_material_unavailable'
+    | 'decryption_failed'
+    | 'invalid_stored_content';
+
+interface DecryptedArtifactBase {
     id: string;
     header?: ArtifactHeader | null;
     title: string | null;
@@ -62,8 +64,38 @@ export interface DecryptedArtifact {
     seq: number;
     createdAt: number;
     updatedAt: number;
-    isDecrypted: boolean;  // Whether decryption was successful
+    /**
+     * Internal storage discriminator used by the sync owner for socket/update decoding.
+     * It is derived from the persisted data-key marker, never from the current account mode.
+     */
+    storageMode?: 'plain' | 'e2ee';
 }
+
+/**
+ * Artifact view state for UI consumers.
+ *
+ * Readable artifacts keep the historical optional `availability` field so existing
+ * fixtures remain lightweight. Unreadable retained E2EE rows must use the explicit
+ * locked branch; they are data that the current client cannot open, not missing rows.
+ */
+export type DecryptedArtifact =
+    | (DecryptedArtifactBase & Readonly<{
+        isDecrypted: true;
+        availability?: Readonly<{ kind: 'available' }>;
+    }>)
+    | (DecryptedArtifactBase & Readonly<{
+        isDecrypted: false;
+        availability: Readonly<{
+            kind: 'locked';
+            reason: ArtifactLockedReason;
+        }>;
+        storageMode: 'plain' | 'e2ee';
+        header?: null;
+        title: null;
+        sessions?: undefined;
+        draft?: undefined;
+        body?: undefined;
+    }>);
 
 /**
  * Request to create a new artifact

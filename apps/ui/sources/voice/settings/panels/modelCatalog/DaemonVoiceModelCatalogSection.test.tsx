@@ -249,7 +249,7 @@ describe('DaemonVoiceModelCatalogSection', () => {
             licenseText: 'Review these exact model terms.',
             licenseSourceUrl: 'https://example.com/licenses/acme-v1',
             licenseTextDigest: `sha256:${'a'.repeat(64)}`,
-            artifactDigest: `sha256:${'b'.repeat(64)}`,
+            artifactBinding: { kind: 'sourceIntegrity', integrity: `sha256:${'b'.repeat(64)}` },
             accepted: false,
         } as const;
         const acceptLicense = vi.fn(async () => undefined);

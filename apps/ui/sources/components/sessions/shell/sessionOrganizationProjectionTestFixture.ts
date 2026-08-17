@@ -1,12 +1,21 @@
-import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
 import type {
-    SessionOrganizationFolder,
+    SessionOrganizationProjection,
+    UiSessionOrganizationFolder,
+    UiSessionOrganizationTag,
+} from '@/sync/domains/session/organization';
+import type {
+    SessionOrganizationContentEnvelope,
     SessionOrganizationOrderEntry,
 } from '@happier-dev/protocol';
 
+type SessionOrganizationJsonValue = Extract<
+    SessionOrganizationContentEnvelope,
+    { t: 'plain' }
+>['v'];
+
 type LegacySessionFolderFixture = Readonly<{
     id: string;
-    workspace: unknown;
+    workspace: SessionOrganizationJsonValue;
     parentId: string | null;
     name: string;
     createdAt: number;
@@ -55,7 +64,7 @@ function toOrderEntry(params: Readonly<{
     };
 }
 
-function toFolder(folder: LegacySessionFolderFixture, index: number): SessionOrganizationFolder {
+function toFolder(folder: LegacySessionFolderFixture, index: number): UiSessionOrganizationFolder {
     return {
         folderId: folder.id,
         folderKey: folder.id,
@@ -65,6 +74,13 @@ function toFolder(folder: LegacySessionFolderFixture, index: number): SessionOrg
         display: {
             t: 'plain',
             v: {
+                name: folder.name,
+                workspace: folder.workspace,
+            },
+        },
+        displayState: {
+            status: 'available',
+            value: {
                 name: folder.name,
                 workspace: folder.workspace,
             },
@@ -81,6 +97,25 @@ export function buildSessionOrganizationProjectionFromLegacyTestSettings(
     const pinnedSessionIds = (fixture.pinnedSessionKeysV1 ?? [])
         .map((key) => stripServerSessionKey(fixture.serverId, key))
         .filter((sessionId): sessionId is string => sessionId != null);
+    const tagIdByLabel = new Map<string, string>();
+    const tagsById: Record<string, UiSessionOrganizationTag> = {};
+    for (const tags of Object.values(fixture.sessionTagsV1 ?? {})) {
+        for (const label of tags) {
+            if (tagIdByLabel.has(label)) continue;
+            const tagId = `fixture-tag-${tagIdByLabel.size + 1}`;
+            tagIdByLabel.set(label, tagId);
+            tagsById[tagId] = {
+                tagId,
+                tagKey: tagId,
+                sortKey: null,
+                display: { t: 'plain', v: { label } },
+                displayState: { status: 'available', value: { label } },
+                archivedAt: null,
+                createdAt: 1,
+                updatedAt: 1,
+            };
+        }
+    }
     return {
         schemaVersion: 1,
         version: 1,
@@ -96,14 +131,18 @@ export function buildSessionOrganizationProjectionFromLegacyTestSettings(
             ]),
         ),
         folderAssignmentsBySessionId: fixture.folderAssignmentsBySessionId ?? {},
-        tagsById: {},
+        tagsById,
         tagAssignmentsBySessionId: Object.fromEntries(
             Object.entries(fixture.sessionTagsV1 ?? {})
-                .map(([key, tags]) => {
+                .flatMap(([key, tags]) => {
                     const sessionId = stripServerSessionKey(fixture.serverId, key);
-                    return sessionId ? [sessionId, tags] : null;
-                })
-                .filter((entry): entry is [string, readonly string[]] => entry != null),
+                    return sessionId
+                        ? [[
+                            sessionId,
+                            tags.map((label) => tagIdByLabel.get(label)!),
+                        ] as const]
+                        : [];
+                }),
         ),
         orderEntriesByScopeKey: Object.fromEntries(
             Object.entries(fixture.sessionListGroupOrderV1 ?? {}).map(([scopeKey, itemKeys]) => [

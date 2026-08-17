@@ -11,6 +11,7 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { ShakeInstance } from '@/components/ui/feedback/Shaker';
 import type { View } from 'react-native';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 type ChipStyle = (pressed: boolean) => any;
 
@@ -48,7 +49,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     onModePress: () => void;
     hasProfile: boolean;
     profileChipAnchorRef: React.RefObject<View | null>;
-    profileIcon: string;
+    profileIcon: IconName;
     profileLabel: string | null;
     onProfilePress: () => void;
     hasEnvVars: boolean;
@@ -60,6 +61,8 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     agentId: AgentId;
     agentLabel: string;
     engineLabel: string;
+    /** Hover/focus/press-in on the Agent chip, before the picker opens. */
+    onAgentIntent?: () => void;
     onAgentPress: () => void;
     machineChipAnchorRef: React.RefObject<View | null>;
     onMachinePress?: () => void;
@@ -140,6 +143,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             agentId: params.agentId,
             agentLabel: params.agentLabel,
             engineLabel: params.engineLabel,
+            onAgentIntent: params.onAgentIntent,
             onAgentPress: params.onAgentPress,
             machineChipAnchorRef: params.machineChipAnchorRef,
             onMachinePress: params.onMachinePress,
@@ -192,6 +196,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.agentId,
         params.agentLabel,
         params.engineLabel,
+        params.onAgentIntent,
         params.chipStyle,
         params.chipStyleAutoHide,
         params.chips,

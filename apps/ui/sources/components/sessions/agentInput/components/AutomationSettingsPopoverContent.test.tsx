@@ -4,6 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { renderScreen } from '@/dev/testkit';
+import {
+    DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
+} from '@happier-dev/protocol';
+import type { PluginEventAutomationComposerModel } from '@/components/automations/editor/usePluginEventAutomationComposer';
+import type { PluginMachineExecutionOriginCandidateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -101,6 +106,252 @@ describe('AutomationSettingsPopoverContent', () => {
         expect(screen.findByType('Item' as any).props.rightElement?.props?.value).toBe(false);
         expect(screen.findAllByProps({ testID: 'automation-sentence-name-input' })).toHaveLength(0);
         expect(screen.findAllByProps({ testID: 'automation-sentence-schedule-trigger' })).toHaveLength(0);
+    });
+
+    it('offers the canonical Event composer mode from the ordinary Automation chip', async () => {
+        const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            event: {
+                id: 'acme.github/events/repository',
+                identity: { pluginId: 'acme.github', localId: 'events/repository' },
+                immutableGenerationId: 'event-generation-a',
+                title: 'Repository changed',
+                description: 'A repository changed',
+                automation: {
+                    v: 1,
+                    eligible: true,
+                    source: {
+                        sourceContractVersion: 1,
+                        supportedObservationTransports: ['checkpointedPull'],
+                        sourceConfigSchema: { type: 'object', additionalProperties: false },
+                        setupActionRef: { pluginId: 'acme.github', localId: 'setup-source' },
+                    },
+                },
+            },
+            setupAction: {
+                id: 'acme.github/setup-source',
+                identity: { pluginId: 'acme.github', localId: 'setup-source' },
+                immutableGenerationId: 'event-generation-a',
+                title: 'Set up source',
+                description: null,
+                inputSchema: { type: 'object', additionalProperties: false },
+                inputHints: null,
+            },
+        });
+        const setMode = vi.fn();
+        const eventComposer: PluginEventAutomationComposerModel = {
+            mode: 'schedule',
+            setMode,
+            isEditingEvent: false,
+            editTarget: null,
+            targetKind: 'newSession',
+            setTargetKind: vi.fn(),
+            targetKindLocked: false,
+            existingSessionOptions: [],
+            selectedExistingSessionId: null,
+            selectExistingSession: vi.fn(),
+            existingSessionAvailability: null,
+            executionPermissionMode: 'read_only',
+            setExecutionPermissionMode: vi.fn(),
+            resolveExecutionTarget: vi.fn(() => null),
+            eligibleEvents: [event],
+            eventCatalogStatus: 'ready',
+            selectedEvent: null,
+            selectEvent: vi.fn(),
+            getPluginPresentation: () => ({
+                eventKey: 'acme.github:events/repository',
+                displayName: 'Acme GitHub',
+                availability: 'unavailable',
+                installedPackage: null,
+                expectedGeneration: null,
+                machineId: null,
+                serverId: null,
+                accountLifetime: null,
+                isCurrent: () => false,
+            }),
+            sourceStatus: 'idle',
+            sourceDisplayLabel: null,
+            sourceInstanceId: null,
+            configureSource: vi.fn(),
+            watcherCandidates: [],
+            selectedWatcherOrigin: null,
+            selectWatcher: vi.fn(),
+            payloadBrowser: { fields: [], samplePayload: null },
+            filterClauses: [],
+            addFilterClause: vi.fn(),
+            removeFilterClause: vi.fn(),
+            setFilterClauseField: vi.fn(),
+            setFilterClauseOperator: vi.fn(),
+            setFilterClauseValueText: vi.fn(),
+            filterValid: true,
+            maximumObservationAgeMsText: '',
+            setMaximumObservationAgeMsText: vi.fn(),
+            maximumObservationAgeMsValid: true,
+            createDraft: null,
+            revision: 0,
+        };
+        const screen = await renderScreen(<AutomationSettingsPopoverContent
+            value={{
+                enabled: true,
+                name: 'Repository triage',
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 60,
+                cronExpr: '0 * * * *',
+                timezone: null,
+            }}
+            onChange={() => {}}
+            eventComposer={eventComposer}
+        />);
+
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-trigger-event' }).props.onPress();
+        });
+
+        expect(setMode).toHaveBeenCalledWith('event');
+    });
+
+    it('requires a selected watcher before exposing Event source setup as actionable', async () => {
+        const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            event: {
+                id: 'acme.github/events/repository',
+                identity: { pluginId: 'acme.github', localId: 'events/repository' },
+                immutableGenerationId: 'event-generation-a',
+                title: 'Repository changed',
+                description: 'A repository changed',
+                payloadSchema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: { action: { type: 'string' } },
+                },
+                automation: {
+                    v: 1,
+                    eligible: true,
+                    source: {
+                        sourceContractVersion: 1,
+                        supportedObservationTransports: ['checkpointedPull'],
+                        sourceConfigSchema: { type: 'object', additionalProperties: false },
+                        setupActionRef: { pluginId: 'acme.github', localId: 'setup-source' },
+                    },
+                },
+            },
+            setupAction: {
+                id: 'acme.github/setup-source',
+                identity: { pluginId: 'acme.github', localId: 'setup-source' },
+                immutableGenerationId: 'event-generation-a',
+                title: 'Set up source',
+                description: null,
+                inputSchema: { type: 'object', additionalProperties: false },
+                inputHints: null,
+            },
+        });
+        const eventComposer: PluginEventAutomationComposerModel = {
+            mode: 'event',
+            setMode: vi.fn(),
+            isEditingEvent: false,
+            editTarget: null,
+            targetKind: 'newSession',
+            setTargetKind: vi.fn(),
+            targetKindLocked: false,
+            existingSessionOptions: [],
+            selectedExistingSessionId: null,
+            selectExistingSession: vi.fn(),
+            existingSessionAvailability: null,
+            executionPermissionMode: 'read_only',
+            setExecutionPermissionMode: vi.fn(),
+            resolveExecutionTarget: vi.fn(() => null),
+            eligibleEvents: [event],
+            eventCatalogStatus: 'ready',
+            selectedEvent: event,
+            selectEvent: vi.fn(),
+            getPluginPresentation: () => ({
+                eventKey: 'acme.github:events/repository',
+                displayName: 'Acme GitHub',
+                availability: 'unavailable',
+                installedPackage: null,
+                expectedGeneration: null,
+                machineId: null,
+                serverId: null,
+                accountLifetime: null,
+                isCurrent: () => false,
+            }),
+            sourceStatus: 'idle',
+            sourceDisplayLabel: null,
+            sourceInstanceId: null,
+            configureSource: vi.fn(),
+            watcherCandidates: [{
+                materialization: {
+                    serverIdentityId: 'srv_account_a',
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization',
+                    pluginId: 'acme.github',
+                    version: '1.0.0',
+                    sourceClass: 'registryPackage',
+                    portableRelease: true,
+                    uiArtifacts: [],
+                    enabled: true,
+                    trustState: 'trusted',
+                    observedAt: 100,
+                },
+                releaseContent: 'matched',
+                validation: { kind: 'rejected', reason: 'offline' },
+            }] satisfies readonly PluginMachineExecutionOriginCandidateV1[],
+            selectedWatcherOrigin: null,
+            selectWatcher: vi.fn(),
+            payloadBrowser: {
+                fields: [{ pointer: '/action', scalarKind: 'string', sampleValue: 'opened' }],
+                samplePayload: { action: 'opened' },
+            },
+            filterClauses: [{ id: 'filter-0', field: '/action', op: 'eq', valueText: '"opened"' }],
+            addFilterClause: vi.fn(),
+            removeFilterClause: vi.fn(),
+            setFilterClauseField: vi.fn(),
+            setFilterClauseOperator: vi.fn(),
+            setFilterClauseValueText: vi.fn(),
+            filterValid: true,
+            maximumObservationAgeMsText: '',
+            setMaximumObservationAgeMsText: vi.fn(),
+            maximumObservationAgeMsValid: true,
+            createDraft: null,
+            revision: 0,
+        };
+        const screen = await renderScreen(<AutomationSettingsPopoverContent
+            value={{
+                enabled: true,
+                name: 'Repository triage',
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 60,
+                cronExpr: '0 * * * *',
+                timezone: null,
+            }}
+            onChange={() => {}}
+            eventComposer={eventComposer}
+        />);
+
+        expect(screen.findByProps({ testID: 'automation-event-watcher-picker' })).toBeTruthy();
+        const sourceSetup = screen.findByProps({ testID: 'automation-event-configure-source' });
+        expect(sourceSetup.props.disabled).toBe(true);
+        expect(sourceSetup.props.accessibilityState).toEqual(expect.objectContaining({ disabled: true }));
+
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-event-watcher-picker' }).props.onPress();
+        });
+        const unavailableWatcher = screen.findByProps({
+            testID: 'automation-event-watcher-option-watcher-machine:github-materialization',
+        });
+        expect(unavailableWatcher.props.disabled).toBe(true);
+        expect(unavailableWatcher.props.accessibilityState).toEqual(expect.objectContaining({ disabled: true }));
+        const watcherTitle = unavailableWatcher.findAllByType('Text' as any).find((node) => (
+            node.props.children === 'watcher-machine / github-materialization'
+        ));
+        expect(watcherTitle?.props.children).toBe(
+            'watcher-machine / github-materialization',
+        );
+        expect(screen.findByProps({ testID: 'automation-event-payload-browser' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'automation-event-filter-add-clause' })).toBeTruthy();
+        expect(screen.findAllByProps({ testID: 'automation-event-filter-input' })).toHaveLength(0);
     });
 
     it('lets users choose hour presets, enter day intervals, and switch to cron from the sentence schedule editor', async () => {

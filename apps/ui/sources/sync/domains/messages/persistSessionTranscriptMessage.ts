@@ -92,10 +92,14 @@ export async function persistSessionTranscriptMessage(
     if (!normalized) {
         throw new Error('Session transcript message could not be normalized');
     }
+    const didUpdate = parsedResponse.data.didUpdate === true;
 
     return {
         didWrite: parsedResponse.data.didWrite,
-        didUpdate: parsedResponse.data.didUpdate === true,
-        message: normalized,
+        didUpdate,
+        message: {
+            ...normalized,
+            ...(didUpdate ? { isAuthoritativeUpdate: true as const } : {}),
+        },
     };
 }

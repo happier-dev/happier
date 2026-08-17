@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { createVoiceProviderRegistry, type VoiceUiRuntimeContribution } from './providerRegistry';
 import { createDefaultVoiceProviderRegistry } from './defaultRegistry';
-import { isVoiceRoleSelectableForConfiguration, resolveVoiceRoleReadiness } from './readiness';
+import {
+  isVoiceRoleSelectableForConfiguration,
+  projectVoiceProviderRequirements,
+  resolveVoicePassiveSetupReadiness,
+  resolveVoiceRoleReadiness,
+} from './readiness';
 
 const CLOUD_STT = {
   kind: 'voice.speech-engine.v1',
@@ -15,7 +20,7 @@ const CLOUD_STT = {
   supportedPlatforms: ['web', 'ios', 'android'],
 } as const satisfies VoiceUiRuntimeContribution;
 
-const registry = createVoiceProviderRegistry({ bundled: [CLOUD_STT] });
+const registry = createVoiceProviderRegistry({ builtIn: [CLOUD_STT] });
 
 const readyFacts = {
   settings: 'ready',
@@ -27,6 +32,31 @@ const readyFacts = {
 } as const;
 
 describe('resolveVoiceRoleReadiness', () => {
+  it('uses declaration-derived machine, runtime, and Connected Services checks for Codex', () => {
+    expect(resolveVoicePassiveSetupReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: 'happier.agent.codex/realtime-codex',
+      platform: 'web',
+      modeId: 'experimental',
+      facts: {
+        ...readyFacts,
+        executionMachine: 'missing',
+      },
+    })).toMatchObject({
+      status: 'needs_setup',
+      code: 'execution_machine_missing',
+    });
+    expect(resolveVoicePassiveSetupReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: 'happier.agent.codex/realtime-codex',
+      platform: 'web',
+      modeId: 'experimental',
+      facts: readyFacts,
+    })).toMatchObject({ status: 'ready', code: 'ready' });
+  });
+
   it('keeps dictation and conversation role support separate', () => {
     expect(resolveVoiceRoleReadiness({
       registry,
@@ -55,29 +85,89 @@ describe('resolveVoiceRoleReadiness', () => {
     })).toMatchObject({ status: 'ready', code: 'ready' });
   });
 
+  it.each([
+    {
+      label: 'available web recognition',
+      platform: 'web' as const,
+      localAvailability: {
+        browserSpeech: { support: 'available', onDevice: 'available' },
+      } as const,
+      expected: { status: 'ready', code: 'ready' },
+    },
+    {
+      label: 'cloud-only web recognition',
+      platform: 'web' as const,
+      localAvailability: {
+        browserSpeech: { support: 'cloud_only', onDevice: 'unsupported' },
+      } as const,
+      expected: { status: 'ready', code: 'ready' },
+    },
+    {
+      label: 'unsupported web recognition',
+      platform: 'web' as const,
+      localAvailability: {
+        browserSpeech: { support: 'unavailable', onDevice: 'unsupported' },
+      } as const,
+      expected: { status: 'unavailable', code: 'device_stt_unavailable' },
+    },
+    {
+      label: 'unknown web recognition',
+      platform: 'web' as const,
+      localAvailability: {
+        browserSpeech: { support: 'unknown', onDevice: 'unknown' },
+      } as const,
+      expected: { status: 'unavailable', code: 'device_stt_availability_unknown' },
+    },
+    {
+      label: 'available native recognition',
+      platform: 'ios' as const,
+      localAvailability: {
+        nativeDevice: { requested: true, speechRecognition: 'available' },
+      } as const,
+      expected: { status: 'ready', code: 'ready' },
+    },
+    {
+      label: 'unsupported native recognition',
+      platform: 'ios' as const,
+      localAvailability: {
+        nativeDevice: { requested: true, speechRecognition: 'unavailable' },
+      } as const,
+      expected: { status: 'unavailable', code: 'device_stt_unavailable' },
+    },
+  ])('projects built-in Device STT from $label', ({ platform, localAvailability, expected }) => {
+    expect(resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'dictation_stt',
+      providerId: 'device',
+      platform,
+      localAvailability,
+      facts: readyFacts,
+    })).toMatchObject(expected);
+  });
+
   it('fails Google speech roles closed when required provider facts are unknown', () => {
     const googleRegistry = createDefaultVoiceProviderRegistry();
     expect(resolveVoiceRoleReadiness({
       registry: googleRegistry,
       role: 'conversation_stt',
-      providerId: 'google_gemini',
+      providerId: 'happier.voice.google/gemini-stt',
       platform: 'web',
       facts: { ...readyFacts, credential: 'unknown' },
     })).toMatchObject({ status: 'unavailable', code: 'credential_unknown' });
     expect(resolveVoiceRoleReadiness({
       registry: googleRegistry,
       role: 'conversation_tts',
-      providerId: 'google_cloud',
+      providerId: 'happier.voice.google/google-cloud-tts',
       platform: 'web',
-      facts: { ...readyFacts, runtime: 'unknown' },
-    })).toMatchObject({ status: 'unavailable', code: 'runtime_unknown' });
+      facts: { ...readyFacts, executionMachine: 'unknown' },
+    })).toMatchObject({ status: 'unavailable', code: 'execution_machine_unknown' });
   });
 
   it('separates recoverable credential configuration from truthful runnable readiness', () => {
     const credentialUnknown = resolveVoiceRoleReadiness({
       registry: createDefaultVoiceProviderRegistry(),
       role: 'realtime_conversation',
-      providerId: 'realtime_openai',
+      providerId: 'happier.voice.openai/realtime-openai',
       platform: 'web',
       modeId: 'byo',
       facts: { ...readyFacts, credential: 'unknown' },
@@ -90,25 +180,42 @@ describe('resolveVoiceRoleReadiness', () => {
     expect(isVoiceRoleSelectableForConfiguration({
       readiness: credentialUnknown,
       credentialConfigurationAvailable: true,
+      passiveRuntimeCheckAvailable: false,
     })).toBe(true);
     expect(isVoiceRoleSelectableForConfiguration({
       readiness: credentialUnknown,
       credentialConfigurationAvailable: false,
+      passiveRuntimeCheckAvailable: false,
     })).toBe(false);
 
-    const unsupportedPlatform = resolveVoiceRoleReadiness({
+    const nativeCredentialUnknown = resolveVoiceRoleReadiness({
       registry: createDefaultVoiceProviderRegistry(),
       role: 'realtime_conversation',
-      providerId: 'realtime_openai',
+      providerId: 'happier.voice.openai/realtime-openai',
       platform: 'ios',
       modeId: 'byo',
       facts: { ...readyFacts, credential: 'unknown' },
     });
-    expect(unsupportedPlatform).toMatchObject({ status: 'incompatible', code: 'platform_unsupported' });
+    expect(nativeCredentialUnknown).toMatchObject({
+      status: 'unavailable',
+      code: 'credential_unknown',
+      recoveryAction: 'configure_credential',
+    });
     expect(isVoiceRoleSelectableForConfiguration({
-      readiness: unsupportedPlatform,
+      readiness: nativeCredentialUnknown,
       credentialConfigurationAvailable: true,
-    })).toBe(false);
+      passiveRuntimeCheckAvailable: false,
+    })).toBe(true);
+
+    const unsupportedDesktop = resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: 'happier.voice.openai/realtime-openai',
+      platform: 'windows',
+      modeId: 'byo',
+      facts: readyFacts,
+    });
+    expect(unsupportedDesktop).toMatchObject({ status: 'incompatible', code: 'platform_unsupported' });
 
     const missingContribution = resolveVoiceRoleReadiness({
       registry,
@@ -121,6 +228,46 @@ describe('resolveVoiceRoleReadiness', () => {
     expect(isVoiceRoleSelectableForConfiguration({
       readiness: missingContribution,
       credentialConfigurationAvailable: true,
+      passiveRuntimeCheckAvailable: false,
+    })).toBe(false);
+  });
+
+  it('keeps a not-yet-checked Agent runtime configurable without making it Start-ready', () => {
+    const runtimeUnknown = resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: 'happier.agent.codex/realtime-codex',
+      platform: 'web',
+      modeId: 'experimental',
+      facts: { ...readyFacts, runtime: 'unknown' },
+    });
+    expect(runtimeUnknown).toMatchObject({
+      status: 'unavailable',
+      code: 'runtime_unknown',
+    });
+    expect(runtimeUnknown.status).not.toBe('ready');
+    expect(isVoiceRoleSelectableForConfiguration({
+      readiness: runtimeUnknown,
+      credentialConfigurationAvailable: false,
+      passiveRuntimeCheckAvailable: true,
+    })).toBe(true);
+
+    const runtimeIncompatible = resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: 'happier.agent.codex/realtime-codex',
+      platform: 'web',
+      modeId: 'experimental',
+      facts: { ...readyFacts, runtime: 'incompatible' },
+    });
+    expect(runtimeIncompatible).toMatchObject({
+      status: 'incompatible',
+      code: 'runtime_incompatible',
+    });
+    expect(isVoiceRoleSelectableForConfiguration({
+      readiness: runtimeIncompatible,
+      credentialConfigurationAvailable: false,
+      passiveRuntimeCheckAvailable: true,
     })).toBe(false);
   });
 
@@ -128,7 +275,7 @@ describe('resolveVoiceRoleReadiness', () => {
     expect(resolveVoiceRoleReadiness({
       registry: createDefaultVoiceProviderRegistry(),
       role: 'realtime_conversation',
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       platform: 'web',
       modeId: 'byo',
       facts: readyFacts,
@@ -136,16 +283,16 @@ describe('resolveVoiceRoleReadiness', () => {
   });
 
   it.each(['ios', 'android'] as const)(
-    'fails the bundled ElevenLabs public leaf closed on unsupported %s',
+    'admits the bundled ElevenLabs public leaf on supported native %s',
     (platform) => {
       expect(resolveVoiceRoleReadiness({
         registry: createDefaultVoiceProviderRegistry(),
         role: 'realtime_conversation',
-        providerId: 'realtime_elevenlabs',
+        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         platform,
         modeId: 'byo',
         facts: readyFacts,
-      })).toMatchObject({ status: 'incompatible', code: 'platform_unsupported' });
+      })).toMatchObject({ status: 'ready', code: 'ready' });
     },
   );
 
@@ -153,7 +300,7 @@ describe('resolveVoiceRoleReadiness', () => {
     expect(resolveVoiceRoleReadiness({
       registry: createDefaultVoiceProviderRegistry(),
       role: 'realtime_conversation',
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       platform: 'windows',
       modeId: 'byo',
       facts: readyFacts,
@@ -219,7 +366,7 @@ describe('resolveVoiceRoleReadiness', () => {
 
   it('uses mode-specific requirements without a generic provider-id branch', () => {
     const modeRegistry = createVoiceProviderRegistry({
-      bundled: [{
+      builtIn: [{
         ...CLOUD_STT,
         requirements: [],
         requirementsByMode: { byo: ['execution_machine', 'credential'] },
@@ -243,9 +390,31 @@ describe('resolveVoiceRoleReadiness', () => {
     })).toMatchObject({ status: 'needs_setup', code: 'provider_mode_unknown' });
   });
 
+  it('projects a selected Connected Account machine dependency through the canonical requirement owner', () => {
+    const openAi = createDefaultVoiceProviderRegistry().get('happier.voice.openai/realtime-openai');
+    if (!openAi) throw new Error('expected_openai_voice_provider');
+
+    expect(projectVoiceProviderRequirements(openAi, 'byo', 'savedSecret'))
+      .not.toContain('execution_machine');
+    expect(projectVoiceProviderRequirements(openAi, 'byo', 'connectedAccount'))
+      .toContain('execution_machine');
+    expect(resolveVoiceRoleReadiness({
+      registry: createDefaultVoiceProviderRegistry(),
+      role: 'realtime_conversation',
+      providerId: 'happier.voice.openai/realtime-openai',
+      platform: 'web',
+      modeId: 'byo',
+      credentialSourceKind: 'connectedAccount',
+      facts: { ...readyFacts, executionMachine: 'missing' },
+    })).toMatchObject({
+      status: 'needs_setup',
+      code: 'execution_machine_missing',
+    });
+  });
+
   it('projects a disabled deployment feature through the same requirement owner', () => {
     const hostedRegistry = createVoiceProviderRegistry({
-      bundled: [{ ...CLOUD_STT, requirements: ['server_feature'] }],
+      builtIn: [{ ...CLOUD_STT, requirements: ['server_feature'] }],
     });
     expect(resolveVoiceRoleReadiness({
       registry: hostedRegistry,

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import type { Automation } from '@/sync/domains/automations/automationTypes';
+import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import {
     useEnabledAutomationsCountForSession,
     useOpenApprovalArtifactsForSession,
@@ -32,21 +32,41 @@ function artifact(
     };
 }
 
-function automation(params: Partial<Automation> & Pick<Automation, 'id' | 'targetType' | 'templateCiphertext'>): Automation {
+type AutomationFixture = Readonly<{
+    id: string;
+    name?: string;
+    description?: string | null;
+    enabled?: boolean;
+    targetType: AutomationDefinition['targetType'];
+    templateVersion?: number;
+    nextRunAt?: number | null;
+    lastRunAt?: number | null;
+    createdAt?: number;
+    updatedAt?: number;
+    assignments?: AutomationDefinition['assignments'];
+    linkedExistingSessionId?: string | null;
+}>;
+
+function automation(params: AutomationFixture): AutomationDefinition {
+    const templateVersion = params.templateVersion ?? 1;
     return {
         id: params.id,
         name: params.name ?? params.id,
         description: params.description ?? null,
         enabled: params.enabled ?? true,
-        schedule: params.schedule ?? { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
+        trigger: {
+            kind: 'schedule',
+            schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
+        },
         targetType: params.targetType,
-        templateCiphertext: params.templateCiphertext,
-        templateVersion: params.templateVersion ?? 1,
+        templateVersion,
         nextRunAt: params.nextRunAt ?? null,
         lastRunAt: params.lastRunAt ?? null,
         createdAt: params.createdAt ?? 1,
         updatedAt: params.updatedAt ?? 1,
         assignments: params.assignments ?? [],
+        detail: { kind: 'unloaded', templateVersion },
+        linkedExistingSessionId: params.linkedExistingSessionId ?? null,
     };
 }
 
@@ -231,32 +251,26 @@ describe('session detail scoped projections', () => {
                     enabled: automation({
                         id: 'enabled',
                         enabled: true,
-                        targetType: 'existing_session',
-                        templateCiphertext: JSON.stringify({
-                            kind: 'happier_automation_template_encrypted_v1',
-                            payloadCiphertext: 'cipher',
-                            existingSessionId: 'session-a',
-                        }),
+                        targetType: 'existingSession',
+                        linkedExistingSessionId: 'session-a',
+                    }),
+                    plain: automation({
+                        id: 'plain',
+                        enabled: true,
+                        targetType: 'existingSession',
+                        linkedExistingSessionId: 'session-a',
                     }),
                     disabled: automation({
                         id: 'disabled',
                         enabled: false,
-                        targetType: 'existing_session',
-                        templateCiphertext: JSON.stringify({
-                            kind: 'happier_automation_template_encrypted_v1',
-                            payloadCiphertext: 'cipher',
-                            existingSessionId: 'session-a',
-                        }),
+                        targetType: 'existingSession',
+                        linkedExistingSessionId: 'session-a',
                     }),
                     other: automation({
                         id: 'other',
                         enabled: true,
-                        targetType: 'existing_session',
-                        templateCiphertext: JSON.stringify({
-                            kind: 'happier_automation_template_encrypted_v1',
-                            payloadCiphertext: 'cipher',
-                            existingSessionId: 'session-b',
-                        }),
+                        targetType: 'existingSession',
+                        linkedExistingSessionId: 'session-b',
                     }),
                 },
             }));
@@ -269,7 +283,7 @@ describe('session detail scoped projections', () => {
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
-            expect(hook.getCurrent()).toBe(1);
+            expect(hook.getCurrent()).toBe(2);
             expect(renderCount).toBe(1);
 
             await act(async () => {
@@ -285,7 +299,7 @@ describe('session detail scoped projections', () => {
                 }));
             });
 
-            expect(hook.getCurrent()).toBe(1);
+            expect(hook.getCurrent()).toBe(2);
             expect(renderCount).toBe(1);
 
             await hook.unmount();

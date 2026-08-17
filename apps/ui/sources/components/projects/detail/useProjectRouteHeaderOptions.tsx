@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
@@ -11,6 +10,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { ProjectHeaderActions } from './ProjectHeaderActions';
 import { resolveProjectRouteHeaderTitle } from './projectRouteState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function useProjectRouteHeaderOptions(params: Readonly<{
     workspaceRef: WorkspaceRefV1 | null;
@@ -67,7 +67,7 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
                 accessibilityLabel={t('common.back')}
                 style={{ paddingHorizontal: 12, paddingVertical: 6 }}
             >
-                <Ionicons name="arrow-back" size={24} color={theme.colors.chrome.header.foreground} />
+                <Icon name="arrow-left" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         ),
         headerRight: () => (

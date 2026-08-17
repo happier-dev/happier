@@ -4,6 +4,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import {
+  buildNewSessionFromSocketUpdate,
   buildUpdatedSessionFromSocketUpdate,
   buildUpdatedSessionListRenderablePatchFromSocketUpdate,
 } from './syncSessions';
@@ -169,7 +170,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
         v: 1,
         summary: { text: 'Safe title', updatedAt: 10 },
       },
-      agentState: {},
+      agentState: null,
     });
     expect(renderablePatch).toMatchObject({
       metadataLayoutVersion: 1,
@@ -180,6 +181,45 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     });
     expect(JSON.stringify(nextSession)).not.toMatch(/private-native-id|private-tool-arguments|private-worktree/);
     expect(JSON.stringify(renderablePatch)).not.toMatch(/private-native-id|private-worktree/);
+  });
+
+  it('treats a layout-v1 new-session socket payload as a recipient projection with an Agent tombstone', async () => {
+    const nextSession = await buildNewSessionFromSocketUpdate({
+      updateBody: {
+        t: 'new-session',
+        id: 's_layout1_recipient',
+        metadataLayoutVersion: 1,
+        metadataVersion: 2,
+        metadata: JSON.stringify({
+          v: 1,
+          summary: { text: 'Safe title', updatedAt: 10 },
+        }),
+        agentStateVersion: 3,
+        agentState: JSON.stringify({
+          requests: {
+            privateRequest: {
+              arguments: 'private-tool-arguments',
+            },
+          },
+        }),
+        encryptionMode: 'plain',
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      encryption: null,
+    });
+
+    expect(nextSession).toMatchObject({
+      metadataLayoutVersion: 1,
+      metadataVersion: 2,
+      agentStateVersion: 3,
+      metadata: {
+        v: 1,
+        summary: { text: 'Safe title', updatedAt: 10 },
+      },
+      agentState: null,
+    });
+    expect(JSON.stringify(nextSession)).not.toContain('private-tool-arguments');
   });
 
   it('strict-parses layout-v1 E2EE socket metadata from the raw decrypted envelope', async () => {

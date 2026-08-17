@@ -5,16 +5,26 @@ import { selectionListTestId } from './_shared';
 
 type SelectionListMeasureHostProps = Readonly<{
     rootTestID?: string;
+    /**
+     * The measure-only subtree. Render-only: no focus, no scroll, no side
+     * effects — it exists so its `onLayout` reports a natural height.
+     *
+     * There is deliberately no second "visible children" prop. This host used
+     * to accept `children` AND `measureChildren` and render
+     * `measureChildren ?? children`, so a caller that passed both — which is
+     * what both call sites did — had its `children` silently DISCARDED. The
+     * prop made the host look like it also hosted the visible tree while
+     * rendering only the mirror. One subtree in, one subtree measured.
+     */
     children: React.ReactNode;
-    measureChildren?: React.ReactNode;
     measureMaxHeight?: number;
     onMeasureLayout: (event: LayoutChangeEvent) => void;
 }>;
 
 export function SelectionListMeasureHost(props: SelectionListMeasureHostProps): React.ReactElement {
     const measureSubtree = React.useMemo(
-        () => stripIdentityProps(props.measureChildren ?? props.children),
-        [props.measureChildren, props.children],
+        () => stripIdentityProps(props.children),
+        [props.children],
     );
 
     const measureStyle: StyleProp<ViewStyle> = props.measureMaxHeight !== undefined

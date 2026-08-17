@@ -68,9 +68,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderTopLeftRadius: CONTENT_SHEET_SEAM_RADIUS_PX,
         borderBottomLeftRadius: CONTENT_SHEET_SEAM_RADIUS_PX,
         zIndex: 2,
-        boxShadow: theme.dark
-            ? '-5px 0 22px rgba(0, 0, 0, 0.13)'
-            : '-5px 0 22px rgba(0, 0, 0, 0.035)',
+        boxShadow: theme.colors.shadowSeamCastBoxShadow,
     },
 }));
 

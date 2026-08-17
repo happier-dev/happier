@@ -3,8 +3,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
 import { storage } from '@/sync/domains/state/storage';
 import {
-    readDisplayMachineIdForSession,
-    readDisplayPathForSession,
+    readDisplayIdentityForSession,
     readMachineTargetForSession,
 } from '@/sync/ops/sessionMachineTarget';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -25,7 +24,9 @@ export function getRecentPathsForMachine(params: {
 }): string[] {
     const paths: string[] = [];
     const pathSet = new Set<string>();
-    const machines = Object.values(storage.getState().machines ?? {});
+    // Canonicalisation runs once per recent entry and once per session below; the store's id-keyed
+    // record is the index those lookups need, so it is used directly instead of a flattened list.
+    const machines = storage.getState().machines ?? {};
 
     // First, add paths from recentMachinePaths (most recent first by storage order)
     for (const entry of params.recentMachinePaths) {
@@ -51,14 +52,13 @@ export function getRecentPathsForMachine(params: {
             });
             if (!metadata) return;
             const reachableTarget = readMachineTargetForSession(session.id);
-            const sessionMachineId = reachableTarget?.machineId ?? readDisplayMachineIdForSession({
-                sessionId: null,
-                metadata,
-            });
-            const path = reachableTarget?.basePath ?? readDisplayPathForSession({
-                sessionId: null,
-                metadata,
-            });
+            // One display resolution per session: reading the machine id and the path separately
+            // resolved the same target, and re-read the same project, twice per session.
+            const displayIdentity = reachableTarget
+                ? null
+                : readDisplayIdentityForSession({ sessionId: null, metadata });
+            const sessionMachineId = reachableTarget?.machineId ?? displayIdentity?.machineId ?? '';
+            const path = reachableTarget?.basePath ?? displayIdentity?.basePath ?? '';
             if (sessionMachineId === params.machineId && path) {
                 if (!pathSet.has(path)) {
                     pathSet.add(path);

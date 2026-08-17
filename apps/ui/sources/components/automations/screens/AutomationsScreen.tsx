@@ -3,18 +3,21 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Modal } from '@/modal';
 import { useAllMachines, useAutomations } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
 import { AutomationListGroup } from '@/components/automations/list/AutomationListGroup';
 import { AutomationsEmptyState } from '@/components/automations/shared/AutomationsEmptyState';
 import { FAB } from '@/components/ui/buttons/FAB';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -35,16 +38,15 @@ export function AutomationsScreen() {
     const automations = useAutomations();
     const machines = useAllMachines();
     const [loading, setLoading] = React.useState(true);
+    const [refreshFailed, setRefreshFailed] = React.useState(false);
 
     const refresh = React.useCallback(async () => {
         try {
             setLoading(true);
+            setRefreshFailed(false);
             await sync.refreshAutomations();
-        } catch (error) {
-            await Modal.alert(
-                t('common.error'),
-                error instanceof Error ? error.message : t('automations.session.failedToLoad')
-            );
+        } catch {
+            setRefreshFailed(true);
         } finally {
             setLoading(false);
         }
@@ -54,10 +56,28 @@ export function AutomationsScreen() {
         void refresh();
     }, [refresh]);
 
-    if (loading) {
+    if (loading && automations.length === 0) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+            </View>
+        );
+    }
+
+    if (refreshFailed && automations.length === 0) {
+        return (
+            <View style={styles.container}>
+                <SurfaceStateCard
+                    testID="automations-refresh-error"
+                    kind="error"
+                    title={t('common.error')}
+                    reason={t('automations.session.failedToLoad')}
+                    action={{
+                        label: t('common.retry'),
+                        onPress: () => { void refresh(); },
+                    }}
+                    accessibilitySemantics="alert"
+                />
             </View>
         );
     }
@@ -66,6 +86,27 @@ export function AutomationsScreen() {
         <View style={styles.container}>
             <ItemList style={{ paddingTop: 0 }}>
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
+                    {refreshFailed ? (
+                        <ItemGroup>
+                            <Item
+                                testID="automations-stale-refresh-error"
+                                title={t('automations.session.failedToLoad')}
+                                icon={<Icon name="warning" size={20} color={theme.colors.state.warning.foreground} />}
+                                mode="info"
+                                showChevron={false}
+                                accessibilityRole="alert"
+                                accessibilityLiveRegion="assertive"
+                                webRole="alert"
+                            />
+                            <Item
+                                testID="automations-stale-refresh-retry"
+                                title={t('common.retry')}
+                                icon={<Icon name="arrow-clockwise" size={20} color={theme.colors.accent.blue} />}
+                                onPress={() => { void refresh(); }}
+                                showChevron={false}
+                            />
+                        </ItemGroup>
+                    ) : null}
                     {automations.length === 0 ? (
                         machines.length === 0 ? (
                             <SessionGettingStartedGuidance variant="primaryPane" />
@@ -76,7 +117,11 @@ export function AutomationsScreen() {
                             />
                         )
                     ) : (
-                        <AutomationListGroup title={t('sessionInfo.automationsTitle')} automations={automations} />
+                        <AutomationListGroup
+                            title={t('sessionInfo.automationsTitle')}
+                            automations={automations}
+                            mutationsEnabled={!refreshFailed}
+                        />
                     )}
                 </View>
             </ItemList>

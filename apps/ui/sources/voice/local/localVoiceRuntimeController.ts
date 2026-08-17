@@ -1,4 +1,14 @@
-import { createLocalVoiceRuntimeControllerImpl } from './createLocalVoiceRuntimeControllerImpl';
+import {
+  abortLocalVoiceTurn,
+  announceLocalVoiceAgentAssistantText,
+  appendLocalVoiceAgentContextUpdate,
+  isLocalVoiceAgentActive,
+  sendLocalVoiceAgentTextTurn,
+  sendLocalVoiceAgentTextUpdate,
+  setLocalVoiceMuted,
+  stopLocalVoiceSession,
+  toggleLocalVoiceTurn,
+} from './localVoiceEngine';
 
 export type LocalVoiceRuntimeController = Readonly<{
   abortTurn: (sessionId: string) => Promise<void>;
@@ -13,6 +23,7 @@ export type LocalVoiceRuntimeController = Readonly<{
       localId: string;
       deliveryCommand: 'interrupt_and_send';
     }>;
+    onAccepted?: () => Promise<void>;
   }>) => Promise<void>;
   sendAgentTextUpdate: (sessionId: string, update: string) => Promise<void>;
   stopSession: () => Promise<void>;
@@ -20,7 +31,18 @@ export type LocalVoiceRuntimeController = Readonly<{
 }>;
 
 export function createLocalVoiceRuntimeController(): LocalVoiceRuntimeController {
-  return createLocalVoiceRuntimeControllerImpl();
+  return {
+    abortTurn: async (sessionId) => await abortLocalVoiceTurn(sessionId),
+    announceAgentAssistantText: (sessionId, text) => announceLocalVoiceAgentAssistantText(sessionId, text),
+    appendAgentContextUpdate: (sessionId, update) => appendLocalVoiceAgentContextUpdate(sessionId, update),
+    isAgentActive: (sessionId) => isLocalVoiceAgentActive(sessionId),
+    setMuted: async (sessionId, muted) => await setLocalVoiceMuted(sessionId, muted),
+    sendAgentTextTurn: async ({ controlSessionId, text, durableDispatch, onAccepted }) =>
+      await sendLocalVoiceAgentTextTurn(controlSessionId, text, durableDispatch, onAccepted),
+    sendAgentTextUpdate: async (sessionId, update) => await sendLocalVoiceAgentTextUpdate(sessionId, update),
+    stopSession: async () => await stopLocalVoiceSession(),
+    toggleTurn: async (sessionId) => await toggleLocalVoiceTurn(sessionId),
+  };
 }
 
 export const localVoiceRuntimeController = createLocalVoiceRuntimeController();

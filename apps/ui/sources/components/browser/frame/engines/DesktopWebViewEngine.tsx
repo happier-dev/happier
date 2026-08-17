@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -48,6 +47,7 @@ import {
 } from '@/sync/domains/browser/control';
 import type { DesktopBrowserPageInfo } from '@/sync/domains/browser/adapters/desktopWebViewBridge';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 import {
     useDesktopWebViewSurfaceSync,
@@ -683,9 +683,9 @@ export function DesktopWebViewEngine(props: Readonly<{
                     onPress={reloadAfterCrash}
                     style={stylesheet.crashedReloadButton}
                 >
-                    <Ionicons
-                        name="refresh-outline"
-                        size={18}
+                    <Icon
+                        name="arrow-clockwise"
+                        size={16}
                         color={theme.colors.text.primary}
                     />
                     <Text style={browserFrameStyles.statusText}>

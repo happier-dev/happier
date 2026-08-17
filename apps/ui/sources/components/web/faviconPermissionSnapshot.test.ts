@@ -144,6 +144,39 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         expect(second.hasFreshPermission).toBe(false);
     });
 
+    it('does not walk the account again when a store notification moves neither sessions nor messages', () => {
+        vi.setSystemTime(new Date(1_000));
+        const selector = createFaviconPermissionSnapshotSelector();
+        let recordAccesses = 0;
+        const countAccess = <T extends object>(record: T): T => new Proxy(record, {
+            get(target, property, receiver) {
+                recordAccesses += 1;
+                return Reflect.get(target, property, receiver);
+            },
+            ownKeys(target) {
+                recordAccesses += 1;
+                return Reflect.ownKeys(target);
+            },
+        });
+        // The favicon indicator is mounted at the web app root, so this selector
+        // runs on every store notification for the whole account. A notification
+        // that moved neither record cannot move the snapshot, so it must not read
+        // a single session back.
+        const sessions = countAccess({
+            session1: createSession({ id: 'session1', updatedAt: 1 }),
+            session2: createSession({ id: 'session2', updatedAt: 1 }),
+        });
+        const sessionMessages = countAccess<StorageState['sessionMessages']>({});
+
+        const first = selector(createState({ sessions, sessionMessages }));
+        recordAccesses = 0;
+
+        const second = selector(createState({ sessions, sessionMessages, isDataReady: true }));
+
+        expect(second).toBe(first);
+        expect(recordAccesses).toBe(0);
+    });
+
     it('derives permission snapshots without Object.keys or Object.values over store sessions', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();

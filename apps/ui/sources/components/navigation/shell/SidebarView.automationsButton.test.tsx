@@ -5,6 +5,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -523,8 +524,8 @@ describe('SidebarView header automations button', () => {
             screen.findByTestId('nav-settings'),
             'settings header button',
         );
-        const settingsIcon = settingsButton.findByType('Ionicons' as any);
-        expect(settingsIcon.props.size).toBe(24);
+        const settingsIcon = settingsButton.findByType('Icon' as any);
+        expect(settingsIcon.props.size).toBe(ICON_SIZE.md);
     });
 
     it('folds header icons into an overflow menu when the sidebar is narrow', async () => {

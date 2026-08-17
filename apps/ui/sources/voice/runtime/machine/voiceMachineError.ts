@@ -43,6 +43,14 @@ const POLICY_BY_KIND: Readonly<Record<VoiceMachineErrorKind, VoiceMachineErrorPo
     unsupported_runtime: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'install_agent_runtime', presentation: 'error' },
     update_required: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'update_agent_runtime', presentation: 'error' },
     feature_unavailable: { phase: 'preflight', retryPolicy: 'never', recoveryAction: 'none', presentation: 'error' },
+    // The only preflight refusal that used to project as a `notice`. A notice is
+    // recoverable, and a recoverable failure reads as a graceful `disconnected`
+    // end, which the surface renders as plain `idle` — so a Start the host
+    // refused before any request showed the user nothing at all while its own
+    // policy demands a `user_action` retry. It is visible like every other
+    // preflight refusal; the retry affordance is what distinguishes it from a
+    // credential or setup fault.
+    service_temporarily_unavailable: { phase: 'preflight', retryPolicy: 'user_action', recoveryAction: 'retry', presentation: 'error' },
 };
 
 const VOICE_MACHINE_ERROR_KINDS = Object.keys(POLICY_BY_KIND) as ReadonlyArray<VoiceMachineErrorKind>;

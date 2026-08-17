@@ -172,7 +172,7 @@ describe('PermissionFooter (Claude permission updates)', () => {
         expect(styleFragments.some((style) => style.opacity === 0.3)).toBe(false);
     });
 
-    it('approves allow-command-name using stripped shell prelude', async () => {
+    it('does not offer a broad command-name grant for a shell prelude', async () => {
         const { PermissionFooter } = await import('../permissions/PermissionFooter');
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },
@@ -184,25 +184,14 @@ describe('PermissionFooter (Claude permission updates)', () => {
             },
             metadata: { flavor: 'opencode' },
         }));
-        const commandNameButton = findPermissionFooterButton(screen, 'claude.permissions.yesForCommandName');
-        await pressTestInstanceAsync(commandNameButton, 'allow-command-name button');
-
-        expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledTimes(1);
-        expect(ops.sessionAllowWithPermissionUpdates).toHaveBeenCalledWith(
-            's1',
-            'p1',
-            expect.objectContaining({
-                allowedTools: ['Bash(pwd:*)'],
-                updatedPermissions: [
-                    {
-                        type: 'addRules',
-                        behavior: 'allow',
-                        destination: 'session',
-                        rules: [{ toolName: 'Bash', ruleContent: 'pwd:*' }],
-                    },
-                ],
-            }),
-        );
+        expect(
+            findTestInstanceByTypeContainingText(
+                screen.tree,
+                'TouchableOpacity',
+                'claude.permissions.yesForCommandName',
+            ),
+        ).toBeUndefined();
+        expect(ops.sessionAllowWithPermissionUpdates).not.toHaveBeenCalled();
     });
 
     it('uses permission foreground tokens for pending action labels', async () => {

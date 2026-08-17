@@ -7,6 +7,9 @@ import type { VoiceSessionSnapshot } from './types';
 import type { VoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 
 const platformOsMock = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
+const CODEX_PROVIDER_ID = 'happier.agent.codex/realtime-codex';
+const ELEVENLABS_PROVIDER_ID = 'happier.voice.elevenlabs/realtime-elevenlabs';
+const OPENAI_PROVIDER_ID = 'happier.voice.openai/realtime-openai';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,7 +27,7 @@ vi.mock('react-native', async () => {
 });
 
 const defaultUseSetting = (key: string) => {
-  if (key === 'voice') return { providerId: 'local_direct' };
+  if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: 'local_direct' };
   return null;
 };
 
@@ -60,8 +63,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
     useActiveServerAccountScope: () => useActiveServerAccountScope(),
-    useRealtimeStatus: () => 'disconnected',
-    useRealtimeMode: () => 'idle',
     useProfile: () => useProfile(),
     useSetting: (key: string) => useSetting(key),
 });
@@ -208,6 +209,28 @@ describe('VoiceSessionRuntime', () => {
     expect(getVoiceSessionSnapshot()).toEqual(snap);
   });
 
+  it('configures exact-session Codex Voice without requiring its global account binding', async () => {
+    platformOsMock.value = 'web';
+    useSetting.mockImplementation((key: string) => key === 'voice' || key === 'voiceSettingsV1'
+      ? {
+          providerId: CODEX_PROVIDER_ID,
+          providers: {
+            [CODEX_PROVIDER_ID]: {
+              schemaVersion: 2,
+              config: { globalConnectedServices: null },
+            },
+          },
+        }
+      : null);
+
+    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+    const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+
+    await renderScreen(React.createElement(VoiceSessionRuntime));
+
+    expect(getVoiceSessionLifecycleController()?.getConfiguredProviderId()).toBe(CODEX_PROVIDER_ID);
+  });
+
   it('updates the store when an adapter subscription fires', async () => {
     let current: Snapshot = {
       adapterId: 'local_direct',
@@ -256,18 +279,31 @@ describe('VoiceSessionRuntime', () => {
 
   it('rearms a failed provider-auth preparation after credential authority changes and waits for explicit start', async () => {
     let voiceSetting = {
-      providerId: 'realtime_openai',
+      providerId: OPENAI_PROVIDER_ID,
       providers: {
-        realtime_openai: {
+        [OPENAI_PROVIDER_ID]: {
           schemaVersion: 1,
           config: {
-            authentication: {
-              source: 'connected_service_api_key',
-              binding: { source: 'connected', selection: 'profile', profileId: 'work' },
-            },
+            model: { kind: 'pinned', id: 'gpt-realtime-2.1' },
+            voice: 'marin',
+            instructions: '',
+            turnDetection: 'server_vad',
+            inputTranscriptionModel: '',
           },
         },
       },
+    };
+    const canonicalVoiceSetting = {
+      ...voiceSetting,
+      credentialBindings: [{
+        contribution: {
+          pluginId: 'happier.voice.openai',
+          localId: 'realtime-openai',
+        },
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'connectedAccount' },
+        credentialBindings: {},
+      }],
     };
     let profile: Exclude<TestProfileAuthority, null> = {
       connectedServicesV2: [{
@@ -279,14 +315,15 @@ describe('VoiceSessionRuntime', () => {
     };
     useSetting.mockImplementation((key: string) => {
       if (key === 'voice') return voiceSetting;
+      if (key === 'voiceSettingsV1') return canonicalVoiceSetting;
       if (key === 'secrets') return [];
       return null;
     });
     useProfile.mockImplementation(() => profile);
-    const selected = createRuntimeAdapter('realtime_openai', {
-      adapterId: 'realtime_openai',
+    const selected = createRuntimeAdapter(OPENAI_PROVIDER_ID, {
+      adapterId: OPENAI_PROVIDER_ID,
       sessionId: 'voice-session',
-      status: 'disconnected',
+      status: 'error',
       mode: 'idle',
       canStop: false,
       errorCode: 'provider_auth_invalid',
@@ -308,7 +345,7 @@ describe('VoiceSessionRuntime', () => {
     const screen = await renderScreen(React.createElement(VoiceSessionRuntime));
 
     expect(getVoiceSessionSnapshot()).toMatchObject({
-      status: 'disconnected',
+      status: 'error',
       errorCode: 'provider_auth_invalid',
       errorRecoveryAction: 'review_credentials',
     });
@@ -329,10 +366,10 @@ describe('VoiceSessionRuntime', () => {
       ...voiceSetting,
       providers: {
         ...voiceSetting.providers,
-        realtime_openai: {
-          ...voiceSetting.providers.realtime_openai,
+        [OPENAI_PROVIDER_ID]: {
+          ...voiceSetting.providers[OPENAI_PROVIDER_ID],
           config: {
-            ...voiceSetting.providers.realtime_openai.config,
+            ...voiceSetting.providers[OPENAI_PROVIDER_ID].config,
           },
         },
       },
@@ -358,13 +395,17 @@ describe('VoiceSessionRuntime', () => {
   });
 
   it('classifies ordinary OpenAI credential changes as next-start-only and Codex authority as exact-session', async () => {
-    let selectedProviderId = 'realtime_openai';
+    let selectedProviderId = 'happier.voice.openai/realtime-openai';
     let accountScope = { serverId: 'server-a', accountId: 'account-a' };
     let credentialBindings: ReadonlyArray<unknown> = [];
     let providerEnvelope: Readonly<Record<string, unknown>> = {
       schemaVersion: 1,
       config: {
-        authentication: { source: 'voice_saved_secret' },
+        model: { kind: 'pinned', id: 'gpt-realtime-2.1' },
+        voice: 'marin',
+        instructions: '',
+        turnDetection: 'server_vad',
+        inputTranscriptionModel: '',
       },
     };
     let secrets: ReadonlyArray<unknown> = [];
@@ -374,12 +415,17 @@ describe('VoiceSessionRuntime', () => {
     };
     const readVoiceSetting = () => ({
       providerId: selectedProviderId,
+      providers: { [selectedProviderId]: providerEnvelope },
+    });
+    const readCanonicalVoiceSetting = () => ({
+      providerId: selectedProviderId,
       credentialBindings,
       providers: { [selectedProviderId]: providerEnvelope },
     });
     useActiveServerAccountScope.mockImplementation(() => accountScope);
     useSetting.mockImplementation((key: string) => {
       if (key === 'voice') return readVoiceSetting();
+      if (key === 'voiceSettingsV1') return readCanonicalVoiceSetting();
       if (key === 'secrets') return secrets;
       return null;
     });
@@ -395,7 +441,7 @@ describe('VoiceSessionRuntime', () => {
     };
     const ordinaryOpenAiAdapter = {
       ...createRuntimeAdapter(
-        'realtime_openai',
+        'happier.voice.openai/realtime-openai',
         disconnectedSnapshot,
         { engineKind: 'realtime' },
       ).controller,
@@ -408,7 +454,7 @@ describe('VoiceSessionRuntime', () => {
     };
     const exactSessionCodexAdapter = {
       ...createRuntimeAdapter(
-        'realtime_codex',
+        'happier.agent.codex/realtime-codex',
         disconnectedSnapshot,
         { engineKind: 'realtime' },
       ).controller,
@@ -463,7 +509,12 @@ describe('VoiceSessionRuntime', () => {
     });
 
     const selectedCredentialBinding = {
-      providerId: 'realtime_openai',
+      contribution: {
+        pluginId: 'happier.voice.openai',
+        localId: 'realtime-openai',
+      },
+      credentialSlotId: 'api_key',
+      credentialSource: { kind: 'savedSecret' },
       credentialBindings: { account: { api_key: 'secret-b' } },
     };
     credentialBindings = [selectedCredentialBinding];
@@ -474,10 +525,8 @@ describe('VoiceSessionRuntime', () => {
     providerEnvelope = {
       ...providerEnvelope,
       config: {
-        authentication: {
-          source: 'connected_service_api_key',
-          binding: { source: 'connected', selection: 'profile', profileId: 'work' },
-        },
+        ...(providerEnvelope.config as Readonly<Record<string, unknown>>),
+        voice: 'cedar',
       },
     };
     await act(async () => {
@@ -487,10 +536,19 @@ describe('VoiceSessionRuntime', () => {
     credentialBindings = [
       selectedCredentialBinding,
       {
-        providerId: 'realtime_other',
+        contribution: { pluginId: 'acme.voice', localId: 'other' },
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'savedSecret' },
         credentialBindings: { account: { api_key: 'unrelated-secret' } },
       },
     ];
+    await act(async () => {
+      screen.tree.update(React.createElement(VoiceSessionRuntime));
+    });
+    expect(rearmAfterCredentialAuthorityChange).toHaveBeenCalledTimes(3);
+
+    credentialBindings = JSON.parse(JSON.stringify(credentialBindings));
+    providerEnvelope = JSON.parse(JSON.stringify(providerEnvelope));
     await act(async () => {
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
@@ -514,17 +572,14 @@ describe('VoiceSessionRuntime', () => {
     });
 
     expect(rearmAfterCredentialAuthorityChange.mock.calls).toEqual([
-      [{ fenceActive: false }],
-      [{ fenceActive: false }],
-      [{ fenceActive: false }],
-      [{ fenceActive: false }],
+      [{ exactSessionAccountScopeChanged: false, globalBindingAuthorityChanged: false }],
+      [{ exactSessionAccountScopeChanged: false, globalBindingAuthorityChanged: false }],
+      [{ exactSessionAccountScopeChanged: false, globalBindingAuthorityChanged: false }],
+      [{ exactSessionAccountScopeChanged: false, globalBindingAuthorityChanged: false }],
     ]);
 
-    selectedProviderId = 'realtime_codex';
-    credentialBindings = [{
-      providerId: 'realtime_codex',
-      credentialBindings: { account: { accountId: 'codex-account-a' } },
-    }];
+    selectedProviderId = 'happier.agent.codex/realtime-codex';
+    credentialBindings = [];
     providerEnvelope = {
       schemaVersion: 2,
       config: {
@@ -569,16 +624,132 @@ describe('VoiceSessionRuntime', () => {
     });
 
     expect(rearmAfterCredentialAuthorityChange.mock.calls).toEqual([
-      [{ fenceActive: true }],
-      [{ fenceActive: true }],
+      [{ exactSessionAccountScopeChanged: true, globalBindingAuthorityChanged: false }],
+      [{ exactSessionAccountScopeChanged: false, globalBindingAuthorityChanged: true }],
     ]);
+  });
+
+  it('does not terminate a pending ordinary OpenAI Start for unrelated secret, profile, or revision refreshes', async () => {
+    const voiceSetting = {
+      providerId: OPENAI_PROVIDER_ID,
+      providers: {
+        [OPENAI_PROVIDER_ID]: {
+          schemaVersion: 1,
+          config: {
+            model: { kind: 'pinned', id: 'gpt-realtime-2.1' },
+            voice: 'marin',
+            instructions: '',
+            turnDetection: 'server_vad',
+            inputTranscriptionModel: '',
+          },
+        },
+      },
+    };
+    const canonicalVoiceSetting = {
+      ...voiceSetting,
+      credentialBindings: [{
+        contribution: {
+          pluginId: 'happier.voice.openai',
+          localId: 'realtime-openai',
+        },
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'savedSecret' },
+        credentialBindings: { account: { api_key: 'openai-secret' } },
+      }],
+    };
+    let secrets: ReadonlyArray<unknown> = [{ id: 'openai-secret', revision: 1 }];
+    let profile: Exclude<TestProfileAuthority, null> = {
+      connectedServicesV2: [],
+      connectedServiceCredentialRevisionsV1: [],
+    };
+    useSetting.mockImplementation((key: string) => {
+      if (key === 'voice') return voiceSetting;
+      if (key === 'voiceSettingsV1') return canonicalVoiceSetting;
+      if (key === 'secrets') return secrets;
+      return null;
+    });
+    useProfile.mockImplementation(() => profile);
+
+    const startDeferred = createDeferred<void>();
+    const pending = createRuntimeAdapter(
+      OPENAI_PROVIDER_ID,
+      {
+        adapterId: null,
+        sessionId: null,
+        status: 'disconnected',
+        mode: 'idle',
+        canStop: false,
+      },
+      {
+        engineKind: 'realtime',
+        start: async () => {
+          await startDeferred.promise;
+        },
+      },
+    );
+    const adapter = {
+      ...pending.controller,
+      resolveSurfaceCapabilities: () => ({
+        allowsGlobalStart: true,
+        controlSessionScope: 'global' as const,
+        requiresVoiceAgentFeature: false,
+        bargeInEnabled: false,
+      }),
+    };
+    vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
+      createBuiltinVoiceAdapterAssembly: () => ({
+        adapters: [adapter],
+        dispose: vi.fn(async () => undefined),
+      }),
+    }));
+
+    const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+    const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+    const screen = await renderScreen(React.createElement(VoiceSessionRuntime));
+    const controller = getVoiceSessionLifecycleController();
+    if (!controller) throw new Error('voice lifecycle controller unavailable');
+    const start = controller.toggle('voice-session');
+    await vi.waitFor(() => expect(pending.controller.start).toHaveBeenCalledOnce());
+
+    secrets = [
+      ...secrets,
+      { id: 'unrelated-secret', revision: 2 },
+    ];
+    profile = {
+      connectedServicesV2: [{
+        serviceId: 'unrelated-service',
+        profiles: [{ profileId: 'unrelated-profile', status: 'connected', kind: 'token' }],
+        groups: [],
+      }],
+      connectedServiceCredentialRevisionsV1: [{
+        serviceId: 'unrelated-service',
+        profileId: 'unrelated-profile',
+        credentialRevision: 'revision-2',
+      }],
+    };
+    await act(async () => {
+      screen.tree.update(React.createElement(VoiceSessionRuntime));
+      await Promise.resolve();
+    });
+
+    expect(pending.controller.stop).not.toHaveBeenCalled();
+
+    startDeferred.resolve();
+    await act(async () => {
+      await start;
+    });
+    expect(pending.getSnapshot()).toMatchObject({
+      adapterId: OPENAI_PROVIDER_ID,
+      sessionId: 'voice-session',
+      status: 'connecting',
+    });
   });
 
   it('fences an established global Agent attachment exactly once when its selected group changes active profile', async () => {
     const voiceSetting = {
-      providerId: 'realtime_codex',
+      providerId: CODEX_PROVIDER_ID,
       providers: {
-        realtime_codex: {
+        [CODEX_PROVIDER_ID]: {
           schemaVersion: 2,
           config: {
             globalConnectedServices: {
@@ -611,12 +782,14 @@ describe('VoiceSessionRuntime', () => {
       }],
       connectedServiceCredentialRevisionsV1: [],
     };
-    useSetting.mockImplementation((key: string) => key === 'voice' ? voiceSetting : null);
+    useSetting.mockImplementation((key: string) => (
+      key === 'voice' || key === 'voiceSettingsV1' ? voiceSetting : null
+    ));
     useProfile.mockImplementation(() => profile);
     const active = createRuntimeAdapter(
-      'realtime_codex',
+      CODEX_PROVIDER_ID,
       {
-        adapterId: 'realtime_codex',
+        adapterId: CODEX_PROVIDER_ID,
         sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         status: 'connected',
         mode: 'listening',
@@ -695,9 +868,9 @@ describe('VoiceSessionRuntime', () => {
     'fences an established global Agent attachment exactly once when its selected profile %s',
     async (_caseName, nextProfiles) => {
       const voiceSetting = {
-        providerId: 'realtime_codex',
+        providerId: CODEX_PROVIDER_ID,
         providers: {
-          realtime_codex: {
+          [CODEX_PROVIDER_ID]: {
             schemaVersion: 2,
             config: {
               globalConnectedServices: {
@@ -722,12 +895,14 @@ describe('VoiceSessionRuntime', () => {
         }],
         connectedServiceCredentialRevisionsV1: [],
       };
-      useSetting.mockImplementation((key: string) => key === 'voice' ? voiceSetting : null);
+      useSetting.mockImplementation((key: string) => (
+        key === 'voice' || key === 'voiceSettingsV1' ? voiceSetting : null
+      ));
       useProfile.mockImplementation(() => profile);
       const active = createRuntimeAdapter(
-        'realtime_codex',
+        CODEX_PROVIDER_ID,
         {
-          adapterId: 'realtime_codex',
+          adapterId: CODEX_PROVIDER_ID,
           sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
           status: 'connected',
           mode: 'listening',
@@ -780,9 +955,9 @@ describe('VoiceSessionRuntime', () => {
 
   it('does not fence an established global Agent attachment for an unrelated Connected Services update', async () => {
     const voiceSetting = {
-      providerId: 'realtime_codex',
+      providerId: CODEX_PROVIDER_ID,
       providers: {
-        realtime_codex: {
+        [CODEX_PROVIDER_ID]: {
           schemaVersion: 2,
           config: {
             globalConnectedServices: {
@@ -814,12 +989,14 @@ describe('VoiceSessionRuntime', () => {
       ],
       connectedServiceCredentialRevisionsV1: [],
     };
-    useSetting.mockImplementation((key: string) => key === 'voice' ? voiceSetting : null);
+    useSetting.mockImplementation((key: string) => (
+      key === 'voice' || key === 'voiceSettingsV1' ? voiceSetting : null
+    ));
     useProfile.mockImplementation(() => profile);
     const active = createRuntimeAdapter(
-      'realtime_codex',
+      CODEX_PROVIDER_ID,
       {
-        adapterId: 'realtime_codex',
+        adapterId: CODEX_PROVIDER_ID,
         sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         status: 'connected',
         mode: 'listening',
@@ -876,9 +1053,9 @@ describe('VoiceSessionRuntime', () => {
 
   it('fences an established direct Agent attachment only when its server-account scope changes', async () => {
     const voiceSetting = {
-      providerId: 'realtime_codex',
+      providerId: CODEX_PROVIDER_ID,
       providers: {
-        realtime_codex: {
+        [CODEX_PROVIDER_ID]: {
           schemaVersion: 2,
           config: {
             globalConnectedServices: {
@@ -912,13 +1089,15 @@ describe('VoiceSessionRuntime', () => {
       }],
       connectedServiceCredentialRevisionsV1: [],
     };
-    useSetting.mockImplementation((key: string) => key === 'voice' ? voiceSetting : null);
+    useSetting.mockImplementation((key: string) => (
+      key === 'voice' || key === 'voiceSettingsV1' ? voiceSetting : null
+    ));
     useProfile.mockImplementation(() => profile);
     useActiveServerAccountScope.mockImplementation(() => accountScope);
     const active = createRuntimeAdapter(
-      'realtime_codex',
+      CODEX_PROVIDER_ID,
       {
-        adapterId: 'realtime_codex',
+        adapterId: CODEX_PROVIDER_ID,
         sessionId: 'direct-agent-session',
         status: 'connected',
         mode: 'listening',
@@ -995,7 +1174,7 @@ describe('VoiceSessionRuntime', () => {
 
   it('prefers the selected provider adapter snapshot when multiple adapters are active', async () => {
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: 'local_conversation' };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: 'local_conversation' };
       return null;
     });
 
@@ -1049,7 +1228,7 @@ describe('VoiceSessionRuntime', () => {
 
   it('keeps the active store owner stable when the selected provider changes mid-call', async () => {
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: 'local_conversation' };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: 'local_conversation' };
       return null;
     });
 
@@ -1105,7 +1284,7 @@ describe('VoiceSessionRuntime', () => {
   it('stops the current owner and starts the newly selected provider after disconnect', async () => {
     let selectedProviderId = 'local_direct';
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: selectedProviderId };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: selectedProviderId };
       return null;
     });
 
@@ -1168,7 +1347,7 @@ describe('VoiceSessionRuntime', () => {
   it('stops the current owner and settles to off after a real disconnect snapshot', async () => {
     let selectedProviderId = 'local_direct';
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: selectedProviderId };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: selectedProviderId };
       return null;
     });
 
@@ -1229,7 +1408,7 @@ describe('VoiceSessionRuntime', () => {
 
   it('prefers the selected provider adapter snapshot when the provider id is padded', async () => {
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: ' local_conversation ' };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: ' local_conversation ' };
       return null;
     });
 
@@ -1284,12 +1463,12 @@ describe('VoiceSessionRuntime', () => {
   it('keeps the stored local provider as the continuous-mode owner on web', async () => {
     platformOsMock.value = 'web';
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: 'local_conversation' };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: 'local_conversation' };
       return null;
     });
 
     const realtimeSnapshot: Snapshot = {
-      adapterId: 'realtime_elevenlabs',
+      adapterId: ELEVENLABS_PROVIDER_ID,
       sessionId: 's-rt',
       status: 'connected',
       mode: 'speaking',
@@ -1306,7 +1485,7 @@ describe('VoiceSessionRuntime', () => {
     vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
       createBuiltinVoiceAdapterAssembly: () => ({ adapters: [
         {
-          id: 'realtime_elevenlabs',
+          id: ELEVENLABS_PROVIDER_ID,
           start: vi.fn(async () => {}),
           stop: vi.fn(async () => {}),
           toggle: vi.fn(async () => {}),
@@ -1338,7 +1517,7 @@ describe('VoiceSessionRuntime', () => {
 
   it('fails closed when the configured provider id is unsupported', async () => {
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: 'unsupported_provider' };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: 'unsupported_provider' };
       return null;
     });
 
@@ -1381,14 +1560,14 @@ describe('VoiceSessionRuntime', () => {
 
   it('keeps realtime capture admission and the active snapshot until unmount stop completes', async () => {
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: 'realtime_openai' };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: OPENAI_PROVIDER_ID };
       return null;
     });
     const stopDeferred = createDeferred<void>();
     const realtime = createRuntimeAdapter(
-      'realtime_openai',
+      OPENAI_PROVIDER_ID,
       {
-        adapterId: 'realtime_openai',
+        adapterId: OPENAI_PROVIDER_ID,
         sessionId: null,
         status: 'disconnected',
         mode: 'idle',
@@ -1434,7 +1613,7 @@ describe('VoiceSessionRuntime', () => {
       activeOwner: 'conversation',
     });
     expect(getVoiceSessionSnapshot()).toMatchObject({
-      adapterId: 'realtime_openai',
+      adapterId: OPENAI_PROVIDER_ID,
       sessionId: 'voice-session',
       status: 'connecting',
     });
@@ -1518,14 +1697,14 @@ describe('VoiceSessionRuntime', () => {
 
   it('does not let an earlier StrictMode-equivalent cleanup overwrite a remounted owner', async () => {
     useSetting.mockImplementation((key: string) => {
-      if (key === 'voice') return { providerId: 'realtime_openai' };
+      if (key === 'voice' || key === 'voiceSettingsV1') return { providerId: OPENAI_PROVIDER_ID };
       return null;
     });
     const oldStopDeferred = createDeferred<void>();
     const oldRuntime = createRuntimeAdapter(
-      'realtime_openai',
+      OPENAI_PROVIDER_ID,
       {
-        adapterId: 'realtime_openai',
+        adapterId: OPENAI_PROVIDER_ID,
         sessionId: null,
         status: 'disconnected',
         mode: 'idle',
@@ -1539,9 +1718,9 @@ describe('VoiceSessionRuntime', () => {
       },
     );
     const freshRuntime = createRuntimeAdapter(
-      'realtime_openai',
+      OPENAI_PROVIDER_ID,
       {
-        adapterId: 'realtime_openai',
+        adapterId: OPENAI_PROVIDER_ID,
         sessionId: null,
         status: 'disconnected',
         mode: 'idle',
@@ -1583,7 +1762,7 @@ describe('VoiceSessionRuntime', () => {
     expect(freshRuntime.controller.start).not.toHaveBeenCalled();
 
     oldRuntime.setSnapshot({
-      adapterId: 'realtime_openai',
+      adapterId: OPENAI_PROVIDER_ID,
       sessionId: 'old-session',
       status: 'connected',
       mode: 'speaking',

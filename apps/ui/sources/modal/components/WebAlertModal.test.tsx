@@ -106,4 +106,50 @@ describe('WebAlertModal', () => {
             expect(pressable.props.accessibilityLabel).toBe(text);
         }
     });
+
+    it('settles an explicit confirm choice without also reporting a dismissal', async () => {
+        const { WebAlertModal } = await import('./WebAlertModal');
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        const screen = await renderScreen(<WebAlertModal
+                    config={{
+                        id: 'test-confirm',
+                        type: 'confirm',
+                        title: 'Review credential access',
+                        cancelText: 'Cancel',
+                        confirmText: 'Approve and save',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />);
+
+        getNodeByTestID(screen, 'web-modal-confirm').props.onPress();
+
+        expect(onConfirm).toHaveBeenCalledOnce();
+        expect(onConfirm).toHaveBeenCalledWith(true);
+        expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('settles an explicit cancel choice through the confirm result', async () => {
+        const { WebAlertModal } = await import('./WebAlertModal');
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        const screen = await renderScreen(<WebAlertModal
+                    config={{
+                        id: 'test-confirm',
+                        type: 'confirm',
+                        title: 'Review credential access',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />);
+
+        getNodeByTestID(screen, 'web-modal-cancel').props.onPress();
+
+        expect(onConfirm).toHaveBeenCalledOnce();
+        expect(onConfirm).toHaveBeenCalledWith(false);
+        expect(onClose).not.toHaveBeenCalled();
+    });
 });

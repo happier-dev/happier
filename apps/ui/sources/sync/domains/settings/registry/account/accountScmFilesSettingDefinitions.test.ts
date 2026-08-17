@@ -1,16 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol';
 
-vi.mock('@/agents/registry/registryCore', () => ({
-    DEFAULT_AGENT_ID: 'codex',
-}));
-
-import { ACCOUNT_SCM_FILES_SETTING_DEFINITIONS } from './accountScmFilesSettingDefinitions';
-
-describe('ACCOUNT_SCM_FILES_SETTING_DEFINITIONS', () => {
+describe('Protocol SCM Account settings', () => {
     it('keeps the released backend preference strict and stores qualified selections separately', () => {
-        const legacy = ACCOUNT_SCM_FILES_SETTING_DEFINITIONS.scmGitRepoPreferredBackend;
+        const legacy = ACCOUNT_SETTING_DEFINITIONS.scmGitRepoPreferredBackend;
         const qualified = Reflect.get(
-            ACCOUNT_SCM_FILES_SETTING_DEFINITIONS,
+            ACCOUNT_SETTING_DEFINITIONS,
             'scmGitRepoPreferredBackendQualifiedId',
         ) as Readonly<{
             default: unknown;

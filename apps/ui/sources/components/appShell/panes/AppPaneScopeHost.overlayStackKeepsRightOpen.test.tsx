@@ -8,6 +8,16 @@ import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTest
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const dispatchSpy = vi.fn();
+const rightPaneBuiltinAdapter = {
+    destinationIds: ['right'],
+    defaultDestinationId: 'right',
+    render: () => <div />,
+};
+const detailsPaneBuiltinAdapter = {
+    destinationIds: ['details'],
+    defaultDestinationId: 'details',
+    render: () => <div />,
+};
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     MultiPaneHostWithBottom: () => React.createElement('MultiPaneHostStub'),
@@ -39,6 +49,7 @@ vi.mock('./AppPaneProvider', () => ({
                 scope1: {
                     right: { isOpen: true },
                     details: { isOpen: true },
+                    bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
                 },
             },
         },
@@ -55,8 +66,8 @@ describe('AppPaneScopeHost (overlayStack keeps right open)', () => {
         await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
-                    rightPane={<div />}
-                    detailsPane={<div />}
+                    rightPaneBuiltinAdapter={rightPaneBuiltinAdapter}
+                    detailsPaneBuiltinAdapter={detailsPaneBuiltinAdapter}
                 />);
 
         const closeRightCalls = dispatchSpy.mock.calls.filter((call) => call?.[0]?.type === 'closeRight');

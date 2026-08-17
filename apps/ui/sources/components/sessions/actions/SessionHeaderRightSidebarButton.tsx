@@ -17,6 +17,9 @@ import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessi
  *
  * The glyphs come from the canonical `SidebarIcons` pair and the strings from the details panel's
  * own toggle. A second icon or a second string for the same concept would be the split-brain.
+ *
+ * `edge="right"` picks the right-edge glyph: the pair defaults to the left sidebar, so without it
+ * this control drew a panel on the opposite side of the screen from the one it opens.
  */
 export const SessionHeaderRightSidebarButton = React.memo((props: Readonly<{
     scopeId: string;
@@ -56,9 +59,9 @@ export const SessionHeaderRightSidebarButton = React.memo((props: Readonly<{
             }
         >
             {isOpen ? (
-                <SidebarCollapseIcon size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
+                <SidebarCollapseIcon edge="right" size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
             ) : (
-                <SidebarExpandIcon size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
+                <SidebarExpandIcon edge="right" size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
             )}
         </Pressable>
     );

@@ -1,4 +1,5 @@
 import { Stack, router, usePathname } from 'expo-router';
+import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import 'react-native-reanimated';
 import * as React from 'react';
 import { Platform, TouchableOpacity } from 'react-native';
@@ -14,7 +15,7 @@ import {
     createFriendsStackScreenOptions,
     createInboxStackScreenOptions,
 } from '@/utils/navigation/createSocialStackScreenOptions';
-import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
+import { isDesktopOverlayWindowContext } from '@/desktop/window/isDesktopOverlayWindowContext';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
@@ -32,9 +33,25 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { RootLayoutNavigationEffects } from '@/components/navigation/root/RootLayoutNavigationEffects';
 import { RootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutRedirectGate';
 import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
+import { VoiceAnnouncer } from '@/components/voice/surface/VoiceAnnouncer';
 
-type StackScreenProps = React.ComponentProps<typeof Stack.Screen>;
-type StackScreenOptions = NonNullable<StackScreenProps['options']>;
+type StackScreenOptions = NativeStackNavigationOptions;
+type ModalRouteNavigation = Readonly<{
+    canGoBack?: () => boolean;
+    goBack?: () => void;
+    getState?: () => Readonly<{
+        index?: number;
+        routes?: ReadonlyArray<unknown>;
+    }> | undefined;
+}>;
+
+function hasPriorModalStackRoute(navigation: ModalRouteNavigation): boolean {
+    const state = navigation.getState?.();
+    return typeof state?.index === 'number'
+        && state.index > 0
+        && Array.isArray(state.routes)
+        && state.routes.length > 1;
+}
 
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
 const SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS = {
@@ -87,7 +104,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     const preferredLanguage = getPreferredLanguage();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
-    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
     const isTauriDesktopHost = isTauriDesktop();
     const newSessionPresentationMode = useSetting('newSessionPresentationModeV1');
     const deviceType = useDeviceType();
@@ -184,6 +201,11 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 headerShown: true,
                 headerTitle: t('runs.title'),
                 headerBackTitle: back,
+            },
+            sessionInfo: {
+                ...visibleBlankBack,
+                headerBackVisible: false,
+                headerLeft: () => null,
             },
             files: SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS,
             sessionCockpitSurface: SESSION_COCKPIT_SURFACE_STACK_SCREEN_OPTIONS,
@@ -289,8 +311,6 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             mode: newSessionPresentationMode,
             platformOs: Platform.OS,
         }),
-        gestureEnabled: true,
-        fullScreenGestureEnabled: true,
         // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
         headerBackVisible: false,
         headerLeft: () => null,
@@ -309,6 +329,23 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     return (
         <SessionCockpitChromeRegistryProvider>
             <BrowserPresentationRetentionProvider>
+            {/*
+              * The one automatic Voice announcer for the whole app (§5.4a). It sits
+              * OUTSIDE `AuthenticatedAppRuntimeMountsGate` on purpose: that gate returns
+              * null while the onboarding journey is active, and the journey still renders
+              * a Voice surface — mounting inside it would make onboarding silent on every
+              * platform. Horizon, the orb and the composer planet expose labels and states
+              * only; two live regions do not coalesce.
+              */}
+            {/*
+              * The one automatic Voice announcer for the whole app (§5.4a). It sits
+              * OUTSIDE `AuthenticatedAppRuntimeMountsGate` on purpose: that gate returns
+              * null while the onboarding journey is active, and the journey still renders
+              * a Voice surface — mounting inside it would make onboarding silent on every
+              * platform. Horizon, the orb and the composer planet expose labels and states
+              * only; two live regions do not coalesce.
+              */}
+            <VoiceAnnouncer />
             <AuthenticatedAppRuntimeMountsGate
                 isDesktopOverlayWindow={isDesktopOverlayWindow}
                 isAuthenticated={isAuthenticated}
@@ -348,12 +385,19 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     options={rootStackRouteOptions.automationsId}
                 />
                 <Stack.Screen
+                    name="automations/[id]/runs/[runId]"
+                    options={rootStackRouteOptions.visibleBlankBack}
+                />
+                <Stack.Screen
                     name="automations/new"
                     options={rootStackRouteOptions.automationsNew}
                 />
                 <Stack.Screen
                     name="session/[id]/info"
-                    options={rootStackRouteOptions.visibleBlankBack}
+                    options={({ navigation }) => ({
+                        ...rootStackRouteOptions.sessionInfo,
+                        headerRight: () => <AppHeaderCloseButton accessibilityLabel={t('common.close')} testID="session-info-close" onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })} />,
+                    })}
                 />
                 <Stack.Screen
                     name="session/[id]/runs"
@@ -541,7 +585,21 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 />
                 <Stack.Screen
                     name="new/index"
-                    options={newSessionScreenOptions}
+                    options={({ navigation }) => {
+                        const isWebModal = Platform.OS === 'web' && newSessionScreenOptions.presentation === 'modal';
+                        const canDismissWithGesture = !isWebModal || hasPriorModalStackRoute(navigation);
+                        return {
+                            ...newSessionScreenOptions,
+                            // Expo Router's web modal closes its Vaul drawer before calling goBack().
+                            // A direct /new entry has no route to pop, so keep the drawer open and
+                            // use the explicit close affordance's deterministic fallback instead.
+                            gestureEnabled: canDismissWithGesture,
+                            fullScreenGestureEnabled: canDismissWithGesture,
+                            headerRight: Platform.OS === 'web'
+                                ? () => <AppHeaderCloseButton testID="new-session-cancel" onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })} />
+                                : undefined,
+                        };
+                    }}
                 />
                 <Stack.Screen
                     name="external/browse"
@@ -587,6 +645,14 @@ export default function RootLayout(): React.ReactElement {
         <>
             <RootLayoutNavigationEffects />
             <RootLayoutRedirectGate>
+                {/*
+                  * One Voice energy clock for the whole app (§4.2 rule 6): every
+                  * Voice surface animates from these shared values, so amplitude
+                  * costs one frame callback rather than one per surface. It wraps
+                  * `<RootLayoutShell />` — an element created here, so the shell
+                  * subtree is untouched when the provider re-renders on a Voice
+                  * setting or session-status change.
+                  */}
                 <RootLayoutShell />
             </RootLayoutRedirectGate>
         </>

@@ -1,5 +1,7 @@
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
+import type { ToolCall } from '@/sync/domains/messages/messageTypes';
+
 export type AgentTeamSessionProviderDescriptor = Readonly<{
     kind: 'session.agentTeamBehavior.v1';
     snapshotKey: string;
@@ -27,7 +29,7 @@ export type AgentTeamSessionProviderDescriptor = Readonly<{
 export type AgentTeamToolCall = Readonly<{
     id?: string;
     name: string;
-    state: 'running' | 'completed' | 'error';
+    state: ToolCall['state'];
     input: unknown;
     createdAt: number;
     startedAt: number | null;

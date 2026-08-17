@@ -229,8 +229,8 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
             throw new Error('Unable to find pinned tab affordances');
         }
 
-        const aIcon = findTestInstanceByTypeWithProps(pinnedA, 'Octicons', { name: 'pin-slash' });
-        const reviewIcon = findTestInstanceByTypeWithProps(pinnedReview, 'Octicons', { name: 'pin-slash' });
+        const aIcon = findTestInstanceByTypeWithProps(pinnedA, 'Icon', { name: 'push-pin-slash' });
+        const reviewIcon = findTestInstanceByTypeWithProps(pinnedReview, 'Icon', { name: 'push-pin-slash' });
 
         expect(aIcon).toBeTruthy();
         expect(reviewIcon).toBeTruthy();
@@ -245,7 +245,7 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         }
 
         expect(screen.findByTestId('session-details-tab-file-icon-file_a')).toBeTruthy();
-        expect(findTestInstanceByTypeWithProps(tab, 'Octicons', { name: 'file' })).toBeUndefined();
+        expect(findTestInstanceByTypeWithProps(tab, 'Icon', { name: 'file' })).toBeUndefined();
     });
 
     it('opens the right pane from the details panel header when it is closed', async () => {
@@ -299,7 +299,7 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
             if (!pinButton) {
                 throw new Error('Unable to find preview pin affordance');
             }
-            const pinIcon = findTestInstanceByTypeWithProps(pinButton, 'Octicons', { name: 'pin' });
+            const pinIcon = findTestInstanceByTypeWithProps(pinButton, 'Icon', { name: 'push-pin' });
             expect(pinIcon).toBeTruthy();
         } finally {
             scopeState = {

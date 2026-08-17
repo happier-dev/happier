@@ -13,20 +13,12 @@ function ready(payload: unknown) {
 }
 
 describe('Pending-input server wire contract', () => {
-    it('selects current only from the Pending-input v1 compatibility declaration', () => {
+    it('selects current only from the independent Pending Input v1 capability', () => {
         expect(resolvePendingInputServerWireMode(ready({
             features: {},
             capabilities: {
-                compatibility: {
-                    v: 1,
-                    sessionSync: {
-                        v: 1,
-                        enforcement: 'observe',
-                        minimumSessionSyncProtocolVersion: 1,
-                        currentSessionSyncProtocolVersion: 2,
-                        declarationTransport: 'headers-v1',
-                    },
-                    pendingInput: { currentPendingInputProtocolVersion: 1 },
+                session: {
+                    pendingInput: { protocolVersion: 1 },
                 },
             },
         }))).toBe('pending_input_v1');
@@ -51,15 +43,8 @@ describe('Pending-input server wire contract', () => {
         ready({
             features: {},
             capabilities: {
-                compatibility: {
-                    v: 1,
-                    sessionSync: {
-                        v: 1,
-                        enforcement: 'observe',
-                        minimumSessionSyncProtocolVersion: 1,
-                        currentSessionSyncProtocolVersion: 2,
-                        declarationTransport: 'headers-v1',
-                    },
+                session: {
+                    runtimeActivity: { protocolVersion: 2 },
                 },
             },
         }),

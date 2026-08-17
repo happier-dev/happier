@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { Typography } from '@/constants/Typography';
 import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { storage } from '@/sync/domains/state/storage';
 import { toggleTodo, updateTodoTitle, deleteTodo } from '@/sync/domains/todos/todoOps';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -18,6 +17,7 @@ import { t } from '@/text';
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export const ZenView = React.memo(() => {
@@ -172,7 +172,7 @@ export const ZenView = React.memo(() => {
                             ]}
                         >
                             {todo.done && (
-                                <Ionicons name="checkmark" size={20} color={theme.colors.button.primary.tint} />
+                                <Icon name="check" size={20} color={theme.colors.button.primary.tint} />
                             )}
                         </Pressable>
 
@@ -217,7 +217,7 @@ export const ZenView = React.memo(() => {
                             onPress={handleWorkOnTask}
                             style={[styles.actionButton, { backgroundColor: theme.colors.button.primary.background }]}
                         >
-                            <Ionicons name="hammer-outline" size={20} color={theme.colors.button.primary.tint} />
+                            <Icon name="hammer" size={20} color={theme.colors.button.primary.tint} />
                             <Text style={styles.actionButtonText}>{t('zen.view.workOnTask')}</Text>
                         </Pressable>
 
@@ -225,7 +225,7 @@ export const ZenView = React.memo(() => {
                             onPress={handleClarifyWithAI}
                             style={[styles.actionButton, { backgroundColor: theme.colors.surface.elevated }]}
                         >
-                            <Ionicons name="sparkles" size={20} color={theme.colors.text.primary} />
+                            <Icon name="sparkle" size={20} color={theme.colors.text.primary} />
                             <Text style={[styles.actionButtonText, { color: theme.colors.text.primary }]}>{t('zen.view.clarify')}</Text>
                         </Pressable>
 
@@ -233,7 +233,7 @@ export const ZenView = React.memo(() => {
                             onPress={handleDelete}
                             style={[styles.actionButton, { backgroundColor: theme.colors.state.danger.foreground }]}
                         >
-                            <Ionicons name="trash-outline" size={20} color={theme.colors.button.primary.tint} />
+                            <Icon name="trash" size={20} color={theme.colors.button.primary.tint} />
                             <Text style={styles.actionButtonText}>{t('zen.view.delete')}</Text>
                         </Pressable>
                     </View>
@@ -250,11 +250,11 @@ export const ZenView = React.memo(() => {
                                     onPress={() => { router.dismissAll(); router.push(`/session/${link.sessionId}`); }}
                                     style={[styles.linkedSession, { backgroundColor: theme.colors.surface.elevated }]}
                                 >
-                                    <Ionicons name="chatbubble-outline" size={16} color={theme.colors.text.secondary} />
+                                    <Icon name="chat-circle" size={16} color={theme.colors.text.secondary} />
                                     <Text style={[styles.linkedSessionText, { color: theme.colors.text.primary }]}>
                                         {link.title}
                                     </Text>
-                                    <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
+                                    <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
                                 </Pressable>
                             ))}
                         </View>

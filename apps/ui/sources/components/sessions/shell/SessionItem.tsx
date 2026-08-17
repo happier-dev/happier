@@ -15,10 +15,6 @@ import {
     type GestureType,
 } from 'react-native-gesture-handler';
 import {
-    Ionicons,
-    Octicons,
-} from '@expo/vector-icons';
-import {
     StyleSheet,
     useUnistyles,
 } from 'react-native-unistyles';
@@ -115,6 +111,7 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type { ExternalSessionRuntimePresentation } from '../presentation/externalSessionRuntimePresentation';
 import type { ExternalSessionIdentityPresentation } from '../presentation/externalSessionIdentityPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -466,9 +463,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    draftIconOverlay: {
-        color: theme.colors.text.secondary,
-    },
     draftIconContainerCompact: {
         width: 16,
         height: 16,
@@ -730,9 +724,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: theme.colors.status.error,
-    },
-    swipeActionIcon: {
-        color: theme.colors.button.primary.tint,
     },
     swipeActionText: {
         marginTop: 4,
@@ -998,8 +989,8 @@ const SessionItemContent = React.memo(
                 testID: resolveSessionFolderMoveTargetTestId(target),
                 title: target.title,
                 icon: target.folderId
-                    ? <Ionicons name="folder-outline" size={16} color={rowActionIconColor} />
-                    : <Ionicons name="file-tray-outline" size={16} color={rowActionIconColor} />,
+                    ? <Icon name="folder" size={16} color={rowActionIconColor} />
+                    : <Icon name="tray" size={16} color={rowActionIconColor} />,
                 rowContainerStyle: resolveSessionFolderMoveTargetRowContainerStyle(target.depth),
                 disabled: target.disabled,
             }))
@@ -1011,12 +1002,12 @@ const SessionItemContent = React.memo(
                     {
                         id: SESSION_ROW_ACTION_OPEN_SPLIT_RIGHT_ID,
                         title: t('sessionInfo.openInSplitRight'),
-                        icon: <Ionicons name="arrow-forward-outline" size={16} color={rowActionIconColor} />,
+                        icon: <Icon name="arrow-right" size={16} color={rowActionIconColor} />,
                     },
                     {
                         id: SESSION_ROW_ACTION_OPEN_SPLIT_DOWN_ID,
                         title: t('sessionInfo.openInSplitDown'),
-                        icon: <Ionicons name="arrow-down-outline" size={16} color={rowActionIconColor} />,
+                        icon: <Icon name="arrow-down" size={16} color={rowActionIconColor} />,
                     },
                 ];
             }
@@ -1024,7 +1015,7 @@ const SessionItemContent = React.memo(
                 return [{
                     id: SESSION_ROW_ACTION_REVEAL_IN_CURRENT_SPLIT_ID,
                     title: t('sessionInfo.revealInCurrentSplit'),
-                    icon: <Ionicons name="locate-outline" size={16} color={rowActionIconColor} />,
+                    icon: <Icon name="crosshair" size={16} color={rowActionIconColor} />,
                 }];
             }
             return [];
@@ -1352,11 +1343,7 @@ const SessionItemContent = React.memo(
         const externalAgentStatusText = externalSessionRuntime
             ? t(externalSessionRuntime.externalAgent.labelKey)
             : null;
-        const externalIdentityText = externalSessionIdentity
-            ? [externalSessionIdentity.agentLabel, externalSessionIdentity.rowMetadataLabel]
-                .filter((value): value is string => Boolean(value))
-                .join(' · ')
-            : '';
+        const externalIdentityText = externalSessionIdentity?.rowMetadataLabel ?? '';
         const statusLineText = externalAgentStatusText
             ? [externalAgentStatusText, externalIdentityText].filter(Boolean).join(' · ')
             : rowPresentation.statusTextKey
@@ -1612,7 +1599,7 @@ const SessionItemContent = React.memo(
                         ) : null}
                         {!isMinimal && shouldRenderSessionListAvatar && 'draft' in resolvedSession && resolvedSession.draft ? (
                             <View style={[styles.draftIconContainer, compact ? styles.draftIconContainerCompact : null]}>
-                                <Ionicons name="create-outline" size={compact ? 11 : 12} style={styles.draftIconOverlay} />
+                                <Icon name="pencil-simple" size={compact ? 11 : 12} color={theme.colors.text.secondary} />
                             </View>
                         ) : null}
                     </View>
@@ -1745,7 +1732,7 @@ const SessionItemContent = React.memo(
                                         onPointerUp={isWeb ? suppressNextPressForPointerGesture : undefined}
                                         onPointerCancel={isWeb ? suppressNextPressForPointerGesture : undefined}
                                     >
-                                        <Ionicons name="reorder-three-outline" size={16} color={rowActionIconColor} />
+                                        <Icon name="list" size={16} color={rowActionIconColor} />
                                     </View>
                                 </GestureDetector>
                             ) : null}
@@ -1773,7 +1760,7 @@ const SessionItemContent = React.memo(
                                                     </RNText>
                                                 </>
                                             ),
-                                            icon: <Ionicons name="add" size={16} color={rowActionIconColor} />,
+                                            icon: <Icon name="plus" size={16} color={rowActionIconColor} />,
                                         })}
                                         placement="bottom"
                                         popoverAnchorAlign="end"
@@ -1862,7 +1849,7 @@ const SessionItemContent = React.memo(
                                             accessibilityLabel={t('common.moreActions')}
                                             hitSlop={8}
                                         >
-                                            <Octicons name="kebab-horizontal" size={14} color={rowActionIconColor} />
+                                            <Icon name="dots-three" size={14} color={rowActionIconColor} />
                                         </Pressable>
                                     )}
                                 />
@@ -1950,7 +1937,7 @@ const SessionItemContent = React.memo(
                                     </RNText>
                                 </>
                             ),
-                            icon: <Ionicons name="add" size={16} color={rowActionIconColor} />,
+                            icon: <Icon name="plus" size={16} color={rowActionIconColor} />,
                         })}
                         placement="auto"
                         variant="slim"
@@ -1982,7 +1969,7 @@ const SessionItemContent = React.memo(
 
         const renderRightActions = () => (
             <Pressable style={styles.swipeAction} onPress={handleSwipeAction} disabled={mutatingSession}>
-                <Ionicons name="archive-outline" size={20} style={styles.swipeActionIcon} />
+                <Icon name="archive" size={20} color={theme.colors.button.primary.tint} />
                 <Text style={styles.swipeActionText} numberOfLines={2}>
                     {t('sessionInfo.archiveSession')}
                 </Text>

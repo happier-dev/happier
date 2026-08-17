@@ -13,17 +13,32 @@ import Animated, {
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { ControlRow, TactilePressable, VoiceTransport } from '../ConceptControls';
+import { ControlRow, TactilePressable, VoiceTransport } from '@/components/voice/controls/VoiceControls';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { Bloom, Grain, PlanetOrb, VoiceWaveform } from '../VoiceLight';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
+import { Bloom, Grain, PlanetOrb, VoiceWaveform } from '@/components/voice/light/VoiceLight';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
 import { controlsForState } from '../voiceLabModel';
-import { VOICE_MOTION, light, onPlanetInk, useVoiceLabTokens } from '../voiceLabTokens';
-import { useVoiceOrbExpanded } from '../voiceLabOrbPreference';
+import { VOICE_MOTION, light, onPlanetInk, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
+import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, number, number, number]));
+
+/**
+ * The orb comes to rest; it does not bounce.
+ *
+ * `dampingRatio: 1` is critically damped — the no-overshoot boundary. Combined
+ * with the release velocity supplied per-axis at the call site, the orb leaves
+ * the finger at exactly the speed it was thrown and decays smoothly into its
+ * corner. No `overshootClamping` is needed, and deliberately so: clamping stops
+ * a bounce by *clipping* the curve, which puts a hard edge on the last few
+ * milliseconds. Removing the overshoot at its source leaves the tail smooth.
+ */
+const SETTLE_SPRING = {
+    duration: VOICE_MOTION.settle.durationMs,
+    dampingRatio: VOICE_MOTION.settle.dampingRatio,
+} as const;
 
 /** Collapsed diameter. Expanded is the same object scaled, never a second one. */
 const ORB = 34;
@@ -56,8 +71,8 @@ const BOTTOM = 34;
  * thing they were looking at.
  */
 export function OrbConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const { state } = props;
     /*
      * Minimised vs expanded is a *preference*, not transient state: it survives
@@ -65,7 +80,10 @@ export function OrbConcept(props: VoiceConceptProps) {
      * session. The lab's own Expand control still works — it writes the same
      * preference — so the two never disagree.
      */
-    const [persistedExpanded, setPersistedExpanded] = useVoiceOrbExpanded();
+    const [persistedExpanded, setPersistedExpanded] = useLocalSettingMutable('voiceOrbExpanded');
+    // Per-device: suppressing the floating presence does not stop Voice, which
+    // stays reachable from the sidebar and the composer.
+    const [orbEnabled] = useLocalSettingMutable('voiceOrbEnabled');
     const expanded = props.expanded || persistedExpanded;
     const dormant = state.id === 'ready' || state.id === 'unavailable';
     const live = !dormant && state.id !== 'error' && state.id !== 'ended';
@@ -129,23 +147,36 @@ export function OrbConcept(props: VoiceConceptProps) {
                      * implies swipe-to-open. Tap stays the transport.
                      */
                     if (e.velocityY < -700 && Math.abs(e.velocityY) > Math.abs(e.velocityX)) {
-                        dx.set(withSpring(0, { damping: 22, stiffness: 190 }));
-                        dy.set(withSpring(0, { damping: 24, stiffness: 200 }));
+                        dx.set(withSpring(0, SETTLE_SPRING));
+                        dy.set(withSpring(0, SETTLE_SPRING));
                         runOnJS(onSwipeOpen)();
                         return;
                     }
-                    // Project the throw before choosing an edge, so a flick lands
-                    // where it was aimed rather than where the finger left.
-                    const projected = dx.get() + e.velocityX * 0.12;
+                    /*
+                     * Project the throw before choosing an edge, so a flick lands
+                     * where it was aimed rather than where the finger left.
+                     *
+                     * Projection picks the *target*; the velocity handoff below
+                     * makes the *motion* continuous. Both are correct together —
+                     * they answer different questions, and dropping either one
+                     * is what makes a thrown object feel wrong.
+                     */
+                    const throwSeconds = VOICE_MOTION.throwProjectionSeconds;
+                    const projected = dx.get() + e.velocityX * throwSeconds;
                     const minX = -(bounds.w - ORB - EDGE * 2);
                     const targetX = projected < minX / 2 ? minX : 0;
                     // Never above the header, never below the home indicator.
                     const targetY = Math.max(
                         -(bounds.h - ORB - BOTTOM - 60),
-                        Math.min(0, dy.get() + e.velocityY * 0.12),
+                        Math.min(0, dy.get() + e.velocityY * throwSeconds),
                     );
-                    dx.set(withSpring(targetX, { damping: 22, stiffness: 190, velocity: e.velocityX }));
-                    dy.set(withSpring(targetY, { damping: 24, stiffness: 200, velocity: e.velocityY }));
+                    /*
+                     * Two independent axes, never one spring on the 2D distance:
+                     * X and Y leave the finger at different speeds, and a single
+                     * spring would desynchronise them into a curved drift.
+                     */
+                    dx.set(withSpring(targetX, { ...SETTLE_SPRING, velocity: e.velocityX }));
+                    dy.set(withSpring(targetY, { ...SETTLE_SPRING, velocity: e.velocityY }));
                 }),
         [bounds.h, bounds.w, dragging, dx, dy, expanded, onSwipeOpen, startX, startY],
     );
@@ -197,6 +228,20 @@ export function OrbConcept(props: VoiceConceptProps) {
         const p = open.get();
         return { opacity: p, pointerEvents: p > 0.5 ? 'auto' : 'none' } as never;
     });
+
+    if (!orbEnabled) {
+        return (
+            <View style={{ flex: 1 }} pointerEvents="box-none">
+                <View
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                    style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', left: -10_000 }}
+                >
+                    <Text>{state.announcement}</Text>
+                </View>
+            </View>
+        );
+    }
 
     return (
         <View
@@ -299,6 +344,16 @@ export function OrbConcept(props: VoiceConceptProps) {
                     }}
                 >
                     <VoiceTransport
+                            labels={{
+                                start: 'Start Voice',
+                                end: 'End Voice',
+                                startHint: 'Starts a spoken conversation',
+                                endHint: 'Stops the spoken conversation. Coding work already started keeps running.',
+                                startText: 'Start Voice',
+                                endText: 'End',
+                                mute: 'Microphone open. Mute',
+                                unmute: 'Microphone muted. Unmute',
+                            }}
                         live={live}
                         canStart={state.id !== 'unavailable'}
                         muted={props.muted}
@@ -423,37 +478,3 @@ export function OrbConcept(props: VoiceConceptProps) {
         </View>
     );
 }
-
-
-/** A mic drawn from primitives so the muted slash is a real object. */
-const MicMark = React.memo(function MicMark(props: Readonly<{ muted: boolean; color: string }>) {
-    return (
-        <View style={{ width: 17, height: 17, alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 6.5, height: 9.5, borderRadius: 3.5, backgroundColor: props.color, marginTop: -2 }} />
-            <View
-                style={{
-                    width: 11,
-                    height: 5.5,
-                    borderBottomLeftRadius: 7,
-                    borderBottomRightRadius: 7,
-                    borderWidth: 1.5,
-                    borderTopWidth: 0,
-                    borderColor: props.color,
-                    marginTop: 1,
-                }}
-            />
-            {props.muted ? (
-                <View
-                    style={{
-                        position: 'absolute',
-                        width: 20,
-                        height: 1.7,
-                        borderRadius: 2,
-                        backgroundColor: props.color,
-                        transform: [{ rotate: '-45deg' }],
-                    }}
-                />
-            ) : null}
-        </View>
-    );
-});

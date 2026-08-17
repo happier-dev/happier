@@ -9,6 +9,7 @@ import { SelectionListInputMirror } from './SelectionListInputMirror';
 import { SelectionListSearchHeaderLeadingSlot } from './SelectionListSearchHeaderLeadingSlot';
 import { SelectionListStartEllipsisInputValue } from './SelectionListStartEllipsisInputValue';
 import { selectionListTestId } from './_shared';
+import type { SelectionListA11yPattern } from './buildSelectionListOptionA11yProps';
 import type { SelectionListTextEllipsizeMode } from './_types';
 
 const IS_WEB = Platform.OS === 'web';
@@ -240,6 +241,13 @@ export type SelectionListSearchHeaderProps = Readonly<{
     onIsComposingChange?: (isComposing: boolean) => void;
     /** Phase 2.10: combobox role wiring (web). */
     listboxId?: string;
+    /**
+     * Role the popup container actually renders. Rows that host their own
+     * interactive controls force the ARIA grid pattern, and `aria-haspopup`
+     * must agree with the container's role or the combobox announces a popup
+     * that does not exist. Defaults to `'listbox'`.
+     */
+    popupRole?: SelectionListA11yPattern;
     activeDescendantId?: string;
     /**
      * Monotonic counter that triggers a brief left/right "shake" of the header
@@ -340,7 +348,7 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
     const useOverlayInput = useLayeredMirror || useStartEllipsisValueMirror;
     type WebComboboxAria = Readonly<{
         role: 'combobox';
-        'aria-haspopup': 'listbox';
+        'aria-haspopup': SelectionListA11yPattern;
         'aria-expanded': true;
         'aria-controls'?: string;
         'aria-activedescendant'?: string;
@@ -348,7 +356,7 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
     const webComboboxAria: WebComboboxAria | null = IS_WEB
         ? {
             role: 'combobox',
-            'aria-haspopup': 'listbox',
+            'aria-haspopup': props.popupRole ?? 'listbox',
             'aria-expanded': true,
             ...(props.listboxId !== undefined ? { 'aria-controls': props.listboxId } : {}),
             ...(props.activeDescendantId !== undefined

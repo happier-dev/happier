@@ -20,6 +20,11 @@ vi.mock('react-native-mmkv', () => {
 });
 
 import { createSessionsDomain } from './sessions';
+import {
+  createSessionComposerTextMutationToken,
+  readSessionComposerSemanticRevision,
+  resetSessionDraftValueCachesForTests,
+} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import { clearPersistence, loadSessionDrafts } from '@/sync/domains/state/persistence';
 
 function createHarness() {
@@ -52,6 +57,7 @@ function createHarness() {
 describe('sessions domain: drafts', () => {
   beforeEach(() => {
     clearPersistence();
+    resetSessionDraftValueCachesForTests();
   });
 
   it('persists drafts even when the session is not yet loaded', () => {
@@ -61,6 +67,26 @@ describe('sessions domain: drafts', () => {
     domain.updateSessionDraft('s_missing', 'hello');
     expect(loadSessionDrafts()).toEqual({ s_missing: 'hello' });
     expect(Object.keys(get().sessions).length).toBe(0);
+  });
+
+  it('does not let an external text write consume a stale visible-text mutation token', () => {
+    const { domain } = createHarness();
+    const firstVisibleToken = createSessionComposerTextMutationToken(null, 's_missing');
+
+    if (!firstVisibleToken) throw new Error('Expected visible text mutation token');
+    domain.updateSessionDraft('s_missing', 'visible', {
+      composerTextMutationToken: firstVisibleToken,
+    });
+    expect(readSessionComposerSemanticRevision(null, 's_missing')).toBe(1);
+
+    const staleVisibleToken = createSessionComposerTextMutationToken(null, 's_missing');
+    if (!staleVisibleToken) throw new Error('Expected stale visible text mutation token');
+    domain.updateSessionDraft('s_missing', 'external');
+    domain.updateSessionDraft('s_missing', 'visible again', {
+      composerTextMutationToken: staleVisibleToken,
+    });
+
+    expect(readSessionComposerSemanticRevision(null, 's_missing')).toBe(4);
   });
 
   it('applies a persisted draft when the session is later loaded', () => {

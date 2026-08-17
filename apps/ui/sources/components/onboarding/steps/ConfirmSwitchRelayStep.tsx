@@ -61,7 +61,7 @@ export const ConfirmSwitchRelayStep = React.memo(function ConfirmSwitchRelayStep
                     testID={`${props.testIDPrefix}-confirmSwitchRelay.choice:keep`}
                     selected={props.decision === 'keep'}
                     onPress={() => props.onDecisionChange('keep')}
-                    icon="remove-circle-outline"
+                    icon="minus-circle"
                     title={t('setupOnboarding.confirmSwitchRelayKeepTitle')}
                     subtitle={t('setupOnboarding.confirmSwitchRelayKeepSubtitle')}
                 />
@@ -69,7 +69,7 @@ export const ConfirmSwitchRelayStep = React.memo(function ConfirmSwitchRelayStep
                     testID={`${props.testIDPrefix}-confirmSwitchRelay.choice:switch`}
                     selected={props.decision === 'switch'}
                     onPress={() => props.onDecisionChange('switch')}
-                    icon="swap-horizontal-outline"
+                    icon="arrows-left-right"
                     title={t('setupOnboarding.confirmSwitchRelaySwitchTitle')}
                     subtitle={t('setupOnboarding.confirmSwitchRelaySwitchSubtitle')}
                 />

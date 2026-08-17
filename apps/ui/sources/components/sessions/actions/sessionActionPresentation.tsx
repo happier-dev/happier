@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
@@ -13,6 +12,7 @@ import {
 } from './sessionActionIds';
 import { getSessionActionMetadata } from './sessionActionMetadata';
 import type { SessionActionId } from './sessionActionTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function createSessionActionDropdownItem(params: Readonly<{
     actionId: SessionActionId;
@@ -24,7 +24,7 @@ export function createSessionActionDropdownItem(params: Readonly<{
     return {
         id: params.actionId,
         title: t(metadata.titleKey),
-        icon: <Ionicons name={metadata.icon} size={params.iconSize ?? 16} color={params.iconColor} />,
+        icon: <Icon name={metadata.icon} size={params.iconSize ?? 16} color={params.iconColor} />,
     };
 }
 
@@ -56,6 +56,6 @@ export function createSessionActionInfoItemProps(params: Readonly<{
         testID,
         title: t(metadata.titleKey),
         subtitle: metadata.subtitleKey ? t(metadata.subtitleKey) : undefined,
-        icon: <Ionicons name={metadata.icon} size={params.iconSize ?? 29} color={params.iconColor} />,
+        icon: <Icon name={metadata.icon} size={params.iconSize ?? 29} color={params.iconColor} />,
     };
 }

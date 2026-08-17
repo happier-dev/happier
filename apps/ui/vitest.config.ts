@@ -62,6 +62,13 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
         packageName: '@happier-dev/connection-supervisor',
         packageSourceRoot: resolve('../../packages/connection-supervisor/src'),
     },
+    {
+        // The shared presentation layer (§3.10). Core adapters consume it from
+        // source so a component change is caught here rather than only after a
+        // package rebuild.
+        packageName: '@happier-dev/plugin-ui',
+        packageSourceRoot: resolve('../../packages/plugin-ui/src'),
+    },
     ...readBundledPluginWorkspacePackageSpecs(repoRoot),
 ] as const;
 
@@ -114,7 +121,10 @@ export default defineConfig({
                 // React Navigation carries a nested React Native peer in this Yarn v1 layout.
                 // Inline it so Vite applies the node-safe React Native alias instead of asking
                 // Node to parse the peer's untransformed Flow entrypoint.
-                inline: [/@react-navigation\/native/],
+                // `@react-navigation/elements` (reached from `native-stack`, which the plugin
+                // Module Federation host share scope provides) additionally imports a `.png`
+                // Node's ESM loader cannot open; inlining lets Vite resolve it as an asset.
+                inline: [/@react-navigation\/native/, /@react-navigation\/elements/],
             },
         },
         env: {
@@ -162,6 +172,7 @@ export default defineConfig({
             { find: /^react-native\//, replacement: resolve('./sources/dev/reactNativeInternalStub.ts') },
             // Vitest runs in node; avoid parsing React Native's Flow entrypoint.
             { find: /^react-native$/, replacement: resolve('./sources/dev/reactNativeStub.ts') },
+            { find: '@livekit/react-native-webrtc', replacement: resolve('./sources/dev/reactNativeWebRtcStub.ts') },
             // `react-native-safe-area-context` imports native modules that don't exist in node/Vitest.
             { find: 'react-native-safe-area-context', replacement: resolve('./sources/dev/reactNativeSafeAreaContextStub.ts') },
             // Expo packages commonly depend on `expo-modules-core`, whose exports point to TS sources that import `react-native`.

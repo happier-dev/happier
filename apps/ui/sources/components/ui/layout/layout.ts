@@ -39,3 +39,25 @@ export function useLayoutMaxWidth(): number {
     const preferredContentWidthMode = useLocalSetting('uiContentWidthMode');
     return resolveConstrainedMaxWidth({ variant: 'content', preferredContentWidthMode });
 }
+
+/**
+ * Referentially stable `{ maxWidth }` overlay for surfaces whose base style lives
+ * in a module-scope `StyleSheet.create` factory. Such a factory evaluates once, so
+ * baking `layout.maxWidth` into it freezes the user's content-width preference
+ * until the app reloads; composing this overlay keeps the surface reactive without
+ * replacing the styled node.
+ *
+ * The cache is bounded by the small set of resolvable widths (three content-width
+ * modes plus the phone fallback edge), and stable identity keeps memoized style
+ * arrays from invalidating on every render.
+ */
+const maxWidthOverlaysByWidth = new Map<number, { readonly maxWidth: number }>();
+
+export function useLayoutMaxWidthStyle(): { readonly maxWidth: number } {
+    const maxWidth = useLayoutMaxWidth();
+    const cached = maxWidthOverlaysByWidth.get(maxWidth);
+    if (cached) return cached;
+    const overlay = { maxWidth } as const;
+    maxWidthOverlaysByWidth.set(maxWidth, overlay);
+    return overlay;
+}

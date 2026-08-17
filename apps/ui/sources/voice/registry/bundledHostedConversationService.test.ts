@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getCredentials: vi.fn(),
   fetchToken: vi.fn(),
   completeSession: vi.fn(),
+  releaseSession: vi.fn(),
 }));
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
@@ -13,6 +14,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
 vi.mock('@/sync/api/voice/apiVoice', () => ({
   fetchHappierVoiceToken: mocks.fetchToken,
   completeHappierVoiceSession: mocks.completeSession,
+  releaseHappierVoiceSession: mocks.releaseSession,
 }));
 
 import { createBundledHostedConversationService } from './bundledConversationRuntimeHost';
@@ -29,6 +31,7 @@ describe('createBundledHostedConversationService', () => {
       expiresAtMs: 12_000,
     });
     mocks.completeSession.mockResolvedValue(undefined);
+    mocks.releaseSession.mockResolvedValue(undefined);
   });
 
   it('binds the minted lease to one attempt and completes through the canonical API', async () => {
@@ -83,6 +86,25 @@ describe('createBundledHostedConversationService', () => {
     await expect(start).rejects.toMatchObject({ code: 'aborted' });
 
     expect(observedAbort).toBe(true);
+    expect(mocks.completeSession).not.toHaveBeenCalled();
+    expect(mocks.releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('releases a minted lease when the attempt aborts before completion', async () => {
+    const service = createBundledHostedConversationService({
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+    });
+
+    await service.start({ sessionId: 'session-1' });
+    await service.abort();
+    await service.abort();
+
+    expect(mocks.releaseSession).toHaveBeenCalledTimes(1);
+    expect(mocks.releaseSession).toHaveBeenCalledWith(
+      { token: 'account-token' },
+      { leaseId: 'lease-1' },
+    );
     expect(mocks.completeSession).not.toHaveBeenCalled();
   });
 

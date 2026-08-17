@@ -24,6 +24,7 @@ import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settin
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { listOpenApprovalArtifactsForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { sessionRunnerRuntimeStatusRetention } from '@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -138,7 +139,10 @@ const sessionRpcWithPreferredSessionScopeSpy = vi.hoisted(() =>
 );
 const renderRealAgentInputPermissionSurfaceState = vi.hoisted(() => ({ current: false }));
 const showDirectSessionTakeoverDialogSpy = vi.hoisted(() =>
-  vi.fn<() => Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
+  vi.fn<() => Promise<{
+    action: 'direct' | 'persisted' | null;
+    targetDirectory?: string;
+  }>>(async () => ({ action: null })),
 );
 const sendVoiceSessionComposerTextSpy = vi.hoisted(() =>
   vi.fn<typeof sendVoiceSessionComposerText>(
@@ -275,6 +279,10 @@ vi.mock('@expo/vector-icons', () => ({
   Octicons: 'Octicons',
 }));
 vi.mock('react-native-safe-area-context', () => ({
+  initialWindowMetrics: {
+    frame: { x: 0, y: 0, width: 0, height: 0 },
+    insets: { top: 0, bottom: 0, left: 0, right: 0 },
+  },
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
@@ -336,7 +344,7 @@ installSessionShellCommonModuleMocks({
   text: async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
-      translate: (key: string) => key,
+      translate: (key: string) => key === 'agentInput.agent.codex' ? 'Codex' : key,
     });
   },
   modal: async () => {
@@ -372,7 +380,6 @@ installSessionShellCommonModuleMocks({
           (storageState.sessions as Record<string, any>)[sessionId] ?? null
         ),
         useIsDataReady: () => true,
-        useRealtimeStatus: () => 'connected',
         useSessionMessages: () => ({ messages: sessionMessagesState.current, isLoaded: true }),
         useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
@@ -541,6 +548,7 @@ vi.mock('@/hooks/session/useDraft', () => ({
       }
       return true;
     },
+    readLatestDraftValue: () => draftHookState.valuesBySessionId.get(_sessionId) ?? '',
     restoreDraft: (draft: string) => {
       draftHookState.valuesBySessionId.set(_sessionId, draft);
       onChange(draft);
@@ -629,7 +637,7 @@ vi.mock('@/sync/ops/machineExternalSessions', () => ({
   machineExternalSessionDetach: vi.fn(async () => ({ ok: true })),
   machineExternalSessionStatusGet: machineDirectSessionStatusGetSpy,
   machineExternalSessionMaterializeStart: machineExternalSessionMaterializeStartSpy,
-  machineExternalSessionTakeover: machineDirectSessionTakeoverSpy,
+  machineExternalSessionTakeoverStart: machineDirectSessionTakeoverSpy,
   machineExternalSessionTakeoverPersist: machineDirectSessionTakeoverPersistSpy,
 }));
 vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
@@ -646,6 +654,19 @@ vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
 }));
 vi.mock('@/sync/ops/sessionRunnerRestart', () => ({
   getSessionRunnerRuntimeStatus: (request: unknown) => getSessionRunnerRuntimeStatusSpy(request),
+  getSessionRunnerRuntimeStatusSnapshot: async (request: unknown) => {
+    const result = await getSessionRunnerRuntimeStatusSpy(request);
+    if (!result) return null;
+    if (typeof result === 'object' && 'state' in result) {
+      return {
+        ...result,
+        runnerProcessIdentity: 'runnerProcessIdentity' in result
+          ? result.runnerProcessIdentity
+          : null,
+      };
+    }
+    return { state: result, runnerProcessIdentity: null };
+  },
   restartSessionRunnerForProviderBindingChange: (request: unknown) =>
     restartProviderBindingSessionRunnerSpy(request),
   restartSessionRunnerOnCurrentRuntime: (request: unknown) => restartStaleSessionRunnerSpy(request),
@@ -848,6 +869,8 @@ describe('SessionView (direct sessions)', () => {
     sessionId: string;
     machineId: string;
     versionState: 'current' | 'stale';
+    pid?: number;
+    runtimeId?: string;
   }>): SessionRunnerRuntimeStateV1 {
     const current = input.versionState === 'current';
     return {
@@ -856,8 +879,8 @@ describe('SessionView (direct sessions)', () => {
       machineId: input.machineId,
       observedAtMs: current ? 2 : 1,
       runner: {
-        pid: 123,
-        runtimeId: current ? 'version:cli-new' : 'version:cli-old',
+        pid: input.pid ?? 123,
+        runtimeId: input.runtimeId ?? (current ? 'version:cli-new' : 'version:cli-old'),
         processCommandHash: current ? 'hash-new' : 'hash-old',
         entrypointVersion: current ? 'cli-new' : 'cli-old',
         entrypointSource: 'process_command',
@@ -1074,6 +1097,18 @@ describe('SessionView (direct sessions)', () => {
     });
   }
 
+  function installRunnerActiveDirectSubmitStatus() {
+    machineDirectSessionStatusGetSpy.mockResolvedValue({
+      ok: true,
+      machineOnline: true,
+      runnerActive: true,
+      activity: 'running',
+      canTakeOverDirect: false,
+      canTakeOverPersist: false,
+      canForceStop: false,
+    });
+  }
+
   beforeEach(() => {
     chatListPropsSpy.mockReset();
     chatHeaderPropsSpy.mockReset();
@@ -1124,6 +1159,7 @@ describe('SessionView (direct sessions)', () => {
     restartProviderBindingSessionRunnerSpy.mockResolvedValue({ ok: true, status: 'restarted', sessionId: 's1' });
     getSessionRunnerRuntimeStatusSpy.mockReset();
     getSessionRunnerRuntimeStatusSpy.mockResolvedValue(null);
+    sessionRunnerRuntimeStatusRetention.clearForTests();
     connectedServiceQuotaRecoveryCreditConsumeSpy.mockReset();
     connectedServiceQuotaRecoveryCreditConsumeSpy.mockResolvedValue({ ok: false, errorCode: 'no_recovery_credit_available', error: 'no_recovery_credit_available' });
     setUsageLimitRecoverySettingsSpy.mockClear();
@@ -1218,7 +1254,7 @@ describe('SessionView (direct sessions)', () => {
 	      executionRunDelivery: 'steer_if_supported',
 	      setExecutionRunDelivery: vi.fn(),
     };
-    showDirectSessionTakeoverDialogSpy.mockResolvedValue({ action: null, forceStop: false });
+    showDirectSessionTakeoverDialogSpy.mockResolvedValue({ action: null });
     machineDirectSessionStatusGetSpy.mockResolvedValue({
       ok: true,
       machineOnline: true,
@@ -1305,6 +1341,33 @@ describe('SessionView (direct sessions)', () => {
       testID: 'session-staleRunner-status-badge',
       tone: 'warning',
     }));
+  });
+
+  it('keeps the stale-runner notice visible while restart is blocked by runtime activity', async () => {
+    installStaleSessionRunnerStatus();
+    const metadata = storageState.sessions.s1.metadata as Record<string, any>;
+    metadata[SESSION_RUNNER_RUNTIME_METADATA_KEY] = {
+      ...metadata[SESSION_RUNNER_RUNTIME_METADATA_KEY],
+      plannedRestart: {
+        supported: true,
+        eligible: false,
+        disabledReason: 'turn_in_progress',
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    const restartAction = screen.findByTestId('session-staleRunner-restart');
+
+    expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
+    expect(restartAction).toBeTruthy();
+    expect(restartAction?.props.disabled).toBe(true);
+    expect(restartAction?.props.accessibilityState).toEqual(expect.objectContaining({ disabled: true }));
+    expect(restartAction?.props.onPress).toBeUndefined();
+    expect(findStaleRunnerStatusBadge(screen)).toEqual(expect.objectContaining({
+      testID: 'session-staleRunner-status-badge',
+      tone: 'warning',
+    }));
+    expect(restartStaleSessionRunnerSpy).not.toHaveBeenCalled();
   });
 
   it('renders stale-runner composer notice from daemon status RPC for an inactive session when metadata is not seeded', async () => {
@@ -3036,7 +3099,6 @@ describe('SessionView (direct sessions)', () => {
       });
       expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
       expect(sendVoiceSessionComposerTextSpy).not.toHaveBeenCalled();
-      expect(resolveVoiceSessionComposerRoutingSpy).not.toHaveBeenCalled();
     },
   );
 
@@ -3163,8 +3225,11 @@ describe('SessionView (direct sessions)', () => {
     const agentInput = findAgentInput(screen);
     expect(agentInput.props.agentType).toBe('codex');
     expect(agentInput.props.agentPickerOptions).toBeUndefined();
-    expect(agentInput.props.agentPickerSelectedOptionId).toBeUndefined();
     expect(agentInput.props.agentPickerApplyLabel).toBeUndefined();
+    // The in-session Agent catalog extends the composer's own row rather than replacing
+    // the projection, and selects nothing of its own until a continuation is armed.
+    expect(typeof agentInput.props.composeAgentPickerOptions).toBe('function');
+    expect(agentInput.props.agentPickerSelectedOptionId).toBeNull();
     expect(agentInput.props.metadata).toEqual(session.metadata);
     expect(typeof agentInput.props.onModelModeChange).toBe('function');
     expect(typeof agentInput.props.onAcpSessionModeChange).toBe('function');
@@ -3195,6 +3260,57 @@ describe('SessionView (direct sessions)', () => {
     expect(modelContentOverride.props.agentTargetKey).toBe('backend:codex');
     expect(modelContentOverride.props.providerGroups).toEqual([]);
     expect(modelContentOverride.props.hiddenNativeModelKeys).toEqual(new Set());
+  });
+
+  it('projects a uniquely resolved unqualified native selection onto its advertised existing-session row', async () => {
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 11,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'gpt-5.6-luna',
+          },
+        },
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 10,
+          currentModelId: 'openai-codex/gpt-5.6-luna',
+          availableModels: [{
+            id: 'openai-codex/gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+            modelOptions: [{
+              id: 'reasoning_effort',
+              name: 'Thinking',
+              type: 'select',
+              currentValue: 'medium',
+              options: [
+                { value: 'low', name: 'Low' },
+                { value: 'medium', name: 'Medium' },
+              ],
+            }],
+          }],
+        },
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+    const picker = findAgentInput(screen).props.modelContentOverride;
+
+    expect(picker.props.selected).toEqual({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'openai-codex/gpt-5.6-luna',
+    });
+    expect(picker.props.effectiveLabel).toBe('GPT-5.6 Luna');
+    expect(picker.props.selectedOptionControls).toEqual([
+      expect.objectContaining({ option: expect.objectContaining({ id: 'reasoning_effort' }) }),
+    ]);
   });
 
   it.each([
@@ -3295,29 +3411,32 @@ describe('SessionView (direct sessions)', () => {
       },
     });
     getSessionRunnerRuntimeStatusSpy.mockResolvedValue({
-      v: 1,
-      sessionId: 's1',
-      machineId: 'machine-1',
-      observedAtMs: 1,
-      runner: {
-        pid: 123,
-        runtimeId: 'version:cli-current',
-        processCommandHash: 'hash-current',
-        entrypointVersion: 'cli-current',
-        entrypointSource: 'process_command',
-        startedBy: 'daemon',
-        startingMode: 'remote',
+      state: {
+        v: 1,
+        sessionId: 's1',
+        machineId: 'machine-1',
+        observedAtMs: 1,
+        runner: {
+          pid: 123,
+          runtimeId: 'version:cli-current',
+          processCommandHash: 'hash-current',
+          entrypointVersion: 'cli-current',
+          entrypointSource: 'process_command',
+          startedBy: 'daemon',
+          startingMode: 'remote',
+        },
+        daemon: {
+          currentEntrypointVersion: 'version:cli-current',
+          currentEntrypointSource: 'launch_spec',
+        },
+        versionState: 'current',
+        statusSource: 'daemon_tracking',
+        plannedRestart: {
+          supported: true,
+          eligible: true,
+        },
       },
-      daemon: {
-        currentEntrypointVersion: 'version:cli-current',
-        currentEntrypointSource: 'launch_spec',
-      },
-      versionState: 'current',
-      statusSource: 'daemon_tracking',
-      plannedRestart: {
-        supported: true,
-        eligible: true,
-      },
+      runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 },
     });
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
@@ -3335,11 +3454,17 @@ describe('SessionView (direct sessions)', () => {
         sessionId: 's1',
         machineId: 'machine-1',
       }),
+      runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 },
       serverId: 'server-route-1',
     });
   });
 
   it('never reuses a cached Provider restart target after the control machine changes', async () => {
+    const requestedSelection = {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'native-next',
+    } as const;
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
       metadata: {
@@ -3347,11 +3472,7 @@ describe('SessionView (direct sessions)', () => {
         modelSelectionIntentV1: {
           v: 1,
           updatedAt: 11,
-          selection: {
-            agentTargetKey: 'backend:codex',
-            providerConnectionId: null,
-            modelId: 'native-next',
-          },
+          selection: requestedSelection,
         },
         sessionModelsV1: {
           v: 1,
@@ -3365,6 +3486,20 @@ describe('SessionView (direct sessions)', () => {
         },
       },
     };
+    actionExecuteSpy.mockResolvedValue({
+      ok: false,
+      errorCode: 'restart_required',
+      error: 'restart_required',
+      details: {
+        status: 'restart_required',
+        activeSelection: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: null,
+          modelId: 'native-old',
+        },
+        requestedSelection,
+      },
+    });
     const runtimeState = (machineId: string) => ({
       v: 1 as const,
       sessionId: 's1',
@@ -3394,13 +3529,25 @@ describe('SessionView (direct sessions)', () => {
     const machineTwoStatus = new Promise<ReturnType<typeof runtimeState>>((resolve) => {
       resolveMachineTwo = resolve;
     });
-    getSessionRunnerRuntimeStatusSpy.mockImplementation(async (request: any) => (
-      request.machineId === 'machine-1'
+    getSessionRunnerRuntimeStatusSpy.mockImplementation(async (request: any) => {
+      const state = request.machineId === 'machine-1'
         ? runtimeState('machine-1')
-        : await machineTwoStatus
-    ));
+        : await machineTwoStatus;
+      return {
+        state,
+        runnerProcessIdentity: {
+          pid: state.runner.pid,
+          processStartTimeMs: state.runner.pid === 123 ? 1_000 : 2_000,
+        },
+      };
+    });
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    await act(async () => {
+      findAgentInput(screen).props.modelContentOverride.props.onSelect(requestedSelection);
+      await Promise.resolve();
+    });
+    await settleDirectSessionView();
     expect(screen.findByTestId('session.providerBinding.banner')).toBeTruthy();
 
     storageState.sessions.s1 = {
@@ -3440,6 +3587,7 @@ describe('SessionView (direct sessions)', () => {
         sessionId: 's1',
         machineId: 'machine-2',
       }),
+      runnerProcessIdentity: { pid: 456, processStartTimeMs: 2_000 },
       serverId: 'server-route-1',
     });
   });
@@ -3492,6 +3640,252 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('restores restart-to-apply UX after remount from durable native intent versus active runtime facts', async () => {
+    const runtimeState = buildSessionRunnerRuntimeStatus({
+      sessionId: 's1',
+      machineId: 'machine-1',
+      versionState: 'current',
+    });
+    const runnerProcessIdentity = {
+      pid: runtimeState.runner.pid!,
+      processStartTimeMs: 2_000,
+    };
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      activeAt: 1_000_000,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 11,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'native-next',
+          },
+        },
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 10,
+          currentModelId: 'native-old',
+          activeSelectionV1: {
+            v: 1,
+            selection: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: null,
+              modelId: 'native-old',
+            },
+            source: 'runtime_readback',
+            runner: runnerProcessIdentity,
+          },
+          availableModels: [
+            { id: 'native-old', name: 'Native old' },
+            { id: 'native-next', name: 'Native next' },
+          ],
+        },
+      },
+    };
+    getSessionRunnerRuntimeStatusSpy.mockResolvedValue({
+      state: runtimeState,
+    });
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(screen.findByTestId('session.providerBinding.banner')).toBeTruthy();
+  });
+
+  it('projects a matching exact runner witness as running active model truth after remount', async () => {
+    const runtimeState = buildSessionRunnerRuntimeStatus({
+      sessionId: 's1',
+      machineId: 'machine-1',
+      versionState: 'current',
+      pid: 123,
+    });
+    const runnerProcessIdentity = {
+      pid: 123,
+      processStartTimeMs: 2_000,
+    };
+    const activeSelection = {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'native-next',
+    } as const;
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      activeAt: 1_000_000,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 11,
+          selection: activeSelection,
+        },
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 10,
+          currentModelId: 'native-next',
+          activeSelectionV1: {
+            v: 1,
+            selection: activeSelection,
+            source: 'runtime_readback',
+            runner: runnerProcessIdentity,
+          },
+          availableModels: [
+            { id: 'native-next', name: 'Native next' },
+          ],
+        },
+      },
+    };
+    getSessionRunnerRuntimeStatusSpy.mockResolvedValue({
+      state: runtimeState,
+      runnerProcessIdentity,
+    });
+
+    const screen = await renderSessionViewAndSettle();
+    const agentInput = findAgentInput(screen);
+
+    expect(agentInput.props.currentRunnerProcessIdentity).toEqual(runnerProcessIdentity);
+    expect(agentInput.props.modelContentOverride.props.reportedModel).toEqual({
+      ref: activeSelection,
+      status: 'running',
+    });
+    expect(screen.findByTestId('session.providerBinding.banner')).toBeNull();
+  });
+
+  it('keeps V1 presentation but retracts a stale V2 runner witness when a remount refresh is unavailable', async () => {
+    const runtimeState = buildSessionRunnerRuntimeStatus({
+      sessionId: 's1',
+      machineId: 'machine-1',
+      versionState: 'current',
+      pid: 123,
+    });
+    const runnerProcessIdentity = {
+      pid: 123,
+      processStartTimeMs: 2_000,
+    };
+    const activeSelection = {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'native-next',
+    } as const;
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      activeAt: 1_000_000,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 11,
+          selection: activeSelection,
+        },
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 10,
+          currentModelId: 'native-next',
+          activeSelectionV1: {
+            v: 1,
+            selection: activeSelection,
+            source: 'runtime_readback',
+            runner: runnerProcessIdentity,
+          },
+          availableModels: [
+            { id: 'native-next', name: 'Native next' },
+          ],
+        },
+      },
+    };
+    getSessionRunnerRuntimeStatusSpy
+      .mockResolvedValueOnce({
+        state: runtimeState,
+        runnerProcessIdentity,
+      })
+      .mockResolvedValueOnce(null);
+
+    const firstScreen = await renderSessionViewAndSettle();
+    expect(findAgentInput(firstScreen).props.currentRunnerProcessIdentity).toEqual(runnerProcessIdentity);
+    await firstScreen.unmount();
+
+    const secondScreen = await renderSessionViewAndSettle();
+
+    expect(findAgentInput(secondScreen).props.currentRunnerProcessIdentity).toBeNull();
+    expect(findAgentInput(secondScreen).props.modelContentOverride.props.reportedModel).toEqual({
+      ref: activeSelection,
+      status: 'last_reported',
+    });
+    expect(secondScreen.findByTestId('session.providerBinding.banner')).toBeTruthy();
+  });
+
+  it('keeps restart-to-apply visible after same-version PID reuse invalidates active proof', async () => {
+    const replacementRuntimeState = buildSessionRunnerRuntimeStatus({
+      sessionId: 's1',
+      machineId: 'machine-1',
+      versionState: 'current',
+      pid: 123,
+      runtimeId: 'version:cli-current',
+    });
+    const activeSelectionRunnerProcessIdentity = {
+      pid: 123,
+      processStartTimeMs: 1_000,
+    };
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      activeAt: 1_000_000,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 11,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'native-next',
+          },
+        },
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 10,
+          currentModelId: 'native-next',
+          activeSelectionV1: {
+            v: 1,
+            selection: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: null,
+              modelId: 'native-next',
+            },
+            source: 'runtime_apply',
+            runner: activeSelectionRunnerProcessIdentity,
+          },
+          availableModels: [
+            { id: 'native-next', name: 'Native next' },
+          ],
+        },
+      },
+    };
+    getSessionRunnerRuntimeStatusSpy.mockResolvedValue({
+      state: replacementRuntimeState,
+      runnerProcessIdentity: {
+        pid: 123,
+        processStartTimeMs: 2_000,
+      },
+    });
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(screen.findByTestId('session.providerBinding.banner')).toBeTruthy();
+    expect(findAgentInput(screen).props.modelContentOverride.props.reportedModel).toEqual({
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'native-next',
+      },
+      status: 'last_reported',
+    });
+  });
+
+  it('keeps restart-to-apply visible when only fallback current-model metadata matches the proposal', async () => {
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
       metadata: {
@@ -3509,11 +3903,21 @@ describe('SessionView (direct sessions)', () => {
           v: 1,
           agentId: 'codex',
           updatedAt: 10,
-          currentModelId: 'native-old',
+          currentModelId: 'native-next',
           availableModels: [
-            { id: 'native-old', name: 'Native old' },
             { id: 'native-next', name: 'Native next' },
           ],
+        },
+        sessionAppliedModelV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 9,
+          modelId: 'native-next',
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'native-next',
+          },
         },
       },
     };
@@ -3523,7 +3927,37 @@ describe('SessionView (direct sessions)', () => {
     expect(screen.findByTestId('session.providerBinding.banner')).toBeTruthy();
   });
 
-  it('does not treat another Agent model snapshot as exact active truth after remount', async () => {
+  it('does not label a fallback current-model projection as running without exact active proof', async () => {
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 10,
+          currentModelId: 'native-next',
+          availableModels: [
+            { id: 'native-next', name: 'Native next' },
+          ],
+        },
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+    const picker = findAgentInput(screen).props.modelContentOverride;
+
+    expect(picker.props.reportedModel).toEqual({
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'native-next',
+      },
+      status: 'last_reported',
+    });
+  });
+
+  it('does not treat another Agent model snapshot as exact active truth or a confirmed transition after remount', async () => {
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
       metadata: {
@@ -3585,6 +4019,15 @@ describe('SessionView (direct sessions)', () => {
             modelId: 'provider-next',
           },
         },
+        sessionModelsV1: {
+          v: 1,
+          agentId: 'codex',
+          updatedAt: 10,
+          currentModelId: 'provider-next',
+          availableModels: [
+            { id: 'provider-next', name: 'Provider next' },
+          ],
+        },
       },
     };
 
@@ -3593,7 +4036,7 @@ describe('SessionView (direct sessions)', () => {
     expect(screen.findByTestId('session.providerBinding.banner')).toBeTruthy();
   });
 
-  it('yields local restart presentation when a newer durable intent becomes active', async () => {
+  it('does not clear local restart presentation from fallback current-model metadata', async () => {
     featureEnabledState.providers = true;
     const requestedSelection = {
       agentTargetKey: 'backend:codex',
@@ -3638,17 +4081,13 @@ describe('SessionView (direct sessions)', () => {
         modelSelectionIntentV1: {
           v: 1,
           updatedAt: 20,
-          selection: {
-            agentTargetKey: 'backend:codex',
-            providerConnectionId: null,
-            modelId: 'default',
-          },
+          selection: requestedSelection,
         },
       },
     };
     await updateSessionViewAndSettle(screen, { jumpToSeq: 1 });
 
-    expect(screen.findByTestId('session.providerBinding.banner')).toBeNull();
+    expect(screen.findByTestId('session.providerBinding.banner')).toBeTruthy();
   });
 
   it('suppresses local Provider restart presentation when the Providers feature turns off', async () => {
@@ -3932,7 +4371,7 @@ describe('SessionView (direct sessions)', () => {
         providerConnectionId: null,
         modelId: 'grok-4.5',
       },
-      status: 'running',
+      status: 'last_reported',
     });
     expect(picker.props.selectedOptionControls).toBeUndefined();
   });
@@ -3996,7 +4435,7 @@ describe('SessionView (direct sessions)', () => {
         providerConnectionId: null,
         modelId: 'gpt-5.6-terra',
       },
-      status: 'running',
+      status: 'last_reported',
     });
     expect(picker.props.selectedOptionControls).toEqual([
       expect.objectContaining({
@@ -4006,7 +4445,72 @@ describe('SessionView (direct sessions)', () => {
     ]);
   });
 
+  it('resolves the published config-option override into the selected model controls', async () => {
+    // A live session's Ultracode switch reads its state from these controls. When the memo
+    // ignored the session's published overrides, the switch rendered the catalog default
+    // (off) forever and every toggle snapped back on the next metadata tick.
+    const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
+    session.metadata = {
+      ...session.metadata,
+      sessionConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 7,
+        overrides: { ultracode: { updatedAt: 7, value: 'true' } },
+      },
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 2,
+        selection: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5.6-sol',
+        },
+      },
+      sessionModelsV1: {
+        v: 1,
+        agentId: 'codex',
+        updatedAt: 1,
+        currentModelId: 'gpt-5.6-sol',
+        availableModels: [{
+          id: 'gpt-5.6-sol',
+          name: '5.6 Sol',
+          modelOptions: [{
+            id: 'ultracode',
+            name: 'Ultracode',
+            type: 'boolean',
+            currentValue: 'false',
+            options: [
+              { value: 'false', name: 'Off' },
+              { value: 'true', name: 'On' },
+            ],
+          }],
+        }],
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+    const picker = findAgentInput(screen).props.modelContentOverride;
+
+    expect(picker.props.selectedOptionControls).toEqual([
+      expect.objectContaining({
+        option: expect.objectContaining({ id: 'ultracode' }),
+        requestedValue: 'true',
+        effectiveValue: 'true',
+        isPending: true,
+      }),
+    ]);
+  });
+
   it('does not inject an unpublished Claude config override into the next submitted message', async () => {
+    machineDirectSessionStatusGetSpy.mockResolvedValueOnce({
+      ok: true,
+      machineOnline: true,
+      runnerActive: true,
+      activity: 'running',
+      canTakeOverDirect: true,
+      canTakeOverPersist: true,
+      canForceStop: false,
+    });
     const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
     session.metadata = {
       ...session.metadata,
@@ -4041,8 +4545,6 @@ describe('SessionView (direct sessions)', () => {
         ],
       },
     };
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-
     const screen = await renderSessionView();
 
     const agentInput = findAgentInput(screen);
@@ -4069,6 +4571,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('clears composer text at direct-session outbound handoff and leaves it clear after acceptance', async () => {
+    installRunnerActiveDirectSubmitStatus();
     let resolveSubmit!: () => void;
     syncSubmitMessageSpy.mockImplementationOnce(
       async (...args: unknown[]) => {
@@ -4081,8 +4584,6 @@ describe('SessionView (direct sessions)', () => {
         });
       },
     );
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-
     const screen = await renderSessionView();
     let agentInput = findAgentInput(screen);
     await act(async () => {
@@ -4107,6 +4608,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('restores composer text when direct-session outbound handoff fails before acceptance', async () => {
+    installRunnerActiveDirectSubmitStatus();
     syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[4] as
         | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
@@ -4114,8 +4616,6 @@ describe('SessionView (direct sessions)', () => {
       options?.onLocalPendingProjectionCreated?.({ localId: 'direct-local-id' });
       throw new Error('direct send rejected');
     });
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-
     const screen = await renderSessionView();
     let agentInput = findAgentInput(screen);
     await act(async () => {
@@ -4133,6 +4633,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('keeps composer custody clear when canonical Pending commits before an ambiguous direct-send error', async () => {
+    installRunnerActiveDirectSubmitStatus();
     syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[4] as
         | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
@@ -4155,8 +4656,6 @@ describe('SessionView (direct sessions)', () => {
       };
       throw new Error('direct send response lost');
     });
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-
     const screen = await renderSessionView();
     let agentInput = findAgentInput(screen);
     await act(async () => {
@@ -4174,6 +4673,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('restores composer custody when only recovered history shares the outbound local id', async () => {
+    installRunnerActiveDirectSubmitStatus();
     syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[4] as
         | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
@@ -4193,7 +4693,6 @@ describe('SessionView (direct sessions)', () => {
       };
       throw new Error('direct send rejected before server custody');
     });
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
 
     const screen = await renderSessionView();
     let agentInput = findAgentInput(screen);
@@ -4211,31 +4710,17 @@ describe('SessionView (direct sessions)', () => {
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected before server custody');
   });
 
-  it('does not restore an old semantic snapshot over newer semantic choices after direct-session handoff failure', async () => {
+  it('restores submitted text without overwriting newer semantic choices after direct-session handoff failure', async () => {
+    installRunnerActiveDirectSubmitStatus();
     const draftValues = await import('@/sync/domains/input/draftValues/sessionDraftValueStore');
     const oldRecipient = { kind: 'execution_run' as const, runId: 'run-old' };
     const newRecipient = { kind: 'execution_run' as const, runId: 'run-new' };
-    const oldMention = {
-      kind: 'skill' as const,
-      tokenText: '$old',
-      start: 8,
-      end: 12,
-      name: 'old',
-    };
-    const newMention = {
-      kind: 'skill' as const,
-      tokenText: '$new',
-      start: 8,
-      end: 12,
-      name: 'new',
-    };
     let rejectSubmit!: (error: Error) => void;
 
     draftValues.resetSessionDraftValueCachesForTests();
     draftValues.clearSessionDraftValuesForSession(null, 's1', { reason: 'sessionDelete' });
     draftValues.writeSessionDraftValue(null, 's1', 'routing.recipient', oldRecipient);
     draftValues.writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
-    draftValues.writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [oldMention]);
 
     try {
       syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
@@ -4247,8 +4732,6 @@ describe('SessionView (direct sessions)', () => {
           rejectSubmit = reject;
         });
       });
-      showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-
       const screen = await renderSessionView();
       let agentInput = findAgentInput(screen);
       await act(async () => {
@@ -4263,11 +4746,9 @@ describe('SessionView (direct sessions)', () => {
 
       expect(draftValues.readSessionDraftValue(null, 's1', 'routing.recipient')).toBeUndefined();
       expect(draftValues.readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBeUndefined();
-      expect(draftValues.readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toBeUndefined();
 
       draftValues.writeSessionDraftValue(null, 's1', 'routing.recipient', newRecipient);
       draftValues.writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'prompt');
-      draftValues.writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [newMention]);
 
       await act(async () => {
         rejectSubmit(new Error('direct send rejected'));
@@ -4276,10 +4757,9 @@ describe('SessionView (direct sessions)', () => {
       await settleDirectSessionView();
 
       agentInput = findAgentInput(screen);
-      expect(agentInput.props.value).toBe('');
+      expect(agentInput.props.value).toBe('send to old target');
       expect(draftValues.readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual(newRecipient);
       expect(draftValues.readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('prompt');
-      expect(draftValues.readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([newMention]);
       expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
     } finally {
       draftValues.clearSessionDraftValuesForSession(null, 's1', { reason: 'sessionDelete' });
@@ -4396,6 +4876,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('removes only sent workspace review comment drafts after submitting them', async () => {
+    installRunnerActiveDirectSubmitStatus();
     featureEnabledState['files.reviewComments'] = true;
     reviewCommentDraftsState.current = [
       {
@@ -4430,8 +4911,6 @@ describe('SessionView (direct sessions)', () => {
       active: true,
       metadata: { host: 'happy-host' },
     };
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-
     const screen = await renderSessionView();
 
     const agentInput = findAgentInput(screen);
@@ -4547,7 +5026,7 @@ describe('SessionView (direct sessions)', () => {
     await renderSessionViewAndSettle();
 
     expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
-      badges: ['sessionsList.storageExternalFilter', 'agentInput.agent.codex · happy-host'],
+      badges: ['sessionsList.storageExternalFilter', 'Codex'],
     }));
   });
 
@@ -4606,8 +5085,26 @@ describe('SessionView (direct sessions)', () => {
     expect(syncRefreshSessionMessagesSpy).not.toHaveBeenCalled();
   });
 
-  it('prompts for takeover on send and submits after taking over the direct session', async () => {
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+  it('starts takeover on send without emitting input before explicit operation Resume', async () => {
+    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', targetDirectory: '/tmp' });
+    machineDirectSessionTakeoverSpy.mockResolvedValueOnce({ ok: true });
+    (storageState.sessions.s1 as any).metadata.directSessionV1 = {
+      ...(storageState.sessions.s1 as any).metadata.directSessionV1,
+      linkedAtMs: 1_000,
+    };
+    (storageState.sessions.s1 as any).metadata.externalSessionV1 = {
+      v: 1,
+      agentId: 'codex',
+      machineId: 'machine-1',
+      remoteSessionId: 'vendor-session-1',
+      source: { kind: 'codexHome', home: 'user' },
+      linkedAtMs: 1_000,
+      qualifiedIdentity: {
+        v: 1,
+        agent: { pluginId: 'happier.codex', localId: 'codex' },
+        source: { kind: 'codexHome', contractVersion: 1 },
+      },
+    };
     const screen = await renderSessionView();
 
     const agentInput = findAgentInput(screen);
@@ -4622,24 +5119,42 @@ describe('SessionView (direct sessions)', () => {
     expect(showDirectSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: true,
       canTakeOverPersist: true,
-      canForceStop: false,
+      target: {
+        machineId: 'machine-1',
+        machineHomeDir: '/tmp',
+        initialDirectory: '/tmp',
+        serverId: 'server-1',
+      },
     });
     expect(machineDirectSessionTakeoverSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
-      sessionId: 's1',
+      request: {
+        v: 1,
+        idempotencyKey: expect.any(String),
+        sessionId: 's1',
+        source: {
+          machineId: 'machine-1',
+          remoteSessionId: 'vendor-session-1',
+          qualifiedIdentity: {
+            v: 1,
+            agent: { pluginId: 'happier.codex', localId: 'codex' },
+            source: { kind: 'codexHome', contractVersion: 1 },
+          },
+          linkGeneration: '1000',
+        },
+        plan: 'takeover',
+        targetStorageMode: 'external-linked',
+        targetDirectory: '/tmp',
+        targetRuntimeMode: 'terminal',
+      },
     }, { serverId: 'server-1' });
-    expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
-      's1',
-      'continue this session',
-      undefined,
-      undefined,
-      expectDirectSendProjectionOptions(),
-    );
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    expect(findAgentInput(screen).props.value).toBe('continue this session');
 
   });
 
   it('keeps the composer text when direct takeover is cancelled from the send prompt', async () => {
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null, forceStop: false });
+    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null });
     const screen = await renderSessionView();
 
     let agentInput = findAgentInput(screen);
@@ -4662,7 +5177,10 @@ describe('SessionView (direct sessions)', () => {
 
   it('keeps the composer text visible while a direct takeover send prompt is still pending', async () => {
     showDirectSessionTakeoverDialogSpy.mockImplementationOnce(
-      () => new Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>(() => {}),
+      () => new Promise<{
+        action: 'direct' | 'persisted' | null;
+        targetDirectory?: string;
+      }>(() => {}),
     );
     const screen = await renderSessionView();
 
@@ -4681,8 +5199,9 @@ describe('SessionView (direct sessions)', () => {
 
   });
 
-  it('uses canonical public intent when persisting takeover from the send prompt', async () => {
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'persisted', forceStop: true });
+  it('uses canonical public intent without emitting input when persisting takeover from the send prompt', async () => {
+    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'persisted', targetDirectory: '/tmp' });
+    machineDirectSessionTakeoverPersistSpy.mockResolvedValueOnce({ ok: true, converted: true });
     machineDirectSessionStatusGetSpy.mockResolvedValue({
       ok: true,
       machineOnline: true,
@@ -4693,6 +5212,10 @@ describe('SessionView (direct sessions)', () => {
       canForceStop: true,
       trustedPid: 123,
     });
+    (storageState.sessions.s1 as any).metadata.directSessionV1 = {
+      ...(storageState.sessions.s1 as any).metadata.directSessionV1,
+      linkedAtMs: 1_000,
+    };
     (storageState.sessions.s1 as any).metadata.externalSessionV1 = {
       v: 1,
       agentId: 'codex',
@@ -4735,20 +5258,17 @@ describe('SessionView (direct sessions)', () => {
         },
         plan: 'takeover',
         targetStorageMode: 'persisted',
+        targetDirectory: '/tmp',
         targetRuntimeMode: 'terminal',
       },
     }, { serverId: 'server-1' });
-    expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
-      's1',
-      'persist this',
-      undefined,
-      undefined,
-      expectDirectSendProjectionOptions(),
-    );
+    expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    expect(findAgentInput(screen).props.value).toBe('persist this');
 
   });
 
   it('routes hidden voice conversation sends through the voice session binding helper and retains pending text', async () => {
+    installRunnerActiveDirectSubmitStatus();
     sendVoiceSessionComposerTextSpy.mockResolvedValueOnce({
       ok: true,
       localId: 'voice-local-1',
@@ -4757,7 +5277,7 @@ describe('SessionView (direct sessions)', () => {
     resolveVoiceSessionComposerRoutingSpy.mockReturnValue({
       kind: 'adapter_text',
       binding: {
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         controlSessionId: 'voice-global',
         conversationSessionId: 's1',
         transcriptMode: 'synthetic',
@@ -4788,6 +5308,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('shows a typed definite-rejection error and preserves the hidden voice composer draft', async () => {
+    installRunnerActiveDirectSubmitStatus();
     sendVoiceSessionComposerTextSpy.mockResolvedValueOnce({
       ok: false,
       reason: 'terminal_rejected',
@@ -4854,6 +5375,34 @@ describe('SessionView (direct sessions)', () => {
     expect(lastChatListProps?.externalControlFooter ?? null).toBeNull();
     expect(lastChatListProps?.onRequestSwitchToRemote).toBeUndefined();
     expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await screen.unmount();
+    });
+  });
+
+  it('renders exact-session Codex Voice without requiring its global account binding', async () => {
+    featureEnabledState.voice = true;
+    settingByKeyState.current = {
+      voice: {
+        providerId: 'happier.agent.codex/realtime-codex',
+        providers: {
+          'happier.agent.codex/realtime-codex': {
+            schemaVersion: 2,
+            config: { globalConnectedServices: null },
+          },
+        },
+      },
+    };
+
+    const screen = await renderSessionView();
+
+    expect(voiceSurfacePropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        variant: 'session',
+        sessionId: 's1',
+      }),
+    );
 
     await act(async () => {
       await screen.unmount();

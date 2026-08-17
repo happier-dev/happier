@@ -9,11 +9,33 @@ type Metadata = {
     path: string;
     host: string;
     readStateV1?: { v: 1; sessionSeq: number; pendingActivityAt: number; updatedAt: number };
+    sessionModelsV1?: {
+        v: 1;
+        agentId: string;
+        updatedAt: number;
+        currentModelId: string;
+        availableModels: Array<{
+            id: string;
+            name: string;
+            contextWindowTokens?: number;
+        }>;
+    };
     tools?: string[];
 };
 
+const ownerCurrentEnvelope = {
+    t: 'plain' as const,
+    v: {
+        v: 1 as const,
+        workspace: {
+            path: '/private',
+            host: 'owner-host',
+        },
+    },
+};
+
 describe('updateSessionMetadataWithRetry', () => {
-    it('keeps an ordinary layout-0 metadata mutation on the legacy writer', async () => {
+    it('migrates an ordinary layout-0 metadata mutation through the owner tuple', async () => {
         const initial = {
             mode: 'legacy_owner' as const,
             metadataLayoutVersion: 0 as const,
@@ -35,8 +57,9 @@ describe('updateSessionMetadataWithRetry', () => {
             `legacy:${JSON.stringify(value)}`);
         const emitUpdateMetadata = vi.fn(async () => ({
             result: 'success' as const,
+            metadataLayoutVersion: 1,
             version: 4,
-            metadata: 'metadata-committed',
+            agentStateVersion: 6,
         }));
         const decryptMetadata = vi.fn(async () => ({
             path: '/workspace',
@@ -44,8 +67,9 @@ describe('updateSessionMetadataWithRetry', () => {
             summary: { text: 'After', updatedAt: 20 },
         }));
         const applySessionMetadata = vi.fn();
-        const encryptPayload = vi.fn(async () => 'tuple-must-not-run');
-        const sealOwnerMetadata = vi.fn(() => 'tuple-must-not-run');
+        const encryptPayload = vi.fn(async (value: unknown) =>
+            `tuple:${JSON.stringify(value)}`);
+        const encodeOwnerMetadata = vi.fn(() => ownerCurrentEnvelope);
         const applyTupleSnapshot = vi.fn();
 
         await updateSessionMetadataWithRetry<Metadata>({
@@ -62,8 +86,12 @@ describe('updateSessionMetadataWithRetry', () => {
             acquireTupleSnapshot: async () => initial,
             tupleCrypto: {
                 encryptPayload,
-                sealOwnerMetadata,
+                encodeOwnerMetadata,
             },
+            getOwnerMigrationCurrentness: () => ({
+                expectedAccountEncryptionMode: 'plain',
+                expectedAccountContentPublicKeyFingerprint: null,
+            }),
             emitUpdateMetadata,
             applyTupleSnapshot,
             updater: (base) => ({
@@ -73,24 +101,116 @@ describe('updateSessionMetadataWithRetry', () => {
         });
 
         expect(emitUpdateMetadata).toHaveBeenCalledWith({
-            sid: 's_ordinary',
-            expectedVersion: 3,
-            metadata: expect.stringContaining('"After"'),
-        });
-        expect(encryptMetadata).toHaveBeenCalledTimes(1);
-        expect(decryptMetadata).toHaveBeenCalledWith(
-            4,
-            'metadata-committed',
-        );
-        expect(applySessionMetadata).toHaveBeenCalledWith({
-            metadataVersion: 4,
-            metadata: expect.objectContaining({
-                summary: { text: 'After', updatedAt: 20 },
+            mode: 'owner_migration',
+            expectedAccountEncryptionMode: 'plain',
+            expectedAccountContentPublicKeyFingerprint: null,
+            source: {
+                metadataLayoutVersion: 0,
+                metadata: {
+                    version: 3,
+                    ciphertext: 'metadata-source',
+                },
+                ownerMetadata: null,
+                agentState: {
+                    version: 5,
+                    ciphertext: null,
+                },
+            },
+            target: expect.objectContaining({
+                metadataLayoutVersion: 1,
+                ownerMetadata: expect.objectContaining({ t: 'plain' }),
+                sharedMetadata: {
+                    ciphertext: expect.stringContaining('"After"'),
+                },
             }),
         });
-        expect(encryptPayload).not.toHaveBeenCalled();
-        expect(sealOwnerMetadata).not.toHaveBeenCalled();
-        expect(applyTupleSnapshot).not.toHaveBeenCalled();
+        expect(encryptMetadata).not.toHaveBeenCalled();
+        expect(decryptMetadata).not.toHaveBeenCalled();
+        expect(applySessionMetadata).not.toHaveBeenCalled();
+        expect(encryptPayload).toHaveBeenCalled();
+        expect(encodeOwnerMetadata).toHaveBeenCalled();
+        expect(applyTupleSnapshot).toHaveBeenCalledWith(
+            expect.objectContaining({
+                mode: 'owner',
+                metadataLayoutVersion: 1,
+                metadataVersion: 4,
+                agentStateVersion: 6,
+            }),
+        );
+    });
+
+    it('projects predecessor aliases only at the layout-0 encryption boundary', async () => {
+        const canonicalMetadata: Metadata = {
+            path: '/workspace',
+            host: 'owner-host',
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'codex',
+                updatedAt: 10,
+                currentModelId: 'codex-1',
+                availableModels: [{
+                    id: 'codex-1',
+                    name: 'Codex 1',
+                    contextWindowTokens: 0,
+                }],
+            },
+        };
+        const initial = {
+            mode: 'legacy_owner' as const,
+            metadataLayoutVersion: 0 as const,
+            metadataVersion: 3,
+            metadataCiphertext: 'metadata-source',
+            ownerMetadata: null,
+            agentStateVersion: 5,
+            agentStateCiphertext: null,
+            value: {
+                metadata: canonicalMetadata,
+                agentState: null,
+            },
+        };
+        const encryptedInputs: Metadata[] = [];
+
+        await updateSessionMetadataWithRetry<Metadata>({
+            sessionId: 's_predecessor_compat',
+            getSession: () => ({
+                metadataLayoutVersion: 0,
+                metadataVersion: 3,
+                metadata: canonicalMetadata,
+            }),
+            refreshSessions: async () => undefined,
+            encryptMetadata: async (value) => {
+                encryptedInputs.push(value);
+                return 'metadata-compatible';
+            },
+            decryptMetadata: async () => canonicalMetadata,
+            applySessionMetadata: () => undefined,
+            acquireTupleSnapshot: async () => initial,
+            tupleCrypto: {
+                encryptPayload: async () => 'tuple-must-not-run',
+                encodeOwnerMetadata: () => ownerCurrentEnvelope,
+            },
+            emitUpdateMetadata: async () => ({
+                result: 'success',
+                version: 4,
+                metadata: 'metadata-compatible',
+            }),
+            applyTupleSnapshot: () => undefined,
+            updater: (base) => ({
+                ...base,
+                summary: { text: 'Unrelated update', updatedAt: 20 },
+            }),
+        });
+
+        expect(encryptedInputs).toHaveLength(1);
+        expect(encryptedInputs[0]?.sessionModelsV1).toMatchObject({
+            agentId: 'codex',
+            provider: 'codex',
+        });
+        expect(encryptedInputs[0]?.sessionModelsV1?.availableModels[0])
+            .not.toHaveProperty('contextWindowTokens');
+        expect(canonicalMetadata.sessionModelsV1).not.toHaveProperty('provider');
+        expect(canonicalMetadata.sessionModelsV1?.availableModels[0])
+            .toHaveProperty('contextWindowTokens', 0);
     });
 
     it('returns an exact ordinary layout-0 no-op without encryption, commit, refetch, or apply', async () => {
@@ -118,7 +238,7 @@ describe('updateSessionMetadataWithRetry', () => {
         }));
         const applySessionMetadata = vi.fn();
         const encryptPayload = vi.fn(async () => 'must-not-run');
-        const sealOwnerMetadata = vi.fn(() => 'must-not-run');
+        const encodeOwnerMetadata = vi.fn(() => ownerCurrentEnvelope);
         const applyTupleSnapshot = vi.fn();
 
         await expect(updateSessionMetadataWithRetry<Metadata>({
@@ -135,7 +255,7 @@ describe('updateSessionMetadataWithRetry', () => {
             acquireTupleSnapshot: async () => initial,
             tupleCrypto: {
                 encryptPayload,
-                sealOwnerMetadata,
+                encodeOwnerMetadata,
             },
             emitUpdateMetadata,
             applyTupleSnapshot,
@@ -148,7 +268,7 @@ describe('updateSessionMetadataWithRetry', () => {
         expect(emitUpdateMetadata).not.toHaveBeenCalled();
         expect(applySessionMetadata).not.toHaveBeenCalled();
         expect(encryptPayload).not.toHaveBeenCalled();
-        expect(sealOwnerMetadata).not.toHaveBeenCalled();
+        expect(encodeOwnerMetadata).not.toHaveBeenCalled();
         expect(applyTupleSnapshot).not.toHaveBeenCalled();
     });
 
@@ -159,7 +279,7 @@ describe('updateSessionMetadataWithRetry', () => {
             metadataLayoutVersion: 1 as const,
             metadataVersion: 3,
             sharedMetadataCiphertext: 'shared-current',
-            ownerMetadataCiphertext: 'owner-current',
+            ownerMetadataEnvelope: ownerCurrentEnvelope,
             agentStateVersion: 5,
             agentStateCiphertext: null,
             value: {
@@ -183,7 +303,7 @@ describe('updateSessionMetadataWithRetry', () => {
             },
         };
         let applied: unknown;
-        const sealOwnerMetadata = vi.fn(() => 'owner-resealed');
+        const encodeOwnerMetadata = vi.fn(() => ownerCurrentEnvelope);
 
         await updateSessionMetadataWithRetry<
             Metadata,
@@ -199,7 +319,7 @@ describe('updateSessionMetadataWithRetry', () => {
             acquireTupleSnapshot: async () => initial,
             tupleCrypto: {
                 encryptPayload: async () => 'shared-next',
-                sealOwnerMetadata,
+                encodeOwnerMetadata,
             },
             emitUpdateMetadata: async (payload) => {
                 emitCalls.push(payload);
@@ -222,12 +342,12 @@ describe('updateSessionMetadataWithRetry', () => {
         expect(emitCalls).toEqual([{
             mode: 'owner',
             metadataLayoutVersion: 1,
-            expectedOwnerMetadataCiphertext: 'owner-current',
+            expectedOwnerMetadata: ownerCurrentEnvelope,
             sharedMetadata: {
                 ciphertext: 'shared-next',
                 expectedVersion: 3,
             },
-            ownerMetadata: { ciphertext: 'owner-current' },
+            ownerMetadata: ownerCurrentEnvelope,
             agentState: {
                 ciphertext: null,
                 expectedVersion: 5,
@@ -237,14 +357,14 @@ describe('updateSessionMetadataWithRetry', () => {
             mode: 'owner',
             metadataVersion: 4,
             agentStateVersion: 6,
-            ownerMetadataCiphertext: 'owner-current',
+            ownerMetadataEnvelope: ownerCurrentEnvelope,
             value: {
                 metadata: {
                     summary: { text: 'After', updatedAt: 20 },
                 },
             },
         });
-        expect(sealOwnerMetadata).not.toHaveBeenCalled();
+        expect(encodeOwnerMetadata).not.toHaveBeenCalled();
     });
 
     it('uses the conditioned legacy branch once and refreshes before surfacing an active conflict', async () => {
@@ -283,7 +403,7 @@ describe('updateSessionMetadataWithRetry', () => {
             acquireTupleSnapshot: async () => initial,
             tupleCrypto: {
                 encryptPayload: async () => 'must-not-run',
-                sealOwnerMetadata: () => 'must-not-run',
+                encodeOwnerMetadata: () => ownerCurrentEnvelope,
             },
             emitUpdateMetadata,
             applyTupleSnapshot: () => undefined,
@@ -314,7 +434,7 @@ describe('updateSessionMetadataWithRetry', () => {
             metadataLayoutVersion: 1 as const,
             metadataVersion: 3,
             sharedMetadataCiphertext: 'shared-current',
-            ownerMetadataCiphertext: 'owner-current',
+            ownerMetadataEnvelope: ownerCurrentEnvelope,
             agentStateVersion: 5,
             agentStateCiphertext: null,
             value: {
@@ -354,7 +474,10 @@ describe('updateSessionMetadataWithRetry', () => {
             acquireTupleSnapshot: async () => initial,
             tupleCrypto: {
                 encryptPayload: async () => 'shared-next',
-                sealOwnerMetadata: () => 'owner-next',
+                encodeOwnerMetadata: (ownerMetadata) => ({
+                    t: 'plain' as const,
+                    v: ownerMetadata,
+                }),
             },
             emitUpdateMetadata,
             applyTupleSnapshot: () => undefined,
@@ -374,12 +497,19 @@ describe('updateSessionMetadataWithRetry', () => {
             mode: 'owner_inactive_model_intent',
             metadataLayoutVersion: 1,
             sessionExpectation: { kind: 'inactive_model_intent' },
-            expectedOwnerMetadataCiphertext: 'owner-current',
+            expectedOwnerMetadata: ownerCurrentEnvelope,
             sharedMetadata: {
                 ciphertext: 'shared-next',
                 expectedVersion: 3,
             },
-            ownerMetadata: { ciphertext: 'owner-next' },
+            ownerMetadata: {
+                t: 'plain',
+                v: expect.objectContaining({
+                    workspace: expect.objectContaining({
+                        path: '/private/next',
+                    }),
+                }),
+            },
             agentState: {
                 ciphertext: null,
                 expectedVersion: 5,
@@ -444,7 +574,7 @@ describe('updateSessionMetadataWithRetry', () => {
             acquireTupleSnapshot,
             tupleCrypto: {
                 encryptPayload: async (payload) => JSON.stringify(payload),
-                sealOwnerMetadata: () => {
+                encodeOwnerMetadata: () => {
                     throw new Error(
                         'shared editor must not seal owner metadata',
                     );
@@ -542,7 +672,7 @@ describe('updateSessionMetadataWithRetry', () => {
             acquireTupleSnapshot: acquire,
             tupleCrypto: {
                 encryptPayload: async () => 'shared-next',
-                sealOwnerMetadata: () => {
+                encodeOwnerMetadata: () => {
                     throw new Error(
                         'shared editor must not seal owner metadata',
                     );

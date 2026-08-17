@@ -1,3 +1,4 @@
+import type { IconName } from '@/components/ui/icons/Icon';
 type SessionModeOptionLike = Readonly<{
     id: string;
     name: string;
@@ -10,16 +11,10 @@ type SessionModeChipControlLike = Readonly<{
 }>;
 
 export type SessionModeChipPresentation =
-    | Readonly<{
-        iconKind: 'ionicon';
-        iconName: 'list-outline';
-        label: string;
-    }>
-    | Readonly<{
-        iconKind: 'octicon';
-        iconName: 'rocket';
-        label: string;
-    }>;
+    Readonly<{
+    iconName: IconName;
+    label: string;
+}>;
 
 const PLAN_MODE_ALIASES = new Set(['plan']);
 const BUILD_MODE_ALIASES = new Set(['build']);
@@ -45,15 +40,13 @@ export function resolveSessionModeChipPresentation(
 
     if (isBuild && !isPlan) {
         return {
-            iconKind: 'octicon',
-            iconName: 'rocket',
+            iconName: 'rocket-launch',
             label: control.label,
         };
     }
 
     return {
-        iconKind: 'ionicon',
-        iconName: 'list-outline',
+        iconName: 'list',
         label: control.label,
     };
 }

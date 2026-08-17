@@ -7,6 +7,7 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     overlay: {
@@ -69,7 +70,7 @@ export function RepositoryTreeDropOverlay(props: Readonly<{ visible: boolean; de
                         : null,
                 ]}
             >
-                <SafeIonicons name="cloud-upload-outline" size={18} color={theme.colors.text.secondary} />
+                <Icon name="cloud-arrow-up" size={16} color={theme.colors.text.secondary} />
                 <View style={{ gap: 2 }}>
                     <Text style={styles.text}>{t('files.repositoryTree.dropToUpload')}</Text>
                     {props.destinationLabel ? (

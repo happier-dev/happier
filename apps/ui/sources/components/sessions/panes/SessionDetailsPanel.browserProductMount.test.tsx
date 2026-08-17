@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+    type PluginUiSurfacePlacementProjection,
+} from '@/sync/domains/plugins/ui/projection';
+import { createPluginDetailsDestinationTab } from '@/components/appShell/panes/details/surfaces/pluginDetailsDestination';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -187,6 +194,146 @@ describe('SessionDetailsPanel browser product mount', () => {
         expect(host?.props.launchpadRows).toBe(launchpadRows);
         expect(host?.props.launchpadRefreshStatus).toBe('idle');
         expect(host?.props.launchpadRefreshError).toBeNull();
+    });
+
+    it('registers the canonical qualified plugin details renderer for session tabs', async () => {
+        const { createSessionDetailsSurfaceRenderers } = await import('./surfaces/sessionDetailsSurfaceRenderers');
+        const binding = normalizePluginUiDestinationBindingV1({
+            pluginId: 'com.example.viewer',
+            destinationId: 'workspace-file',
+            rendererId: 'workspace-file-renderer',
+            container: 'detailsTab',
+            target: { kind: 'session', sessionIdPath: '/session/id' },
+        });
+        if (!binding) throw new Error('session details fixture must be admitted');
+        const placement = {
+            id: 'surfacePlacement:com.example.viewer:workspace-file',
+            pluginId: 'com.example.viewer',
+            contributionKind: 'surfacePlacement' as const,
+            descriptorId: 'workspace-file',
+            binding,
+            target: binding.target,
+            renderer: { kind: 'reactNative', contributionId: 'workspace-file-renderer' },
+            display: { developerFallback: 'Workspace file viewer' },
+            availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
+            headerActions: [],
+        } satisfies PluginUiSurfacePlacementProjection;
+        const projection: PluginUiProjectionModel = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            generation: 4,
+            surfacePlacementsById: { [placement.id]: placement },
+        };
+        const tab = {
+            ...createPluginDetailsDestinationTab({
+                destination: { pluginId: 'com.example.viewer', localId: 'workspace-file' },
+                title: 'Workspace file viewer',
+            }),
+            isPinned: true,
+            isPreview: false,
+        };
+        const renderers = createSessionDetailsSurfaceRenderers({
+            sessionId: 's1',
+            scopeId: 'session:s1',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            pluginUiProjection: projection,
+            pluginUiProjectionPhase: 'current',
+            pluginUiInteractionEnabled: true,
+            platform: 'web',
+            requestClose: vi.fn(),
+            openFileTab: vi.fn(),
+            getStartEditingFileHandler: () => vi.fn(),
+            sessionScreenTestIdsEnabled: false,
+            closeDetailsTab: vi.fn(),
+        });
+        const renderInput = {
+            tab,
+            descriptor: {
+                surfaceId: 'session:s1:details:plugin-file',
+                resourceKey: 'pluginDetailsDestination:plugin-file',
+                scope: { kind: 'session' as const, sessionId: 's1', serverId: 'server-1', machineId: 'machine-1' },
+                region: 'details' as const,
+                status: 'available' as const,
+            },
+            scope: { kind: 'session' as const, sessionId: 's1', serverId: 'server-1', machineId: 'machine-1' },
+            region: 'details' as const,
+            active: true,
+            callbacks: {},
+        };
+
+        const renderer = renderers.find((candidate) => candidate.id === 'plugin-details-destination:session');
+
+        expect(renderer).toBeDefined();
+        expect(renderer?.canRender(renderInput)).toBe(true);
+    });
+
+    it('passes the current session file-tab context to the shared openable-content viewer owner', async () => {
+        const { createSessionDetailsSurfaceRenderers } = await import('./surfaces/sessionDetailsSurfaceRenderers');
+        const replaceTab = vi.fn();
+        const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 9 };
+        const renderers = createSessionDetailsSurfaceRenderers({
+            sessionId: 's1',
+            scopeId: 'session:s1',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            pluginUiProjection: projection,
+            pluginUiProjectionPhase: 'current',
+            pluginUiInteractionEnabled: true,
+            platform: 'web',
+            requestClose: vi.fn(),
+            openFileTab: vi.fn(),
+            getStartEditingFileHandler: () => vi.fn(),
+            sessionScreenTestIdsEnabled: false,
+            closeDetailsTab: vi.fn(),
+        });
+        const renderInput = {
+            tab: {
+                key: 'file:README.md',
+                kind: 'file',
+                title: 'README.md',
+                resource: { kind: 'file', path: 'README.md' },
+                isPinned: true,
+                isPreview: false,
+            },
+            descriptor: {
+                surfaceId: 'session:s1:details:file:README.md',
+                resourceKey: 'file:README.md',
+                scope: {
+                    kind: 'session' as const,
+                    sessionId: 's1',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                },
+                region: 'details' as const,
+                status: 'available' as const,
+            },
+            scope: {
+                kind: 'session' as const,
+                sessionId: 's1',
+                serverId: 'server-1',
+                machineId: 'machine-1',
+            },
+            region: 'details' as const,
+            active: true,
+            callbacks: { replaceTab },
+        };
+        const renderer = renderers.find((candidate) => candidate.id === 'session-file');
+
+        const rendered = renderer?.render(renderInput);
+
+        expect(React.isValidElement(rendered)).toBe(true);
+        if (!React.isValidElement<{ openableContentViewer?: unknown }>(rendered)) return;
+        expect(rendered.props.openableContentViewer).toMatchObject({
+            targetKind: 'session',
+            projection,
+            details: renderInput,
+            scopedLaunchFacts: {
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                generation: 9,
+                interactionEnabled: true,
+            },
+        });
     });
 
     it('builds a live browser recording model for session browser-surface tabs', async () => {

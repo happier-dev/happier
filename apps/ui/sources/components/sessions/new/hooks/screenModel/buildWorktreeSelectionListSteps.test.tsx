@@ -23,11 +23,12 @@ vi.mock('@/scm/repository/repoScmBranchService', () => {
 });
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import type {
-    SelectionListDynamicSection,
-    SelectionListOption,
-    SelectionListSection,
-    SelectionListStep,
+import {
+    renderSelectionListAccessory,
+    type SelectionListDynamicSection,
+    type SelectionListOption,
+    type SelectionListSection,
+    type SelectionListStep,
 } from '@/components/ui/selectionList';
 
 const TEST_ROW_ICON_COLOR = '#456DEF';
@@ -724,8 +725,8 @@ describe('buildWorktreeSelectionListSteps', () => {
 
     // ---- Per-row icon contracts ----
 
-    function getIconProps(option: { icon?: React.ReactNode }): { name?: string; color?: string; size?: number } | null {
-        const icon = option.icon;
+    function getIconProps(option: SelectionListOption): { name?: string; color?: string; size?: number } | null {
+        const icon = renderSelectionListAccessory(option.icon);
         if (icon === undefined || icon === null) return null;
         if (!React.isValidElement(icon)) return null;
         return icon.props as { name?: string; color?: string; size?: number };
@@ -750,7 +751,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         const currentDirOption = requireOption(quickActions, 'current_path');
         const iconProps = getIconProps(currentDirOption);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('folder-outline');
+        expect(iconProps!.name).toBe('folder');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 
@@ -773,7 +774,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         const createOption = requireOption(quickActions, 'create_git_worktree');
         const iconProps = getIconProps(createOption);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('add-circle-outline');
+        expect(iconProps!.name).toBe('plus-circle');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 
@@ -802,7 +803,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         for (const option of existing.options) {
             const iconProps = getIconProps(option);
             expect(iconProps).not.toBeNull();
-            expect(iconProps!.name).toBe('git-network-outline');
+            expect(iconProps!.name).toBe('graph');
             expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
         }
     });
@@ -820,7 +821,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         });
         const iconProps = getIconProps(option);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('git-branch-outline');
+        expect(iconProps!.name).toBe('git-branch');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 
@@ -837,7 +838,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         });
         const iconProps = getIconProps(option);
         expect(iconProps).not.toBeNull();
-        expect(iconProps!.name).toBe('git-branch-outline');
+        expect(iconProps!.name).toBe('git-branch');
         expect(iconProps!.color).toBe(TEST_ROW_ICON_COLOR);
     });
 

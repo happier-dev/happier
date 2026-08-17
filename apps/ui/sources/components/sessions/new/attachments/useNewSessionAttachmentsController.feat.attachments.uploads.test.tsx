@@ -1,10 +1,17 @@
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import * as React from 'react';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { Platform } from 'react-native';
+import type { ComposerAttachmentDraftV1, ComposerSnapshotV1 } from '@happier-dev/protocol';
 
 import type { PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
+import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
+import { useNewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
+import type { HandleCreateSessionOptions } from '@/components/sessions/new/hooks/useCreateNewSession';
+import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
+import type { ComposerSubmissionSnapshot } from '@/components/sessions/composer/composerSubmissionCoordinator';
 import { installNewSessionScreenModelCommonModuleMocks } from '@/components/sessions/new/hooks/newSessionScreenModelTestHelpers';
 import {
     clearAllNewSessionAttachmentDrafts,
@@ -170,6 +177,93 @@ async function renderHook(
     };
 }
 
+function createComposerSnapshot(input: Readonly<{
+    text: string;
+    attachments: readonly ComposerAttachmentDraftV1[];
+    references?: ComposerSnapshotV1['references'];
+    availability?: ComposerSnapshotV1['attachments'][number]['availability'];
+}>): ComposerSnapshotV1 {
+    return {
+        revision: 7,
+        ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+        text: input.text,
+        references: input.references ?? [],
+        attachments: input.attachments.map((attachment) => ({
+            ...attachment,
+            availability: input.availability ?? { status: 'ready' },
+        })),
+        layout: 'wrap',
+        capabilities: {
+            text: true,
+            references: true,
+            attachments: true,
+            submit: true,
+        },
+        state: {
+            focused: false,
+            editable: true,
+            submittable: true,
+            submitting: false,
+            running: false,
+        },
+    };
+}
+
+function createComposerDocument(input: Readonly<{
+    attachments: readonly ComposerAttachmentDraftV1[];
+    snapshot: ComposerSnapshotV1 | null;
+}>): Readonly<{
+    composerDocument: NewSessionComposerDocument;
+    captureSubmissionSnapshot: ReturnType<typeof vi.fn>;
+    clearAcceptedSnapshot: ReturnType<typeof vi.fn>;
+}> {
+    const captureSubmissionSnapshot = vi.fn((_inputTextOverride?: string) => input.snapshot);
+    const clearAcceptedSnapshot = vi.fn((_snapshot: ComposerSubmissionSnapshot) => true);
+    return {
+        composerDocument: {
+            ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+            isCurrent: () => true,
+            isReferenceSearchCurrent: () => true,
+            revision: 7,
+            attachments: input.attachments,
+            structuredInputMentions: [],
+            onStructuredInputMentionsChange: () => {},
+            onComposerFocusChange: () => {},
+            onComposerFocusRequestChange: () => {},
+            onComposerActionBarLayoutChange: () => {},
+            composerDecorations: [],
+            composerInputLock: null,
+            attachmentRowItems: [],
+            hasSendableAttachments: input.attachments.length > 0,
+            extraActionChips: [],
+            beforeComposer: null,
+            afterComposer: null,
+            captureSubmissionSnapshot,
+            clearAcceptedSnapshot,
+        },
+        captureSubmissionSnapshot,
+        clearAcceptedSnapshot,
+    };
+}
+
+function createLaunchAttempt(): NewSessionLaunchAttempt {
+    return {
+        attemptId: 'new-session-attempt-1',
+        spawnNonce: 'new-session-spawn-1',
+        scopeKey: 'server-a:account-a',
+        createdSessionId: null,
+        firstTurnLocalId: 'new-session-first-turn-1',
+        attachmentMessageLocalId: 'new-session-attachment-local-1',
+        status: 'created',
+        prompt: {
+            prompt: '',
+            displayText: '',
+            meta: null,
+        },
+        phaseErrors: {},
+    };
+}
+
 describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
     beforeEach(() => {
         clearAllNewSessionAttachmentDrafts();
@@ -198,7 +292,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-live-text',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -214,6 +308,530 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         await hook.unmount();
     });
 
+    it('routes a text-only mounted Composer through one coordinator admission and preserves text edited before acceptance', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const promptStore = createNewSessionPromptStore('Original text-only first turn');
+        const handleCreateSession = vi.fn();
+        const canSubmitRef = { current: true };
+        const mountedComposerDocument = { current: null as NewSessionComposerDocument | null };
+        const hook = await renderHook(() => {
+            mountedComposerDocument.current = useNewSessionComposerDocument({
+                promptStore,
+                persistedAttachments: [],
+                composerAttachmentEntriesById: {},
+                scopeKey: 'server-a/account-a',
+                canSubmitRef,
+                isSubmitting: false,
+            });
+            return useNewSessionAttachmentsController({
+                flowId: 'flow-text-only-composer',
+                isCreating: false,
+                promptStore,
+                handleCreateSession,
+                selectedProfileId: null,
+                targetServerId: 'server-a',
+                baseActionChips: [],
+                composerDocument: mountedComposerDocument.current,
+            });
+        });
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(handleCreateSession).toHaveBeenCalledTimes(1);
+        expect(handleCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+            initialMessage: 'skip',
+            afterCreated: expect.any(Function),
+            onAfterCreatedSettled: expect.any(Function),
+            deferAcceptedDraftClearToDocument: true,
+        }));
+
+        const createOptions = handleCreateSession.mock.calls[0]?.[0] as HandleCreateSessionOptions | undefined;
+        const afterCreated = createOptions?.afterCreated;
+        const onAfterCreatedSettled = createOptions?.onAfterCreatedSettled;
+        const composerDocument = mountedComposerDocument.current;
+        if (!afterCreated || !onAfterCreatedSettled || !composerDocument) {
+            throw new Error('expected coordinator-owned New Session admission callbacks');
+        }
+
+        await act(async () => {
+            await afterCreated({
+                sessionId: 'session-text-only',
+                effectiveSpawnServerId: 'server-a',
+                launchAttempt: createLaunchAttempt(),
+            });
+            promptStore.setPrompt('Newer text typed before acceptance');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            onAfterCreatedSettled({ status: 'accepted', sessionId: 'session-text-only' });
+            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledTimes(1);
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
+            sessionId: 'session-text-only',
+            targetServerId: 'server-a',
+            initialMessageText: 'Original text-only first turn',
+            displayText: 'Original text-only first turn',
+            messageLocalId: 'new-session-first-turn-1',
+            profileId: null,
+            metaOverrides: undefined,
+        });
+        expect(promptStore.getPrompt()).toBe('Newer text typed before acceptance');
+        expect(composerDocument.captureSubmissionSnapshot()?.text).toBe('Newer text typed before acceptance');
+        await hook.unmount();
+    });
+
+    it('admits one detached New Session Composer snapshot before exact document clearing', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const composerAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: {
+                label: 'Issue #42',
+                typeLabel: 'Issue',
+            },
+        } satisfies ComposerAttachmentDraftV1;
+        const snapshot = createComposerSnapshot({
+            text: 'Check @issue',
+            attachments: [composerAttachment],
+            references: [{
+                kind: 'partner.reference',
+                ref: 'partner:issue-42',
+                token: '@issue',
+                start: 6,
+                end: 12,
+                label: 'Issue #42',
+            }],
+        });
+        const {
+            composerDocument,
+            captureSubmissionSnapshot,
+            clearAcceptedSnapshot,
+        } = createComposerDocument({
+            attachments: [composerAttachment],
+            snapshot,
+        });
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-composer-attachment',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore('Check @issue'),
+            handleCreateSession,
+            selectedProfileId: 'profile-work',
+            targetServerId: 'server-a',
+            baseActionChips: [],
+            composerDocument,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend({
+                structuredInputMetaOverrides: {
+                    legacyOptionContext: { preserve: true },
+                    happierStructuredInputV1: {
+                        v: 1,
+                        mentions: [{
+                            kind: 'partner.reference',
+                            ref: 'partner:issue-42',
+                            token: '@issue',
+                            start: 6,
+                            end: 12,
+                            label: 'Issue #42',
+                        }],
+                    },
+                },
+            });
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(captureSubmissionSnapshot).toHaveBeenCalledWith(undefined);
+        expect(handleCreateSession).toHaveBeenCalledWith(expect.objectContaining({
+            initialMessage: 'skip',
+            afterCreated: expect.any(Function),
+            onAfterCreatedSettled: expect.any(Function),
+            deferAcceptedDraftClearToDocument: true,
+            hasComposerAttachments: true,
+        }));
+
+        const createOptions = handleCreateSession.mock.calls[0]?.[0] as HandleCreateSessionOptions | undefined;
+        const afterCreated = createOptions?.afterCreated;
+        const onAfterCreatedSettled = createOptions?.onAfterCreatedSettled;
+        if (!afterCreated || !onAfterCreatedSettled) {
+            throw new Error('expected canonical New Session admission callbacks');
+        }
+        await act(async () => {
+            await afterCreated({
+                sessionId: 'session-1',
+                effectiveSpawnServerId: 'server-a',
+                launchAttempt: createLaunchAttempt(),
+            });
+            expect(clearAcceptedSnapshot).not.toHaveBeenCalled();
+            onAfterCreatedSettled({ status: 'accepted', sessionId: 'session-1' });
+            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
+            sessionId: 'session-1',
+            targetServerId: 'server-a',
+            initialMessageText: 'Check @issue',
+            displayText: 'Check @issue',
+            messageLocalId: 'new-session-first-turn-1',
+            profileId: 'profile-work',
+            metaOverrides: {
+                legacyOptionContext: { preserve: true },
+                happierStructuredInputV1: {
+                    v: 1,
+                    mentions: [{
+                        kind: 'partner.reference',
+                        ref: 'partner:issue-42',
+                        token: '@issue',
+                        label: 'Issue #42',
+                    }],
+                    composerAttachments: [composerAttachment],
+                },
+            },
+        });
+        expect(clearAcceptedSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+            ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+            revision: 7,
+            text: 'Check @issue',
+            attachments: [{
+                ...composerAttachment,
+                availability: { status: 'ready' },
+            }],
+        }));
+        await hook.unmount();
+    });
+
+    it('reuses the incumbent first-turn local id when a generic Composer attachment follow-up retries on the created session', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const composerAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } satisfies ComposerAttachmentDraftV1;
+        const { composerDocument, clearAcceptedSnapshot } = createComposerDocument({
+            attachments: [composerAttachment],
+            snapshot: createComposerSnapshot({ text: '', attachments: [composerAttachment] }),
+        });
+        followUpSpawnedSessionWithServerScopeSpy
+            .mockRejectedValueOnce(new Error('first generic follow-up failed'))
+            .mockResolvedValueOnce(undefined);
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-composer-attachment-retry',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore(''),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+            composerDocument,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        const createOptions = handleCreateSession.mock.calls[0]?.[0] as HandleCreateSessionOptions | undefined;
+        const afterCreated = createOptions?.afterCreated;
+        const onAfterCreatedSettled = createOptions?.onAfterCreatedSettled;
+        if (!afterCreated || !onAfterCreatedSettled) {
+            throw new Error('expected canonical New Session admission callbacks');
+        }
+        const launchAttempt = createLaunchAttempt();
+        await expect(afterCreated({
+            sessionId: 'session-created',
+            effectiveSpawnServerId: 'server-a',
+            launchAttempt,
+        })).rejects.toThrow('first generic follow-up failed');
+        await afterCreated({
+            sessionId: 'session-created',
+            effectiveSpawnServerId: 'server-a',
+            launchAttempt,
+        });
+        await act(async () => {
+            onAfterCreatedSettled({ status: 'accepted', sessionId: 'session-created' });
+            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledTimes(2);
+        for (const [input] of followUpSpawnedSessionWithServerScopeSpy.mock.calls) {
+            expect(input).toEqual(expect.objectContaining({
+                sessionId: 'session-created',
+                messageLocalId: launchAttempt.firstTurnLocalId,
+            }));
+        }
+        expect(clearAcceptedSnapshot).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+    });
+
+    it('retains a Composer attachment after automation rejects it, then clears that exact snapshot for a later ordinary New Session admission', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const composerAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: {
+                label: 'Issue #42',
+                typeLabel: 'Issue',
+            },
+        } satisfies ComposerAttachmentDraftV1;
+        const snapshot = createComposerSnapshot({ text: 'Check @issue', attachments: [composerAttachment] });
+        const {
+            composerDocument,
+            clearAcceptedSnapshot,
+        } = createComposerDocument({
+            attachments: [composerAttachment],
+            snapshot,
+        });
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-composer-attachment-automation-rejected',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore('Check @issue'),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+            composerDocument,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        const rejectedAutomationOptions = handleCreateSession.mock.calls[0]?.[0] as HandleCreateSessionOptions | undefined;
+        expect(rejectedAutomationOptions).toEqual(expect.objectContaining({
+            initialMessage: 'skip',
+            hasComposerAttachments: true,
+            onAfterCreatedSettled: expect.any(Function),
+        }));
+        rejectedAutomationOptions?.onAfterCreatedSettled?.({ status: 'rejected' });
+        await act(async () => {
+            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        expect(clearAcceptedSnapshot).not.toHaveBeenCalled();
+
+        handleCreateSession.mockClear();
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        const ordinarySessionOptions = handleCreateSession.mock.calls[0]?.[0] as HandleCreateSessionOptions | undefined;
+        const afterCreated = ordinarySessionOptions?.afterCreated;
+        const onAfterCreatedSettled = ordinarySessionOptions?.onAfterCreatedSettled;
+        if (!afterCreated || !onAfterCreatedSettled) {
+            throw new Error('expected ordinary New Session admission callbacks');
+        }
+        await act(async () => {
+            await afterCreated({
+                sessionId: 'session-ordinary',
+                effectiveSpawnServerId: 'server-a',
+                launchAttempt: createLaunchAttempt(),
+            });
+            onAfterCreatedSettled({ status: 'accepted', sessionId: 'session-ordinary' });
+            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(clearAcceptedSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+            text: 'Check @issue',
+            attachments: [{
+                ...composerAttachment,
+                availability: { status: 'ready' },
+            }],
+        }));
+        await hook.unmount();
+    });
+
+    it('retains a contentless Composer snapshot when New Session admission is rejected', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const composerAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: {
+                label: 'Issue #42',
+                typeLabel: 'Issue',
+            },
+        } satisfies ComposerAttachmentDraftV1;
+        const {
+            composerDocument,
+            clearAcceptedSnapshot,
+        } = createComposerDocument({
+            attachments: [composerAttachment],
+            snapshot: createComposerSnapshot({ text: '', attachments: [composerAttachment] }),
+        });
+        followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-composer-attachment-failure',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore(''),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+            composerDocument,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        const createOptions = handleCreateSession.mock.calls[0]?.[0] as HandleCreateSessionOptions | undefined;
+        const afterCreated = createOptions?.afterCreated;
+        const onAfterCreatedSettled = createOptions?.onAfterCreatedSettled;
+        if (!afterCreated || !onAfterCreatedSettled) {
+            throw new Error('expected canonical New Session admission callbacks');
+        }
+        await expect(afterCreated({
+            sessionId: 'session-1',
+            effectiveSpawnServerId: 'server-a',
+            launchAttempt: createLaunchAttempt(),
+        })).rejects.toThrow('follow-up failed');
+        onAfterCreatedSettled({ status: 'rejected' });
+        await act(async () => {
+            await Promise.resolve();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
+            sessionId: 'session-1',
+            targetServerId: 'server-a',
+            initialMessageText: '',
+            displayText: undefined,
+            messageLocalId: 'new-session-first-turn-1',
+            profileId: null,
+            metaOverrides: {
+                happierStructuredInputV1: {
+                    v: 1,
+                    composerAttachments: [composerAttachment],
+                },
+            },
+        });
+        expect(clearAcceptedSnapshot).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it.each([
+        ['unavailable', { status: 'unavailable' }],
+        ['invalid', { status: 'invalid' }],
+    ] as const)('refuses a %s Composer attachment before New Session admission while retaining the draft', async (
+        _availabilityStatus,
+        availability,
+    ) => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const composerAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: {
+                label: 'Issue #42',
+                typeLabel: 'Issue',
+            },
+        } satisfies ComposerAttachmentDraftV1;
+        const snapshot = createComposerSnapshot({
+            text: 'Keep this New Session draft',
+            attachments: [composerAttachment],
+            availability,
+        });
+        const {
+            composerDocument,
+            captureSubmissionSnapshot,
+            clearAcceptedSnapshot,
+        } = createComposerDocument({
+            attachments: [composerAttachment],
+            snapshot,
+        });
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: `flow-composer-${_availabilityStatus}-blocked`,
+            isCreating: false,
+            promptStore: createNewSessionPromptStore(''),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+            composerDocument,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(captureSubmissionSnapshot).toHaveBeenCalledWith(undefined);
+        expect(handleCreateSession).not.toHaveBeenCalled();
+        expect(clearAcceptedSnapshot).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'common.unavailable');
+        expect(captureSubmissionSnapshot.mock.results[0]?.value).toMatchObject({
+            text: 'Keep this New Session draft',
+            attachments: [expect.objectContaining({ availability })],
+        });
+        await hook.unmount();
+    });
+
+    it('fails closed when a semantic Composer document cannot capture its snapshot', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const composerAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: {
+                label: 'Issue #42',
+                typeLabel: 'Issue',
+            },
+        } satisfies ComposerAttachmentDraftV1;
+        const { composerDocument, captureSubmissionSnapshot } = createComposerDocument({
+            attachments: [composerAttachment],
+            snapshot: null,
+        });
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-composer-snapshot-unavailable',
+            isCreating: false,
+            promptStore: createNewSessionPromptStore(''),
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+            composerDocument,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(captureSubmissionSnapshot).toHaveBeenCalledWith(undefined);
+        expect(handleCreateSession).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
     it('restores attachment drafts when the new-session flow remounts with the same flow id', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();
@@ -221,7 +839,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const first = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-1',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -251,7 +869,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const second = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-1',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -271,7 +889,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const first = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-feature-loading',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: null,
             targetServerId: 'server-a',
@@ -298,7 +916,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             const disabled = await renderHook(() => useNewSessionAttachmentsController({
                 flowId: 'flow-feature-loading',
                 isCreating: false,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 handleCreateSession,
                 selectedProfileId: null,
                 targetServerId: 'server-a',
@@ -324,7 +942,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             const hook = await renderHook(() => useNewSessionAttachmentsController({
                 flowId: 'flow-pick-once',
                 isCreating: false,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 handleCreateSession,
                 selectedProfileId: null,
                 targetServerId: 'server-a',
@@ -340,7 +958,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
                 openImages,
             } as any;
 
-            const attachmentChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'attachments-add');
+            const attachmentChip = hook.getCurrent().actionChips.find((chip) => chip.key === 'attachments-add');
             expect(attachmentChip).toBeTruthy();
 
             const rendered = attachmentChip!.render({
@@ -380,7 +998,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-success',
             isCreating: false,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             targetServerId: 'server-b',
@@ -458,7 +1076,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const remounted = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-success',
             isCreating: false,
-            sessionPrompt: 'Investigate this bug',
+            promptStore: createNewSessionPromptStore('Investigate this bug'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             targetServerId: 'server-b',
@@ -514,7 +1132,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-review-comments',
             isCreating: false,
-            sessionPrompt: 'Focus on correctness',
+            promptStore: createNewSessionPromptStore('Focus on correctness'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',
@@ -523,12 +1141,13 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             baseActionChips: [],
         }));
 
-        const reviewCommentsChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        const reviewCommentsChip = hook.getCurrent().actionChips.find((chip) => chip.key === 'review-comments');
         expect(reviewCommentsChip).toBeTruthy();
         const collapsedActionResult = reviewCommentsChip?.collapsedAction?.({
             tint: '#000',
             dismiss: vi.fn(),
             blurInput: vi.fn(),
+            openCollapsedPopover: vi.fn(),
         });
         const collapsedAction = Array.isArray(collapsedActionResult)
             ? collapsedActionResult[0]
@@ -629,7 +1248,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const params = {
             flowId: 'flow-review-comments-home-relative',
             isCreating: false,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',
@@ -641,7 +1260,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
 
         const hook = await renderHook(() => useNewSessionAttachmentsController(params));
 
-        const reviewCommentsChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        const reviewCommentsChip = hook.getCurrent().actionChips.find((chip) => chip.key === 'review-comments');
         expect(reviewCommentsChip).toBeTruthy();
         expect(reviewDraftHandlerScopeSpy).toHaveBeenCalledWith({
             serverId: 'server-b',
@@ -689,7 +1308,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-review-comments-attachments',
             isCreating: false,
-            sessionPrompt: 'Focus on correctness',
+            promptStore: createNewSessionPromptStore('Focus on correctness'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',
@@ -789,7 +1408,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-review-comments-unlink',
             isCreating: false,
-            sessionPrompt: 'Focus on correctness',
+            promptStore: createNewSessionPromptStore('Focus on correctness'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',
@@ -798,12 +1417,12 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             baseActionChips: [],
         }));
 
-        expect(hook.getCurrent().extraActionChips.some((chip) => chip.key === 'review-comments')).toBe(true);
+        expect(hook.getCurrent().actionChips.some((chip) => chip.key === 'review-comments')).toBe(true);
 
         selectedPath = '/repo/other';
         await hook.rerender();
 
-        expect(hook.getCurrent().extraActionChips.some((chip) => chip.key === 'review-comments')).toBe(false);
+        expect(hook.getCurrent().actionChips.some((chip) => chip.key === 'review-comments')).toBe(false);
 
         await act(async () => {
             hook.getCurrent().handleSend();
@@ -841,7 +1460,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const hook = await renderHook(() => useNewSessionAttachmentsController({
             flowId: 'flow-review-comments-discover',
             isCreating: false,
-            sessionPrompt: 'Focus on correctness',
+            promptStore: createNewSessionPromptStore('Focus on correctness'),
             handleCreateSession,
             selectedProfileId: 'profile-work',
             selectedMachineId: 'machine-1',
@@ -850,9 +1469,17 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             baseActionChips: [],
         }));
 
-        const reviewCommentsChip = hook.getCurrent().extraActionChips.find((chip) => chip.key === 'review-comments');
+        const reviewCommentsChip = hook.getCurrent().actionChips.find((chip) => chip.key === 'review-comments');
         expect(reviewCommentsChip).toBeTruthy();
-        const reviewCommentsBadge = reviewCommentsChip?.composerAttachmentBadge;
+        expect('composerAttachmentBadge' in (reviewCommentsChip ?? {})).toBe(false);
+        const reviewCommentsBadge = hook.getCurrent().attachmentRowItems.find((item) => item.key === 'review-comments');
+        expect(reviewCommentsBadge).toMatchObject({
+            kind: 'badge',
+            testID: 'agent-input-review-comments-attachment-badge',
+        });
+        if (!reviewCommentsBadge || !('kind' in reviewCommentsBadge) || reviewCommentsBadge.kind !== 'badge') {
+            throw new Error('Expected review comments attachment-row badge');
+        }
         expect(reviewCommentsBadge?.testID).toBe('agent-input-review-comments-attachment-badge');
 
         await act(async () => {

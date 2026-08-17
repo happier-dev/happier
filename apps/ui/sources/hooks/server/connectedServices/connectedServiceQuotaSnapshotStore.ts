@@ -9,9 +9,13 @@ import {
 import { openConnectedServiceQuotaViewSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaViewSnapshot';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import {
+    computeConnectedServiceQuotaErrorBackoffMs,
+} from '@/sync/domains/connectedServices/connectedServiceQuotaErrorBackoff';
+import {
     connectedServiceQuotaRecoveryCreditConsume,
 } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
 import { sanitizeEndpointErrorMessage } from '@/sync/runtime/connectivity/sanitizeEndpointErrorMessage';
+import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type {
     ExpectedActiveServerFetchBasis,
@@ -74,6 +78,8 @@ type InternalEntry = {
     loading: boolean;
     error: string | null;
     refreshing: boolean;
+    /** Credential scope this entry was last retained for; drives eviction. */
+    credentialScope: string | null;
     loadAttempted: boolean;
     nextFetchAtMs: number;
     consecutiveErrors: number;
@@ -89,8 +95,6 @@ type InternalEntry = {
 const REFRESH_RELOAD_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000, 4_000] as const;
 const QUOTA_SNAPSHOT_POLL_MS = 30_000;
 const QUOTA_SNAPSHOT_MISS_RETRY_MS = 30_000;
-const QUOTA_SNAPSHOT_ERROR_BACKOFF_MIN_MS = 30_000;
-const QUOTA_SNAPSHOT_ERROR_BACKOFF_MAX_MS = 5 * 60_000;
 
 const EMPTY_VIEW: QuotaSnapshotStoreEntry = { snapshot: null, loading: false, error: null, refreshing: false };
 
@@ -115,6 +119,7 @@ function getOrCreateEntry(key: string): InternalEntry {
         loading: false,
         error: null,
         refreshing: false,
+        credentialScope: null,
         loadAttempted: false,
         nextFetchAtMs: 0,
         consecutiveErrors: 0,
@@ -127,14 +132,6 @@ function getOrCreateEntry(key: string): InternalEntry {
     };
     entries.set(key, created);
     return created;
-}
-
-function computeErrorBackoffMs(consecutiveErrors: number): number {
-    const exp = QUOTA_SNAPSHOT_ERROR_BACKOFF_MIN_MS * Math.pow(2, Math.max(0, consecutiveErrors - 1));
-    return Math.max(
-        QUOTA_SNAPSHOT_ERROR_BACKOFF_MIN_MS,
-        Math.min(QUOTA_SNAPSHOT_ERROR_BACKOFF_MAX_MS, Math.trunc(exp)),
-    );
 }
 
 function notify(key: string): void {
@@ -182,12 +179,52 @@ function clearPollTimer(entry: InternalEntry): void {
     entry.pollTimer = null;
 }
 
+/**
+ * Drops cached entries that belong to a superseded credential scope.
+ *
+ * A retained entry is what preserves last-known-good across an unmount, so an
+ * entry is never dropped while its scope is the one in use. Once a re-login,
+ * server switch, or generation bump makes a different scope active, the old
+ * scope's keys can never be read again, so its unretained entries are released
+ * instead of being stranded for the session lifetime.
+ */
+function evictEntriesOutsideCredentialScope(activeCredentialScope: string): void {
+    for (const [key, entry] of entries) {
+        if (entry.pollRetainCount > 0) continue;
+        if (entry.credentialScope === activeCredentialScope) continue;
+        clearPollTimer(entry);
+        entries.delete(key);
+    }
+}
+
+/**
+ * Quota polling is a network round trip per retained account block. It exists to
+ * keep a meter the user is looking at honest, so it stops while the app is
+ * backgrounded or the tab is hidden instead of waking the radio every 30 s behind
+ * a locked screen, and resumes the moment the runtime is active again —
+ * immediately when the cadence went overdue while away, so a returning user never
+ * reads a meter that quietly went stale.
+ */
+let runtimeActiveResumeDetach: (() => void) | null = null;
+
+function ensureRuntimeActiveResumeWatcher(): void {
+    if (runtimeActiveResumeDetach) return;
+    runtimeActiveResumeDetach = subscribeToRuntimeActiveChange(() => {
+        if (!isRuntimeActive()) return;
+        for (const key of [...entries.keys()]) {
+            schedulePolling(key);
+        }
+    });
+}
+
 function schedulePolling(key: string): void {
     const entry = entries.get(key);
     if (!entry) return;
     clearPollTimer(entry);
     if (entry.pollRetainCount <= 0 || entry.loadPromise || entry.refreshPromise) return;
     if (!entry.pollContext || !isScopeActive(entry.pollContext.credentialScope)) return;
+    ensureRuntimeActiveResumeWatcher();
+    if (!isRuntimeActive()) return;
 
     const delayMs = Math.max(0, entry.nextFetchAtMs - Date.now());
     entry.pollTimer = setTimeout(() => {
@@ -196,6 +233,10 @@ function schedulePolling(key: string): void {
         if (!latest || latest.pollRetainCount <= 0 || latest.loadPromise || latest.refreshPromise) return;
         const ctx = latest.pollContext;
         if (!ctx || !isScopeActive(ctx.credentialScope)) return;
+        if (!isRuntimeActive()) {
+            ensureRuntimeActiveResumeWatcher();
+            return;
+        }
         latest.loadAttempted = true;
         void runLoad(key, ctx);
     }, delayMs);
@@ -281,7 +322,8 @@ async function runLoad(key: string, ctx: QuotaSnapshotLoadContext): Promise<Conn
             if (!isScopeActive(ctx.credentialScope)) return null;
             entry.error = sanitizeEndpointErrorMessage(error) ?? t('common.error');
             entry.consecutiveErrors += 1;
-            entry.nextFetchAtMs = Date.now() + computeErrorBackoffMs(entry.consecutiveErrors);
+            entry.nextFetchAtMs = Date.now()
+                + computeConnectedServiceQuotaErrorBackoffMs(entry.consecutiveErrors);
             if (!entry.snapshot) entry.snapshot = null;
             return null;
         } finally {
@@ -303,6 +345,8 @@ export function retainQuotaSnapshotPolling(key: string, ctx: QuotaSnapshotLoadCo
     const entry = getOrCreateEntry(key);
     entry.pollRetainCount += 1;
     entry.pollContext = ctx;
+    entry.credentialScope = ctx.credentialScope;
+    evictEntriesOutsideCredentialScope(ctx.credentialScope);
 
     if (!entry.loadAttempted || (!entry.loadPromise && Date.now() >= entry.nextFetchAtMs)) {
         entry.loadAttempted = true;
@@ -317,7 +361,7 @@ export function retainQuotaSnapshotPolling(key: string, ctx: QuotaSnapshotLoadCo
         released = true;
         releaseCredentialScope();
         const current = entries.get(key);
-        if (!current) return;
+        if (current !== entry) return;
         current.pollRetainCount = Math.max(0, current.pollRetainCount - 1);
         if (current.pollRetainCount === 0) {
             current.pollContext = null;
@@ -443,4 +487,6 @@ export function __resetConnectedServiceQuotaSnapshotStore(): void {
     entries.clear();
     listenersByKey.clear();
     activeCredentialScopeRetainCounts.clear();
+    runtimeActiveResumeDetach?.();
+    runtimeActiveResumeDetach = null;
 }

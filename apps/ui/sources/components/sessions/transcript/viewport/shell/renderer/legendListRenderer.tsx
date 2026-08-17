@@ -50,6 +50,7 @@ import {
 } from './legend/dataProjection';
 import type { TouchVerticalCoordinate } from './legend/dataProjection';
 import {
+    isPlacementHeldIntent,
     LEGEND_HELD_TARGET_IDENTITY_MS,
     LEGEND_USER_INPUT_DETACH_WINDOW_MS,
     LEGEND_USER_MOMENTUM_CHAIN_WINDOW_MS,
@@ -63,6 +64,8 @@ import { useLegendRevealRevalidation } from './legend/useLegendRevealRevalidatio
 export { resolveLegendRendererAtEndStateFromWebMetrics } from './legend/atEnd';
 
 const LEGEND_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
+// Compile-time constant: only its identity churned, and it is read on every Legend render.
+const LEGEND_MAINTAIN_VISIBLE_CONTENT_POSITION = { data: true, size: true } as const;
 // The measurement runtime models ordinary transcript rows around 168-240px and
 // handles giant markdown rows with per-row measured floors, so this is only a
 // first-render hint. It intentionally stays below the giant-row outliers.
@@ -98,7 +101,6 @@ function LegendListTranscriptRendererInner<TItem>(
         React.useRef<TranscriptRendererNativePhysicalViewportCapture | null>(null);
     const nativePhysicalViewportObservationRef = React.useRef<object | null>(null);
     const pendingViewportCauseRef = React.useRef<TranscriptViewportMutationCause>('layout');
-    const webTailDetachedIntentRef = React.useRef(false);
     const webScrollbarDragCleanupRef = React.useRef<(() => void) | null>(null);
     const lastUserInteractionAtMsRef = React.useRef(Number.NEGATIVE_INFINITY);
     // SCROLL-INTENT evidence only (wheel/drag/keyboard/momentum) — a bare tap records general
@@ -467,7 +469,6 @@ function LegendListTranscriptRendererInner<TItem>(
 
     const {
         armVisibleAnchorHold,
-        armWebVisibleAnchorHold,
         beginExplicitJumpTakeover,
         cancelLegendInitialScrollPreservation,
         hasActiveEntryPlacement,
@@ -503,7 +504,6 @@ function LegendListTranscriptRendererInner<TItem>(
         toSourceIndex: resolveSourceIndex,
         webScrollableElementRef,
         webDomObservation: props.webDomObservation,
-        webTailDetachedIntentRef,
     });
 
     const readRendererAtEndObservation = React.useCallback((): Readonly<{
@@ -815,10 +815,6 @@ function LegendListTranscriptRendererInner<TItem>(
         const movementDirection = webMovementFact?.direction ?? nativeMovementDirection;
         const isClassifiedUserMovement =
             webMovementFact?.isGenuineUserMovement ?? isNativeClassifiedUserMovement;
-        const topEdgeCaptureThresholdPx = Math.max(
-            4,
-            (webScrollableElementRef.current?.clientHeight ?? 0) * Math.max(0, props.onStartReachedThreshold ?? 0),
-        );
         const offsetMoved =
             webMovementFact?.movedSinceLastObservation
             ?? (
@@ -844,29 +840,6 @@ function LegendListTranscriptRendererInner<TItem>(
             movedAwayFromTail
             && isWebFrame
             && isClassifiedUserMovement;
-        if (webUserMovedAwayFromTail) {
-            // Release the PRE-MOVEMENT target before the detached capture below installs the
-            // user's current rest-position baseline. Releasing after capture deletes the new
-            // baseline from this same event and leaves later row remeasures unowned.
-            releaseHeldScrollIntent();
-        }
-        if (isWebFrame && (
-            webTailDetachedIntentRef.current
-            || nextScrollOffset <= topEdgeCaptureThresholdPx
-        )) {
-            // The generic host scroll-ingress owner can start pagination before Legend emits its
-            // own onStartReached callback. Refresh the renderer fallback before forwarding that
-            // top-edge observation. Detached web scrolls also keep a current renderer-owned
-            // baseline so appends below the viewport can repair Legend row-remeasure residuals.
-            // Only USER-caused movement may re-baseline a live keyed hold: Legend MVCP replay,
-            // estimate corrections, and this adapter's own residual writes emit non-user scroll
-            // events during a prepend/measurement burst, and re-capturing there adopts displaced
-            // geometry as the new baseline and freezes the displacement (live DR-030: the held
-            // transaction settled 61px off after "correcting" to a mid-burst recapture).
-            if (isClassifiedUserMovement || !hasLiveKeyedHeldIntent()) {
-                armWebVisibleAnchorHold();
-            }
-        }
         // Does live user input EXPLAIN this movement? Liveness alone is not enough: at the top
         // clamp an upward wheel produces no movement while estimate churn pushes the offset DOWN,
         // and treating that as the reader's abandons the anchor they are reading (live S-D). So it
@@ -882,6 +855,26 @@ function LegendListTranscriptRendererInner<TItem>(
                 userScrollIntent.isGestureActive()
                 || (movementDirection !== null && userScrollIntent.lastInputDirection() === movementDirection)
             );
+        // READER TAKEOVER ENDS A PLACEMENT MANDATE — and it is a lifecycle fact of the hold,
+        // not a side effect of the wheel/keyboard/touch handlers. A driver-armed placement hold
+        // (jump landing, `restore-anchor`, entry restore) writes an ABSOLUTE target for its
+        // full 10s identity window, and `finishHeldIntentSettle` clears only `entry-restore`
+        // (`readEntryPlacementItemId`), so a jump hold is released today purely as a byproduct
+        // of an input handler firing — or of `movedAwayFromTail`, which is false for a jump
+        // that landed inside the tail thresholds. A web scrollbar-band drag records intent and
+        // never calls a release handler at all, so it fell through both (A1 §2, 2026-08-06).
+        // The driver named where the row must sit for as long as the READER had not moved it;
+        // once they have, the mandate is void and Legend's `maintainVisibleContentPosition`
+        // keeps them where they stopped.
+        const readerTookOverPlacementHold =
+            isWebFrame
+            && offsetMoved
+            && (isClassifiedUserMovement || userScrollInputExplainsMovement)
+            && hasLiveKeyedHeldIntent()
+            && isPlacementHeldIntent(heldScrollIntentRef.current);
+        if (webUserMovedAwayFromTail || readerTookOverPlacementHold) {
+            releaseHeldScrollIntent();
+        }
         const keyedLandingDisplacedByRenderer = isWebFrame
             && offsetMoved
             && !isClassifiedUserMovement
@@ -953,7 +946,7 @@ function LegendListTranscriptRendererInner<TItem>(
             props.onScroll?.(event);
         }
         if (pendingViewportCauseRef.current === cause) pendingViewportCauseRef.current = 'layout';
-    }, [armWebVisibleAnchorHold, emitRendererAtEndState, hasLiveKeyedHeldIntent, hasPendingHeldIntentCorrection, heldIntentSettleUntilRef, invalidateNativePhysicalViewportCapture, isWebFrame, latchHeldEndIntent, props.frame.rendererOptions.continuousFollow.endThresholdRatio, props.onScroll, props.onStartReachedThreshold, props.webDomObservation, readRendererAtEndState, readWebScrollMetrics, releaseHeldScrollIntent, requestHeldIntentSettle, tryAcknowledgeInitialPresentationSettlement, userScrollIntent]);
+    }, [emitRendererAtEndState, hasLiveKeyedHeldIntent, hasPendingHeldIntentCorrection, heldIntentSettleUntilRef, invalidateNativePhysicalViewportCapture, isWebFrame, latchHeldEndIntent, props.frame.rendererOptions.continuousFollow.endThresholdRatio, props.onScroll, props.onStartReachedThreshold, props.webDomObservation, readRendererAtEndState, readWebScrollMetrics, releaseHeldScrollIntent, requestHeldIntentSettle, tryAcknowledgeInitialPresentationSettlement, userScrollIntent]);
 
     const handleLegendWheel = React.useCallback((event: unknown) => {
         invalidateNativePhysicalViewportCapture();
@@ -1262,26 +1255,23 @@ function LegendListTranscriptRendererInner<TItem>(
             : undefined;
 
     const handleLegendStartReached = React.useCallback(() => {
-        // The reached-edge capture must not replace a live keyed hold either: Legend can emit
-        // onStartReached from its own replay-driven scroll while a prepend burst is in flight,
-        // and the existing hold carries the pre-commit baseline.
-        // The live hold's IDENTITY is refreshed, though: a reader DWELLING at the top
-        // outlives the 10s identity window, and the prepend this trigger is about to
-        // load would then land against an expired, unenforceable hold — the viewport
-        // stays at the top edge showing the new content instead of the reader's rows
-        // (live report 2026-07-23). Refreshing expiry adopts no geometry, so the
-        // DR-030 mid-burst recapture hazard stays excluded.
+        // A live PLACEMENT hold keeps its identity through the prepend this trigger loads: a
+        // reader dwelling at the top outlives the 10s identity window, and the prepend would
+        // then land against an expired, unenforceable landing mandate (live report
+        // 2026-07-23). Refreshing expiry adopts no geometry.
+        //
+        // The refresh REPLACES the intent object, and every corrector baseline keys on it by
+        // reference, so it must never carry a stabilization hold: doing so turned the
+        // misalignment the hold had already adopted back into a fresh residual and wrote the
+        // reader backwards. There is no stabilization hold to carry any more — Legend's MVCP
+        // owns the prepend (measured: a 600px prepend holds a detached reader's anchor within
+        // 1px, `legendListRenderer.real.integration.test.tsx`).
         const held = heldScrollIntentRef.current;
-        let captured: boolean;
-        if (held && held.kind !== 'end') {
+        if (held !== null && held.kind !== 'end') {
             heldScrollIntentRef.current = { ...held, identityExpiresAtMs: Date.now() + LEGEND_HELD_TARGET_IDENTITY_MS };
-            captured = true;
-        } else {
-            captured = armWebVisibleAnchorHold();
         }
         props.onStartReached?.();
-        return captured;
-    }, [armWebVisibleAnchorHold, heldScrollIntentRef, props.onStartReached]);
+    }, [heldScrollIntentRef, props.onStartReached]);
 
     const handleLegendItemSizeChanged = React.useCallback(() => {
         invalidateNativePhysicalViewportCapture();
@@ -1338,10 +1328,19 @@ function LegendListTranscriptRendererInner<TItem>(
         const candidate = (event as { nativeEvent?: unknown } | null)?.nativeEvent ?? event;
         const press = candidate as { offsetX?: unknown; offsetY?: unknown; target?: unknown } | null;
         if (!press || press.target !== element) return false;
-        const offsetX = typeof press.offsetX === 'number' ? press.offsetX : null;
-        const offsetY = typeof press.offsetY === 'number' ? press.offsetY : null;
-        return (offsetX !== null && offsetX >= element.clientWidth)
-            || (offsetY !== null && offsetY >= element.clientHeight);
+        // "Beyond the client box" is only meaningful against a box that was MEASURED. An
+        // unmeasured axis reads 0 (collapsed/hidden pane, pre-layout frame), and `offset >= 0`
+        // is true for every press — which turned an ordinary press on the scroller into a
+        // scrollbar drag: gesture active, user scroll input recorded, initial-scroll
+        // preservation cancelled, and the corrector suppressed until pointerup.
+        const isBeyondMeasuredExtent = (offset: unknown, contentExtent: number): boolean => (
+            typeof offset === 'number'
+            && Number.isFinite(contentExtent)
+            && contentExtent > 0
+            && offset >= contentExtent
+        );
+        return isBeyondMeasuredExtent(press.offsetX, element.clientWidth)
+            || isBeyondMeasuredExtent(press.offsetY, element.clientHeight);
     }, [isWebFrame]);
     const endWebScrollbarDrag = React.useCallback(() => {
         const cleanup = webScrollbarDragCleanupRef.current;
@@ -1396,12 +1395,14 @@ function LegendListTranscriptRendererInner<TItem>(
         onTouchStart: handleLegendTouchStart,
         onWheel: isWebFrame ? handleLegendWheel : props.platformInteractionProps?.onWheel,
     };
-    // Legend forwards these React Native lifecycle names to its web scroll div,
-    // where React rejects them as unknown event handlers. Web interaction is
-    // owned by the DOM handlers above; preserve the callbacks only on native.
-    const nativeScrollLifecycleProps = isWebFrame
+    // Legend forwards React Native interaction and lifecycle props to its web
+    // scroll div, where React rejects them as unknown DOM props. Web interaction
+    // is owned by the DOM handlers above; preserve these contracts only on native.
+    const nativeScrollInteractionAndLifecycleProps = isWebFrame
         ? {}
         : {
+            keyboardDismissMode: props.frame.rendererOptions.interaction.keyboardDismissMode,
+            keyboardShouldPersistTaps: props.frame.rendererOptions.interaction.keyboardShouldPersistTaps,
             onMomentumScrollBegin: handleLegendMomentumScrollBegin,
             onMomentumScrollEnd: handleLegendMomentumScrollEnd,
             onScrollBeginDrag: handleLegendScrollBeginDrag,
@@ -1409,7 +1410,7 @@ function LegendListTranscriptRendererInner<TItem>(
         };
     const legendProps: LegendListProps<TItem> = {
         ...legendPlatformInteractionProps,
-        ...nativeScrollLifecycleProps,
+        ...nativeScrollInteractionAndLifecycleProps,
         style: LEGEND_LIST_STYLE,
         alignItemsAtEnd: true,
         data,
@@ -1449,8 +1450,6 @@ function LegendListTranscriptRendererInner<TItem>(
             item,
             toSourceIndex(index, dataLength, projectChronologicalIndex),
         ),
-        keyboardDismissMode: props.frame.rendererOptions.interaction.keyboardDismissMode,
-        keyboardShouldPersistTaps: props.frame.rendererOptions.interaction.keyboardShouldPersistTaps,
         // Shell header/footer are FRAME LIST-SPACE slots. On
         // newest-first frames the shell `header` slot (data-start) appears at the VISUAL
         // BOTTOM — that is where callers put the composer keyboard-inset spacer. This adapter
@@ -1476,7 +1475,7 @@ function LegendListTranscriptRendererInner<TItem>(
             }
             : false,
         maintainScrollAtEndThreshold: props.frame.rendererOptions.continuousFollow.endThresholdRatio,
-        maintainVisibleContentPosition: { data: true, size: true },
+        maintainVisibleContentPosition: LEGEND_MAINTAIN_VISIBLE_CONTENT_POSITION,
         onEndReached: props.onEndReached,
         onEndReachedThreshold: props.onEndReachedThreshold,
         onItemSizeChanged: handleLegendItemSizeChanged,

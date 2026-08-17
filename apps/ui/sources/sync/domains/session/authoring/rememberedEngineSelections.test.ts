@@ -11,6 +11,61 @@ const codexTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in
 const ohMyPiTarget = { kind: 'backend', backendId: 'ohMyPi', sourceKind: 'built_in' } as const;
 
 describe('remembered engine selections', () => {
+    it('normalizes the provenance-pinned remote-dev predecessor vector that omitted v', () => {
+        // Provenance: ../remote-dev @ 8abe1fb5dcd4c066047df033d80769167555a90e,
+        // apps/ui/sources/components/sessions/new/hooks/useNewSessionScreenModel.draftPersistence.test.tsx.
+        // That released-predecessor shape had no `v` field and used the old
+        // built-in Agent target key.
+        const predecessor = {
+            'default:agent:claude': {
+                modelId: null,
+                acpSessionModeId: 'plan',
+                sessionConfigOptionOverrides: null,
+                updatedAt: 1,
+            },
+        };
+
+        expect(RememberedEngineSelectionsByScopeV1Schema.parse(predecessor)).toEqual({
+            'default:backend:claude': {
+                v: 1,
+                modelSelection: null,
+                acpSessionModeId: 'plan',
+                sessionConfigOptionOverrides: null,
+                updatedAt: 1,
+            },
+        });
+        expect(predecessor).toEqual({
+            'default:agent:claude': {
+                modelId: null,
+                acpSessionModeId: 'plan',
+                sessionConfigOptionOverrides: null,
+                updatedAt: 1,
+            },
+        });
+    });
+
+    it('fails closed when a current remembered selection carries an unknown field', () => {
+        const raw = {
+            'server-a:backend:codex': {
+                v: 1,
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 42,
+                    ref: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: null,
+                        modelId: 'gpt-5.5',
+                    },
+                },
+                updatedAt: 42,
+                futureWriterField: true,
+            },
+        };
+
+        expect(RememberedEngineSelectionsByScopeV1Schema.parse(raw)).toEqual({});
+        expect(raw['server-a:backend:codex']).toHaveProperty('futureWriterField', true);
+    });
+
     it('normalizes a legacy bare model to a native structured selection using the scoped target', () => {
         const parsed = RememberedEngineSelectionsByScopeV1Schema.parse({
             'server-a:backend:codex': {

@@ -68,6 +68,7 @@ export class QualifiedConnectedAccountUiSourceError extends Error {
 export type QualifiedConnectedAccountUiGroupRevision =
     | Readonly<{
         protocol: 'v4';
+        incarnation: string;
         generation: number;
         runtimeStateRevision: number;
     }>
@@ -95,6 +96,27 @@ export type QualifiedConnectedAccountUiGroup = Readonly<{
     state: ConnectedServiceAuthGroupStateV1;
     members: readonly QualifiedConnectedAccountUiGroupMember[];
 }>;
+
+/**
+ * Spacing of the member priority ladder. Priorities are rewritten as
+ * `(index + 1) * MEMBER_PRIORITY_STEP` on reorder, so the gap left between two
+ * neighbours is what an append or a future insert can land in.
+ *
+ * Owned here, on the mutation seam, so the reorder consumer and `addMember`
+ * cannot pick different spacings for the same ladder.
+ */
+export const MEMBER_PRIORITY_STEP = 100;
+
+/**
+ * The priority to give a member appended to the end of the ladder: one full step
+ * past the current highest.
+ */
+export function nextMemberPriority(
+    members: ReadonlyArray<Pick<QualifiedConnectedAccountUiGroupMember, 'priority'>>,
+): number {
+    const highest = members.reduce((max, member) => Math.max(max, member.priority), 0);
+    return highest + MEMBER_PRIORITY_STEP;
+}
 
 function sameService(
     left: PluginContributionIdentityV1,
@@ -126,6 +148,7 @@ function fromQualifiedGroup(
         activeAccountId: group.activeConnectedAccountId,
         revision: {
             protocol: 'v4',
+            incarnation: group.incarnation,
             generation: group.generation,
             runtimeStateRevision: group.runtimeStateRevision,
         },
@@ -363,6 +386,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                             ? { displayName: input.displayName }
                             : {}),
                         ...(policy ? { policy } : {}),
+                        expectedIncarnation: revision.incarnation,
                         expectedRuntimeStateRevision:
                             revision.runtimeStateRevision,
                     },
@@ -389,6 +413,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                 const revision = readV4Revision(group);
                 await deleteQualifiedConnectedAccountGroupV4(credentials, {
                     group: group.ref,
+                    expectedIncarnation: revision.incarnation,
                     expectedRuntimeStateRevision:
                         revision.runtimeStateRevision,
                 });
@@ -402,10 +427,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
         async addMember(input) {
             assertGroup(input.group);
             assertAccount(input.account);
-            const priority = input.group.members.reduce(
-                (highest, member) => Math.max(highest, member.priority),
-                0,
-            ) + 10;
+            const priority = nextMemberPriority(input.group.members);
             if (source.protocol === 'v4') {
                 const revision = readV4Revision(input.group);
                 return normalize((await addQualifiedConnectedAccountGroupMemberV4(
@@ -415,6 +437,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                         connectedAccountId: input.account.accountId,
                         priority,
                         enabled: true,
+                        expectedIncarnation: revision.incarnation,
                         expectedRuntimeStateRevision:
                             revision.runtimeStateRevision,
                     },
@@ -448,6 +471,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                         ...(input.priority === undefined
                             ? {}
                             : { priority: input.priority }),
+                        expectedIncarnation: revision.incarnation,
                         expectedRuntimeStateRevision:
                             revision.runtimeStateRevision,
                     },
@@ -481,6 +505,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                     {
                         group: input.group.ref,
                         connectedAccountId: input.account.accountId,
+                        expectedIncarnation: revision.incarnation,
                         expectedRuntimeStateRevision:
                             revision.runtimeStateRevision,
                     },
@@ -507,6 +532,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
                         group: input.group.ref,
                         connectedAccountId: input.account.accountId,
                         expectedGeneration: revision.generation,
+                        expectedIncarnation: revision.incarnation,
                         expectedRuntimeStateRevision:
                             revision.runtimeStateRevision,
                         ...(input.overrideRuntimeCooldown

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ConnectedServiceCredentialRecordV1Schema,
   openQualifiedConnectedAccountContentEnvelope,
@@ -79,6 +79,7 @@ describe('resealQualifiedConnectedAccountMigrationCredentials', () => {
             ref,
             status: 'connected',
             authenticationModeId: 'api-key',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_1234567890123456789012',
             configurationReady: true,
             configurationRevision: 'configuration-7',
@@ -87,6 +88,7 @@ describe('resealQualifiedConnectedAccountMigrationCredentials', () => {
           fetchCredential: async () => ({
             ref,
             authenticationModeId: 'api-key',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_1234567890123456789012',
             configurationRevision: 'configuration-7',
             content: sourceContent,
@@ -95,6 +97,7 @@ describe('resealQualifiedConnectedAccountMigrationCredentials', () => {
           fetchConfiguration: async () => ({
             target: { kind: 'account', ref },
             authenticationModeId: 'api-key',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_1234567890123456789012',
             configurationRevision: 'configuration-7',
             configurationContent: sourceConfigurationContent,
@@ -153,4 +156,31 @@ describe('resealQualifiedConnectedAccountMigrationCredentials', () => {
       expect(migratedConfiguration).toEqual(configurationPlaintext);
     },
   );
+
+  it('refuses an unfenced account before reading or resealing its credential', async () => {
+    const fetchCredential = vi.fn(async () => {
+      throw new Error('must not fetch an unfenced credential');
+    });
+
+    await expect(resealQualifiedConnectedAccountMigrationCredentials({
+      toMode: 'e2ee',
+      material,
+      accounts: [{
+        ref,
+        status: 'connected',
+        authenticationModeId: 'api-key',
+        revisionSemantics: 'legacy_unfenced',
+        credentialRevision: null,
+        configurationReady: false,
+        configurationRevision: null,
+        scopes: [],
+      }],
+      fetchCredential,
+      fetchConfiguration: async () => {
+        throw new Error('must not fetch an unfenced configuration');
+      },
+      randomBytes: (length) => new Uint8Array(length),
+    })).rejects.toThrow('credential revision is unavailable for migration');
+    expect(fetchCredential).not.toHaveBeenCalled();
+  });
 });

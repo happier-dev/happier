@@ -3,14 +3,11 @@ import type {
     BrowserAutomationAdapterCapabilityKindV1,
     BrowserProfileV1,
 } from '@happier-dev/protocol';
-import { resolvePluginUiSurfaceContextPlacement } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { createPluginSurfaceHostApi } from '@happier-dev/plugin-ui';
 import { BrowserFrameUnavailable } from '@/components/browser/frame/BrowserFrameUnavailable';
-import { PluginHostedWebPane } from '@/components/plugins/hostedWeb/PluginHostedWebPane';
 import { resolveBrowserAdapterUnavailableReason } from '@/sync/domains/browser/adapters/availability';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
 import { resolveHostedPluginBrowserPolicyUnavailableReason } from '@/sync/domains/browser/policy/evaluate';
@@ -30,8 +27,6 @@ import {
     type LocalServicePreviewState,
 } from '@/sync/domains/local/services/preview/store';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { resolvePluginUiProjectionContributionId } from '@/sync/domains/plugins/ui/projectionRefs';
-import { useEndpointStatus } from '@/sync/domains/state/storage';
 
 import { ExternalUrlTarget } from './adapters/ExternalUrlTarget';
 import { LocalPreviewTarget } from './adapters/LocalPreviewTarget';
@@ -283,7 +278,6 @@ export function BrowserViewHost(props: Readonly<{
     nowMs?: () => number;
     testID?: string;
 }>): React.ReactElement {
-    const endpointStatus = useEndpointStatus();
     const testID = props.testID ?? 'browser-view-host';
     const view = props.view;
     if (!view) {
@@ -341,51 +335,16 @@ export function BrowserViewHost(props: Readonly<{
                 />
             );
         }
-        const contributionId = resolvePluginUiProjectionContributionId({
-            family: 'hostedWeb',
-            pluginId: view.target.pluginId,
-            contributionId: view.target.contributionId,
-            entriesById: props.pluginUiProjection?.hostedWebById ?? {},
-        });
-        const surfacePlacement = resolvePluginUiSurfaceContextPlacement('browser.panel');
-        // Phase 1.3: the browser-view hosted-web pane gets a scope-aware host API
-        // (a `browser`-scoped surface) so its bridge host-API is live, not dead.
-        const browserViewHostApi = endpointStatus === 'online'
-            ? createPluginSurfaceHostApi({
-                surfaceContext: {
-                    pluginId: view.target.pluginId,
-                    contributionId: contributionId ?? view.target.contributionId ?? '',
-                    surfaceId: view.target.targetId,
-                    placement: surfacePlacement,
-                    // B-3: surface the REAL platform to the hosted-web host-API surface context. The prior
-                    // `desktop → 'web'` downgrade hid the desktop signal from plugins (#13); `view.platform`
-                    // already feeds the real platform (incl. `'desktop'`) to PluginHostedWebPane below.
-                    platform: view.platform,
-                    channel: 'internal',
-                    resourceScope: [],
-                    diagnostics: [],
-                },
-            })
-            : undefined;
+        // Browser navigation URLs are display/navigation state, never proof that
+        // hosted-plugin bytes were selected and verified. This specialized route
+        // stays unavailable until the Availability owner supplies the exact
+        // artifact admission and selected destination binding needed to mount the
+        // bound controller without inventing endpoint or method authority.
         return (
-            <View testID={testID} style={stylesheet.root}>
-                <PluginHostedWebPane
-                    contributionId={contributionId ?? ''}
-                    surfaceId={view.target.targetId}
-                    pluginUiProjection={props.pluginUiProjection}
-                    endpointUrl={view.pendingUrl ?? view.currentUrl}
-                    expiresAt={view.currentUrlExpiresAt}
-                    platform={view.platform}
-                    surfacePlacement={surfacePlacement}
-                    navigationKey={frameNavigationKey}
-                    navigationCommand={frameNavigationCommand}
-                    diagnostics={diagnosticsBridge}
-                    hostApi={browserViewHostApi}
-                    interactionEnabled={Boolean(browserViewHostApi)
-                        && props.projectionInteractionEnabled !== false}
-                    nowMs={props.nowMs}
-                />
-            </View>
+            <BrowserFrameUnavailable
+                testID={testID}
+                reasonCode="hosted_plugin_artifact_unavailable"
+            />
         );
     }
     if (renderKind === 'externalUrl') {

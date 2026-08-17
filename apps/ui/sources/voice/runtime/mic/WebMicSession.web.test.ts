@@ -326,6 +326,61 @@ describe('WebMicSession', () => {
         await Promise.resolve();
         expect(onFailure).toHaveBeenCalledWith({ kind: 'mic_ended', reason: 'web_mic_input_removed' });
         expect(session.getStream()).toBeNull();
+        expect(trackStop).toHaveBeenCalledTimes(1);
+
+        await session.ensureActive();
+
+        expect(getUserMedia).toHaveBeenCalledTimes(2);
+        expect(trackStop).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a stale device-loss enumeration retire a newer reacquired stream', async () => {
+        const enumerateResult = createDeferred<Array<{ kind: string }>>();
+        const firstTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const secondTrack = {
+            enabled: true,
+            muted: false,
+            stop: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+        const firstStream = { getAudioTracks: () => [firstTrack] } as unknown as MediaStream;
+        const secondStream = { getAudioTracks: () => [secondTrack] } as unknown as MediaStream;
+        const replacementGetUserMedia = vi.fn()
+            .mockResolvedValueOnce(firstStream)
+            .mockResolvedValueOnce(secondStream);
+        const deviceMediaDevices = {
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            enumerateDevices: vi.fn(() => enumerateResult.promise),
+        };
+        const session = createWebMicSession({
+            getUserMedia: replacementGetUserMedia,
+            mediaDevices: deviceMediaDevices as unknown as MediaDevices,
+            document: documentLike as unknown as Document,
+        });
+
+        await session.ensureActive();
+        const deviceChangeHandler = deviceMediaDevices.addEventListener.mock.calls.find(
+            ([event]) => event === 'devicechange',
+        )?.[1] as EventListener | undefined;
+        deviceChangeHandler?.(new Event('devicechange'));
+
+        await session.teardown();
+        await session.ensureActive();
+        enumerateResult.resolve([{ kind: 'audiooutput' }]);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(firstTrack.stop).toHaveBeenCalledTimes(1);
+        expect(secondTrack.stop).not.toHaveBeenCalled();
+        expect(session.getStream()).toBe(secondStream);
     });
 
     it('debounces a transient track mute and only escalates a sustained mute', async () => {

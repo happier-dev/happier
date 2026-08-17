@@ -1,11 +1,16 @@
 import * as React from 'react';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
 
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { createSessionFilePreviewSource, type SessionFilePreviewSource } from '@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource';
+import {
+    createComposerStagedMediaPreviewSource,
+    createSessionFilePreviewSource,
+    type SessionFilePreviewSource,
+} from '@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource';
 
 import { ImagePreviewCache } from '@/components/workspaces/files/imagePreview/imagePreviewCache';
 
@@ -54,21 +59,47 @@ export function useSessionImagePreview(input: Readonly<{
     sizeBytes?: number | null;
     workspaceScope?: WorkspaceScopeBase | null;
     cacheScopeId?: string | null;
+    /**
+     * Draft-only opaque stage rendered through the same cache/source lifecycle
+     * as SessionMedia. The handle has no filesystem path or direct URI.
+     */
+    composerStagedMedia?: ComposerContentHandleV1 | null;
 }>): SessionImagePreviewState {
+    const composerStagedMedia = React.useMemo<ComposerContentHandleV1 | null>(() => (
+        input.composerStagedMedia ?? null
+    ), [
+        input.composerStagedMedia?.executionTarget.machineId,
+        input.composerStagedMedia?.executionTarget.serverId,
+        input.composerStagedMedia?.id,
+        input.composerStagedMedia?.mediaKind,
+        input.composerStagedMedia?.mimeType,
+        input.composerStagedMedia?.name,
+        input.composerStagedMedia?.owner.localId,
+        input.composerStagedMedia?.owner.pluginId,
+        input.composerStagedMedia?.sha256,
+        input.composerStagedMedia?.sizeBytes,
+        input.composerStagedMedia?.v,
+    ]);
     const sessionId = input.sessionId;
-    const filePath = input.filePath;
+    const filePath = composerStagedMedia?.name ?? input.filePath;
     const enabled = input.enabled === true;
     const cacheKey =
-        typeof input.cacheKey === 'string' && input.cacheKey.trim().length > 0
+        composerStagedMedia !== null
+            ? composerStagedMedia.sha256
+            : typeof input.cacheKey === 'string' && input.cacheKey.trim().length > 0
             ? input.cacheKey.trim()
             : null;
     const sizeBytes =
-        typeof input.sizeBytes === 'number' && Number.isFinite(input.sizeBytes)
+        composerStagedMedia !== null
+            ? composerStagedMedia.sizeBytes
+            : typeof input.sizeBytes === 'number' && Number.isFinite(input.sizeBytes)
             ? Math.max(0, input.sizeBytes)
             : null;
     const providedScope = input.workspaceScope ?? null;
-    const resolvedSessionScope = useSessionWorkspaceTarget(enabled && !providedScope ? sessionId : null);
-    const resolvedScopeInput = providedScope ?? resolvedSessionScope;
+    const resolvedSessionScope = useSessionWorkspaceTarget(
+        enabled && composerStagedMedia === null && !providedScope ? sessionId : null,
+    );
+    const resolvedScopeInput = composerStagedMedia === null ? providedScope ?? resolvedSessionScope : null;
     const resolvedScope = React.useMemo<WorkspaceScopeBase | null>(() => {
         if (!resolvedScopeInput) return null;
         return {
@@ -82,13 +113,27 @@ export function useSessionImagePreview(input: Readonly<{
         resolvedScopeInput?.serverId,
     ]);
     const cacheScopeId = (() => {
+        if (composerStagedMedia !== null) {
+            return JSON.stringify([
+                'composer-stage',
+                composerStagedMedia.executionTarget.serverId,
+                composerStagedMedia.executionTarget.machineId,
+                composerStagedMedia.owner.pluginId,
+                composerStagedMedia.owner.localId,
+                composerStagedMedia.id,
+            ]);
+        }
         const explicit = typeof input.cacheScopeId === 'string' && input.cacheScopeId.trim().length > 0
             ? input.cacheScopeId.trim()
             : null;
         return explicit ?? (resolvedSessionScope?.workspaceCacheKey ?? sessionId);
     })();
 
-    const mime = React.useMemo(() => resolvePreviewMimeType({ filePath, mimeType: input.mimeType }), [filePath, input.mimeType]);
+    const previewMimeType = composerStagedMedia?.mimeType ?? input.mimeType;
+    const mime = React.useMemo(
+        () => resolvePreviewMimeType({ filePath, mimeType: previewMimeType }),
+        [filePath, previewMimeType],
+    );
     const canCache = Boolean(cacheKey);
 
     const cacheMaxEntriesSetting = useSetting('filesImagePreviewCacheMaxEntries');
@@ -125,7 +170,7 @@ export function useSessionImagePreview(input: Readonly<{
 
     const [state, setState] = React.useState<SessionImagePreviewState>(() => {
         if (!enabled || !mime) return { status: 'disabled', uri: null, error: null };
-        if (!resolvedScope) return { status: 'loading', uri: null, error: null };
+        if (!resolvedScope && composerStagedMedia === null) return { status: 'loading', uri: null, error: null };
         if (canCache) {
             const cached = imagePreviewCache.get({ sessionId: cacheScopeId, signature: cacheKey!, filePath });
             if (cached?.status === 'loaded') return { status: 'loaded', uri: cached.uri, error: null };
@@ -139,11 +184,11 @@ export function useSessionImagePreview(input: Readonly<{
             setState({ status: 'disabled', uri: null, error: null });
             return;
         }
-        if (!resolvedScope) {
+        if (!resolvedScope && composerStagedMedia === null) {
             setState({ status: 'loading', uri: null, error: null });
             return;
         }
-        const previewIdentity = `${cacheScopeId}\u0000${filePath}`;
+        const previewIdentity = `${cacheScopeId}\u0000${cacheKey ?? ''}\u0000${filePath}`;
 
         const tooLarge =
             maxPreviewBytes > 0 &&
@@ -178,6 +223,7 @@ export function useSessionImagePreview(input: Readonly<{
         }
 
         let cancelled = false;
+        const controller = new AbortController();
         let uncachedCleanup: (() => void | Promise<void>) | null = null;
         const previousLoaded = lastLoadedRef.current?.identity === previewIdentity ? lastLoadedRef.current : null;
         if (!previousLoaded) {
@@ -186,14 +232,21 @@ export function useSessionImagePreview(input: Readonly<{
 
         void (async () => {
             try {
-                const res = await createSessionFilePreviewSource({
-                    scope: resolvedScope,
-                    filePath,
-                    mimeType: mime,
-                    maxBytes: maxPreviewBytes,
-                    expectedSizeBytes: sizeBytes,
-                    cacheIdentity: cacheKey,
-                });
+                const res = composerStagedMedia !== null
+                    ? await createComposerStagedMediaPreviewSource({
+                        handle: composerStagedMedia,
+                        maxBytes: maxPreviewBytes,
+                        signal: controller.signal,
+                    })
+                    : await createSessionFilePreviewSource({
+                        scope: resolvedScope!,
+                        filePath,
+                        mimeType: mime,
+                        maxBytes: maxPreviewBytes,
+                        expectedSizeBytes: sizeBytes,
+                        cacheIdentity: cacheKey,
+                        signal: controller.signal,
+                    });
                 if (!res.ok) {
                     if (cancelled) return;
                     const errorMessage = res.error || t('files.fileReadFailed');
@@ -250,13 +303,14 @@ export function useSessionImagePreview(input: Readonly<{
 
         return () => {
             cancelled = true;
+            controller.abort();
             if (uncachedCleanup) {
                 try {
                     void Promise.resolve(uncachedCleanup()).catch(() => undefined);
                 } catch {}
             }
         };
-    }, [cacheKey, cacheScopeId, canCache, enabled, filePath, maxPreviewBytes, mime, resolvedScope, sizeBytes]);
+    }, [cacheKey, cacheScopeId, canCache, composerStagedMedia, enabled, filePath, maxPreviewBytes, mime, resolvedScope, sizeBytes]);
 
     return state;
 }

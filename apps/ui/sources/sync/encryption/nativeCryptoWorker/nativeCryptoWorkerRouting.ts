@@ -4,14 +4,22 @@ import {
 } from '@/sync/runtime/syncPerformanceTelemetry';
 
 import {
+    NATIVE_CRYPTO_WORKER_FALLBACK_REASON,
     NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON,
+    NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON,
     NativeCryptoWorkerUnavailableError,
     type NativeCryptoWorkerBatchResult,
     type NativeCryptoWorkerCapability,
+    type NativeCryptoWorkerFallbackReason,
     type NativeCryptoWorkerOperation,
+    type NativeCryptoWorkerRoutingDeclineReason,
 } from './types';
 import { recordNativeCryptoWorkerStaleScopeDropForResume } from './nativeCryptoWorkerQueue';
 import { recordNativeCryptoWorkerProbe } from './nativeCryptoWorkerTelemetry';
+import {
+    reportNativeCryptoWorkerFallback,
+    reportNativeCryptoWorkerRoutingDecline,
+} from './nativeCryptoWorkerFallbackReport';
 
 export type NativeCryptoWorkerMode = 'off' | 'auto' | 'require';
 
@@ -226,13 +234,53 @@ export async function runNativeCryptoWorkerBatch<T>(
     if (isAbortSignalAborted(options.signal)) {
         return { status: 'cancelled', source: 'cancelled', items: [] };
     }
-    if (
-        routing.mode === 'off'
-        || options.itemCount < routing.minBatchSize
-        || options.payloadBytes < routing.minPayloadBytes
-    ) {
+    const declineReason: NativeCryptoWorkerRoutingDeclineReason | null = routing.mode === 'off'
+        ? NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.routingDisabled
+        : options.itemCount < routing.minBatchSize
+            ? NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.belowMinBatchSize
+            : options.payloadBytes < routing.minPayloadBytes
+                ? NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.belowMinPayloadBytes
+                : null;
+    if (declineReason !== null) {
+        // A decline is silent to the profiler: the batch simply appears on the JS
+        // reference stack, exactly like a broken worker does. Record which branch
+        // chose it so the two are distinguishable without re-deriving the arithmetic.
+        const lastKnownCapability = options.capabilityCacheKey
+            ? nativeCryptoWorkerCapabilityCache.get(options.capabilityCacheKey)
+            : undefined;
+        reportNativeCryptoWorkerRoutingDecline({
+            operation: options.operation,
+            reason: declineReason,
+            itemCount: options.itemCount,
+            payloadBytes: options.payloadBytes,
+            threshold: declineReason === NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.belowMinBatchSize
+                ? routing.minBatchSize
+                : declineReason === NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.belowMinPayloadBytes
+                    ? routing.minPayloadBytes
+                    : null,
+            lastKnownFailureReason: lastKnownCapability && !lastKnownCapability.available
+                ? lastKnownCapability.failureReason
+                : null,
+            verbose: routing.logFallbacks,
+        });
         return runReference(options.referenceRun);
     }
+
+    const reportFallback = (
+        reason: NativeCryptoWorkerFallbackReason,
+        failureReason: number | null,
+        error?: unknown,
+    ): void => {
+        reportNativeCryptoWorkerFallback({
+            operation: options.operation,
+            reason,
+            itemCount: options.itemCount,
+            payloadBytes: options.payloadBytes,
+            failureReason,
+            error,
+            verbose: routing.logFallbacks,
+        });
+    };
 
     let capability: NativeCryptoWorkerCapability;
     try {
@@ -243,12 +291,14 @@ export async function runNativeCryptoWorkerBatch<T>(
         if (routing.mode === 'require') {
             throw error;
         }
+        reportFallback(NATIVE_CRYPTO_WORKER_FALLBACK_REASON.probeFailed, getNativeWorkerFailureReason(error), error);
         return runReference(options.referenceRun);
     }
     if (!capability.available) {
         if (routing.mode === 'require') {
             throw new NativeCryptoWorkerUnavailableError(capability.failureReason);
         }
+        reportFallback(NATIVE_CRYPTO_WORKER_FALLBACK_REASON.unavailable, capability.failureReason);
         return runReference(options.referenceRun);
     }
     if (isAbortSignalAborted(options.signal)) {
@@ -277,6 +327,7 @@ export async function runNativeCryptoWorkerBatch<T>(
         if (routing.mode === 'require') {
             throw error;
         }
+        reportFallback(NATIVE_CRYPTO_WORKER_FALLBACK_REASON.nativeRunFailed, getNativeWorkerFailureReason(error), error);
         return runReference(options.referenceRun);
     }
 }

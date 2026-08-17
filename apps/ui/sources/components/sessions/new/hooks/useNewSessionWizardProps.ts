@@ -1,5 +1,8 @@
 import * as React from 'react';
 
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
+import type { ActiveSuggestionsHandler } from '@/components/autocomplete/useActiveSuggestions';
+
 import type { AgentId } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
@@ -16,7 +19,7 @@ import { buildCliAvailabilityProbeState } from '@/components/sessions/new/module
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
 
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
+import type { AgentInputExtraActionChip, AgentInputExtraActionPresentation } from '@/components/sessions/agentInput';
 import type { InstallableDepInstallerProps } from '@/components/machines/InstallableDepInstaller';
 import type {
     NewSessionWizardAgentProps,
@@ -27,6 +30,7 @@ import type {
     NewSessionWizardProps,
 } from '../components/NewSessionWizard';
 import type { CliNotDetectedBannerDismissScope } from '../components/CliNotDetectedBanner';
+import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 function tNoParams(key: string): string {
     return (t as any)(key);
@@ -138,7 +142,8 @@ export function useNewSessionWizardProps(params: Readonly<{
     setFavoriteDirectories: (dirs: string[]) => void;
 
     // Footer section
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
+    composerDocument?: NewSessionWizardFooterProps['composerDocument'];
     setSessionPrompt: (v: string) => void;
     handleCreateSession: () => void;
     canCreate: boolean;
@@ -147,9 +152,8 @@ export function useNewSessionWizardProps(params: Readonly<{
     providerLaunchError?: NewSessionWizardFooterProps['providerLaunchError'];
     retryProviderLaunch?: NewSessionWizardFooterProps['retryProviderLaunch'];
     submitAccessibilityLabel?: NewSessionWizardFooterProps['submitAccessibilityLabel'];
-    emptyAutocompletePrefixes: any;
-    emptyAutocompleteSuggestions: any;
-    onAutocompleteSuggestionSelect?: NewSessionWizardFooterProps['onAutocompleteSuggestionSelect'];
+    emptyAutocompleteKinds: readonly ComposerSuggestionKindId[];
+    emptyAutocompleteSuggestions: ActiveSuggestionsHandler;
     connectionStatus?: any;
     statusBadges?: NewSessionWizardFooterProps['statusBadges'];
     machinePopover?: NewSessionWizardFooterProps['machinePopover'];
@@ -159,6 +163,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     isResumeSupportChecking: boolean;
     sessionPromptInputMaxHeight?: number;
     agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    sourceContextPresentation?: AgentInputExtraActionPresentation | null;
     attachmentFlowId?: string | null;
     sectionPresentation?: NewSessionWizardProps['sectionPresentation'];
     useColumnLayout?: NewSessionWizardProps['useColumnLayout'];
@@ -477,7 +482,8 @@ export function useNewSessionWizardProps(params: Readonly<{
 
     const wizardFooterProps = React.useMemo((): NewSessionWizardFooterProps => {
         return {
-            sessionPrompt: params.sessionPrompt,
+            promptStore: params.promptStore,
+            composerDocument: params.composerDocument,
             setSessionPrompt: params.setSessionPrompt,
             handleCreateSession: params.handleCreateSession,
             canCreate: params.canCreate,
@@ -486,9 +492,8 @@ export function useNewSessionWizardProps(params: Readonly<{
             providerLaunchError: params.providerLaunchError,
             retryProviderLaunch: params.retryProviderLaunch,
             submitAccessibilityLabel: params.submitAccessibilityLabel,
-            emptyAutocompletePrefixes: params.emptyAutocompletePrefixes,
+            emptyAutocompleteKinds: params.emptyAutocompleteKinds,
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
-            onAutocompleteSuggestionSelect: params.onAutocompleteSuggestionSelect,
             connectionStatus: params.connectionStatus,
             statusBadges: params.statusBadges,
             machinePopover: params.machinePopover,
@@ -498,6 +503,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             resumeIsChecking: params.isResumeSupportChecking,
             inputMaxHeight: params.sessionPromptInputMaxHeight,
             agentInputExtraActionChips: params.agentInputExtraActionChips,
+            sourceContextPresentation: params.sourceContextPresentation ?? null,
             attachmentFlowId: params.attachmentFlowId,
         };
         // NOTE: Agent selection doesn't affect these props, but keeping dependencies
@@ -506,12 +512,12 @@ export function useNewSessionWizardProps(params: Readonly<{
     }, [
         params.agentType,
         params.agentInputExtraActionChips,
+        params.sourceContextPresentation,
         params.attachmentFlowId,
         params.canCreate,
         params.connectionStatus,
-        params.emptyAutocompletePrefixes,
+        params.emptyAutocompleteKinds,
         params.emptyAutocompleteSuggestions,
-        params.onAutocompleteSuggestionSelect,
         params.handleCreateSession,
         params.isCreating,
         params.isResumeSupportChecking,
@@ -522,7 +528,8 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.resumePopover,
         params.resumeSessionId,
         params.retryProviderLaunch,
-        params.sessionPrompt,
+        params.composerDocument,
+        params.promptStore,
         params.sessionPromptInputMaxHeight,
         params.setSessionPrompt,
         params.statusBadges,

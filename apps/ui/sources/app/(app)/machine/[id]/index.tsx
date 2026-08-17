@@ -15,11 +15,8 @@ import {
     useSettingMutable,
     useSettings,
 } from '@/sync/domains/state/storage';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import type { Machine, MachineMetadata, Session } from '@/sync/domains/state/storageTypes';
 import {
-    completeMachineSpawnAttemptCustody,
-    machineSpawnNewSession,
     machineStopDaemon,
     machineStopSession,
     machineUpdateMetadata,
@@ -30,7 +27,6 @@ import {
     machineRevokeWithProviderCleanup,
 } from '@/sync/ops';
 import {
-    createUiSessionSpawnNonce,
     createUiSessionSpawnUserAttemptId,
 } from '@/sync/domains/session/spawn/spawnSessionNonce';
 import {
@@ -72,6 +68,7 @@ import {
     type DaemonExecutionRunEntry,
 } from '@happier-dev/protocol';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
+import { readExecutionRunSessionAssociation } from '@/components/sessions/runs/readExecutionRunSessionAssociation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
@@ -79,9 +76,19 @@ import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMac
 import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagnostics';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
+import {
+    executeSessionSpawnNewAction,
+    resolveSessionSpawnNewActionFailureMessageKey,
+    resolveSessionSpawnNewResultFailureMessageKey,
+} from '@/sync/ops/actions/sessionSpawnNewAction';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
-import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
+import {
+    readDisplayMachineIdForSession,
+    readDisplayPathForSession,
+    readMachineControlTargetForSession,
+} from '@/sync/ops/sessionMachineTarget';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import {
@@ -89,6 +96,7 @@ import {
     type MachineReplacementPickerCandidate,
 } from '@/components/machines/MachineReplacementPickerModal';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -628,10 +636,13 @@ export default function MachineDetailScreen() {
         const paths = new Set<string>();
         machineSessions.forEach(session => {
             const ownerMetadata = readSessionOwnerMetadataView(session);
-            const path = readDisplayPathForSession({
-                sessionId: session.id,
-                metadata: ownerMetadata,
-            });
+            const machineTarget = readMachineControlTargetForSession(session.id);
+            const path = machineTarget?.machineId === machineId
+                ? machineTarget.basePath
+                : readDisplayPathForSession({
+                    sessionId: session.id,
+                    metadata: ownerMetadata,
+                });
             if (path) paths.add(path);
         });
         return Array.from(paths).sort();
@@ -798,7 +809,7 @@ export default function MachineDetailScreen() {
                 titleStyle={headerTextStyle as any}
                 action={{
                     accessibilityLabel: t('common.refresh'),
-                    iconName: 'refresh',
+                    iconName: 'arrow-clockwise',
                     iconColor: isOnline ? theme.colors.text.secondary : theme.colors.border.default,
                     disabled: !canRefresh,
                     loading: detectedCapabilities.status === 'loading',
@@ -898,7 +909,7 @@ export default function MachineDetailScreen() {
         await updateMachineWindowsRemoteSessionLaunchMode(effectiveWindowsRemoteSessionLaunchMode ?? windowsRemoteSessionLaunchModeDefault);
     }, [effectiveWindowsRemoteSessionLaunchMode, updateMachineWindowsRemoteSessionLaunchMode, windowsRemoteSessionLaunchModeDefault]);
 
-    const handleStartSession = async (approvedNewDirectoryCreation: boolean = false): Promise<void> => {
+    const handleStartSession = async (): Promise<void> => {
         if (!machine || !machineId) return;
         try {
             const pathToUse = (customPath.trim() || '~');
@@ -909,42 +920,57 @@ export default function MachineDetailScreen() {
                 settings: storage.getState().settings,
                 machineId,
             });
-            const spawnOptions = {
-                machineId: machineId!,
-                ...(machineServerId ? { serverId: machineServerId } : {}),
-                directory: absolutePath,
-                approvedNewDirectoryCreation,
-                backendTarget: preferredBackendTarget,
-                terminal,
-                ...(effectiveWindowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode } : {}),
-            } as const;
+            const targetServerId = String(machineServerId ?? '').trim();
+            if (!targetServerId) {
+                Modal.alert(t('common.error'), t('newSession.failedToStart'));
+                return;
+            }
             const launchSignature = JSON.stringify({
                 machineId,
-                serverId: machineServerId ?? null,
+                serverId: targetServerId,
                 directory: absolutePath,
                 backendTarget: preferredBackendTarget,
                 terminal,
-                windowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode ?? null,
             });
             spawnAttemptRef.current = resolveMachineDetailSpawnAttempt({
                 current: spawnAttemptRef.current,
                 signature: launchSignature,
                 createUserAttemptId: createUiSessionSpawnUserAttemptId,
-                createSpawnNonce: createUiSessionSpawnNonce,
             });
-            const result = await machineSpawnNewSession({
-                ...spawnOptions,
-                userAttemptId: spawnAttemptRef.current.userAttemptId,
-                spawnNonce: spawnAttemptRef.current.spawnNonce,
+            const agentTarget = resolveAgentExecutionTargetForBackendTarget({
+                backendTarget: preferredBackendTarget,
+                daemonMergedProjectionInputs: daemonMergedProjection.inputs,
             });
+            if (!agentTarget) {
+                spawnAttemptRef.current = null;
+                Modal.alert(t('common.error'), t('newSession.failedToStart'));
+                return;
+            }
+
+            const actionResult = await executeSessionSpawnNewAction({
+                creationKey: spawnAttemptRef.current.userAttemptId,
+                executionTarget: {
+                    serverId: targetServerId,
+                    machineId,
+                },
+                directory: absolutePath,
+                organizationPlacement: { folderId: null, tagIds: [] },
+                agentTarget,
+                ...(terminal ? { terminal } : {}),
+            }, { surface: 'ui' });
+            if (!actionResult.ok) {
+                // Incompatible/older daemons are a typed Action failure. Never
+                // fall back to the private spawn RPC from an ordinary UI flow.
+                Modal.alert(
+                    t('common.error'),
+                    t(resolveSessionSpawnNewActionFailureMessageKey(actionResult)),
+                );
+                return;
+            }
+
+            const result = actionResult.result;
             switch (result.type) {
                 case 'success':
-                    if (result.spawnAttemptCustody?.status === 'completed') {
-                        const completed = await completeMachineSpawnAttemptCustody(result.spawnAttemptCustody);
-                        if (!completed) {
-                            throw new Error('Created session custody could not be completed.');
-                        }
-                    }
                     spawnAttemptRef.current = null;
                     // Dismiss machine picker & machine detail screen
                     router.back();
@@ -955,22 +981,22 @@ export default function MachineDetailScreen() {
                         Modal.alert(t('common.error'), t('newSession.failedToStart'));
                     }
                     break;
-                case 'requestToApproveDirectoryCreation': {
-                    const approved = await Modal.confirm(
-                        t('newSession.directoryDoesNotExist'),
-                        t('newSession.createDirectoryConfirm', { directory: result.directory }),
-                        { cancelText: t('common.cancel'), confirmText: t('common.create') }
+                case 'pending':
+                    // Preserve the user-attempt creation key so an explicit
+                    // retry/rejoin is idempotent at the canonical owner.
+                    Modal.alert(
+                        t('common.error'),
+                        t(resolveSessionSpawnNewResultFailureMessageKey(result)),
                     );
-                    if (approved) {
-                        await handleStartSession(true);
-                    }
                     break;
-                }
                 case 'error':
-                    if (result.spawnAttemptCustody?.status !== 'unresolved') {
+                    if (!result.retryable) {
                         spawnAttemptRef.current = null;
                     }
-                    Modal.alert(t('common.error'), result.errorMessage);
+                    Modal.alert(
+                        t('common.error'),
+                        t(resolveSessionSpawnNewResultFailureMessageKey(result)),
+                    );
                     break;
             }
         } catch (error) {
@@ -1022,9 +1048,9 @@ export default function MachineDetailScreen() {
         return (
             <View>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons
-                        name="desktop-outline"
-                        size={18}
+                    <Icon
+                        name="desktop"
+                        size={16}
                         color={theme.colors.chrome.header.foreground}
                         style={{ marginRight: 6 }}
                     />
@@ -1062,7 +1088,7 @@ export default function MachineDetailScreen() {
                 }}
                 disabled={isRenamingMachine}
             >
-                <Octicons
+                <Icon
                     name="pencil"
                     size={20}
                     color={theme.colors.text.primary}
@@ -1165,7 +1191,7 @@ export default function MachineDetailScreen() {
                                             spawnButtonDisabled ? styles.inlineSendInactive : styles.inlineSendActive
                                         ]}
                                     >
-                                        <Ionicons
+                                        <Icon
                                             name="play"
                                             size={16}
                                             color={spawnButtonDisabled ? theme.colors.text.secondary : theme.colors.button.primary.tint}
@@ -1184,7 +1210,7 @@ export default function MachineDetailScreen() {
                                     <Item
                                         key={path}
                                         title={display}
-                                        leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.text.secondary} />}
+                                        leftElement={<Icon name="folder" size={16} color={theme.colors.text.secondary} />}
                                         onPress={machineCanSpawn ? () => {
                                             setCustomPath(display);
                                             setTimeout(() => inputRef.current?.focus(), 50);
@@ -1336,7 +1362,7 @@ export default function MachineDetailScreen() {
                                             option.value === (machineWindowsRemoteSessionLaunchMode ?? effectiveWindowsRemoteSessionLaunchMode ?? windowsRemoteSessionLaunchModeDefault)
                                         )?.subtitleKey ?? 'windowsRemoteSessionLaunchMode.hiddenSubtitle',
                                     ),
-                                    icon: <Ionicons name="logo-windows" size={29} color={theme.colors.accent.blue} />,
+                                    icon: <Icon name="windows-logo" size={29} color={theme.colors.accent.blue} />,
                                 }}
                                 rowKind="item"
                                 connectToTrigger
@@ -1384,10 +1410,10 @@ export default function MachineDetailScreen() {
                                 isStoppingDaemon ? (
                                     <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                 ) : (
-                                    <Ionicons 
-                                        name="stop-circle" 
-                                        size={20} 
-                                        color={daemonStatus === 'stopped' ? '#999' : '#FF9500'} 
+                                    <Icon
+                                        name="stop-circle"
+                                        size={20}
+                                        color={daemonStatus === 'stopped' ? '#999' : '#FF9500'}
                                     />
                                 )
                             }
@@ -1483,27 +1509,33 @@ export default function MachineDetailScreen() {
                                     ? executionRunsState.runs
                                     : executionRunsState.runs.filter((r) => r.status === 'running');
 
-                                const grouped = new Map<string, DaemonExecutionRunEntry[]>();
+                                const grouped = new Map<string | null, DaemonExecutionRunEntry[]>();
                                 for (const run of visibleRuns) {
-                                    const key = run.happySessionId;
+                                    const key = readExecutionRunSessionAssociation(run);
                                     const list = grouped.get(key) ?? [];
                                     list.push(run);
                                     grouped.set(key, list);
                                 }
-                                const orderedSessionIds = Array.from(grouped.keys()).sort();
+                                const orderedSessionIds = Array.from(grouped.keys()).sort((left, right) => {
+                                    if (left === null || right === null) {
+                                        if (left === right) return 0;
+                                        return left === null ? 1 : -1;
+                                    }
+                                    return left.localeCompare(right);
+                                });
 
                                 return orderedSessionIds.flatMap((sessionId) => {
                                     const runs = grouped.get(sessionId) ?? [];
                                     runs.sort((a, b) => (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0));
 
-                                    const header = (
+                                    const header = sessionId === null ? null : (
                                         <Item
                                             key={`sess-${sessionId}`}
                                             title={t('runs.sessionTitle', { sessionId })}
                                             subtitle={t('runs.openSession')}
                                             subtitleStyle={{ color: theme.colors.text.secondary }}
                                             onPress={() => navigateToSession(sessionId)}
-                                            rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.text.secondary} />}
+                                            rightElement={<Icon name="caret-right" size={20} color={theme.colors.text.secondary} />}
                                         />
                                     );
 
@@ -1518,13 +1550,14 @@ export default function MachineDetailScreen() {
                                             detailParts.push(t('runs.detail.memory', { megabytes: Math.round(memory / (1024 * 1024)) }));
                                         }
 
-                                        const canStop = run.status === 'running';
+                                        const canStop = run.status === 'running' && sessionId !== null;
                                         const onStop = async () => {
                                             if (!machineId) return;
+                                            if (!sessionId) return;
                                             if (!canStop) return;
                                             setStoppingRunId(run.runId);
                                             const stopSessionProcess = async () => {
-                                                const stopResult = await machineStopSession(machineId, run.happySessionId, { serverId: machineServerId });
+                                                const stopResult = await machineStopSession(machineId, sessionId, { serverId: machineServerId });
                                                 if (stopResult.ok) return;
 
                                                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForRpcFailure({
@@ -1542,7 +1575,7 @@ export default function MachineDetailScreen() {
                                             };
                                             try {
                                                 const res = await sessionExecutionRunStop(
-                                                    run.happySessionId,
+                                                    sessionId,
                                                     { runId: run.runId },
                                                     { serverId: machineServerId },
                                                 );
@@ -1586,7 +1619,7 @@ export default function MachineDetailScreen() {
                                                 key={run.runId}
                                                 run={run as any}
                                                 subtitle={`${t('runs.runLabel', { runId: run.runId })} · ${detailParts.join(' · ')}`}
-                                                onPress={() => router.push(`/session/${run.happySessionId}/runs/${run.runId}` as any)}
+                                                onPress={sessionId ? () => router.push(`/session/${sessionId}/runs/${run.runId}` as any) : undefined}
                                                 rightAccessory={canStop ? (
                                                     <Pressable
                                                         accessibilityRole="button"
@@ -1600,7 +1633,7 @@ export default function MachineDetailScreen() {
                                                         {stoppingRunId === run.runId ? (
                                                             <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                                         ) : (
-                                                            <Ionicons name="stop-circle-outline" size={20} color={theme.colors.accent.orange} />
+                                                            <Icon name="stop-circle" size={20} color={theme.colors.accent.orange} />
                                                         )}
                                                     </Pressable>
                                                 ) : null}
@@ -1608,7 +1641,7 @@ export default function MachineDetailScreen() {
                                         );
                                     });
 
-                                    return [header, ...rows];
+                                    return header ? [header, ...rows] : rows;
                                 });
                             })()
                         )}
@@ -1624,7 +1657,7 @@ export default function MachineDetailScreen() {
                                 title={getSessionName(session)}
                                 subtitle={getSessionSubtitle(session)}
                                 onPress={() => navigateToSession(session.id)}
-                                rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.text.secondary} />}
+                                rightElement={<Icon name="caret-right" size={20} color={theme.colors.text.secondary} />}
                             />
                         ))}
                     </ItemGroup>

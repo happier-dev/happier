@@ -3,6 +3,10 @@ import type {
     ManagedConnectionTransport,
     TransportDisconnectEvent,
 } from '@happier-dev/connection-supervisor';
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    buildAccountStoredContentCompatibilitySocketAuthV1,
+} from '@happier-dev/protocol';
 
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 
@@ -22,6 +26,9 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
             token: params.token,
             clientType: 'user-scoped' as const,
             clientPurpose: 'concurrent-server-cache' as const,
+            ...buildAccountStoredContentCompatibilitySocketAuthV1(
+                CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+            ),
         },
         ...(transports ? { transports } : null),
         withCredentials: false,

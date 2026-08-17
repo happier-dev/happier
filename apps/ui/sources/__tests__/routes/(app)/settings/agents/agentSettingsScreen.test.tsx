@@ -53,6 +53,32 @@ const mockAgentCatalogProjection = vi.hoisted(
 );
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
 const machinePluginSessionHooksRpcMock = vi.hoisted(() => vi.fn());
+const administrationTargetState = vi.hoisted(() => ({
+    selectedTarget: {
+        serverIdentityId: 'server1',
+        machineId: 'm1',
+    } as { serverIdentityId: string; machineId: string } | null,
+    executionTarget: {
+        target: {
+            serverIdentityId: 'server1',
+            machineId: 'm1',
+        },
+        serverId: 'server1',
+        machine: {
+            id: 'm1',
+            metadata: { displayName: 'Machine One', host: 'm1', homeDir: '/Users/m1' },
+            daemonStateVersion: 0,
+        },
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        serverId: string;
+        machine: {
+            id: string;
+            metadata: { displayName: string; host: string; homeDir: string };
+            daemonStateVersion: number;
+        };
+    } | null,
+}));
 
 const machineCapabilitiesInvokeMock = vi.fn(async () => ({
     supported: true,
@@ -116,6 +142,9 @@ let activeServerSnapshot: ActiveServerSnapshot = {
     serverUrl: 'http://localhost:3000',
     generation: 1,
 };
+let serverIdentityByProfileId: Record<string, string> = {
+    server1: 'server1',
+};
 let activeServerSubscribers = new Set<(snapshot: ActiveServerSnapshot) => void>();
 function emitActiveServerSnapshot(snapshot: ActiveServerSnapshot) {
     for (const subscriber of activeServerSubscribers) {
@@ -151,7 +180,6 @@ function buildExternalSessionsAgentProjection() {
                     sources: [{
                         sourceKind: 'codexHome',
                         schema: {
-                            passthrough: true,
                             fields: [
                                 { name: 'kind', kind: 'literal', value: 'codexHome' },
                                 { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
@@ -173,6 +201,37 @@ function buildExternalSessionsAgentProjection() {
     };
 }
 
+function buildBuiltInAgentSettingsProjection(): PluginProjectionV2 {
+    return {
+        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        installedPackagesById: {
+            ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById,
+            'happier.agent.codex': {
+                id: 'happier.agent.codex',
+                displayName: 'Codex',
+                version: '1.0.0',
+                enabled: true,
+                source: { kind: 'bundled', locator: 'happier.agent.codex' },
+            },
+        },
+        settingsById: {
+            'happier.agent.codex.agent-settings': {
+                id: 'agent-settings',
+                pluginId: 'happier.agent.codex',
+                version: 1,
+                title: 'Codex settings',
+                scope: { kind: 'account' },
+                presentation: { sections: [], subagentSections: [] },
+                target: {
+                    kind: 'agent',
+                    agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                },
+                fields: [],
+            },
+        },
+    };
+}
+
 function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
     return {
         v: 2,
@@ -184,7 +243,6 @@ function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
                 version: '1.0.0',
                 enabled: true,
                 source: { kind: 'path', locator: '/plugins/acme-voice' },
-                digest: 'sha256:acme-voice',
             },
             'other.voice': {
                 id: 'other.voice',
@@ -192,7 +250,6 @@ function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
                 version: '1.0.0',
                 enabled: true,
                 source: { kind: 'path', locator: '/plugins/other-voice' },
-                digest: 'sha256:other-voice',
             },
         },
         agentsById: {
@@ -227,7 +284,6 @@ function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
                     sources: [{
                         sourceKind: 'claudeHome',
                         schema: {
-                            passthrough: true,
                             fields: [
                                 { name: 'kind', kind: 'literal', value: 'claudeHome' },
                                 { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
@@ -393,11 +449,20 @@ installSessionSettingsEntryModuleMocks({
 
 vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 
+vi.mock('@/components/ui/icons/Icon', () => ({
+    Icon: 'Icon',
+    ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
+}));
+
 vi.mock('@/components/ui/lists/ItemList', () => passThrough('ItemList'));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => passThrough('ItemGroup'));
 
 vi.mock('@/components/ui/lists/Item', () => passThrough('Item'));
+
+vi.mock('@/components/ui/lists/virtualized', () => ({
+    VirtualizedList: 'VirtualizedList',
+}));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: 'Switch',
@@ -454,6 +519,13 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => activeServerSnapshot,
     listServerProfiles: () => [{ id: 'server1', serverUrl: 'http://localhost:3000', webappUrl: 'http://localhost:8081', name: 'server1' }],
+    getServerProfileById: (serverId: string) => {
+        const serverIdentityId = serverIdentityByProfileId[serverId];
+        return serverIdentityId
+            ? { id: serverId, serverIdentityId }
+            : null;
+    },
+    areServerProfileIdentifiersEquivalent: (left: string | null | undefined, right: string | null | undefined) => left === right,
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -475,6 +547,16 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machineContributionRegistryProjectionDescribeMock(...args),
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
+    // This screen does not exercise daemon-scoped plugin Settings I/O. Keep
+    // the canonical Settings/secret/watch runtime boundary explicitly
+    // unavailable instead of leaving a partial module mock with absent
+    // exports.
+    machinePluginSettingsGet: async () => ({ supported: false, reason: 'not-supported' }),
+    machinePluginSettingsSet: async () => ({ supported: false, reason: 'not-supported' }),
+    watchMachinePluginSettingsChanges: () => ({ dispose: () => {} }),
+    machinePluginSecretStatus: async () => ({ supported: false, reason: 'not-supported' }),
+    machinePluginSecretSet: async () => ({ supported: false, reason: 'not-supported' }),
+    machinePluginSecretDelete: async () => ({ supported: false, reason: 'not-supported' }),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -487,6 +569,55 @@ vi.mock('@/hooks/auth/useCLIDetection', () => ({
 
 vi.mock('@/hooks/machine/useCapabilityInstallability', () => ({
     useCapabilityInstallability: (...args: any[]) => useCapabilityInstallabilityMock(...args),
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => {
+        const [, rerender] = React.useState(0);
+        return {
+            selectedTarget: administrationTargetState.selectedTarget,
+            resolveExecutionTarget: () => administrationTargetState.executionTarget,
+            candidates: [
+                { target: { serverIdentityId: 'server1', machineId: 'm1' } },
+                { target: { serverIdentityId: 'server1', machineId: 'm2' } },
+                { target: { serverIdentityId: 'server2', machineId: 'm3' } },
+            ],
+            selectTarget: (target: { serverIdentityId: string; machineId: string }) => {
+                const machineNames: Record<string, string> = {
+                    m1: 'Machine One',
+                    m2: 'Machine Two',
+                    m3: 'Machine Three',
+                };
+                const displayName = machineNames[target.machineId] ?? target.machineId;
+                administrationTargetState.selectedTarget = target;
+                administrationTargetState.executionTarget = {
+                    target,
+                    serverId: target.serverIdentityId,
+                    machine: {
+                        id: target.machineId,
+                        metadata: {
+                            displayName,
+                            host: target.machineId,
+                            homeDir: `/Users/${target.machineId}`,
+                        },
+                        daemonStateVersion: 0,
+                    },
+                };
+                rerender((current) => current + 1);
+            },
+            clearTarget: () => {
+                administrationTargetState.selectedTarget = null;
+                administrationTargetState.executionTarget = null;
+                rerender((current) => current + 1);
+            },
+        };
+    },
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
 }));
 
 vi.mock('@/sync/ops', async (importOriginal) => {
@@ -647,8 +778,8 @@ vi.mock('@/agents/catalog/localAuth/agentLocalAuthCatalog', () => ({
 vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
     getPermissionModeLabelForAgentType: () => 'Ask',
     getPermissionModeOptionsForAgentType: () => [
-        { value: 'default', label: 'Default', description: 'Use the global default', icon: 'list-outline' },
-        { value: 'ask', label: 'Ask', description: 'Ask each time', icon: 'help-circle-outline' },
+        { value: 'default', label: 'Default', description: 'Use the global default', icon: 'list' },
+        { value: 'ask', label: 'Ask', description: 'Ask each time', icon: 'question' },
     ],
 }));
 
@@ -675,8 +806,6 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
 });
 
 vi.mock('@/components/settings/agents/AgentCliInstallItem', () => passThrough('AgentCliInstallItem'));
-
-vi.mock('@/components/contextBar/ContextBar', () => passThrough('ContextBar'));
 
 vi.mock('@/components/ui/layout/BadgeGrid', () => passThrough('BadgeGrid'));
 
@@ -720,6 +849,24 @@ async function renderPluginAgentSettingsScreen() {
     return renderScreen(React.createElement(Screen));
 }
 
+function setAdministrationExecutionTarget(machineId: string, serverId: string) {
+    const displayName = ({
+        m1: 'Machine One',
+        m2: 'Machine Two',
+        m3: 'Machine Three',
+    } as Record<string, string>)[machineId] ?? machineId;
+    administrationTargetState.selectedTarget = { serverIdentityId: serverId, machineId };
+    administrationTargetState.executionTarget = {
+        target: { serverIdentityId: serverId, machineId },
+        serverId,
+        machine: {
+            id: machineId,
+            metadata: { displayName, host: machineId, homeDir: `/Users/${machineId}` },
+            daemonStateVersion: 0,
+        },
+    };
+}
+
 function buildCanonicalBackendTargetKey(backendId: string): string {
     return resolveBackendTargetKeyV2({ kind: 'backend', backendId });
 }
@@ -742,6 +889,7 @@ describe('PluginAgentSettingsScreen', () => {
         mockInstallIntent = null;
         mockAgentModelOverride = null;
         mockAgentStaticModelsOverride = null;
+        setAdministrationExecutionTarget('m1', 'server1');
         shouldThrowOnAppPaneScope = false;
         tauriDesktopState.value = true;
         applySettingsMock.mockReset();
@@ -801,6 +949,7 @@ describe('PluginAgentSettingsScreen', () => {
             serverUrl: 'http://localhost:3000',
             generation: 1,
         };
+        serverIdentityByProfileId = { server1: 'server1' };
         activeServerSubscribers = new Set();
         useCLIDetectionMock.mockReset();
         useCLIDetectionMock.mockImplementation(() => cliDetectionState);
@@ -849,6 +998,62 @@ describe('PluginAgentSettingsScreen', () => {
         });
     });
 
+    it('uses the canonical Administration exact target for projection, CLI detection, and install', async () => {
+        setAdministrationExecutionTarget('m2', 'server-selected');
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        });
+
+        const screen = await renderPluginAgentSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        expect(screen.findByType('MachineAdministrationTargetSelector')).toBeTruthy();
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m2', expect.objectContaining({
+            serverId: 'server-selected',
+        }));
+        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m2', expect.objectContaining({
+            serverId: 'server-selected',
+        }));
+        const installer = screen.findByType('AgentCliInstallItem');
+        expect(installer.props).toMatchObject({
+            machineId: 'm2',
+            serverId: 'server-selected',
+        });
+    });
+
+    it('keeps Account Settings identity independent from the Administration daemon target for a built-in Agent', async () => {
+        activeServerSnapshot = {
+            serverId: 'account-profile-a',
+            serverUrl: 'http://account-a.example.test',
+            generation: 1,
+        };
+        serverIdentityByProfileId = {
+            'account-profile-a': 'account-identity-a',
+        };
+        setAdministrationExecutionTarget('m2', 'admin-identity-b');
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: buildBuiltInAgentSettingsProjection(),
+        });
+
+        const screen = await renderPluginAgentSettingsScreen();
+        await act(async () => {});
+        await flushHookEffects();
+
+        const { PluginDetailGenericSettingsSection } = await import(
+            '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection'
+        );
+        const settingsSection = screen.findByType(PluginDetailGenericSettingsSection);
+        expect(settingsSection.props).toMatchObject({
+            accountServerIdentityId: 'account-identity-a',
+            daemonServerIdentityId: 'admin-identity-b',
+            machineId: 'm2',
+            serverId: 'admin-identity-b',
+        });
+    });
+
     it('uses daemon merged projection inputs when resolving a plugin provider settings screen', async () => {
         mockProviderId = 'acme.review.provider';
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -856,7 +1061,7 @@ describe('PluginAgentSettingsScreen', () => {
             projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
         });
 
-        await renderPluginAgentSettingsScreen();
+        const screen = await renderPluginAgentSettingsScreen();
 
         // Flush the projection RPC -> state -> re-render before checking the projection call-site.
         await act(async () => {});
@@ -885,17 +1090,16 @@ describe('PluginAgentSettingsScreen', () => {
 
         machineContributionRegistryProjectionDescribeMock.mockClear();
 
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector');
         await act(async () => {
-            activeServerSnapshot = {
-                serverId: 'server2',
-                serverUrl: 'http://localhost:4000',
-                generation: 2,
-            };
-            emitActiveServerSnapshot(activeServerSnapshot);
+            targetSelector.props.selection.selectTarget({
+                serverIdentityId: 'server2',
+                machineId: 'm3',
+            });
         });
         await flushHookEffects();
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m1', expect.objectContaining({
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m3', expect.objectContaining({
             serverId: 'server2',
         }));
     });
@@ -910,9 +1114,12 @@ describe('PluginAgentSettingsScreen', () => {
         await act(async () => {});
         await flushHookEffects();
 
-        const contextBar = screen.findByType('ContextBar' as any);
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
         await act(async () => {
-            contextBar.props.machine.onSelect('m2');
+            targetSelector.props.selection.selectTarget({
+                serverIdentityId: 'server1',
+                machineId: 'm2',
+            });
         });
         await flushHookEffects();
 
@@ -947,9 +1154,12 @@ describe('PluginAgentSettingsScreen', () => {
         await act(async () => {});
         await flushHookEffects();
 
-        const contextBar = screen.findByType('ContextBar' as any);
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
         await act(async () => {
-            contextBar.props.machine.onSelect('m2');
+            targetSelector.props.selection.selectTarget({
+                serverIdentityId: 'server1',
+                machineId: 'm2',
+            });
         });
         await flushHookEffects();
 
@@ -1236,17 +1446,16 @@ describe('PluginAgentSettingsScreen', () => {
             resolveReload = resolve;
         }));
 
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
         await act(async () => {
-            activeServerSnapshot = {
-                serverId: 'server2',
-                serverUrl: 'http://localhost:4000',
-                generation: 2,
-            };
-            emitActiveServerSnapshot(activeServerSnapshot);
+            targetSelector.props.selection.selectTarget({
+                serverIdentityId: 'server2',
+                machineId: 'm3',
+            });
         });
         await flushHookEffects();
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m1', expect.objectContaining({
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m3', expect.objectContaining({
             serverId: 'server2',
         }));
         const loadingItems = screen.findAllByType('Item' as any);
@@ -1272,11 +1481,14 @@ describe('PluginAgentSettingsScreen', () => {
         await act(async () => {});
         await flushHookEffects();
 
-        const contextBar = screen.findByType('ContextBar' as any);
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
         machineContributionRegistryProjectionDescribeMock.mockClear();
 
         await act(async () => {
-            contextBar.props.machine.onSelect('m2');
+            targetSelector.props.selection.selectTarget({
+                serverIdentityId: 'server1',
+                machineId: 'm2',
+            });
         });
         await flushHookEffects();
 
@@ -1314,7 +1526,7 @@ describe('PluginAgentSettingsScreen', () => {
             iconAgentId: 'claude',
             title: 'Acme Headless Provider',
             subtitle: 'Plugin provider',
-            iconName: 'layers-outline',
+            iconName: 'stack-simple',
             isBuiltIn: false,
             backendTargetKey: null,
             enabled: null,
@@ -1338,7 +1550,7 @@ describe('PluginAgentSettingsScreen', () => {
             iconAgentId: 'codex',
             title: 'Acme Review Provider',
             subtitle: 'Plugin provider',
-            iconName: 'layers-outline',
+            iconName: 'stack-simple',
             isBuiltIn: false,
             backendTargetKey: null,
             enabled: null,
@@ -1504,15 +1716,16 @@ describe('PluginAgentSettingsScreen', () => {
         expect(screen.findByTestId('settings-provider-auth-login')).toBeNull();
     });
 
-    it('renders a machine-only context bar scoped to the active server machines', async () => {
+    it('renders the canonical Administration target selector instead of a route-owned machine picker', async () => {
         const screen = await renderPluginAgentSettingsScreen();
-        const contextBar = screen.findByType('ContextBar' as any);
-        expect(contextBar.props.mode).toBe('machine_only');
-        expect(contextBar.props.machine.selectedId).toBe('m1');
-        expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m1', 'm2']);
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
+        expect(targetSelector.props.selection.selectedTarget).toEqual({
+            serverIdentityId: 'server1',
+            machineId: 'm1',
+        });
     });
 
-    it('falls back to active server machines when the server-scoped machine cache is not populated yet', async () => {
+    it('keeps the canonical target when active-server machine lists are incomplete', async () => {
         machinesState = [
             { id: 'm1', metadata: { displayName: 'Machine One', host: 'm1', homeDir: '/Users/m1' } },
             { id: 'm2', metadata: { displayName: 'Machine Two', host: 'm2', homeDir: '/Users/m2' } },
@@ -1526,9 +1739,11 @@ describe('PluginAgentSettingsScreen', () => {
         };
 
         const screen = await renderPluginAgentSettingsScreen();
-        const contextBar = screen.findByType('ContextBar' as any);
-        expect(contextBar.props.machine.selectedId).toBe('m1');
-        expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m1', 'm2']);
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
+        expect(targetSelector.props.selection.selectedTarget).toEqual({
+            serverIdentityId: 'server1',
+            machineId: 'm1',
+        });
 
         expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m1', expect.objectContaining({
             serverId: 'server1',
@@ -1539,11 +1754,14 @@ describe('PluginAgentSettingsScreen', () => {
         }));
     });
 
-    it('uses the context bar machine selection for CLI detection and installability', async () => {
+    it('uses the canonical target selection for CLI detection and installability', async () => {
         const screen = await renderPluginAgentSettingsScreen();
-        const contextBar = screen.findByType('ContextBar' as any);
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
         await act(async () => {
-            contextBar.props.machine.onSelect('m2');
+            targetSelector.props.selection.selectTarget({
+                serverIdentityId: 'server1',
+                machineId: 'm2',
+            });
         });
         await flushHookEffects();
 
@@ -1567,7 +1785,7 @@ describe('PluginAgentSettingsScreen', () => {
         expect(installer.props.managedInstalled).toBe(true);
     });
 
-    it('updates the selected machine when the active server changes', async () => {
+    it('does not retarget Agent operations when the active server changes', async () => {
         const screen = await renderPluginAgentSettingsScreen();
 
         expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m1', expect.objectContaining({
@@ -1591,19 +1809,21 @@ describe('PluginAgentSettingsScreen', () => {
         });
         await flushHookEffects();
 
-        const contextBar = screen.findByType('ContextBar' as any);
-        expect(contextBar.props.machine.selectedId).toBe('m3');
-        expect(contextBar.props.machine.items.map((item: any) => item.id)).toEqual(['m3']);
+        const targetSelector = screen.findByType('MachineAdministrationTargetSelector' as any);
+        expect(targetSelector.props.selection.selectedTarget).toEqual({
+            serverIdentityId: 'server1',
+            machineId: 'm1',
+        });
 
-        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m3', expect.objectContaining({
+        expect(useCLIDetectionMock).toHaveBeenLastCalledWith('m1', expect.objectContaining({
             autoDetect: true,
             includeLoginStatus: true,
-            serverId: 'server2',
+            serverId: 'server1',
         }));
         expect(useCapabilityInstallabilityMock).toHaveBeenLastCalledWith(expect.objectContaining({
-            machineId: 'm3',
+            machineId: 'm1',
             capabilityId: 'cli.codex',
-            serverId: 'server2',
+            serverId: 'server1',
         }));
 
     });
@@ -1627,7 +1847,7 @@ describe('PluginAgentSettingsScreen', () => {
             iconAgentId: 'antigravity',
             title: 'Antigravity',
             subtitle: 'antigravity',
-            iconName: 'code-slash-outline',
+            iconName: 'code',
             isBuiltIn: true,
             backendTargetKey: antigravityTargetKey,
             enabled: false,
@@ -1757,7 +1977,7 @@ describe('PluginAgentSettingsScreen', () => {
 
         const screen = await renderPluginAgentSettingsScreen();
         const hostBefore = screen.findByType('AppPaneScopeHost' as any);
-        expect(hostBefore.props.bottomPane).toBeNull();
+        expect(hostBefore.props.bottomPaneBuiltinAdapter.render()).toBeNull();
         expect(hostBefore.props.scopeId).toBe('settings:provider:codex');
 
         await screen.pressByTestIdAsync('settings-provider-auth-login');
@@ -1776,8 +1996,9 @@ describe('PluginAgentSettingsScreen', () => {
         const rerenderedScreen = await renderPluginAgentSettingsScreen();
 
         const hostAfter = rerenderedScreen.findByType('AppPaneScopeHost' as any);
-        expect(hostAfter.props.bottomPane).toBeTruthy();
-        expect(hostAfter.props.bottomPane.props.agentId).toBe('codex');
+        const bottomPane = hostAfter.props.bottomPaneBuiltinAdapter.render();
+        expect(bottomPane).toBeTruthy();
+        expect(bottomPane.props.agentId).toBe('codex');
     });
 
     it('refreshes provider auth detection when the auth terminal pane closes', async () => {
@@ -1800,10 +2021,11 @@ describe('PluginAgentSettingsScreen', () => {
 
         const screen = await renderPluginAgentSettingsScreen();
         const host = screen.findByType('AppPaneScopeHost' as any);
-        expect(host.props.bottomPane).toBeTruthy();
+        const bottomPane = host.props.bottomPaneBuiltinAdapter.render();
+        expect(bottomPane).toBeTruthy();
 
         await act(async () => {
-            host.props.bottomPane.props.onRequestClose();
+            bottomPane.props.onRequestClose();
         });
         await flushHookEffects();
 
@@ -1834,10 +2056,11 @@ describe('PluginAgentSettingsScreen', () => {
 
         const screen = await renderPluginAgentSettingsScreen();
         const host = screen.findByType('AppPaneScopeHost' as any);
-        expect(host.props.bottomPane).toBeTruthy();
+        const bottomPane = host.props.bottomPaneBuiltinAdapter.render();
+        expect(bottomPane).toBeTruthy();
 
         await act(async () => {
-            host.props.bottomPane.props.onTerminalExit();
+            bottomPane.props.onTerminalExit();
         });
         await flushHookEffects();
 
@@ -1945,7 +2168,7 @@ describe('PluginAgentSettingsScreen', () => {
             iconAgentId: 'claude',
             title: 'Acme Review Backend',
             subtitle: 'acme.review.backend',
-            iconName: 'code-slash-outline',
+            iconName: 'code',
             isBuiltIn: false,
             backendTargetKey: null,
             enabled: null,
@@ -1969,7 +2192,7 @@ describe('PluginAgentSettingsScreen', () => {
             iconAgentId: null,
             title: 'Acme Native',
             subtitle: 'acme.native',
-            iconName: 'terminal-outline',
+            iconName: 'terminal',
             isBuiltIn: false,
             backendTargetKey: null,
             enabled: true,

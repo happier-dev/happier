@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,6 +7,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type PromptDocOption = Readonly<{
     id: string;
@@ -28,7 +28,7 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
         props.promptDocs.map((doc) => ({
             id: doc.id,
             title: doc.title,
-            icon: <Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />,
+            icon: <Icon name="file-text" size={20} color={theme.colors.text.secondary} />,
         }))
     ), [props.promptDocs, theme.colors.text.secondary]);
 
@@ -48,7 +48,7 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
                 itemTrigger={{
                     title: t('promptLibrary.templateTargetPromptLabel'),
                     subtitle: selectedPromptTitle,
-                    icon: <Ionicons name="document-text-outline" size={29} color={theme.colors.accent.blue} />,
+                    icon: <Icon name="file-text" size={29} color={theme.colors.accent.blue} />,
                 }}
                 rowKind="item"
                 connectToTrigger
@@ -58,7 +58,7 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
                 testID="promptTemplate.target.edit"
                 title={t('promptLibrary.editSelectedPrompt')}
                 subtitle={props.selectedArtifactId ? selectedPromptTitle : t('promptLibrary.editSelectedPromptDisabled')}
-                icon={<Ionicons name="pencil-outline" size={22} color={theme.colors.text.secondary} />}
+                icon={<Icon name="pencil" size={20} color={theme.colors.text.secondary} />}
                 disabled={!props.selectedArtifactId}
                 onPress={() => {
                     if (!props.selectedArtifactId) return;
@@ -69,7 +69,7 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
                 testID="promptTemplate.target.new"
                 title={t('promptLibrary.addPrompt')}
                 subtitle={t('promptLibrary.addPromptSubtitle')}
-                icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
+                icon={<Icon name="plus-circle" size={20} color={theme.colors.accent.blue} />}
                 onPress={() => router.push('/(app)/settings/prompts/docs/new')}
             />
         </ItemGroup>

@@ -1,6 +1,6 @@
+import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { usePathname, useRouter } from 'expo-router';
 
@@ -41,9 +41,12 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'connected-services/[serviceId]', titleKey: 'connectedServices.fallbackName' },
     { name: 'connected-services/account', titleKey: 'connectedServices.profile.profileId' },
     { name: 'connected-services/provider-state-sharing', titleKey: 'connectedServices.providerStateSharing.title' },
-    { name: 'connected-services/group', titleKey: 'connectedServices.detail.groupDetail.routeTitle' },
-    { name: 'connected-services/oauth', titleKey: 'connectedServices.detail.addOauthProfileTitle' },
-    { name: 'connected-services/profile', titleKey: 'connectedServices.profile.profileId' },
+    // Legacy deep-link redirects (`ConnectedAccountLegacyRouteRedirect`). They
+    // render no screen of their own, so their chrome title is the section's, not
+    // the name of the screen each one used to be.
+    { name: 'connected-services/group', titleKey: 'connectedServices.title' },
+    { name: 'connected-services/oauth', titleKey: 'connectedServices.title' },
+    { name: 'connected-services/profile', titleKey: 'connectedServices.title' },
     { name: 'desktop', titleKey: 'settingsDesktop.title' },
     { name: 'diagnosis', titleKey: 'diagnosis.title' },
     { name: 'features', titleKey: 'settings.features' },
@@ -60,7 +63,9 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'notifications/push', titleKey: 'settingsNotifications.push.troubleshootTitle' },
     { name: 'pets', titleKey: 'settingsPets.title' },
     { name: 'plugins/index', titleKey: 'settingsPlugins.title' },
+    { name: 'plugins/webhooks', titleKey: 'settingsPlugins.title' },
     { name: 'plugins/[pluginId]', titleKey: 'settingsPlugins.detailTitle' },
+    { name: 'plugins/[pluginId]/[pageId]', titleKey: 'settingsPlugins.detailTitle' },
     { name: 'plugins/panels', titleKey: 'settingsPlugins.appPanelsTitle' },
     { name: 'profiles', titleKey: 'settingsFeatures.profiles' },
     { name: 'prompts/index', titleKey: 'settings.prompts' },
@@ -115,6 +120,10 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'system-status', titleKey: 'settings.systemStatus' },
     { name: 'usage', titleKey: 'settings.usage' },
     { name: 'voice', titleKey: 'settings.voiceAssistant' },
+    { name: 'voice/dictation', titleKey: 'settingsVoice.intents.dictation.title' },
+    { name: 'voice/conversations', titleKey: 'settingsVoice.intents.conversations.title' },
+    { name: 'voice/privacy', titleKey: 'settingsVoice.intents.privacy.title' },
+    { name: 'voice/advanced', titleKey: 'settingsVoice.intents.advanced.title' },
     { name: 'voice-history', titleKey: 'settingsVoice.history.title' },
 ] as const;
 

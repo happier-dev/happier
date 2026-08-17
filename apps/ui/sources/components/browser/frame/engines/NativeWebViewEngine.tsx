@@ -179,7 +179,10 @@ export function NativeWebViewEngine(props: Readonly<{
         });
     }, [props.diagnostics, props.javaScriptEnabled]);
 
-    React.useEffect(() => {
+    // Teardown runs in the layout phase so the bridge owner can send its one
+    // terminal message through this exact WebView before React clears the
+    // native ref and the delivery primitive is returned.
+    React.useLayoutEffect(() => {
         const automation = props.automation;
         if (!automation || props.javaScriptEnabled === false) return;
         if (automation.supportedActions.length === 0) return;
@@ -225,6 +228,23 @@ export function NativeWebViewEngine(props: Readonly<{
             });
         };
     }, [props.automation, props.javaScriptEnabled]);
+
+    // EU-8: the host->frame push direction on native. The WebView has no
+    // `contentWindow`, so the delivery primitive is the SAME injected
+    // `MessageEvent` dispatch the response path already uses — one script
+    // builder, so a push and a reply cannot arrive in two different shapes.
+    // Scripts disabled means nothing can receive the message, so nothing is
+    // attached.
+    // Keep the lent delivery primitive available through terminal bridge
+    // disposal. Passive cleanup runs after React clears the native ref, which
+    // would drop the canonical disconnect addressed to this incumbent view.
+    React.useLayoutEffect(() => {
+        const attach = props.nativeMessageBridge?.attachHostMessages;
+        if (!attach || props.javaScriptEnabled === false) return;
+        return attach((message: unknown) => {
+            webViewRef.current?.injectJavaScript?.(buildNativeBridgeResponseScript(message));
+        });
+    }, [props.javaScriptEnabled, props.nativeMessageBridge]);
 
     const handleWebViewMessage = React.useCallback((event: NativeWebViewCallbackEvent) => {
         const diagnostics = props.diagnostics;

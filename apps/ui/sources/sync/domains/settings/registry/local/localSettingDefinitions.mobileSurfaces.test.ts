@@ -40,4 +40,32 @@ describe('LOCAL_SETTING_DEFINITIONS mobile surfaces', () => {
         expect(schema.safeParse({ 'session-1': 'browser-preview' }).success).toBe(false);
         expect(schema.safeParse({ 'session-1': 'agents' }).success).toBe(false);
     });
+
+    it('bounds persisted cockpit pins to three qualified non-empty surface ids', () => {
+        const schema = LOCAL_SETTING_DEFINITIONS.sessionCockpitPinnedSurfaceIds.schema;
+
+        expect(schema.safeParse(['plugin:acme.one:panel', 'browser', 'services']).success).toBe(true);
+        expect(schema.safeParse(['one', 'two', 'three', 'four']).success).toBe(false);
+        expect(schema.safeParse(['']).success).toBe(false);
+    });
+
+    it('persists bounded compact destination order and visibility independently of route state', () => {
+        const definitions = LOCAL_SETTING_DEFINITIONS as unknown as Record<string, {
+            schema?: Readonly<{ safeParse: (value: unknown) => Readonly<{ success: boolean }> }>;
+        }>;
+        const schema = definitions.compactAppDestinationPreferencesV1?.schema;
+
+        expect(schema?.safeParse({
+            orderedDestinationIds: ['plugin:acme.notes:notes'],
+            hiddenDestinationIds: ['rightSidebarTab:plugin:acme.review:review'],
+        }).success).toBe(true);
+        expect(schema?.safeParse({
+            orderedDestinationIds: [''],
+            hiddenDestinationIds: [],
+        }).success).toBe(false);
+        expect(schema?.safeParse({
+            orderedDestinationIds: Array.from({ length: 129 }, (_unused, index) => `plugin:acme:${index}`),
+            hiddenDestinationIds: [],
+        }).success).toBe(false);
+    });
 });

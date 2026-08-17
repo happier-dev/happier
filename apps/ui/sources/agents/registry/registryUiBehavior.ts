@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react';
 import {
+    buildBackendTargetKeyV2,
+    readAcpConfiguredBackendV1FromMetadata,
     readBackendTargetRefV2,
+    SessionModelSelectionIntentV1Schema,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     AccountProfile,
@@ -25,6 +28,8 @@ import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilitie
 import type { TranslationKey } from '@/text';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import type { GoalActionCapabilities } from '@/components/sessions/workState/goalActionVisibility';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
@@ -102,8 +107,10 @@ export type AgentSessionComposerNonSteerableReason = 'provider_config_change_ref
 
 export type AgentSessionComposerNonSteerablePayloadContext = Readonly<{
     agentId: AgentLookupId;
+    agentTargetKey: string;
     session: Session;
     metaOverrides?: Record<string, unknown> | null;
+    currentRunnerProcessIdentity: CurrentSessionRunnerProcessIdentity | null;
 }>;
 
 export type AgentContextWindowBehavior = Readonly<{
@@ -194,11 +201,6 @@ export type AgentUiBehavior = Readonly<{
         }>) => unknown;
     }>;
     contextWindow?: AgentContextWindowBehavior;
-    debug?: Readonly<{
-        resolveProviderSessionArtifactPath?: (ctx: Readonly<{
-            metadata: unknown;
-        }>) => string | null;
-    }>;
     message?: Readonly<{
         buildOverrides?: (ctx: Readonly<{
             session: unknown;
@@ -401,7 +403,6 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
         ...(a.contextWindow || b.contextWindow
             ? { contextWindow: { ...(a.contextWindow ?? {}), ...(b.contextWindow ?? {}) } }
             : {}),
-        ...(a.debug || b.debug ? { debug: { ...(a.debug ?? {}), ...(b.debug ?? {}) } } : {}),
         ...(message ? { message } : {}),
         ...(a.newSession || b.newSession ? { newSession: { ...(a.newSession ?? {}), ...(b.newSession ?? {}) } } : {}),
         ...(a.externalSessions || b.externalSessions
@@ -558,34 +559,48 @@ export function isAttachedSessionTerminalAvailableForSession(session: Session): 
     return isAvailable?.({ agentId, session }) === true;
 }
 
-export function resolveProviderSessionArtifactPathFromUiBehavior(metadata: unknown): string | null {
-    const agentId = resolveAgentIdFromSessionMetadata(metadata);
-    if (agentId) {
-        return resolveAgentUiBehavior(agentId).debug?.resolveProviderSessionArtifactPath?.({ metadata }) ?? null;
-    }
-
-    for (const candidateAgentId of CANONICAL_AGENT_IDS) {
-        const artifactPath = CANONICAL_AGENTS_UI_BEHAVIOR[candidateAgentId]
-            .debug
-            ?.resolveProviderSessionArtifactPath?.({ metadata });
-        if (artifactPath) return artifactPath;
-    }
-    return null;
-}
-
 export function classifyAgentSessionComposerNonSteerablePayload(opts: {
     session: Session | null;
+    agentTargetKey?: string | null;
     metaOverrides?: Record<string, unknown> | null;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
 }): AgentSessionComposerNonSteerableReason | null {
     const agentId = resolveAgentIdFromSessionMetadata(
         opts.session ? readSessionOwnerMetadataView(opts.session) : null,
     );
     if (!opts.session || !agentId) return null;
+    const ownerMetadata = readSessionOwnerMetadataView(opts.session);
+    const explicitAgentTargetKey = typeof opts.agentTargetKey === 'string'
+        ? opts.agentTargetKey.trim()
+        : '';
+    const canonicalIntent = ownerMetadata
+        && typeof ownerMetadata === 'object'
+        && !Array.isArray(ownerMetadata)
+        ? SessionModelSelectionIntentV1Schema.safeParse(
+            (ownerMetadata as Readonly<Record<string, unknown>>).modelSelectionIntentV1,
+        )
+        : null;
+    const configuredBackend = readAcpConfiguredBackendV1FromMetadata(ownerMetadata);
+    const agentTargetKey = explicitAgentTargetKey
+        || (canonicalIntent?.success
+            ? canonicalIntent.data.selection?.agentTargetKey ?? ''
+            : '')
+        || (configuredBackend
+            ? buildBackendTargetKeyV2({
+                kind: 'backend',
+                backendId: configuredBackend.backendId,
+                configuredBackendId: configuredBackend.backendId,
+                sourceKind: 'configured',
+            })
+            : '')
+        || buildAgentUniverseBackendTargetKey(agentId);
 
     return resolveAgentUiBehavior(agentId).sessionComposer?.classifyNonSteerablePayload?.({
         agentId,
+        agentTargetKey,
         session: opts.session,
         metaOverrides: opts.metaOverrides ?? null,
+        currentRunnerProcessIdentity: opts.currentRunnerProcessIdentity ?? null,
     }) ?? null;
 }
 

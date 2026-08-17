@@ -1,30 +1,14 @@
 export {
     PluginSurfaceHost,
     PluginSurfacePlacementHost,
+    PluginSettingsPageHost,
 } from './PluginSurfaceHost';
-export type { PluginSurfaceHostApi } from './PluginSurfaceHost';
+// §3.1: a placement supplies FACTS (`binding`), never a composed Host API. The
+// mounted API type is deliberately not re-exported here — the only way to obtain
+// one is `createBoundPluginSurfaceController`, so a mount cannot type a private
+// composition against the host's barrel.
 export { PluginSurfacePlacementStack } from './PluginSurfacePlacementStack';
-export { resolvePluginHostRendererComponent } from './hostRenderers';
-export type {
-    PluginHostRendererDescriptorDisplay,
-    PluginHostRendererProps,
-} from './hostRenderers';
 export {
-    PLUGIN_UI_ICON_FALLBACK_IONICON,
-    PLUGIN_UI_ICON_FALLBACK_OCTICON,
-    PLUGIN_UI_ICON_TOKENS,
-    resolvePluginUiIoniconName,
-    resolvePluginUiOcticonName,
+    PLUGIN_UI_ICON_FALLBACK,
+    resolvePluginUiIconName,
 } from './iconToken/resolvePluginUiIconToken';
-export type {
-    PluginUiIconTokenName,
-    PluginUiIoniconName,
-    PluginUiOcticonName,
-} from './iconToken/resolvePluginUiIconToken';
-export { executePluginUiAction } from './executePluginUiAction';
-export type {
-    ExecutePluginUiActionInput,
-    ExecutePluginUiActionResult,
-    PluginUiActionExecutorRunner,
-    PluginUiActionHostHandlers,
-} from './executePluginUiAction';

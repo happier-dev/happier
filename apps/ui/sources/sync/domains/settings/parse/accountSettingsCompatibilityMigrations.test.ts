@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { accountSettingsParse } from '@happier-dev/protocol';
+
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -119,19 +121,17 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         );
     });
 
-    it('migrates legacy backend CLI source preferences into the canonical target-keyed map', () => {
+    it('retains Protocol-migrated backend CLI source preferences without a second UI migration', () => {
+        const input = {
+            backendCliSourcePreferenceById: {
+                codex: 'managed-first',
+                gemini: 'system-first',
+                invalid: 'ignored',
+            },
+        };
         const migrated = applyAccountSettingsCompatibilityMigrations({
-            input: {
-                backendCliSourcePreferenceById: {
-                    codex: 'managed-first',
-                    gemini: 'system-first',
-                    invalid: 'ignored',
-                },
-            },
-            settings: {
-                ...settingsDefaults,
-                backendCliSourcePreferenceByTargetKey: {},
-            },
+            input,
+            settings: accountSettingsParse(input),
             inputSchemaVersion: 6,
             supportedSchemaVersion: 6,
         });

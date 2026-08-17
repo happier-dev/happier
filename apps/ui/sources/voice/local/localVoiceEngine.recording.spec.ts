@@ -22,7 +22,7 @@ describe('local voice engine recording lifecycle', () => {
         expect(getLocalVoiceState().error).toBe('recording_start_failed');
     });
 
-    it('throws when STT base URL is missing', async () => {
+    it('maps a blank qualified STT endpoint to the daemon provider failure', async () => {
         const storage = await getStorage();
         storage.__setState({
             settings: {
@@ -31,25 +31,30 @@ describe('local voice engine recording lifecycle', () => {
                     ...storage.getState().settings.voice,
                     providers: {
                         ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: '',
-                            },
+                        'happier.voice.openai-compat/stt': { schemaVersion: 2, config: {
+                            ...storage.getState().settings.voice.providers['happier.voice.openai-compat/stt'].config,
+                            baseUrl: '',
                         } },
                     },
                 },
             },
         });
+        const fallback = machineRpcWithServerScope.getMockImplementation();
+        machineRpcWithServerScope.mockImplementation(async (request: any) => {
+            if (request?.method === RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE) {
+                return { ok: false, errorCode: 'provider_unavailable' };
+            }
+            if (!fallback) throw new Error('missing local voice machine RPC fallback');
+            return await fallback(request);
+        });
 
         const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
-        await expect(toggleLocalVoiceTurn('s1')).rejects.toThrow('missing_stt_base_url');
+        await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
 
         expect(globalThis.fetch).toHaveBeenCalledTimes(0);
         expect(getLocalVoiceState().status).toBe('idle');
-        expect(getLocalVoiceState().error).toBe('missing_stt_base_url');
+        expect(getLocalVoiceState().error).toBe('stt_provider_unavailable');
     });
 
     it('resets to idle when STT request throws (network error)', async () => {
@@ -78,12 +83,10 @@ describe('local voice engine recording lifecycle', () => {
     it('maps a daemon STT request timeout to a recoverable idle failure', async () => {
         const fallback = machineRpcWithServerScope.getMockImplementation();
         machineRpcWithServerScope.mockImplementation(async (request: any) => {
-            if (request?.method === RPC_METHODS.DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE) {
+            if (request?.method === RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE) {
                 return {
                     ok: false,
-                    error: 'request_timeout',
                     errorCode: 'request_timeout',
-                    retryable: true,
                 };
             }
             if (!fallback) throw new Error('missing local voice machine RPC fallback');

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -8,6 +7,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 import {
     isDesktopPetOverlayVisibilityModeOverride,
@@ -43,7 +43,7 @@ export function PetsDesktopOverlaySettingsSection(props: PetsDesktopOverlaySetti
                 testID="settings-pets-desktop-overlay-enabled"
                 title={t('settingsPets.desktopOverlayEnabledTitle')}
                 subtitle={t('settingsPets.desktopOverlayEnabledSubtitle')}
-                icon={<Ionicons name="desktop-outline" size={25} color={theme.colors.accent.blue} />}
+                icon={<Icon name="desktop" size={24} color={theme.colors.accent.blue} />}
                 rightElement={(
                     <Switch
                         value={props.desktopOverlayDefaultEnabled}
@@ -66,7 +66,7 @@ export function PetsDesktopOverlaySettingsSection(props: PetsDesktopOverlaySetti
                     itemTrigger={{
                         title: t('settingsPets.desktopOverlayDeviceOverrideTitle'),
                         subtitle: t('settingsPets.deviceOverrideSubtitle'),
-                        icon: <Ionicons name="hardware-chip-outline" size={25} color={theme.colors.accent.blue} />,
+                        icon: <Icon name="cpu" size={24} color={theme.colors.accent.blue} />,
                         itemProps: { showDivider: false },
                     }}
                     rowKind="item"
@@ -86,7 +86,7 @@ export function PetsDesktopOverlaySettingsSection(props: PetsDesktopOverlaySetti
                     itemTrigger={{
                         title: t('settingsPets.desktopOverlayVisibilityModeTitle'),
                         subtitle: t('settingsPets.desktopOverlayVisibilityModeSubtitle'),
-                        icon: <Ionicons name="eye-outline" size={25} color={theme.colors.accent.blue} />,
+                        icon: <Icon name="eye" size={24} color={theme.colors.accent.blue} />,
                     }}
                     rowKind="item"
                 />
@@ -95,7 +95,7 @@ export function PetsDesktopOverlaySettingsSection(props: PetsDesktopOverlaySetti
                 testID="settings-pets-desktop-overlay-reset-position"
                 title={t('settingsPets.desktopOverlayResetPositionTitle')}
                 subtitle={t('settingsPets.desktopOverlayResetPositionSubtitle')}
-                icon={<Ionicons name="locate-outline" size={25} color={theme.colors.accent.orange} />}
+                icon={<Icon name="crosshair" size={24} color={theme.colors.accent.orange} />}
                 onPress={props.onResetPosition}
             />
         </ItemGroup>

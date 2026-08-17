@@ -4,11 +4,14 @@ import Fuse from 'fuse.js';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 import { SETTINGS_PAGE_CATALOG, flattenSettingsPageCatalog } from '../pageCatalog';
+import { SETTINGS_ROUTES } from '../routes';
 import type { ResolvedSettingsPageNode, SettingsPageId, SettingsPageNode, SettingsPageSearchResult } from '../types';
+import { mergeAdmittedPluginSettingsPages } from './pluginSettingsPageCatalog';
 
 type ResolvedCatalog = Readonly<{
     tree: readonly ResolvedSettingsPageNode[];
@@ -53,10 +56,17 @@ function resolveTree(nodes: readonly SettingsPageNode[], ctx: Readonly<{
         out.push({
             id: node.id,
             titleKey: node.titleKey,
+            title: node.title ?? (node.titleKey ? String(t(node.titleKey)) : node.id),
             subtitleKey: node.subtitleKey,
+            ...(node.subtitle
+                ? { subtitle: node.subtitle }
+                : node.subtitleKey
+                    ? { subtitle: String(t(node.subtitleKey)) }
+                    : {}),
             route: node.route,
             keywords: node.keywords ?? [],
             icon: node.icon,
+            pluginSettingsPage: node.pluginSettingsPage,
             ...(children && children.length > 0 ? { children } : {}),
         });
     }
@@ -81,8 +91,8 @@ function buildSearchDocs(nodes: readonly ResolvedSettingsPageNode[]): SettingsPa
     const out: SettingsPageSearchDoc[] = [];
     const visit = (items: readonly ResolvedSettingsPageNode[], ancestors: readonly string[]) => {
         for (const item of items) {
-            const title = String(t(item.titleKey));
-            const subtitle = item.subtitleKey ? String(t(item.subtitleKey)) : '';
+            const title = item.title ?? (item.titleKey ? String(t(item.titleKey)) : item.id);
+            const subtitle = item.subtitle ?? (item.subtitleKey ? String(t(item.subtitleKey)) : '');
             const nextAncestors = title ? [...ancestors, title] : ancestors;
 
             if (typeof item.route === 'string' && item.route.length > 0) {
@@ -106,6 +116,16 @@ function buildSearchDocs(nodes: readonly ResolvedSettingsPageNode[]): SettingsPa
     return out;
 }
 
+function pathnameIsAtOrBelowRoute(pathname: string, route: string): boolean {
+    return pathname === route || pathname.startsWith(`${route}/`);
+}
+
+function isQualifiedPluginSettingsPagePathname(pathname: string): boolean {
+    const prefix = `${SETTINGS_ROUTES.plugins}/`;
+    if (!pathname.startsWith(prefix)) return false;
+    return pathname.slice(prefix.length).split('/').filter(Boolean).length >= 2;
+}
+
 function resolveActivePageIdFromPathname(
     pathname: string,
     flat: readonly ResolvedSettingsPageNode[]
@@ -113,11 +133,18 @@ function resolveActivePageIdFromPathname(
     const exact = flat.find((node) => node.route && node.route === pathname);
     if (exact) return exact.id;
 
-    // Fallback: choose the longest matching prefix route.
+    // The generic plugin Settings route is a qualified leaf identity. If its
+    // admission has retired, retain no active catalog page instead of making
+    // the unavailable route look like an admitted page or the Marketplace.
+    if (isQualifiedPluginSettingsPagePathname(pathname)) return null;
+
+    // Fallback: choose the longest Settings route on a segment boundary. The
+    // Settings overview is an exact-only index page, not an owner for every
+    // unmatched /settings child route.
     let best: ResolvedSettingsPageNode | null = null;
     for (const node of flat) {
-        if (!node.route) continue;
-        if (!pathname.startsWith(node.route)) continue;
+        if (!node.route || node.route === SETTINGS_ROUTES.general) continue;
+        if (!pathnameIsAtOrBelowRoute(pathname, node.route)) continue;
         if (!best || (best.route && node.route.length > best.route.length)) {
             best = node;
         }
@@ -127,6 +154,7 @@ function resolveActivePageIdFromPathname(
 
 export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
     const pathname = usePathname();
+    const appShellPluginUiProjection = useAppShellPluginUiProjection();
     const useProfiles = Boolean(useSetting('useProfiles'));
     const devModeEnabled = Boolean(useLocalSetting('devModeEnabled'));
     const tauriDesktop = isTauriDesktop();
@@ -139,9 +167,11 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
+    const petsCompanionEnabled = useFeatureEnabled('pets.companion');
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const providersEnabled = useFeatureEnabled('providers');
     const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
+    const locale = getPreferredLanguage();
 
     const featureSnapshot = React.useMemo(() => {
         return {
@@ -153,6 +183,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
             'attachments.uploads': attachmentsUploadsEnabled,
             'prompts.library': promptsLibraryEnabled,
             'mcp.servers': mcpServersEnabled,
+            'pets.companion': petsCompanionEnabled,
             'remoteHosts.management': remoteHostsManagementEnabled,
             providers: providersEnabled,
             'sessions.direct': externalSessionsEnabled,
@@ -163,6 +194,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
         externalSessionsEnabled,
         mcpServersEnabled,
         memorySearchEnabled,
+        petsCompanionEnabled,
         promptsLibraryEnabled,
         providersEnabled,
         remoteHostsManagementEnabled,
@@ -172,13 +204,25 @@ export function useResolvedSettingsPageCatalog(): ResolvedCatalog {
     ]);
 
     const tree = React.useMemo(() => {
-        return resolveTree(SETTINGS_PAGE_CATALOG, {
+        const catalog = mergeAdmittedPluginSettingsPages({
+            baseCatalog: SETTINGS_PAGE_CATALOG,
+            projection: appShellPluginUiProjection.pluginUiProjection,
+            locale,
+        });
+        return resolveTree(catalog, {
             useProfiles,
             devModeEnabled,
             tauriDesktop,
             features: featureSnapshot,
         });
-    }, [devModeEnabled, featureSnapshot, tauriDesktop, useProfiles]);
+    }, [
+        appShellPluginUiProjection.pluginUiProjection,
+        devModeEnabled,
+        featureSnapshot,
+        locale,
+        tauriDesktop,
+        useProfiles,
+    ]);
 
     const flat = React.useMemo(() => flattenResolvedTree(tree), [tree]);
 

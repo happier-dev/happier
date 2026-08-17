@@ -1,13 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -17,12 +16,18 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 import { createDefaultVoiceHistoryConsumer } from './defaultVoiceHistoryConsumer';
 import {
   isVoiceHistoryClearActiveCallError,
-  VoiceHistoryOperationSupersededError,
   type VoiceHistoryExportArtifact,
   type VoiceHistoryRow,
   type VoiceHistorySnapshot,
 } from './voiceHistoryConsumer';
 import { saveVoiceHistoryExportArtifact } from './voiceHistoryExportTarget';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ExternalSessionOperationAccessibilityStatus } from '@/components/sessions/external/progress/ExternalSessionOperationAccessibilityStatus';
+import {
+  isVoiceHistoryOperationSupersededError,
+  resolveVoiceHistoryInitialLoadFailureState,
+  type VoiceHistoryInitialLoadFailureState,
+} from './voiceHistoryInitialLoadState';
 
 type VoiceHistoryConsumer = ReturnType<typeof createDefaultVoiceHistoryConsumer>;
 
@@ -31,7 +36,7 @@ type VoiceHistoryScreenProps = Readonly<{
   saveExportArtifact?: (artifact: VoiceHistoryExportArtifact) => Promise<void>;
 }>;
 
-type InitialLoadState = 'loading' | 'ready' | 'error' | 'superseded';
+type InitialLoadState = 'loading' | 'ready' | VoiceHistoryInitialLoadFailureState;
 
 const EMPTY_SNAPSHOT: VoiceHistorySnapshot = Object.freeze({
   sessionId: null,
@@ -50,19 +55,12 @@ function formatVoiceHistoryTimestamp(createdAt: number): string {
   });
 }
 
-function isSupersededError(error: unknown): boolean {
-  return error instanceof VoiceHistoryOperationSupersededError
-    || (
-      typeof error === 'object'
-      && error !== null
-      && 'code' in error
-      && error.code === 'voice_history_operation_superseded'
-    );
-}
-
 const VoiceHistoryRowView = React.memo(function VoiceHistoryRowView(
   props: Readonly<{ row: VoiceHistoryRow }>,
 ) {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const rowMaxWidthStyle = useLayoutMaxWidthStyle();
   const roleLabel = props.row.role === 'user'
     ? t('settingsVoice.history.roleYou')
     : t('settingsVoice.history.roleAssistant');
@@ -75,7 +73,7 @@ const VoiceHistoryRowView = React.memo(function VoiceHistoryRowView(
   ].join('. ');
 
   return (
-    <View style={styles.rowOuter}>
+    <View style={[styles.rowOuter, rowMaxWidthStyle]}>
       <View
         testID={`voice-history-row-${props.row.id}`}
         accessible
@@ -96,16 +94,20 @@ const VoiceHistoryRowView = React.memo(function VoiceHistoryRowView(
 
 function VoiceHistoryStateMessage(props: Readonly<{
   testID: string;
-  icon: React.ComponentProps<typeof Ionicons>['name'];
+  icon: IconName;
   title: string;
   body: string;
+  actionMessage?: string | null;
   retry?: (() => void) | null;
 }>) {
   const { theme } = useUnistyles();
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const stateMaxWidthStyle = useLayoutMaxWidthStyle();
   return (
-    <View testID={props.testID} style={styles.stateOuter}>
+    <View testID={props.testID} style={[styles.stateOuter, stateMaxWidthStyle]}>
       <View style={styles.stateCard}>
-        <Ionicons name={props.icon} size={30} color={theme.colors.text.secondary} />
+        <Icon name={props.icon} size={29} color={theme.colors.text.secondary} />
         <Text style={styles.stateTitle}>{props.title}</Text>
         <Text style={styles.stateBody}>{props.body}</Text>
         {props.retry ? (
@@ -119,7 +121,23 @@ function VoiceHistoryStateMessage(props: Readonly<{
           />
         ) : null}
       </View>
+      {props.actionMessage ? <VoiceHistoryActionMessage message={props.actionMessage} /> : null}
     </View>
+  );
+}
+
+function VoiceHistoryActionMessage(props: Readonly<{ message: string }>) {
+  return (
+    <>
+      <Text testID="voice-history-action-message" style={styles.actionMessage}>
+        {props.message}
+      </Text>
+      <ExternalSessionOperationAccessibilityStatus
+        announcement={props.message}
+        statusTestID="voice-history-operation-status"
+        transitionKey={props.message}
+      />
+    </>
   );
 }
 
@@ -127,6 +145,9 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
   props: VoiceHistoryScreenProps,
 ) {
   const { theme } = useUnistyles();
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const headerMaxWidthStyle = useLayoutMaxWidthStyle();
   const [consumer] = React.useState<VoiceHistoryConsumer>(
     () => props.consumer ?? createDefaultVoiceHistoryConsumer(),
   );
@@ -142,7 +163,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
   const requestEpochRef = React.useRef(0);
 
   const showOperationError = React.useCallback((error: unknown, fallback: string) => {
-    if (isSupersededError(error)) {
+    if (isVoiceHistoryOperationSupersededError(error)) {
       setLoadState('superseded');
       return;
     }
@@ -165,7 +186,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
       setLoadState('ready');
     } catch (error) {
       if (requestEpoch !== requestEpochRef.current) return;
-      setLoadState(isSupersededError(error) ? 'superseded' : 'error');
+      setLoadState(resolveVoiceHistoryInitialLoadFailureState(error));
     }
   }, [consumer, query]);
 
@@ -190,9 +211,12 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     if (loadingOlder) return;
     setLoadingOlder(true);
     setActionMessage(null);
+    const requestedQuery = queryRef.current;
     try {
-      await consumer.loadOlder(queryRef.current);
-      setSnapshot(consumer.read(queryRef.current));
+      const next = await consumer.loadOlder(requestedQuery);
+      setSnapshot(queryRef.current === requestedQuery
+        ? next
+        : consumer.read(queryRef.current));
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.loadOlderFailed'));
     } finally {
@@ -257,10 +281,21 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     return (
       <VoiceHistoryStateMessage
         testID="voice-history-error"
-        icon="cloud-offline-outline"
+        icon="cloud-slash"
         title={t('settingsVoice.history.errorTitle')}
         body={t('settingsVoice.history.errorBody')}
         retry={() => { void open(); }}
+      />
+    );
+  }
+
+  if (loadState === 'upgrade_required') {
+    return (
+      <VoiceHistoryStateMessage
+        testID="voice-history-upgrade-required"
+        icon="arrow-up"
+        title={t('settingsVoice.history.upgradeRequiredTitle')}
+        body={t('settingsVoice.history.upgradeRequiredBody')}
       />
     );
   }
@@ -269,7 +304,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     return (
       <VoiceHistoryStateMessage
         testID="voice-history-superseded"
-        icon="swap-horizontal-outline"
+        icon="arrows-left-right"
         title={t('settingsVoice.history.supersededTitle')}
         body={t('settingsVoice.history.supersededBody')}
         retry={() => { void open(); }}
@@ -281,9 +316,10 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     return (
       <VoiceHistoryStateMessage
         testID="voice-history-empty"
-        icon="time-outline"
+        icon="clock"
         title={t('settingsVoice.history.emptyTitle')}
         body={t('settingsVoice.history.emptyBody')}
+        actionMessage={actionMessage}
       />
     );
   }
@@ -292,14 +328,14 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
     && snapshot.loadedRowCount > 0
     && snapshot.rows.length === 0;
   const listHeader = (
-    <View style={styles.header}>
+    <View style={[styles.header, headerMaxWidthStyle]}>
       <ItemGroup
         title={t('settingsVoice.history.searchTitle')}
         footer={t('settingsVoice.history.searchFooter')}
       >
         <View style={styles.searchFieldWrap}>
-          <Ionicons
-            name="search-outline"
+          <Icon
+            name="magnifying-glass"
             size={20}
             color={theme.colors.text.secondary}
           />
@@ -323,7 +359,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
             ? t('settingsVoice.history.exporting')
             : t('settingsVoice.history.exportTitle')}
           subtitle={t('settingsVoice.history.exportSubtitle')}
-          icon={<Ionicons name="download-outline" size={22} color={theme.colors.text.secondary} />}
+          icon={<Icon name="download" size={20} color={theme.colors.text.secondary} />}
           accessibilityRole="button"
           accessibilityLabel={t('settingsVoice.history.exportTitle')}
           disabled={exporting || clearing}
@@ -336,7 +372,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
             ? t('settingsVoice.history.clearing')
             : t('settingsVoice.history.clearTitle')}
           subtitle={t('settingsVoice.history.clearSubtitle')}
-          icon={<Ionicons name="trash-outline" size={22} color={theme.colors.state.danger.foreground} />}
+          icon={<Icon name="trash" size={20} color={theme.colors.state.danger.foreground} />}
           accessibilityRole="button"
           accessibilityLabel={t('settingsVoice.history.clearTitle')}
           disabled={exporting || clearing}
@@ -363,11 +399,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
           />
         </ItemGroup>
       ) : null}
-      {actionMessage ? (
-        <Text testID="voice-history-action-message" accessibilityLiveRegion="polite" style={styles.actionMessage}>
-          {actionMessage}
-        </Text>
-      ) : null}
+      {actionMessage ? <VoiceHistoryActionMessage message={actionMessage} /> : null}
     </View>
   );
 
@@ -386,7 +418,7 @@ export const VoiceHistoryScreen = React.memo(function VoiceHistoryScreen(
         ListEmptyComponent={(
           <VoiceHistoryStateMessage
             testID={noSearchResults ? 'voice-history-no-results' : 'voice-history-empty'}
-            icon={noSearchResults ? 'search-outline' : 'time-outline'}
+            icon={noSearchResults ? 'magnifying-glass' : 'clock'}
             title={noSearchResults
               ? t('settingsVoice.history.noResultsTitle')
               : t('settingsVoice.history.emptyTitle')}
@@ -422,7 +454,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   header: {
     width: '100%',
-    maxWidth: layout.maxWidth,
     alignSelf: 'center',
   },
   searchFieldWrap: {
@@ -445,7 +476,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowOuter: {
     width: '100%',
-    maxWidth: layout.maxWidth,
     alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 10,
@@ -483,7 +513,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   stateOuter: {
     width: '100%',
-    maxWidth: layout.maxWidth,
     alignSelf: 'center',
     padding: 20,
   },

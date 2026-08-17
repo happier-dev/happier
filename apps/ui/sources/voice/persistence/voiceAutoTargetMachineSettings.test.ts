@@ -2,8 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installVoiceStorageModuleMocks } from './installVoiceStorageModuleMocks';
 
-const applySettingsLocal = vi.fn();
+const applySettings = vi.fn();
 let state: any;
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+  getSyncSingleton: () => ({ applySettings }),
+}));
 
 installVoiceStorageModuleMocks({
   storage: async () => {
@@ -19,7 +23,7 @@ installVoiceStorageModuleMocks({
 describe('voiceAutoTargetMachineSettings', () => {
   beforeEach(() => {
     vi.resetModules();
-    applySettingsLocal.mockReset();
+    applySettings.mockReset();
     state = {
       settings: {
         voice: {
@@ -29,7 +33,6 @@ describe('voiceAutoTargetMachineSettings', () => {
           },
         },
       },
-      applySettingsLocal,
     };
   });
 
@@ -44,7 +47,7 @@ describe('voiceAutoTargetMachineSettings', () => {
 
     persistVoiceAutoTargetMachineId('  machine-2  ');
 
-    expect(applySettingsLocal).toHaveBeenCalledWith({
+    expect(applySettings).toHaveBeenCalledWith(expect.objectContaining({
       voice: expect.objectContaining({
         executionMachine: {
           mode: 'auto',
@@ -52,6 +55,6 @@ describe('voiceAutoTargetMachineSettings', () => {
           autoMachineId: 'machine-2',
         },
       }),
-    });
+    }), { source: 'ui' });
   });
 });

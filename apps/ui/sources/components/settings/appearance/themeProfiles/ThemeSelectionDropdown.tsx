@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -8,6 +7,7 @@ import { t } from '@/text';
 import type { ThemeProfileMode, ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
 import { getActiveThemeProfileIdForMode } from '@/theme/profiles/themeProfilePersistence';
 import { buildThemePresetSourceOptions, type ThemePresetSourceOption } from './themeProfilePresetOptions';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type ThemeSelectionBaseProps = Readonly<{
     open: boolean;
@@ -84,11 +84,11 @@ export type ThemeSlotSelectionDropdownProps = ThemeSelectionBaseProps & Readonly
 
 const getOptionIconName = (
     option: ThemeSelectionOption,
-): React.ComponentProps<typeof Ionicons>['name'] => {
-    if (option.kind === 'adaptive') return 'contrast-outline';
-    if (option.kind === 'builtIn') return 'sparkles-outline';
-    if (option.kind === 'custom') return 'color-palette-outline';
-    return option.id === 'dark' ? 'moon-outline' : 'sunny-outline';
+): IconName => {
+    if (option.kind === 'adaptive') return 'circle-half';
+    if (option.kind === 'builtIn') return 'sparkle';
+    if (option.kind === 'custom') return 'palette';
+    return option.id === 'dark' ? 'moon' : 'sun';
 };
 
 export const ThemeSelectionDropdown = React.memo(function ThemeSelectionDropdown(props: ThemeSelectionDropdownProps) {
@@ -109,9 +109,9 @@ export const ThemeSelectionDropdown = React.memo(function ThemeSelectionDropdown
         title: option.title,
         subtitle: option.subtitle,
         icon: (
-            <Ionicons
+            <Icon
                 name={getOptionIconName(option)}
-                size={22}
+                size={20}
                 color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting}
             />
         ),
@@ -140,10 +140,10 @@ export const ThemeSelectionDropdown = React.memo(function ThemeSelectionDropdown
                     ? t('settingsAppearance.themeDescriptions.dark')
                     : t('settingsAppearance.themeDescriptions.light'),
                 icon: (
-                    <Ionicons
+                    <Icon
                         name={props.variant === 'current'
-                            ? 'contrast-outline'
-                            : props.mode === 'dark' ? 'moon-outline' : 'sunny-outline'}
+                            ? 'circle-half'
+                            : props.mode === 'dark' ? 'moon' : 'sun'}
                         size={29}
                         color={theme.colors.status.connecting}
                     />

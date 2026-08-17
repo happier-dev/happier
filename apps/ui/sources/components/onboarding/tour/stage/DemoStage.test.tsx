@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +18,9 @@ const stageSurfaceLifecycle = vi.hoisted(() => ({
     liveMountCount: 0,
     mountCount: 0,
     suspend: false,
+    failLoad: false,
+    preloadStageSurfaces: vi.fn(async () => undefined),
+    resetStageSurfaceComponent: vi.fn(),
 }));
 
 const suspendedSurfacePromise = new Promise<never>(() => undefined);
@@ -40,6 +43,7 @@ vi.mock('./stageSurfaces', async () => {
 
     function RegisteredStageSurface(props: Readonly<{ device?: StageFrame['device'] }>): React.ReactElement {
         if (stageSurfaceLifecycle.suspend) throw suspendedSurfacePromise;
+        if (stageSurfaceLifecycle.failLoad) throw new Error('stage surface chunk unavailable');
         const targetRef = ReactModule.useRef<SpotlightTargetRef | null>(null);
         const targetProps = spotlightTargetModule.useSpotlightTarget(targetRef, 'stage-target');
         ReactModule.useEffect(() => {
@@ -64,6 +68,8 @@ vi.mock('./stageSurfaces', async () => {
             ['sessions-list', { component: RegisteredStageSurface }],
             ['session-view', { component: RegisteredStageSurface }],
         ]),
+        preloadStageSurfaces: stageSurfaceLifecycle.preloadStageSurfaces,
+        resetStageSurfaceComponent: stageSurfaceLifecycle.resetStageSurfaceComponent,
     };
 });
 
@@ -79,6 +85,9 @@ function resetStageSurfaceLifecycle(): void {
     stageSurfaceLifecycle.liveMountCount = 0;
     stageSurfaceLifecycle.mountCount = 0;
     stageSurfaceLifecycle.suspend = false;
+    stageSurfaceLifecycle.failLoad = false;
+    stageSurfaceLifecycle.preloadStageSurfaces.mockClear();
+    stageSurfaceLifecycle.resetStageSurfaceComponent.mockClear();
     stageSnapshotBoundary.captureRef.mockClear();
     stageSnapshotBoundary.releaseCapture.mockClear();
 }
@@ -94,18 +103,38 @@ function intersectionOverUnion(first: Rect, second: Rect): number {
 }
 
 describe('resolveMountedStageFrames', () => {
-    it('keeps previous warm, current mounted, and next pre-mounted', () => {
-        expect(resolveMountedStageFrames(demoFrames, 'session-view.hero').map((frame) => frame.id)).toEqual([
-            'sessions-list.spotlight',
+    it('warms the frame the journey reaches next, not the frame table array neighbour', () => {
+        // `session-view.spotlight` is the ARRAY neighbour of `session-view.hero`;
+        // the journey's next beat is the sessions list. Only the beat the host
+        // declares may be pre-mounted.
+        expect(resolveMountedStageFrames(demoFrames, 'session-view.hero', ['sessions-list.hero']).map((frame) => frame.id)).toEqual([
             'session-view.hero',
+            'sessions-list.hero',
+        ]);
+    });
+
+    it('mounts the active frame alone when the host declares no upcoming beat', () => {
+        expect(resolveMountedStageFrames(demoFrames, 'session-view.hero').map((frame) => frame.id)).toEqual([
+            'session-view.hero',
+        ]);
+    });
+
+    it('warms one upcoming surface and skips unknown ids and the active surface', () => {
+        expect(resolveMountedStageFrames(demoFrames, 'session-view.hero', [
+            'no-such-frame',
             'session-view.spotlight',
+            'sessions-list.hero',
+            'sessions-list.spotlight',
+        ]).map((frame) => frame.id)).toEqual([
+            'session-view.hero',
+            'sessions-list.hero',
         ]);
     });
 
     it('falls back to the first frame when the active id is missing', () => {
-        expect(resolveMountedStageFrames(demoFrames, 'missing').map((frame) => frame.id)).toEqual([
+        expect(resolveMountedStageFrames(demoFrames, 'missing', ['session-view.hero']).map((frame) => frame.id)).toEqual([
             'sessions-list.hero',
-            'sessions-list.spotlight',
+            'session-view.hero',
         ]);
     });
 });
@@ -117,26 +146,43 @@ describe('DemoStage', () => {
         vi.unstubAllGlobals();
     });
 
-    it('renders only lifecycle-eligible frame slots and keeps staged surfaces non-interactive', async () => {
+    it('renders only lifecycle-eligible frame slots and hides every static stage subtree from native accessibility', async () => {
         const screen = await renderScreen(
-            <DemoStage
-                frames={demoFrames}
-                activeFrameId="session-view.hero"
-                reducedMotion={false}
-            />,
+            <>
+                <DemoStage
+                    frames={demoFrames}
+                    activeFrameId="session-view.hero"
+                    upcomingFrameIds={['sessions-list.hero']}
+                    reducedMotion={false}
+                />
+                <Pressable testID="journey-next" />
+            </>,
             { flushOptions: { cycles: 0 } },
         );
 
-        expect(screen.findByTestId('demo-stage-frame-sessions-list.hero')).toBeNull();
-        expect(screen.findByTestId('demo-stage-frame-sessions-list.spotlight')).not.toBeNull();
+        expect(screen.findByTestId('demo-stage-frame-sessions-list.hero')).not.toBeNull();
+        expect(screen.findByTestId('demo-stage-frame-sessions-list.spotlight')).toBeNull();
         expect(screen.findByTestId('demo-stage-frame-session-view.hero')).not.toBeNull();
         expect(screen.findByTestId('demo-stage-frame-session-view.spotlight')).toBeNull();
 
         const activeSlot = screen.findByTestId('demo-stage-frame-session-view.hero');
         expect(activeSlot?.props.pointerEvents).toBe('none');
+        expect(activeSlot?.props.accessibilityElementsHidden).toBe(true);
+        expect(activeSlot?.props.importantForAccessibility).toBe('no-hide-descendants');
         expect(StyleSheet.flatten(activeSlot?.props.style)).toMatchObject({
             opacity: 1,
         });
+
+        const warmSlot = screen.findByTestId('demo-stage-frame-sessions-list.hero');
+        expect(warmSlot?.props.pointerEvents).toBe('none');
+        expect(warmSlot?.props.accessibilityElementsHidden).toBe(true);
+        expect(warmSlot?.props.importantForAccessibility).toBe('no-hide-descendants');
+
+        // The onboarding action is a sibling of the static stage, so stage
+        // isolation must not also hide the journey's real control surface.
+        const journeyNext = screen.findByTestId('journey-next');
+        expect(journeyNext?.props.accessibilityElementsHidden).toBeUndefined();
+        expect(journeyNext?.props.importantForAccessibility).toBeUndefined();
     });
 
     it('fills the stage host so the measured DeviceFrame can become visible', async () => {
@@ -157,7 +203,7 @@ describe('DemoStage', () => {
         });
     });
 
-    it('renders the device frame shell fallback while a lazy surface is still loading', async () => {
+    it('renders an app-shell skeleton inside the device chrome while a lazy surface is still loading', async () => {
         stageSurfaceLifecycle.suspend = true;
         const screen = await renderScreen(
             <DemoStage
@@ -170,6 +216,107 @@ describe('DemoStage', () => {
 
         expect(screen.findByTestId('demo-stage-device-frame-shell')).not.toBeNull();
         expect(screen.findByTestId('demo-stage-frame-session-view.hero-loading')).not.toBeNull();
+        // A bare rectangle is indistinguishable from an intentional planet-only
+        // beat: the loading state has to read as the app shell arriving.
+        expect(screen.findByTestId('demo-stage-frame-session-view.hero-loading-sidebar')).not.toBeNull();
+        expect(screen.findByTestId('demo-stage-frame-session-view.hero-loading-detail')).not.toBeNull();
+    });
+
+    it('shows an honest unavailable state and drops the poisoned lazy component when a surface fails to load', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        stageSurfaceLifecycle.failLoad = true;
+        try {
+            const screen = await renderScreen(
+                <DemoStage
+                    frames={demoFrames}
+                    activeFrameId="session-view.hero"
+                    reducedMotion={false}
+                />,
+                { flushOptions: { cycles: 0 } },
+            );
+
+            expect(screen.findByTestId('demo-stage-frame-session-view.hero-error')).not.toBeNull();
+            expect(screen.findByTestId('demo-stage-frame-session-view.hero-loading')).toBeNull();
+            expect(stageSurfaceLifecycle.resetStageSurfaceComponent).toHaveBeenCalledWith('session-view');
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    it('gives a failed surface a fresh attempt when the journey returns to the beat', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        stageSurfaceLifecycle.failLoad = true;
+        try {
+            const screen = await renderScreen(
+                <DemoStage
+                    frames={demoFrames}
+                    activeFrameId="session-view.hero"
+                    reducedMotion={false}
+                />,
+                { flushOptions: { cycles: 0 } },
+            );
+
+            expect(screen.findByTestId('demo-stage-frame-session-view.hero-error')).not.toBeNull();
+
+            // The registry has already dropped the poisoned lazy, so the chunk can
+            // resolve on a later attempt. A boundary that latched onto the first
+            // failure would keep replaying it and poison the beat for the whole
+            // journey, so leaving and returning has to rebuild it.
+            stageSurfaceLifecycle.failLoad = false;
+            await screen.update(
+                <DemoStage
+                    frames={demoFrames}
+                    activeFrameId="sessions-list.hero"
+                    reducedMotion={false}
+                />,
+            );
+            await screen.update(
+                <DemoStage
+                    frames={demoFrames}
+                    activeFrameId="session-view.hero"
+                    reducedMotion={false}
+                />,
+            );
+
+            expect(screen.findByTestId('demo-stage-frame-session-view.hero-error')).toBeNull();
+            expect(screen.findByTestId('demo-stage-frame-session-view.hero-content')).not.toBeNull();
+            expect(screen.findAllByTestId('mock-stage-device:desktop')).toHaveLength(1);
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    it('warms the upcoming beat surfaces the active frame does not already own', async () => {
+        await renderScreen(
+            <DemoStage
+                frames={demoFrames}
+                activeFrameId="sessions-list.hero"
+                upcomingFrameIds={['sessions-list.spotlight', 'session-view.hero']}
+                reducedMotion={false}
+            />,
+            { flushOptions: { cycles: 1 } },
+        );
+
+        expect(stageSurfaceLifecycle.preloadStageSurfaces).toHaveBeenCalledWith(['session-view']);
+    });
+
+    it('paints the active beat alone and warms nothing when the host declares no upcoming beat', async () => {
+        // The prop is optional, so an absent one is a supported host state (a host
+        // that has not resolved its beat order yet, or a stage rendered outside the
+        // journey). The stage still paints the active beat; it just declines to
+        // guess, because the frame table's array order is not the journey's path.
+        const screen = await renderScreen(
+            <DemoStage
+                frames={demoFrames}
+                activeFrameId="sessions-list.spotlight"
+                reducedMotion={false}
+            />,
+            { flushOptions: { cycles: 1 } },
+        );
+
+        expect(screen.findByTestId('demo-stage-frame-sessions-list.spotlight')).not.toBeNull();
+        expect(screen.findAllByTestId('mock-stage-device:desktop')).toHaveLength(1);
+        expect(stageSurfaceLifecycle.preloadStageSurfaces).not.toHaveBeenCalled();
     });
 
     it('materializes resolved stage content with a tokenized fade no longer than 200ms', async () => {
@@ -263,27 +410,12 @@ describe('DemoStage', () => {
         expect(stageSurfaceLifecycle.listenerCount).toBe(1);
     });
 
-    it('pre-captures the live surface at rest and does not capture again at camera-motion start', async () => {
+    it('never rasterizes a stage frame for a freeze this layout can never display', async () => {
         vi.useFakeTimers();
         try {
-            let notifySurfaceMutation: (() => void) | null = null;
-            vi.stubGlobal('MutationObserver', class {
-                constructor(callback: () => void) {
-                    notifySurfaceMutation = callback;
-                }
-
-                observe(): void {}
-
-                disconnect(): void {}
-            });
-            const sameSurfaceFrames = [
-                { id: 'session-view.hero', surface: 'session-view', device: 'desktop', zoom: 1, dim: 0 },
-                { id: 'session-view.spotlight', surface: 'session-view', device: 'desktop', spotlight: 'stage-target', zoom: 1.8, dim: 0.55 },
-            ] as const satisfies readonly StageFrame[];
-
             const screen = await renderScreen(
                 <DemoStage
-                    frames={sameSurfaceFrames}
+                    frames={demoFrames}
                     activeFrameId="session-view.hero"
                     reducedMotion={false}
                 />,
@@ -296,129 +428,14 @@ describe('DemoStage', () => {
                 },
             );
 
-            expect(screen.findByTestId('demo-stage-surface-session-view-capture-source')).not.toBeNull();
-            expect(stageSnapshotBoundary.captureRef).toHaveBeenCalledTimes(1);
-            expect(screen.findByTestId('demo-stage-camera-frozen-frame')).not.toBeNull();
-            expect(StyleSheet.flatten(screen.findByTestId('demo-stage-camera-frozen-outer')?.props.style)).toMatchObject({
-                opacity: 0,
-            });
-            expect(screen.findAllByTestId('mock-stage-device:desktop')).toHaveLength(1);
-
-            await act(async () => {
-                notifySurfaceMutation?.();
-                vi.advanceTimersByTime(3000);
-            });
-            expect(stageSnapshotBoundary.captureRef).toHaveBeenCalledTimes(2);
-
-            await screen.update(
-                <DemoStage
-                    frames={sameSurfaceFrames}
-                    activeFrameId="session-view.spotlight"
-                    reducedMotion={false}
-                />,
-            );
-
-            expect(screen.findByTestId('demo-stage-camera-frozen-frame')).not.toBeNull();
-            expect(screen.findAllByTestId('mock-stage-device:desktop')).toHaveLength(1);
-            expect(stageSurfaceLifecycle.liveMountCount).toBe(1);
-
-            await act(async () => {
-                vi.runAllTimers();
-            });
-
-            expect(screen.findByTestId('demo-stage-camera-frozen-frame')).not.toBeNull();
-            expect(StyleSheet.flatten(screen.findByTestId('demo-stage-camera-frozen-outer')?.props.style)).toMatchObject({
-                opacity: 0,
-            });
-            expect(StyleSheet.flatten(screen.findByTestId('demo-stage-camera-live')?.props.style)).toMatchObject({
-                display: 'flex',
-            });
-            expect(stageSnapshotBoundary.captureRef).toHaveBeenCalledTimes(2);
-            expect(stageSnapshotBoundary.releaseCapture).toHaveBeenCalledTimes(1);
-            expect(stageSurfaceLifecycle.liveMountCount).toBe(1);
-            expect(stageSurfaceLifecycle.listenerCount).toBe(1);
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('does not reuse an aged frozen capture after a throttled rest and refreshes after settlement', async () => {
-        vi.useFakeTimers();
-        const originalPlatformOS = Platform.OS;
-        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
-        try {
-            vi.stubGlobal('requestAnimationFrame', vi.fn(() => 71));
-            vi.stubGlobal('cancelAnimationFrame', vi.fn());
-            vi.stubGlobal('window', {
-                addEventListener: vi.fn(),
-                removeEventListener: vi.fn(),
-            });
-            const liveNode = { style: { opacity: '1', willChange: '' } };
-            const frozenNode = { style: { opacity: '0', transform: '', willChange: '' } };
-            const outerNode = { style: { opacity: '1', transform: '', willChange: '' } };
-            const innerNode = { style: { opacity: '1', transform: '', willChange: '' } };
-            const sameSurfaceFrames = [
-                { id: 'session-view.hero', surface: 'session-view', device: 'desktop', zoom: 1, dim: 0 },
-                { id: 'session-view.spotlight', surface: 'session-view', device: 'desktop', spotlight: 'stage-target', zoom: 1.8, dim: 0.55 },
-            ] as const satisfies readonly StageFrame[];
-            const createNodeMock = (element: React.ReactElement) => {
-                const testID = (element as { props?: { testID?: string } }).props?.testID;
-                if (testID === 'demo-stage-camera-live') return liveNode;
-                if (testID === 'demo-stage-camera-frozen-outer') return frozenNode;
-                if (testID === 'demo-stage-camera-outer') return outerNode;
-                if (testID === 'demo-stage-camera-inner' || testID === 'demo-stage-camera-frozen-inner') return innerNode;
-                if (testID?.endsWith('-capture-source')) return {};
-                if (testID === 'demo-stage') {
-                    return {
-                        getBoundingClientRect: () => ({ x: 0, y: 0, width: 1000, height: 700 }),
-                    };
-                }
-                if (testID === 'demo-stage-device-frame') {
-                    return {
-                        getBoundingClientRect: () => ({ x: 0, y: 0, width: 1000, height: 700 }),
-                    };
-                }
-                if (testID === 'mock-stage-device:desktop') {
-                    return {
-                        getBoundingClientRect: () => ({ x: 620, y: 480, width: 200, height: 80 }),
-                    };
-                }
-                return {};
-            };
-            const screen = await renderScreen(
-                <DemoStage
-                    frames={sameSurfaceFrames}
-                    activeFrameId="session-view.hero"
-                    reducedMotion={false}
-                />,
-                { flushOptions: { cycles: 2 }, createNodeMock },
-            );
-
-            expect(stageSnapshotBoundary.captureRef).toHaveBeenCalledTimes(1);
             await act(async () => {
                 vi.advanceTimersByTime(30_000);
             });
-            expect(stageSnapshotBoundary.captureRef).toHaveBeenCalledTimes(1);
 
-            await act(async () => {
-                screen.tree.update(
-                    <DemoStage
-                        frames={sameSurfaceFrames}
-                        activeFrameId="session-view.spotlight"
-                        reducedMotion={false}
-                    />,
-                );
-            });
-
-            expect(liveNode.style.opacity).toBe('1');
-            expect(frozenNode.style.opacity).toBe('0');
-
-            await act(async () => {
-                vi.advanceTimersByTime(2_000);
-            });
-            expect(stageSnapshotBoundary.captureRef).toHaveBeenCalledTimes(2);
+            expect(stageSnapshotBoundary.captureRef).not.toHaveBeenCalled();
+            expect(screen.findByTestId('demo-stage-camera-frozen-outer')).toBeNull();
+            expect(screen.findByTestId('demo-stage-camera-frozen-frame')).toBeNull();
         } finally {
-            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatformOS });
             vi.useRealTimers();
         }
     });
@@ -579,7 +596,15 @@ describe('DemoStage', () => {
         ] as const satisfies readonly StageFrame[];
 
         const screen = await renderScreen(
-            <DemoStage frames={frames} activeFrameId="session-view.active-target" reducedMotion={false} />,
+            <DemoStage
+                frames={frames}
+                activeFrameId="session-view.active-target"
+                // The host has to declare the upcoming beat for the warm cache to
+                // mount it at all; without this the duplicate registration the
+                // guard exists for never happens and the test proves nothing.
+                upcomingFrameIds={['sessions-list.warm-target']}
+                reducedMotion={false}
+            />,
             {
                 createNodeMock: (element) => {
                     const testID = (element as { props?: { testID?: string } }).props?.testID;
@@ -615,12 +640,20 @@ describe('DemoStage', () => {
             },
         );
 
+        // The guard is only worth anything while the duplicate really exists: the
+        // warm-cache surface has to be MOUNTED and claiming the same target id.
+        expect(screen.findByTestId('mock-stage-device:phone')).not.toBeNull();
+
         // Only the active desktop target frames the halo; the duplicate warm-cache
-        // phone registration is ignored. The halo sits at the settled target origin.
+        // phone registration is ignored. The halo sits at the settled target origin
+        // with the desktop target's size — a union with the warm phone rect would
+        // move it to (300, 320) and inflate it to 360.25 x 107.
         const haloStyle = StyleSheet.flatten(screen.findByTestId('demo-stage-spotlight-halo')?.props.style) as {
-            left: number; top: number;
+            left: number; top: number; width: number; height: number;
         };
         expect(haloStyle.left).toBeCloseTo(619.75);
         expect(haloStyle.top).toBeCloseTo(373);
+        expect(haloStyle.width).toBeCloseTo(40.5);
+        expect(haloStyle.height).toBeCloseTo(54);
     });
 });

@@ -3,15 +3,15 @@ import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
-import { resolveAgentUiBehaviorFromSessionMetadata } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentIdFromSessionMetadata } from '@/agents/registry/registryCore';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { sessionAllowWithAnswers } from '@/sync/ops';
-import { machinePluginSettingsSet } from '@/sync/ops/machineContributionRegistryProjection';
-import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { storage } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { Modal } from '@/modal';
 import { t, type TranslationKey } from '@/text';
-import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -19,8 +19,18 @@ import {
     useOpenAttachedSessionTerminal,
     type AttachedSessionTerminalUnavailableReason,
 } from '@/components/sessions/terminal/openAttachedSessionTerminal';
-import { isClaudeUnifiedTerminalDialogChoiceAgentStateRequest } from '@happier-dev/agents';
+import { isClaudeUnifiedTerminalDialogChoiceAgentStateRequest } from '@happier-dev/protocol';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { Icon } from '@/components/ui/icons/Icon';
+import {
+    resolveScopedPluginSettingsTarget,
+    type ScopedPluginSettingsField,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
+import {
+    resolveScopedPluginSettingsServerIdentity,
+    scopedPluginSettingsAdapter,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
+import { commitScopedPluginSettingsField } from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
 
 
 interface QuestionOption {
@@ -54,6 +64,79 @@ interface AskUserQuestionInput {
     title?: string;
     questions: Question[];
     happierDialog?: unknown;
+}
+
+type ClaudeDialogSettingMutation =
+    | Readonly<{
+        settingId: 'claudeUnifiedTerminalWorkspaceTrust';
+        value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
+    }>
+    | Readonly<{
+        settingId: 'claudeUnifiedTerminalResumeChoice';
+        value: 'resume_from_summary' | 'resume_full_session';
+    }>;
+
+const DAEMON_PLUGIN_SETTINGS_SCOPE = Object.freeze({ kind: 'daemon' as const });
+
+/**
+ * A recognized terminal dialog may ask to persist a declared daemon setting,
+ * but it has no independent Settings transport. Reuse the scoped adapter so
+ * its read/CAS/write and unavailable semantics remain one canonical path.
+ */
+async function persistClaudeDialogSetting(input: Readonly<{
+    sessionId: string;
+    session: Readonly<{ serverId?: unknown }>;
+    ownerMetadata: Readonly<{ machineId?: unknown }> | null;
+    mutation: ClaudeDialogSettingMutation;
+}>): Promise<void> {
+    const preferenceName = input.mutation.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
+        ? 'workspace trust'
+        : 'resume choice';
+    const machineId = typeof input.ownerMetadata?.machineId === 'string'
+        ? input.ownerMetadata.machineId.trim()
+        : '';
+    if (!machineId) {
+        throw new Error(`Unable to persist Claude ${preferenceName} without a session machine.`);
+    }
+    const serverId = typeof input.session.serverId === 'string' ? input.session.serverId.trim() : '';
+    const target = resolveScopedPluginSettingsTarget({
+        scope: DAEMON_PLUGIN_SETTINGS_SCOPE,
+        machineId,
+        serverId,
+        serverIdentityId: resolveScopedPluginSettingsServerIdentity(serverId),
+    });
+    if (!target || target.kind !== 'daemon') {
+        throw new Error(`Unable to persist Claude ${preferenceName} without an exact server target.`);
+    }
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) {
+        throw new Error(`Unable to persist Claude ${preferenceName} outside the active Account lifetime.`);
+    }
+    const isTargetCurrent = (): boolean => {
+        const currentSession = storage.getState().sessions[input.sessionId];
+        const currentOwnerMetadata = currentSession ? readSessionOwnerMetadataView(currentSession) : null;
+        const currentMachineId = typeof currentOwnerMetadata?.machineId === 'string'
+            ? currentOwnerMetadata.machineId.trim()
+            : '';
+        const currentServerId = typeof currentSession?.serverId === 'string'
+            ? currentSession.serverId.trim()
+            : '';
+        return currentMachineId === machineId && currentServerId === serverId;
+    };
+    const result = await commitScopedPluginSettingsField({
+        pluginId: 'claude',
+        scope: DAEMON_PLUGIN_SETTINGS_SCOPE,
+        target,
+        accountLifetime,
+        fields: [{ key: input.mutation.settingId, redacted: false } satisfies ScopedPluginSettingsField],
+        adapter: scopedPluginSettingsAdapter,
+        fieldId: input.mutation.settingId,
+        mutation: { kind: 'set', value: input.mutation.value },
+        isCurrent: isTargetCurrent,
+    });
+    if (result?.status !== 'ready') {
+        throw new Error(`Unable to persist Claude ${preferenceName}.`);
+    }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -410,14 +493,20 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [isSubmitted, setIsSubmitted] = React.useState(false);
     const attachedSessionTerminal = useOpenAttachedSessionTerminal(sessionId ?? null);
+    // A Session keeps its identity across an Agent switch, so a historical row
+    // is PRESENTED by the Agent that produced it, not by the one running now.
+    // `null` means no divider evidence, which keeps the live-metadata behavior.
+    // Answering stays on live authority — see the submit path.
+    const historicalAgentId = useHistoricalTranscriptAgentId();
 
     // Parse input
     const rawInput = tool.input;
     const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
+    const presentationAgentId = historicalAgentId ?? resolveAgentIdFromSessionMetadata(ownerMetadata);
     const presentedInput = isLegacyAskUserQuestionInput(rawInput)
-        ? resolveAgentUiBehaviorFromSessionMetadata(ownerMetadata)
-            ?.workflow
+        ? resolveAgentUiBehavior(presentationAgentId)
+            .workflow
             ?.resolveAskUserQuestionPresentation?.({ input: rawInput, translate: (key) => t(key as TranslationKey) }) ?? rawInput
         : rawInput;
     const input = normalizeAskUserQuestionInput(presentedInput);
@@ -474,7 +563,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                 onPress={attachedSessionTerminal.open}
                                 activeOpacity={0.7}
                             >
-                                <Ionicons name="terminal-outline" size={20} color={theme.colors.text.secondary} />
+                                <Icon name="terminal" size={20} color={theme.colors.text.secondary} />
                                 <View style={styles.optionContent}>
                                     <Text style={styles.optionLabel}>{t('tools.askUserQuestion.claudeDialogNotice.openTerminal')}</Text>
                                     <Text style={styles.optionDescription}>{t('tools.askUserQuestion.claudeDialogNotice.description')}</Text>
@@ -602,36 +691,46 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             const dialog = input.happierDialog;
             if (dialog && typeof dialog === 'object' && !Array.isArray(dialog)) {
                 const metadata = dialog as Record<string, unknown>;
-                if (
-                    isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(latestRequest)
-                    && metadata.kind === 'recognized'
-                    && metadata.dialogId === 'trust_folder'
-                ) {
+                if (isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(latestRequest) && metadata.kind === 'recognized') {
                     for (const [questionIndex, selectedIndexes] of selections) {
                         for (const optionIndex of selectedIndexes) {
                             const mutation = questions[questionIndex]?.options?.[optionIndex]?.settingMutation;
                             if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) continue;
                             const candidate = mutation as Record<string, unknown>;
-                            if (candidate.settingId !== 'claudeUnifiedTerminalWorkspaceTrust') continue;
                             if (
-                                candidate.value === 'always_trust_happier_workspaces'
-                                || candidate.value === 'always_reject_happier_workspaces'
+                                metadata.dialogId === 'trust_folder'
+                                && candidate.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
+                                && (
+                                    candidate.value === 'always_trust_happier_workspaces'
+                                    || candidate.value === 'always_reject_happier_workspaces'
+                                )
                             ) {
-                                const machineId = typeof latestOwnerMetadata?.machineId === 'string'
-                                    ? latestOwnerMetadata.machineId.trim()
-                                    : '';
-                                if (!machineId) {
-                                    throw new Error('Unable to persist Claude workspace trust without a session machine.');
-                                }
-                                const result = await machinePluginSettingsSet(machineId, {
-                                    serverId: resolvePreferredServerIdForSessionId(sessionId) ?? null,
-                                    pluginId: 'claude',
-                                    fieldId: 'claudeUnifiedTerminalWorkspaceTrust',
-                                    value: candidate.value,
+                                await persistClaudeDialogSetting({
+                                    sessionId,
+                                    session: latestSession,
+                                    ownerMetadata: latestOwnerMetadata,
+                                    mutation: {
+                                        settingId: candidate.settingId,
+                                        value: candidate.value,
+                                    },
                                 });
-                                if (!result.supported) {
-                                    throw new Error('Unable to persist Claude workspace trust.');
-                                }
+                            } else if (
+                                metadata.dialogId === 'resume_choice'
+                                && candidate.settingId === 'claudeUnifiedTerminalResumeChoice'
+                                && (
+                                    candidate.value === 'resume_from_summary'
+                                    || candidate.value === 'resume_full_session'
+                                )
+                            ) {
+                                await persistClaudeDialogSetting({
+                                    sessionId,
+                                    session: latestSession,
+                                    ownerMetadata: latestOwnerMetadata,
+                                    mutation: {
+                                        settingId: candidate.settingId,
+                                        value: candidate.value,
+                                    },
+                                });
                             }
                         }
                     }
@@ -713,7 +812,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                         onPress={attachedSessionTerminal.open}
                         activeOpacity={0.7}
                     >
-                        <Ionicons name="terminal-outline" size={20} color={theme.colors.text.secondary} />
+                        <Icon name="terminal" size={20} color={theme.colors.text.secondary} />
                         <View style={styles.optionContent}>
                             <Text style={styles.optionLabel}>{t('tools.askUserQuestion.claudeDialogNotice.openTerminal')}</Text>
                             <Text style={styles.optionDescription}>{t('tools.askUserQuestion.claudeDialogNotice.description')}</Text>
@@ -809,7 +908,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                                     isSelected && styles.checkboxOuterSelected,
                                                 ]}>
                                                     {isSelected && (
-                                                        <Ionicons name="checkmark" size={14} color={theme.colors.button.primary.tint} />
+                                                        <Icon name="check" size={14} color={theme.colors.button.primary.tint} />
                                                     )}
                                                 </View>
                                             ) : (

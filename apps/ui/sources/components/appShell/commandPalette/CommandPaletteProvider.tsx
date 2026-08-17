@@ -2,6 +2,9 @@ import React, { useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Modal } from '@/modal';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { CommandPalette } from './CommandPalette';
 import { useAuth } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storage';
@@ -14,6 +17,11 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resetDesktopActivityOverlayPosition } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 import { requestCodexPetRefresh } from '@/components/settings/pets/petSettingsCommandEvents';
+import {
+    type CompactAppDestination,
+    useCompactAppDestinations,
+} from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { usePluginAppPageCatalogActivationHandler } from '@/components/appShell/plugins/pluginAppPageNavigation';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -66,6 +74,22 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const voiceEnabled = useFeatureEnabled('voice');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
     const petsCompanionEnabled = useFeatureEnabled('pets.companion');
+    const browseExistingSessionsEnabled = useFeatureEnabled('sessions.direct');
+    const compactAppDestinations = useCompactAppDestinations({ browseExistingSessionsEnabled });
+    const activatePluginAppPage = usePluginAppPageCatalogActivationHandler();
+    const activateCompactAppDestination = useCallback((destination: CompactAppDestination) => {
+        if (
+            destination.kind === 'plugin'
+            && destination.container === 'appPage'
+            && destination.availability === 'available'
+        ) {
+            activatePluginAppPage(destination);
+            return;
+        }
+        // Unavailable pages retain the existing route-owned tombstone; all
+        // other compact entries have no launch-input lifecycle to stage.
+        router.push(destination.routePath as Parameters<typeof router.push>[0]);
+    }, [activatePluginAppPage, router]);
     const applySettings = useApplySettings();
     const applyLocalSettings = useApplyLocalSettings();
     const keyboardPlatform = useMemo(resolveKeyboardPlatform, []);
@@ -162,11 +186,19 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             features: { executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled },
             shortcutLabels,
             petControls,
+            compactAppDestinations,
+            onActivateCompactAppDestination: activateCompactAppDestination,
             nav: {
                 push: (path) => router.push(path as any),
                 navigateToSession,
             },
-            auth: { logout },
+            auth: {
+                logout: async () => {
+                    await presentFirstKeyCredentialLifecycle({
+                        run: logout,
+                    });
+                },
+            },
             actions: {
                 execute: (actionId, parameters, ctx) => actionExecutor.execute(actionId as any, parameters, ctx),
             },
@@ -174,7 +206,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [segments, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, shortcutLabels, petControls, router, navigateToSession, logout, actionExecutor]);
+    }, [segments, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, compactAppDestinations, activateCompactAppDestination, shortcutLabels, petControls, router, navigateToSession, logout, actionExecutor]);
 
     const showCommandPalette = useCallback(() => {
         if (Platform.OS !== 'web' || !commandPaletteEnabled) return;

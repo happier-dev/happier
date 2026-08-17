@@ -68,7 +68,7 @@ describe('ThinkingTimelineRow', () => {
 
         const summaryNode = tree!.findByProps({ testID: 'transcript-thinking-summary-inline' });
         expect(String(summaryNode.props.children)).toBe('Hello world…');
-        const iconCollapsed = tree!.findAllByType('Ionicons').at(-1) as any;
+        const iconCollapsed = tree!.findAllByType('Icon').at(-1) as any;
         expect(iconCollapsed?.props?.name).toBe('chevron-down-outline');
 
         await act(async () => {
@@ -76,7 +76,7 @@ describe('ThinkingTimelineRow', () => {
         });
 
         expect(tree!.findAllByTestId('transcript-thinking-summary-inline')).toHaveLength(0);
-        const iconExpanded = tree!.findAllByType('Ionicons').at(-1) as any;
+        const iconExpanded = tree!.findAllByType('Icon').at(-1) as any;
         expect(iconExpanded?.props?.name).toBe('chevron-up-outline');
         expect(tree!.findAllByTestId('body')).toHaveLength(1);
     });

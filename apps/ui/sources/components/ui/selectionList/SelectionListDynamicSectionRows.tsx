@@ -16,7 +16,7 @@
  */
 
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -26,17 +26,21 @@ import {
     SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS,
     SELECTION_LIST_VIRTUALIZATION_THRESHOLD,
 } from './_constants';
-import { activateSelectionListRow } from './SelectionListRowActivation';
+import {
+    buildSelectionListSectionGroupA11yProps,
+    type SelectionListA11yPattern,
+} from './buildSelectionListOptionA11yProps';
 import {
     PlanAnimatedSuccessRows,
     PlanSuccessRows,
     VirtualizedTransitionShell,
 } from './SelectionListOptionRow';
+import type { SelectionListGridRowPlacement } from './selectionListGridRowModel';
 import type { SectionRenderPlan } from './SelectionListRenderPlan';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
 import { SelectionListSkeletonRow } from './SelectionListSkeletonRow';
 import { SelectionListVirtualizedSection } from './SelectionListVirtualizedSection';
-import { SelectionListScrollIntoViewContext } from './SelectionListScrollIntoViewContext';
+import { SelectionListScrollOffsetFrame } from './SelectionListScrollOffsetFrame';
 import { selectionListTestId } from './_shared';
 import type {
     SelectionListOption,
@@ -192,54 +196,6 @@ const sectionWrapStyles = StyleSheet.create(() => ({
     },
 }));
 
-function SelectionListSectionScrollOffsetFrame(props: Readonly<{
-    children: React.ReactNode;
-    style: StyleProp<ViewStyle>;
-    testID?: string;
-}>): React.ReactElement {
-    const parentRegisterItemLayout = React.useContext(SelectionListScrollIntoViewContext);
-    const sectionOffsetYRef = React.useRef(0);
-    const registerItemLayout = React.useCallback<NonNullable<typeof parentRegisterItemLayout>>((optionId) => {
-        const parentHandler = parentRegisterItemLayout?.(optionId);
-        return (event) => {
-            const layout = event.nativeEvent?.layout;
-            if (!layout || typeof layout.y !== 'number') {
-                parentHandler?.(event);
-                return;
-            }
-            parentHandler?.({
-                ...event,
-                nativeEvent: {
-                    ...event.nativeEvent,
-                    layout: {
-                        ...layout,
-                        y: sectionOffsetYRef.current + layout.y,
-                    },
-                },
-            });
-        };
-    }, [parentRegisterItemLayout]);
-
-    return (
-        <SelectionListScrollIntoViewContext.Provider
-            value={parentRegisterItemLayout ? registerItemLayout : null}
-        >
-            <View
-                testID={props.testID}
-                style={props.style}
-                onLayout={(event) => {
-                    const nextY = event.nativeEvent.layout.y;
-                    if (typeof nextY === 'number') {
-                        sectionOffsetYRef.current = nextY;
-                    }
-                }}
-            >
-                {props.children}
-            </View>
-        </SelectionListScrollIntoViewContext.Provider>
-    );
-}
-
 /**
  * Per-section render context. Plumbed through the body composition so the
  * dynamic-section renderer doesn't need to know about the body's full prop
@@ -257,6 +213,25 @@ export type SelectionListSectionRenderContext = Readonly<{
     showsVerticalScrollIndicator: boolean;
     /** FR3-1 / FR3-8 — identity-free measure rendering. */
     measureMode: boolean;
+    /** The body-owned popup pattern, shared with every section renderer. */
+    a11yPattern: SelectionListA11yPattern;
+    /** Lane G — resolved column count for the `columns` variant. `1` = classic rows. */
+    columnCount?: number;
+    /** Gutter between adjacent columns. Defaults to the shared list gutter. */
+    columnGapPx?: number;
+    /**
+     * Rows preceding each section's first option row — the section's own header
+     * row included in the `aria-rowindex` half — so a section can number its
+     * own rows into the popup-wide sequences. Present at EVERY column count in
+     * `grid` mode; absent in `listbox` mode, which emits no row indices.
+     */
+    optionRowOffsetBySectionId?: ReadonlyMap<string, SelectionListGridRowPlacement>;
+    /**
+     * `aria-rowindex` of each section's header row. A header that renders text
+     * cannot be a role-less child of a grid, so in `grid` mode it becomes a row
+     * of its own — see `buildSelectionListSectionHeaderGridA11yProps`.
+     */
+    headerRowIndexBySectionId?: ReadonlyMap<string, number>;
 }>;
 
 /**
@@ -306,11 +281,32 @@ function renderSelectionListSectionElement(
     const wrapperStyle = sectionPlan.isStale === true
         ? [wrapStyles.sectionWrap, dynStyles.staleSection]
         : wrapStyles.sectionWrap;
+    const sectionGroupA11y = measureMode
+        ? null
+        : buildSelectionListSectionGroupA11yProps({
+            pattern: ctx.a11yPattern,
+            title: sectionPlan.title,
+        });
+    const sectionGroupFrameProps = sectionGroupA11y === null
+        ? {}
+        : {
+            role: 'group' as const,
+            ariaProps: sectionGroupA11y,
+        };
+    // The measure mirror stays identity-free: no testIDs, no roles, no row
+    // indices — only the layout, which one extra role-carrying wrapper around
+    // the header does not change.
+    const headerRowIndex = measureMode
+        ? undefined
+        : ctx.headerRowIndexBySectionId?.get(sectionPlan.id);
     const header = (
         <SelectionListSectionHeader
             testID={measureMode ? undefined : headerTestId}
             title={sectionPlan.title}
             count={sectionPlan.count}
+            {...(headerRowIndex === undefined
+                ? {}
+                : { gridRow: { rowIndex: headerRowIndex, columnCount: ctx.columnCount ?? 1 } })}
         />
     );
     const sectionTestIdForRender = measureMode ? undefined : sectionTestId;
@@ -318,10 +314,11 @@ function renderSelectionListSectionElement(
     if (sectionPlan.dynamicState === 'loading') {
         const skeletonCount = sectionPlan.skeletonRowCount ?? SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS;
         return (
-            <SelectionListSectionScrollOffsetFrame
+            <SelectionListScrollOffsetFrame
                 key={sectionPlan.id}
                 testID={sectionTestIdForRender}
                 style={wrapperStyle}
+                {...sectionGroupFrameProps}
             >
                 {header}
                 <SelectionListLoadingSkeletonGroup
@@ -347,19 +344,23 @@ function renderSelectionListSectionElement(
                         optionPositionById={ctx.optionPositionById}
                         optionSetSize={ctx.optionSetSize}
                         measureMode={measureMode}
+                        columnCount={ctx.columnCount}
+                        columnGapPx={ctx.columnGapPx}
+                        rowOffset={ctx.optionRowOffsetBySectionId?.get(sectionPlan.id)}
                     />
                 ) : null}
-            </SelectionListSectionScrollOffsetFrame>
+            </SelectionListScrollOffsetFrame>
         );
     }
 
     if (sectionPlan.dynamicState === 'error') {
         const errorLabel = sectionPlan.hint ?? t('selectionList.dynamicSectionError');
         return (
-            <SelectionListSectionScrollOffsetFrame
+            <SelectionListScrollOffsetFrame
                 key={sectionPlan.id}
                 testID={sectionTestIdForRender}
                 style={wrapperStyle}
+                {...sectionGroupFrameProps}
             >
                 {header}
                 <SelectionListErrorRow
@@ -380,20 +381,24 @@ function renderSelectionListSectionElement(
                             optionPositionById={ctx.optionPositionById}
                             optionSetSize={ctx.optionSetSize}
                             measureMode={measureMode}
+                            columnCount={ctx.columnCount}
+                            columnGapPx={ctx.columnGapPx}
+                            rowOffset={ctx.optionRowOffsetBySectionId?.get(sectionPlan.id)}
                         />
                     </View>
                 ) : null}
-            </SelectionListSectionScrollOffsetFrame>
+            </SelectionListScrollOffsetFrame>
         );
     }
 
     if (sectionPlan.dynamicState === 'notFound') {
         const notFoundLabel = sectionPlan.hint ?? t('selectionList.pathNotFound');
         return (
-            <SelectionListSectionScrollOffsetFrame
+            <SelectionListScrollOffsetFrame
                 key={sectionPlan.id}
                 testID={sectionTestIdForRender}
                 style={wrapperStyle}
+                {...sectionGroupFrameProps}
             >
                 {header}
                 <SelectionListNotFoundRow
@@ -401,7 +406,7 @@ function renderSelectionListSectionElement(
                     testID={measureMode ? undefined : selectionListTestId(sectionTestId, 'notFound')}
                     measureMode={measureMode}
                 />
-            </SelectionListSectionScrollOffsetFrame>
+            </SelectionListScrollOffsetFrame>
         );
     }
 
@@ -410,10 +415,11 @@ function renderSelectionListSectionElement(
             return null;
         }
         return (
-            <SelectionListSectionScrollOffsetFrame
+            <SelectionListScrollOffsetFrame
                 key={sectionPlan.id}
                 testID={sectionTestIdForRender}
                 style={wrapperStyle}
+                {...sectionGroupFrameProps}
             >
                 {header}
                 <SelectionListEmptyHintRow
@@ -422,7 +428,7 @@ function renderSelectionListSectionElement(
                         ? undefined
                         : selectionListTestId(sectionTestId, 'emptyHint')}
                 />
-            </SelectionListSectionScrollOffsetFrame>
+            </SelectionListScrollOffsetFrame>
         );
     }
 
@@ -434,13 +440,6 @@ function renderSelectionListSectionElement(
         count: sectionPlan.count,
         options: sectionPlan.options,
         virtualization: sectionPlan.virtualization,
-    };
-    const handleVirtualizedSelect = (option: SelectionListOption) => {
-        activateSelectionListRow({
-            option,
-            onSelect: ctx.onSelect,
-            onPushStep: ctx.onPushStep,
-        });
     };
     const mode: SelectionListVirtualizationMode =
         sectionPlan.virtualization ?? 'auto';
@@ -467,11 +466,20 @@ function renderSelectionListSectionElement(
                 // AND so it can scroll the focused row into view
                 // (matching the plain mapped path's UX).
                 focusedOptionId={ctx.focusedOptionId}
-                onSelectOption={handleVirtualizedSelect}
+                // The virtualized rows are `PlanOptionRow`s: they own
+                // activation themselves, so the raw sinks are forwarded
+                // (wrapping them in `activateSelectionListRow` here would
+                // commit twice).
+                onSelect={ctx.onSelect}
+                onPushStep={ctx.onPushStep}
                 optionPositionById={ctx.optionPositionById}
                 optionSetSize={ctx.optionSetSize}
                 virtualization={sectionPlan.virtualization}
                 showsVerticalScrollIndicator={ctx.showsVerticalScrollIndicator}
+                a11yPattern={ctx.a11yPattern}
+                gridColumnCount={ctx.columnCount ?? 1}
+                headerRowIndex={headerRowIndex}
+                rowIndexOffset={ctx.optionRowOffsetBySectionId?.get(sectionPlan.id)?.rowIndex}
             />
         );
         // FR3-9: when the virtualized section advertises a `transitionKey`
@@ -516,10 +524,11 @@ function renderSelectionListSectionElement(
         && sectionPlan.transitionKey.length > 0;
 
     return (
-        <SelectionListSectionScrollOffsetFrame
+        <SelectionListScrollOffsetFrame
             key={sectionPlan.id}
             testID={sectionTestIdForRender}
             style={wrapperStyle}
+            {...sectionGroupFrameProps}
         >
             {header}
             {useAnimatedRows && !measureMode ? (
@@ -533,6 +542,9 @@ function renderSelectionListSectionElement(
                     onPushStep={ctx.onPushStep}
                     optionPositionById={ctx.optionPositionById}
                     optionSetSize={ctx.optionSetSize}
+                    columnCount={ctx.columnCount}
+                    columnGapPx={ctx.columnGapPx}
+                    rowOffset={ctx.optionRowOffsetBySectionId?.get(sectionPlan.id)}
                     transitionKey={sectionPlan.transitionKey as string}
                     sectionTestId={sectionTestId}
                 />
@@ -548,8 +560,11 @@ function renderSelectionListSectionElement(
                     optionPositionById={ctx.optionPositionById}
                     optionSetSize={ctx.optionSetSize}
                     measureMode={measureMode}
+                    columnCount={ctx.columnCount}
+                    columnGapPx={ctx.columnGapPx}
+                    rowOffset={ctx.optionRowOffsetBySectionId?.get(sectionPlan.id)}
                 />
             )}
-        </SelectionListSectionScrollOffsetFrame>
+        </SelectionListScrollOffsetFrame>
     );
 }

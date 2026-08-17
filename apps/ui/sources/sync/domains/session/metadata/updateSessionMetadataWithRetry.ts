@@ -2,11 +2,13 @@ import {
     updateSessionMetadataTupleWithRetry,
     type SessionMetadataLegacyOwnerMutationRequestV1,
     type SessionMetadataLegacyOwnerTupleMutationSnapshotV1,
+    type SessionMetadataOwnerMigrationCurrentnessV1,
     type SessionMetadataTupleMutationCryptoV1,
     type SessionMetadataTupleMutationSnapshotV1,
 } from '@happier-dev/cli-common/sessionMetadata';
 import {
     SESSION_METADATA_LAYOUT_VERSION_V1,
+    projectSessionMetadataAgentVocabularyWriteCompatibilityV1,
     type SessionMetadataInactiveModelIntentExpectationV1,
     type SessionMetadataInactiveModelIntentOwnerPatchV1,
     type SessionMetadataTuplePatchV1,
@@ -131,6 +133,8 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         ) => void;
         acquireTupleSnapshot: () => Promise<TupleSnapshot<M, A>>;
         tupleCrypto: SessionMetadataTupleMutationCryptoV1;
+        getOwnerMigrationCurrentness?: () =>
+            SessionMetadataOwnerMigrationCurrentnessV1 | undefined;
         applyTupleSnapshot: (
             next: Layout1TupleSnapshot<M, A>,
         ) => void;
@@ -188,7 +192,9 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         }
         legacyAttempt += 1;
         const encryptedMetadata = await params.encryptMetadata(
-            request.updatedMetadata,
+            projectSessionMetadataAgentVocabularyWriteCompatibilityV1(
+                request.updatedMetadata,
+            ),
         );
         const result = await emitUpdateMetadata({
             sid: sessionId,
@@ -386,6 +392,8 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
                     ));
             },
             isAmbiguousCommitError: isAmbiguousTupleCommitError,
+            ownerMigrationCurrentness:
+                params.getOwnerMigrationCurrentness?.(),
             mutateLegacy,
             maxAttempts,
         });

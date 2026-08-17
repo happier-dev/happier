@@ -3,64 +3,32 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-type SourceExpectation = Readonly<{
-    filePath: string;
-    requiredImports: ReadonlyArray<string>;
-    forbiddenImports: ReadonlyArray<string>;
-}>;
+const canonicalPlaybackOwnerPath = 'sources/voice/runtime/playback/VoicePlaybackController.ts';
+const canonicalPlaybackOwnerImport = '@/voice/runtime/playback/VoicePlaybackController';
+const retiredPlaybackOwnerImport = '@/voice/runtime/VoicePlaybackController';
 
-const sourceExpectations: ReadonlyArray<SourceExpectation> = [
-    {
-        filePath: 'sources/voice/output/playAudioBytesWithStopper.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/output/speakAssistantText.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/output/KokoroTtsController.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/output/TtsController.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/runtime/bundledSpeech/bundledSpeechRuntime.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/backends/tts/runtime.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/backends/tts/localVoiceTtsProviderControllers.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/local/localVoiceEngine.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/runtime/daemonInference/DaemonTtsController.ts',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-    {
-        filePath: 'sources/voice/settings/panels/localTts/LocalNeuralTtsSettings.native.tsx',
-        requiredImports: ['@/voice/runtime/playback/VoicePlaybackController'],
-        forbiddenImports: ['@/voice/runtime/VoicePlaybackController'],
-    },
-];
+// Keep this inventory to direct consumers of the interruption/stopper owner.
+// TtsController owns ordering for one speak generation; it neither creates nor
+// consumes the interruption controller, so requiring it to import this module
+// would assert a false cross-owner dependency rather than canonicalization.
+const directPlaybackConsumerPaths = [
+    'sources/voice/backends/tts/localVoiceTtsProviderControllers.ts',
+    'sources/voice/backends/tts/runtime.ts',
+    'sources/voice/local/localVoiceEngine.ts',
+    'sources/voice/local/sendVoiceTextTurn.ts',
+    'sources/voice/output/KokoroTtsController.ts',
+    'sources/voice/output/playAudioBytesWithStopper.ts',
+    'sources/voice/output/speakAssistantText.ts',
+    'sources/voice/qa/voiceQaOutputFixturePlayback.ts',
+    'sources/voice/runtime/bundledSpeech/bundledSpeechRuntime.ts',
+    'sources/voice/runtime/connection/VoiceRealtimeConnection.ts',
+    'sources/voice/runtime/connection/WebSocketPcmMedia.ts',
+    'sources/voice/runtime/controller/VoiceConversationController.ts',
+    'sources/voice/runtime/daemonInference/DaemonTtsController.ts',
+    'sources/voice/runtime/machine/voiceBargeInController.ts',
+    'sources/voice/runtime/realtime/createRealtimeBargeInCoordinator.ts',
+    'sources/voice/settings/panels/localTts/LocalNeuralTtsSettings.native.tsx',
+] as const;
 
 const retiredCompatibilityWrappers = [
     'sources/voice/runtime/VoicePlaybackController.ts',
@@ -69,18 +37,22 @@ const retiredCompatibilityWrappers = [
 const uiRootPath = fileURLToPath(new URL('../../../../', import.meta.url));
 
 describe('voice playback canonical owner imports', () => {
-    it('routes owned playback and TTS surfaces through the runtime/playback owner path', async () => {
-        for (const expectation of sourceExpectations) {
-            const source = await readFile(join(uiRootPath, expectation.filePath), 'utf8');
+    it('routes every direct interruption/stopper consumer through the runtime/playback owner path', async () => {
+        expect(directPlaybackConsumerPaths).not.toContain(canonicalPlaybackOwnerPath);
 
-            for (const requiredImport of expectation.requiredImports) {
-                expect(source).toContain(requiredImport);
-            }
+        for (const consumerPath of directPlaybackConsumerPaths) {
+            const source = await readFile(join(uiRootPath, consumerPath), 'utf8');
 
-            for (const forbiddenImport of expectation.forbiddenImports) {
-                expect(source).not.toContain(forbiddenImport);
-            }
+            expect(source).toContain(canonicalPlaybackOwnerImport);
+            expect(source).not.toContain(retiredPlaybackOwnerImport);
         }
+    });
+
+    it('keeps the canonical owner self-contained rather than requiring a self-import', async () => {
+        const source = await readFile(join(uiRootPath, canonicalPlaybackOwnerPath), 'utf8');
+
+        expect(source).not.toContain(canonicalPlaybackOwnerImport);
+        expect(source).not.toContain(retiredPlaybackOwnerImport);
     });
 
     it('deletes the playback compatibility wrapper once all remaining consumers use the canonical owner path', async () => {

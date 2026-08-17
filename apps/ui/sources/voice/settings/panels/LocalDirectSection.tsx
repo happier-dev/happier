@@ -23,6 +23,7 @@ export function LocalDirectSection(props: {
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  showProcessingDisclosure?: boolean;
 }) {
   const voice = voiceSettingsParse(props.voice);
   const enabled = resolveVoiceProviderIdFromSettings(voice) === 'local_direct';
@@ -41,8 +42,11 @@ export function LocalDirectSection(props: {
       <LocalVoiceSttGroup
         cfgStt={cfg.stt}
         setStt={(next) => setCfg({ stt: next })}
+        voice={voice}
+        setVoice={props.setVoice}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        showProcessingDisclosure={props.showProcessingDisclosure}
       />
 
       {sttProvider === 'device' ? (
@@ -105,9 +109,12 @@ export function LocalDirectSection(props: {
       <LocalVoiceTtsGroup
         cfgTts={cfg.tts}
         setTts={(next) => setCfg({ tts: next })}
+        voice={voice}
+        setVoice={props.setVoice}
         networkTimeoutMs={cfg.networkTimeoutMs}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        showProcessingDisclosure={props.showProcessingDisclosure}
       />
 
       <ItemGroup>

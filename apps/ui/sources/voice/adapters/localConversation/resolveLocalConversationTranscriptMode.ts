@@ -7,9 +7,9 @@ import { readLocalConversationVoiceSettings, voiceSettingsParse } from '@/sync/d
  *
  * - Returns `null` when the adapter does not expose a hidden voice conversation
  *   session (i.e. not in `agent` conversation mode) — no binding.
- * - `daemon` agent backend mirrors a real backend session (`native_session`).
- * - Any other agent backend (e.g. `openai_compat`) projects a `synthetic`
- *   transcript.
+ * - Agent mode always mirrors the daemon-owned execution run session
+ *   (`native_session`). Provider-backed Chat changes the selected runtime
+ *   composition, not transcript ownership.
  *
  * This lives with the provider adapter so generic binding/sync code never has
  * to branch on the `local_conversation` id to learn the transcript mode.
@@ -19,12 +19,11 @@ export function resolveLocalConversationTranscriptMode(
 ): VoiceAdapterTranscriptMode | null {
     const config = readLocalConversationConfig(settings);
     if ((config?.conversationMode ?? 'direct_session') !== 'agent') return null;
-    return config?.agent?.backend === 'daemon' ? 'native_session' : 'synthetic';
+    return 'native_session';
 }
 
 type LocalConversationConfig = Readonly<{
     conversationMode?: string;
-    agent?: Readonly<{ backend?: string }> | null;
 }>;
 
 function readLocalConversationConfig(settings: unknown): LocalConversationConfig | null {

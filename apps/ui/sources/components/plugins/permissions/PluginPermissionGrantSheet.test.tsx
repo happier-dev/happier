@@ -21,6 +21,7 @@ type SheetModule = Readonly<{
         };
         onGrant: (input: Readonly<{ requestId: string }>) => void;
         onDismiss: (input: Readonly<{ requestId: string }>) => void;
+        detailRows?: readonly Readonly<{ key: string; label?: string; value: string }>[];
         disabled?: boolean;
         testID?: string;
     }>;
@@ -93,6 +94,60 @@ describe('PluginPermissionGrantSheet', () => {
         expect(onDismiss).toHaveBeenCalledWith({ requestId: 'request-1' });
         expect(screen.findByTestId('plugin-grant-grant')?.props.style.minHeight).toBe(44);
         expect(screen.findByTestId('plugin-grant-dismiss')?.props.style.minHeight).toBe(44);
+    });
+
+    it('renders caller-supplied disclosure facts inside the canonical accessible review summary', async () => {
+        const mod = await loadSheet();
+        expect(mod).not.toBeNull();
+        if (!mod) return;
+
+        const screen = await renderScreen(
+            <mod.PluginPermissionGrantSheet
+                pendingRequest={{
+                    id: 'request-raw-credential',
+                    pluginId: 'acme.voice',
+                    pluginName: 'Acme Voice',
+                    capability: 'credentials.materialize.raw',
+                    targetScope: { kind: 'account' },
+                    requester: { kind: 'plugin', pluginId: 'acme.voice' },
+                    authoritySource: { kind: 'bundled' },
+                    status: 'pending',
+                    createdAt: 1,
+                    updatedAt: 1,
+                }}
+                labels={{
+                    title: 'Raw credential access review',
+                    body: ({ pluginName }) => `${pluginName} requests raw credential access.`,
+                    grant: 'Allow access',
+                    dismiss: 'Not now',
+                }}
+                detailRows={[
+                    { key: 'package', label: 'Package', value: '@acme/voice' },
+                    { key: 'publisher', label: 'Publisher', value: 'Unavailable' },
+                    { key: 'credential-slot', label: 'Credential slot', value: 'api_key' },
+                    {
+                        key: 'disclosure-0',
+                        label: 'Credential disclosure',
+                        value: 'Saved secret · connection · web · authorization @ https://voice.example.test',
+                    },
+                    { key: 'contribution', value: 'Contribution: acme.voice/conversation' },
+                ]}
+                onGrant={() => {}}
+                onDismiss={() => {}}
+                testID="plugin-grant-raw-credential"
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('Package: @acme/voice');
+        expect(screen.getTextContent()).toContain('Publisher: Unavailable');
+        expect(screen.getTextContent()).toContain('Credential slot: api_key');
+        expect(screen.getTextContent()).toContain('authorization @ https://voice.example.test');
+        const summary = screen.findByTestId('plugin-grant-raw-credential-details')?.props.accessibilityLabel;
+        expect(summary).toContain('Package: @acme/voice');
+        expect(summary).toContain('Publisher: Unavailable');
+        expect(summary).toContain('Credential disclosure: Saved secret');
+        expect(summary).toContain('Contribution: acme.voice/conversation');
+        expect(summary).not.toContain(': Contribution: acme.voice/conversation');
     });
 
     it('localizes and accessibly groups long permission facts while preserving exact technical values in RTL', async () => {

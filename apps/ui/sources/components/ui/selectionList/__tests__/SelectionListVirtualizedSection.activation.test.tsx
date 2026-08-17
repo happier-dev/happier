@@ -20,24 +20,21 @@ vi.mock('@legendapp/list/react-native', () => ({
 }));
 
 /**
- * RV-2 / F2 — Virtualized row activation must call `option.onSelect` EXACTLY
- * ONCE per press. Previously the inner row press handler called both
- * `option.onSelect?.()` AND `props.onSelectOption(option)`; the orchestrator's
- * `handleVirtualizedSelect` then routed through `activateSelectionListRow`,
- * which calls `option.onSelect?.()` again — producing a double commit on
- * directories with > 50 entries (auto-virtualized).
- *
- * The fix removes the inner call; the orchestrator's
- * `activateSelectionListRow` is the single source of truth (already proven by
- * the non-virtualized `PlanOptionRow` path).
+ * RV-2 / F2 — Virtualized row activation must commit EXACTLY ONCE per press.
+ * The section renders the canonical `PlanOptionRow`, whose press handler is the
+ * single activation entry point (`activateSelectionListRow`): it invokes the
+ * option-level `onSelect` and then bubbles to the orchestrator's `onSelect`.
+ * A second activation wrapper around the section's own callback would produce a
+ * double commit on directories with > 50 entries (auto-virtualized).
  */
 describe('SelectionListVirtualizedSection activation contract (F2)', () => {
-    it('invokes the row press handler exactly once and bubbles the option to onSelectOption (no inner option.onSelect)', async () => {
+    it('activates a pressed row exactly once through the canonical activation entry point', async () => {
         legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 
         const optionOnSelect = vi.fn();
-        const onSelectOption = vi.fn();
+        const onSelect = vi.fn();
+        const onPushStep = vi.fn();
 
         const options: ReadonlyArray<SelectionListOption> = [
             {
@@ -58,12 +55,13 @@ describe('SelectionListVirtualizedSection activation contract (F2)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={onSelectOption}
+                onSelect={onSelect}
+                onPushStep={onPushStep}
                 virtualization="force"
             />,
         );
 
-        // Sanity: FlashList mounted (forced).
+        // Sanity: the virtualized backend mounted (forced).
         expect(legendListState.props).not.toBeNull();
 
         // The rendered Item carries the canonical option testID.
@@ -71,23 +69,61 @@ describe('SelectionListVirtualizedSection activation contract (F2)', () => {
         expect(itemNode).not.toBeNull();
         expect(typeof itemNode!.props.onPress).toBe('function');
 
-        // Press the row. The inner handler MUST NOT call option.onSelect
-        // — the orchestrator owns activation via onSelectOption.
         itemNode!.props.onPress();
 
-        // Inner handler did NOT directly invoke option.onSelect.
-        expect(optionOnSelect).not.toHaveBeenCalled();
-        // The orchestrator wrapper received exactly one call with the option.
-        expect(onSelectOption).toHaveBeenCalledTimes(1);
-        expect(onSelectOption).toHaveBeenCalledWith(options[0]);
+        expect(optionOnSelect).toHaveBeenCalledTimes(1);
+        expect(onSelect).toHaveBeenCalledTimes(1);
+        expect(onSelect).toHaveBeenCalledWith('row-0', options[0]);
+        expect(onPushStep).not.toHaveBeenCalled();
     });
 
-    it('does not call onSelectOption when the option is disabled', async () => {
+    it('pushes the step instead of selecting for a drill-down row', async () => {
+        legendListState.reset();
+        const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
+
+        const onSelect = vi.fn();
+        const onPushStep = vi.fn();
+        const openStep = { id: 'child', sections: [] } as const;
+
+        const section: SelectionListSection = {
+            id: 'forced',
+            title: 'FORCED',
+            options: [
+                {
+                    id: 'row-drill',
+                    label: 'Drill',
+                    openStep,
+                },
+            ],
+        };
+
+        const screen = await renderScreen(
+            <SelectionListVirtualizedSection
+                section={section}
+                stepId="root"
+                rootTestID="sl"
+                selectedOptionId={null}
+                onSelect={onSelect}
+                onPushStep={onPushStep}
+                virtualization="force"
+            />,
+        );
+
+        const itemNode = screen.findByTestId('sl:root:option:row-drill');
+        expect(itemNode).not.toBeNull();
+        itemNode!.props.onPress();
+
+        expect(onPushStep).toHaveBeenCalledTimes(1);
+        expect(onPushStep).toHaveBeenCalledWith(openStep);
+        expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('does not activate when the option is disabled', async () => {
         legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
 
         const optionOnSelect = vi.fn();
-        const onSelectOption = vi.fn();
+        const onSelect = vi.fn();
 
         const section: SelectionListSection = {
             id: 'forced',
@@ -108,7 +144,8 @@ describe('SelectionListVirtualizedSection activation contract (F2)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={onSelectOption}
+                onSelect={onSelect}
+                onPushStep={() => {}}
                 virtualization="force"
             />,
         );
@@ -118,6 +155,6 @@ describe('SelectionListVirtualizedSection activation contract (F2)', () => {
         itemNode!.props.onPress();
 
         expect(optionOnSelect).not.toHaveBeenCalled();
-        expect(onSelectOption).not.toHaveBeenCalled();
+        expect(onSelect).not.toHaveBeenCalled();
     });
 });

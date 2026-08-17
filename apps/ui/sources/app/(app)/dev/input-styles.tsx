@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { View, Text, ScrollView, Pressable, TextInput, Platform } from 'react-native';
-import { Ionicons, MaterialIcons, FontAwesome5, Feather } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type InputStyle = {
     id: string;
@@ -31,23 +31,23 @@ export default function InputStylesDemo() {
                         paddingBottom: 4,
                     }}>
                         <Pressable style={{ padding: 6, marginRight: 2 }}>
-                            <Ionicons name="at" size={18} color="#666" />
+                            <Icon name="at" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 2 }}>
-                            <Ionicons name="happy-outline" size={18} color="#666" />
+                            <Icon name="smiley" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 2 }}>
-                            <MaterialIcons name="format-bold" size={18} color="#666" />
+                            <Icon name="text-b" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 2 }}>
-                            <MaterialIcons name="format-italic" size={18} color="#666" />
+                            <Icon name="text-italic" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 2 }}>
-                            <MaterialIcons name="link" size={18} color="#666" />
+                            <Icon name="link" size={16} color="#666" />
                         </Pressable>
                         <View style={{ flex: 1 }} />
                         <Pressable style={{ padding: 6 }}>
-                            <Ionicons name="code-slash" size={18} color="#666" />
+                            <Icon name="code" size={16} color="#666" />
                         </Pressable>
                     </View>
                     <View style={{
@@ -57,7 +57,7 @@ export default function InputStylesDemo() {
                         paddingBottom: 12,
                     }}>
                         <Pressable style={{ padding: 8 }}>
-                            <Ionicons name="add" size={20} color="#666" />
+                            <Icon name="plus" size={20} color="#666" />
                         </Pressable>
                         <View style={{
                             flex: 1,
@@ -79,7 +79,7 @@ export default function InputStylesDemo() {
                             />
                         </View>
                         <Pressable style={{ padding: 8 }}>
-                            <Ionicons name="send" size={18} color="#007a5a" />
+                            <Icon name="paper-plane-tilt" size={16} color="#007a5a" />
                         </Pressable>
                     </View>
                 </View>
@@ -117,7 +117,7 @@ export default function InputStylesDemo() {
                                 alignItems: 'center',
                                 justifyContent: 'center',
                             }}>
-                                <Ionicons name="arrow-up" size={20} color="#fff" />
+                                <Icon name="arrow-up" size={20} color="#fff" />
                             </Pressable>
                         </View>
                     </View>
@@ -134,7 +134,7 @@ export default function InputStylesDemo() {
                             backgroundColor: '#f0f0f0',
                             marginRight: 8,
                         }}>
-                            <Ionicons name="attach" size={16} color="#666" />
+                            <Icon name="paperclip" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{
                             paddingHorizontal: 14,
@@ -143,7 +143,7 @@ export default function InputStylesDemo() {
                             backgroundColor: '#f0f0f0',
                             marginRight: 8,
                         }}>
-                            <Ionicons name="image" size={16} color="#666" />
+                            <Icon name="image" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{
                             paddingHorizontal: 14,
@@ -173,7 +173,7 @@ export default function InputStylesDemo() {
                             minHeight: 44,
                         }}>
                             <Pressable style={{ marginRight: 16 }}>
-                                <Ionicons name="add-circle" size={24} color="#b9bbbe" />
+                                <Icon name="plus-circle" size={24} color="#b9bbbe" />
                             </Pressable>
                             <TextInput
                                 style={{ flex: 1, fontSize: 16, color: '#dcddde' }}
@@ -182,10 +182,10 @@ export default function InputStylesDemo() {
                                 editable={false}
                             />
                             <Pressable style={{ marginLeft: 12 }}>
-                                <MaterialIcons name="gif" size={24} color="#b9bbbe" />
+                                <Icon name="gif" size={24} color="#b9bbbe" />
                             </Pressable>
                             <Pressable style={{ marginLeft: 12 }}>
-                                <Ionicons name="happy" size={24} color="#b9bbbe" />
+                                <Icon name="smiley" size={24} color="#b9bbbe" />
                             </Pressable>
                         </View>
                     </View>
@@ -196,13 +196,13 @@ export default function InputStylesDemo() {
                         paddingBottom: 12,
                     }}>
                         <Pressable style={{ padding: 4, marginRight: 8 }}>
-                            <Feather name="gift" size={18} color="#b9bbbe" />
+                            <Icon name="gift" size={16} color="#b9bbbe" />
                         </Pressable>
                         <Pressable style={{ padding: 4, marginRight: 8 }}>
-                            <MaterialIcons name="sticky-note-2" size={18} color="#b9bbbe" />
+                            <Icon name="note" size={16} color="#b9bbbe" />
                         </Pressable>
                         <Pressable style={{ padding: 4 }}>
-                            <Ionicons name="game-controller" size={18} color="#b9bbbe" />
+                            <Icon name="game-controller" size={16} color="#b9bbbe" />
                         </Pressable>
                     </View>
                 </View>
@@ -230,7 +230,7 @@ export default function InputStylesDemo() {
                             minHeight: 42,
                         }}>
                             <Pressable style={{ marginRight: 8 }}>
-                                <Ionicons name="happy-outline" size={24} color="#51585c" />
+                                <Icon name="smiley" size={24} color="#51585c" />
                             </Pressable>
                             <TextInput
                                 style={{ flex: 1, fontSize: 16, color: '#000' }}
@@ -239,10 +239,10 @@ export default function InputStylesDemo() {
                                 editable={false}
                             />
                             <Pressable style={{ marginLeft: 8 }}>
-                                <Ionicons name="attach" size={24} color="#51585c" />
+                                <Icon name="paperclip" size={24} color="#51585c" />
                             </Pressable>
                             <Pressable style={{ marginLeft: 8 }}>
-                                <Ionicons name="camera" size={24} color="#51585c" />
+                                <Icon name="camera" size={24} color="#51585c" />
                             </Pressable>
                         </View>
                         <Pressable style={{
@@ -253,7 +253,7 @@ export default function InputStylesDemo() {
                             alignItems: 'center',
                             justifyContent: 'center',
                         }}>
-                            <Ionicons name="mic" size={24} color="#fff" />
+                            <Icon name="microphone" size={24} color="#fff" />
                         </Pressable>
                     </View>
                     <View style={{
@@ -306,7 +306,7 @@ export default function InputStylesDemo() {
                         borderTopColor: '#e0e0e0',
                     }}>
                         <Pressable style={{ padding: 8 }}>
-                            <Ionicons name="attach" size={24} color="#8e8e8e" />
+                            <Icon name="paperclip" size={24} color="#8e8e8e" />
                         </Pressable>
                         <View style={{
                             flex: 1,
@@ -324,14 +324,14 @@ export default function InputStylesDemo() {
                             />
                         </View>
                         <Pressable style={{ padding: 8 }}>
-                            <Ionicons name="mic" size={24} color="#0088cc" />
+                            <Icon name="microphone" size={24} color="#0088cc" />
                         </Pressable>
                         <Pressable style={{
                             padding: 8,
                             backgroundColor: '#0088cc',
                             borderRadius: 20,
                         }}>
-                            <Ionicons name="send" size={20} color="#fff" />
+                            <Icon name="paper-plane-tilt" size={20} color="#fff" />
                         </Pressable>
                     </View>
                     <View style={{
@@ -341,16 +341,16 @@ export default function InputStylesDemo() {
                         paddingBottom: 8,
                     }}>
                         <Pressable style={{ padding: 4, marginRight: 12 }}>
-                            <Ionicons name="happy-outline" size={20} color="#8e8e8e" />
+                            <Icon name="smiley" size={20} color="#8e8e8e" />
                         </Pressable>
                         <Pressable style={{ padding: 4, marginRight: 12 }}>
-                            <MaterialIcons name="sticky-note-2" size={20} color="#8e8e8e" />
+                            <Icon name="note" size={20} color="#8e8e8e" />
                         </Pressable>
                         <Pressable style={{ padding: 4, marginRight: 12 }}>
-                            <Ionicons name="location" size={20} color="#8e8e8e" />
+                            <Icon name="map-pin" size={20} color="#8e8e8e" />
                         </Pressable>
                         <Pressable style={{ padding: 4 }}>
-                            <Ionicons name="timer-outline" size={20} color="#8e8e8e" />
+                            <Icon name="timer" size={20} color="#8e8e8e" />
                         </Pressable>
                     </View>
                 </View>
@@ -399,16 +399,16 @@ export default function InputStylesDemo() {
                         paddingBottom: 12,
                     }}>
                         <Pressable style={{ marginRight: 16 }}>
-                            <Ionicons name="at" size={18} color="#6a737d" />
+                            <Icon name="at" size={16} color="#6a737d" />
                         </Pressable>
                         <Pressable style={{ marginRight: 16 }}>
-                            <MaterialIcons name="tag" size={18} color="#6a737d" />
+                            <Icon name="tag" size={16} color="#6a737d" />
                         </Pressable>
                         <Pressable style={{ marginRight: 16 }}>
-                            <Ionicons name="code-slash" size={18} color="#6a737d" />
+                            <Icon name="code" size={16} color="#6a737d" />
                         </Pressable>
                         <Pressable>
-                            <Ionicons name="attach" size={18} color="#6a737d" />
+                            <Icon name="paperclip" size={16} color="#6a737d" />
                         </Pressable>
                     </View>
                 </View>
@@ -494,22 +494,22 @@ export default function InputStylesDemo() {
                                 borderBottomColor: '#e1e4e8',
                             }}>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="format-bold" size={18} color="#586069" />
+                                    <Icon name="text-b" size={16} color="#586069" />
                                 </Pressable>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="format-italic" size={18} color="#586069" />
+                                    <Icon name="text-italic" size={16} color="#586069" />
                                 </Pressable>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="code" size={18} color="#586069" />
+                                    <Icon name="code" size={16} color="#586069" />
                                 </Pressable>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="link" size={18} color="#586069" />
+                                    <Icon name="link" size={16} color="#586069" />
                                 </Pressable>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="format-list-bulleted" size={18} color="#586069" />
+                                    <Icon name="list-bullets" size={16} color="#586069" />
                                 </Pressable>
                                 <Pressable>
-                                    <MaterialIcons name="format-list-numbered" size={18} color="#586069" />
+                                    <Icon name="list-numbers" size={16} color="#586069" />
                                 </Pressable>
                             </View>
                             <TextInput
@@ -576,7 +576,7 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginRight: 8,
                         }}>
-                            <Ionicons name="camera" size={20} color="#fff" />
+                            <Icon name="camera" size={20} color="#fff" />
                         </Pressable>
                         <View style={{
                             flex: 1,
@@ -602,7 +602,7 @@ export default function InputStylesDemo() {
                             alignItems: 'center',
                             justifyContent: 'center',
                         }}>
-                            <Ionicons name="arrow-up" size={20} color="#fff" />
+                            <Icon name="arrow-up" size={20} color="#fff" />
                         </Pressable>
                     </View>
                     <View style={{
@@ -612,16 +612,16 @@ export default function InputStylesDemo() {
                         paddingBottom: 8,
                     }}>
                         <Pressable style={{ padding: 6, marginRight: 4 }}>
-                            <Ionicons name="apps" size={22} color="#8e8e93" />
+                            <Icon name="squares-four" size={20} color="#8e8e93" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 4 }}>
-                            <Ionicons name="images" size={22} color="#8e8e93" />
+                            <Icon name="images" size={20} color="#8e8e93" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 4 }}>
-                            <MaterialIcons name="sticky-note-2" size={22} color="#8e8e93" />
+                            <Icon name="note" size={20} color="#8e8e93" />
                         </Pressable>
                         <Pressable style={{ padding: 6 }}>
-                            <Ionicons name="musical-notes" size={22} color="#8e8e93" />
+                            <Icon name="music-notes" size={20} color="#8e8e93" />
                         </Pressable>
                     </View>
                 </View>
@@ -657,7 +657,7 @@ export default function InputStylesDemo() {
                                     editable={false}
                                 />
                                 <Pressable style={{ marginLeft: 8 }}>
-                                    <MaterialIcons name="send" size={24} color="#1976d2" />
+                                    <Icon name="paper-plane-tilt" size={24} color="#1976d2" />
                                 </Pressable>
                             </View>
                         </View>
@@ -677,7 +677,7 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginRight: 12,
                         }}>
-                            <Ionicons name="attach" size={20} color="#757575" />
+                            <Icon name="paperclip" size={20} color="#757575" />
                         </Pressable>
                         <Pressable style={{
                             width: 40,
@@ -688,7 +688,7 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginRight: 12,
                         }}>
-                            <Ionicons name="image" size={20} color="#757575" />
+                            <Icon name="image" size={20} color="#757575" />
                         </Pressable>
                         <Pressable style={{
                             width: 40,
@@ -699,7 +699,7 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginRight: 12,
                         }}>
-                            <Ionicons name="mic" size={20} color="#757575" />
+                            <Icon name="microphone" size={20} color="#757575" />
                         </Pressable>
                         <Pressable style={{
                             width: 40,
@@ -709,7 +709,7 @@ export default function InputStylesDemo() {
                             alignItems: 'center',
                             justifyContent: 'center',
                         }}>
-                            <Ionicons name="location" size={20} color="#757575" />
+                            <Icon name="map-pin" size={20} color="#757575" />
                         </Pressable>
                     </View>
                 </View>
@@ -833,7 +833,7 @@ export default function InputStylesDemo() {
                                 justifyContent: 'center',
                                 marginLeft: 12,
                             }}>
-                                <Ionicons name="send" size={20} color="#fff" />
+                                <Icon name="paper-plane-tilt" size={20} color="#fff" />
                             </Pressable>
                         </View>
                     </View>
@@ -854,7 +854,7 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginRight: 12,
                         }}>
-                            <Ionicons name="attach" size={18} color="rgba(255, 255, 255, 0.8)" />
+                            <Icon name="paperclip" size={16} color="rgba(255, 255, 255, 0.8)" />
                         </Pressable>
                         <Pressable style={{
                             width: 36,
@@ -867,7 +867,7 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginRight: 12,
                         }}>
-                            <Ionicons name="image" size={18} color="rgba(255, 255, 255, 0.8)" />
+                            <Icon name="image" size={16} color="rgba(255, 255, 255, 0.8)" />
                         </Pressable>
                         <Pressable style={{
                             width: 36,
@@ -879,7 +879,7 @@ export default function InputStylesDemo() {
                             alignItems: 'center',
                             justifyContent: 'center',
                         }}>
-                            <Ionicons name="sparkles" size={18} color="rgba(255, 255, 255, 0.8)" />
+                            <Icon name="sparkle" size={16} color="rgba(255, 255, 255, 0.8)" />
                         </Pressable>
                     </View>
                 </View>
@@ -900,7 +900,7 @@ export default function InputStylesDemo() {
                             paddingHorizontal: 16,
                             paddingVertical: 12,
                         }}>
-                            <Ionicons name="search" size={20} color="#b3b3b3" />
+                            <Icon name="magnifying-glass" size={20} color="#b3b3b3" />
                             <TextInput
                                 style={{ 
                                     flex: 1, 
@@ -913,7 +913,7 @@ export default function InputStylesDemo() {
                                 editable={false}
                             />
                             <Pressable style={{ marginLeft: 12 }}>
-                                <Ionicons name="mic" size={20} color="#1db954" />
+                                <Icon name="microphone" size={20} color="#1db954" />
                             </Pressable>
                         </View>
                     </View>
@@ -925,10 +925,10 @@ export default function InputStylesDemo() {
                         paddingBottom: 12,
                     }}>
                         <Pressable style={{ padding: 12 }}>
-                            <Ionicons name="shuffle" size={24} color="#b3b3b3" />
+                            <Icon name="shuffle" size={24} color="#b3b3b3" />
                         </Pressable>
                         <Pressable style={{ padding: 12 }}>
-                            <Ionicons name="play-skip-back" size={24} color="#fff" />
+                            <Icon name="skip-back" size={24} color="#fff" />
                         </Pressable>
                         <Pressable style={{
                             width: 56,
@@ -939,13 +939,13 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginHorizontal: 16,
                         }}>
-                            <Ionicons name="play" size={28} color="#000" style={{ marginLeft: 2 }} />
+                            <Icon name="play" size={29} color="#000" style={{ marginLeft: 2 }} />
                         </Pressable>
                         <Pressable style={{ padding: 12 }}>
-                            <Ionicons name="play-skip-forward" size={24} color="#fff" />
+                            <Icon name="skip-forward" size={24} color="#fff" />
                         </Pressable>
                         <Pressable style={{ padding: 12 }}>
-                            <Ionicons name="repeat" size={24} color="#1db954" />
+                            <Icon name="repeat" size={24} color="#1db954" />
                         </Pressable>
                     </View>
                 </View>
@@ -1032,10 +1032,10 @@ export default function InputStylesDemo() {
                         </View>
                         <View style={{ flexDirection: 'row' }}>
                             <Pressable style={{ padding: 4 }}>
-                                <Ionicons name="happy-outline" size={20} color="#a0a0a0" />
+                                <Icon name="smiley" size={20} color="#a0a0a0" />
                             </Pressable>
                             <Pressable style={{ padding: 4, marginLeft: 8 }}>
-                                <Ionicons name="at" size={20} color="#a0a0a0" />
+                                <Icon name="at" size={20} color="#a0a0a0" />
                             </Pressable>
                         </View>
                     </View>
@@ -1074,16 +1074,16 @@ export default function InputStylesDemo() {
                             }}>
                                 <View style={{ flexDirection: 'row' }}>
                                     <Pressable style={{ marginRight: 16 }}>
-                                        <Ionicons name="image-outline" size={20} color="#1d9bf0" />
+                                        <Icon name="image" size={20} color="#1d9bf0" />
                                     </Pressable>
                                     <Pressable style={{ marginRight: 16 }}>
-                                        <MaterialIcons name="gif" size={20} color="#1d9bf0" />
+                                        <Icon name="gif" size={20} color="#1d9bf0" />
                                     </Pressable>
                                     <Pressable style={{ marginRight: 16 }}>
-                                        <Ionicons name="stats-chart" size={20} color="#1d9bf0" />
+                                        <Icon name="chart-bar" size={20} color="#1d9bf0" />
                                     </Pressable>
                                     <Pressable>
-                                        <Ionicons name="happy-outline" size={20} color="#1d9bf0" />
+                                        <Icon name="smiley" size={20} color="#1d9bf0" />
                                     </Pressable>
                                 </View>
                                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1169,7 +1169,7 @@ export default function InputStylesDemo() {
                                 },
                             }),
                         }}>
-                            <Ionicons name="search" size={18} color="#999" />
+                            <Icon name="magnifying-glass" size={16} color="#999" />
                             <TextInput
                                 style={{ 
                                     flex: 1, 
@@ -1289,10 +1289,10 @@ export default function InputStylesDemo() {
                             }}>
                                 <View style={{ flexDirection: 'row' }}>
                                     <Pressable style={{ marginRight: 16 }}>
-                                        <Ionicons name="attach" size={20} color="#666" />
+                                        <Icon name="paperclip" size={20} color="#666" />
                                     </Pressable>
                                     <Pressable>
-                                        <Ionicons name="code-slash" size={20} color="#666" />
+                                        <Icon name="code" size={20} color="#666" />
                                     </Pressable>
                                 </View>
                                 <Pressable style={{
@@ -1301,7 +1301,7 @@ export default function InputStylesDemo() {
                                     paddingVertical: 8,
                                     borderRadius: 20,
                                 }}>
-                                    <Ionicons name="arrow-up" size={18} color="#fff" />
+                                    <Icon name="arrow-up" size={16} color="#fff" />
                                 </Pressable>
                             </View>
                         </View>
@@ -1388,19 +1388,19 @@ export default function InputStylesDemo() {
                             paddingVertical: 4,
                         }}>
                             <Pressable style={{ padding: 8 }}>
-                                <MaterialIcons name="format-bold" size={18} color="#818384" />
+                                <Icon name="text-b" size={16} color="#818384" />
                             </Pressable>
                             <Pressable style={{ padding: 8 }}>
-                                <MaterialIcons name="format-italic" size={18} color="#818384" />
+                                <Icon name="text-italic" size={16} color="#818384" />
                             </Pressable>
                             <Pressable style={{ padding: 8 }}>
-                                <MaterialIcons name="link" size={18} color="#818384" />
+                                <Icon name="link" size={16} color="#818384" />
                             </Pressable>
                             <Pressable style={{ padding: 8 }}>
-                                <MaterialIcons name="strikethrough-s" size={18} color="#818384" />
+                                <Icon name="text-strikethrough" size={16} color="#818384" />
                             </Pressable>
                             <Pressable style={{ padding: 8 }}>
-                                <MaterialIcons name="code" size={18} color="#818384" />
+                                <Icon name="code" size={16} color="#818384" />
                             </Pressable>
                             <View style={{ flex: 1 }} />
                             <Pressable style={{
@@ -1423,20 +1423,20 @@ export default function InputStylesDemo() {
                         paddingBottom: 8,
                     }}>
                         <Pressable style={{ marginRight: 16 }}>
-                            <Ionicons name="arrow-up-outline" size={20} color="#818384" />
+                            <Icon name="arrow-up" size={20} color="#818384" />
                         </Pressable>
                         <Text style={{ color: '#818384', fontSize: 16, marginRight: 16 }}>0</Text>
                         <Pressable style={{ marginRight: 16 }}>
-                            <Ionicons name="arrow-down-outline" size={20} color="#818384" />
+                            <Icon name="arrow-down" size={20} color="#818384" />
                         </Pressable>
                         <Pressable style={{ marginRight: 16 }}>
-                            <Ionicons name="chatbox-outline" size={18} color="#818384" />
+                            <Icon name="chat" size={16} color="#818384" />
                         </Pressable>
                         <Pressable style={{ marginRight: 16 }}>
-                            <Ionicons name="share-outline" size={18} color="#818384" />
+                            <Icon name="share" size={16} color="#818384" />
                         </Pressable>
                         <Pressable>
-                            <Ionicons name="bookmark-outline" size={18} color="#818384" />
+                            <Icon name="bookmark" size={16} color="#818384" />
                         </Pressable>
                     </View>
                 </View>
@@ -1464,7 +1464,7 @@ export default function InputStylesDemo() {
                             borderWidth: 1,
                             borderColor: '#e0e0e0',
                         }}>
-                            <Ionicons name="mic-outline" size={24} color="#333" />
+                            <Icon name="microphone" size={24} color="#333" />
                         </Pressable>
                         <View style={{
                             flex: 1,
@@ -1494,7 +1494,7 @@ export default function InputStylesDemo() {
                             borderWidth: 1,
                             borderColor: '#e0e0e0',
                         }}>
-                            <Ionicons name="happy-outline" size={24} color="#333" />
+                            <Icon name="smiley" size={24} color="#333" />
                         </Pressable>
                         <Pressable style={{
                             width: 40,
@@ -1506,7 +1506,7 @@ export default function InputStylesDemo() {
                             borderWidth: 1,
                             borderColor: '#e0e0e0',
                         }}>
-                            <Ionicons name="add" size={24} color="#333" />
+                            <Icon name="plus" size={24} color="#333" />
                         </Pressable>
                     </View>
                     <View style={{
@@ -1519,23 +1519,23 @@ export default function InputStylesDemo() {
                         borderTopColor: '#e0e0e0',
                     }}>
                         <Pressable style={{ alignItems: 'center' }}>
-                            <Ionicons name="camera" size={24} color="#576b95" />
+                            <Icon name="camera" size={24} color="#576b95" />
                             <Text style={{ fontSize: 11, color: '#576b95', marginTop: 2 }}>Album</Text>
                         </Pressable>
                         <Pressable style={{ alignItems: 'center' }}>
-                            <Ionicons name="videocam" size={24} color="#576b95" />
+                            <Icon name="video-camera" size={24} color="#576b95" />
                             <Text style={{ fontSize: 11, color: '#576b95', marginTop: 2 }}>Sight</Text>
                         </Pressable>
                         <Pressable style={{ alignItems: 'center' }}>
-                            <Ionicons name="call" size={24} color="#576b95" />
+                            <Icon name="phone" size={24} color="#576b95" />
                             <Text style={{ fontSize: 11, color: '#576b95', marginTop: 2 }}>Call</Text>
                         </Pressable>
                         <Pressable style={{ alignItems: 'center' }}>
-                            <Ionicons name="location" size={24} color="#576b95" />
+                            <Icon name="map-pin" size={24} color="#576b95" />
                             <Text style={{ fontSize: 11, color: '#576b95', marginTop: 2 }}>Location</Text>
                         </Pressable>
                         <Pressable style={{ alignItems: 'center' }}>
-                            <MaterialIcons name="attach-money" size={24} color="#576b95" />
+                            <Icon name="currency-dollar" size={24} color="#576b95" />
                             <Text style={{ fontSize: 11, color: '#576b95', marginTop: 2 }}>Transfer</Text>
                         </Pressable>
                     </View>
@@ -1578,16 +1578,16 @@ export default function InputStylesDemo() {
                             <Text style={{ color: '#7f6df2', fontSize: 16 }}>[[</Text>
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 8 }}>
-                            <MaterialIcons name="tag" size={18} color="#7f6df2" />
+                            <Icon name="tag" size={16} color="#7f6df2" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 8 }}>
-                            <MaterialIcons name="format-bold" size={18} color="#666" />
+                            <Icon name="text-b" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 8 }}>
-                            <MaterialIcons name="format-italic" size={18} color="#666" />
+                            <Icon name="text-italic" size={16} color="#666" />
                         </Pressable>
                         <Pressable style={{ padding: 6, marginRight: 8 }}>
-                            <MaterialIcons name="code" size={18} color="#666" />
+                            <Icon name="code" size={16} color="#666" />
                         </Pressable>
                         <View style={{ flex: 1 }} />
                         <Pressable style={{
@@ -1598,7 +1598,7 @@ export default function InputStylesDemo() {
                             backgroundColor: '#404040',
                             borderRadius: 4,
                         }}>
-                            <Ionicons name="document-text" size={14} color="#e0e0e0" />
+                            <Icon name="file-text" size={14} color="#e0e0e0" />
                             <Text style={{ color: '#e0e0e0', fontSize: 12, marginLeft: 4 }}>
                                 Markdown
                             </Text>
@@ -1627,7 +1627,7 @@ export default function InputStylesDemo() {
                             justifyContent: 'center',
                             marginRight: 12,
                         }}>
-                            <Ionicons name="camera" size={28} color="#000" />
+                            <Icon name="camera" size={29} color="#000" />
                         </Pressable>
                         <View style={{
                             flex: 1,
@@ -1652,7 +1652,7 @@ export default function InputStylesDemo() {
                             alignItems: 'center',
                             justifyContent: 'center',
                         }}>
-                            <MaterialIcons name="more-horiz" size={24} color="#fff" />
+                            <Icon name="dots-three" size={24} color="#fff" />
                         </Pressable>
                     </View>
                     <View style={{
@@ -1719,20 +1719,20 @@ export default function InputStylesDemo() {
                                 paddingVertical: 8,
                             }}>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="format-bold" size={20} color="#605e5c" />
+                                    <Icon name="text-b" size={20} color="#605e5c" />
                                 </Pressable>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="format-italic" size={20} color="#605e5c" />
+                                    <Icon name="text-italic" size={20} color="#605e5c" />
                                 </Pressable>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="format-underlined" size={20} color="#605e5c" />
+                                    <Icon name="text-underline" size={20} color="#605e5c" />
                                 </Pressable>
                                 <Pressable style={{ marginRight: 16 }}>
-                                    <MaterialIcons name="format-color-text" size={20} color="#605e5c" />
+                                    <Icon name="text-aa" size={20} color="#605e5c" />
                                 </Pressable>
                                 <View style={{ flex: 1 }} />
                                 <Pressable>
-                                    <MaterialIcons name="more-horiz" size={20} color="#605e5c" />
+                                    <Icon name="dots-three" size={20} color="#605e5c" />
                                 </Pressable>
                             </View>
                             <TextInput
@@ -1756,13 +1756,13 @@ export default function InputStylesDemo() {
                             }}>
                                 <View style={{ flexDirection: 'row' }}>
                                     <Pressable style={{ marginRight: 16 }}>
-                                        <Ionicons name="attach" size={20} color="#605e5c" />
+                                        <Icon name="paperclip" size={20} color="#605e5c" />
                                     </Pressable>
                                     <Pressable style={{ marginRight: 16 }}>
-                                        <Ionicons name="happy-outline" size={20} color="#605e5c" />
+                                        <Icon name="smiley" size={20} color="#605e5c" />
                                     </Pressable>
                                     <Pressable>
-                                        <MaterialIcons name="gif" size={20} color="#605e5c" />
+                                        <Icon name="gif" size={20} color="#605e5c" />
                                     </Pressable>
                                 </View>
                                 <Pressable style={{
@@ -1771,7 +1771,7 @@ export default function InputStylesDemo() {
                                     paddingVertical: 8,
                                     borderRadius: 4,
                                 }}>
-                                    <Ionicons name="send" size={16} color="#fff" />
+                                    <Icon name="paper-plane-tilt" size={16} color="#fff" />
                                 </Pressable>
                             </View>
                         </View>
@@ -1793,7 +1793,7 @@ export default function InputStylesDemo() {
                             borderColor: '#e1e1e1',
                             marginRight: 8,
                         }}>
-                            <Ionicons name="videocam" size={16} color="#6264a7" />
+                            <Icon name="video-camera" size={16} color="#6264a7" />
                             <Text style={{ fontSize: 13, color: '#605e5c', marginLeft: 6 }}>
                                 Meet now
                             </Text>
@@ -1808,7 +1808,7 @@ export default function InputStylesDemo() {
                             borderWidth: 1,
                             borderColor: '#e1e1e1',
                         }}>
-                            <Ionicons name="calendar" size={16} color="#6264a7" />
+                            <Icon name="calendar" size={16} color="#6264a7" />
                             <Text style={{ fontSize: 13, color: '#605e5c', marginLeft: 6 }}>
                                 Schedule
                             </Text>
@@ -1923,7 +1923,7 @@ export default function InputStylesDemo() {
                                     {style.name}
                                 </Text>
                                 {selectedStyle === style.id && (
-                                    <Ionicons name="checkmark-circle" size={24} color="#007AFF" />
+                                    <Icon name="check-circle" size={24} color="#007AFF" />
                                 )}
                             </View>
                             <Text style={{

@@ -1,26 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRecipientContractDigestV1 } from '@happier-dev/protocol';
+import {
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+  createRecipientContractDigestV1,
+} from '@happier-dev/protocol';
 
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createSessionFixture } from '@/dev/testkit';
+import { encodeBase64 } from '@/encryption/base64';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { Encryption } from '@/sync/encryption/encryption';
+import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { sync } from '@/sync/sync';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { createAccountVoiceOperationService } from '@/voice/credentials/accountVoiceOperationService';
-import { upsertAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
+import { saveAndUseAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import {
   buildVoiceTranscriptHistorySessionMetadata,
 } from '@/voice/persistence/voiceTranscriptHistorySession';
 import {
   readVoiceProviderConversationMetadata,
+  writeVoiceProviderConversationMetadata,
 } from '@/voice/persistence/voiceProviderConversationMetadata';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import {
+  performVoiceAdapterRuntimeAction,
   registerVoiceAdapters,
   resetVoiceAdapterRegistryForTests,
 } from '@/voice/session/voiceAdapterRegistry';
@@ -45,6 +58,46 @@ import {
 
 const XAI_HISTORY_SESSION_ID = 'voice-history-xai-composed';
 const XAI_SOURCE_CREDENTIAL = 'xai_source_composed';
+let historyLookupSessionIds: readonly string[] = [];
+
+function installProviderConversationMetadata(
+  sessionId: string,
+  conversationId: string,
+): void {
+  storage.setState((current) => {
+    const session = current.sessions[sessionId];
+    if (!session?.metadata) throw new Error(`missing session metadata ${sessionId}`);
+    return {
+      ...current,
+      sessions: {
+        ...current.sessions,
+        [sessionId]: {
+          ...session,
+          metadata: writeVoiceProviderConversationMetadata(session.metadata, {
+            providerId: 'happier.voice.xai/realtime-grok',
+            state: { conversationId },
+            updatedAt: 1,
+          }),
+        },
+      },
+    } as never;
+  });
+}
+
+function mockHistoryCarrierDiscovery(
+  sessionIds: readonly string[] = [XAI_HISTORY_SESSION_ID],
+): void {
+  historyLookupSessionIds = sessionIds;
+  vi.spyOn(sync, 'ensureSessionVisibleForMessageRoute').mockImplementation(
+    async (sessionId) => ({ kind: 'available', sessionId }) as never,
+  );
+}
+
+function buildToken(accountId: string): string {
+  const encode = (value: unknown) =>
+    encodeBase64(new TextEncoder().encode(JSON.stringify(value)), 'base64url');
+  return `${encode({ alg: 'none' })}.${encode({ sub: accountId })}.signature`;
+}
 
 class FakeWebSocket {
   static readonly OPEN = 1;
@@ -98,7 +151,7 @@ class FakeWebSocket {
 
 function xaiEntry() {
   const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(
-    (candidate) => candidate.uiEntry.providerId === 'realtime_grok',
+    (candidate) => candidate.declaration.id === 'realtime-grok',
   );
   if (!entry) throw new Error('realtime_grok bundled entry missing');
   return entry;
@@ -107,14 +160,14 @@ function xaiEntry() {
 function installXaiSettings(resumptionEnabled: boolean): void {
   const entry = xaiEntry();
   const recipientContract = createBundledVoiceRecipientContract({
-    pluginId: entry.uiEntry.pluginId,
-    declaration: entry.uiEntry.declaration,
+    pluginId: entry.pluginId,
+    declaration: entry.declaration,
   });
   if (!recipientContract) throw new Error('realtime_grok recipient contract missing');
   const voice = voiceSettingsParse({
-    providerId: 'realtime_grok',
+    providerId: 'happier.voice.xai/realtime-grok',
     providers: {
-      realtime_grok: {
+      'happier.voice.xai/realtime-grok': {
         schemaVersion: 1,
         config: {
           ...XAI_REALTIME_DEFAULT_SETTINGS,
@@ -123,13 +176,18 @@ function installXaiSettings(resumptionEnabled: boolean): void {
       },
     },
   });
-  const credentialSettings = upsertAccountVoiceCredential({
+  const credentialSettings = saveAndUseAccountVoiceCredential({
     settings: settingsParse({
       ...settingsDefaults,
       voiceSettingsV1: voice,
     }),
-    providerId: 'realtime_grok',
+    contribution: {
+      pluginId: entry.pluginId,
+      localId: entry.declaration.id,
+    },
     credentialSlotId: recipientContract.credentialSlot.id,
+    expectedSettingsVersion: 1,
+    currentDeclaration: entry.declaration,
     value: XAI_SOURCE_CREDENTIAL,
     generateId: () => 'realtime-xai-composed-secret',
     now: 1,
@@ -224,14 +282,17 @@ function createSourceComposedXaiRuntime() {
     }),
   });
   const entry = xaiEntry();
-  const { uiEntry } = entry;
+  const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+    pluginId: entry.pluginId,
+    localId: entry.declaration.id,
+  }));
   const recipientContract = createBundledVoiceRecipientContract({
-    pluginId: uiEntry.pluginId,
-    declaration: uiEntry.declaration,
+    pluginId: entry.pluginId,
+    declaration: entry.declaration,
   });
   if (!recipientContract) throw new Error('realtime_grok recipient contract missing');
   voiceSessionBindingStore.getState().bind({
-    adapterId: uiEntry.providerId,
+    adapterId: providerId,
     controlSessionId,
     conversationSessionId: XAI_HISTORY_SESSION_ID,
     lifetime: 'runtime_attempt',
@@ -241,18 +302,17 @@ function createSourceComposedXaiRuntime() {
   });
   const requestAccountOperation = vi.fn();
   const scope = createExternalVoiceProviderActivationScope({
-    pluginId: uiEntry.pluginId,
-    declarations: [uiEntry.declaration],
+    pluginId: entry.pluginId,
+    declarations: [entry.declaration],
     hostPlatform: 'web',
     runtimeHost: host,
     isRuntimeHostCurrent: () =>
       getCurrentBundledConversationRuntimeHost() === hostLease.host,
     hostBindingsByLocalId: Object.freeze({
-      [uiEntry.declaration.id]: Object.freeze({
-        providerId: uiEntry.providerId,
+      [entry.declaration.id]: Object.freeze({
         recipientContract: createBundledVoiceRecipientContract({
-          pluginId: uiEntry.pluginId,
-          declaration: uiEntry.declaration,
+          pluginId: entry.pluginId,
+          declaration: entry.declaration,
         }),
         createInvocationAccountOperations: (
           signal: AbortSignal,
@@ -260,23 +320,19 @@ function createSourceComposedXaiRuntime() {
           isCurrent: () => boolean,
         ) => {
           const accountOperations = createAccountVoiceOperationService({
-            providerId: uiEntry.providerId,
+            providerId,
+            contribution: {
+              pluginId: entry.pluginId,
+              localId: entry.declaration.id,
+            },
             recipientContract,
             signal,
             isCurrent,
-            requireRecipientApproval: true,
           });
           requestAccountOperation.mockImplementation(accountOperations.request);
           return Object.freeze({ request: requestAccountOperation });
         },
         descriptor: 'bundled' as const,
-        resolveSurfaceCapabilities: (settings: unknown) => {
-          const projection = host.projectVoiceSettings(settings, uiEntry.providerId);
-          if (projection?.providerId !== uiEntry.providerId) return null;
-          return uiEntry.internal.resolveSurfaceCapabilities?.(
-            projection.providerConfig,
-          ) ?? null;
-        },
       }),
     }),
   });
@@ -285,7 +341,7 @@ function createSourceComposedXaiRuntime() {
   if (commit) {
     void commit.catch(() => undefined);
   }
-  const registration = getExternalVoiceProviderRegistration(uiEntry.providerId);
+  const registration = getExternalVoiceProviderRegistration(providerId);
   if (!registration?.adapter) {
     throw new Error('realtime_grok bundled activation failed');
   }
@@ -310,7 +366,28 @@ function createSourceComposedXaiRuntime() {
 }
 
 describe('realtime_grok source-composed direct-media persistence gate', () => {
-  beforeEach(() => {
+  const originalSyncEncryption = sync.encryption;
+  const originalSyncCredentials = Reflect.get(sync, 'credentials');
+
+  beforeEach(async () => {
+    await resetServerReachabilitySupervisors();
+    const server = upsertServerProfile({
+      serverUrl: 'https://xai-composed.example.test',
+      name: 'xAI composed test',
+    });
+    setActiveServerId(server.id, { scope: 'device' });
+    storage.getState().activateProfileScope({
+      serverId: server.id,
+      accountId: 'xai-composed-account',
+    });
+    const secretBytes = new Uint8Array(32).fill(9);
+    const credentials: AuthCredentials = {
+      token: buildToken('xai-composed-account'),
+      secret: encodeBase64(secretBytes, 'base64url'),
+    };
+    Reflect.set(sync, 'credentials', credentials);
+    sync.encryption = await Encryption.create(secretBytes);
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
     resetVoiceAdapterRegistryForTests();
     resetVoiceSessionStoreForTests();
     voiceConversationRuntimeMachine.reset();
@@ -324,12 +401,53 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       list: voiceSessionBindingStore.getState().list,
     }, true);
     FakeWebSocket.instances.length = 0;
+    historyLookupSessionIds = [];
     vi.stubGlobal('WebSocket', FakeWebSocket);
     installXaiFetchBoundary();
     let nextTranscriptSeq = 0;
-    vi.spyOn(apiSocket, 'request').mockImplementation(async (path, init) => {
-      expect(path).toBe(
-        `/v2/sessions/${XAI_HISTORY_SESSION_ID}/messages`,
+    vi.spyOn(apiSocket, 'request').mockRejectedValue(
+      new Error('dynamic active request must not own transcript persistence'),
+    );
+    setRuntimeFetch(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+        return new Response('{}', {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/v1/features')) {
+        return Response.json({
+          features: { voice: { enabled: true } },
+          capabilities: {
+            accountStoredContentCompatibility: {
+              v: 1,
+              minimumProtocolVersion: 2,
+              currentProtocolVersion: 3,
+              declarationTransport: 'http-header-and-socket-auth-v1',
+            },
+          },
+        });
+      }
+      if (url.endsWith('/v2/sessions/lookup-by-tags')) {
+        return Response.json({
+          sessions: historyLookupSessionIds.map((id) => ({
+            id,
+            seq: 0,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            metadata: '{}',
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          })),
+        });
+      }
+      expect(url).toBe(
+        `https://xai-composed.example.test/v2/sessions/${XAI_HISTORY_SESSION_ID}/messages`,
       );
       expect(init?.method).toBe('POST');
       const body = JSON.parse(String(init?.body)) as Readonly<{
@@ -369,7 +487,11 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await resetServerReachabilitySupervisors();
+    resetRuntimeFetch();
+    sync.encryption = originalSyncEncryption;
+    Reflect.set(sync, 'credentials', originalSyncCredentials);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     resetVoiceAdapterRegistryForTests();
@@ -385,13 +507,13 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       await composed.runtime.adapter.start({ sessionId: '', initialContext: '' });
 
       expect(composed.requestAccountOperation).toHaveBeenCalledTimes(1);
+      expect(composed.ensureMicActive).toHaveBeenCalledTimes(1);
+      expect(composed.createWebSocketPcmMedia).toHaveBeenCalledTimes(1);
+      expect(composed.pcmStart).toHaveBeenCalledTimes(1);
       expect(FakeWebSocket.instances).toHaveLength(1);
       expect(FakeWebSocket.instances[0]?.protocols).toEqual([
         'xai-client-secret.source-composed',
       ]);
-      expect(composed.ensureMicActive).toHaveBeenCalledTimes(1);
-      expect(composed.createWebSocketPcmMedia).toHaveBeenCalledTimes(1);
-      expect(composed.pcmStart).toHaveBeenCalledTimes(1);
       expect(Object.keys(storage.getState().sessions)).toEqual([
         XAI_HISTORY_SESSION_ID,
       ]);
@@ -399,7 +521,7 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
         composed.controlSessionId,
       );
       expect(binding).toMatchObject({
-        adapterId: 'realtime_grok',
+        adapterId: 'happier.voice.xai/realtime-grok',
         lifetime: 'runtime_attempt',
         targetSessionId: null,
       });
@@ -411,8 +533,8 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       await expect(voiceSessionBindingManager.ensureBoundForOpenConversation({
         openConversationSessionId: binding!.conversationSessionId,
         fallbackControlSessionId: composed.controlSessionId,
-        activeAdapterId: 'realtime_grok',
-        providerId: 'realtime_grok',
+        activeAdapterId: 'happier.voice.xai/realtime-grok',
+        providerId: 'happier.voice.xai/realtime-grok',
         requestedTargetSessionId: null,
       })).resolves.toEqual({ conversationSessionId: null });
 
@@ -480,14 +602,14 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       await vi.waitFor(() => expect(patchSessionMetadata).toHaveBeenCalledTimes(1));
       expect(readVoiceProviderConversationMetadata(
         storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
-        'realtime_grok',
+        'happier.voice.xai/realtime-grok',
       )).toMatchObject({
         conversationId: 'conv-durable',
       });
 
       await composed.runtime.adapter.stop({ sessionId: composed.controlSessionId });
       voiceSessionBindingStore.getState().bind({
-        adapterId: 'realtime_grok',
+        adapterId: 'happier.voice.xai/realtime-grok',
         controlSessionId: composed.controlSessionId,
         conversationSessionId: XAI_HISTORY_SESSION_ID,
         lifetime: 'runtime_attempt',
@@ -503,13 +625,13 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
         'conversation_id',
       )).toBe('conv-durable');
       expect(composed.hostLease.host.canPersistProviderConversationState?.({
-        providerId: 'realtime_openai',
+        providerId: 'happier.voice.openai/realtime-openai',
         conversationSessionId: XAI_HISTORY_SESSION_ID,
       })).toBe(false);
 
       await composed.runtime.adapter.stop({ sessionId: composed.controlSessionId });
       expect(composed.hostLease.host.canPersistProviderConversationState?.({
-        providerId: 'realtime_grok',
+        providerId: 'happier.voice.xai/realtime-grok',
         conversationSessionId: XAI_HISTORY_SESSION_ID,
       })).toBe(false);
       const writeProviderConversationState =
@@ -518,16 +640,281 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
         throw new Error('provider conversation persistence host missing');
       }
       await expect(writeProviderConversationState({
-        providerId: 'realtime_grok',
+        providerId: 'happier.voice.xai/realtime-grok',
         conversationSessionId: XAI_HISTORY_SESSION_ID,
         state: { conversationId: 'stale-after-stop' },
       })).rejects.toThrow('voice_provider_conversation_persistence_unavailable');
       expect(readVoiceProviderConversationMetadata(
         storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
-        'realtime_grok',
+        'happier.voice.xai/realtime-grok',
       )).toMatchObject({
         conversationId: 'conv-durable',
       });
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+    }
+  });
+
+  it('forgets only Happier-owned xAI resumption metadata without a provider request', async () => {
+    installXaiSettings(true);
+    mockHistoryCarrierDiscovery();
+    const patchSessionMetadata = vi.spyOn(sync, 'patchSessionMetadataWithRetry');
+    const composed = createSourceComposedXaiRuntime();
+
+    try {
+      await composed.runtime.adapter.start({ sessionId: '', initialContext: '' });
+      const socket = FakeWebSocket.instances[0]!;
+      socket.emitConversationId('conv-forget-local-only');
+      await vi.waitFor(() => expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toMatchObject({
+        conversationId: 'conv-forget-local-only',
+      }));
+      const accountRequestCount = composed.requestAccountOperation.mock.calls.length;
+      const providerMessagesBeforeForget = [...socket.sent];
+
+      await expect(performVoiceAdapterRuntimeAction(
+        'happier.voice.xai/realtime-grok',
+        'forget_provider_conversation',
+      )).resolves.toEqual({ status: 'completed' });
+
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toBeNull();
+      expect(patchSessionMetadata).toHaveBeenCalledTimes(2);
+      expect(composed.requestAccountOperation).toHaveBeenCalledTimes(accountRequestCount);
+      expect(socket.sent).toEqual(providerMessagesBeforeForget);
+
+      socket.emitConversationId('conv-late-after-forget');
+      await Promise.resolve();
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toBeNull();
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+    }
+  });
+
+  it('forgets only the fixed history carrier after a retained direct-session attempt', async () => {
+    installXaiSettings(true);
+    installProviderConversationMetadata(XAI_HISTORY_SESSION_ID, 'conv-history-before-direct');
+    const directTargetSessionId = 'direct-target-before-forget';
+    storage.setState((current) => ({
+      ...current,
+      sessions: {
+        ...current.sessions,
+        [directTargetSessionId]: createSessionFixture({
+          id: directTargetSessionId,
+          active: true,
+          encryptionMode: 'plain',
+          metadata: writeVoiceProviderConversationMetadata({
+            path: '/direct-target',
+            host: 'happier.test',
+          }, {
+            providerId: 'happier.voice.xai/realtime-grok',
+            state: { conversationId: 'conv-direct-before' },
+            updatedAt: 1,
+          }),
+        }),
+      },
+    }) as never);
+    mockHistoryCarrierDiscovery([directTargetSessionId, XAI_HISTORY_SESSION_ID]);
+    const composed = createSourceComposedXaiRuntime();
+
+    try {
+      await composed.runtime.adapter.start({ sessionId: '', initialContext: '' });
+      const historySocket = FakeWebSocket.instances[0]!;
+      historySocket.emitConversationId('conv-history-current');
+      await vi.waitFor(() => expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toMatchObject({ conversationId: 'conv-history-current' }));
+      await composed.runtime.adapter.stop({ sessionId: composed.controlSessionId });
+
+      voiceSessionBindingStore.getState().bind({
+        adapterId: 'happier.voice.xai/realtime-grok',
+        controlSessionId: directTargetSessionId,
+        conversationSessionId: directTargetSessionId,
+        lifetime: 'runtime_attempt',
+        transcriptMode: 'synthetic',
+        targetSessionId: directTargetSessionId,
+        updatedAt: 2,
+      });
+      await composed.runtime.adapter.start({
+        sessionId: directTargetSessionId,
+        initialContext: '',
+      });
+      const directSocket = FakeWebSocket.instances[1]!;
+      expect(new URL(directSocket.url).searchParams.get('conversation_id'))
+        .toBe('conv-direct-before');
+      directSocket.emitConversationId('conv-direct-current');
+      await vi.waitFor(() => expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[directTargetSessionId]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toMatchObject({ conversationId: 'conv-direct-current' }));
+      await composed.runtime.adapter.stop({ sessionId: directTargetSessionId });
+
+      await expect(performVoiceAdapterRuntimeAction(
+        'happier.voice.xai/realtime-grok',
+        'forget_provider_conversation',
+      )).resolves.toEqual({ status: 'completed' });
+
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toBeNull();
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[directTargetSessionId]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toMatchObject({ conversationId: 'conv-direct-current' });
+
+      historySocket.emitConversationId('conv-history-late-after-forget');
+      await Promise.resolve();
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toBeNull();
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+    }
+  });
+
+  it('forgets persisted history-carrier metadata before any Voice attempt after a fresh composition', async () => {
+    installXaiSettings(true);
+    installProviderConversationMetadata(XAI_HISTORY_SESSION_ID, 'conv-from-prior-process');
+    const directTargetSessionId = 'direct-target-with-independent-state';
+    storage.setState((current) => ({
+      ...current,
+      sessions: {
+        ...current.sessions,
+        [directTargetSessionId]: createSessionFixture({
+          id: directTargetSessionId,
+          active: true,
+          encryptionMode: 'plain',
+          metadata: writeVoiceProviderConversationMetadata({
+            path: '/direct-target',
+            host: 'happier.test',
+          }, {
+            providerId: 'happier.voice.xai/realtime-grok',
+            state: { conversationId: 'conv-direct-target' },
+            updatedAt: 1,
+          }),
+        }),
+      },
+    }) as never);
+    mockHistoryCarrierDiscovery([directTargetSessionId, XAI_HISTORY_SESSION_ID]);
+    const providerFetch = installXaiFetchBoundary();
+    const patchSessionMetadata = vi.spyOn(sync, 'patchSessionMetadataWithRetry');
+    const composed = createSourceComposedXaiRuntime();
+    voiceSessionBindingStore.getState().unbind(XAI_HISTORY_SESSION_ID);
+
+    try {
+      await expect(performVoiceAdapterRuntimeAction(
+        'happier.voice.xai/realtime-grok',
+        'forget_provider_conversation',
+      )).resolves.toEqual({ status: 'completed' });
+
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toBeNull();
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[directTargetSessionId]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toMatchObject({ conversationId: 'conv-direct-target' });
+      expect(patchSessionMetadata).toHaveBeenCalledTimes(1);
+      expect(providerFetch).not.toHaveBeenCalled();
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(composed.requestAccountOperation).not.toHaveBeenCalled();
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+    }
+  });
+
+  it('forgets persisted metadata after End Voice and keeps the fenced late provider write inert', async () => {
+    installXaiSettings(true);
+    mockHistoryCarrierDiscovery();
+    const composed = createSourceComposedXaiRuntime();
+
+    try {
+      await composed.runtime.adapter.start({ sessionId: '', initialContext: '' });
+      const socket = FakeWebSocket.instances[0]!;
+      socket.emitConversationId('conv-before-end');
+      await vi.waitFor(() => expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toMatchObject({ conversationId: 'conv-before-end' }));
+
+      await composed.runtime.adapter.stop({ sessionId: composed.controlSessionId });
+      await expect(performVoiceAdapterRuntimeAction(
+        'happier.voice.xai/realtime-grok',
+        'forget_provider_conversation',
+      )).resolves.toEqual({ status: 'completed' });
+
+      socket.emitConversationId('conv-late-after-end-and-forget');
+      await Promise.resolve();
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toBeNull();
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+    }
+  });
+
+  it('treats an already-absent persisted ID as successful without a metadata mutation', async () => {
+    installXaiSettings(true);
+    mockHistoryCarrierDiscovery();
+    const providerFetch = installXaiFetchBoundary();
+    const patchSessionMetadata = vi.spyOn(sync, 'patchSessionMetadataWithRetry');
+    const composed = createSourceComposedXaiRuntime();
+    voiceSessionBindingStore.getState().unbind(XAI_HISTORY_SESSION_ID);
+
+    try {
+      await expect(performVoiceAdapterRuntimeAction(
+        'happier.voice.xai/realtime-grok',
+        'forget_provider_conversation',
+      )).resolves.toEqual({ status: 'completed' });
+      expect(patchSessionMetadata).not.toHaveBeenCalled();
+      expect(providerFetch).not.toHaveBeenCalled();
+      expect(FakeWebSocket.instances).toHaveLength(0);
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+    }
+  });
+
+  it('does not report completed when the durable metadata clear fails', async () => {
+    installXaiSettings(true);
+    installProviderConversationMetadata(XAI_HISTORY_SESSION_ID, 'conv-mutation-fails');
+    mockHistoryCarrierDiscovery();
+    vi.spyOn(sync, 'patchSessionMetadataWithRetry')
+      .mockRejectedValueOnce(new Error('metadata mutation failed'));
+    const composed = createSourceComposedXaiRuntime();
+    voiceSessionBindingStore.getState().unbind(XAI_HISTORY_SESSION_ID);
+
+    try {
+      await expect(performVoiceAdapterRuntimeAction(
+        'happier.voice.xai/realtime-grok',
+        'forget_provider_conversation',
+      )).resolves.toEqual({
+        status: 'failed',
+        code: 'voice_runtime_action_failed',
+      });
+      expect(readVoiceProviderConversationMetadata(
+        storage.getState().sessions[XAI_HISTORY_SESSION_ID]?.metadata,
+        'happier.voice.xai/realtime-grok',
+      )).toMatchObject({ conversationId: 'conv-mutation-fails' });
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(composed.requestAccountOperation).not.toHaveBeenCalled();
     } finally {
       await composed.runtime.dispose();
       composed.hostLease.revoke();

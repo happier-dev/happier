@@ -1,4 +1,7 @@
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import {
+    isTokenOnlyAuthCredentials,
+    type AuthCredentials,
+} from '@/auth/storage/tokenStorage';
 import {
     getQualifiedConnectedAccountQuotaV4,
     requestQualifiedConnectedAccountQuotaRefreshV4,
@@ -24,10 +27,6 @@ export type QualifiedConnectedAccountQuotaTransportContext = Readonly<{
 export async function readQualifiedConnectedAccountQuota(
     context: QualifiedConnectedAccountQuotaTransportContext,
 ): Promise<QualifiedConnectedAccountQuotaSnapshotV4 | null> {
-    const material =
-        resolveAccountScopedCryptoMaterialFromCredentials(
-            context.credentials,
-        );
     await context.assertOperationAllowed('quota_read');
     const response = await getQualifiedConnectedAccountQuotaV4(
         context.credentials,
@@ -35,6 +34,11 @@ export async function readQualifiedConnectedAccountQuota(
         { expectedActiveServer: context.serverBasis },
     );
     if (!response) return null;
+    const material = isTokenOnlyAuthCredentials(context.credentials)
+        ? null
+        : resolveAccountScopedCryptoMaterialFromCredentials(
+            context.credentials,
+        );
     const opened = openQualifiedConnectedAccountQuotaResponseV4({
         response,
         expectedRef: context.ref,

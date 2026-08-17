@@ -184,6 +184,30 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
+    /*
+     * The floating Voice orb is a per-device presence, deliberately kept out of the synced
+     * `voice.ui.*` tree: a companion that is welcome on a phone can be unwelcome on a desktop
+     * where the pet already owns that corner, and a synced flag forces one answer onto both.
+     * Turning it off suppresses the presence only — Voice keeps running and stays reachable from
+     * the sidebar and the composer.
+     */
+    voiceOrbEnabled: {
+        schema: z.boolean().catch(true),
+        default: true,
+        description: 'Show the floating Voice orb on this device',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
+    },
+    /*
+     * Expanded vs minimised is a preference, not transient state: it survives the app so someone
+     * who keeps Voice out of the way does not have to re-make that choice every launch.
+     */
+    voiceOrbExpanded: {
+        schema: z.boolean().catch(false),
+        default: false,
+        description: 'Voice orb expanded on this device',
+        storageScope: 'local',
+    },
     petsEnabledOverride: {
         schema: PetEnabledOverrideSchema,
         default: 'inherit',

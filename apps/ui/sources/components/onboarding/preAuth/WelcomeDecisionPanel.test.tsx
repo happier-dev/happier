@@ -29,7 +29,10 @@ const baseOptions: AuthEntryOptions = {
     providerKeylessTitle: '',
     anonymousSignupTitle: 'Create account',
     mtlsTitle: 'Sign in with certificate',
-    primarySignupTitle: 'Create account',
+    primaryAction: {
+        kind: 'anonymous',
+        title: 'Create account',
+    },
     mtlsPrimary: false,
     keylessPrimary: false,
     autoRedirect: {
@@ -113,7 +116,10 @@ describe('WelcomeDecisionPanel', () => {
             showProviderSignup: true,
             providerId: 'github',
             providerSignupTitle: 'Continue with GitHub',
-            primarySignupTitle: 'Continue with GitHub',
+            primaryAction: {
+                kind: 'provider-keyed',
+                title: 'Continue with GitHub',
+            },
         });
         const screen = await screenPromise;
 
@@ -132,7 +138,10 @@ describe('WelcomeDecisionPanel', () => {
             keylessPrimary: true,
             keylessProviderId: 'github',
             providerKeylessTitle: 'Continue with GitHub',
-            primarySignupTitle: 'Continue with GitHub',
+            primaryAction: {
+                kind: 'keyless',
+                title: 'Continue with GitHub',
+            },
         });
         const screen = await screenPromise;
 
@@ -151,7 +160,10 @@ describe('WelcomeDecisionPanel', () => {
             keylessPrimary: false,
             keylessProviderId: 'github',
             providerKeylessTitle: 'Continue with GitHub',
-            primarySignupTitle: 'Create account',
+            primaryAction: {
+                kind: 'anonymous',
+                title: 'Create account',
+            },
         });
         const screen = await screenPromise;
 
@@ -168,7 +180,10 @@ describe('WelcomeDecisionPanel', () => {
             showAnonymousSignup: false,
             showMtlsLogin: true,
             mtlsPrimary: true,
-            primarySignupTitle: 'Sign in with certificate',
+            primaryAction: {
+                kind: 'mtls',
+                title: 'Sign in with certificate',
+            },
         });
         const screen = await screenPromise;
 
@@ -212,5 +227,24 @@ describe('WelcomeDecisionPanel', () => {
 
         expect(callbacks.onChangeRelay).toHaveBeenCalledTimes(1);
         expect(retryServerCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('promotes login and explains the policy when the server exposes no signup action', async () => {
+        const { callbacks, screenPromise } = renderPanel({
+            showAnonymousSignup: false,
+            showProviderSignup: false,
+            primaryAction: null,
+        });
+        const screen = await screenPromise;
+
+        expect(screen.findByTestId('welcome-signup-disabled')).toBeTruthy();
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-provider-primary')).toHaveLength(0);
+        expect(screen.findByTestId('welcome-secondary-login')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('welcome-secondary-login');
+
+        expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
+        expect(callbacks.onCreateAccount).not.toHaveBeenCalled();
     });
 });

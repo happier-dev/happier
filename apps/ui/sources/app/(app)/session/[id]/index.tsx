@@ -17,54 +17,60 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRouteHydrationState';
-import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
+import {
+    useActiveServerAccountScope,
+    useEndpointConnectivity,
+    useSessionLastMobileSurface,
+    useSyncError,
+} from '@/sync/domains/state/storage';
 import { markSessionRouteEnteredForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
+import {
+    serverAccountScopeKeySuffix,
+    type ServerAccountScope,
+} from '@/sync/domains/scope/serverAccountScope';
 import { selectSessionViewShellSessionForRouteState } from '@/components/sessions/shell/sessionViewStableSession';
 
 type InitialMobileSurfaceHintCache = Readonly<{
     sessionId: string;
     routeServerId: string | null;
+    activeServerId: string | null;
+    activeScopeKey: string | null;
     explicitMobileSurfaceHint: string | null;
     persistedSurface: string | null;
 }>;
-
-function readPersistedMobileSurfaceSnapshot(sessionId: string, routeServerId: string | null): string | null {
-    const persistedBySessionId = storage.getState().localSettings.sessionLastMobileSurfaceBySessionId;
-    const scopedStorageKey = normalizeSessionListKeyParts(routeServerId, sessionId).sessionKey;
-    const scopedValue = scopedStorageKey ? persistedBySessionId?.[scopedStorageKey] ?? null : null;
-    if (typeof scopedValue === 'string') {
-        return scopedValue;
-    }
-    const legacyValue = persistedBySessionId?.[sessionId] ?? null;
-    return typeof legacyValue === 'string' ? legacyValue : null;
-}
 
 function useInitialMobileSurfaceHint(
     sessionId: string,
     routeServerId: string | null,
     explicitMobileSurfaceHint: string | null,
+    activeServerId: string | null,
+    activeScope: ServerAccountScope | null,
+    persistedMobileSurface: string | null,
 ): string | null {
     const cacheRef = React.useRef<InitialMobileSurfaceHintCache | null>(null);
     const cached = cacheRef.current;
+    const activeScopeKey = activeScope ? serverAccountScopeKeySuffix(activeScope) : null;
     if (
         !cached
         || cached.sessionId !== sessionId
         || cached.routeServerId !== routeServerId
+        || cached.activeServerId !== activeServerId
+        || cached.activeScopeKey !== activeScopeKey
         || cached.explicitMobileSurfaceHint !== explicitMobileSurfaceHint
     ) {
         cacheRef.current = {
             sessionId,
             routeServerId,
+            activeServerId,
+            activeScopeKey,
             explicitMobileSurfaceHint,
-            persistedSurface: explicitMobileSurfaceHint ?? (
-                sessionId
-                    ? readPersistedMobileSurfaceSnapshot(sessionId, routeServerId)
-                    : null
-            ),
+            // The storage hook is the only session-selection reader/migrator.
+            // Keep this route cache's incumbent snapshot behavior so a live
+            // setting write cannot remount the currently focused cockpit tab.
+            persistedSurface: explicitMobileSurfaceHint ?? persistedMobileSurface,
         };
     }
     return cacheRef.current?.persistedSurface ?? null;
@@ -128,12 +134,24 @@ export default function SessionRouteIndex() {
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
-    const initialMobileSurfaceHint = useInitialMobileSurfaceHint(sessionId, routeServerId.trim() || null, explicitMobileSurfaceHint);
+    const activeServerAccountScope = useActiveServerAccountScope();
+    const activeServerSnapshot = useActiveServerSnapshot();
+    const persistedMobileSurface = useSessionLastMobileSurface(
+        sessionId || null,
+        routeServerId.trim() || null,
+    );
+    const initialMobileSurfaceHint = useInitialMobileSurfaceHint(
+        sessionId,
+        routeServerId.trim() || null,
+        explicitMobileSurfaceHint,
+        activeServerSnapshot.serverId,
+        activeServerAccountScope,
+        persistedMobileSurface,
+    );
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
 
-    const activeServerSnapshot = useActiveServerSnapshot();
     const activeServerGeneration = activeServerSnapshot.generation;
 
     React.useLayoutEffect(() => {

@@ -1,4 +1,18 @@
 export const providerSessionTranslations = {
+    fr: {
+        launchDefaultLabel: ({ provider }: { provider: string }) => `Provider : ${provider}`,
+        launchNamedLabel: ({ provider, connection }: { provider: string; connection: string }) => `Provider : ${provider} · ${connection}`,
+        changedTitle: 'Réglages du provider modifiés',
+        changedBody: ({ provider, connection }: { provider: string; connection: string }) => `Cette session utilise toujours la configuration ${provider} · ${connection} avec laquelle elle a démarré.`,
+        unavailableTitle: 'Provider plus disponible',
+        unavailableBody: ({ provider, connection }: { provider: string; connection: string }) => `${provider} · ${connection} n’est plus disponible pour reprendre cette session.`,
+        disabledTitle: 'Le provider est désactivé',
+        disabledBody: ({ provider, connection }: { provider: string; connection: string }) => `Active ${provider} · ${connection} avant de reprendre cette session.`,
+        incompatibleTitle: 'Provider plus compatible',
+        incompatibleBody: ({ provider, connection }: { provider: string; connection: string }) => `${provider} · ${connection} n’est plus compatible avec l’agent de cette session.`,
+        restartAction: 'Redémarrer la session',
+        chooseModelAction: 'Choisir un modèle',
+    },
     es: {
         launchDefaultLabel: ({ provider }: { provider: string }) => `Proveedor: ${provider}`,
         launchNamedLabel: ({ provider, connection }: { provider: string; connection: string }) => `Proveedor: ${provider} · ${connection}`,

@@ -1,7 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { createDeferred, findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 import type { StorageState } from '@/sync/store/types';
 
@@ -13,11 +13,59 @@ type AutomationListItem = Readonly<{
     name: string;
     description: string | null;
     enabled: boolean;
-    schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null };
+    trigger: Readonly<{
+        kind: 'schedule';
+        schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone: string | null };
+    }>;
     nextRunAt: number | null;
-    targetType: 'new_session' | 'existing_session';
-    templateCiphertext: string;
+    lastRunAt: number | null;
+    targetType: 'newSession' | 'existingSession' | 'executionRun';
+    templateVersion: number;
+    createdAt: number;
+    updatedAt: number;
+    assignments: ReadonlyArray<{ machineId: string; enabled: boolean; priority: number }>;
+    detail: Readonly<{
+        kind: 'unloaded';
+        templateVersion: number;
+    }> | Readonly<{
+        kind: 'available';
+        templateVersion: number;
+        value: Readonly<{ templateCiphertext: string }>;
+    }>;
+    linkedExistingSessionId: string | null;
 }>;
+
+function createScheduleDefinition(input: Readonly<{
+    id: string;
+    name: string;
+    targetType: 'newSession' | 'existingSession';
+    linkedExistingSessionId?: string | null;
+    detail?: 'unloaded' | 'legacy';
+}>): AutomationListItem {
+    const templateVersion = 1;
+    const trigger = {
+        kind: 'schedule' as const,
+        schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null },
+    };
+    return {
+        id: input.id,
+        name: input.name,
+        description: null,
+        enabled: true,
+        trigger,
+        nextRunAt: null,
+        lastRunAt: null,
+        targetType: input.targetType,
+        templateVersion,
+        createdAt: 1,
+        updatedAt: 1,
+        assignments: [],
+        detail: input.detail === 'unloaded'
+            ? { kind: 'unloaded', templateVersion }
+            : { kind: 'available', templateVersion, value: { templateCiphertext: 'template' } },
+        linkedExistingSessionId: input.linkedExistingSessionId ?? null,
+    };
+}
 
 const automationsState = vi.hoisted(() => ({
     list: [] as AutomationListItem[],
@@ -37,6 +85,7 @@ const hydrateReadyState = vi.hoisted(() => ({
 
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
+    refreshAutomationDefinitionDetail: vi.fn(async () => {}),
     runAutomationNow: vi.fn(async (_id: string) => {}),
     pauseAutomation: vi.fn(async (_id: string) => {}),
     resumeAutomation: vi.fn(async (_id: string) => {}),
@@ -46,13 +95,22 @@ const syncSpies = vi.hoisted(() => ({
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
+const storeTempDataSpy = vi.hoisted(() => vi.fn(() => 'event-target-seed'));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+vi.mock('@/components/ui/forms/Switch', () => ({
+    Switch: (props: any) => React.createElement('Switch', props),
+}));
+
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
+}));
+
+vi.mock('@/utils/sessions/tempDataStore', () => ({
+    storeTempData: storeTempDataSpy,
 }));
 
 installAutomationScreensCommonModuleMocks({
@@ -102,6 +160,7 @@ installAutomationScreensCommonModuleMocks({
                     'automations.session.emptyTitle': 'No automations yet',
                     'automations.session.emptyBody': 'Create an automation to trigger work for this session.',
                     'automations.session.addAutomation': 'Add automation',
+                    'automations.session.addEventAutomation': 'Add event automation',
                     'common.actions': 'Actions',
                     'common.error': 'Error',
                     'automations.session.failedToLoad': 'Failed to load automations',
@@ -142,6 +201,7 @@ describe('SessionAutomationsScreen', () => {
         automationsState.list = [];
         sessionState.value = {
             id: 's1',
+            serverId: 'server-a',
             active: true,
             encryptionMode: 'plain',
             metadata: {
@@ -149,6 +209,7 @@ describe('SessionAutomationsScreen', () => {
                 path: '/tmp/project',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         settingsState.value = {};
@@ -173,9 +234,11 @@ describe('SessionAutomationsScreen', () => {
                 : null,
         });
         routerPushSpy.mockReset();
+        storeTempDataSpy.mockClear();
         modalAlertSpy.mockReset();
         navigateWithBlurOnWebSpy.mockClear();
         syncSpies.refreshAutomations.mockClear();
+        syncSpies.refreshAutomationDefinitionDetail.mockClear();
         syncSpies.runAutomationNow.mockClear();
         syncSpies.pauseAutomation.mockClear();
         syncSpies.resumeAutomation.mockClear();
@@ -188,34 +251,18 @@ describe('SessionAutomationsScreen', () => {
 
     it('filters to automations linked to the session', async () => {
         automationsState.list = [
-            {
+            createScheduleDefinition({
                 id: 'a1',
                 name: 'Linked',
-                description: null,
-                enabled: true,
-                schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null },
-                nextRunAt: null,
-                targetType: 'existing_session',
-                templateCiphertext: JSON.stringify({
-                    kind: 'happier_automation_template_encrypted_v1',
-                    payloadCiphertext: 'cipher',
-                    existingSessionId: 's1',
-                }),
-            },
-            {
+                targetType: 'existingSession',
+                linkedExistingSessionId: 's1',
+            }),
+            createScheduleDefinition({
                 id: 'a2',
                 name: 'Other session',
-                description: null,
-                enabled: true,
-                schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null },
-                nextRunAt: null,
-                targetType: 'existing_session',
-                templateCiphertext: JSON.stringify({
-                    kind: 'happier_automation_template_encrypted_v1',
-                    payloadCiphertext: 'cipher',
-                    existingSessionId: 's2',
-                }),
-            },
+                targetType: 'existingSession',
+                linkedExistingSessionId: 's2',
+            }),
         ];
 
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
@@ -227,6 +274,111 @@ describe('SessionAutomationsScreen', () => {
         expect(json).not.toContain('Other session');
     });
 
+    it('keeps linked hydrated automations visible while the mount refresh is pending', async () => {
+        const refresh = createDeferred<void>();
+        syncSpies.refreshAutomations.mockImplementationOnce(() => refresh.promise);
+        automationsState.list = [createScheduleDefinition({
+            id: 'a1',
+            name: 'Linked',
+            targetType: 'existingSession',
+            linkedExistingSessionId: 's1',
+        })];
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Linked')).toBeTruthy();
+
+        await act(async () => {
+            refresh.resolve();
+            await refresh.promise;
+        });
+    });
+
+    it('shows an announced retryable error instead of a scoped empty state after the initial refresh fails', async () => {
+        syncSpies.refreshAutomations.mockRejectedValueOnce(new Error('network unavailable'));
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const errorState = screen.findAllByProps({ testID: 'session-automations-refresh-error' })
+            .find((instance) => instance.props.role === 'alert');
+        expect(errorState?.props.role).toBe('alert');
+        expect(errorState?.props['aria-live']).toBe('assertive');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('No automations yet');
+
+        const retry = screen.findAllByProps({ testID: 'session-automations-refresh-error-action' })
+            .find((instance) => typeof instance.props.onPress === 'function');
+        if (!retry) throw new Error('Retry action was not found');
+        await act(async () => {
+            retry.props.onPress();
+            await Promise.resolve();
+        });
+        expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps linked cached automations visible with an announced retry and disables stale mutations after refresh failure', async () => {
+        automationsState.list = [createScheduleDefinition({
+            id: 'a1',
+            name: 'Linked',
+            targetType: 'existingSession',
+            linkedExistingSessionId: 's1',
+        })];
+        syncSpies.refreshAutomations.mockRejectedValueOnce(new Error('network unavailable'));
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Linked')).toBeTruthy();
+        const errorState = screen.findByProps({ testID: 'session-automations-stale-refresh-error' });
+        expect(errorState.props.accessibilityRole).toBe('alert');
+        expect(errorState.props.accessibilityLiveRegion).toBe('assertive');
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' }).props.disabled).toBe(true);
+        expect(screen.findByType('Switch' as any).props.disabled).toBe(true);
+
+        await act(async () => {
+            pressTestInstance(screen.findByProps({ testID: 'session-automations-stale-refresh-retry' }), 'Retry');
+            await Promise.resolve();
+        });
+        expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
+    });
+
+    it('resolves an unloaded V3 existing-session definition before showing an empty list', async () => {
+        let resolveDetail: (() => void) | undefined;
+        const pendingDetail = new Promise<void>((resolve) => {
+            resolveDetail = resolve;
+        });
+        syncSpies.refreshAutomationDefinitionDetail.mockImplementationOnce(() => pendingDetail);
+        automationsState.list = [createScheduleDefinition({
+            id: 'a1',
+            name: 'Direct-only link',
+            targetType: 'existingSession',
+            detail: 'unloaded',
+        })];
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(syncSpies.refreshAutomationDefinitionDetail).toHaveBeenCalledWith('a1');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('No automations yet');
+
+        await act(async () => {
+            resolveDetail?.();
+            await pendingDetail;
+        });
+    });
+
     it('navigates to add automation for the session when the reachable target comes from project state', async () => {
         sessionState.value = {
             id: 's1',
@@ -236,6 +388,7 @@ describe('SessionAutomationsScreen', () => {
                 path: '/tmp/project',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         setStorageStateForSession({
@@ -252,11 +405,14 @@ describe('SessionAutomationsScreen', () => {
                 ? {
                     key: {
                         machineId: 'm-target',
-                        path: '/tmp/project',
+                        rootPath: '/tmp/project',
                     },
                 }
                 : null,
         });
+
+        const { readMachineControlTargetForSession } = await import('@/sync/ops/sessionMachineTarget');
+        expect(readMachineControlTargetForSession('s1')).toEqual(expect.objectContaining({ machineId: 'm-target' }));
 
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
@@ -273,6 +429,27 @@ describe('SessionAutomationsScreen', () => {
 
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations/new');
+    });
+
+    it('hands an existing-session Event target to the shared new-automation editor without changing V2 scheduling', async () => {
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        const addEvent = screen.tree.findByProps({ testID: 'session-automations-add-event-automation' });
+
+        await act(async () => {
+            pressTestInstance(addEvent, 'Add event automation');
+        });
+
+        expect(storeTempDataSpy).toHaveBeenCalledWith({
+            replacePersistedDraftSelections: true,
+            eventAutomationInitialTarget: {
+                kind: 'existingSession',
+                sessionId: 's1',
+                serverId: 'server-a',
+            },
+        });
+        expect(routerPushSpy).toHaveBeenCalledWith('/new?automation=1&dataId=event-target-seed');
     });
 
     it('uses the machine-control target when explaining why a scoped session cannot add automations', async () => {

@@ -1,4 +1,4 @@
-import type { PluginVoiceClientToolDefinition } from '@happier-dev/plugin-sdk/runtime';
+import type { VoiceClientToolDefinition } from '@happier-dev/plugin-sdk/voice/client';
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
 
 function attemptAborted(): Error {
@@ -10,9 +10,9 @@ function attemptAborted(): Error {
 
 /** Bind host-owned tool execution to the exact provider connection attempt. */
 export function bindVoiceClientToolsToAttempt(
-  tools: readonly PluginVoiceClientToolDefinition[],
+  tools: readonly VoiceClientToolDefinition[],
   signal: AbortSignal,
-): readonly PluginVoiceClientToolDefinition[] {
+): readonly VoiceClientToolDefinition[] {
   return Object.freeze(tools.map((tool) => Object.freeze({
     ...tool,
     async execute(parameters: VoiceRealtimeJsonValue) {

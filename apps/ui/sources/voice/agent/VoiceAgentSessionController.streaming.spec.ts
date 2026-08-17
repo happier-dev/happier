@@ -17,8 +17,6 @@ const sendTurn = vi.fn(async () => ({ assistantText: 'fallback', actions: [] }))
 const welcome = vi.fn(async () => ({ assistantText: 'Welcome!' }));
 const commit = vi.fn(async () => ({ commitText: 'commit' }));
 const stop = vi.fn(async () => ({ ok: true }));
-const openAiStart = vi.fn(async () => ({ voiceAgentId: 'oa1' }));
-const openAiWelcome = vi.fn(async () => ({ assistantText: 'Welcome (openai_compat)!' }));
 const isRuntimeFeatureEnabled = vi.fn<(args: any) => Promise<boolean>>(async () => true);
 const resolveRuntimeFeatureDecision = vi.fn<(args: any) => Promise<FeatureDecision>>(async (args: any) => ({
   featureId: args?.featureId,
@@ -175,19 +173,6 @@ vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
   },
 }));
 
-vi.mock('@/voice/agent/openaiCompatVoiceAgentClient', () => ({
-  OpenAiCompatVoiceAgentClient: class {
-    start = openAiStart;
-    welcome = openAiWelcome;
-    startTurnStream = vi.fn();
-    readTurnStream = vi.fn();
-    cancelTurnStream = vi.fn();
-    sendTurn = vi.fn();
-    commit = vi.fn();
-    stop = vi.fn();
-  },
-}));
-
 vi.mock('@/voice/context/buildVoiceInitialContext', () => ({
   buildVoiceInitialContext: (sessionId: string, options?: { targetSessionId?: string | null }) =>
     buildVoiceInitialContext(sessionId, options),
@@ -308,8 +293,6 @@ describe('VoiceAgentSessionController (streaming)', () => {
     cancelTurnStream.mockClear();
     sendTurn.mockClear();
     welcome.mockClear();
-    openAiStart.mockClear();
-    openAiWelcome.mockClear();
     commit.mockClear();
     stop.mockClear();
   });
@@ -427,56 +410,21 @@ describe('VoiceAgentSessionController (streaming)', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('restarts the daemon voice agent after execution_run_busy without admitting a concurrent turn during recovery', async () => {
-    const retryStarted = createDeferred<void>();
-    const releaseRetry = createDeferred<void>();
-    start
-      .mockResolvedValueOnce({ voiceAgentId: 'busy-run' })
-      .mockResolvedValueOnce({ voiceAgentId: 'fresh-run' });
-    startTurnStream
-      .mockRejectedValueOnce(Object.assign(new Error('Voice agent busy'), { rpcErrorCode: 'execution_run_busy' }))
-      .mockImplementationOnce(async () => {
-        retryStarted.resolve();
-        await releaseRetry.promise;
-        return { streamId: 'stream-2' };
-      })
-      .mockResolvedValueOnce({ streamId: 'stream-3' });
-    readTurnStream
-      .mockResolvedValueOnce({
-        streamId: 'stream-2',
-        events: [{ t: 'done', assistantText: 'recovered', actions: [] }],
-        nextCursor: 1,
-        done: true,
-      } satisfies TurnStreamReadResult)
-      .mockResolvedValueOnce({
-        streamId: 'stream-3',
-        events: [{ t: 'done', assistantText: 'second', actions: [] }],
-        nextCursor: 1,
-        done: true,
-      } satisfies TurnStreamReadResult);
+  it('projects execution_run_busy without stopping or redispatching the turn', async () => {
+    start.mockResolvedValueOnce({ voiceAgentId: 'busy-run' });
+    startTurnStream.mockRejectedValueOnce(
+      Object.assign(new Error('Voice agent busy'), { rpcErrorCode: 'execution_run_busy' }),
+    );
 
     const controller = createVoiceAgentSessionController();
-    const firstTurn = controller.sendTurn('s1', 'hello');
-    await retryStarted.promise;
-    const secondTurn = controller.sendTurn('s1', 'second');
-    await Promise.resolve();
-    await Promise.resolve();
 
-    expect(startTurnStream).toHaveBeenCalledTimes(2);
-    releaseRetry.resolve();
-
-    await expect(firstTurn).resolves.toMatchObject({
-      assistantText: 'recovered',
-      actions: [],
+    await expect(controller.sendTurn('s1', 'hello')).rejects.toMatchObject({
+      message: 'Voice agent busy',
+      rpcErrorCode: 'execution_run_busy',
     });
-    await expect(secondTurn).resolves.toMatchObject({
-      assistantText: 'second',
-      actions: [],
-    });
-
-    expect(stop).toHaveBeenCalledWith({ sessionId: 's1', voiceAgentId: 'busy-run' });
-    expect(start).toHaveBeenCalledTimes(2);
-    expect(startTurnStream).toHaveBeenCalledTimes(3);
+    expect(stop).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(startTurnStream).toHaveBeenCalledTimes(1);
   });
 
   it('aborts and settles the active turn before clearing its retained effect outcomes on stop', async () => {
@@ -505,55 +453,64 @@ describe('VoiceAgentSessionController (streaming)', () => {
     expect(cancelTurnStream).toHaveBeenCalledWith(expect.objectContaining({ streamId: 'stream-stop' }));
   });
 
-  it('serializes stop admission before a send admitted later for the same session', async () => {
-    const stopStarted = createDeferred<void>();
-    const releaseStop = createDeferred<void>();
-    const operationOrder: string[] = [];
-    start
-      .mockResolvedValueOnce({ voiceAgentId: 'run-before-stop' })
-      .mockImplementationOnce(async () => {
-        operationOrder.push('later-handle-started');
-        return { voiceAgentId: 'run-after-stop' };
-      });
-    startTurnStream.mockImplementationOnce(async () => {
-      operationOrder.push('later-turn-started');
-      return { streamId: 'stream-after-stop' };
+  it('forwards a concurrent turn to canonical admission instead of queueing it in Voice', async () => {
+    const blockedRead = createDeferred<TurnStreamReadResult>();
+    startTurnStream.mockResolvedValueOnce({ streamId: 'stream-active' });
+    startTurnStream.mockRejectedValueOnce(
+      Object.assign(new Error('Voice agent busy'), { rpcErrorCode: 'execution_run_busy' }),
+    );
+    readTurnStream.mockImplementationOnce(async () => await blockedRead.promise);
+
+    const controller = createVoiceAgentSessionController();
+    const activeTurn = trackPromise(controller.sendTurn('s1', 'active turn'));
+    await vi.waitFor(() => expect(readTurnStream).toHaveBeenCalledTimes(1));
+
+    await expect(controller.sendTurn('s1', 'concurrent turn')).rejects.toMatchObject({
+      rpcErrorCode: 'execution_run_busy',
     });
-    readTurnStream.mockResolvedValueOnce({
-      streamId: 'stream-after-stop',
-      events: [{ t: 'done', assistantText: 'after stop', actions: [] }],
+
+    expect(startTurnStream).toHaveBeenCalledTimes(2);
+    expect(readTurnStream).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+
+    blockedRead.resolve({
+      streamId: 'stream-active',
+      events: [{ t: 'done', assistantText: 'active complete', actions: [] }],
       nextCursor: 1,
       done: true,
-    } satisfies TurnStreamReadResult);
+    });
+    await expect(activeTurn.settled).resolves.toMatchObject({
+      status: 'resolved',
+      value: { assistantText: 'active complete' },
+    });
+  });
+
+  it('joins concurrent stops without retiring the first stop before daemon recovery', async () => {
+    const stopStarted = createDeferred<void>();
+    const releaseStop = createDeferred<void>();
     stop.mockImplementationOnce(async () => {
-      operationOrder.push('stop-started');
       stopStarted.resolve();
       await releaseStop.promise;
-      operationOrder.push('stop-finished');
       return { ok: true };
     });
 
     const controller = createVoiceAgentSessionController();
     await controller.ensureRunning('s1');
 
-    const stopping = trackPromise(controller.stop('s1'));
-    const laterTurn = controller.sendTurn('s1', 'after stop');
+    const firstStop = trackPromise(controller.stop('s1'));
+    const secondStop = trackPromise(controller.stop('s1'));
     await stopStarted.promise;
-    await flushHookEffects({ cycles: 4, turns: 4 });
+    await flushHookEffects({ cycles: 2, turns: 2 });
 
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(startTurnStream).not.toHaveBeenCalled();
-    expect(operationOrder).toEqual(['stop-started']);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(firstStop.isSettled()).toBe(false);
+    expect(secondStop.isSettled()).toBe(false);
 
     releaseStop.resolve();
-    await expect(stopping.settled).resolves.toMatchObject({ status: 'resolved' });
-    await expect(laterTurn).resolves.toMatchObject({ assistantText: 'after stop' });
-    expect(operationOrder).toEqual([
-      'stop-started',
-      'stop-finished',
-      'later-handle-started',
-      'later-turn-started',
-    ]);
+    await expect(firstStop.settled).resolves.toMatchObject({ status: 'resolved' });
+    await expect(secondStop.settled).resolves.toMatchObject({ status: 'resolved' });
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces a clear error when starting local voice on an inactive target session', async () => {
@@ -722,66 +679,30 @@ describe('VoiceAgentSessionController (streaming)', () => {
     );
   });
 
-  it('queues interrupting text updates behind an in-flight turn for the same session', async () => {
-    const firstStartTurn = createDeferred<void>();
-    const firstReadReady = createDeferred<void>();
-    const streamReadState: {
-      resolveFirstRead: ((value: TurnStreamReadResult) => void) | null;
-    } = {
-      resolveFirstRead: null,
-    };
-    readTurnStream.mockImplementation(async ({ streamId }: any) => {
-      if (streamId === 'stream-1') {
-        return await new Promise<TurnStreamReadResult>((resolve) => {
-          streamReadState.resolveFirstRead = resolve;
-          firstReadReady.resolve();
-        });
-      }
-      return {
-        streamId,
-        events: [{ t: 'done', assistantText: 'follow-up', actions: [] }],
-        nextCursor: 1,
-        done: true,
-      };
-    });
-    startTurnStream.mockImplementation(async ({ userText }: any) => {
-      if (userText === 'hello') {
-        firstStartTurn.resolve();
-      }
-      return {
-        streamId: userText === 'hello' ? 'stream-1' : 'stream-2',
-      };
-    });
+  it('projects a concurrent text update to canonical admission instead of queueing it in Voice', async () => {
+    const blockedRead = createDeferred<TurnStreamReadResult>();
+    startTurnStream.mockResolvedValueOnce({ streamId: 'stream-1' });
+    startTurnStream.mockRejectedValueOnce(
+      Object.assign(new Error('Voice agent busy'), { rpcErrorCode: 'execution_run_busy' }),
+    );
+    readTurnStream.mockImplementationOnce(async () => await blockedRead.promise);
 
     const controller: any = createVoiceAgentSessionController();
-
     const firstTurn = controller.sendTurn('s1', 'hello');
-    await firstStartTurn.promise;
-    await firstReadReady.promise;
-    expect(startTurnStream).toHaveBeenCalledTimes(1);
-    const textUpdate = controller.sendTextUpdate('s1', 'Permission required. Ask the human whether to allow it.');
+    await vi.waitFor(() => expect(readTurnStream).toHaveBeenCalledTimes(1));
 
-    expect(startTurnStream).toHaveBeenCalledTimes(1);
+    await expect(
+      controller.sendTextUpdate('s1', 'Permission required. Ask the human whether to allow it.'),
+    ).rejects.toMatchObject({ rpcErrorCode: 'execution_run_busy' });
+    expect(startTurnStream).toHaveBeenCalledTimes(2);
 
-    const finishFirstRead = streamReadState.resolveFirstRead;
-    if (!finishFirstRead) {
-      throw new Error('Expected first stream read resolver to be captured');
-    }
-    finishFirstRead({
+    blockedRead.resolve({
       streamId: 'stream-1',
       events: [{ t: 'done', assistantText: 'ok', actions: [] }],
       nextCursor: 1,
       done: true,
     });
-
     await expect(firstTurn).resolves.toMatchObject({ assistantText: 'ok' });
-    await expect(textUpdate).resolves.toMatchObject({ assistantText: 'follow-up' });
-    expect(startTurnStream).toHaveBeenCalledTimes(2);
-    expect(startTurnStream).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        userText: 'Permission required. Ask the human whether to allow it.',
-      }),
-    );
   });
 
   it('can emit an immediate welcome via ensureRunningAndMaybeWelcome, and does not inject a greeting into the next user turn', async () => {
@@ -829,7 +750,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
     expect(String(payload)).not.toContain('greeting');
   });
 
-  it('can emit an immediate welcome for openai_compat backend', async () => {
+  it('emits an immediate welcome for migrated Provider-backed Chat through the daemon', async () => {
     getState.mockImplementation(() => ({
       settings: {
         voice: {
@@ -844,14 +765,14 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 turnStreamTimeoutMs: 1200,
               },
               agent: {
-                backend: 'openai_compat',
-
+                agentSource: 'agent',
+                agentId: 'opencode',
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
-                openaiCompat: {
-                  chatBaseUrl: 'http://localhost:9999',
-                  chatApiKey: null,
-                  chatModel: 'default',
-                  commitModel: 'default',
+                providerChat: {
+                  status: 'configured',
+                  chat: { agentTargetKey: 'backend:opencode', providerConnectionId: 'provider-chat', modelId: 'chat-model' },
+                  commit: { agentTargetKey: 'backend:opencode', providerConnectionId: 'provider-chat', modelId: 'commit-model' },
+                  configuration: { temperature: null },
                 },
               },
               networkTimeoutMs: 15_000,
@@ -872,8 +793,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
 
     const controller = createVoiceAgentSessionController();
     const welcomed = await controller.ensureRunningAndMaybeWelcome('s1');
-    expect(welcomed).toBe('Welcome (openai_compat)!');
-    expect(openAiWelcome).toHaveBeenCalledTimes(1);
+    expect(welcomed).toBe('Welcome!');
+    expect(welcome).toHaveBeenCalledTimes(1);
   });
 
   it('does not use ready_handshake bootstrap when immediate welcome is enabled (welcome acts as the bootstrap prompt)', async () => {

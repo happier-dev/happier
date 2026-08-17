@@ -1,6 +1,7 @@
 export const SESSION_ACTION_MARK_READ_ID = 'ui.session.mark-read';
 export const SESSION_ACTION_MARK_UNREAD_ID = 'ui.session.mark-unread';
 export const SESSION_ACTION_RENAME_ID = 'ui.session.rename';
+export const SESSION_ACTION_RESUME_ID = 'ui.session.resume';
 export const SESSION_ACTION_STOP_ID = 'ui.session.stop';
 export const SESSION_ACTION_ARCHIVE_ID = 'ui.session.archive';
 export const SESSION_ACTION_UNARCHIVE_ID = 'ui.session.unarchive';

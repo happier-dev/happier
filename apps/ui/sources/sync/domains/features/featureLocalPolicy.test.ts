@@ -5,6 +5,15 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { FeatureId } from '@happier-dev/protocol';
 
 describe('featureLocalPolicy', () => {
+    it('does not let a persisted retired channel bridge toggle decide local availability', () => {
+        // Account settings from a predecessor can contain a retired feature identifier.
+        expect(resolveLocalFeaturePolicyEnabled('channelBridges' as unknown as FeatureId, {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { channelBridges: false },
+        })).toBe(true);
+    });
+
     it('disables connectedServices.quotas by default when experiments are on', () => {
         expect(resolveLocalFeaturePolicyEnabled('connectedServices.quotas', {
             ...settingsDefaults,
@@ -297,7 +306,7 @@ describe('featureLocalPolicy', () => {
     });
 
     it('defers server-represented plugin UI tiers to the server decision and keeps dev hot reload fail-closed', () => {
-        // §4.1/§13.5.3: hostedWeb / structuredMessages / reactNativeBundles are
+        // §4.1/§13.5.3: hostedWeb / reactNativeBundles are
         // server-represented + default-ALLOW kill-switches. The UI local policy must NOT force them
         // closed (that would override the now-ON server bit, since a server-represented decision
         // combines `localPolicyEnabled && serverEnabled`). They defer via the unlisted-id fallback
@@ -306,7 +315,6 @@ describe('featureLocalPolicy', () => {
         const settings = { ...settingsDefaults, experiments: true, featureToggles: {} };
         expect(resolveLocalFeaturePolicyEnabled('plugins.ui.hostedWeb', settings)).toBe(true);
         expect(resolveLocalFeaturePolicyEnabled('plugins.ui.reactNativeBundles', settings)).toBe(true);
-        expect(resolveLocalFeaturePolicyEnabled('plugins.ui.structuredMessages', settings)).toBe(true);
         expect(resolveLocalFeaturePolicyEnabled('plugins.ui.reactNativeBundles.devHotReload', settings)).toBe(false);
     });
 

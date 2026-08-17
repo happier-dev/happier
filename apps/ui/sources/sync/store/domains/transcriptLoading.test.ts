@@ -71,4 +71,22 @@ describe('transcriptLoading domain', () => {
         get().endSessionCatchUpNewer('s1');
         expect(Object.keys(get().sessionCatchUpNewerInFlight)).not.toContain('s1');
     });
+
+    it('stores one typed transcript-load issue per session and prunes it on authoritative success', () => {
+        const { get } = createHarness();
+        get().setSessionTranscriptLoadIssue('s1', {
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
+
+        expect(get().getSessionTranscriptLoadIssue('s1')).toEqual({
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
+        expect(get().getSessionTranscriptLoadIssue('s2')).toBeNull();
+
+        get().setSessionTranscriptLoadIssue('s1', null);
+        expect(get().getSessionTranscriptLoadIssue('s1')).toBeNull();
+        expect(Object.keys(get().sessionTranscriptLoadIssues)).not.toContain('s1');
+    });
 });

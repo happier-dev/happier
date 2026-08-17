@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
+import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 
 const speakKokoroTextSpy = vi.fn().mockResolvedValue(undefined);
 const daemonSpeakSpy = vi.fn().mockResolvedValue(undefined);
@@ -79,14 +80,17 @@ describe('localNeuralTtsProviderSpec', () => {
 
     const cfgTts: VoiceLocalTtsSettings = {
       provider: 'local_neural',
-      openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
       localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
-      providers: {},
       autoSpeakReplies: true,
       bargeInEnabled: true,
     };
 
-    await localNeuralTtsProviderSpec.test({ cfgTts, networkTimeoutMs: 15_000, sample: 'Hello' });
+    await localNeuralTtsProviderSpec.test({
+      cfgTts,
+      voice: voiceSettingsDefaults,
+      networkTimeoutMs: 15_000,
+      sample: 'Hello',
+    });
 
     expect(speakKokoroTextSpy).toHaveBeenCalled();
     const arg = speakKokoroTextSpy.mock.calls[0]?.[0];
@@ -99,14 +103,17 @@ describe('localNeuralTtsProviderSpec', () => {
 
     const cfgTts: VoiceLocalTtsSettings = {
       provider: 'local_neural',
-      openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
       localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'auto' },
-      providers: {},
       autoSpeakReplies: true,
       bargeInEnabled: true,
     };
 
-    await localNeuralTtsProviderSpec.test({ cfgTts, networkTimeoutMs: 15_000, sample: 'Hello' });
+    await localNeuralTtsProviderSpec.test({
+      cfgTts,
+      voice: voiceSettingsDefaults,
+      networkTimeoutMs: 15_000,
+      sample: 'Hello',
+    });
 
     expect(daemonSpeakSpy).toHaveBeenCalledWith(expect.objectContaining({
       text: 'Hello',
@@ -122,14 +129,17 @@ describe('localNeuralTtsProviderSpec', () => {
 
     const cfgTts: VoiceLocalTtsSettings = {
       provider: 'local_neural',
-      openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
       localNeural: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'device' },
-      providers: {},
       autoSpeakReplies: true,
       bargeInEnabled: true,
     };
 
-    await localNeuralTtsProviderSpec.test({ cfgTts, networkTimeoutMs: 15_000, sample: 'Hello from web device' });
+    await localNeuralTtsProviderSpec.test({
+      cfgTts,
+      voice: voiceSettingsDefaults,
+      networkTimeoutMs: 15_000,
+      sample: 'Hello from web device',
+    });
 
     expect(speakKokoroTextSpy).toHaveBeenCalledWith(expect.objectContaining({
       text: 'Hello from web device',

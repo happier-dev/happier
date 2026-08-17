@@ -24,6 +24,12 @@ export type WorkspaceUploadEntry =
 
 export type UploadConflictStrategy = 'skip' | 'replace' | 'keep_both' | 'cancel';
 
+export type UploadConflictResolutionRequest = Readonly<{
+    conflictCount: number;
+    totalCount: number;
+    signal?: AbortSignal | null;
+}>;
+
 export type WorkspaceUploadState =
     | Readonly<{ status: 'idle' }>
     | Readonly<{
@@ -81,6 +87,42 @@ function joinRepoPath(parentDir: string, relativePath: string): string {
     return `${cleanParent}/${cleanRel}`.replace(/\/+/g, '/');
 }
 
+type UploadPreflightAwait<T> = Readonly<{ status: 'ready'; value: T }> | Readonly<{ status: 'aborted' }>;
+
+async function awaitUploadPreflight<T>(
+    promise: Promise<T>,
+    signal: AbortSignal | null | undefined,
+): Promise<UploadPreflightAwait<T>> {
+    if (!signal) return { status: 'ready', value: await promise };
+    if (signal.aborted) return { status: 'aborted' };
+    return await new Promise<UploadPreflightAwait<T>>((resolve, reject) => {
+        const onAbort = () => {
+            cleanup();
+            resolve({ status: 'aborted' });
+        };
+        const cleanup = () => signal.removeEventListener('abort', onAbort);
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) {
+            onAbort();
+            return;
+        }
+        void promise.then(
+            (value) => {
+                cleanup();
+                resolve(signal.aborted ? { status: 'aborted' } : { status: 'ready', value });
+            },
+            (error: unknown) => {
+                cleanup();
+                reject(error);
+            },
+        );
+    });
+}
+
+function uploadCanceledPlan(): { ok: false; error: string } {
+    return { ok: false, error: 'Upload canceled' };
+}
+
 async function openWorkspaceUploadSourceReader(entry: WorkspaceUploadEntry): Promise<{
     sizeBytes: number;
     readBytes: (offset: number, length: number) => Promise<Uint8Array>;
@@ -111,13 +153,15 @@ export async function buildUploadEntryPlan(input: Readonly<{
     workspaceScope: WorkspaceScopeBase | null;
     entries: readonly WorkspaceUploadEntry[];
     destinationDir: string;
-    onResolveConflicts?: ((params: Readonly<{ conflictCount: number; totalCount: number }>) => Promise<UploadConflictStrategy>) | null;
+    onResolveConflicts?: ((params: UploadConflictResolutionRequest) => Promise<UploadConflictStrategy>) | null;
+    signal?: AbortSignal | null;
 }>): Promise<{ ok: true; tasks: Array<{ entry: WorkspaceUploadEntry; targetPath: string; overwrite: boolean; sizeBytes: number }> } | { ok: false; error: string }> {
     const destinationDir = String(input.destinationDir ?? '').trim().replace(/\\/g, '/').replace(/\/+$/g, '');
     const tasks: Array<{ entry: WorkspaceUploadEntry; targetPath: string; overwrite: boolean; sizeBytes: number }> = [];
 
     const invalidPaths: string[] = [];
     for (const entry of input.entries) {
+        if (input.signal?.aborted) return uploadCanceledPlan();
         const relativePath = String(entry.relativePath ?? '').trim();
         const targetPath = joinRepoPath(destinationDir, relativePath);
         if (!targetPath || !isSafeWorkspaceRelativePath(targetPath)) {
@@ -131,7 +175,9 @@ export async function buildUploadEntryPlan(input: Readonly<{
         } else {
             sizeBytes = typeof entry.sizeBytes === 'number' && Number.isFinite(entry.sizeBytes) ? entry.sizeBytes : null;
             if (sizeBytes == null) {
-                sizeBytes = await resolveLocalUploadSourceSizeBytes(entry);
+                const resolvedSize = await awaitUploadPreflight(resolveLocalUploadSourceSizeBytes(entry), input.signal);
+                if (resolvedSize.status === 'aborted') return uploadCanceledPlan();
+                sizeBytes = resolvedSize.value;
             }
         }
 
@@ -158,13 +204,14 @@ export async function buildUploadEntryPlan(input: Readonly<{
     // Detect collisions within the current upload batch (common on native when multiple picked files share a basename).
     // Resolve them eagerly via keep-both logic so the upload plan never contains duplicate target paths.
     for (let i = 0; i < tasks.length; i += 1) {
+        if (input.signal?.aborted) return uploadCanceledPlan();
         const existing = tasks[i]!;
         if (!usedPaths.has(existing.targetPath)) {
             usedPaths.add(existing.targetPath);
             continue;
         }
 
-        const resolved = await resolveKeepBothTargetPath({
+        const resolvedResult = await awaitUploadPreflight(resolveKeepBothTargetPath({
             desiredPath: existing.targetPath,
             usedPaths,
             maxAttempts: 50,
@@ -174,23 +221,29 @@ export async function buildUploadEntryPlan(input: Readonly<{
                     serverId: scope.serverId,
                     rootPath: scope.rootPath,
                     request: { path: candidatePath },
+                    ...(input.signal ? { signal: input.signal } : {}),
                 });
                 return stat.success !== true || stat.exists === true;
             },
-        });
-        tasks[i] = { ...existing, targetPath: resolved, overwrite: false };
-        usedPaths.add(resolved);
+        }), input.signal);
+        if (resolvedResult.status === 'aborted') return uploadCanceledPlan();
+        tasks[i] = { ...existing, targetPath: resolvedResult.value, overwrite: false };
+        usedPaths.add(resolvedResult.value);
     }
 
     const conflicts: Array<{ index: number; targetPath: string }> = [];
 
     for (let i = 0; i < tasks.length; i += 1) {
-        const stat = await callDaemonWorkspaceStatFileRpc({
+        if (input.signal?.aborted) return uploadCanceledPlan();
+        const statResult = await awaitUploadPreflight(callDaemonWorkspaceStatFileRpc({
             machineId: scope.machineId,
             serverId: scope.serverId,
             rootPath: scope.rootPath,
             request: { path: tasks[i]!.targetPath },
-        });
+            ...(input.signal ? { signal: input.signal } : {}),
+        }), input.signal);
+        if (statResult.status === 'aborted') return uploadCanceledPlan();
+        const stat = statResult.value;
         if (stat.success === true && stat.exists === true) {
             conflicts.push({ index: i, targetPath: tasks[i]!.targetPath });
         }
@@ -200,9 +253,18 @@ export async function buildUploadEntryPlan(input: Readonly<{
         return { ok: true, tasks };
     }
 
-    const strategy = input.onResolveConflicts
-        ? await input.onResolveConflicts({ conflictCount: conflicts.length, totalCount: tasks.length })
-        : 'keep_both';
+    const strategyResult = input.onResolveConflicts
+        ? await awaitUploadPreflight(
+            input.onResolveConflicts({
+                conflictCount: conflicts.length,
+                totalCount: tasks.length,
+                signal: input.signal ?? null,
+            }),
+            input.signal,
+        )
+        : { status: 'ready' as const, value: 'keep_both' as const };
+    if (strategyResult.status === 'aborted') return uploadCanceledPlan();
+    const strategy = strategyResult.value;
 
     if (strategy === 'cancel') {
         return { ok: false, error: 'Upload canceled' };
@@ -222,8 +284,9 @@ export async function buildUploadEntryPlan(input: Readonly<{
 
     // keep_both
     for (const conflict of conflicts) {
+        if (input.signal?.aborted) return uploadCanceledPlan();
         const original = tasks[conflict.index]!;
-        const resolved = await resolveKeepBothTargetPath({
+        const resolvedResult = await awaitUploadPreflight(resolveKeepBothTargetPath({
             desiredPath: original.targetPath,
             usedPaths,
             maxAttempts: 50,
@@ -233,12 +296,14 @@ export async function buildUploadEntryPlan(input: Readonly<{
                     serverId: scope.serverId,
                     rootPath: scope.rootPath,
                     request: { path: candidatePath },
+                    ...(input.signal ? { signal: input.signal } : {}),
                 });
                 return stat.success !== true || stat.exists === true;
             },
-        });
-        tasks[conflict.index] = { ...original, targetPath: resolved, overwrite: false };
-        usedPaths.add(resolved);
+        }), input.signal);
+        if (resolvedResult.status === 'aborted') return uploadCanceledPlan();
+        tasks[conflict.index] = { ...original, targetPath: resolvedResult.value, overwrite: false };
+        usedPaths.add(resolvedResult.value);
     }
 
     return { ok: true, tasks };
@@ -249,7 +314,7 @@ type NativeDownloadSink = NativeCacheFileSink;
 export function useWorkspaceFileTransfers(params: Readonly<{
     workspaceScope: WorkspaceScopeBase | null;
     maxConcurrentUploads?: number;
-    onResolveUploadConflicts?: ((params: Readonly<{ conflictCount: number; totalCount: number }>) => Promise<UploadConflictStrategy>) | null;
+    onResolveUploadConflicts?: ((params: UploadConflictResolutionRequest) => Promise<UploadConflictStrategy>) | null;
     onAfterUploadSuccess?: (() => void) | null;
 }>): Readonly<{
     uploadState: WorkspaceUploadState;
@@ -275,6 +340,20 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     const uploadAbortRef = React.useRef<AbortController | null>(null);
     const downloadAbortRef = React.useRef<AbortController | null>(null);
     const uploadAbortReasonRef = React.useRef<'user' | 'error' | null>(null);
+    const mountedRef = React.useRef(false);
+
+    // Controllers already own transfer cancellation. A real hook unmount must
+    // retire those same in-flight operations instead of allowing a stale
+    // upload/download callback to publish into a vanished file surface.
+    React.useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            uploadAbortReasonRef.current = 'user';
+            uploadAbortRef.current?.abort();
+            downloadAbortRef.current?.abort();
+        };
+    }, []);
 
     const cancelUploads = React.useCallback(() => {
         uploadAbortReasonRef.current = 'user';
@@ -294,9 +373,15 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         uploadAbortRef.current = controller;
         uploadAbortReasonRef.current = null;
         let uploadFailureError: string | null = null;
+        const isCurrentUpload = (): boolean => (
+            mountedRef.current && uploadAbortRef.current === controller
+        );
+        const setCurrentUploadState: typeof setUploadState = (next) => {
+            if (isCurrentUpload()) setUploadState(next);
+        };
 
         try {
-            setUploadState({
+            setCurrentUploadState({
                 status: 'preflighting',
                 totalFiles: input.entries.length,
                 completedFiles: 0,
@@ -309,15 +394,16 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 entries: input.entries,
                 destinationDir: input.destinationDir,
                 onResolveConflicts: onResolveUploadConflicts ?? null,
+                signal: controller.signal,
             });
             if (!plan.ok) {
-                setUploadState(plan.error === 'Upload canceled' ? { status: 'canceled' } : { status: 'error', error: plan.error });
+                setCurrentUploadState(plan.error === 'Upload canceled' ? { status: 'canceled' } : { status: 'error', error: plan.error });
                 return { ok: false, error: plan.error };
             }
 
             const tasks = plan.tasks;
             const totalBytes = tasks.reduce((sum, t) => sum + t.sizeBytes, 0);
-            setUploadState({
+            setCurrentUploadState({
                 status: 'uploading',
                 totalFiles: tasks.length,
                 completedFiles: 0,
@@ -327,7 +413,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
 
             const scope = stableWorkspaceScope;
             if (!scope) {
-                setUploadState({ status: 'error', error: 'Workspace scope not available' });
+                setCurrentUploadState({ status: 'error', error: 'Workspace scope not available' });
                 return { ok: false, error: 'Workspace scope not available' };
             }
 
@@ -381,7 +467,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                                 const delta = progress.uploadedBytes - lastUploaded;
                                 lastUploaded = progress.uploadedBytes;
                                 if (delta <= 0) return;
-                                setUploadState((prev) => {
+                                setCurrentUploadState((prev) => {
                                     if (prev.status !== 'uploading') return prev;
                                     return {
                                         ...prev,
@@ -393,7 +479,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                         });
 
                         if (isTransferFinalizeRecoveryFailure<WorkspaceFileUploadFinalizeResponse>(result)) {
-                            setUploadState({ status: 'error', error: result.error });
+                            setCurrentUploadState({ status: 'error', error: result.error });
                             const recoveryResult = await runTransferFinalizeRecovery({
                                 recovery: result.recovery,
                                 title: t('transferRecovery.title'),
@@ -419,7 +505,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                                 uploadAbortReasonRef.current = 'error';
                             }
                             cancelOnce();
-                            setUploadState({ status: 'error', error: result.error });
+                            setCurrentUploadState({ status: 'error', error: result.error });
                             return;
                         }
                     } catch (error) {
@@ -429,7 +515,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                             uploadAbortReasonRef.current = 'error';
                         }
                         cancelOnce();
-                        setUploadState({ status: 'error', error: errorMessage });
+                        setCurrentUploadState({ status: 'error', error: errorMessage });
                         return;
                     } finally {
                         try {
@@ -439,7 +525,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                         }
                     }
 
-                    setUploadState((prev) => {
+                    setCurrentUploadState((prev) => {
                         if (prev.status !== 'uploading') return prev;
                         return {
                             ...prev,
@@ -452,27 +538,29 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             await Promise.all(workers);
 
             if (uploadAbortReasonRef.current === 'user') {
-                setUploadState({ status: 'canceled' });
+                setCurrentUploadState({ status: 'canceled' });
                 return { ok: false, error: 'Upload canceled' };
             }
 
             if (uploadAbortReasonRef.current === 'error') {
                 const error = uploadFailureError ?? 'Upload failed';
-                setUploadState({ status: 'error', error });
+                setCurrentUploadState({ status: 'error', error });
                 return { ok: false, error };
             }
 
             if (controller.signal.aborted) {
-                setUploadState({ status: 'error', error: 'Upload canceled' });
+                setCurrentUploadState({ status: 'canceled' });
                 return { ok: false, error: 'Upload canceled' };
             }
 
-            setUploadState({ status: 'done', totalFiles: tasks.length, totalBytes });
-            onAfterUploadSuccess?.();
+            setCurrentUploadState({ status: 'done', totalFiles: tasks.length, totalBytes });
+            if (isCurrentUpload() && !controller.signal.aborted) onAfterUploadSuccess?.();
             return { ok: true };
         } finally {
-            uploadAbortRef.current = null;
-            uploadAbortReasonRef.current = null;
+            if (uploadAbortRef.current === controller) {
+                uploadAbortRef.current = null;
+                uploadAbortReasonRef.current = null;
+            }
         }
     }, [maxConcurrentUploads, onAfterUploadSuccess, onResolveUploadConflicts, stableWorkspaceScope]);
 
@@ -483,6 +571,12 @@ export function useWorkspaceFileTransfers(params: Readonly<{
 
         const controller = new AbortController();
         downloadAbortRef.current = controller;
+        const isCurrentDownload = (): boolean => (
+            mountedRef.current && downloadAbortRef.current === controller
+        );
+        const setCurrentDownloadState: typeof setDownloadState = (next) => {
+            if (isCurrentDownload()) setDownloadState(next);
+        };
 
         const nativeSinkRef: { current: NativeDownloadSink | null } = { current: null };
         const cleanupNativeSinkOnce = async () => {
@@ -506,7 +600,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         };
         const webDownloadMaxBytes = resolveWebDownloadMaxBytes();
         const updateProgress = (progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => {
-            setDownloadState((prev) => prev.status === 'downloading'
+            setCurrentDownloadState((prev) => prev.status === 'downloading'
                 ? { ...prev, downloadedBytes: progress.downloadedBytes, totalBytes: progress.totalBytes }
                 : prev);
         };
@@ -514,7 +608,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         try {
             const scope = stableWorkspaceScope;
             if (!scope) {
-                setDownloadState({ status: 'error', error: 'Workspace scope not available' });
+                setCurrentDownloadState({ status: 'error', error: 'Workspace scope not available' });
                 return { ok: false, error: 'Workspace scope not available' };
             }
 
@@ -527,6 +621,9 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     request: input,
                     destination: {
                         writeBytes: async (bytes) => {
+                            if (!isCurrentDownload() || controller.signal.aborted) {
+                                throw new Error('Download canceled');
+                            }
                             if (Platform.OS === 'web') {
                                 if (!webSinkRef.current) {
                                     throw new Error('Download sink unavailable');
@@ -565,7 +662,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                         },
                     },
                     onInit: async (init) => {
-                        setDownloadState({
+                        if (!isCurrentDownload() || controller.signal.aborted) {
+                            return { success: false, error: 'Download canceled' };
+                        }
+                        setCurrentDownloadState({
                             status: 'downloading',
                             name: init.name,
                             downloadedBytes: 0,
@@ -608,10 +708,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 const webSinkFailure = webSinkFailureRef.current;
                 const message = webSinkFailure?.message ?? (error instanceof Error ? error.message : 'Download failed');
                 if (!webSinkFailure && controller.signal.aborted) {
-                    setDownloadState({ status: 'canceled' });
+                    setCurrentDownloadState({ status: 'canceled' });
                     return { ok: false, error: 'Download canceled', canceled: true };
                 }
-                setDownloadState(webSinkFailure
+                setCurrentDownloadState(webSinkFailure
                     ? { status: 'error', error: message }
                     : controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: message });
                 return { ok: false, error: message };
@@ -621,19 +721,29 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 await cleanupNativeSinkOnce();
                 await cleanupWebSinkOnce();
                 if (controller.signal.aborted) {
-                    setDownloadState({ status: 'canceled' });
+                    setCurrentDownloadState({ status: 'canceled' });
                     return { ok: false, error: 'Download canceled', canceled: true };
                 }
-                setDownloadState({ status: 'error', error: res.error });
+                setCurrentDownloadState({ status: 'error', error: res.error });
                 return { ok: false, error: res.error };
+            }
+
+            if (!isCurrentDownload() || controller.signal.aborted) {
+                await cleanupNativeSinkOnce();
+                await cleanupWebSinkOnce();
+                return { ok: false, error: 'Download canceled', canceled: true };
             }
 
             if (Platform.OS === 'web') {
                 if (!webSinkRef.current) {
-                    setDownloadState({ status: 'error', error: 'Download sink unavailable' });
+                    setCurrentDownloadState({ status: 'error', error: 'Download sink unavailable' });
                     return { ok: false, error: 'Download sink unavailable' };
                 }
                 const file = await webSinkRef.current.getFile();
+                if (!isCurrentDownload() || controller.signal.aborted) {
+                    await cleanupWebSinkOnce();
+                    return { ok: false, error: 'Download canceled', canceled: true };
+                }
                 const url = URL.createObjectURL(file);
                 try {
                     const anchor = document.createElement('a');
@@ -659,9 +769,9 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             } else if (nativeSinkRef.current) {
                 try {
                     const Sharing: any = await import('expo-sharing');
-                    if (Sharing && typeof Sharing.isAvailableAsync === 'function') {
+                    if (isCurrentDownload() && !controller.signal.aborted && Sharing && typeof Sharing.isAvailableAsync === 'function') {
                         const available = await Sharing.isAvailableAsync();
-                        if (available && typeof Sharing.shareAsync === 'function') {
+                        if (isCurrentDownload() && !controller.signal.aborted && available && typeof Sharing.shareAsync === 'function') {
                             await Sharing.shareAsync(nativeSinkRef.current.fileUri);
                         }
                     }
@@ -670,17 +780,17 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 }
                 await cleanupNativeSinkOnce();
             } else {
-                setDownloadState({ status: 'error', error: 'Download sink unavailable' });
+                setCurrentDownloadState({ status: 'error', error: 'Download sink unavailable' });
                 return { ok: false, error: 'Download sink unavailable' };
             }
 
             if (controller.signal.aborted) {
                 await cleanupNativeSinkOnce();
-                setDownloadState({ status: 'canceled' });
+                setCurrentDownloadState({ status: 'canceled' });
                 return { ok: false, error: 'Download canceled', canceled: true };
             }
 
-            setDownloadState((prev) => prev.status === 'downloading'
+            setCurrentDownloadState((prev) => prev.status === 'downloading'
                 ? { status: 'done', name: prev.name, totalBytes: prev.totalBytes }
                 : prev);
             return { ok: true };
@@ -688,7 +798,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             if (Platform.OS === 'web' && !webSinkCleanupScheduled) {
                 await cleanupWebSinkOnce();
             }
-            downloadAbortRef.current = null;
+            if (downloadAbortRef.current === controller) downloadAbortRef.current = null;
         }
     }, [stableWorkspaceScope]);
 

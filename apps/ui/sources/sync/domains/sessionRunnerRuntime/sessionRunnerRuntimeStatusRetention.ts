@@ -1,4 +1,7 @@
-import type { SessionRunnerRuntimeStateV1 } from '@happier-dev/protocol';
+import type {
+    SessionRunnerProcessIdentityV2,
+    SessionRunnerRuntimeStateV1,
+} from '@happier-dev/protocol';
 
 export type SessionRunnerRuntimeStatusIdentity = Readonly<{
     serverId: string;
@@ -8,6 +11,7 @@ export type SessionRunnerRuntimeStatusIdentity = Readonly<{
 
 export type SessionRunnerRuntimeStatusSnapshot = SessionRunnerRuntimeStatusIdentity & Readonly<{
     state: SessionRunnerRuntimeStateV1;
+    runnerProcessIdentity: SessionRunnerProcessIdentityV2 | null;
 }>;
 
 type SessionRunnerRuntimeStatusRefresh = Readonly<{
@@ -20,13 +24,16 @@ export type SessionRunnerRuntimeStatusRetention = Readonly<{
     beginRefresh: (identity: SessionRunnerRuntimeStatusIdentity) => SessionRunnerRuntimeStatusRefresh;
     completeRefresh: (
         refresh: SessionRunnerRuntimeStatusRefresh,
-        state: SessionRunnerRuntimeStateV1 | null,
+        fetched: Readonly<{
+            state: SessionRunnerRuntimeStateV1;
+            runnerProcessIdentity: SessionRunnerProcessIdentityV2 | null;
+        }> | null,
     ) => void;
+    clearForTests: () => void;
 }>;
 
 const MAX_RETAINED_SESSION_RUNNER_RUNTIME_STATUSES = 32;
 const MAX_PENDING_SESSION_RUNNER_RUNTIME_STATUS_REFRESHES = 32;
-
 function buildIdentityKey(identity: SessionRunnerRuntimeStatusIdentity): string {
     return JSON.stringify([identity.serverId, identity.machineId, identity.sessionId]);
 }
@@ -44,12 +51,24 @@ export function createSessionRunnerRuntimeStatusRetention(): SessionRunnerRuntim
     const latestRefreshByIdentity = new Map<string, SessionRunnerRuntimeStatusRefresh>();
 
     return {
+        clearForTests() {
+            retainedByIdentity.clear();
+            latestRefreshByIdentity.clear();
+        },
         read(identity) {
-            return retainedByIdentity.get(buildIdentityKey(identity)) ?? null;
+            const identityKey = buildIdentityKey(identity);
+            return retainedByIdentity.get(identityKey) ?? null;
         },
         beginRefresh(identity) {
             const refreshIdentity = { ...identity };
             const identityKey = buildIdentityKey(refreshIdentity);
+            const retained = retainedByIdentity.get(identityKey);
+            if (retained?.runnerProcessIdentity) {
+                retainedByIdentity.set(identityKey, {
+                    ...retained,
+                    runnerProcessIdentity: null,
+                });
+            }
             const refresh = {
                 identity: refreshIdentity,
                 identityKey,
@@ -63,16 +82,17 @@ export function createSessionRunnerRuntimeStatusRetention(): SessionRunnerRuntim
             );
             return refresh;
         },
-        completeRefresh(refresh, state) {
+        completeRefresh(refresh, fetched) {
             if (latestRefreshByIdentity.get(refresh.identityKey) !== refresh) {
                 return;
             }
             latestRefreshByIdentity.delete(refresh.identityKey);
 
             const identity = refresh.identity;
+            if (!fetched) return;
+            const state = fetched.state;
             if (
-                !state
-                || state.sessionId !== identity.sessionId
+                state.sessionId !== identity.sessionId
                 || state.machineId !== identity.machineId
             ) {
                 return;
@@ -80,6 +100,7 @@ export function createSessionRunnerRuntimeStatusRetention(): SessionRunnerRuntim
             const snapshot = {
                 ...identity,
                 state,
+                runnerProcessIdentity: fetched.runnerProcessIdentity,
             } satisfies SessionRunnerRuntimeStatusSnapshot;
             retainedByIdentity.delete(refresh.identityKey);
             retainedByIdentity.set(refresh.identityKey, snapshot);

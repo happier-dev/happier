@@ -89,6 +89,42 @@ function mergeDynamicModelOptionWithCatalog(
     };
 }
 
+/**
+ * Two rows that read identically are not a choice.
+ *
+ * A dynamic catalog advertises pinned snapshot ids (`claude-opus-4-5-20251101`) under the same
+ * curated name as their floating alias (`claude-opus-4-5`), and the alias is offered too — either
+ * because the source lists both or because the static catalog contributes the one the probe
+ * omitted. The result is rows with the same label and the same blurb selecting different models,
+ * so the user cannot tell which one they picked.
+ *
+ * Where a label is contested, the blurb the rows share distinguishes nothing, so it gives way to
+ * the one fact that does: the model id being selected. Uncontested rows keep their curated copy.
+ */
+function nameCollidingModelOptionsByModelId(options: readonly ModelOption[]): readonly ModelOption[] {
+    const countByLabel = new Map<string, number>();
+    for (const option of options) {
+        const label = option.label.trim();
+        if (!label) continue;
+        countByLabel.set(label, (countByLabel.get(label) ?? 0) + 1);
+    }
+
+    let contested = false;
+    for (const count of countByLabel.values()) {
+        if (count > 1) {
+            contested = true;
+            break;
+        }
+    }
+    if (!contested) return options;
+
+    return options.map((option) => {
+        if ((countByLabel.get(option.label.trim()) ?? 0) < 2) return option;
+        if (option.description === option.value) return option;
+        return { ...option, description: option.value };
+    });
+}
+
 function mergeModelOptionsWithCatalog(params: Readonly<{
     options: readonly ModelOption[];
     catalogOptions: readonly ModelOption[];
@@ -97,17 +133,17 @@ function mergeModelOptionsWithCatalog(params: Readonly<{
     const catalogByValue = new Map(params.catalogOptions.map((option) => [option.value, option] as const));
     const merged = dedupeModelOptionsByValue(params.options.map((option) => mergeDynamicModelOptionWithCatalog(option, catalogByValue)));
 
-    if (!params.appendMissingCatalogOptions) return merged;
+    if (!params.appendMissingCatalogOptions) return nameCollidingModelOptionsByModelId(merged);
 
     const seen = new Set(merged.map((option) => option.value));
-    return [
+    return nameCollidingModelOptionsByModelId([
         ...merged,
         ...params.catalogOptions.filter((option) => {
             if (seen.has(option.value)) return false;
             seen.add(option.value);
             return true;
         }),
-    ];
+    ]);
 }
 
 function appendSelectedFreeformModelOption(params: Readonly<{
@@ -116,7 +152,7 @@ function appendSelectedFreeformModelOption(params: Readonly<{
     modelConfig: AgentModelConfig;
 }>): readonly ModelOption[] {
     if (!isFreeformModelIdAllowed(params.modelConfig, params.selectedModelId)) return params.options;
-    if (params.options.some((option) => option.value === params.selectedModelId)) return params.options;
+    if (findModelOptionForEffectiveModelId(params.options, params.selectedModelId)) return params.options;
     return [
         ...params.options,
         { value: params.selectedModelId, label: params.selectedModelId, description: '' },
@@ -349,8 +385,8 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Meta
     const normalized = typeof modelId === 'string' ? modelId.trim() : '';
     if (!normalized) return false;
 
-    const allowed = getSelectableModelIdsForSession(agentType, metadata);
-    if ((allowed as readonly string[]).includes(normalized)) return true;
+    const options = resolveModelOptionsForSession(agentType, metadata);
+    if (findModelOptionForEffectiveModelId(options, normalized)) return true;
     return isFreeformModelIdAllowed(getAgentCore(agentType).model, normalized);
 }
 
@@ -374,5 +410,59 @@ export function findModelOptionForEffectiveModelId<T extends Readonly<{
     if (!raw) return null;
     const exact = options.find((option) => option.value === raw);
     if (exact) return exact;
-    return options.find((option) => option.extendedContextModelId === raw) ?? null;
+    const extendedContext = options.find((option) => option.extendedContextModelId === raw);
+    if (extendedContext) return extendedContext;
+
+    // Pi accepts unqualified model ids, while its model probe advertises the
+    // canonical provider-qualified id. Only collapse that shorthand when the
+    // advertised options prove that the suffix has exactly one owner.
+    if (raw.includes('/')) return null;
+    let qualifiedMatch: T | null = null;
+    for (const option of options) {
+        const separatorIndex = option.value.indexOf('/');
+        if (separatorIndex <= 0 || option.value.slice(separatorIndex + 1) !== raw) continue;
+        if (qualifiedMatch) return null;
+        qualifiedMatch = option;
+    }
+    return qualifiedMatch;
+}
+
+export function resolveCanonicalModelOptionId<T extends Readonly<{
+    value: string;
+    extendedContextModelId?: string;
+}>>(
+    options: readonly T[],
+    effectiveModelId: string | null | undefined,
+): string {
+    const raw = typeof effectiveModelId === 'string' ? effectiveModelId.trim() : '';
+    if (!raw) return raw;
+    const matched = findModelOptionForEffectiveModelId(options, raw);
+    if (!matched || matched.value === raw || matched.extendedContextModelId === raw) return raw;
+    return matched.value;
+}
+
+type NativeModelSelectionRefLike = Readonly<{
+    providerConnectionId: string | null;
+    modelId: string;
+}>;
+
+export function resolveCanonicalNativeModelSelectionRef<Ref extends NativeModelSelectionRefLike>(
+    options: readonly Readonly<{ value: string; extendedContextModelId?: string }>[],
+    ref: Ref,
+): Ref;
+export function resolveCanonicalNativeModelSelectionRef(
+    options: readonly Readonly<{ value: string; extendedContextModelId?: string }>[],
+    ref: null,
+): null;
+export function resolveCanonicalNativeModelSelectionRef<Ref extends NativeModelSelectionRefLike>(
+    options: readonly Readonly<{ value: string; extendedContextModelId?: string }>[],
+    ref: Ref | null,
+): Ref | null;
+export function resolveCanonicalNativeModelSelectionRef<Ref extends NativeModelSelectionRefLike>(
+    options: readonly Readonly<{ value: string; extendedContextModelId?: string }>[],
+    ref: Ref | null,
+): Ref | null {
+    if (!ref || ref.providerConnectionId !== null) return ref;
+    const modelId = resolveCanonicalModelOptionId(options, ref.modelId);
+    return modelId === ref.modelId ? ref : { ...ref, modelId };
 }

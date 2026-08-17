@@ -1,15 +1,16 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import {
     SelectionList,
+    type SelectionListColumnsLayout,
     type SelectionListHeightBehavior,
     type SelectionListOption,
     type SelectionListSectionDescriptor,
@@ -27,6 +28,7 @@ import {
     resolveBooleanConfigOptionValue,
 } from '@/sync/domains/sessionControl/configOptionsControl';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
@@ -34,6 +36,59 @@ type WebHoverablePressableState = Readonly<{
 }>;
 
 const CUSTOM_EDITOR_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.modal + 1;
+
+/**
+ * No config option value normalizes to the empty string, so this highlights nothing — used when
+ * an override forces a value this option has no segment for.
+ */
+const NO_SEGMENT_HIGHLIGHTED = '';
+
+/**
+ * Glyph square for the favourite star, in list rows and in a card's corner
+ * overlay alike. Matches the selection mark it sits beside, so the two read as
+ * one piece of corner art; the physical target stays at the platform minimum
+ * through the press frame, not through the drawn box.
+ */
+const OPTION_CARD_GLYPH_BOX_PX = 20;
+
+/**
+ * Drawn glyph inside that square — the same size as the selection check above it,
+ * so the pair reads as one piece of corner art instead of a mark and a heavier
+ * twin. A larger star only crowds the 20px box it shares.
+ */
+const OPTION_CARD_GLYPH_SIZE_PX = 14;
+
+/** Gap between the trailing indicator glyphs, and so the star's horizontal budget. */
+const OPTION_INDICATOR_GAP_PX = 6;
+
+/**
+ * The header's catalog-refresh control: an icon and nothing else. The drawn box
+ * only sets the hover/press capsule around a glyph the same weight as the
+ * header's own text; the real press target comes from the frame.
+ */
+const HEADER_GLYPH_BOX_PX = 24;
+const HEADER_GLYPH_SIZE_PX = 16;
+
+/** Gap inside `titleRowActions`, and so the refresh control's horizontal budget. */
+const TITLE_ROW_ACTION_GAP_PX = 4;
+
+/**
+ * The two-up grid used by the engine detail panes, opted into per caller.
+ *
+ * The minimum is deliberately far below the shared list-column default (320px,
+ * tuned for FULL-WIDTH settings lists and needing 652px for two columns). This
+ * picker never sees anything close: its widest home is the engine popover's
+ * detail pane, which is the 720px popover cap minus the 190px agent rail minus
+ * the pane's 12px horizontal insets — 506px — or 550px when the rail is hidden
+ * and the popover caps at 570px instead. At the shared gutter of 12px, two
+ * columns need `2 * min + 12`, so anything above 247 collapses the pane beside
+ * the rail back to one column forever. 240 clears both widths (492 <= 506) with
+ * enough headroom for popover chrome and a web scrollbar.
+ *
+ * Module-level so the identity is stable: the prop feeds a memo that decides
+ * the column count from the measured width.
+ */
+const ENGINE_PANE_COLUMNS: SelectionListColumnsLayout = { max: 2, minColumnWidthPx: 240 };
 
 export type OptionPickerOption<TValue = string> = Readonly<{
     value: TValue;
@@ -116,6 +171,12 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     autoFocusInputOnWeb?: boolean;
     onRequestClose?: () => void;
     favoriteActionVisibility?: 'selected-or-favorite' | 'all';
+    /**
+     * Lay the options out as a two-up card grid when the surface is wide enough.
+     * Opt-in per caller — a keyboard-first list or an ordered set of branches
+     * reads worse as a grid, so this is never a global width rule.
+     */
+    multiColumn?: boolean;
 }> & CustomValueCompatibility<TValue>;
 
 function defaultValueKey<TValue>(value: TValue): string {
@@ -137,6 +198,19 @@ function SelectedOptionControls(props: Readonly<{
                 const controlAccessibilityLabel = t('modelPickerOverlay.optionControlA11y', {
                     name: option.name,
                 });
+                const overriddenBy = control.disabled === true ? control.disabledByOptionName : undefined;
+                // The override note REPLACES the description: it is the operative fact about the
+                // control right now, and stacking both in a 9pt block just buries it.
+                const secondaryText = overriddenBy
+                    ? t('agentInput.acp.optionOverriddenBy', { name: overriddenBy })
+                    : option.description;
+                const secondaryTestID = overriddenBy
+                    ? `model-picker-overlay-selected-option-control-overridden:${option.id}`
+                    : undefined;
+                const secondary = secondaryText ? (
+                    <Text testID={secondaryTestID} style={styles.selectedControlDescription}>{secondaryText}</Text>
+                ) : null;
+
                 if (isBooleanConfigOptionType(option.type)) {
                     const boolValue = resolveBooleanConfigOptionValue(
                         option,
@@ -150,22 +224,33 @@ function SelectedOptionControls(props: Readonly<{
                         >
                             <View style={styles.selectedControlTextBlock}>
                                 <Text style={styles.selectedControlTitle}>{option.name}</Text>
-                                {option.description ? <Text style={styles.selectedControlDescription}>{option.description}</Text> : null}
+                                {secondary}
                             </View>
                             <Switch
                                 testID={`model-picker-overlay-selected-option-control-switch:${option.id}`}
                                 accessibilityLabel={controlAccessibilityLabel}
                                 value={boolValue}
-                                onValueChange={(next) => props.onSelect?.(
-                                    option.id,
-                                    resolveBooleanConfigOptionNextValue(option, next),
-                                )}
+                                disabled={control.disabled === true}
+                                onValueChange={(next) => {
+                                    if (control.disabled === true) return;
+                                    props.onSelect?.(
+                                        option.id,
+                                        resolveBooleanConfigOptionNextValue(option, next),
+                                    );
+                                }}
                                 compact
                             />
                         </View>
                     );
                 }
 
+                // While overridden, show what the agent is ACTUALLY running — not the stored
+                // value, which is the lie. When the forced value is not one of this option's
+                // choices the control dims with nothing highlighted rather than pointing at a
+                // segment that does not exist.
+                const highlightedValue = control.disabled === true
+                    ? control.overriddenEffectiveValue ?? NO_SEGMENT_HIGHLIGHTED
+                    : control.effectiveValue;
                 return (
                     <View
                         key={option.id}
@@ -173,11 +258,15 @@ function SelectedOptionControls(props: Readonly<{
                         style={styles.selectedControlGroup}
                     >
                         <Text style={styles.selectedControlTitle}>{option.name}</Text>
-                        {option.description ? <Text style={styles.selectedControlDescription}>{option.description}</Text> : null}
+                        {secondary}
                         <SegmentedTabBar
                             tabs={(option.options ?? []).map((choice) => ({ id: choice.value, label: choice.name }))}
-                            activeTabId={control.effectiveValue}
-                            onSelectTab={(tabId) => props.onSelect?.(option.id, tabId as SessionConfigOptionValueId)}
+                            activeTabId={highlightedValue}
+                            disabled={control.disabled === true}
+                            onSelectTab={(tabId) => {
+                                if (control.disabled === true) return;
+                                props.onSelect?.(option.id, tabId as SessionConfigOptionValueId);
+                            }}
                             testIDPrefix={`model-picker-overlay-selected-option-control-option:${option.id}`}
                             accessibilityLabel={controlAccessibilityLabel}
                             compact
@@ -198,6 +287,13 @@ function OptionTrailingAccessory<TValue>(props: Readonly<{
     canToggleFavorite: boolean;
     optionTestIDPrefix: string;
     favoriteOptions?: OptionPickerFavoriteOptions<TValue>;
+    /**
+     * Card presentation. The list lifts this node out of the row's flow into
+     * an absolute corner overlay, which is what makes a VERTICAL stack free:
+     * in flow the same stack grew every row by ~20px. The glyph square shrinks
+     * to corner-art size and keeps its full physical target through hit slop.
+     */
+    card: boolean;
 }>) {
     const { theme } = useUnistyles();
     const actionLabel = props.favorite
@@ -209,7 +305,7 @@ function OptionTrailingAccessory<TValue>(props: Readonly<{
         <View
             testID={props.selected ? `model-picker-overlay-option-selected-indicator:${props.valueKey}` : undefined}
             pointerEvents="box-none"
-            style={styles.optionCardIndicator}
+            style={props.card ? styles.optionCardIndicatorStacked : styles.optionCardIndicator}
         >
             {props.selected || props.option.trailingStatusIcon ? (
                 <View
@@ -219,7 +315,7 @@ function OptionTrailingAccessory<TValue>(props: Readonly<{
                 >
                     {props.selected ? (
                         <View style={styles.optionSelectionMark}>
-                            <Ionicons name="checkmark-outline" size={14} color={theme.colors.text.primary} />
+                            <Icon name="check" size={14} color={theme.colors.text.primary} />
                         </View>
                     ) : null}
                     {props.option.trailingStatusIcon ? (
@@ -235,12 +331,26 @@ function OptionTrailingAccessory<TValue>(props: Readonly<{
             {props.canToggleFavorite ? (
                 <IconButton
                     testID={`${props.optionTestIDPrefix}-favorite:${props.valueKey}`}
-                    iconName={props.favorite ? 'star' : 'star-outline'}
+                    // Favorite is a STATE, so it is the glyph weight that carries it — a tone
+                    // cannot: `default` and `primary` resolve to the same ink in the dark theme,
+                    // which left a favorited star indistinguishable from a favoritable one.
+                    icon={(
+                        <Icon
+                            name="star"
+                            size={OPTION_CARD_GLYPH_SIZE_PX}
+                            weight={props.favorite ? 'fill' : 'regular'}
+                            color={props.favorite ? theme.colors.text.primary : theme.colors.text.secondary}
+                        />
+                    )}
                     accessibilityLabel={accessibilityLabel}
                     tooltip={actionLabel}
-                    size={44}
-                    iconSize={18}
-                    tone={props.favorite ? 'primary' : 'default'}
+                    // One drawn size in both presentations: the list row was carrying a
+                    // 44px box only to buy a target that `hitSlop` never delivered on web.
+                    // The frame buys it now, so the star can be corner art everywhere.
+                    size={OPTION_CARD_GLYPH_BOX_PX}
+                    iconSize={OPTION_CARD_GLYPH_SIZE_PX}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={OPTION_INDICATOR_GAP_PX}
                     variant="plain"
                     onPress={() => props.favoriteOptions?.onToggle(props.option)}
                 />
@@ -384,6 +494,33 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         ? ({ onKeyDown: handleCustomEditorKeyDown } as Record<string, unknown>)
         : {};
 
+    // The controls configure the SELECTED model, so they live inside that row's card rather
+    // than in a detached panel below the list — the same at every width, so narrow surfaces
+    // get it without a second layout. Built lazily: `SelectionList` only resolves
+    // `expandedContent` for the selected row, so the other rows never construct it.
+    const selectedControlsExpandedContent = React.useMemo(() => {
+        const controls = props.selectedOptionControls ?? [];
+        if (controls.length === 0) return undefined;
+        return () => (
+            <View
+                testID="model-picker-overlay-selected-controls"
+                style={[
+                    styles.selectedControlsPanel,
+                    // In card mode the card is the single owner of the selected
+                    // fill and clips this panel to its own corners, so the panel
+                    // contributes padding only. Continuing the fill here as well
+                    // would be a second decision-maker for one surface.
+                    props.multiColumn ? null : styles.selectedControlsPanelFill,
+                ]}
+            >
+                <SelectedOptionControls
+                    controls={controls}
+                    onSelect={props.onSelectOptionControlValue}
+                />
+            </View>
+        );
+    }, [props.multiColumn, props.onSelectOptionControlValue, props.selectedOptionControls]);
+
     const selectionSections = React.useMemo<ReadonlyArray<SelectionListSectionDescriptor>>(() => {
         const seen = new Set<string>();
         return sourceSections.map((section) => ({
@@ -431,9 +568,11 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                             canToggleFavorite={canToggleFavorite}
                             optionTestIDPrefix={optionTestIDPrefix}
                             favoriteOptions={props.favoriteOptions}
+                            card={props.multiColumn === true}
                         />
                     ) : undefined,
                     rightAccessoryOutsidePressable: canToggleFavorite,
+                    expandedContent: selected ? selectedControlsExpandedContent : undefined,
                 }];
             }),
         }));
@@ -442,6 +581,8 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         optionTestIDPrefix,
         props.favoriteActionVisibility,
         props.favoriteOptions,
+        props.multiColumn,
+        selectedControlsExpandedContent,
         selectedValueKey,
         sourceSections,
     ]);
@@ -492,7 +633,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                 </Text>
                 {props.customDescription ? <Text style={styles.optionCardDescription}>{props.customDescription}</Text> : null}
             </View>
-            {customEditorVisible ? <Ionicons name="checkmark-outline" size={14} color={theme.colors.text.primary} /> : null}
+            {customEditorVisible ? <Icon name="check" size={14} color={theme.colors.text.primary} /> : null}
         </View>
     );
 
@@ -532,17 +673,26 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                             probe.phase === 'idle' && typeof probe.onRefresh === 'function' ? (
                                 <IconButton
                                     testID={refreshTestID}
-                                    iconName="refresh-outline"
+                                    iconName="arrow-clockwise"
                                     accessibilityLabel={refreshAccessibilityLabel}
                                     tooltip={refreshAccessibilityLabel}
-                                    size={44}
-                                    iconSize={18}
+                                    // Icon only: no border, no fill. The header already
+                                    // carries the surface this control sits on, so a
+                                    // second bordered circle only added weight.
+                                    variant="plain"
+                                    size={HEADER_GLYPH_BOX_PX}
+                                    iconSize={HEADER_GLYPH_SIZE_PX}
+                                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                                    interactiveTargetGapPx={TITLE_ROW_ACTION_GAP_PX}
                                     onPress={probe.onRefresh}
                                 />
                             ) : probe.phase !== 'idle' ? (
-                                <View style={styles.refreshIconButton}>
+                                <View testID={`${refreshTestID}-progress`} style={styles.refreshProgressSlot}>
                                     <ActivitySpinner
-                                        size="small"
+                                        // Without a border to sit in, the spinner reads as
+                                        // legible only if it matches the glyph it replaces:
+                                        // same box, same ink, same optical weight.
+                                        size={iconMatchedSpinnerSize(HEADER_GLYPH_SIZE_PX)}
                                         color={theme.colors.text.secondary}
                                         accessibilityLabel={probe.phase === 'loading'
                                             ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
@@ -581,21 +731,41 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     fillAvailableSpace={props.fillAvailableSpace}
                     maxHeight={props.maxHeight}
                     heightBehavior={props.heightBehavior}
+                    columns={props.multiColumn ? ENGINE_PANE_COLUMNS : undefined}
+                    // The card and the grid arrive together: a card is what
+                    // gives a grid cell an edge, and the grid is the only
+                    // layout where a per-option surface reads as a card rather
+                    // than as a full-width band.
+                    optionPresentation={props.multiColumn ? 'card' : undefined}
+                    // A picker WIRED for inline option controls puts interactive
+                    // segmented bars and switches inside the selected row, which
+                    // makes the popup a grid rather than a listbox.
+                    //
+                    // Keyed on the HANDLER, which is how the surface is
+                    // configured, and not on `selectedOptionControls`, which is
+                    // rebuilt from the current selection: a picker that swapped
+                    // pattern each time the user picked a model with a different
+                    // control set would re-announce the whole widget mid-use.
+                    // A branch picker, which wires neither, keeps the plain
+                    // listbox markup it has always emitted.
+                    //
+                    // WHAT THIS ACTUALLY GUARANTEES, precisely: the pattern is
+                    // as static as the caller's handler prop. That is not a
+                    // property the resolver can enforce — it is a CONTRACT this
+                    // prop places on callers, and one caller has already broken
+                    // it (`SessionModelPicker` nulled the handler for provider-
+                    // connection selections, which flipped a live single-column
+                    // popup; it now passes the handler unconditionally and
+                    // suppresses the CONTROL SET instead). So: pass a handler
+                    // whose presence is a fact about the surface, never about
+                    // the selection, the filter, the plan, or a measurement.
+                    // `SessionModelPicker.a11yPattern.test.tsx` probes that with
+                    // `multiColumn` off, where nothing else can force the grid.
+                    optionsHostInlineControls={props.onSelectOptionControlValue !== undefined}
                 />
             ) : !props.canEnterCustomValue ? (
                 <Text style={styles.emptyText}>{props.emptyText}</Text>
             ) : null}
-
-            {!customEditorVisible
-                && optionKeys.has(selectedValueKey)
-                && (props.selectedOptionControls?.length ?? 0) > 0 ? (
-                    <View testID="model-picker-overlay-selected-controls" style={styles.selectedControlsPanel}>
-                        <SelectedOptionControls
-                            controls={props.selectedOptionControls ?? []}
-                            onSelect={props.onSelectOptionControlValue}
-                        />
-                    </View>
-                ) : null}
 
             {props.canEnterCustomValue ? (
                 customEditorVisible ? (
@@ -664,12 +834,17 @@ const styles = StyleSheet.create((theme) => ({
     },
     titleRowContainer: { flexDirection: 'row', alignItems: 'flex-start', paddingLeft: 7 },
     titleRow: { flex: 1, minWidth: 0 },
-    titleRowActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0, gap: 4, marginLeft: 8 },
+    titleRowActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0, gap: TITLE_ROW_ACTION_GAP_PX, marginLeft: 8 },
     headerAccessory: { flexShrink: 0 },
     title: { flex: 1, fontSize: 12, color: theme.colors.text.secondary, textTransform: 'uppercase' },
     effectiveBlock: { gap: 0 },
     noteText: { fontSize: 11, color: theme.colors.text.tertiary },
-    refreshIconButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.default },
+    /**
+     * The loading twin of the refresh control's drawn box. Same square, so the
+     * header never reflows between idle and in-flight; no chrome, because the
+     * control it replaces has none either.
+     */
+    refreshProgressSlot: { width: HEADER_GLYPH_BOX_PX, height: HEADER_GLYPH_BOX_PX, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
     optionCardIconSlot: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
     optionSelectionStatus: { alignItems: 'center', justifyContent: 'flex-start', gap: 2 },
     optionSelectionMark: { width: 20, height: 14, alignItems: 'center', justifyContent: 'center' },
@@ -678,7 +853,20 @@ const styles = StyleSheet.create((theme) => ({
     optionCardTitleSelected: { ...Typography.default('semiBold') },
     optionCardDescription: { fontSize: 12, color: theme.colors.text.secondary },
     optionCardIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, zIndex: 2, elevation: 2 },
-    selectedControlsPanel: { borderRadius: 12, paddingHorizontal: 7, paddingVertical: 7, backgroundColor: theme.colors.surface.selected },
+    /**
+     * Card presentation: the selection mark sits ABOVE the favourite star.
+     * Free vertically because the list hosts this node as an absolute corner
+     * overlay rather than in the row's flow.
+     */
+    optionCardIndicatorStacked: { alignItems: 'flex-end', justifyContent: 'flex-start', gap: 6 },
+    /**
+     * Continues the selected row's fill downward so the row and its controls read as one
+     * card. `Item` keeps its per-density horizontal inset private; the three selectable
+     * densities span 12–16px, so this matches the shipped default (`cozy`, 14) and is at
+     * worst 2px off the row text. No top padding — the row's own bottom inset is the gap.
+     */
+    selectedControlsPanel: { paddingHorizontal: 14, paddingBottom: 10 },
+    selectedControlsPanelFill: { backgroundColor: theme.colors.surface.selected },
     inlineSelectedControls: { gap: 10 },
     selectedControlGroup: { gap: 3 },
     selectedControlRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },

@@ -53,31 +53,6 @@ function flattenStyle(style: any): Record<string, any> {
     return {};
 }
 
-describe('CommandSuggestion', () => {
-    it('renders command descriptions as subtitles with balanced vertical padding', async () => {
-        const { CommandSuggestion } = await import('./AgentInputSuggestionView');
-
-        const screen = await renderScreen(
-            <CommandSuggestion command="goal" description="Set or inspect the session goal" />,
-        );
-
-        const row = screen.tree.root.findByProps({ testID: 'agent-input-command-suggestion' });
-        expect(flattenStyle(row.props.style)).toMatchObject({
-            flexDirection: 'column',
-            justifyContent: 'center',
-            paddingTop: 8,
-            paddingBottom: 8,
-        });
-
-        const textNodes = row.findAllByType('Text' as any);
-        expect(textNodes).toHaveLength(2);
-        expect(textNodes[1]?.props.numberOfLines).toBe(1);
-        expect(flattenStyle(textNodes[1]?.props.style)).toMatchObject({
-            marginTop: 2,
-        });
-    });
-});
-
 describe('FileMentionSuggestion', () => {
     it('right-aligns the directory segment against the file name and uses web start ellipsis', async () => {
         const { FileMentionSuggestion } = await import('./AgentInputSuggestionView');

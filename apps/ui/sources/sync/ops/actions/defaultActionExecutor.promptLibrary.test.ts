@@ -68,12 +68,13 @@ vi.mock('@/voice/session/voiceSession', () => ({ voiceSessionManager: { stop: vi
 vi.mock('@/voice/agent/voiceAgentGlobalSessionId', () => ({ VOICE_AGENT_GLOBAL_SESSION_ID: 'voice-global' }));
 vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({ teleportVoiceAgentToSessionRoot: vi.fn() }));
 vi.mock('@/voice/tools/actionImpl/openSession', () => ({ openSessionForVoiceTool: vi.fn() }));
-vi.mock('@/voice/tools/actionImpl/spawnSession', () => ({ spawnSessionForVoiceTool: vi.fn() }));
-vi.mock('@/voice/tools/actionImpl/spawnSessionPicker', () => ({ spawnSessionWithPickerForVoiceTool: vi.fn() }));
 vi.mock('@/voice/tools/actionImpl/sessionTargets', () => ({ setPrimaryActionSessionId: vi.fn(), setTrackedSessionIds: vi.fn() }));
 vi.mock('@/voice/tools/actionImpl/sessionList', () => ({ listSessionsForVoiceTool: vi.fn() }));
 vi.mock('@/voice/tools/actionImpl/sessionActivity', () => ({ getSessionActivityForVoiceTool: vi.fn() }));
-vi.mock('@/voice/tools/actionImpl/sessionRecentMessages', () => ({ getSessionRecentMessagesForVoiceTool: vi.fn() }));
+vi.mock('@/voice/tools/actionImpl/sessionRecentMessages', () => ({
+    getSessionRecentMessagesForVoiceTool: vi.fn(),
+    getSessionTranscriptForVoiceTool: vi.fn(),
+}));
 vi.mock('@/voice/tools/actionImpl/pathsListRecent', () => ({ listRecentPathsForVoiceTool: vi.fn() }));
 vi.mock('@/voice/tools/actionImpl/machinesList', () => ({ listMachinesForVoiceTool: vi.fn() }));
 vi.mock('@/voice/tools/actionImpl/serversList', () => ({ listServersForVoiceTool: vi.fn() }));

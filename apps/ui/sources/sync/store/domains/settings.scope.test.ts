@@ -166,11 +166,11 @@ describe('createSettingsDomain scoped account settings', () => {
         expect(loadPendingAccountSettings(scopeA)).toEqual({ analyticsOptOut: true, viewInline: true });
     });
 
-    it('forwards explicit legacy identity scopes during scoped activation', () => {
+    it('forwards explicit legacy identity scopes without reviving retired organization settings', () => {
         const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
         saveAccountSettings(legacyScope, {
             ...settingsDefaults,
-            pinnedSessionKeysV1: ['legacy-session'],
+            lastUsedAgent: 'codex',
         }, 7);
 
         const { getState } = createTestStore();
@@ -178,9 +178,8 @@ describe('createSettingsDomain scoped account settings', () => {
 
         getState().activateSettingsScope(scopeA, [legacyScope]);
 
-        expect(loadPendingAccountSettings(scopeA)).toMatchObject({
-            pinnedSessionKeysV1: ['legacy-session'],
-        });
+        expect(getState().settings.lastUsedAgent).toBe('codex');
+        expect(loadPendingAccountSettings(scopeA)).toEqual({});
     });
 
     it('hydrates purchases from explicit legacy identity scopes during scoped activation', () => {

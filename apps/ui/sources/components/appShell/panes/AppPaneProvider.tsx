@@ -4,6 +4,15 @@ import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/st
 import type { PaneDriver, PaneScopeId } from './types';
 import { appPaneReduce, createAppPaneState, type AppPaneAction, type AppPaneState, type PaneScopeState } from './model/appPaneReducer';
 import { migrateLegacyDetailsWorkspaceState, serializeDetailsWorkspaceState } from './details/workspace/migrateLegacyDetailsWorkspaceState';
+import {
+    createBuiltinPaneDestination,
+    type SelectedPaneDestinationV1,
+} from './model/selectedPaneDestination';
+import {
+    createPaneOverlayFocusReturnOwner,
+    type PaneOverlayFocusReturnOwner,
+    type PaneOverlayFocusSurface,
+} from './paneOverlayFocusReturn';
 
 type AppPaneContextValue = Readonly<{
     state: AppPaneState;
@@ -11,15 +20,37 @@ type AppPaneContextValue = Readonly<{
     registerDriver: (driver: PaneDriver) => () => void;
     getDriver: (scopeId: PaneScopeId) => PaneDriver | null;
     driverRegistryVersion: number;
+    overlayFocusReturnOwner: PaneOverlayFocusReturnOwner;
 }>;
 
 const AppPaneContext = createContext<AppPaneContextValue | null>(null);
 
+type PersistedPaneSlot = Readonly<{
+    isOpen: boolean;
+    activeTabId: string | null;
+    selectedDestination?: SelectedPaneDestinationV1 | null;
+    tabState: Record<string, unknown>;
+}>;
+
+function normalizePersistedPaneSlot(slot: PersistedPaneSlot): PaneScopeState['right'] {
+    // `activeTabId` is the predecessor's built-in selection. Preserve it as a
+    // host-owned selected destination once, at the persistence boundary; the
+    // reducer never has to guess whether a legacy string was a plugin id.
+    const selectedDestination = slot.selectedDestination
+        ?? (slot.activeTabId ? createBuiltinPaneDestination(slot.activeTabId) : null);
+    return {
+        isOpen: slot.isOpen,
+        activeTabId: slot.activeTabId ?? null,
+        selectedDestination,
+        tabState: slot.tabState,
+    };
+}
+
 function normalizePersistedPaneScopes(
     value: Readonly<Record<string, {
-        right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+        right: PersistedPaneSlot;
         details: unknown;
-        bottom: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+        bottom: PersistedPaneSlot;
     }>> | null | undefined,
 ): Readonly<Record<string, PaneScopeState>> {
     if (!value) return {};
@@ -27,17 +58,9 @@ function normalizePersistedPaneScopes(
         Object.entries(value).map(([scopeId, scope]) => [
             scopeId,
             {
-                right: {
-                    isOpen: scope.right.isOpen,
-                    activeTabId: scope.right.activeTabId ?? null,
-                    tabState: scope.right.tabState,
-                },
+                right: normalizePersistedPaneSlot(scope.right),
                 details: migrateLegacyDetailsWorkspaceState(scope.details),
-                bottom: {
-                    isOpen: scope.bottom.isOpen,
-                    activeTabId: scope.bottom.activeTabId ?? null,
-                    tabState: scope.bottom.tabState,
-                },
+                bottom: normalizePersistedPaneSlot(scope.bottom),
             } satisfies PaneScopeState,
         ]),
     );
@@ -46,9 +69,19 @@ function normalizePersistedPaneScopes(
 function serializePersistedPaneScopes(
     value: Readonly<Record<string, PaneScopeState>>,
 ): Record<string, {
-    right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+    right: {
+        isOpen: boolean;
+        activeTabId: string | null;
+        selectedDestination: SelectedPaneDestinationV1 | null;
+        tabState: Record<string, unknown>;
+    };
     details: ReturnType<typeof serializeDetailsWorkspaceState>;
-    bottom: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
+    bottom: {
+        isOpen: boolean;
+        activeTabId: string | null;
+        selectedDestination: SelectedPaneDestinationV1 | null;
+        tabState: Record<string, unknown>;
+    };
 }> {
     return Object.fromEntries(
         Object.entries(value).map(([scopeId, scope]) => [
@@ -57,17 +90,71 @@ function serializePersistedPaneScopes(
                 right: {
                     isOpen: scope.right.isOpen,
                     activeTabId: scope.right.activeTabId,
+                    selectedDestination: scope.right.selectedDestination,
                     tabState: { ...scope.right.tabState },
                 },
                 details: serializeDetailsWorkspaceState(scope.details),
                 bottom: {
                     isOpen: scope.bottom.isOpen,
                     activeTabId: scope.bottom.activeTabId,
+                    selectedDestination: scope.bottom.selectedDestination,
                     tabState: { ...scope.bottom.tabState },
                 },
             },
         ]),
     );
+}
+
+function resolveOverlayFocusCapture(
+    state: AppPaneState,
+    action: AppPaneAction,
+): Readonly<{ scopeId: string; surface: PaneOverlayFocusSurface }> | null {
+    switch (action.type) {
+        case 'openDetailsOverlay': {
+            const scope = state.scopes[action.scopeId] ?? null;
+            return scope?.details.overlay == null
+                ? { scopeId: action.scopeId, surface: 'details' }
+                : null;
+        }
+        case 'openDetailsTab': {
+            const scope = state.scopes[action.scopeId] ?? null;
+            return scope?.details.isOpen !== true
+                ? { scopeId: action.scopeId, surface: 'details' }
+                : null;
+        }
+        case 'openRight':
+        case 'selectRightDestination': {
+            const scope = state.scopes[action.scopeId] ?? null;
+            return scope?.right.isOpen !== true
+                ? { scopeId: action.scopeId, surface: 'right' }
+                : null;
+        }
+        case 'openBottom':
+        case 'selectBottomDestination': {
+            const scope = state.scopes[action.scopeId] ?? null;
+            return scope?.bottom.isOpen !== true
+                ? { scopeId: action.scopeId, surface: 'bottom' }
+                : null;
+        }
+        default:
+            return null;
+    }
+}
+
+function resolveOverlayFocusClear(
+    action: AppPaneAction,
+): Readonly<{ scopeId: string; surface: PaneOverlayFocusSurface }> | null {
+    switch (action.type) {
+        case 'closeDetails':
+        case 'closeDetailsOverlay':
+            return { scopeId: action.scopeId, surface: 'details' };
+        case 'closeRight':
+            return { scopeId: action.scopeId, surface: 'right' };
+        case 'closeBottom':
+            return { scopeId: action.scopeId, surface: 'bottom' };
+        default:
+            return null;
+    }
 }
 
 export const AppPaneProvider = React.memo((props: Readonly<{ children: React.ReactNode }>) => {
@@ -77,7 +164,7 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         [persistedScopesValue],
     );
     const [, setPersistedScopes] = useLocalSettingMutable('appPaneScopesV1');
-    const [state, dispatch] = useReducer(
+    const [state, reduce] = useReducer(
         appPaneReduce,
         persistedScopes ?? {},
         (initialScopes) => createAppPaneState({
@@ -85,6 +172,30 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
             persistedScopes: initialScopes,
         }),
     );
+    const stateRef = useRef(state);
+    stateRef.current = state;
+    const overlayFocusReturnOwnerRef = useRef<PaneOverlayFocusReturnOwner | null>(null);
+    if (overlayFocusReturnOwnerRef.current === null) {
+        overlayFocusReturnOwnerRef.current = createPaneOverlayFocusReturnOwner();
+    }
+    const overlayFocusReturnOwner = overlayFocusReturnOwnerRef.current;
+    const dispatch = React.useCallback((action: AppPaneAction) => {
+        if (action.type === 'mergePersistedScopes') {
+            overlayFocusReturnOwner.clearAll();
+        }
+
+        const capture = resolveOverlayFocusCapture(stateRef.current, action);
+        if (capture) {
+            overlayFocusReturnOwner.capture(capture.scopeId, capture.surface);
+        }
+
+        const clear = resolveOverlayFocusClear(action);
+        if (clear) {
+            overlayFocusReturnOwner.clear(clear.scopeId, clear.surface);
+        }
+
+        reduce(action);
+    }, [overlayFocusReturnOwner, reduce]);
     const driversRef = useRef<Map<PaneScopeId, PaneDriver>>(new Map());
     const [driverRegistryVersion, setDriverRegistryVersion] = useState(0);
 
@@ -119,7 +230,8 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         registerDriver,
         getDriver,
         driverRegistryVersion,
-    }), [driverRegistryVersion, dispatch, getDriver, registerDriver, state]);
+        overlayFocusReturnOwner,
+    }), [driverRegistryVersion, dispatch, getDriver, overlayFocusReturnOwner, registerDriver, state]);
 
     return <AppPaneContext.Provider value={value}>{props.children}</AppPaneContext.Provider>;
 });

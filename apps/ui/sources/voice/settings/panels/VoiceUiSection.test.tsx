@@ -53,6 +53,8 @@ describe('VoiceUiSection', () => {
     const screen = await renderScreen(React.createElement(VoiceUiSection, {
       voice,
       setVoice,
+      voiceOrbEnabled: true,
+      setVoiceOrbEnabled: vi.fn(),
     }));
 
     const activityFeedSwitch = screen.findByProps({
@@ -65,6 +67,7 @@ describe('VoiceUiSection', () => {
     ).toEqual([
       t('settingsVoice.ui.activityFeedEnabled'),
       t('settingsVoice.ui.activityFeedAutoExpandOnStart'),
+      t('settingsVoice.ui.orbEnabled'),
       t('settingsVoice.ui.updates.includeUserMessagesInSnippetsTitle'),
     ]);
 
@@ -77,5 +80,84 @@ describe('VoiceUiSection', () => {
         activityFeedEnabled: true,
       },
     });
+  });
+
+  it('offers both default scope choices and persists Session through the canonical voice setting', async () => {
+    const setVoice = vi.fn();
+    const { VoiceUiSection } = await import('./VoiceUiSection');
+    const voice = {
+      ...voiceSettingsDefaults,
+      ui: {
+        ...voiceSettingsDefaults.ui,
+        scopeDefault: 'global' as const,
+      },
+    };
+    const screen = await renderScreen(React.createElement(VoiceUiSection, {
+      voice,
+      setVoice,
+      voiceOrbEnabled: true,
+      setVoiceOrbEnabled: vi.fn(),
+    }));
+
+    const scopeMenu = screen.tree.root.findAllByType('DropdownMenu' as any)
+      .find((menu) => menu.props.selectedId === 'global');
+    expect(scopeMenu).toBeDefined();
+    expect(scopeMenu?.props.items.map((item: { id: string }) => item.id)).toEqual([
+      'global',
+      'session',
+    ]);
+
+    scopeMenu?.props.onSelect('session');
+
+    expect(setVoice).toHaveBeenCalledWith({
+      ...voice,
+      ui: {
+        ...voice.ui,
+        scopeDefault: 'session',
+      },
+    });
+  });
+
+  it('allows Voice Surface and Session updates descriptions to wrap in their settings rows', async () => {
+    const { VoiceUiSection } = await import('./VoiceUiSection');
+    const voice = {
+      ...voiceSettingsDefaults,
+      ui: {
+        ...voiceSettingsDefaults.ui,
+        activityFeedEnabled: true,
+        updates: {
+          ...voiceSettingsDefaults.ui.updates,
+          activeSession: 'snippets' as const,
+          otherSessions: 'snippets' as const,
+        },
+      },
+    };
+    const screen = await renderScreen(React.createElement(VoiceUiSection, {
+      voice,
+      setVoice: vi.fn(),
+      voiceOrbEnabled: true,
+      setVoiceOrbEnabled: vi.fn(),
+    }));
+
+    const descriptiveRows = screen.tree.root.findAllByType('Item' as any)
+      .filter((item) => typeof item.props.subtitle === 'string');
+    expect(descriptiveRows.map((item) => item.props.subtitleLines)).toEqual([
+      0,
+      0,
+      0,
+      0,
+    ]);
+
+    const descriptiveTriggers = screen.tree.root.findAllByType('DropdownMenu' as any)
+      .map((menu) => menu.props.itemTrigger)
+      .filter((trigger) => typeof trigger?.subtitle === 'string');
+    expect(descriptiveTriggers.map((trigger) => trigger.itemProps?.subtitleLines)).toEqual([
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
   });
 });

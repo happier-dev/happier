@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -16,6 +15,7 @@ import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 
 import type { SessionGettingStartedDecisionKind } from '@/components/sessions/guidance/gettingStartedModel';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type SessionsListEmptyStateKind = Extract<
     SessionGettingStartedDecisionKind,
@@ -88,7 +88,7 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
                                 testID={`sessions-empty-state-machine:${machine.id}`}
                                 title={t('sessionsList.emptyState.startSessionOnMachine', { machine: machineLabel })}
                                 subtitle={t('sessionsList.emptyState.startSessionOnMachineSubtitle')}
-                                icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
                                 onPress={() => handleStartSession(machine.id)}
                             />
                         );
@@ -102,7 +102,7 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
                         testID="sessions-empty-state-open-setup"
                         title={t('setupOnboarding.openSetupAction')}
                         subtitle={setupSubtitle}
-                        icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
                         onPress={handleOpenSetup}
                     />
                 </ItemGroup>

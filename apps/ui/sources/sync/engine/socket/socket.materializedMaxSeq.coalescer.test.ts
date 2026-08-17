@@ -205,7 +205,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
             applyMessages,
@@ -276,7 +276,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
             applyMessages,
@@ -389,7 +389,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
             applyMessages,
@@ -495,7 +495,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
             applyMessages,
@@ -584,7 +584,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as any,
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn((sessions: Parameters<typeof handleUpdateContainer>[0]['applySessions'] extends (arg: infer T) => void ? T : never) => {
                 storage.getState().applySessions(sessions as Session[]);
             }),
@@ -667,7 +667,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
             applyMessages,
@@ -767,7 +767,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
             hydrateSessionById,
@@ -868,7 +868,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
             applyMessages,
@@ -951,7 +951,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
             applyMessages: vi.fn(),
@@ -1040,7 +1040,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions: vi.fn(),
             applyMessages: vi.fn(),
@@ -1115,7 +1115,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions: vi.fn(),
             applyMessages: vi.fn(),
@@ -1201,7 +1201,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as any,
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions: vi.fn(),
             applyMessages,
@@ -1279,7 +1279,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as any,
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions: vi.fn(),
             applyMessages,
@@ -1336,6 +1336,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         }));
 
         const appliedTexts = new Map<string, string>();
+        const sessionReceivedMessages = new Map<string, Map<string, number>>();
         const applyMessages = vi.fn((_sessionId: string, messages: Array<{ id: string; content: { type: 'text'; text: string } }>) => {
             for (const message of messages) {
                 appliedTexts.set(message.id, message.content.text);
@@ -1356,10 +1357,11 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 decryptEncryptionKey: async () => null as Uint8Array | null,
                 initializeMachines: async () => {},
             } as any,
-            artifactDataKeys: new Map<string, Uint8Array>(),
+            artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions: vi.fn(),
             applyMessages: applyMessages as any,
+            sessionReceivedMessages,
             onSessionVisible: vi.fn(),
             isSessionMessagesLoaded: vi.fn(() => true),
             getSessionMaterializedMaxSeq: vi.fn(() => materializedMaxSeq),
@@ -1423,6 +1425,9 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         });
 
         expect(applyMessages).toHaveBeenCalledTimes(1);
+        // Admission to the existing new-message queue is not transcript apply,
+        // and therefore cannot publish page/socket currentness.
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBeUndefined();
 
         await handleUpdateContainer({
             ...baseParams,
@@ -1447,9 +1452,11 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         });
 
         expect(appliedTexts.get('m2')).toBe('fresh text');
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBe(1_003);
 
         await vi.runAllTimersAsync();
 
         expect(appliedTexts.get('m2')).toBe('fresh text');
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBe(1_003);
     });
 });

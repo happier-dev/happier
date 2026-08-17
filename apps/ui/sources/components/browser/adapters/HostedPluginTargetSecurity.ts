@@ -35,7 +35,13 @@ export function isLoopbackHostedWebUrl(url: string): boolean {
     if (!parsed) {
         return false;
     }
-    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    // URL.hostname can retain IPv6 brackets. Normalize that parser
+    // representation at the one hosted-target security owner before applying
+    // the address classification.
+    const hostname = parsed.hostname
+        .toLowerCase()
+        .replace(/^\[|\]$/gu, '')
+        .replace(/\.$/u, '');
     return hostname === 'localhost'
         || hostname.endsWith('.localhost')
         || /^127(?:\.[0-9]{1,3}){3}$/u.test(hostname)
@@ -72,7 +78,23 @@ export function resolveHostedPluginWebSandboxPolicy(input: Readonly<{
     url: string;
 }>): PluginHostedWebSandboxPolicy {
     const parsed = parseHostedPluginTargetUrl(input.url);
-    const sameOrigin = Boolean(input.sandbox.sameOrigin && parsed?.protocol === 'https:');
+    // EU-8: an addressable origin is a TRANSPORT requirement, not an author
+    // capability. A frame sandboxed without `allow-same-origin` has an opaque
+    // origin, and BOTH bridge directions then fail in a real browser: the
+    // guest's `postMessage` arrives with `origin: "null"` and the host's
+    // inbound validator rejects it, while the host cannot address an exact
+    // `targetOrigin` back — so it must never use `'*'` instead. That was
+    // observed in Chromium, not inferred: every unit test on this path
+    // fabricates `event.origin` and therefore could not see it.
+    //
+    // It is granted for the origins the HOST itself addresses — a secure origin,
+    // or the daemon's own loopback static-asset server — and for nothing else.
+    // `allow-scripts allow-same-origin` is only dangerous when the framed
+    // document is same-origin with its EMBEDDER, which a plugin asset served
+    // from a different origin never is. The author's remaining sandbox flags
+    // (popups, top navigation, mixed content) keep their meaning untouched.
+    const sameOrigin = Boolean(parsed
+        && (parsed.protocol === 'https:' || isLoopbackHostedWebUrl(input.url)));
     const topNavigation = Boolean(parsed && input.sandbox.topNavigation && canAllowTopNavigation({
         security: input.security,
         url: parsed,

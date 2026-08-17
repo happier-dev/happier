@@ -23,6 +23,7 @@ describe('SelectionListStorySurface — split variant modules (FR4-14)', () => {
         expect(screen.findByTestId('story:with-search')).not.toBeNull();
         expect(screen.findByTestId('story:with-steps')).not.toBeNull();
         expect(screen.findByTestId('story:with-footer')).not.toBeNull();
+        expect(screen.findByTestId('story:columns')).not.toBeNull();
         expect(screen.findByTestId('story:empty')).not.toBeNull();
         expect(screen.findByTestId('story:selected-disabled')).not.toBeNull();
         expect(screen.findByTestId('story:reduced-motion')).not.toBeNull();

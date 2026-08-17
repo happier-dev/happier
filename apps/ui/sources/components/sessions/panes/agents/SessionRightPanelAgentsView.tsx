@@ -7,13 +7,14 @@ import {
     useEnsureSidechainsLoaded,
     type SidechainHydrationStatus,
 } from '@/hooks/session/useEnsureSidechainsLoaded';
-import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
+import { useSessionAgentActivityRoster } from '@/hooks/session/useSessionAgentActivity';
 import { useSession, useSetting } from '@/sync/domains/state/storage';
-import { useSessionMessages, useSessionMessagesReducerState } from '@/sync/store/hooks';
-import { deriveSessionActiveSubagents } from '@/sync/domains/session/subagents/deriveSessionActiveSubagents';
-import { deriveSessionRecentSubagents } from '@/sync/domains/session/subagents/deriveSessionRecentSubagents';
+import { useSessionMessagesReducerState } from '@/sync/store/hooks';
 import { deriveSessionSubagentActivityPreview } from '@/sync/domains/session/subagents/deriveSessionSubagentActivityPreview';
-import { deriveSessionSubagentHasPendingPermission } from '@/sync/domains/session/subagents/deriveSessionSubagentHasPendingPermission';
+import {
+    partitionAgentActivityEntriesByLiveness,
+    type AgentActivityEntry,
+} from '@/sync/domains/session/agentActivity';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -70,6 +71,26 @@ function deriveRightPanelPreviewSidechainIds(params: Readonly<{
     return [...sidechainIds];
 }
 
+/**
+ * The locally derived rows behind a slice of the merged roster, in that slice's order.
+ *
+ * A headline-only entry has no subagent yet — its transcript page has not arrived — and is skipped
+ * here rather than drawn from an invented row: every control on a subagent row (open, send, stop)
+ * needs a real route, recipient or run id, and a row synthesised to fill the gap would announce
+ * controls that lead nowhere. The entry is not lost: it still exists in the merge and still counts.
+ */
+function readSubagentsForEntries(
+    entries: readonly AgentActivityEntry[],
+    readSubagentForEntry: (entryId: string) => SessionSubagent | null,
+): readonly SessionSubagent[] {
+    const rows: SessionSubagent[] = [];
+    for (const entry of entries) {
+        const subagent = readSubagentForEntry(entry.id);
+        if (subagent) rows.push(subagent);
+    }
+    return rows;
+}
+
 function resolveRightPanelPreviewFallback(status: SidechainHydrationStatus | undefined): string | null {
     if (status === 'loaded') return null;
     if (status === 'error' || status === 'not_ready') return t('common.unavailable');
@@ -82,17 +103,26 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const session = useSession(props.sessionId);
-    const { messages } = useSessionMessages(props.sessionId);
     const reducerState = useSessionMessagesReducerState(props.sessionId);
     const transcriptToolCallsCollapsedPreviewCount = useSetting('transcriptToolCallsCollapsedPreviewCount');
-    const { subagents } = useSessionSubagents({
+    // The enriched width: this pane already pays for the transcript, so it is the one surface that
+    // can observe a permission prompt — the only way a row reaches `waiting`.
+    const { entries, readSubagentForEntry, subagents } = useSessionAgentActivityRoster({
         sessionId: props.sessionId,
         session,
-        messages,
     });
 
-    const activeSubagents = React.useMemo(() => deriveSessionActiveSubagents(subagents), [subagents]);
-    const recentSubagents = React.useMemo(() => deriveSessionRecentSubagents(subagents), [subagents]);
+    // Both sections are cut from the MERGED status, so a row the publisher has already reported
+    // finished leaves the live section without waiting for its tool result to arrive.
+    const liveness = React.useMemo(() => partitionAgentActivityEntriesByLiveness(entries), [entries]);
+    const activeSubagents = React.useMemo(
+        () => readSubagentsForEntries(liveness.live, readSubagentForEntry),
+        [liveness.live, readSubagentForEntry],
+    );
+    const recentSubagents = React.useMemo(
+        () => readSubagentsForEntries(liveness.finished, readSubagentForEntry),
+        [liveness.finished, readSubagentForEntry],
+    );
     const previewSidechainIds = React.useMemo(() => {
         return deriveRightPanelPreviewSidechainIds({
             activeSubagents,
@@ -126,20 +156,17 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
         }
         return previews;
     }, [previewSidechainIdsSet, reducerState, sidechainHydration.bySidechainId, subagents]);
+    // Read off the merged status rather than derived a second time here. `waiting` IS the pending
+    // prompt, resolved once at the roster owner — which also means a row the publisher has already
+    // reported terminal cannot show a badge inviting a person to answer a prompt that is over.
     const pendingPermissionById = React.useMemo(() => {
         const pending = new Map<string, boolean>();
-        for (const subagent of subagents) {
-            if (!deriveSessionSubagentHasPendingPermission({
-                subagent,
-                reducerState,
-                messages,
-            })) {
-                continue;
-            }
-            pending.set(subagent.id, true);
+        for (const entry of entries) {
+            if (entry.status !== 'waiting' || !entry.subagentId) continue;
+            pending.set(entry.subagentId, true);
         }
         return pending;
-    }, [messages, reducerState, subagents]);
+    }, [entries]);
     const openFull = React.useCallback((subagent: SessionSubagent) => {
         const route = resolveSessionSubagentFullRoute({
             sessionId: props.sessionId,

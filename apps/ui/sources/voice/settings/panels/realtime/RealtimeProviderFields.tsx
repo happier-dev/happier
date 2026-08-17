@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -10,6 +9,7 @@ import { getLanguageDisplayNameForCode } from '@/constants/Languages';
 import { Modal } from '@/modal';
 import { getPreferredLanguage, t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { AccountVoiceCredentialUseStatus } from '@/voice/credentials/accountVoiceCredential';
 import { performVoiceAdapterRuntimeAction } from '@/voice/session/voiceAdapterRegistry';
 import {
   acquireVoicePlaybackAudioMode,
@@ -23,7 +23,11 @@ import {
   type RealtimeSettingsDescriptor,
   type RealtimeSettingsFieldDescriptor,
 } from './descriptor';
-import { RealtimeAuthenticationSourceField } from './RealtimeAuthenticationSourceField';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import type { VoiceRemoteCatalogState } from '@/voice/settings/remoteCatalogState';
+
+const REALTIME_CATALOG_PREVIEW_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 type CatalogRow = Readonly<{
   id: string;
@@ -32,9 +36,7 @@ type CatalogRow = Readonly<{
   previewUrl?: string | null;
 }>;
 
-export type RealtimeCatalogState =
-  | Readonly<{ phase: 'idle' | 'loading' | 'error' }>
-  | Readonly<{ phase: 'ready'; rows: readonly CatalogRow[] }>;
+export type RealtimeCatalogState = VoiceRemoteCatalogState<CatalogRow>;
 
 type SettingsValue = Readonly<Record<string, unknown>>;
 
@@ -105,13 +107,13 @@ export function RealtimeProviderFields(props: Readonly<{
   owner: RealtimeProviderSettingsOwner;
   config: SettingsValue;
   onConfigChange: (next: SettingsValue) => void;
-  credentialExists: boolean;
+  credentialStatus: AccountVoiceCredentialUseStatus;
   catalog: RealtimeCatalogState;
   onRequestCatalog: () => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   welcomeSelection?: string;
   onWelcomeSelection?: (selection: string) => void;
-  renderAutoprovision?: (field: RealtimeSettingsFieldDescriptor) => React.ReactNode;
+  renderAfterField?: (field: RealtimeSettingsFieldDescriptor) => React.ReactNode;
   renderConnectedServicesBinding?: (
     field: RealtimeSettingsFieldDescriptor,
     value: unknown,
@@ -142,6 +144,14 @@ export function RealtimeProviderFields(props: Readonly<{
     config: props.config,
     onConfigChange: props.onConfigChange,
   };
+  const credentialUsable = props.credentialStatus === 'ready';
+  const credentialUnavailableDetail = props.credentialStatus === 'review_required'
+    ? tLoose('settingsVoice.externalCredentials.reviewRequired')
+    : props.credentialStatus === 'unknown'
+      // The snapshot could not be read; asking for a credential that may
+      // already be stored is the same falsehood the row above avoids.
+      ? tLoose('voice.readiness.credential_unknown')
+      : tLoose('settingsVoice.realtimeProviders.catalog.credentialRequired');
 
   const stopPreview = React.useCallback(() => {
     previewGenerationRef.current += 1;
@@ -269,6 +279,7 @@ export function RealtimeProviderFields(props: Readonly<{
     {props.descriptor.fields.map((field) => {
       const value = readRealtimeProviderConfigPath(props.config, field.pathSegments);
       const key = `${field.kind}:${field.path}`;
+      const rendered = (() => {
 
       if (field.kind === 'segmented' && Array.isArray(field.supportedModelIds)) {
         const model = record(props.config.model);
@@ -300,18 +311,6 @@ export function RealtimeProviderFields(props: Readonly<{
         />;
       }
 
-      if (field.kind === 'authentication_source') {
-        return <RealtimeAuthenticationSourceField
-          key={key}
-          field={field}
-          value={value}
-          open={openField === key}
-          onOpenChange={(next) => setOpenField(next ? key : null)}
-          onChange={(next) => write(field, next)}
-          popoverBoundaryRef={props.popoverBoundaryRef}
-        />;
-      }
-
       if (field.kind === 'connected_services_binding') {
         return <React.Fragment key={key}>
           {props.renderConnectedServicesBinding?.(field, value, (next) => {
@@ -319,8 +318,6 @@ export function RealtimeProviderFields(props: Readonly<{
           }) ?? null}
         </React.Fragment>;
       }
-
-      if (field.kind === 'autoprovision') return <React.Fragment key={key}>{props.renderAutoprovision?.(field) ?? null}</React.Fragment>;
 
       if (field.kind === 'privacy_opt_in') {
         const enabled = value === true;
@@ -483,15 +480,19 @@ export function RealtimeProviderFields(props: Readonly<{
           rightElement: !row.previewUrl ? undefined : <Pressable
             accessibilityRole="button"
             accessibilityLabel={t('settingsVoice.realtimeProviders.catalog.preview', { voice: row.name })}
-            hitSlop={4}
-            style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
+            style={{
+              minWidth: REALTIME_CATALOG_PREVIEW_TARGET_SIZE,
+              minHeight: REALTIME_CATALOG_PREVIEW_TARGET_SIZE,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
             onPress={(event) => {
               event.stopPropagation();
               playPreview(row);
             }}
           >
-            <Ionicons
-              name={previewingId === row.id ? 'stop-circle-outline' : 'play-circle-outline'}
+            <Icon
+              name={previewingId === row.id ? 'stop-circle' : 'play-circle'}
               size={24}
               color={theme.colors.text.secondary}
             />
@@ -505,7 +506,7 @@ export function RealtimeProviderFields(props: Readonly<{
       const hasCustomRow = rows.some((row) => row.id === '__custom__');
       const allowCustom = field.customIdAllowed === true || hasCustomRow;
       const statusRows: DropdownMenuItem[] = !isCatalog ? []
-        : !props.credentialExists ? [{ id: '__status__', title: tLoose('settingsVoice.realtimeProviders.catalog.credentialRequired'), disabled: true }]
+        : !credentialUsable ? [{ id: '__status__', title: credentialUnavailableDetail, disabled: true }]
           : props.catalog.phase === 'loading' ? [{ id: '__status__', title: t('common.loading'), disabled: true }]
             : props.catalog.phase === 'error' ? [{ id: '__retry__', title: tLoose('settingsVoice.realtimeProviders.catalog.retry') }]
               : props.catalog.phase === 'ready' && props.catalog.rows.length === 0
@@ -520,7 +521,7 @@ export function RealtimeProviderFields(props: Readonly<{
         open={openField === key}
         onOpenChange={(next) => {
           setOpenField(next ? key : null);
-          if (next && isCatalog && props.credentialExists) props.onRequestCatalog();
+          if (next && isCatalog && credentialUsable) props.onRequestCatalog();
           if (!next && isCatalog) stopPreview();
         }}
         variant="selectable"
@@ -534,8 +535,8 @@ export function RealtimeProviderFields(props: Readonly<{
         itemRowProps={isCatalog ? { rightElementOutsidePressable: true } : undefined}
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{ title: translate(field.titleKey), subtitle: translate(field.subtitleKey), showSelectedSubtitle: false,
-          detailFormatter: () => isCatalog && !props.credentialExists
-            ? tLoose('settingsVoice.realtimeProviders.catalog.credentialRequired')
+          detailFormatter: () => isCatalog && !credentialUsable
+            ? credentialUnavailableDetail
             : detail(value) }}
         items={[...statusRows, ...rows, ...customRow]}
         onSelect={(id) => {
@@ -575,6 +576,11 @@ export function RealtimeProviderFields(props: Readonly<{
           setOpenField(null);
         }}
       />;
+      })();
+      return <React.Fragment key={`layout:${key}`}>
+        {rendered}
+        {rendered === null ? null : props.renderAfterField?.(field) ?? null}
+      </React.Fragment>;
     })}
   </>;
 }

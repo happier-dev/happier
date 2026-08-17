@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -8,8 +7,10 @@ import { AgentInputChipLabel } from '@/components/sessions/agentInput/components
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { t } from '@/text';
 import { LinkFilePickerPopoverContent } from '@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 
-const LINK_FILE_ICON: React.ComponentProps<typeof Ionicons>['name'] = 'at';
+const LINK_FILE_ICON: IconName = 'at';
 
 function normalizeAbsoluteDirectoryForPrefix(raw: string): { normalized: string; prefix: string; isWindows: boolean } | null {
     const value = String(raw ?? '').trim();
@@ -61,7 +62,7 @@ function createBaseLinkFileChip(params: Readonly<{
             title: label,
             label,
             icon: (tint: string) =>
-                normalizeNodeForView(<Ionicons name={LINK_FILE_ICON} size={16} color={tint} />),
+                normalizeNodeForView(<Icon name={LINK_FILE_ICON} size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
             renderContent: params.popoverContent,
             maxHeightCap: params.maxHeightCap,
             maxWidthCap: params.maxWidthCap,
@@ -80,7 +81,7 @@ function createBaseLinkFileChip(params: Readonly<{
                 hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                 style={({ pressed }) => chipStyle(Boolean(pressed))}
             >
-                {normalizeNodeForView(<Ionicons name={LINK_FILE_ICON} size={16} color={iconColor} />)}
+                {normalizeNodeForView(<Icon name={LINK_FILE_ICON} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
                 {showLabel ? (
                     <AgentInputChipLabel
                         label={label}

@@ -5,7 +5,13 @@ const toggleLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async (
 const stopLocalVoiceSession = vi.fn(async () => {});
 const abortLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async (_sessionId: string) => {});
 const appendLocalVoiceAgentContextUpdate = vi.fn();
-const sendLocalVoiceAgentTextTurn = vi.fn<(params: { controlSessionId: string; text: string }) => Promise<void>>(async () => {});
+const sendLocalVoiceAgentTextTurn = vi.fn<(params: {
+  controlSessionId: string;
+  text: string;
+  onAccepted?: () => Promise<void>;
+}) => Promise<void>>(async (params) => {
+  await params.onAccepted?.();
+});
 const setLocalVoiceMuted = vi.fn<(sessionId: string, muted: boolean) => Promise<void>>(async () => {});
 
 const state: any = {
@@ -13,7 +19,7 @@ const state: any = {
     voice: {
       providerId: 'local_conversation',
       providers: {
-        local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent', agent: { backend: 'openai_compat' } } },
+        local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } },
       },
     },
   },
@@ -23,7 +29,6 @@ function resetMockVoiceSettings(): void {
   state.settings.voice.providerId = 'local_conversation';
   state.settings.voice.providers.local_conversation.config = {
     conversationMode: 'agent',
-    agent: { backend: 'openai_compat' },
   };
 }
 
@@ -40,7 +45,11 @@ vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
     stopSession: () => stopLocalVoiceSession(),
     abortTurn: (sessionId: string) => abortLocalVoiceTurn(sessionId),
     appendAgentContextUpdate: (sessionId: string, update: string) => appendLocalVoiceAgentContextUpdate(sessionId, update),
-    sendAgentTextTurn: (params: { controlSessionId: string; text: string }) => sendLocalVoiceAgentTextTurn(params),
+    sendAgentTextTurn: (params: {
+      controlSessionId: string;
+      text: string;
+      onAccepted?: () => Promise<void>;
+    }) => sendLocalVoiceAgentTextTurn(params),
     setMuted: (sessionId: string, muted: boolean) => setLocalVoiceMuted(sessionId, muted),
   },
 }));
@@ -73,7 +82,7 @@ describe('local conversation voice adapter', () => {
     expect(adapter.resolveSurfaceCapabilities?.(state.settings.voice)).toEqual({
       allowsGlobalStart: true,
       controlSessionScope: 'global',
-      requiresVoiceAgentFeature: false,
+      requiresVoiceAgentFeature: true,
       bargeInEnabled: true,
       cancelResponse: 'immediate',
     });
@@ -132,8 +141,17 @@ describe('local conversation voice adapter', () => {
 
   it('projects the machine micMuted flag through the local session snapshot', async () => {
     const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
-    voiceConversationRuntimeMachine.transitionToListening({ controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
-    voiceConversationRuntimeMachine.setMuted(true);
+    voiceConversationRuntimeMachine.transitionToListening({
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      adapterId: null,
+      attemptId: null,
+    });
+    voiceConversationRuntimeMachine.setMuted({
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      adapterId: null,
+      attemptId: null,
+      micMuted: true,
+    });
 
     const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
     const adapter = createLocalConversationVoiceAdapter();
@@ -162,12 +180,14 @@ describe('local conversation voice adapter', () => {
     const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
     const adapter = createLocalConversationVoiceAdapter();
 
+    const onAccepted = vi.fn(async () => {});
     await adapter.sendTextTurn?.({
       controlSessionId: 's1',
       conversationSessionId: 'voice-home',
       text: 'hello from composer',
       localId: 'voice-local-1',
       deliveryCommand: 'interrupt_and_send',
+      onAccepted,
     });
 
     expect(sendLocalVoiceAgentTextTurn).toHaveBeenCalledWith({
@@ -177,6 +197,7 @@ describe('local conversation voice adapter', () => {
         localId: 'voice-local-1',
         deliveryCommand: 'interrupt_and_send',
       },
+      onAccepted,
     });
   });
 

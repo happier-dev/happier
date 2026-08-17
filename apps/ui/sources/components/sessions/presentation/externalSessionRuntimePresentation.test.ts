@@ -5,6 +5,7 @@ import {
     readExternalAgentObservationPresentationInput,
     resolveExternalSessionCandidateActivityPresentation,
     resolveExternalSessionRuntimePresentation,
+    resolveExternalSessionStatusPillState,
 } from './externalSessionRuntimePresentation';
 
 const canonicalObservation = {
@@ -32,17 +33,24 @@ describe('resolveExternalSessionRuntimePresentation', () => {
     });
 
     it('maps browse candidate activity through the shared external-session presenter', () => {
-        expect(resolveExternalSessionCandidateActivityPresentation('running')).toMatchObject({
+        const working = resolveExternalSessionCandidateActivityPresentation('running');
+        const idle = resolveExternalSessionCandidateActivityPresentation('idle');
+        const recentlyActive = resolveExternalSessionCandidateActivityPresentation('active_recently');
+
+        expect(working).toMatchObject({
             state: 'working',
             labelKey: 'status.workingExternally',
             tone: 'live',
             indicator: 'working',
         });
-        expect(resolveExternalSessionCandidateActivityPresentation('idle')).toMatchObject({
+        expect(idle).toMatchObject({
             state: 'idle',
             labelKey: 'status.ready',
             tone: 'ready',
         });
+        expect(resolveExternalSessionStatusPillState(working)).toBe('live');
+        expect(resolveExternalSessionStatusPillState(idle)).toBe('live');
+        expect(resolveExternalSessionStatusPillState(recentlyActive)).toBe('neutral');
     });
 
     it.each([

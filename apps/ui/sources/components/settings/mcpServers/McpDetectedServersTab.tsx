@@ -1,29 +1,23 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/protocol';
 
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { TextInput } from '@/components/ui/text/Text';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 
-import { describeMachine, formatDetectedWarning, resolveDetectedServerStatusLabel, resolveTransportIconName } from './mcpServerUi';
-import { resolveMachineServerId } from './resolveMachineServerId';
+import { formatDetectedWarning, resolveDetectedServerStatusLabel, resolveTransportIconName } from './mcpServerUi';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(props: Readonly<{
-    machines: readonly Machine[];
-    machineItems: readonly DropdownMenuItem[];
     selectedMachineId: string | null;
-    onSelectMachine: (machineId: string) => void;
-    machineMenuOpen: boolean;
-    onMachineMenuOpenChange: (open: boolean) => void;
+    selectedServerId: string | null;
+    canExecute: boolean;
     directory: string;
     onChangeDirectory: (value: string) => void;
     loading: boolean;
@@ -33,50 +27,28 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
     onImport: (server: DetectedMcpServerV1) => void;
 }>) {
     const { theme } = useUnistyles();
-    const selectedMachineServerId = React.useMemo(
-        () => resolveMachineServerId(props.machines, props.selectedMachineId),
-        [props.machines, props.selectedMachineId],
-    );
 
     const handleBrowseDirectory = React.useCallback(async () => {
-        if (!props.selectedMachineId) return;
+        if (!props.selectedMachineId || !props.selectedServerId || !props.canExecute) return;
         const selected = await openMachinePathBrowserModal({
             machineId: props.selectedMachineId,
-            serverId: selectedMachineServerId,
+            serverId: props.selectedServerId,
             initialPath: props.directory,
             title: t('settings.mcpServersDetectedDirectoryTitle'),
         });
         if (selected) {
             props.onChangeDirectory(selected);
         }
-    }, [props.directory, props.onChangeDirectory, props.selectedMachineId, selectedMachineServerId]);
+    }, [props.canExecute, props.directory, props.onChangeDirectory, props.selectedMachineId, props.selectedServerId]);
 
     return (
         <>
             <ItemGroup title={t('settings.mcpServersDetectedTitle')}>
-                <DropdownMenu
-                    open={props.machineMenuOpen}
-                    onOpenChange={props.onMachineMenuOpenChange}
-                    items={props.machineItems}
-                    selectedId={props.selectedMachineId}
-                    onSelect={(id) => props.onSelectMachine(id)}
-                    itemTrigger={{
-                        title: t('settings.mcpServersDetectedMachineTitle'),
-                        subtitle: props.selectedMachineId
-                            ? describeMachine(props.selectedMachineId, props.machines)
-                            : t('settings.mcpServersNoMachineSelected'),
-                        icon: <Ionicons name="laptop-outline" size={29} color={theme.colors.accent.indigo} />,
-                    }}
-                    rowKind="item"
-                    connectToTrigger
-                    variant="default"
-                />
-
                 <Item
                     testID="settings.mcpServers.detect.directory"
                     title={t('settings.mcpServersDetectedDirectoryTitle')}
                     subtitle={t('settings.mcpServersDetectedDirectorySubtitle')}
-                    icon={<Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="folder-open" size={29} color={theme.colors.accent.blue} />}
                     showChevron={false}
                     rightElement={(
                         <View style={styles.directoryInputRow}>
@@ -92,7 +64,7 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
                             />
                             <PathInputBrowseButton
                                 onPress={handleBrowseDirectory}
-                                disabled={!props.selectedMachineId}
+                                disabled={!props.canExecute}
                             />
                         </View>
                     )}
@@ -102,9 +74,9 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
                     testID="settings.mcpServers.detect.refresh"
                     title={t('settings.mcpServersDetectedRefreshTitle')}
                     subtitle={props.loading ? t('common.loading') : t('settings.mcpServersDetectedRefreshSubtitle')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.blue} />}
                     onPress={props.onRefresh}
-                    disabled={props.loading || !props.selectedMachineId}
+                    disabled={props.loading || !props.canExecute}
                     showChevron={false}
                 />
             </ItemGroup>
@@ -116,7 +88,7 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
                         key={`${warning.provider}:${warning.code}:${index}`}
                         title={t('settings.mcpServersDetectedWarningsTitle')}
                         subtitle={formatDetectedWarning(warning)}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="warning-circle" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
                     ))}
@@ -133,7 +105,7 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
                             subtitle={server.transport === 'stdio'
                                 ? [server.stdio?.command ?? '', ...(server.stdio?.args ?? [])].filter(Boolean).join(' ')
                                 : (server.remote?.url ?? '')}
-                            icon={<Ionicons name={resolveTransportIconName(server.transport)} size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name={resolveTransportIconName(server.transport)} size={29} color={theme.colors.accent.blue} />}
                             detail={resolveDetectedServerStatusLabel(server.provider, server.enabled)}
                             onPress={() => props.onImport(server)}
                         />
@@ -143,7 +115,7 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
                         testID="settings.mcpServers.detect.empty"
                         title={t('settings.mcpServersDetectedEmptyTitle')}
                         subtitle={t('settings.mcpServersDetectedEmptySubtitle')}
-                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="magnifying-glass" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />

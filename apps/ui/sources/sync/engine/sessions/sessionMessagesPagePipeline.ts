@@ -3,7 +3,10 @@ import type { SessionMessageRole } from '@happier-dev/protocol';
 import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
 import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
-import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
+import {
+    readStoredSessionMessage,
+    readStoredSessionRawRecord,
+} from '@/sync/runtime/readStoredSessionContent';
 import { writeSyncDebugLog } from '@/sync/runtime/syncDebugLogging';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import {
@@ -16,6 +19,11 @@ import {
     applyTranscriptObservationMetadata,
     isRecoveredHistoryTranscriptObservation,
 } from '@/sync/domains/messages/transcriptObservationProvenance';
+import {
+    advanceSessionReceivedMessageCurrentness,
+    isSessionMessageRowCurrent,
+    type SessionReceivedMessages,
+} from './sessionMessageCurrentness';
 
 export type SessionMessagesEncryption = {
     decryptMessages: (messages: ApiMessage[]) => Promise<Array<DecryptedSessionMessage | null>>;
@@ -317,6 +325,18 @@ function emptyPageForDirection(direction: MessagePageDirection): ApiSessionMessa
     };
 }
 
+function skippedMissingSessionResult(direction: MessagePageDirection): SessionMessagesPagePipelineResult {
+    return {
+        applied: 0,
+        page: emptyPageForDirection(direction),
+        appliedMessageIds: [],
+        appliedSeqs: [],
+        rawSeqs: [],
+        normalizedMessages: [],
+        skippedMissingSession: true,
+    };
+}
+
 export async function runSessionMessagesPagePipeline(params: {
     sessionId: string;
     purpose: MessagePagePurpose;
@@ -324,8 +344,10 @@ export async function runSessionMessagesPagePipeline(params: {
     lifecyclePolicy: LifecyclePolicy;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
+    /** Exact server rows whose hidden message-updated event authorized replacement. */
+    authoritativeUpdateMessageIds?: ReadonlySet<string>;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Map<string, number>>;
+    sessionReceivedMessages: SessionReceivedMessages;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
@@ -334,16 +356,7 @@ export async function runSessionMessagesPagePipeline(params: {
 } & SessionMessagesPageOptions): Promise<SessionMessagesPagePipelineResult> {
     if (params.isSessionKnown?.(params.sessionId) === false) {
         writeSyncDebugLog(params.log, `💬 session message page: Session ${params.sessionId} is not known on this server; skipping page fetch`);
-        const page = emptyPageForDirection(params.page.direction);
-        return {
-            applied: 0,
-            page,
-            appliedMessageIds: [],
-            appliedSeqs: [],
-            rawSeqs: [],
-            normalizedMessages: [],
-            skippedMissingSession: true,
-        };
+        return skippedMissingSessionResult(params.page.direction);
     }
 
     const encryption = resolveSessionMessagesEncryption(params);
@@ -356,20 +369,38 @@ export async function runSessionMessagesPagePipeline(params: {
         request: params.request,
         page: params.page,
     });
-    params.onMessagesPage?.(data);
     recordMessagePageTelemetry(params.purpose, data.messages.length);
 
-    let existingMessages = params.sessionReceivedMessages.get(params.sessionId);
-    if (!existingMessages) {
-        existingMessages = new Map<string, number>();
-        params.sessionReceivedMessages.set(params.sessionId, existingMessages);
+    // A held response can arrive after local delete/share-revocation. Do not
+    // allocate a currentness owner or spend decrypt work for a session that no
+    // longer belongs to this Sync scope; the post-decrypt fence below covers a
+    // second retirement race while decryption itself is in flight.
+    if (params.isSessionKnown?.(params.sessionId) === false) {
+        writeSyncDebugLog(params.log, `💬 session message page: Session ${params.sessionId} disappeared before page decrypt; dropping response`);
+        return skippedMissingSessionResult(params.page.direction);
     }
+
+    // Reading must not allocate the shared row-watermark owner. It is created
+    // only after a reducer application below; otherwise a delete during
+    // decrypt leaves an orphan empty map behind.
+    const existingMessages = params.sessionReceivedMessages.get(params.sessionId);
 
     const messagesToDecrypt: ApiMessage[] = [];
     for (const msg of orderedMessagesForDirection(data.messages, params.page.direction)) {
         const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
-        const existingUpdatedAt = existingMessages.get(msg.id);
-        if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
+        const existingUpdatedAt = existingMessages?.get(msg.id);
+        // A hidden `message-updated` event names the exact durable row whose
+        // correction must reach the reducer. An earlier background page can
+        // already have recorded this timestamp while its unmarked delivery was
+        // intentionally inert, so the exact marker narrowly bypasses the
+        // timestamp dedupe only for the same revision. It never authorizes an
+        // older page row to replace a newer current row.
+        const isAuthoritativeUpdate = params.authoritativeUpdateMessageIds?.has(msg.id) === true;
+        if (isSessionMessageRowCurrent({
+            existingUpdatedAt,
+            incomingUpdatedAt: msgUpdatedAt,
+            isAuthoritativeUpdate,
+        })) {
             messagesToDecrypt.push(msg);
         }
     }
@@ -382,23 +413,51 @@ export async function runSessionMessagesPagePipeline(params: {
         messagesToDecrypt,
         params,
     );
+    const replayableMessages = await Promise.all(decryptedMessages.map(async (decrypted) => {
+        if (!decrypted) return null;
+        return {
+            ...decrypted,
+            content: await readStoredSessionRawRecord({ content: decrypted.content }),
+        };
+    }));
+    // The request can outlive a delete/share-revocation. Recheck after the
+    // asynchronous decrypt boundary and before any page or transcript state is
+    // published so an old response cannot recreate a deleted session.
+    if (params.isSessionKnown?.(params.sessionId) === false) {
+        writeSyncDebugLog(params.log, `💬 session message page: Session ${params.sessionId} disappeared before page apply; dropping response`);
+        return skippedMissingSessionResult(params.page.direction);
+    }
+    params.onMessagesPage?.(data);
 
     const normalizedMessages: NormalizedMessage[] = [];
+    const appliedRowCurrentness: Array<Readonly<{ messageId: string; updatedAt: number }>> = [];
     const normalizationState = createRawMessageNormalizationSequenceState();
-    measureMessageNormalization(params.purpose, decryptedMessages.length, () => {
-        for (let i = 0; i < decryptedMessages.length; i++) {
-            const decrypted = decryptedMessages[i];
+    measureMessageNormalization(params.purpose, replayableMessages.length, () => {
+        for (let i = 0; i < replayableMessages.length; i++) {
+            const decrypted = replayableMessages[i];
             if (!decrypted) continue;
 
             const inputMessage = messagesToDecrypt[i];
-            const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
             const inputUpdatedAt = inputMessage
                 ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
                 : decrypted.createdAt;
-            if (decrypted.content !== null || !inputWasEncrypted) {
-                existingMessages.set(decrypted.id, inputUpdatedAt);
+            const isAuthoritativeUpdate = inputMessage !== undefined
+                && params.authoritativeUpdateMessageIds?.has(inputMessage.id) === true;
+            const currentUpdatedAt = params.sessionReceivedMessages
+                .get(params.sessionId)
+                ?.get(decrypted.id);
+            // Decryption yields, so a newer same-row socket/page delivery can
+            // advance the shared currentness watermark after the first filter.
+            // Recheck at the apply boundary; an exact stale marker admits only
+            // an equal revision, never a time-travel overwrite.
+            if (!isSessionMessageRowCurrent({
+                existingUpdatedAt: currentUpdatedAt,
+                incomingUpdatedAt: inputUpdatedAt,
+                isAuthoritativeUpdate,
+            })) {
+                continue;
             }
-            if (inputWasEncrypted && decrypted.content === null) {
+            if (decrypted.content === null) {
                 continue;
             }
             if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
@@ -420,6 +479,9 @@ export async function runSessionMessagesPagePipeline(params: {
             }, normalizationState);
             if (normalized) {
                 applyTranscriptObservationMetadata(normalized, inputMessage);
+                if (params.authoritativeUpdateMessageIds?.has(normalized.id)) {
+                    normalized.isAuthoritativeUpdate = true;
+                }
                 applySidechainScopeMetadata({
                     normalizedMessage: normalized,
                     inputSidechainId: inputMessage?.sidechainId,
@@ -427,6 +489,10 @@ export async function runSessionMessagesPagePipeline(params: {
                     requestedSidechainId: params.page.sidechainId ?? null,
                 });
                 normalizedMessages.push(normalized);
+                appliedRowCurrentness.push({
+                    messageId: normalized.id,
+                    updatedAt: inputUpdatedAt,
+                });
             }
         }
     });
@@ -434,11 +500,23 @@ export async function runSessionMessagesPagePipeline(params: {
     params.onNormalizedMessages?.(normalizedMessages);
     recordMessageApplyTelemetry(
         params.purpose,
-        decryptedMessages.length,
+        replayableMessages.length,
         params.sessionId,
         normalizedMessages,
         params.applyMessages,
     );
+    // The watermark represents a reducer-applied transcript row, not a fetched
+    // or merely normalized one. Publishing it after the apply keeps a rejected
+    // row retryable and prevents legacy/null/normalization skips from poisoning
+    // later authoritative delivery.
+    for (const row of appliedRowCurrentness) {
+        advanceSessionReceivedMessageCurrentness(
+            params.sessionReceivedMessages,
+            params.sessionId,
+            row.messageId,
+            row.updatedAt,
+        );
+    }
 
     return {
         applied: normalizedMessages.length,

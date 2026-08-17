@@ -7,7 +7,6 @@ const UI_SOURCES_ROOT = join(__dirname, '..', '..', '..');
 
 const ALLOWED_COMPATIBILITY_ONLY_FILES = new Set([
     'sync/domains/settings/parse/accountSettingsCompatibilityMigrations.ts',
-    'sync/domains/settings/registry/account/accountLegacySettingDefinitions.ts',
 ]);
 
 const COMPATIBILITY_ONLY_SETTING_KEY_PATTERN =
@@ -45,5 +44,28 @@ describe('settings legacy architecture', () => {
             .sort();
 
         expect(violations).toEqual([]);
+    });
+
+    it('keeps released OpenAI-compatible speech compatibility role-qualified and Chat-isolated', () => {
+        const readSource = (relativePath: string) => readFileSync(join(UI_SOURCES_ROOT, relativePath), 'utf8');
+        const accountIngress = readSource('sync/domains/settings/parse/accountSettingsCompatibilityMigrations.ts');
+        const voicePersistence = readSource('sync/domains/settings/voiceSettingsPersistence.ts');
+        const providerProjection = readSource('voice/settings/providerSettings.ts');
+        const speechMigrations = readSource('sync/domains/settings/migrations/speechProviders.ts');
+        const credentialItem = readSource('voice/credentials/CredentialItem.tsx');
+
+        expect(accountIngress).not.toMatch(/stt_api_key|tts_api_key/);
+        expect(voicePersistence).not.toMatch(/stt_api_key|tts_api_key|providerId === 'openai_compat'/);
+        expect(providerProjection).toContain("'happier.voice.openai-compat/stt'");
+        expect(providerProjection).toContain("'happier.voice.openai-compat/tts'");
+        expect(providerProjection).not.toContain('chatApiKey');
+        expect(speechMigrations.slice(
+            speechMigrations.indexOf('export function projectPredecessorSpeechProviderConfig'),
+        )).toContain('OPENAI_COMPAT_STT_ID');
+        expect(speechMigrations.slice(
+            speechMigrations.indexOf('export function projectPredecessorSpeechProviderConfig'),
+        )).toContain('OPENAI_COMPAT_TTS_ID');
+        expect(credentialItem).not.toContain('until its STT/TTS cutover lands');
+        expect(credentialItem).not.toContain('qualified secret until');
     });
 });

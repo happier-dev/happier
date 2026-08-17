@@ -161,6 +161,22 @@ describe('Encryption.initializeSessions (key updates)', () => {
     expect(generation.getCurrentGeneration('account-a', 'server-b')).toBe(0);
   });
 
+  it('does not install a session key after initialization currentness is revoked', async () => {
+    const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+    let current = true;
+
+    const initialization = encryption.initializeSessions(
+      new Map([['session_deleted_during_initialization', new Uint8Array(32).fill(2)]]),
+      { shouldContinue: () => current },
+    );
+    current = false;
+    await initialization;
+
+    expect(
+      encryption.getSessionEncryption('session_deleted_during_initialization'),
+    ).toBeNull();
+  });
+
   it('routes session AES native decrypt batches with the session owning scope', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const baseWorker = createFakeCryptoWorker();

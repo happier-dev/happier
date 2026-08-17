@@ -16,7 +16,7 @@ claude, code, ai, programming, developer, tools, encrypted, secure, coding, assi
 
 ## App Description / Full Description
 
-Happier is the secure mobile companion for Claude Code that lets you continue your AI coding sessions anywhere (not affiliated with Anthropic). Built by developers who needed to check on Claude's progress during coffee breaks, this app brings the full Claude Code experience to your phone with military-grade encryption.
+Happier is the secure mobile companion for Claude Code that lets you continue your AI coding sessions anywhere (not affiliated with Anthropic). Built by developers who needed to check on Claude's progress during coffee breaks, this app brings the full Claude Code experience to your phone with explicit privacy modes.
 
 **Important**: This app requires Claude Code to be installed on your computer. Happier is a companion app that connects to your existing Claude Code setup.
 
@@ -25,14 +25,14 @@ Happier is the secure mobile companion for Claude Code that lets you continue yo
 • Continue Claude Code sessions seamlessly between desktop and mobile
 • Push notifications for permission requests and task completion
 • Access conversation history even when your terminal is offline
-• End-to-end encryption - your code stays private
+• End-to-end encryption for sessions configured as E2EE
 • Real-time streaming of Claude's responses
-• Zero-knowledge architecture - we can't read your data
+• Plaintext mode for deployments that intentionally trust the sync server
 
 **How It Works:**
 1. Install the @happier-dev/cli CLI on your computer
 2. Scan a QR code to securely pair your devices
-3. Use 'happier' instead of 'claude' to start encrypted sessions
+3. Use 'happier' instead of 'claude' and select the storage mode allowed by your server
 4. Switch between desktop and mobile instantly
 
 Perfect for developers who:
@@ -41,20 +41,23 @@ Perfect for developers who:
 - Value privacy and open-source transparency
 - Work from coffee shops, trains, or anywhere
 
-Happier uses the same encryption as Signal (TweetNaCl) and is completely open source. Your encryption keys never leave your device, and all data is encrypted before transmission.
+Happier is completely open source. E2EE sessions use client-held encryption material
+and remain opaque to the Happier sync server. Plaintext sessions and plaintext-account
+data are intentionally server-readable and may optionally be sealed by the server at
+rest; that sealing is not end-to-end encryption.
 
 Built by Bay Area engineers who believe the best tools come from scratching your own itch. We needed a way to securely check on our AI coding assistant while away from our desks - so we built it and shared it with the community.
 
 Your code. Your privacy. Your Claude Code companion.
 
 ## Promotional Text
-**App Store (170 chars)**: Securely continue your Claude Code sessions on mobile. End-to-end encrypted, open source, with push notifications for completed tasks. Your AI coding assistant, anywhere.
+**App Store (170 chars)**: Securely continue Claude Code sessions on mobile. Open source, with explicit E2EE or plaintext storage modes and task notifications.
 
-**Google Play (80 chars)**: Secure mobile Claude Code companion. Encrypted, open source, with notifications.
+**Google Play (80 chars)**: Secure mobile Claude Code companion with explicit privacy modes.
 
 ## What's New (for updates)
 - Initial release
-- End-to-end encryption for all messages
+- Explicit E2EE and plaintext storage modes
 - Push notifications for permissions and task completion
 - Offline access to conversation history
 - Real-time sync with desktop sessions

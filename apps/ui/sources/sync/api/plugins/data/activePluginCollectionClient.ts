@@ -1,0 +1,891 @@
+import {
+    PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1,
+    PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+    PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
+    PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
+    PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    PluginCollectionContractReadRequestV1Schema,
+    PluginCollectionContractReadResultV1Schema,
+    PluginCollectionContentEnvelopeV1Schema,
+    PluginCollectionGetRequestV1Schema,
+    PluginCollectionGetResultV1Schema,
+    PluginCollectionMutationErrorV1Schema,
+    PluginCollectionMutationRequestV1Schema,
+    PluginCollectionMutationResultV1Schema,
+    PluginCollectionPrivatePayloadV1Schema,
+    PluginCollectionProjectionV1Schema,
+    PluginCollectionQueryRequestV1Schema,
+    PluginCollectionQueryResultV1Schema,
+    PluginCollectionReadErrorV1Schema,
+    PluginCollectionRowIdV1Schema,
+    assertPluginCollectionContentEnvelopeForModeV1,
+    compilePluginJsonSchema,
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+    createAccountScopedCryptoMaterialSnapshotV1,
+    isValidPluginJsonSchemaValue,
+    openPluginCollectionPrivatePayloadV1,
+    sealPluginCollectionPrivatePayloadV1,
+    type AccountScopedCryptoMaterial,
+    type NormalizedPluginAccountCollectionContractV1,
+    type PluginCollectionContractRefV1,
+    type PluginCollectionIndexScalarValueV1,
+    type PluginCollectionMutationConflictV1,
+    type PluginCollectionRelationRestrictionContinuationV1,
+    type PluginCollectionMutationOperationV1,
+    type PluginCollectionMutationResultEntryV1,
+    type PluginCollectionProjectionV1,
+    type PluginCollectionQueryRangeV1,
+    type PluginCollectionRowV1,
+} from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type {
+    PluginAccountCollectionDefinition,
+    PluginAccountCollectionValue,
+} from '@happier-dev/plugin-sdk/collections';
+
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { decodeBase64 } from '@/encryption/base64';
+import { getRandomBytes } from '@/platform/cryptoRandom';
+import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import {
+    captureActiveServerAccountScopeLifetime,
+    type ActiveServerAccountScopeLifetime,
+} from '@/sync/domains/scope/activeServerAccountScope';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import {
+    resolveAccountStoredContentCompatibilityHeaders,
+    withAccountStoredContentCompatibilityRequestDeclaration,
+    type AccountStoredContentCompatibilityUnavailableReason,
+} from '@/sync/http/accountStoredContentCompatibility';
+import { captureSessionRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+
+import { watchActivePluginCollectionChanges } from './queryPluginCollectionUiQuery';
+
+export type ActivePluginCollectionUnavailableReasonV1 =
+    | AccountStoredContentCompatibilityUnavailableReason
+    | 'no-active-account-scope'
+    | 'account-scope-changed'
+    | 'server-generation-changed'
+    | 'operation-cancelled'
+    | 'account-currentness-unavailable'
+    | 'account-encryption-material-unavailable'
+    | 'account-content-mismatch'
+    | 'collection-unavailable'
+    | 'writer-contract-unavailable'
+    | 'response-invalid'
+    | 'transport-unavailable';
+
+export type ActivePluginCollectionUnavailableV1 = Readonly<{
+    status: 'unavailable';
+    reason: ActivePluginCollectionUnavailableReasonV1;
+}>;
+
+export type ActivePluginCollectionRejectedV1 = Readonly<{
+    status: 'rejected';
+    code: string;
+    relationRestriction?: Readonly<{
+        dependentCount: number;
+        continuation: PluginCollectionRelationRestrictionContinuationV1;
+    }>;
+}>;
+
+export type ActivePluginCollectionLogicalRowV1<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+> = Readonly<{
+    rowId: string;
+    revision: number;
+    value: TValue;
+}>;
+
+export type ActivePluginCollectionGetOutcomeV1<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+> =
+    | Readonly<{ status: 'ready'; row: ActivePluginCollectionLogicalRowV1<TValue> | null }>
+    | ActivePluginCollectionUnavailableV1
+    | ActivePluginCollectionRejectedV1;
+
+export type ActivePluginCollectionQueryOutcomeV1<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+> =
+    | Readonly<{
+        status: 'ready';
+        rows: readonly ActivePluginCollectionLogicalRowV1<TValue>[];
+        nextCursor?: string;
+        changeCursor: number;
+    }>
+    | ActivePluginCollectionUnavailableV1
+    | ActivePluginCollectionRejectedV1;
+
+export type ActivePluginCollectionMutationOutcomeV1 =
+    | Readonly<{
+        status: 'updated';
+        results: readonly PluginCollectionMutationResultEntryV1[];
+        changeCursor: number;
+    }>
+    | Readonly<{
+        status: 'conflict';
+        conflicts: readonly PluginCollectionMutationConflictV1[];
+    }>
+    | ActivePluginCollectionUnavailableV1
+    | ActivePluginCollectionRejectedV1;
+
+export type ActivePluginCollectionQueryInputV1 = Readonly<{
+    indexId: string;
+    prefix?: readonly PluginCollectionIndexScalarValueV1[];
+    range?: PluginCollectionQueryRangeV1;
+    order: 'asc' | 'desc';
+    cursor?: string;
+    limit?: number;
+}>;
+
+export type ActivePluginCollectionMutationInputV1<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+> =
+    | Readonly<{
+        kind: 'put';
+        expectedRevision: number | 'absent';
+        value: TValue;
+    }>
+    | Readonly<{
+        kind: 'delete';
+        rowId: string;
+        expectedRevision: number;
+    }>
+    | Readonly<{
+        kind: 'assert';
+        rowId: string;
+        expectedRevision: number;
+    }>;
+
+export type ActivePluginCollectionOperationOptionsV1 = Readonly<{
+    signal?: AbortSignal;
+}>;
+
+export type ActivePluginCollectionWatchOutcomeV1 =
+    | Readonly<{ status: 'watching'; dispose(): void }>
+    | ActivePluginCollectionUnavailableV1;
+
+export type ActivePluginCollectionClientForContractRefOutcomeV1<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+> =
+    | Readonly<{
+        status: 'ready';
+        contract: NormalizedPluginAccountCollectionContractV1;
+        client: ActivePluginCollectionClientV1<TValue>;
+    }>
+    | ActivePluginCollectionUnavailableV1
+    | ActivePluginCollectionRejectedV1;
+
+export type ActivePluginCollectionClientV1<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+> = Readonly<{
+    get(
+        rowId: string,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionGetOutcomeV1<TValue>>;
+    query(
+        input: ActivePluginCollectionQueryInputV1,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionQueryOutcomeV1<TValue>>;
+    mutate(
+        operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionMutationOutcomeV1>;
+    /** Register before the initial query; the wakeup carries no row content. */
+    watch(onInvalidated: () => void): ActivePluginCollectionWatchOutcomeV1;
+}>;
+
+/** Shared direct-UI Data operation foundation; only sibling Data owners import it. */
+export type PreparedCollectionOperation = Readonly<{
+    lifetime: ActiveServerAccountScopeLifetime;
+    serverSnapshot: ReturnType<typeof getActiveServerSnapshot>;
+    authority: Awaited<ReturnType<typeof captureSessionRequestAuthorityForServerAccountScope>>;
+    encryptionMode: 'plain' | 'e2ee';
+    material: AccountScopedCryptoMaterial | null;
+    headers: Headers;
+    signal: AbortSignal;
+    release(): void;
+}>;
+
+export type PreparedCollectionOperationOutcome =
+    | Readonly<{ status: 'ready'; operation: PreparedCollectionOperation }>
+    | ActivePluginCollectionUnavailableV1;
+
+function unavailable(reason: ActivePluginCollectionUnavailableReasonV1): ActivePluginCollectionUnavailableV1 {
+    return { status: 'unavailable', reason };
+}
+
+function rejected(
+    code: string,
+    relationRestriction?: ActivePluginCollectionRejectedV1['relationRestriction'],
+): ActivePluginCollectionRejectedV1 {
+    return {
+        status: 'rejected',
+        code,
+        ...(relationRestriction ? { relationRestriction } : {}),
+    };
+}
+
+function hasOwn(value: Readonly<Record<string, unknown>>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function createJsonRecord(): Record<string, JsonValue> {
+    return {};
+}
+
+function setJsonRecordValue(
+    record: Record<string, JsonValue>,
+    key: string,
+    value: JsonValue,
+): void {
+    Object.defineProperty(record, key, {
+        value,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+    });
+}
+
+function isScopeAndServerCurrent(
+    lifetime: ActiveServerAccountScopeLifetime,
+    serverSnapshot: ReturnType<typeof getActiveServerSnapshot>,
+): ActivePluginCollectionUnavailableReasonV1 | null {
+    if (!lifetime.isCurrent()) return 'account-scope-changed';
+    const current = getActiveServerSnapshot();
+    if (current.serverId !== serverSnapshot.serverId || current.generation !== serverSnapshot.generation) {
+        return 'server-generation-changed';
+    }
+    return null;
+}
+
+export function getPreparedCollectionOperationCurrentness(
+    operation: PreparedCollectionOperation,
+): ActivePluginCollectionUnavailableReasonV1 | null {
+    return isScopeAndServerCurrent(operation.lifetime, operation.serverSnapshot);
+}
+
+function resolveCurrentAccountMaterial(input: Readonly<{
+    mode: 'plain' | 'e2ee';
+    contentKeyFingerprint: string | null;
+    credentials?: AuthCredentials;
+}>): AccountScopedCryptoMaterial | null {
+    if (input.mode === 'plain') return null;
+    if (!input.credentials || !input.contentKeyFingerprint) return null;
+    try {
+        const material = resolveAccountScopedCryptoMaterialFromCredentials(input.credentials);
+        const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
+            accountEncryptionMode: 'e2ee',
+            material,
+            ...(isDataKeyAuthCredentials(input.credentials)
+                ? {
+                    dataKeyPublicKey: decodeBase64(
+                        input.credentials.encryption.publicKey,
+                        'base64',
+                    ),
+                }
+                : {}),
+        });
+        return convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+            snapshot.contentPublicKeyFingerprint,
+        ) === input.contentKeyFingerprint
+            ? material
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+export async function prepareCollectionOperation(
+    options: ActivePluginCollectionOperationOptionsV1 | undefined,
+    accountLifetime?: ActiveServerAccountScopeLifetime,
+): Promise<PreparedCollectionOperationOutcome> {
+    if (options?.signal?.aborted) return unavailable('operation-cancelled');
+    const lifetime = accountLifetime ?? captureActiveServerAccountScopeLifetime();
+    if (!lifetime) return unavailable('no-active-account-scope');
+    if (!lifetime.isCurrent()) return unavailable('account-scope-changed');
+    const serverSnapshot = getActiveServerSnapshot();
+    if (serverSnapshot.serverId !== lifetime.scope.serverId) return unavailable('server-generation-changed');
+    const compatibility = resolveAccountStoredContentCompatibilityHeaders(
+        { 'Content-Type': 'application/json' },
+        {
+            serverUrl: serverSnapshot.serverUrl,
+            declaration: PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+        },
+    );
+    if (compatibility.status === 'unavailable') return compatibility;
+
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const retirement = lifetime.onRetire(abort);
+    options?.signal?.addEventListener('abort', abort, { once: true });
+    const release = (): void => {
+        options?.signal?.removeEventListener('abort', abort);
+        retirement.dispose();
+    };
+    if (options?.signal?.aborted) {
+        release();
+        return unavailable('operation-cancelled');
+    }
+    try {
+        const authority = await captureSessionRequestAuthorityForServerAccountScope({
+            scope: lifetime.scope,
+            activeRequest: (path, init) => apiSocket.request(path, init),
+        });
+        const currentnessAfterAuthority = isScopeAndServerCurrent(lifetime, serverSnapshot);
+        if (currentnessAfterAuthority) {
+            release();
+            return unavailable(currentnessAfterAuthority);
+        }
+        if (controller.signal.aborted) {
+            release();
+            return unavailable(options?.signal?.aborted ? 'operation-cancelled' : 'account-scope-changed');
+        }
+
+        const credentials = authority.context.credentials ?? { token: authority.context.token };
+        const currentness = await fetchAccountEncryptionCurrentness(credentials, {
+            request: (path, init) => authority.request(path, {
+                ...init,
+                signal: controller.signal,
+            }),
+        });
+        const currentnessAfterRead = isScopeAndServerCurrent(lifetime, serverSnapshot);
+        if (currentnessAfterRead) {
+            release();
+            return unavailable(currentnessAfterRead);
+        }
+        if (controller.signal.aborted) {
+            release();
+            return unavailable(options?.signal?.aborted ? 'operation-cancelled' : 'account-scope-changed');
+        }
+        const material = resolveCurrentAccountMaterial({
+            mode: currentness.mode,
+            contentKeyFingerprint: currentness.contentKeyFingerprint,
+            credentials: authority.context.credentials,
+        });
+        if (currentness.mode === 'e2ee' && !material) {
+            release();
+            return unavailable('account-encryption-material-unavailable');
+        }
+        return {
+            status: 'ready',
+            operation: {
+                lifetime,
+                serverSnapshot,
+                authority,
+                encryptionMode: currentness.mode,
+                material,
+                headers: compatibility.headers,
+                signal: controller.signal,
+                release,
+            },
+        };
+    } catch {
+        release();
+        return unavailable(controller.signal.aborted
+            ? (options?.signal?.aborted ? 'operation-cancelled' : 'account-scope-changed')
+            : 'account-currentness-unavailable');
+    }
+}
+
+export async function requestCollectionOperation(input: Readonly<{
+    operation: PreparedCollectionOperation;
+    path: string;
+    body: unknown;
+    options?: ActivePluginCollectionOperationOptionsV1;
+}>): Promise<
+    | Readonly<{ status: 'response'; ok: boolean; body: unknown }>
+    | ActivePluginCollectionUnavailableV1
+> {
+    try {
+        const response = await input.operation.authority.request(
+            input.path,
+            withAccountStoredContentCompatibilityRequestDeclaration({
+                method: 'POST',
+                headers: input.operation.headers,
+                body: JSON.stringify(input.body),
+                signal: input.operation.signal,
+            }, PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+        );
+        if (input.operation.signal.aborted) {
+            return unavailable(input.options?.signal?.aborted
+                ? 'operation-cancelled'
+                : 'account-scope-changed');
+        }
+        const currentness = isScopeAndServerCurrent(
+            input.operation.lifetime,
+            input.operation.serverSnapshot,
+        );
+        if (currentness) return unavailable(currentness);
+        const body = await response.json().catch(() => null);
+        if (input.operation.signal.aborted) {
+            return unavailable(input.options?.signal?.aborted
+                ? 'operation-cancelled'
+                : 'account-scope-changed');
+        }
+        const currentnessAfterBody = isScopeAndServerCurrent(
+            input.operation.lifetime,
+            input.operation.serverSnapshot,
+        );
+        if (currentnessAfterBody) return unavailable(currentnessAfterBody);
+        return { status: 'response', ok: response.ok, body };
+    } catch {
+        return unavailable(input.options?.signal?.aborted
+            ? 'operation-cancelled'
+            : input.operation.lifetime.isCurrent()
+                ? 'transport-unavailable'
+                : 'account-scope-changed');
+    }
+}
+
+function ensureExactProjection(input: Readonly<{
+    contract: NormalizedPluginAccountCollectionContractV1;
+    rowId: string;
+    projection: PluginCollectionProjectionV1;
+}>): PluginCollectionProjectionV1 | null {
+    const fields = Object.keys(input.projection);
+    const expected = new Set(input.contract.serverReadable);
+    if (fields.length !== expected.size || fields.some((field) => !expected.has(field))) return null;
+    for (const field of input.contract.serverReadable) {
+        if (!hasOwn(input.projection, field)) return null;
+        if (field === input.contract.rowIdField && input.projection[field] !== input.rowId) return null;
+    }
+    return input.projection;
+}
+
+export type EncodedPluginCollectionLogicalValueV1 = Readonly<{
+    rowId: string;
+    content: Extract<PluginCollectionMutationOperationV1, { kind: 'put' }>['content'];
+    projection: PluginCollectionProjectionV1;
+}>;
+
+/**
+ * The sole direct-UI logical-value encoder. Candidate preparation uses this
+ * exact codec so its non-authoritative target rows cannot drift from ordinary
+ * Account Collection writes.
+ */
+export function encodePluginCollectionLogicalValue<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(input: Readonly<{
+    contract: NormalizedPluginAccountCollectionContractV1;
+    validate: ReturnType<typeof compilePluginJsonSchema>;
+    value: TValue;
+    encryptionMode: 'plain' | 'e2ee';
+    material: AccountScopedCryptoMaterial | null;
+}>): EncodedPluginCollectionLogicalValueV1 | null {
+    if (!isValidPluginJsonSchemaValue(input.validate, input.value)) return null;
+    const rowIdCandidate = input.value[input.contract.rowIdField];
+    const rowId = PluginCollectionRowIdV1Schema.safeParse(rowIdCandidate);
+    if (!rowId.success) return null;
+    const projection = createJsonRecord();
+    for (const field of input.contract.serverReadable) {
+        setJsonRecordValue(projection, field, hasOwn(input.value, field) ? input.value[field]! : null);
+    }
+    const parsedProjection = PluginCollectionProjectionV1Schema.safeParse(projection);
+    if (!parsedProjection.success || !ensureExactProjection({
+        contract: input.contract,
+        rowId: rowId.data,
+        projection: parsedProjection.data,
+    })) {
+        return null;
+    }
+    const privatePayload = createJsonRecord();
+    const reserved = new Set([input.contract.rowIdField, ...input.contract.serverReadable]);
+    for (const [field, value] of Object.entries(input.value)) {
+        if (!reserved.has(field)) setJsonRecordValue(privatePayload, field, value);
+    }
+    try {
+        const content = input.encryptionMode === 'plain'
+            ? PluginCollectionContentEnvelopeV1Schema.parse({ t: 'plain', v: privatePayload })
+            : PluginCollectionContentEnvelopeV1Schema.parse({
+                t: 'encrypted',
+                c: sealPluginCollectionPrivatePayloadV1({
+                    material: input.material ?? (() => { throw new Error('Missing Account crypto material'); })(),
+                    payload: PluginCollectionPrivatePayloadV1Schema.parse(privatePayload),
+                    randomBytes: getRandomBytes,
+                }),
+            });
+        return {
+            rowId: rowId.data,
+            content,
+            projection: parsedProjection.data,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function splitLogicalPut<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(input: Readonly<{
+    contract: NormalizedPluginAccountCollectionContractV1;
+    validate: ReturnType<typeof compilePluginJsonSchema>;
+    value: TValue;
+    expectedRevision: number | 'absent';
+    encryptionMode: 'plain' | 'e2ee';
+    material: AccountScopedCryptoMaterial | null;
+}>): Extract<PluginCollectionMutationOperationV1, { kind: 'put' }> | null {
+    const encoded = encodePluginCollectionLogicalValue(input);
+    return encoded
+        ? {
+            kind: 'put',
+            expectedRevision: input.expectedRevision,
+            ...encoded,
+        }
+        : null;
+}
+
+/** Shared direct-UI logical-row decoder for ordinary and candidate-bound reads. */
+export function mergeLogicalRow<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(input: Readonly<{
+    contract: NormalizedPluginAccountCollectionContractV1;
+    validate: ReturnType<typeof compilePluginJsonSchema>;
+    row: PluginCollectionRowV1;
+    encryptionMode: 'plain' | 'e2ee';
+    material: AccountScopedCryptoMaterial | null;
+}>): ActivePluginCollectionLogicalRowV1<TValue> | null {
+    try {
+        const envelope = assertPluginCollectionContentEnvelopeForModeV1(
+            input.row.content,
+            input.encryptionMode,
+        );
+        const privatePayload = envelope.t === 'plain'
+            ? envelope.v
+            : input.material
+                ? openPluginCollectionPrivatePayloadV1({
+                    material: input.material,
+                    ciphertext: envelope.c,
+                })
+                : null;
+        const projection = ensureExactProjection({
+            contract: input.contract,
+            rowId: input.row.rowId,
+            projection: input.row.projection,
+        });
+        if (!privatePayload || !projection) return null;
+        const logical = createJsonRecord();
+        const reserved = new Set([input.contract.rowIdField, ...input.contract.serverReadable]);
+        for (const [field, value] of Object.entries(privatePayload)) {
+            if (reserved.has(field)) return null;
+            setJsonRecordValue(logical, field, value);
+        }
+        for (const field of input.contract.serverReadable) {
+            setJsonRecordValue(logical, field, projection[field]!);
+        }
+        if (!hasOwn(logical, input.contract.rowIdField)) {
+            setJsonRecordValue(logical, input.contract.rowIdField, input.row.rowId);
+        }
+        const value = Object.freeze({ ...logical });
+        if (!isLogicalCollectionValue<TValue>(input.validate, value)) return null;
+        return Object.freeze({
+            rowId: input.row.rowId,
+            revision: input.row.revision,
+            value,
+        });
+    } catch {
+        return null;
+    }
+}
+
+function isLogicalCollectionValue<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(
+    validate: ReturnType<typeof compilePluginJsonSchema>,
+    value: Readonly<Record<string, JsonValue>>,
+): value is TValue {
+    return isValidPluginJsonSchemaValue(validate, value);
+}
+
+function mapReadError(value: unknown): ActivePluginCollectionUnavailableV1 | ActivePluginCollectionRejectedV1 {
+    const parsed = PluginCollectionReadErrorV1Schema.safeParse(value);
+    if (!parsed.success) return unavailable('response-invalid');
+    switch (parsed.data.error) {
+        case 'collection_unavailable':
+            return unavailable('collection-unavailable');
+        case 'collection_content_mode_mismatch':
+            return unavailable('account-content-mismatch');
+        case 'collection_index_not_ready':
+        case 'collection_contract_inconsistent':
+            return unavailable('collection-unavailable');
+        case 'collection_query_invalid':
+        case 'collection_cursor_invalid':
+            return rejected(parsed.data.error);
+    }
+    return unavailable('response-invalid');
+}
+
+function mapMutationError(value: unknown): ActivePluginCollectionUnavailableV1 | ActivePluginCollectionRejectedV1 {
+    const parsed = PluginCollectionMutationErrorV1Schema.safeParse(value);
+    if (!parsed.success) return unavailable('response-invalid');
+    if (parsed.data.error === 'collection_relation_restricted') {
+        return rejected(parsed.data.error, {
+            dependentCount: parsed.data.dependentCount,
+            continuation: parsed.data.continuation,
+        });
+    }
+    switch (parsed.data.error) {
+        case 'collection_unavailable':
+        case 'collection_index_not_ready':
+        case 'collection_relation_unavailable':
+        case 'collection_contract_inconsistent':
+            return unavailable('collection-unavailable');
+        case 'collection_writer_contract_unavailable':
+            return unavailable('writer-contract-unavailable');
+        case 'collection_content_mode_mismatch':
+            return unavailable('account-content-mismatch');
+        case 'collection_mutation_invalid':
+        case 'collection_quota_exceeded':
+            return rejected(parsed.data.error);
+    }
+    return unavailable('response-invalid');
+}
+
+export function contractMatchesRef(
+    contract: NormalizedPluginAccountCollectionContractV1,
+    ref: PluginCollectionContractRefV1,
+): boolean {
+    return contract.pluginId === ref.pluginId
+        && contract.collectionId === ref.collectionId
+        && contract.schemaVersion === ref.schemaVersion
+        && contract.contractDigest === ref.contractDigest;
+}
+
+/**
+ * Resolves one immutable release-admitted contract through the canonical Data
+ * route, then returns the existing direct client over that exact contract. It
+ * intentionally owns no cached contract, Account lifecycle, or alternate
+ * transport: each caller gets the current scoped result or a typed failure.
+ */
+export async function createActivePluginCollectionClientForContractRef<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+>(input: Readonly<{
+    ref: PluginCollectionContractRefV1;
+    options?: ActivePluginCollectionOperationOptionsV1;
+    /** Preserve a facade's sole pre-captured Account lifetime across nested operations. */
+    accountLifetime?: ActiveServerAccountScopeLifetime;
+}>): Promise<ActivePluginCollectionClientForContractRefOutcomeV1<TValue>> {
+    const request = PluginCollectionContractReadRequestV1Schema.safeParse({ ref: input.ref });
+    if (!request.success) return rejected('collection_query_invalid');
+    const prepared = await prepareCollectionOperation(input.options, input.accountLifetime);
+    if (prepared.status === 'unavailable') return prepared;
+    try {
+        const response = await requestCollectionOperation({
+            operation: prepared.operation,
+            path: PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1,
+            body: request.data,
+            options: input.options,
+        });
+        if (response.status === 'unavailable') return response;
+        if (!response.ok) return mapReadError(response.body);
+        const result = PluginCollectionContractReadResultV1Schema.safeParse(response.body);
+        if (!result.success || !contractMatchesRef(result.data.contract, request.data.ref)) {
+            return unavailable('response-invalid');
+        }
+        return {
+            status: 'ready',
+            contract: result.data.contract,
+            client: createActivePluginCollectionClient<TValue>({
+                contract: result.data.contract,
+                accountLifetime: input.accountLifetime,
+            }),
+        };
+    } finally {
+        prepared.operation.release();
+    }
+}
+
+/**
+ * Direct UI adapter for one already-admitted collection contract. It has no
+ * store, retry loop, persistence, or independent Account lifecycle: callers
+ * receive the server's exact CAS result and use the shared AccountChange
+ * wakeup to decide when their own desired state needs reconciliation.
+ */
+export function createActivePluginCollectionClient<
+    TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
+>(params: Readonly<{
+    contract: NormalizedPluginAccountCollectionContractV1;
+    /** A resolved facade retains this existing scope instead of recapturing globally. */
+    accountLifetime?: ActiveServerAccountScopeLifetime;
+}>): ActivePluginCollectionClientV1<TValue> {
+    const validate = compilePluginJsonSchema(params.contract.schema);
+
+    const get = async (
+        rowId: string,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionGetOutcomeV1<TValue>> => {
+        const request = PluginCollectionGetRequestV1Schema.safeParse({
+            pluginId: params.contract.pluginId,
+            collectionId: params.contract.collectionId,
+            rowId,
+        });
+        if (!request.success) return rejected('collection_query_invalid');
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime);
+        if (prepared.status === 'unavailable') return prepared;
+        try {
+            const response = await requestCollectionOperation({
+                operation: prepared.operation,
+                path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+                body: request.data,
+                options,
+            });
+            if (response.status === 'unavailable') return response;
+            if (!response.ok) return mapReadError(response.body);
+            const result = PluginCollectionGetResultV1Schema.safeParse(response.body);
+            if (!result.success) return unavailable('response-invalid');
+            const row = result.data.row === null
+                ? null
+                : mergeLogicalRow<TValue>({
+                    contract: params.contract,
+                    validate,
+                    row: result.data.row,
+                    encryptionMode: prepared.operation.encryptionMode,
+                    material: prepared.operation.material,
+                });
+            return result.data.row !== null && !row
+                ? unavailable('account-content-mismatch')
+                : { status: 'ready', row };
+        } finally {
+            prepared.operation.release();
+        }
+    };
+
+    const query = async (
+        input: ActivePluginCollectionQueryInputV1,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionQueryOutcomeV1<TValue>> => {
+        const index = params.contract.indexes.find((candidate) => candidate.id === input.indexId);
+        if (!index || (input.prefix?.length ?? 0) > index.fields.length) {
+            return rejected('collection_query_invalid');
+        }
+        const request = PluginCollectionQueryRequestV1Schema.safeParse({
+            pluginId: params.contract.pluginId,
+            collectionId: params.contract.collectionId,
+            ...input,
+        });
+        if (!request.success) return rejected('collection_query_invalid');
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime);
+        if (prepared.status === 'unavailable') return prepared;
+        try {
+            const response = await requestCollectionOperation({
+                operation: prepared.operation,
+                path: PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
+                body: request.data,
+                options,
+            });
+            if (response.status === 'unavailable') return response;
+            if (!response.ok) return mapReadError(response.body);
+            const result = PluginCollectionQueryResultV1Schema.safeParse(response.body);
+            if (!result.success) return unavailable('response-invalid');
+            const rows: ActivePluginCollectionLogicalRowV1<TValue>[] = [];
+            for (const row of result.data.rows) {
+                const materialized = mergeLogicalRow<TValue>({
+                    contract: params.contract,
+                    validate,
+                    row,
+                    encryptionMode: prepared.operation.encryptionMode,
+                    material: prepared.operation.material,
+                });
+                if (!materialized) return unavailable('account-content-mismatch');
+                rows.push(materialized);
+            }
+            return {
+                status: 'ready',
+                rows,
+                ...(result.data.nextCursor ? { nextCursor: result.data.nextCursor } : {}),
+                changeCursor: result.data.changeCursor,
+            };
+        } finally {
+            prepared.operation.release();
+        }
+    };
+
+    const mutate = async (
+        operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionMutationOutcomeV1> => {
+        if (operations.length < 1 || operations.length > 100) return rejected('collection_mutation_invalid');
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime);
+        if (prepared.status === 'unavailable') return prepared;
+        try {
+            const wireOperations: PluginCollectionMutationOperationV1[] = [];
+            for (const operation of operations) {
+                if (operation.kind === 'delete') {
+                    const parsed = PluginCollectionRowIdV1Schema.safeParse(operation.rowId);
+                    if (!parsed.success || !Number.isSafeInteger(operation.expectedRevision) || operation.expectedRevision < 1) {
+                        return rejected('collection_mutation_invalid');
+                    }
+                    wireOperations.push({
+                        kind: 'delete',
+                        rowId: parsed.data,
+                        expectedRevision: operation.expectedRevision,
+                    });
+                    continue;
+                }
+                if (operation.kind === 'assert') {
+                    const parsed = PluginCollectionRowIdV1Schema.safeParse(operation.rowId);
+                    if (!parsed.success || !Number.isSafeInteger(operation.expectedRevision) || operation.expectedRevision < 1) {
+                        return rejected('collection_mutation_invalid');
+                    }
+                    wireOperations.push({
+                        kind: 'assert',
+                        rowId: parsed.data,
+                        expectedRevision: operation.expectedRevision,
+                    });
+                    continue;
+                }
+                const split = splitLogicalPut<TValue>({
+                    contract: params.contract,
+                    validate,
+                    value: operation.value,
+                    expectedRevision: operation.expectedRevision,
+                    encryptionMode: prepared.operation.encryptionMode,
+                    material: prepared.operation.material,
+                });
+                if (!split) return rejected('collection_mutation_invalid');
+                wireOperations.push(split);
+            }
+            const request = PluginCollectionMutationRequestV1Schema.safeParse({
+                pluginId: params.contract.pluginId,
+                collectionId: params.contract.collectionId,
+                writerContext: {
+                    schemaVersion: params.contract.schemaVersion,
+                    contractDigest: params.contract.contractDigest,
+                },
+                operations: wireOperations,
+            });
+            if (!request.success) return rejected('collection_mutation_invalid');
+            const response = await requestCollectionOperation({
+                operation: prepared.operation,
+                path: PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
+                body: request.data,
+                options,
+            });
+            if (response.status === 'unavailable') return response;
+            if (!response.ok) return mapMutationError(response.body);
+            const result = PluginCollectionMutationResultV1Schema.safeParse(response.body);
+            if (!result.success) return unavailable('response-invalid');
+            return result.data.status === 'conflict'
+                ? { status: 'conflict', conflicts: result.data.conflicts }
+                : {
+                    status: 'updated',
+                    results: result.data.results,
+                    changeCursor: result.data.changeCursor,
+                };
+        } finally {
+            prepared.operation.release();
+        }
+    };
+
+    return Object.freeze({
+        get,
+        query,
+        mutate,
+        watch(onInvalidated): ActivePluginCollectionWatchOutcomeV1 {
+            const watch = watchActivePluginCollectionChanges({
+                pluginId: params.contract.pluginId,
+                collectionId: params.contract.collectionId,
+                onInvalidated,
+                ...(params.accountLifetime ? { accountLifetime: params.accountLifetime } : {}),
+            });
+            return watch
+                ? { status: 'watching', dispose: watch.dispose }
+                : unavailable('no-active-account-scope');
+        },
+    });
+}

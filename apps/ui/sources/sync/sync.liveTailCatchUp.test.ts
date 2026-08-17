@@ -93,6 +93,10 @@ type SyncLiveTailCatchUpTestAccess = {
     hasFetchedSessionsSnapshotForActiveServer: boolean;
     isForeground: boolean;
     sessionMaterializedMaxSeqById: Record<string, number>;
+    lastSocketOfflineDurationMs: number | null;
+    lastSocketDisconnectedAtMs: number | null;
+    socketOfflineCatchUpConsumedSessionIds: Set<string>;
+    retireLocalSession(sessionId: string): void;
 };
 
 const initialStorageState = storage.getState();
@@ -221,5 +225,36 @@ describe('sync live-tail catch-up decision (plan B8)', () => {
 
         expect(sync.hasDeferredNewerMessages(SESSION_ID)).toBe(false);
         expect(messagesRequestPaths().length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('does not recreate transcript state when delete wins a held tail-reset catch-up', async () => {
+        const { sync } = await seedLargeGapSession();
+        const syncForTest = sync as unknown as SyncLiveTailCatchUpTestAccess;
+        syncForTest.lastSocketOfflineDurationMs = 1_000;
+        syncForTest.lastSocketDisconnectedAtMs = null;
+
+        let releasePage!: (response: Response) => void;
+        const heldPage = new Promise<Response>((resolve) => {
+            releasePage = resolve;
+        });
+        let markRequestStarted!: () => void;
+        const requestStarted = new Promise<void>((resolve) => {
+            markRequestStarted = resolve;
+        });
+        requestMock.mockImplementationOnce(async () => {
+            markRequestStarted();
+            return await heldPage;
+        });
+
+        const catchUp = sync.refreshSessionMessages(SESSION_ID);
+        await requestStarted;
+        syncForTest.retireLocalSession(SESSION_ID);
+        releasePage(emptyMessagesResponse());
+        await catchUp;
+
+        expect(storage.getState().sessions[SESSION_ID]).toBeUndefined();
+        expect(storage.getState().sessionMessages[SESSION_ID]).toBeUndefined();
+        expect(sync.hasDeferredNewerMessages(SESSION_ID)).toBe(false);
+        expect(syncForTest.socketOfflineCatchUpConsumedSessionIds.has(SESSION_ID)).toBe(false);
     });
 });

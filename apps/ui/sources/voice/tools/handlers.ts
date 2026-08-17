@@ -1,13 +1,16 @@
-import type { ActionId } from '@happier-dev/protocol';
 import {
+  ActionsSettingsV1Schema,
   getActionSpec,
+  isActionEnabledByActionsSettings,
   listActionSpecs,
   normalizeSpawnSessionErrorDetail,
+  type ActionId,
 } from '@happier-dev/protocol';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE } from '@/sync/domains/session/input/types';
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import {
   listPendingSessionRequests,
@@ -31,6 +34,14 @@ type PendingVoiceRequest = Readonly<{
 
 export type VoiceToolEffectClass = 'read_only' | 'mutation' | 'external';
 
+export type VoiceToolInvocationContext = Readonly<{
+  signal?: AbortSignal;
+  effectId?: string;
+  callId?: string;
+}>;
+
+export type VoiceToolHandler = (parameters: unknown, context?: VoiceToolInvocationContext) => Promise<string>;
+
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
@@ -38,6 +49,12 @@ function normalizeId(raw: unknown): string {
 function asPlainObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function readErrorCode(error: unknown): string | null {
+  const record = asPlainObject(error);
+  const code = record?.code ?? record?.errorCode;
+  return typeof code === 'string' ? code : null;
 }
 
 type ToolOk = { ok: true } & Record<string, unknown>;
@@ -143,7 +160,7 @@ export function resolveVoiceToolEffectClass(toolName: string): VoiceToolEffectCl
 
 export function createVoiceToolHandlers(
   deps: Readonly<{ resolveSessionId: (explicitSessionId?: string | null) => string | null }>,
-): Readonly<Record<string, (parameters: unknown) => Promise<string>>> {
+): Readonly<Record<string, VoiceToolHandler>> {
   const resolveSessionIdOrError = (
     explicitSessionId?: string | null,
   ): { ok: true; sessionId: string } | { ok: false; error: string } => {
@@ -302,7 +319,7 @@ export function createVoiceToolHandlers(
     return jsonOkFromUnknown(res.result);
   };
 
-  const sendSessionMessage = async (parameters: unknown): Promise<string> => {
+  const sendSessionMessage: VoiceToolHandler = async (parameters, context) => {
     const spec = getActionSpec('session.message.send');
     const parsed = spec.inputSchema.safeParse(parameters ?? {});
     if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
@@ -320,6 +337,16 @@ export function createVoiceToolHandlers(
       return jsonError('session_not_found', 'session_not_found', { sessionId });
     }
 
+    const actionSettings = ActionsSettingsV1Schema.safeParse(
+      (storage.getState() as { settings?: { actionsSettingsV1?: unknown } }).settings?.actionsSettingsV1,
+    );
+    if (
+      actionSettings.success
+      && !isActionEnabledByActionsSettings('session.message.send', actionSettings.data, { surface: 'voice' })
+    ) {
+      return jsonError('action_disabled', 'action_disabled', { sessionId });
+    }
+
     const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
     const activeServerId = normalizeId(getActiveServerSnapshot().serverId);
     const isActiveServer = !targetServerId || areServerProfileIdentifiersEquivalent(targetServerId, activeServerId);
@@ -333,18 +360,25 @@ export function createVoiceToolHandlers(
     const message = typeof data.message === 'string' ? data.message : null;
     if (!message) return jsonError('invalid_parameters', 'invalid_parameters');
 
-    const res = await executor.execute(
-      'session.message.send',
-      { sessionId, message },
-      { surface: 'voice', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
-    );
-    if (!res.ok) {
-      return jsonError(res.errorCode ?? 'send_failed', res.error ?? 'send_failed', { sessionId });
+    if (context?.signal?.aborted) {
+      return jsonError('tool_cancelled', 'tool_cancelled', { sessionId });
     }
 
-    const inner: any = res.result;
-    if (inner && typeof inner === 'object' && (inner as any).ok === false) {
-      return jsonError(String((inner as any).errorCode ?? 'send_failed'), String((inner as any).errorMessage ?? 'send_failed'), { sessionId });
+    try {
+      await sync.submitMessage(sessionId, message, undefined, undefined, {
+        callerSurface: 'voice_turn',
+        forceImmediate: true,
+        hostAdmissionOrigin: 'voice',
+      });
+    } catch (error) {
+      if (readErrorCode(error) === SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE) {
+        return jsonError(
+          SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE,
+          SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE,
+          { sessionId },
+        );
+      }
+      throw error;
     }
 
     return jsonOk({ status: 'sent', sessionId });
@@ -434,10 +468,10 @@ export function createVoiceToolHandlers(
     return jsonOk({ status: 'done', sessionId, requestId });
   };
 
-  const handlers: Record<string, (parameters: unknown) => Promise<string>> = {};
+  const handlers: Record<string, VoiceToolHandler> = {};
 
   for (const toolName of Object.keys(VOICE_TOOL_ACTION_ID_BY_TOOL_NAME)) {
-    handlers[toolName] = async (parameters: unknown) => await execute(toolName, parameters);
+    handlers[toolName] = async (parameters) => await execute(toolName, parameters);
   }
 
   // Voice surface overrides (extra UX behavior).

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscriptTurn } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
 import {
+    buildTranscriptItemHeightSignatureKey,
+    createDefaultTranscriptItemHeightCache,
+} from './transcriptItemHeightCache';
+import {
     buildTranscriptRowShellSignature,
     resolveTranscriptItemActiveThinkingMessageId,
     resolveTranscriptRowItemType,
@@ -155,6 +159,9 @@ describe('buildTranscriptRowShellSignature', () => {
             groupingMode: 'turns',
             item: params.item,
             latestCommittedActivityKey: params.latestCommittedActivityKey ?? null,
+            // No `action-draft` row in this file; the option resolver is exercised in
+            // `actionDraftStatusChurn.consumers.test.ts`.
+            resolveActionDraftFieldOptions: () => [],
             resolveThinkingExpanded: () => false,
             sessionActive: params.sessionActive ?? false,
             widthBucket: 'w:400',
@@ -320,7 +327,7 @@ describe('buildTranscriptRowShellSignature', () => {
             expect(after.rowState).toBe('stable');
         });
 
-        it('invalidates the header signature on count, status-summary, and expansion changes', () => {
+        it('invalidates the header signature on count and status-summary changes', () => {
             const base = buildSignature({ item: headerItem(), messagesById });
 
             const grown = buildSignature({
@@ -334,9 +341,27 @@ describe('buildTranscriptRowShellSignature', () => {
                 messagesById: { ...messagesById, 'tool-2': runningToolMessage('tool-2') },
             });
             expect(running.structuralKey).not.toBe(base.structuralKey);
+        });
 
+        /**
+         * F-P1. The header's only expansion-dependent output is a 16px chevron inside a
+         * `flexDirection: 'row'` container whose row height is set by the 13px title text, plus the
+         * `Pressable`'s enabled state — neither is height-bearing. `estimateTranscriptRowHeightFromCache`
+         * holds the corroborating live measurement (2026-07-29, all three chrome variants x 7 tool
+         * shapes: "expansion ... never changed a unit row's painted height"), which is why its
+         * per-variant header constant has no expanded/collapsed split. Keeping expansion in the size
+         * version therefore only discarded the header's measured height on every tap.
+         */
+        it('keeps the measured height of the header row across an expand/collapse tap', () => {
+            const collapsed = buildSignature({ item: headerItem({ expanded: false, hiddenCount: 1 }), messagesById });
             const expanded = buildSignature({ item: headerItem({ expanded: true, hiddenCount: 0 }), messagesById });
-            expect(expanded.structuralKey).not.toBe(base.structuralKey);
+
+            expect(buildTranscriptItemHeightSignatureKey(expanded))
+                .toBe(buildTranscriptItemHeightSignatureKey(collapsed));
+
+            const cache = createDefaultTranscriptItemHeightCache();
+            expect(cache.set(collapsed, { heightPx: 33 })).toBe(true);
+            expect(cache.get(expanded)?.heightPx).toBe(33);
         });
 
         it('keys the expand unit on its hidden count only', () => {
@@ -360,7 +385,7 @@ describe('buildTranscriptRowShellSignature', () => {
             expect(grownCount.structuralKey).not.toBe(base.structuralKey);
         });
 
-        it('keys a tool unit on its OWN message revision plus group expansion, ignoring siblings', () => {
+        it('keys a tool unit on its OWN message revision, ignoring siblings', () => {
             const base = buildSignature({ item: toolUnitItem('tool-2'), messagesById });
 
             const siblingChanged = buildSignature({
@@ -374,9 +399,75 @@ describe('buildTranscriptRowShellSignature', () => {
                 messagesById: { ...messagesById, 'tool-2': toolMessage('tool-2', { value: 'own changed' }) },
             });
             expect(ownChanged.structuralKey).not.toBe(base.structuralKey);
+        });
 
-            const expandedFlip = buildSignature({ item: toolUnitItem('tool-2', true), messagesById });
-            expect(expandedFlip.structuralKey).not.toBe(base.structuralKey);
+        /**
+         * F-P1. `ChatListInternal` wires Legend's vendored `getItemSizeVersion` to
+         * `buildTranscriptItemHeightSignatureKey(buildTranscriptRowShellSignature(item))`, and the
+         * vendored `validateItemSizeVersion` DELETES both `sizesKnown` and `sizes` for every row whose
+         * version moved. So any expansion fact in a `tool-group-tool` signature makes one
+         * expand/collapse tap throw away the MEASURED height of every tool row in the group and
+         * re-place them from the estimate.
+         *
+         * A grouped tool row paints identical content expanded and collapsed unless its renderer
+         * actually swaps on group expansion — which happens only for subagent rows
+         * (`ToolTimelineRow` <-> `MessageView`, plus the collapsed-preview sidechain eager-load).
+         * The renderer module stays the single decision-maker; this signature consumes its answer.
+         */
+        describe('group expansion is part of the size version ONLY when it can change what the row paints (F-P1)', () => {
+            function subAgentToolMessage(id: string) {
+                return {
+                    kind: 'tool-call',
+                    id,
+                    localId: null,
+                    createdAt: 1,
+                    tool: {
+                        id: `call:${id}`,
+                        name: 'SubAgentRun',
+                        state: 'completed',
+                        input: { sidechainId: `sidechain:${id}` },
+                    },
+                    children: [],
+                } as any;
+            }
+
+            it('keeps the measured height of a plain tool row across an expand/collapse tap', () => {
+                const collapsed = buildSignature({ item: toolUnitItem('tool-2', false), messagesById });
+                const expanded = buildSignature({ item: toolUnitItem('tool-2', true), messagesById });
+
+                // Legend compares exactly this key; an equal key means `sizesKnown`/`sizes` survive.
+                expect(buildTranscriptItemHeightSignatureKey(expanded))
+                    .toBe(buildTranscriptItemHeightSignatureKey(collapsed));
+
+                // ...and the measurement cache keyed on the same signature still resolves the height.
+                const cache = createDefaultTranscriptItemHeightCache();
+                expect(cache.set(collapsed, { heightPx: 137 })).toBe(true);
+                expect(cache.get(expanded)?.heightPx).toBe(137);
+            });
+
+            it('still invalidates a subagent tool row, whose renderer swaps on group expansion', () => {
+                const subAgentMessagesById = { ...messagesById, 'tool-2': subAgentToolMessage('tool-2') };
+                const collapsed = buildSignature({ item: toolUnitItem('tool-2', false), messagesById: subAgentMessagesById });
+                const expanded = buildSignature({ item: toolUnitItem('tool-2', true), messagesById: subAgentMessagesById });
+
+                expect(buildTranscriptItemHeightSignatureKey(expanded))
+                    .not.toBe(buildTranscriptItemHeightSignatureKey(collapsed));
+
+                const cache = createDefaultTranscriptItemHeightCache();
+                expect(cache.set(collapsed, { heightPx: 137 })).toBe(true);
+                expect(cache.get(expanded)).toBeUndefined();
+            });
+
+            it('keeps own-revision invalidation intact for a plain tool row that is expanded', () => {
+                const expanded = buildSignature({ item: toolUnitItem('tool-2', true), messagesById });
+                const expandedOwnChanged = buildSignature({
+                    item: toolUnitItem('tool-2', true),
+                    messagesById: { ...messagesById, 'tool-2': toolMessage('tool-2', { value: 'own changed' }) },
+                });
+
+                expect(buildTranscriptItemHeightSignatureKey(expandedOwnChanged))
+                    .not.toBe(buildTranscriptItemHeightSignatureKey(expanded));
+            });
         });
 
         it('derives the tool unit row state from its own message progress', () => {

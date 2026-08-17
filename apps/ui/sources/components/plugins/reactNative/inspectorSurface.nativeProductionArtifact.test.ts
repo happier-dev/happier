@@ -6,14 +6,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     PluginUiArtifactsManifestV1Schema,
+    PluginUiArtifactDigestV1Schema,
     type PluginUiArtifactsManifestEntryV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { encodeBase64 } from '@/encryption/base64';
-
 import {
     createPluginReactNativeBundleCache,
-    preloadReactNativeInstalledArtifactBytes,
     type PluginReactNativeBundleCacheIdentity,
 } from './bundleCache';
 import {
@@ -23,17 +21,17 @@ import {
 } from './loader';
 
 type InstalledArtifactResolver = (scriptId: string, caller?: string) => Promise<unknown>;
-type NativeProductionArtifactGraph = PluginUiArtifactsManifestEntryV1 & Readonly<{
+type NativeProductionArtifactGraph = Omit<
+    PluginUiArtifactsManifestEntryV1,
+    'tier' | 'platform' | 'compat' | 'repack'
+> & Readonly<{
     tier: 'reactNative';
     platform: 'ios' | 'android';
     compat: PluginUiArtifactsManifestEntryV1['compat'] & Readonly<{
+        react: string;
         reactNative: string;
     }>;
-    repack: Readonly<{
-        containerName: string;
-        modulePath: string;
-        exportName: string;
-    }>;
+    repack: NonNullable<PluginUiArtifactsManifestEntryV1['repack']>;
 }>;
 
 const PRODUCTION_ARTIFACT_ROOT = fileURLToPath(
@@ -56,12 +54,23 @@ function readProductionArtifactGraph(
         !graph
         || graph.tier !== 'reactNative'
         || graph.platform !== platform
+        || !graph.compat.react
         || !graph.compat.reactNative
         || !graph.repack
     ) {
         throw new Error(`missing inspector ${platform} Re.Pack production artifact graph`);
     }
-    return graph as NativeProductionArtifactGraph;
+    return {
+        ...graph,
+        tier: graph.tier,
+        platform: graph.platform,
+        compat: {
+            ...graph.compat,
+            react: graph.compat.react,
+            reactNative: graph.compat.reactNative,
+        },
+        repack: graph.repack,
+    };
 }
 
 describe('inspector native production artifact graph', () => {
@@ -85,7 +94,7 @@ describe('inspector native production artifact graph', () => {
     );
 
     it.each(['ios', 'android'] as const)(
-        'verifies and loads the exact generated %s graph with its declared Re.Pack identity',
+        'loads the exact generated %s graph with its declared Re.Pack identity',
         async (platform) => {
             const graph = readProductionArtifactGraph(platform);
             const files = graph.files.map((file) => {
@@ -95,17 +104,32 @@ describe('inspector native production artifact graph', () => {
                 return {
                     ...file,
                     bytes,
-                    bytesBase64: encodeBase64(bytes),
                 };
             });
             const entryFile = files.find((file) => file.relativePath === graph.entry);
             if (!entryFile) {
                 throw new Error(`missing inspector ${platform} graph entry bytes`);
             }
+            const renderSurfaceChunk = files.find((file) =>
+                file.relativePath.endsWith('.chunk.bundle')
+                && file.relativePath.includes('src_ui_renderSurface_tsx-')
+            );
+            const renderSurfaceChunkFileName = renderSurfaceChunk?.relativePath
+                .split(/[\\/]/u)
+                .filter(Boolean)
+                .pop();
+            if (!renderSurfaceChunk || !renderSurfaceChunkFileName) {
+                throw new Error(`missing inspector ${platform} render surface chunk`);
+            }
+            const renderSurfaceChunkScriptId = renderSurfaceChunkFileName.slice(
+                0,
+                -'.chunk.bundle'.length,
+            );
+            const artifactDigest = PluginUiArtifactDigestV1Schema.parse(graph.digest);
             const identity: PluginReactNativeBundleCacheIdentity = {
                 pluginId: 'happier.inspector',
                 contributionId: graph.contributionId,
-                artifactDigest: graph.digest,
+                artifactDigest,
                 hostAppVersion: '0.0.0-production-fixture',
                 hostUiApiVersion: graph.hostUiApiVersion,
                 reactVersion: graph.compat.react,
@@ -118,30 +142,18 @@ describe('inspector native production artifact graph', () => {
             };
             const cache = createPluginReactNativeBundleCache();
 
-            await expect(preloadReactNativeInstalledArtifactBytes({
-                cache,
+            expect(cache.putInstalledArtifact({
                 identity,
-                artifactGraph: graph,
-                fetchArtifactBytes: async () => ({
-                    ok: true,
-                    cacheIdentity: identity,
-                    artifact: {
-                        pluginId: identity.pluginId,
-                        contributionId: identity.contributionId,
-                        artifactKind: 'reactNativeBundle',
-                        digest: graph.digest,
-                        format: 'plainJs',
-                        byteSize: entryFile.byteSize,
-                    },
-                    bytesBase64: entryFile.bytesBase64,
-                    files: files.map((file) => ({
-                        relativePath: file.relativePath,
-                        digest: file.digest,
-                        byteSize: file.byteSize,
-                        bytesBase64: file.bytesBase64,
-                    })),
-                }),
-            })).resolves.toEqual({
+                bytes: entryFile.bytes,
+                format: 'plainJs',
+                entryRelativePath: graph.entry,
+                files: files.map((file) => ({
+                    relativePath: file.relativePath,
+                    digest: file.digest,
+                    byteSize: file.byteSize,
+                    bytes: file.bytes,
+                })),
+            })).toEqual({
                 ok: true,
                 cacheKey: expect.any(String),
             });
@@ -158,11 +170,11 @@ describe('inspector native production artifact graph', () => {
                         absolute: true,
                     });
                     expect(await installedArtifactResolver?.(
-                        'src_ui_renderSurface_tsx',
+                        renderSurfaceChunkScriptId,
                         graph.repack.containerName,
                     )).toMatchObject({
                         url: expect.stringContaining(
-                            encodeURIComponent('src_ui_renderSurface_tsx.chunk.bundle'),
+                            encodeURIComponent(renderSurfaceChunk.relativePath),
                         ),
                         absolute: true,
                     });

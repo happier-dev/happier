@@ -71,6 +71,7 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
     kv: { plannerOwner: 'kv', snapshotDomain: 'todos' },
     machine: { plannerOwner: 'machines', snapshotDomain: 'machines' },
     pet: { plannerOwner: 'pets', snapshotDomain: 'pets' },
+    pluginDomain: { plannerOwner: 'plugin-domain', snapshotDomain: 'plugin-domain-level-triggered' },
     session: { plannerOwner: 'sessions', snapshotDomain: 'sessions-and-session-messages' },
     share: { plannerOwner: 'sessions', snapshotDomain: 'sessions' },
 } satisfies Record<ChangeKind, ChangeCheckpointCoverageEntry>;

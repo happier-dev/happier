@@ -4,13 +4,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import type {
+    AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
+import type {
+    AccountEncryptionFirstKeyCredentialMutationResult,
+    AccountEncryptionFirstKeyRecoveryHandle,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 
-const loginSpy = vi.hoisted(() => vi.fn(async () => {}));
+const loginSpy = vi.hoisted(() => vi.fn<
+    (...args: unknown[]) => Promise<AuthCredentialLifecycleResult>
+>(async () => ({ kind: 'completed' })));
 const replaceSpy = vi.hoisted(() => vi.fn());
 const dismissToSpy = vi.hoisted(() => vi.fn());
 const trackAccountRestoredSpy = vi.hoisted(() => vi.fn());
 const authGetTokenSpy = vi.hoisted(() => vi.fn<(secret: Uint8Array) => Promise<string>>(async (_secret) => 'tok_restore'));
 const activateStackRuntimeServerSpy = vi.hoisted(() => vi.fn());
+const guardCredentialMutationSpy = vi.hoisted(() =>
+    vi.fn<
+        (
+            target?: Readonly<{
+                serverUrl: string;
+                serverId?: string;
+            }>,
+        ) => Promise<AccountEncryptionFirstKeyCredentialMutationResult>
+    >(async () => ({ kind: 'allowed' })),
+);
+const modalShowSpy = vi.hoisted(() => vi.fn(
+    (config: { onRequestClose?: () => void }) => {
+        config.onRequestClose?.();
+        return 'modal-id';
+    },
+));
 
 const expoRouterMock = createExpoRouterMock({
     router: {
@@ -46,7 +71,18 @@ vi.mock('@/auth/recovery/secretKeyBackup', () => ({
 
 vi.mock('@/sync/domains/server/stackRuntimeServer', () => ({
     activateStackRuntimeServer: activateStackRuntimeServerSpy,
+    readStackRuntimeServerUrl: () => 'https://stack.example.test',
 }));
+
+vi.mock(
+    '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth',
+    () => ({
+        guardAccountEncryptionFirstKeyCredentialMutation:
+            guardCredentialMutationSpy,
+        abandonAccountEncryptionFirstKeyExternalAuth:
+            vi.fn(async () => ({ kind: 'abandoned' as const })),
+    }),
+);
 
 vi.mock('@/encryption/base64', () => ({
     decodeBase64: () => new Uint8Array(32).fill(1),
@@ -54,7 +90,9 @@ vi.mock('@/encryption/base64', () => ({
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({
+        spies: { show: modalShowSpy },
+    }).module;
 });
 
 vi.mock('@/text', async () => {
@@ -104,12 +142,18 @@ vi.mock('@/track', () => ({
 describe('SecretKeyLoginForm', () => {
     beforeEach(() => {
         loginSpy.mockReset();
+        loginSpy.mockResolvedValue({ kind: 'completed' });
         replaceSpy.mockReset();
         dismissToSpy.mockReset();
         trackAccountRestoredSpy.mockReset();
         authGetTokenSpy.mockReset();
         authGetTokenSpy.mockResolvedValue('tok_restore');
         activateStackRuntimeServerSpy.mockReset();
+        guardCredentialMutationSpy.mockReset();
+        guardCredentialMutationSpy.mockResolvedValue({
+            kind: 'allowed',
+        });
+        modalShowSpy.mockClear();
     });
 
     afterEach(() => {
@@ -156,5 +200,72 @@ describe('SecretKeyLoginForm', () => {
 
         expect(activateStackRuntimeServerSpy).toHaveBeenCalledWith({ scope: 'device' });
         expect(loginSpy).toHaveBeenCalledWith('tok_restore', 'secret-key');
+    });
+
+    it('does not track or navigate when restore credential recovery fails', async () => {
+        loginSpy.mockResolvedValueOnce({ kind: 'recovery_failed' });
+        const { SecretKeyLoginForm } = await import('./SecretKeyLoginForm');
+        const screen = await renderScreen(<SecretKeyLoginForm />);
+        const secretInput = screen.findByTestId('restore-manual-secret-input');
+        const submitButton = screen.findByTestId('restore-manual-submit');
+        if (!secretInput || !submitButton) {
+            throw new Error('Expected restore secret input and submit button to render');
+        }
+
+        await act(async () => {
+            secretInput.props.onChangeText('secret-key');
+        });
+        await act(async () => {
+            await submitButton.props.action();
+        });
+
+        expect(loginSpy).toHaveBeenCalledWith('tok_restore', 'secret-key');
+        expect(trackAccountRestoredSpy).not.toHaveBeenCalled();
+        expect(replaceSpy).not.toHaveBeenCalled();
+        expect(dismissToSpy).not.toHaveBeenCalled();
+    });
+
+    it('guards the known stack target before activating it', async () => {
+        const recovery =
+            {} as AccountEncryptionFirstKeyRecoveryHandle;
+        guardCredentialMutationSpy.mockImplementation(
+            async (target?: { serverUrl?: string }) =>
+                target?.serverUrl === 'https://stack.example.test'
+                    ? {
+                        kind: 'finish_encryption_setup' as const,
+                        recovery,
+                    }
+                    : { kind: 'allowed' as const },
+        );
+        const { SecretKeyLoginForm } = await import('./SecretKeyLoginForm');
+        const screen = await renderScreen(<SecretKeyLoginForm />);
+        const secretInput = screen.findByTestId('restore-manual-secret-input');
+        const submitButton = screen.findByTestId('restore-manual-submit');
+        if (!secretInput || !submitButton) {
+            throw new Error('Expected restore secret input and submit button to render');
+        }
+
+        await act(async () => {
+            secretInput.props.onChangeText('secret-key');
+        });
+        await act(async () => {
+            await submitButton.props.action();
+        });
+
+        expect(guardCredentialMutationSpy).toHaveBeenCalledWith({
+            serverUrl: 'https://stack.example.test',
+        });
+        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        expect(activateStackRuntimeServerSpy).not.toHaveBeenCalled();
+        expect(authGetTokenSpy).not.toHaveBeenCalled();
+        expect(loginSpy).not.toHaveBeenCalled();
+    });
+
+    it('gives the secret-key input its accessible name', async () => {
+        const { SecretKeyLoginForm } = await import('./SecretKeyLoginForm');
+        const screen = await renderScreen(<SecretKeyLoginForm />);
+
+        expect(screen.findByTestId('restore-manual-secret-input')?.props.accessibilityLabel)
+            .toBe('connect.secretKeyInputLabel');
     });
 });

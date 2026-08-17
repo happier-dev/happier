@@ -3,7 +3,6 @@ import {
     V2SessionByIdNotFoundSchema,
     parseSessionRuntimeActivityProjectionFields,
     type V2SessionListResponse,
-    type V2SessionRecord,
 } from '@happier-dev/protocol';
 
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
@@ -14,6 +13,7 @@ import {
 import { HappyError } from '@/utils/errors/errors';
 
 type SessionRequest = (path: string, init: RequestInit) => Promise<Response>;
+type V2SessionRecord = V2SessionListResponse['sessions'][number];
 type SessionListRequestHeadersOptions = Readonly<{
     includeSessionListTiming?: boolean;
 }>;
@@ -129,6 +129,20 @@ function readRuntimeActivityProjectionFields(
         runtimeActivityObservedAt: parsed.projection.observedAt,
         runtimeActivityRevision: parsed.projection.revision,
     };
+}
+
+const EXTERNAL_SESSION_STORAGE_STATES: ReadonlySet<string> = new Set([
+    'machine_only',
+    'server_partial',
+    'snapshot_complete',
+    'hosted',
+    'legacy_external_unknown',
+]);
+
+function readExternalSessionStorageState(value: unknown): V2SessionRecord['currentStorageState'] {
+    return typeof value === 'string' && EXTERNAL_SESSION_STORAGE_STATES.has(value)
+        ? value as V2SessionRecord['currentStorageState']
+        : undefined;
 }
 
 function mergeCompatSessionAdditiveFields(session: V2SessionRecord, raw: unknown): V2SessionRecord {
@@ -275,11 +289,28 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
         encryptionMode: raw.encryptionMode === 'plain' ? 'plain' : raw.encryptionMode === 'e2ee' ? 'e2ee' : undefined,
         metadata,
         metadataVersion,
+        // The guard above already rejected anything other than absent/0, so a coerced
+        // record is a layout-0 record by construction; state that rather than leaving it absent.
+        metadataLayoutVersion: 0,
         agentState: coerceStringPayload(raw.agentState),
         agentStateVersion,
         lastViewedSessionSeq: readNullableNumber(raw.lastViewedSessionSeq),
         pendingPermissionRequestCount: readNumber(raw.pendingPermissionRequestCount) ?? undefined,
         pendingUserActionRequestCount: readNumber(raw.pendingUserActionRequestCount) ?? undefined,
+        // Attention EDGE facts. Dropping these does not fail loudly: the placement key
+        // silently falls back to `updatedAt`, which moves on every message to an
+        // already-promoted session. Carried through the file's existing nullable readers.
+        pendingRequestObservedAt: readNullableNumber(raw.pendingRequestObservedAt),
+        latestTurnId: readNullableString(raw.latestTurnId) ?? null,
+        latestReadyEventSeq: readNullableNumber(raw.latestReadyEventSeq),
+        latestReadyEventAt: readNullableNumber(raw.latestReadyEventAt),
+        thinking: readOptionalBoolean(raw.thinking),
+        thinkingAt: readNullableNumber(raw.thinkingAt),
+        currentStorageState: readExternalSessionStorageState(raw.currentStorageState),
+        acceptedThroughServerSeq: readNullableNumber(raw.acceptedThroughServerSeq),
+        materializedThroughSourceAt: readNullableNumber(raw.materializedThroughSourceAt),
+        publishedThroughServerSeq: readNullableNumber(raw.publishedThroughServerSeq),
+        transcriptShareable: readOptionalBoolean(raw.transcriptShareable),
         latestTurnStatus: raw.latestTurnStatus === 'in_progress'
             || raw.latestTurnStatus === 'completed'
             || raw.latestTurnStatus === 'cancelled'

@@ -50,12 +50,9 @@ describe('MCP directory browse tabs', () => {
 
     let tree!: ReactTestRenderer;
         tree = (await renderScreen(<McpDetectedServersTab
-                    machines={[{ id: 'machine-1', serverId: 'server-1', metadata: { displayName: 'Machine 1' } } as any]}
-                    machineItems={[]}
                     selectedMachineId="machine-1"
-                    onSelectMachine={() => {}}
-                    machineMenuOpen={false}
-          onMachineMenuOpenChange={() => {}}
+                    selectedServerId="server-1"
+                    canExecute
           directory="/repo"
           onChangeDirectory={onChangeDirectory}
           loading={false}
@@ -85,14 +82,11 @@ describe('MCP directory browse tabs', () => {
 
     let tree!: ReactTestRenderer;
         tree = (await renderScreen(<McpPreviewServersTab
-                    machines={[{ id: 'machine-1', serverId: 'server-1', metadata: { displayName: 'Machine 1' } } as any]}
-                    machineItems={[]}
                     agentItems={[]}
                     selectedAgentTools={{ delivery: 'manual' } as any}
           selectedMachineId="machine-1"
-          onSelectMachine={() => {}}
-          machineMenuOpen={false}
-          onMachineMenuOpenChange={() => {}}
+          selectedServerId="server-1"
+          canExecute
           selectedAgentId="codex"
           onSelectAgentId={() => {}}
           agentMenuOpen={false}

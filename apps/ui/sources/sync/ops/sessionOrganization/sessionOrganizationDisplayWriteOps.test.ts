@@ -237,6 +237,7 @@ describe('session organization display write ops', () => {
                 tagKey: 'opaque-existing',
                 sortKey: null,
                 display: { t: 'plain', v: { label: 'Existing' } },
+                displayState: { status: 'available', value: { label: 'Existing' } },
                 archivedAt: null,
                 createdAt: 1,
                 updatedAt: 1,

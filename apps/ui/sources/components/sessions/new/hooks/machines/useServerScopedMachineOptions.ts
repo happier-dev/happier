@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import {
     areServerProfileIdentifiersEquivalent,
     listServerProfiles,
@@ -10,15 +11,19 @@ import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 
-export type ServerScopedMachine = Machine & Readonly<{
+export type ServerScopedMachinePresentation = MachineDisplayRenderable & Readonly<{
     serverId: string;
     serverName: string;
 }>;
 
-export type ServerScopedMachineGroup = Readonly<{
+export type ServerScopedMachine = Machine & ServerScopedMachinePresentation;
+
+export type ServerScopedMachineGroup<
+    TMachine extends ServerScopedMachinePresentation = ServerScopedMachine,
+> = Readonly<{
     serverId: string;
     serverName: string;
-    machines: ServerScopedMachine[];
+    machines: TMachine[];
     loading: boolean;
     signedOut: boolean;
 }>;

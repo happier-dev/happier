@@ -4,10 +4,17 @@ import type {
   VoiceRuntimePlatform,
 } from '@happier-dev/protocol';
 
-import type { VoiceProviderRegistry, VoiceProviderRegistryEntry } from './providerRegistry';
+import { resolveVoiceDeviceSpeechRolePath } from '@/voice/settings/resolveVoiceProviderAvailability';
+import type { VoiceProviderLocalAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
+
+import {
+  type VoiceProviderRegistry,
+  type VoiceProviderRegistryEntry,
+} from './providerRegistry';
 
 export type VoiceReadinessFact = 'ready' | 'missing' | 'installing' | 'incompatible' | 'unknown';
 export type VoiceCredentialReadinessFact = VoiceReadinessFact | 'approval_required';
+export type VoiceProviderCredentialSourceKind = 'none' | 'savedSecret' | 'connectedAccount';
 export type VoiceSettingsReadinessFact =
   | 'ready'
   | 'missing_required_setting'
@@ -39,8 +46,16 @@ export type VoiceRoleReadiness = Readonly<{
 export function isVoiceRoleSelectableForConfiguration(input: Readonly<{
   readiness: VoiceRoleReadiness;
   credentialConfigurationAvailable: boolean;
+  passiveRuntimeCheckAvailable: boolean;
 }>): boolean {
   if (input.readiness.status === 'ready' || input.readiness.status === 'needs_setup') return true;
+  if (input.readiness.status === 'unavailable'
+    && input.readiness.code === 'runtime_unknown'
+    && input.passiveRuntimeCheckAvailable) {
+    // Selection is required to expose the passive setup check that can refine
+    // this unknown fact; runnable readiness remains unavailable until then.
+    return true;
+  }
   return input.readiness.status === 'unavailable'
     && input.readiness.recoveryAction === 'configure_credential'
     && input.credentialConfigurationAvailable;
@@ -110,20 +125,36 @@ function projectRequirement(
 export function projectVoiceProviderRequirements(
   entry: Pick<VoiceProviderRegistryEntry, 'requirements' | 'requirementsByMode'>,
   modeId: string | null | undefined,
+  credentialSourceKind?: VoiceProviderCredentialSourceKind | null,
 ): readonly VoiceReadinessRequirement[] | null {
-  if (!entry.requirementsByMode) return entry.requirements;
-  if (!modeId || !Object.prototype.hasOwnProperty.call(entry.requirementsByMode, modeId)) return null;
-  return entry.requirementsByMode[modeId] ?? null;
+  const declaredRequirements = !entry.requirementsByMode
+    ? entry.requirements
+    : !modeId || !Object.prototype.hasOwnProperty.call(entry.requirementsByMode, modeId)
+      ? null
+      : entry.requirementsByMode[modeId] ?? null;
+  if (!declaredRequirements || credentialSourceKind !== 'connectedAccount') {
+    return declaredRequirements;
+  }
+  return declaredRequirements.includes('execution_machine')
+    ? declaredRequirements
+    : Object.freeze([...declaredRequirements, 'execution_machine']);
 }
 
-export function resolveVoiceRoleReadiness(input: Readonly<{
+type ResolveVoiceRoleReadinessInput = Readonly<{
   registry: VoiceProviderRegistry;
   role: VoiceReadinessRole;
   providerId: string | null;
   platform: VoiceRuntimePlatform | 'unknown';
   modeId?: string | null;
+  credentialSourceKind?: VoiceProviderCredentialSourceKind | null;
+  localAvailability?: VoiceProviderLocalAvailability;
   facts: VoiceRoleReadinessFacts;
-}>): VoiceRoleReadiness {
+}>;
+
+function resolveVoiceRoleReadinessInternal(
+  input: ResolveVoiceRoleReadinessInput,
+  includePassiveSetupRequirements: boolean,
+): VoiceRoleReadiness {
   if (!input.providerId) {
     return result(input.role, null, 'needs_setup', 'provider_unselected', 'select_provider');
   }
@@ -147,10 +178,20 @@ export function resolveVoiceRoleReadiness(input: Readonly<{
     }
     return result(input.role, input.providerId, 'needs_setup', `settings_${input.facts.settings}`, 'open_provider_settings');
   }
-  const requirements = projectVoiceProviderRequirements(entry, input.modeId);
-  if (!requirements) {
+  const declaredRequirements = projectVoiceProviderRequirements(
+    entry,
+    input.modeId,
+    input.credentialSourceKind,
+  );
+  if (!declaredRequirements) {
     return result(input.role, input.providerId, 'needs_setup', 'provider_mode_unknown', 'open_provider_settings');
   }
+  const requirements = includePassiveSetupRequirements
+    ? Object.freeze(Array.from(new Set<VoiceReadinessRequirement>([
+        ...declaredRequirements,
+        ...(entry.providerSettings?.connectedServicesBinding ? ['credential'] as const : []),
+      ])))
+    : declaredRequirements;
   for (const requirement of requirements) {
     const projected = projectRequirement(
       input.role,
@@ -160,5 +201,30 @@ export function resolveVoiceRoleReadiness(input: Readonly<{
     );
     if (projected) return projected;
   }
+  if (entry.localReadiness?.kind === 'device_speech') {
+    const path = resolveVoiceDeviceSpeechRolePath({
+      role: input.role,
+      platformOs: input.platform,
+      local: input.localAvailability,
+    });
+    if (path && !path.runnable) {
+      const code = path.readiness === 'unknown'
+        ? 'device_stt_availability_unknown'
+        : 'device_stt_unavailable';
+      return result(input.role, input.providerId, 'unavailable', code, 'switch_provider');
+    }
+  }
   return result(input.role, input.providerId, 'ready', 'ready', 'none');
+}
+
+export function resolveVoiceRoleReadiness(
+  input: ResolveVoiceRoleReadinessInput,
+): VoiceRoleReadiness {
+  return resolveVoiceRoleReadinessInternal(input, false);
+}
+
+export function resolveVoicePassiveSetupReadiness(
+  input: ResolveVoiceRoleReadinessInput,
+): VoiceRoleReadiness {
+  return resolveVoiceRoleReadinessInternal(input, true);
 }

@@ -1,19 +1,43 @@
 import * as React from 'react';
 
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import {
-    connectedServiceProfileKey,
+    resolveQualifiedConnectedAccountLabel,
     resolveConnectedServiceProfileLabel,
 } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { deriveQuotaUtilizationPct } from '@/sync/domains/connectedServices/deriveQuotaUtilizationPct';
+import {
+    getLegacyConnectedServiceRegistryEntry,
+    type ConnectedServiceRegistryEntry,
+} from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import {
+    resolveConnectedAccountUiNegotiation,
+} from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
+import {
+    useServerFeaturesRuntimeSnapshot,
+} from '@/sync/domains/features/featureDecisionRuntime';
+import {
+    selectConnectedServiceQuotaSummaryMeters,
+    type ConnectedServiceQuotaSummaryStrategy,
+} from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import {
     type ConnectedServiceId,
     type ConnectedServiceQuotaMeterV1,
+    type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
 
-import { useConnectedServiceQuotaSnapshots } from './useConnectedServiceQuotaSnapshots';
+import {
+    useConnectedServiceQuotaSnapshots,
+} from './useConnectedServiceQuotaSnapshots';
+import type {
+    ConnectedServiceQuotaProfileRefInput,
+} from '@/sync/domains/connectedServices/connectedServiceQuotaProfileRefs';
+import {
+    resolveConnectedServiceRegistryEntryDisplayName,
+} from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 
 export type ConnectedServiceQuotaSummaryMeter = Readonly<{
     meterId: string;
@@ -25,7 +49,12 @@ export type ConnectedServiceQuotaSummaryMeter = Readonly<{
 
 export type ConnectedServiceQuotaSummary = Readonly<{
     key: string;
-    serviceId: ConnectedServiceId;
+    /** Exact V4 owner identity; legacy scalar ids never escape this boundary. */
+    service: PluginContributionIdentityV1;
+    /** Present only for a released built-in V2/V3 compatibility projection. */
+    legacyServiceId: ConnectedServiceId | null;
+    /** Descriptor-derived display label, or the bounded generic fallback. */
+    serviceLabel: string;
     profileId: string;
     profileLabel: string | null;
     planLabel: string | null;
@@ -33,41 +62,92 @@ export type ConnectedServiceQuotaSummary = Readonly<{
     meters: ReadonlyArray<ConnectedServiceQuotaSummaryMeter>;
 }>;
 
+/**
+ * Projects a snapshot's meters for the usage summary through the same owner the
+ * settings-row badges use, so both surfaces rank and label a meter identically.
+ * Unpinned accounts summarize the snapshot's own meters; a pinned meter that the
+ * snapshot no longer reports is dropped rather than shown without a value.
+ */
 function buildSummaryMeters(
     meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>,
     pinnedMeterIds: ReadonlyArray<string>,
-    strategy: 'primary' | 'min_remaining',
+    strategy: ConnectedServiceQuotaSummaryStrategy,
 ): ConnectedServiceQuotaSummary['meters'] {
-    const byId = new Map(meters.map((meter) => [meter.meterId, meter] as const));
-    const selectedMeters = pinnedMeterIds.length > 0
-        ? pinnedMeterIds.map((meterId) => byId.get(meterId)).filter((meter): meter is ConnectedServiceQuotaMeterV1 => Boolean(meter))
-        : [...meters];
+    return selectConnectedServiceQuotaSummaryMeters({
+        meters,
+        meterIds: pinnedMeterIds.length > 0
+            ? pinnedMeterIds
+            : meters.map((meter) => meter.meterId),
+        strategy,
+    })
+        .flatMap((selected) => selected.meter
+            ? [{
+                meterId: selected.meterId,
+                label: selected.label,
+                utilizationPct: selected.utilizationPct,
+                remainingPct: selected.remainingPct,
+                status: selected.meter.status,
+            } satisfies ConnectedServiceQuotaSummaryMeter]
+            : [])
+        .slice(0, 3);
+}
 
-    const normalized = selectedMeters.map((meter) => {
-        const utilizationPct = deriveQuotaUtilizationPct(meter);
-        return {
-            meterId: meter.meterId,
-            label: meter.label,
-            utilizationPct,
-            remainingPct: utilizationPct === null ? null : Math.max(0, 100 - utilizationPct),
-            status: meter.status,
-        } satisfies ConnectedServiceQuotaSummaryMeter;
-    });
+function resolveQualifiedSummaryService(params: Readonly<{
+    ref: Readonly<{ service: PluginContributionIdentityV1; accountId: string }>;
+    settings: ReturnType<typeof useSettings>;
+    registryEntries: readonly ConnectedServiceRegistryEntry[];
+}>): Readonly<{
+    service: PluginContributionIdentityV1;
+    legacyServiceId: ConnectedServiceId | null;
+    serviceLabel: string;
+    profileId: string;
+    profileLabel: string | null;
+}> {
+    const entry = params.registryEntries.find((candidate) => (
+        candidate.service?.pluginId === params.ref.service.pluginId
+        && candidate.service.localId === params.ref.service.localId
+    )) ?? null;
+    const legacyServiceId = entry?.legacyServiceId ?? null;
+    return {
+        service: params.ref.service,
+        legacyServiceId,
+        serviceLabel: entry
+            ? resolveConnectedServiceRegistryEntryDisplayName(entry, t)
+            : t('connectedServices.fallbackName'),
+        profileId: params.ref.accountId,
+        profileLabel: resolveQualifiedConnectedAccountLabel({
+            labelsByKey: params.settings.connectedServicesProfileLabelByKey,
+            service: params.ref.service,
+            legacyServiceId,
+            accountId: params.ref.accountId,
+        }),
+    };
+}
 
-    if (strategy === 'primary') {
-        return normalized.slice(0, 3);
-    }
-
-    const sorted = normalized.sort((left, right) => {
-        const leftScore = left.remainingPct ?? Number.POSITIVE_INFINITY;
-        const rightScore = right.remainingPct ?? Number.POSITIVE_INFINITY;
-        if (leftScore !== rightScore) {
-            return leftScore - rightScore;
-        }
-        return left.label.localeCompare(right.label);
-    });
-
-    return sorted.slice(0, 3);
+function resolveLegacySummaryService(params: Readonly<{
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    settings: ReturnType<typeof useSettings>;
+}>): Readonly<{
+    service: PluginContributionIdentityV1;
+    legacyServiceId: ConnectedServiceId;
+    serviceLabel: string;
+    profileId: string;
+    profileLabel: string | null;
+}> | null {
+    const entry = getLegacyConnectedServiceRegistryEntry(params.serviceId);
+    if (!entry.service || !entry.legacyServiceId) return null;
+    return {
+        service: entry.service,
+        legacyServiceId: entry.legacyServiceId,
+        serviceLabel: resolveConnectedServiceRegistryEntryDisplayName(entry, t),
+        profileId: params.profileId,
+        profileLabel: resolveConnectedServiceProfileLabel({
+            labelsByKey: params.settings.connectedServicesProfileLabelByKey,
+            serviceId: entry.legacyServiceId,
+            profileId: params.profileId,
+        }),
+    };
 }
 
 export function useConnectedServiceQuotaSummaries(): Readonly<{
@@ -78,15 +158,35 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const profile = useProfile();
     const settings = useSettings();
+    const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
+    const serverFeatures = useServerFeaturesRuntimeSnapshot({
+        enabled: quotasEnabled,
+    });
+    const accountTransport = resolveConnectedAccountUiNegotiation(serverFeatures);
 
-    const connectedProfiles = React.useMemo(() => {
+    const quotaProfileInputs = React.useMemo<ConnectedServiceQuotaProfileRefInput[]>(() => {
         if (!quotasEnabled) {
-            return [] as Array<{ serviceId: ConnectedServiceId; profileId: string }>;
+            return [];
         }
 
-        const next: Array<{ serviceId: ConnectedServiceId; profileId: string }> = [];
-        const seenKeys = new Set<string>();
+        if (accountTransport === 'advertised-v4') {
+            return profile.connectedAccountsV4.flatMap((account) => (
+                // Usage DISPLAY fails OPEN: skip an account ONLY for an explicit,
+                // recognized needs_reauth. Absent/unknown status still shows usage.
+                shouldHideQuotaForCredentialStatus(account.status)
+                    ? []
+                    : [{ ref: account.ref }]
+            ));
+        }
+
+        // A failed/in-flight V4 capability probe has no safe scalar transport.
+        // Only a proven legacy peer may enter through the generated adapter.
+        if (accountTransport !== 'legacy') return [];
+
+        const next: ConnectedServiceQuotaProfileRefInput[] = [];
         for (const service of profile.connectedServicesV2) {
+            const compatibility = getLegacyConnectedServiceRegistryEntry(service.serviceId);
+            if (!compatibility.service || !compatibility.legacyServiceId) continue;
             for (const entry of service.profiles ?? []) {
                 // Usage DISPLAY fails OPEN: skip a profile ONLY for an explicit,
                 // recognized needs_reauth. Absent/unknown/'' status still shows
@@ -94,27 +194,25 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
                 if (shouldHideQuotaForCredentialStatus(entry.status)) {
                     continue;
                 }
-                const key = connectedServiceProfileKey({
-                    serviceId: service.serviceId,
-                    profileId: entry.profileId,
-                });
-                if (seenKeys.has(key)) {
-                    continue;
-                }
-                seenKeys.add(key);
                 next.push({
-                    serviceId: service.serviceId,
+                    serviceId: compatibility.legacyServiceId,
                     profileId: entry.profileId,
                 });
             }
         }
         return next;
     }, [
+        accountTransport,
+        profile.connectedAccountsV4,
         profile.connectedServicesV2,
         quotasEnabled,
     ]);
 
-    const { snapshotsByKey, loadingByKey } = useConnectedServiceQuotaSnapshots(connectedProfiles);
+    const {
+        profiles: connectedProfiles,
+        snapshotsByKey,
+        loadingByKey,
+    } = useConnectedServiceQuotaSnapshots(quotaProfileInputs);
 
     const summaries = React.useMemo(() => {
         if (!quotasEnabled) {
@@ -123,26 +221,31 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
 
         const next: ConnectedServiceQuotaSummary[] = [];
         for (const entry of connectedProfiles) {
-            const key = connectedServiceProfileKey(entry);
-            const snapshot = snapshotsByKey[key];
+            const summaryService = entry.kind === 'qualified'
+                ? resolveQualifiedSummaryService({
+                    ref: entry.ref,
+                    settings,
+                    registryEntries: connectedServicesRegistrySnapshot.entries,
+                })
+                : resolveLegacySummaryService({
+                    serviceId: entry.serviceId,
+                    profileId: entry.profileId,
+                    settings,
+                });
+            if (!summaryService) continue;
+            const snapshot = snapshotsByKey[entry.key];
             if (!snapshot || snapshot.meters.length === 0) {
                 continue;
             }
 
-            const pinnedMeterIds = settings.connectedServicesQuotaPinnedMeterIdsByKey[key] ?? [];
-            const rawStrategy = settings.connectedServicesQuotaSummaryStrategyByKey[key];
+            const pinnedMeterIds = settings.connectedServicesQuotaPinnedMeterIdsByKey[entry.key] ?? [];
+            const rawStrategy = settings.connectedServicesQuotaSummaryStrategyByKey[entry.key];
             const strategy = rawStrategy === 'min_remaining' ? 'min_remaining' : 'primary';
             const meters = buildSummaryMeters(snapshot.meters, pinnedMeterIds, strategy);
 
             next.push({
-                key,
-                serviceId: entry.serviceId,
-                profileId: entry.profileId,
-                profileLabel: resolveConnectedServiceProfileLabel({
-                    labelsByKey: settings.connectedServicesProfileLabelByKey,
-                    serviceId: entry.serviceId,
-                    profileId: entry.profileId,
-                }),
+                key: entry.key,
+                ...summaryService,
                 planLabel: snapshot.planLabel,
                 primaryMeter: meters[0] ?? null,
                 meters,
@@ -155,9 +258,13 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
             if (leftScore !== rightScore) {
                 return leftScore - rightScore;
             }
-            return left.serviceId.localeCompare(right.serviceId);
+            const serviceOrder = left.serviceLabel.localeCompare(right.serviceLabel);
+            return serviceOrder !== 0
+                ? serviceOrder
+                : left.key.localeCompare(right.key);
         });
     }, [
+        connectedServicesRegistrySnapshot,
         connectedProfiles,
         quotasEnabled,
         settings.connectedServicesProfileLabelByKey,

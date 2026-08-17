@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { Text } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type VoiceSurfaceControlStyles = Readonly<Record<string, unknown>>;
 const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
@@ -106,7 +106,7 @@ export const VoiceSurfaceControls = React.memo(function VoiceSurfaceControls(pro
                     onPress={props.onCancelTurn}
                     style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, props.styles.iconAction as any, MINIMUM_TARGET_STYLE]}
                 >
-                    <Ionicons name="close-circle-outline" size={18} color={props.textColor} />
+                    <Icon name="x-circle" size={16} color={props.textColor} />
                 </Pressable>
             ) : null}
 
@@ -119,7 +119,7 @@ export const VoiceSurfaceControls = React.memo(function VoiceSurfaceControls(pro
                     onPress={props.onToggleMute}
                     style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, props.styles.iconAction as any, MINIMUM_TARGET_STYLE]}
                 >
-                    <Ionicons name={props.isMuted ? 'mic-off-outline' : 'mic-outline'} size={18} color={props.textColor} />
+                    <Icon name={props.isMuted ? 'microphone-slash' : 'microphone'} size={16} color={props.textColor} />
                 </Pressable>
             ) : null}
 
@@ -131,7 +131,7 @@ export const VoiceSurfaceControls = React.memo(function VoiceSurfaceControls(pro
                     onPress={props.onOpenConversation}
                     style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, props.styles.iconAction as any, MINIMUM_TARGET_STYLE]}
                 >
-                    <Ionicons name="chatbubble-ellipses-outline" size={18} color={props.textColor} />
+                    <Icon name="chat-circle-dots" size={16} color={props.textColor} />
                 </Pressable>
             ) : null}
 
@@ -142,7 +142,7 @@ export const VoiceSurfaceControls = React.memo(function VoiceSurfaceControls(pro
                     onPress={props.onTeleport}
                     style={({ pressed }) => [{ opacity: pressed ? 0.72 : 1 }, props.styles.iconAction as any, MINIMUM_TARGET_STYLE]}
                 >
-                    <Ionicons name="navigate-outline" size={18} color={props.textColor} />
+                    <Icon name="navigation-arrow" size={16} color={props.textColor} />
                 </Pressable>
             ) : null}
 
@@ -157,7 +157,7 @@ export const VoiceSurfaceControls = React.memo(function VoiceSurfaceControls(pro
                     testID={props.toggleTestID}
                 >
                     {props.canStop ? (
-                        <Ionicons name="stop-circle" size={22} color={props.tintColor} />
+                        <Icon name="stop-circle" size={20} color={props.tintColor} />
                     ) : (
                         <Image
                             source={require('@/assets/images/icon-voice-white.png')}

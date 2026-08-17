@@ -148,6 +148,7 @@ export type DaemonVoiceInferenceStreamingSttTransportSelection = Readonly<{
 }>;
 
 export type DaemonVoiceInferenceStreamingSttTransportFactoryInput = Readonly<{
+    sessionId?: string | null;
     machineTarget: DaemonVoiceInferenceMachineTarget;
     requestId: string;
     signal: AbortSignal | null;
@@ -216,8 +217,16 @@ export class DaemonVoiceInferenceClient {
         return scope?.machineId ?? machineId;
     }
 
-    private async resolveMachineTarget(): Promise<DaemonVoiceInferenceMachineTarget> {
+    private async resolveMachineTarget(
+        capturedTarget?: DaemonVoiceInferenceMachineTarget | null,
+    ): Promise<DaemonVoiceInferenceMachineTarget> {
         await this.assertFeatureEnabled();
+        const capturedMachineId = typeof capturedTarget?.machineId === 'string'
+            ? capturedTarget.machineId.trim()
+            : '';
+        if (capturedMachineId) {
+            return { machineId: capturedMachineId };
+        }
         const machineId = this.deps.resolveVoiceHomeDaemonMachineId();
         if (!machineId) {
             throw createDaemonVoiceInferenceClientError('machine_unreachable');
@@ -568,6 +577,7 @@ export class DaemonVoiceInferenceClient {
 
     async transcribeRecordedAudio(params: Readonly<{
         sessionId?: string | null;
+        machineTarget?: DaemonVoiceInferenceMachineTarget | null;
         durationMs?: number | null;
         source: LocalUploadSource;
         inputMimeType: string;
@@ -580,7 +590,7 @@ export class DaemonVoiceInferenceClient {
         language: string | null;
         modelPackId: string | null;
     }>> {
-        const machineTarget = await this.resolveMachineTarget();
+        const machineTarget = await this.resolveMachineTarget(params.machineTarget);
         const requestId = this.deps.createRequestId();
         const durationMs = typeof params.durationMs === 'number' && Number.isFinite(params.durationMs)
             ? Math.max(0, params.durationMs)
@@ -749,6 +759,7 @@ export class DaemonVoiceInferenceClient {
                 ),
         };
         const selectedTransport = await this.deps.createStreamingSttTransport({
+            sessionId: params.sessionId ?? null,
             machineTarget,
             requestId,
             signal: rpcSignal,

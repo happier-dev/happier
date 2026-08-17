@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 
 import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelpers';
 
@@ -18,9 +19,14 @@ const machineTargetState = vi.hoisted(() => ({
   value: null as null | { machineId: string; basePath: string },
 }));
 
+// V-2 (2026-08-11): the hook takes the session's machine id as a PRIMITIVE instead of subscribing to
+// the whole `Session`, so the store seam moved from `useSession` to `useSessionMachineId`. The
+// fixtures below still supply the session record and the REAL `resolveSessionMachineId` still decides
+// — including the `externalSessionV1` link leg — so this is the same coverage through the new seam,
+// not a weaker stub.
 installServerHookCommonModuleMocks({
   storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useSession: (sessionId: string) => useSessionSpy(sessionId),
+    useSessionMachineId: (sessionId: string) => resolveSessionMachineId(useSessionSpy(sessionId)?.metadata),
   }),
 });
 

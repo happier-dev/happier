@@ -27,6 +27,7 @@ const {
     setScmCommitMessageGeneratorInstructions,
     applySettings,
     routerPush,
+    daemonProjectionRequest,
     daemonProjectionState,
 } = vi.hoisted(() => ({
     setScmCommitStrategy: vi.fn(),
@@ -46,6 +47,7 @@ const {
     setScmCommitMessageGeneratorInstructions: vi.fn(),
     applySettings: vi.fn(),
     routerPush: vi.fn(),
+    daemonProjectionRequest: vi.fn(),
     daemonProjectionState: {
         current: {
             phase: 'unsupported',
@@ -118,15 +120,45 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 }));
 
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => daemonProjectionState.current,
+    useDaemonMergedProjectionInputs: (params: unknown) => {
+        daemonProjectionRequest(params);
+        return daemonProjectionState.current;
+    },
 }));
 
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
-    usePrimaryMachineFromActiveSelection: () => 'machine-1',
-}));
-
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://server.example', generation: 1 }),
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+        candidates: [{
+            target: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+            displayName: 'Machine Target',
+            serverLabel: 'Server Target',
+            availability: 'online',
+            observation: 'live',
+            observedAt: 1,
+        }],
+        pickerRows: [],
+        state: {
+            kind: 'online',
+            target: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+            machine: {
+                target: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+                displayName: 'Machine Target',
+                serverLabel: 'Server Target',
+                availability: 'online',
+                observation: 'live',
+                observedAt: 1,
+            },
+        },
+        canExecute: true,
+        selectTarget: vi.fn(),
+        clearTarget: vi.fn(),
+        resolveExecutionTarget: () => ({
+            target: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+            serverId: 'server-target',
+            machine: { id: 'machine-target' },
+        }),
+    }),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -147,6 +179,17 @@ describe('SourceControlSettingsView', () => {
         scmGitRepoPreferredBackendValue = 'git';
         scmGitRepoPreferredBackendQualifiedIdValue = null;
         applySettings.mockClear();
+        daemonProjectionRequest.mockClear();
+    });
+
+    it('reads the SCM contribution catalog from the Administration-selected exact target', async () => {
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+        await renderSettingsView(React.createElement(SourceControlSettingsView));
+
+        expect(daemonProjectionRequest).toHaveBeenCalledWith({
+            machineId: 'machine-target',
+            serverId: 'server-target',
+        });
     });
 
     it('uses the active daemon SCM projection for backend selection, settings, and hosting authentication', async () => {

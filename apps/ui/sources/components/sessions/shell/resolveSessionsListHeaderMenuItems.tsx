@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { getPreferredLanguage, t } from '@/text';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -11,6 +10,7 @@ import {
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const SESSIONS_LIST_HEADER_MENU_ITEMS_CACHE = new LruMap<string, ReadonlyArray<DropdownMenuItem>>({
     maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
@@ -63,7 +63,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('sessionsList.storageAllFilter'),
             category: t('sessionsList.storageFilterCategory'),
             rightElement: input.storageFilter === 'all'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         } satisfies DropdownMenuItem, {
             id: 'sessionListStorageFilterPersisted',
@@ -71,7 +71,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('sessionsList.storagePersistedTab'),
             category: t('sessionsList.storageFilterCategory'),
             rightElement: input.storageFilter === 'persisted'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         } satisfies DropdownMenuItem, {
             id: 'sessionListStorageFilterDirect',
@@ -79,7 +79,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('sessionsList.storageExternalFilter'),
             category: t('sessionsList.storageFilterCategory'),
             rightElement: input.storageFilter === 'direct'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         } satisfies DropdownMenuItem] : []),
         {
@@ -88,7 +88,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsSession.sessionList.orderingOptions.custom'),
             category: t('settingsSession.sessionList.menuSections.sortBy'),
             rightElement: orderingMode === 'custom'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -97,7 +97,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsSession.sessionList.orderingOptions.created'),
             category: t('settingsSession.sessionList.menuSections.sortBy'),
             rightElement: orderingMode === 'created'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -106,7 +106,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsSession.sessionList.orderingOptions.updated'),
             category: t('settingsSession.sessionList.menuSections.sortBy'),
             rightElement: orderingMode === 'updated'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -115,7 +115,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             subtitle: t('settingsSession.sessionList.sectionModeActivitySubtitle'),
             category: t('settingsSession.sessionList.sectionModeTitle'),
             rightElement: input.sectionMode === 'activity'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -124,7 +124,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             subtitle: t('settingsSession.sessionList.sectionModeSingleSubtitle'),
             category: t('settingsSession.sessionList.sectionModeTitle'),
             rightElement: input.sectionMode === 'single'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -132,7 +132,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsFeatures.sessionListGrouping.projectTitle'),
             category: t('settingsFeatures.sessionListActiveGrouping'),
             rightElement: input.activeGrouping === 'project'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -140,7 +140,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsFeatures.sessionListGrouping.dateTitle'),
             category: t('settingsFeatures.sessionListActiveGrouping'),
             rightElement: input.activeGrouping === 'date'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -148,7 +148,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsFeatures.sessionListGrouping.projectTitle'),
             category: t('settingsFeatures.sessionListInactiveGrouping'),
             rightElement: input.inactiveGrouping === 'project'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         {
@@ -156,7 +156,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsFeatures.sessionListGrouping.dateTitle'),
             category: t('settingsFeatures.sessionListInactiveGrouping'),
             rightElement: input.inactiveGrouping === 'date'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
         ...(input.showFolderViewMode ? [{
@@ -165,7 +165,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsSession.sessionList.folderTreeView'),
             category: t('settingsSession.sessionList.menuSections.show'),
             rightElement: input.folderViewMode === 'tree'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         } satisfies DropdownMenuItem,
         {
@@ -175,7 +175,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             subtitle: t('settingsSession.sessionList.folderSortModeFoldersFirstSubtitle'),
             category: t('settingsSession.sessionList.menuSections.folderSortMode'),
             rightElement: effectiveFolderSortMode === 'foldersFirst'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         } satisfies DropdownMenuItem,
         {
@@ -188,7 +188,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             category: t('settingsSession.sessionList.menuSections.folderSortMode'),
             disabled: isDateOrderingMode,
             rightElement: effectiveFolderSortMode === 'mixed'
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         } satisfies DropdownMenuItem] : []),
         {
@@ -196,7 +196,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
             title: t('settingsFeatures.hideInactiveSessions'),
             category: t('settingsSession.sessionList.menuSections.show'),
             rightElement: input.isHideInactiveSessionsEnabled
-                ? <Ionicons name="checkmark" size={16} color={input.actionIconColor} />
+                ? <Icon name="check" size={16} color={input.actionIconColor} />
                 : undefined,
         },
     ];

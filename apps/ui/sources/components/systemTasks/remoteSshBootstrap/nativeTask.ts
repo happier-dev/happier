@@ -13,7 +13,12 @@ import {
 import type { NativeSshModule } from '@happier-dev/ssh-native';
 
 import { authApprove } from '@/auth/flows/approve';
-import { isLegacyAuthCredentials, TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import {
+    isDataKeyAuthCredentials,
+    isLegacyAuthCredentials,
+    TokenStorage,
+    type AuthCredentials,
+} from '@/auth/storage/tokenStorage';
 import { buildTerminalResponseV1, buildTerminalResponseV2 } from '@/auth/terminal/terminalProvisioning';
 import { decodeBase64 } from '@/encryption/base64';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -83,12 +88,19 @@ function decodeTerminalPublicKey(value: string): Uint8Array {
 }
 
 function resolveTerminalProvisioningContentPrivateKey(credentials: AuthCredentials): Uint8Array {
-    if (!isLegacyAuthCredentials(credentials)) {
+    if (isDataKeyAuthCredentials(credentials)) {
         const machineKey = decodeBase64(credentials.encryption.machineKey, 'base64');
         if (machineKey.length !== 32) {
             throw new Error('native_ssh_invalid_terminal_key_material');
         }
         return machineKey;
+    }
+
+    if (!isLegacyAuthCredentials(credentials)) {
+        throw new SystemTaskExecutionError(
+            'native_ssh_token_only_terminal_approval_upgrade_required',
+            'Token-only native SSH pairing requires a newer authenticated remote-pairing protocol.',
+        );
     }
 
     const secretKey = decodeBase64(credentials.secret, 'base64url');

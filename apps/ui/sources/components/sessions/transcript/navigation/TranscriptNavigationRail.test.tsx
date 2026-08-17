@@ -390,8 +390,8 @@ describe('TranscriptNavigationRail', () => {
                 paneHeightPx={240}
             />,
         );
-        expect(screen.findByTestId('transcript-navigation-rail.fade.top')).toBeNull();
-        expect(screen.findByTestId('transcript-navigation-rail.fade.bottom')).toBeTruthy();
+        expect(screen.findByTestId('transcript-navigation-rail.edge.top')).toBeNull();
+        expect(screen.findByTestId('transcript-navigation-rail.edge.bottom')).toBeTruthy();
 
         const marker = screen.findByTestId('transcript-navigation-rail.marker:turn-31');
         await act(async () => {
@@ -412,7 +412,7 @@ describe('TranscriptNavigationRail', () => {
             screen.findByTestId('transcript-navigation-rail.preview')?.props.style,
             'top',
         );
-        const topFade = screen.findByTestId('transcript-navigation-rail.fade.top');
+        const topFade = screen.findByTestId('transcript-navigation-rail.edge.top');
         expect(topFade).toBeTruthy();
         // Overflow fades are real gradients, not solid overlay blocks.
         expect(topFade?.findAll((node) => String(node.type) === 'LinearGradient').length).toBeGreaterThan(0);
@@ -424,7 +424,7 @@ describe('TranscriptNavigationRail', () => {
             });
         });
 
-        expect(screen.findByTestId('transcript-navigation-rail.fade.bottom')).toBeNull();
+        expect(screen.findByTestId('transcript-navigation-rail.edge.bottom')).toBeNull();
     });
 
     it('magnifies the focused marker and tapers its neighbours through React state', async () => {

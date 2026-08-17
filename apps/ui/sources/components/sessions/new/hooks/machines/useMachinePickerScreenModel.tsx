@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
@@ -22,6 +21,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function useMachinePickerScreenOptions(params: Readonly<{
     title: string;
@@ -38,7 +38,7 @@ function useMachinePickerScreenOptions(params: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={t('common.back')}
         >
-            <Ionicons name="chevron-back" size={22} color={params.theme.colors.chrome.header.foreground} />
+            <Icon name="caret-left" size={20} color={params.theme.colors.chrome.header.foreground} />
         </Pressable>
     ), [params.onBack, params.theme.colors.chrome.header.foreground]);
 
@@ -47,7 +47,7 @@ function useMachinePickerScreenOptions(params: Readonly<{
             title={params.title}
             tintColor={tintColor ?? params.theme.colors.chrome.header.foreground}
             actionLabel={t('common.refresh')}
-            actionIconName="refresh-outline"
+            actionIconName="arrow-clockwise"
             actionColor={params.theme.colors.text.secondary}
             actionDisabled={params.isRefreshing}
             actionLoading={params.isRefreshing}

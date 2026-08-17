@@ -88,6 +88,12 @@ interface MultiTextInputProps {
     onFilesPasted?: (files: readonly File[]) => void;
     onFilesDropped?: (files: readonly File[]) => void;
     onFileDragActiveChange?: (active: boolean) => void;
+    accessibilityRole?: 'combobox';
+    accessibilityState?: Readonly<{ expanded?: boolean }>;
+    'aria-haspopup'?: 'listbox';
+    'aria-autocomplete'?: 'list';
+    'aria-controls'?: string;
+    'aria-activedescendant'?: string;
 }
 
 function resolveNativeReturnKeyType(submitBehavior: MultiTextInputSubmitBehavior | undefined): 'default' | 'send' {
@@ -453,6 +459,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 onSubmitEditing={props.onSubmitEditing ? () => props.onSubmitEditing?.() : undefined}
                 onFocus={props.onFocus}
                 onBlur={props.onBlur}
+                accessibilityRole={props.accessibilityRole}
+                accessibilityState={props.accessibilityState}
             />
         </View>
     );

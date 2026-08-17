@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Platform, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -26,9 +25,13 @@ import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getRes
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import type { ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
+import {
+    readProfileEnabledById,
+    type ProfileEnabledById,
+} from '@/sync/domains/profiles/profileEnablement';
 import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
 import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export interface ProfilesListProps {
@@ -41,6 +44,10 @@ export interface ProfilesListProps {
     onPressDefaultEnvironment?: () => void;
 
     machineId: string | null;
+    /** Optional server context for an exact machine-scoped preview. */
+    serverId?: string | null;
+    /** Optional content rendered before profile groups inside the canonical list scroll surface. */
+    header?: React.ReactNode;
 
     includeDefaultEnvironmentRow?: boolean;
     includeAddProfileRow?: boolean;
@@ -95,6 +102,7 @@ type ProfileRowProps = {
     showDivider: boolean;
     isMobile: boolean;
     machineId: string | null;
+    serverId?: string | null;
     subtitleText: string;
     showMobileBadge: boolean;
     onPressProfile?: (profile: AIBackendProfile) => void | Promise<void>;
@@ -127,6 +135,7 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
                     <ProfileRequirementsBadge
                         profile={props.profile}
                         machineId={props.machineId}
+                        serverId={props.serverId}
                         overrideReady={props.getSecretOverrideReady?.(props.profile) ?? false}
                         machineEnvOverride={props.getSecretMachineEnvOverride?.(props.profile) ?? null}
                         onPressIn={() => ignoreNextRowPress(props.ignoreRowPressRef)}
@@ -137,7 +146,7 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
                 </View>
             </View>
         );
-    }, [props.ignoreRowPressRef, props.machineId, props.onSecretBadgePress, props.profile, props.showMobileBadge, props.subtitleText, theme.colors.text.secondary]);
+    }, [props.ignoreRowPressRef, props.machineId, props.onSecretBadgePress, props.profile, props.serverId, props.showMobileBadge, props.subtitleText, theme.colors.text.secondary]);
 
     const onPress = React.useCallback(() => {
         if (props.isDisabled) return;
@@ -169,9 +178,13 @@ export function ProfilesList(props: ProfilesListProps) {
     const { theme, rt } = useUnistyles();
     const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const settingsProfileEnabledById = useSetting('profileEnabledById') as ProfileEnabledById | undefined;
+    const settingsProfileEnabledByIdRaw = useSetting('profileEnabledById');
+    const settingsProfileEnabledById = React.useMemo(
+        () => readProfileEnabledById(settingsProfileEnabledByIdRaw),
+        [settingsProfileEnabledByIdRaw],
+    );
     const lastUsedProfile = useSetting('lastUsedProfile');
-    const secretBindingsByProfileId = useSetting('secretBindingsByProfileId');
+    const secretBindingsByProfileId = useSetting('currentSecretBindingsByProfileId');
     const providerSettingsV1 = useSetting('providerSettingsV1');
     const providerMigration = React.useMemo(() => (
         readProviderSettingsFromAccountSettingsV1({ providerSettingsV1 }).settings.migration
@@ -182,6 +195,7 @@ export function ProfilesList(props: ProfilesListProps) {
     }, [backendEnabledByTargetKey]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: props.machineId,
+        serverId: props.serverId,
         enabled: Boolean(props.machineId),
         staleMs: 60_000,
     });
@@ -294,7 +308,7 @@ export function ProfilesList(props: ProfilesListProps) {
             {
                 id: 'favorite',
                 title: isFavorite ? t('profiles.actions.removeFromFavorites') : t('profiles.actions.addToFavorites'),
-                icon: isFavorite ? 'star' : 'star-outline',
+                icon: 'star',
                 onPress: () => toggleFavorite(''),
                 color: isFavorite ? selectedIndicatorColor : theme.colors.text.secondary,
             },
@@ -304,7 +318,7 @@ export function ProfilesList(props: ProfilesListProps) {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                 <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
                     {normalizeNodeForView(
-                        <Ionicons name="checkmark-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />,
+                        <Icon name="check-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />,
                     )}
                 </View>
                 <ItemRowActions
@@ -332,6 +346,7 @@ export function ProfilesList(props: ProfilesListProps) {
                     <ProfileRequirementsBadge
                         profile={profile}
                         machineId={props.machineId}
+                        serverId={props.serverId}
                         overrideReady={props.getSecretOverrideReady?.(profile) ?? false}
                         machineEnvOverride={props.getSecretMachineEnvOverride?.(profile) ?? null}
                         onPressIn={() => ignoreNextRowPress(ignoreRowPressRef)}
@@ -342,7 +357,7 @@ export function ProfilesList(props: ProfilesListProps) {
                 )}
                 <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
                     {normalizeNodeForView(
-                        <Ionicons name="checkmark-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />,
+                        <Icon name="check-circle" size={24} color={selectedIndicatorColor} style={{ opacity: isSelected ? 1 : 0 }} />,
                     )}
                 </View>
                 <ItemRowActions
@@ -366,6 +381,7 @@ export function ProfilesList(props: ProfilesListProps) {
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            {props.header}
             {showFavoritesGroup && (
                 <ItemGroup
                     title={props.groupTitles?.favorites ?? t('profiles.groups.favorites')}
@@ -379,7 +395,7 @@ export function ProfilesList(props: ProfilesListProps) {
                             testID="profiles-list-row:default-environment"
                             title={t('profiles.noProfile')}
                             subtitle={t('profiles.noProfileDescription')}
-                            leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.text.secondary} />}
+                            leftElement={<Icon name="house" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                             selected={!props.selectedProfileId}
                             onPress={() => {
@@ -420,6 +436,7 @@ export function ProfilesList(props: ProfilesListProps) {
                                 showDivider={!isLast}
                                 isMobile={isMobile}
                                 machineId={props.machineId}
+                                serverId={props.serverId}
                                 subtitleText={subtitleText}
                                 showMobileBadge={showMobileBadge}
                                 onPressProfile={props.onPressProfile}
@@ -467,6 +484,7 @@ export function ProfilesList(props: ProfilesListProps) {
                                 showDivider={!isLast}
                                 isMobile={isMobile}
                                 machineId={props.machineId}
+                                serverId={props.serverId}
                                 subtitleText={subtitleText}
                                 showMobileBadge={showMobileBadge}
                                 onPressProfile={props.onPressProfile}
@@ -496,7 +514,7 @@ export function ProfilesList(props: ProfilesListProps) {
                         testID="profiles-list-row:default-environment"
                         title={t('profiles.noProfile')}
                         subtitle={t('profiles.noProfileDescription')}
-                        leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.text.secondary} />}
+                        leftElement={<Icon name="house" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         selected={!props.selectedProfileId}
                         onPress={() => {
@@ -538,6 +556,7 @@ export function ProfilesList(props: ProfilesListProps) {
                             showDivider={!isLast}
                             isMobile={isMobile}
                             machineId={props.machineId}
+                            serverId={props.serverId}
                             subtitleText={subtitleText}
                             showMobileBadge={showMobileBadge}
                             onPressProfile={props.onPressProfile}
@@ -557,7 +576,7 @@ export function ProfilesList(props: ProfilesListProps) {
                         testID="profiles-list-add-profile"
                         title={t('profiles.addProfile')}
                         subtitle={t('profiles.subtitle')}
-                        leftElement={<Ionicons name="add-circle-outline" size={29} color={theme.colors.button.secondary.tint} />}
+                        leftElement={<Icon name="plus-circle" size={29} color={theme.colors.button.secondary.tint} />}
                         onPress={props.onAddProfilePress}
                         showChevron={false}
                         showDivider={false}

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveHostedWebRuntimeDiagnostics } from './hostedWebRuntime';
+import {
+    resolveHostedWebRuntimeDiagnostics,
+} from './hostedWebRuntime';
 
 const hostedWeb = {
     id: 'hostedWeb:acme.preview:preview-web',
@@ -14,17 +16,19 @@ const hostedWeb = {
 } as const;
 
 describe('hosted-web UI runtime diagnostics', () => {
-    it('distinguishes static asset unavailability from preview expiry', () => {
+    it('reports a missing endpoint without inferring frame-adapter absence from static assets', () => {
         expect(resolveHostedWebRuntimeDiagnostics({
             hostedWeb,
             endpointUrl: null,
             nowMs: 1_000,
         })).toEqual({
             state: 'fallback',
-            reason: 'static_asset_unavailable',
-            diagnostics: ['hosted_web_static_asset_unavailable', 'hosted_web_fallback_rendering'],
+            reason: 'preview_unavailable',
+            diagnostics: ['hosted_web_preview_unavailable', 'hosted_web_fallback_rendering'],
         });
+    });
 
+    it('distinguishes preview expiry from a missing endpoint', () => {
         expect(resolveHostedWebRuntimeDiagnostics({
             hostedWeb,
             endpointUrl: 'https://preview.happier.test/plugin/acme/',
@@ -37,43 +41,15 @@ describe('hosted-web UI runtime diagnostics', () => {
         });
     });
 
-    it('distinguishes managed service startup and unhealthy phases', () => {
+    it('keeps an exact projected preview endpoint renderable independently of packaged adapter availability', () => {
         expect(resolveHostedWebRuntimeDiagnostics({
-            hostedWeb: {
-                ...hostedWeb,
-                service: { kind: 'managedService', serviceId: 'preview-dev-server' },
-            },
-            localService: {
-                id: 'preview-dev-server',
-                phase: 'starting',
-                diagnostics: [],
-            },
+            hostedWeb,
+            endpointUrl: 'https://preview.happier.test/plugin/acme/',
             nowMs: 1_000,
         })).toEqual({
-            state: 'fallback',
-            reason: 'managed_service_starting',
-            diagnostics: ['hosted_web_managed_service_starting', 'hosted_web_fallback_rendering'],
-        });
-
-        expect(resolveHostedWebRuntimeDiagnostics({
-            hostedWeb: {
-                ...hostedWeb,
-                service: { kind: 'managedService', serviceId: 'preview-dev-server' },
-            },
-            localService: {
-                id: 'preview-dev-server',
-                phase: 'unhealthy',
-                diagnostics: [{ code: 'http_health_check_failed' }],
-            },
-            nowMs: 1_000,
-        })).toEqual({
-            state: 'fallback',
-            reason: 'managed_service_unhealthy',
-            diagnostics: [
-                'hosted_web_managed_service_unhealthy',
-                'http_health_check_failed',
-                'hosted_web_fallback_rendering',
-            ],
+            state: 'ready',
+            endpointUrl: 'https://preview.happier.test/plugin/acme/',
+            diagnostics: [],
         });
     });
 

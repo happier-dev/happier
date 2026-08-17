@@ -7,6 +7,7 @@ import { t } from '@/text';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 
 import type { SessionMessagePinRole } from '@/sync/domains/messages/pins/sessionMessagePinIdentity';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 
 import {
     buildSessionMessagePinAtPressTime,
@@ -61,9 +62,9 @@ export function ToolCallPinAction(props: Readonly<{
             ]}
         >
             {pinned ? (
-                <PinSlashIcon size={14} color={iconColor} />
+                <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
             ) : (
-                <PinIcon size={14} color={iconColor} />
+                <PinIcon size={ICON_SIZE.xs} color={iconColor} />
             )}
         </Pressable>
     );

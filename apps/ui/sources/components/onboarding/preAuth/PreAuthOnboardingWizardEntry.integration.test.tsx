@@ -7,6 +7,7 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { StorageState } from '@/sync/store/types';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 
 const reactNativeState = vi.hoisted(() => ({
     width: 390,
@@ -20,9 +21,14 @@ const routerMocks = vi.hoisted(() => ({
 }));
 
 const authMock = vi.hoisted(() => ({
-    login: vi.fn(async () => {}),
-    loginWithCredentials: vi.fn(async () => {}),
+    login: vi.fn(async () => ({ kind: 'completed' as const })),
+    loginWithCredentials: vi.fn(async () => ({
+        kind: 'completed' as const,
+    })),
 }));
+
+const serverFetchMock = vi.hoisted(() => vi.fn());
+const modalAlertMock = vi.hoisted(() => vi.fn());
 
 const authEntryOptionsState = vi.hoisted(() => ({
     current: {
@@ -39,7 +45,10 @@ const authEntryOptionsState = vi.hoisted(() => ({
         providerKeylessTitle: '',
         anonymousSignupTitle: 'welcome.createAccount',
         mtlsTitle: '',
-        primarySignupTitle: 'welcome.createAccount',
+        primaryAction: {
+            kind: 'anonymous' as const,
+            title: 'welcome.createAccount',
+        },
         mtlsPrimary: false,
         keylessPrimary: false,
         autoRedirect: {
@@ -99,7 +108,15 @@ vi.mock('react-native-keyboard-controller', () => ({}));
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ spies: { alert: modalAlertMock } }).module;
+});
+
+vi.mock('@/sync/http/client', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/http/client')>('@/sync/http/client');
+    return {
+        ...actual,
+        serverFetch: serverFetchMock,
+    };
 });
 
 vi.mock('@/assets/onboarding/planet-dark.jpg', () => ({ default: 'planet-dark.jpg' }));
@@ -120,10 +137,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
     useAuthEntryOptions: () => authEntryOptionsState.current,
-}));
-
-vi.mock('@/auth/flows/getToken', () => ({
-    authGetToken: vi.fn(async () => 'account-token'),
 }));
 
 vi.mock('@/platform/cryptoRandom', () => ({
@@ -174,6 +187,7 @@ vi.mock('@/encryption/libsodium.lib', () => ({
             publicKey: new Uint8Array([1]),
             privateKey: new Uint8Array([2]),
         }),
+        crypto_sign_detached: () => new Uint8Array([3]),
     },
 }));
 
@@ -187,6 +201,7 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
     let nowSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
+        resetServerFeaturesClientForTests();
         previousStorageState = storage.getState();
         act(() => {
             storage.setState((state) => ({
@@ -202,6 +217,10 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         reactNativeState.height = 844;
         authMock.login.mockClear();
         authMock.loginWithCredentials.mockClear();
+        serverFetchMock.mockReset();
+        serverFetchMock.mockImplementation(async () => new Response(null, { status: 404 }));
+        modalAlertMock.mockClear();
+        authEntryOptionsState.current.retryServerCheck.mockClear();
         routerMocks.push.mockClear();
         routerMocks.replace.mockClear();
         routerMocks.back.mockClear();
@@ -246,6 +265,14 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
     it('shows split shell immediately on desktop and creates an anonymous account from welcome', async () => {
         reactNativeState.width = 1100;
         reactNativeState.height = 720;
+        serverFetchMock.mockImplementation(async (path: string) => (
+            path === '/v1/auth'
+                ? new Response(JSON.stringify({ token: 'account-token' }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+                : new Response(null, { status: 404 })
+        ));
 
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(<PreAuthOnboardingWizardEntry />);
@@ -260,6 +287,29 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         await flushHookEffects();
 
         expect(authMock.login).toHaveBeenCalledWith('account-token', expect.any(String));
+    });
+
+    it('surfaces raced signup policy and requests a capability refresh instead of a generic failure', async () => {
+        reactNativeState.width = 1100;
+        reactNativeState.height = 720;
+        serverFetchMock.mockImplementation(async (path: string) => (
+            path === '/v1/auth'
+                ? new Response(JSON.stringify({ error: 'signup-disabled' }), {
+                    status: 403,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+                : new Response(null, { status: 404 })
+        ));
+
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(<PreAuthOnboardingWizardEntry />);
+
+        await screen.pressByTestIdAsync('welcome-primary-start');
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(authEntryOptionsState.current.retryServerCheck).toHaveBeenCalledTimes(1);
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.signupDisabled');
+        expect(authMock.login).not.toHaveBeenCalled();
     });
 
     it('keeps returning mobile users in workflow and navigates restore and relay through the shell', async () => {

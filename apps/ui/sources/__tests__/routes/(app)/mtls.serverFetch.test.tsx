@@ -3,6 +3,9 @@ import * as React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import type {
+    AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
 
 (
     globalThis as typeof globalThis & {
@@ -33,13 +36,11 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
-const loginWithCredentialsMock = vi.fn(async () => {});
+const loginWithCredentialsMock = vi.fn<
+    (...args: unknown[]) => Promise<AuthCredentialLifecycleResult>
+>(async () => ({ kind: 'completed' }));
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ loginWithCredentials: loginWithCredentialsMock }),
-}));
-
-vi.mock('@/auth/flows/buildDataKeyCredentialsForToken', () => ({
-    buildDataKeyCredentialsForToken: vi.fn(async (token: string) => ({ token, secret: 'secret' })),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -111,7 +112,30 @@ describe('MtlsCallbackScreen', () => {
         });
 
         expect(fetchMock).not.toHaveBeenCalled();
-        expect(loginWithCredentialsMock).toHaveBeenCalledWith({ token: 'mtls-token', secret: 'secret' });
+        expect(loginWithCredentialsMock).toHaveBeenCalledWith({ token: 'mtls-token' });
         expect(routerReplaceMock).toHaveBeenCalledWith('/');
+    });
+
+    it('does not navigate as a successful mTLS replacement when credential recovery fails', async () => {
+        loginWithCredentialsMock.mockResolvedValueOnce({
+            kind: 'recovery_failed',
+        });
+        runtimeFetchMock.mockImplementation(async () => okJson({
+            token: 'replacement-token',
+        }));
+
+        const { default: MtlsCallbackScreen } = await import('@/app/(app)/mtls');
+        await act(async () => {
+            await renderScreen(React.createElement(MtlsCallbackScreen));
+        });
+        await act(async () => {
+            await new Promise<void>((resolve) => queueMicrotask(resolve));
+        });
+
+        expect(loginWithCredentialsMock).toHaveBeenCalledWith({
+            token: 'replacement-token',
+        });
+        expect(routerReplaceMock).not.toHaveBeenCalled();
+        expect(modalAlertMock).not.toHaveBeenCalled();
     });
 });

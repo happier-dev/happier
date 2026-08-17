@@ -132,9 +132,7 @@ describe('WorkspaceRepositoryTreeList', () => {
         const screen = await renderScreen(
             <WorkspaceRepositoryTreeList
                 theme={theme}
-                workspaceCacheKey="server:m1:/repo"
-                machineId="m1"
-                rootPath="/repo"
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
                 expandedPaths={[]}
                 onExpandedPathsChange={() => {}}
                 onOpenFile={() => {}}
@@ -159,9 +157,7 @@ describe('WorkspaceRepositoryTreeList', () => {
         const screen = await renderScreen(
             <WorkspaceRepositoryTreeList
                 theme={theme}
-                workspaceCacheKey="server:m1:/repo"
-                machineId="m1"
-                rootPath="/repo"
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
                 expandedPaths={[]}
                 onExpandedPathsChange={() => {}}
                 onOpenFile={() => {}}
@@ -189,9 +185,7 @@ describe('WorkspaceRepositoryTreeList', () => {
                 <>
                     <WorkspaceRepositoryTreeList
                         theme={theme}
-                        workspaceCacheKey="server:m1:/repo"
-                        machineId="m1"
-                        rootPath="/repo"
+                        scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
                         expandedPaths={[]}
                         onExpandedPathsChange={() => {}}
                         onOpenFile={() => {}}

@@ -25,6 +25,18 @@ export type AgentCliInstallQueueState = Readonly<{
     statusByProviderId: Readonly<Partial<Record<AgentId, AgentCliInstallResult>>>;
 }>;
 
+export type AgentCliInstallExecutionTarget = Readonly<{
+    machineId: string;
+    serverId: string;
+}>;
+
+function areExecutionTargetsEqual(
+    left: AgentCliInstallExecutionTarget,
+    right: AgentCliInstallExecutionTarget,
+): boolean {
+    return left.machineId === right.machineId && left.serverId === right.serverId;
+}
+
 function resolveInstalledCandidate(installed: boolean | null | undefined): boolean {
     return installed === true;
 }
@@ -32,6 +44,12 @@ function resolveInstalledCandidate(installed: boolean | null | undefined): boole
 export function useAgentCliInstallQueue(params: Readonly<{
     machineId: string | null;
     serverId: string | null;
+    /**
+     * Optional Administration-owned target resolver. When supplied, it is
+     * authoritative over the render-time identifiers and is consulted before
+     * every machine mutation.
+     */
+    resolveExecutionTarget?: () => AgentCliInstallExecutionTarget | null;
     agentIds: readonly AgentId[];
     agentDetectKeys: Readonly<Partial<Record<AgentId, string>>>;
     installedByAgentId: Readonly<Partial<Record<AgentId, boolean | null>>>;
@@ -43,6 +61,17 @@ export function useAgentCliInstallQueue(params: Readonly<{
     const [hasStarted, setHasStarted] = React.useState(false);
     const [isRunning, setIsRunning] = React.useState(false);
     const [statusByProviderId, setStatusByProviderId] = React.useState<Partial<Record<AgentId, AgentCliInstallResult>>>({});
+
+    const resolveCurrentExecutionTarget = React.useCallback((): AgentCliInstallExecutionTarget | null => {
+        if (params.resolveExecutionTarget) return params.resolveExecutionTarget();
+        if (!params.machineId || !params.serverId) return null;
+        return { machineId: params.machineId, serverId: params.serverId };
+    }, [params.machineId, params.resolveExecutionTarget, params.serverId]);
+
+    const isExecutionTargetCurrent = React.useCallback((expected: AgentCliInstallExecutionTarget): boolean => {
+        const current = resolveCurrentExecutionTarget();
+        return current !== null && areExecutionTargetsEqual(current, expected);
+    }, [resolveCurrentExecutionTarget]);
 
     React.useEffect(() => {
         return () => {
@@ -83,7 +112,9 @@ export function useAgentCliInstallQueue(params: Readonly<{
         }
 
         setHasStarted(true);
-        abortRef.current.aborted = false;
+        abortRef.current.aborted = true;
+        const runAbort = { aborted: false };
+        abortRef.current = runAbort;
         runningRef.current = true;
         setIsRunning(true);
 
@@ -104,9 +135,11 @@ export function useAgentCliInstallQueue(params: Readonly<{
         }
 
         for (const agentId of installTargets) {
-            if (abortRef.current.aborted) break;
+            if (runAbort.aborted) break;
             const detectKey = params.agentDetectKeys[agentId];
-            if (!params.machineId || !detectKey) {
+            const executionTarget = resolveCurrentExecutionTarget();
+            if (!executionTarget) break;
+            if (!detectKey) {
                 setStatus(agentId, { status: 'failed', logPath: null, failureReason: 'error' });
                 failedAgentIds.push(agentId);
                 continue;
@@ -124,9 +157,9 @@ export function useAgentCliInstallQueue(params: Readonly<{
                         allowVendorRecipeExecution: true,
                     },
                 };
-                const invoked = await machineCapabilitiesInvoke(params.machineId, invokeRequest, {
+                const invoked = await machineCapabilitiesInvoke(executionTarget.machineId, invokeRequest, {
                     timeoutMs: 5 * 60_000,
-                    serverId: params.serverId,
+                    serverId: executionTarget.serverId,
                 });
                 if (!invoked.supported) {
                     result = { ok: false, reason: invoked.reason };
@@ -136,6 +169,8 @@ export function useAgentCliInstallQueue(params: Readonly<{
             } catch {
                 result = { ok: false, reason: 'error' };
             }
+
+            if (runAbort.aborted || !isExecutionTargetCurrent(executionTarget)) break;
 
             if (!result.ok) {
                 setStatus(agentId, { status: 'failed', logPath: null, failureReason: result.reason });
@@ -153,13 +188,15 @@ export function useAgentCliInstallQueue(params: Readonly<{
             installedAgentIds.push(agentId);
         }
 
-        if (mountedRef.current) {
+        if (mountedRef.current && !runAbort.aborted) {
             setIsRunning(false);
         }
-        runningRef.current = false;
+        if (!runAbort.aborted) {
+            runningRef.current = false;
+        }
 
         return { installedAgentIds, failedAgentIds };
-    }, [params.machineId, params.agentDetectKeys, params.agentIds, params.serverId, resolveStatus, setStatus]);
+    }, [isExecutionTargetCurrent, params.agentDetectKeys, params.agentIds, resolveCurrentExecutionTarget, resolveStatus, setStatus]);
 
     const retry = React.useCallback(async (agentId: AgentId): Promise<AgentCliInstallQueueSummary> => {
         setStatus(agentId, { status: 'queued', logPath: null, failureReason: null });

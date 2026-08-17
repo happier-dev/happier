@@ -25,6 +25,22 @@ export type ServerProfile = Readonly<{
     source?: ServerProfileSource;
 }>;
 
+export type PortableServerIdentityProfileResolution =
+    | Readonly<{
+        kind: 'resolved';
+        serverIdentityId: string;
+        profile: ServerProfile;
+    }>
+    | Readonly<{
+        kind: 'missing';
+        serverIdentityId: string;
+    }>
+    | Readonly<{
+        kind: 'ambiguous';
+        serverIdentityId: string;
+        profiles: readonly ServerProfile[];
+    }>;
+
 export type ActiveServerSnapshot = Readonly<{
     serverId: string;
     serverUrl: string;
@@ -873,6 +889,41 @@ export function getServerProfileById(idRaw: string): ServerProfile | null {
     return findProfileByServerIdentifier(readPersistedState().servers, id);
 }
 
+/**
+ * Resolves only a portable server identity to the current device-local profile
+ * that can be used for routing. Profile ids themselves are intentionally not
+ * accepted here: they must never be promoted into Account-synced selections.
+ */
+export function resolveServerProfileForPortableIdentity(
+    serverIdentityIdRaw: string | null | undefined,
+): PortableServerIdentityProfileResolution {
+    const serverIdentityId = normalizeServerIdentityId(serverIdentityIdRaw) ?? '';
+    if (!serverIdentityId) {
+        return { kind: 'missing', serverIdentityId: '' };
+    }
+
+    const profiles = Object.values(readPersistedState().servers);
+    const matchingProfiles = profiles.filter((profile) => (
+        profile.serverIdentityId === serverIdentityId
+        || (profile.legacyServerIds ?? []).includes(serverIdentityId)
+    ));
+    if (matchingProfiles.length === 1) {
+        return {
+            kind: 'resolved',
+            serverIdentityId,
+            profile: matchingProfiles[0]!,
+        };
+    }
+    if (matchingProfiles.length > 1) {
+        return {
+            kind: 'ambiguous',
+            serverIdentityId,
+            profiles: matchingProfiles,
+        };
+    }
+    return { kind: 'missing', serverIdentityId };
+}
+
 export function resolveServerProfileScopeIdForIdentifier(idRaw: string | null | undefined): string {
     const id = normalizeServerId(idRaw);
     if (!id) return '';
@@ -981,6 +1032,19 @@ export function setServerProfileIdentityForUrl(serverUrlRaw: string, identityRaw
 
     const state = readPersistedState();
     const existing = findProfileByEquivalentUrl(state.servers, url);
+    const hasCompetingIdentityProfile = Object.values(state.servers).some((profile) => (
+        profile.id !== existing?.id
+        && (
+            profile.serverIdentityId === serverIdentityId
+            || comparableUrlKey(profile.serverUrl) === comparableUrlKey(url)
+        )
+    ));
+    if (
+        existing?.serverIdentityId === serverIdentityId
+        && !hasCompetingIdentityProfile
+    ) {
+        return existing;
+    }
     const id = existing?.id ?? createUniqueServerId(state.servers, deriveServerIdFromUrl(url), url);
     const now = nowMs();
     const profile: ServerProfile = {

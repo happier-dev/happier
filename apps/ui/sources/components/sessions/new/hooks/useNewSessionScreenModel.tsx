@@ -1,7 +1,17 @@
 import React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useLaunchSelectionMachines, useMachineListByServerId, useSessions, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import {
+    storage,
+    useCurrentFavoriteModelSelectionsV1Mutable,
+    useCurrentRememberedEngineSelectionsByScopeV1Mutable,
+    useCurrentSecretBindingsByProfileIdMutable,
+    useLaunchSelectionMachines,
+    useMachineListByServerId,
+    useSessions,
+    useSetting,
+    useSettingMutable,
+    useSettings,
+} from '@/sync/domains/state/storage';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useRouter, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
@@ -27,7 +37,10 @@ import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agent
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { usePluginEventAutomationComposer } from '@/components/automations/editor/usePluginEventAutomationComposer';
+import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 
 import { loadNewSessionDraft, type NewSessionDraft } from '@/sync/domains/state/persistence';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
@@ -46,9 +59,11 @@ import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modu
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
 import {
     buildNewSessionAuthoringDraftFromPersistedDraft,
     buildNewSessionAuthoringDraftFromTempData,
+    buildSessionAuthoringDraftFromServerStartSpawnDraftV1,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
@@ -86,6 +101,8 @@ import { useNewSessionProfilePopover } from '@/components/sessions/new/hooks/scr
 import { useNewSessionCreateSessionAction } from '@/components/sessions/new/hooks/screenModel/useNewSessionCreateSessionAction';
 import { useNewSessionScreenAgentInputPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenAgentInputPresentation';
 import { useNewSessionScreenAuthoringState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenAuthoringState';
+import { useNewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
+import { useNewSessionSourceContext } from '@/components/sessions/new/sourceContext/useNewSessionSourceContext';
 import { useNewSessionScreenSimplePanelProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenSimplePanelProps';
 import { useNewSessionScreenWizardProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenWizardProps';
 import { useNewSessionConnectedServicesAgentOptions } from '@/components/sessions/new/hooks/screenModel/useNewSessionConnectedServicesAgentOptions';
@@ -93,9 +110,8 @@ import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hoo
 import { buildNewSessionLaunchStatusBadges } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
-import type { AgentInputAutocompleteSelectionHandler } from '@/components/sessions/agentInput';
-import { resolvePromptInvocationAutocompleteSelection } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { isProfileCompatibleWithResolvedBackendEntry } from '@/components/profiles/edit/profileBackendEntryStorage';
 import {
@@ -104,24 +120,30 @@ import {
 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import { useDeferredRememberedEngineSelection } from '@/components/sessions/new/hooks/screenModel/useDeferredRememberedEngineSelection';
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
-import { getCommandSuggestions } from '@/components/autocomplete/commandSuggestions';
+import {
+    NEW_SESSION_COMPOSER_SUGGESTION_KINDS,
+    type ComposerReferenceSearchHost,
+} from '@/components/autocomplete/composerSuggestionKinds';
+import { getSuggestions } from '@/components/autocomplete/suggestions';
+import { resolveNewSessionFileSuggestionScope } from '@/components/sessions/new/modules/resolveNewSessionFileSuggestionScope';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import {
-    projectAiLaunchProfileForLegacyUi,
     readUiAiLaunchProfiles,
+    readUiAiLaunchProfilesForLegacyUi,
     removeAiLaunchProfile,
 } from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { readProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
 import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol';
 import { resolveLaunchProfileAuthoringIntent } from '@/sync/domains/profiles/resolveLaunchProfileAuthoringIntent';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useConfirmExperimentalProviderModel } from '@/providers/hooks/useConfirmExperimentalProviderModel';
 import { hiddenModelVisibilityKeys } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
+import { notifyComposerPresentationTargetChanged } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
-const NEW_SESSION_COMMAND_SUGGESTION_SESSION_ID = '__new_session__';
 const styles = newSessionScreenStyles;
 
 function useLatestRef<Value>(value: Value): React.MutableRefObject<Value> {
@@ -228,6 +250,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         backendTargetKey?: string;
     }>();
     const draftScope = useActiveServerAccountScope();
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
     const attachmentFlowId = React.useMemo(() => {
         if (typeof dataId === 'string' && dataId.trim().length > 0) {
             return dataId.trim();
@@ -242,6 +265,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         return null;
     }, [dataId]);
+    // Direct Event details are intentionally transient. The generic composer
+    // may retain editable Automation metadata, but its session fields must
+    // never replace the strict server-start seed owned by the Event definition.
+    const eventAutomationEditSeed = tempSessionData?.eventAutomationEditSeed ?? null;
+    const eventAutomationExistingSessionServerId = tempSessionData?.eventAutomationExistingSessionServerId ?? null;
+    const eventAutomationInitialTarget = tempSessionData?.eventAutomationInitialTarget ?? null;
     const shouldReplacePersistedDraftSelections = tempSessionData?.replacePersistedDraftSelections === true;
     const loadScopedNewSessionDraft = React.useCallback(() => {
         return draftScope ? loadNewSessionDraft(draftScope) : null;
@@ -293,7 +322,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const sessionPromptInputMaxHeight = undefined;
     const useProfiles = useSetting('useProfiles');
     const [secrets, setSecrets] = useSavedSecretsMutable();
-    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const settings = useSettings() ?? settingsDefaults;
     const executionRunsEnabled = resolveLocalFeaturePolicyEnabled('execution.runs', settings);
@@ -316,6 +345,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             persistedTargetServerId: persistedDraft?.targetServerId,
         },
     });
+    // The continuation recipe rides the same one-shot temp-data channel as every
+    // other rich New Session handoff; removing the chip clears only this value.
+    const sourceContextState = useNewSessionSourceContext({
+        seed: tempSessionData,
+        targetServerId: targetServerId ?? null,
+    });
     // New-session capability gating should be evaluated in spawn scope (target server),
     // not in main selection scope (which can be a multi-server group).
     const automationsSupport = useAutomationsSupport({ scopeKind: 'spawn', serverId: targetServerId });
@@ -336,16 +371,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
     const launchProfiles = React.useMemo(() => readUiAiLaunchProfiles(rawProfiles), [rawProfiles]);
-    const profiles = React.useMemo(() => launchProfiles.map(projectAiLaunchProfileForLegacyUi), [launchProfiles]);
+    const profiles = React.useMemo(() => readUiAiLaunchProfilesForLegacyUi(rawProfiles), [rawProfiles]);
     const lastUsedProfile = useSetting('lastUsedProfile');
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
-    const [favoriteModelSelections, setFavoriteModelSelections] = useSettingMutable('favoriteModelSelectionsV1');
+    const [favoriteModelSelections, setFavoriteModelSelections] = useCurrentFavoriteModelSelectionsV1Mutable();
     const [favoriteBackendTargetKeys, setFavoriteBackendTargetKeys] = useSettingMutable('favoriteBackendTargetKeysV1');
     const [lastNewSessionAgentPickerView, setLastNewSessionAgentPickerView] = useSettingMutable('lastNewSessionAgentPickerViewV1');
     const rememberLastEngineSelections = useSetting('rememberLastEngineSelectionsV1') !== false;
-    const [lastEngineSelectionsByScope, setLastEngineSelectionsByScope] = useSettingMutable('lastEngineSelectionsByScopeV1');
+    const [lastEngineSelectionsByScope, setLastEngineSelectionsByScope] = useCurrentRememberedEngineSelectionsByScopeV1Mutable();
     const [dismissedCLIWarnings, setDismissedCLIWarnings] = useSettingMutable('dismissedCLIWarnings');
 
     const hydratedTempAuthoringDraft = React.useMemo(() => {
@@ -419,23 +454,27 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             providerSettingsV1: settings.providerSettingsV1,
         }).settings
     ), [settings.providerSettingsV1]);
+    const profileEnabledById = React.useMemo(
+        () => readProfileEnabledById(settings.profileEnabledById),
+        [settings.profileEnabledById],
+    );
 
     // Combined profiles (built-in + custom)
     const allProfiles = React.useMemo(() => {
         const builtInProfiles = resolveVisibleBuiltInLaunchProfiles({
             lastUsedProfile,
             favoriteProfileIds,
-            profileEnabledById: settings.profileEnabledById,
+            profileEnabledById,
             secretBindingsByProfileId,
             migration: providerSettingsForProfileIntent.migration,
         });
         return [...builtInProfiles, ...profiles];
-    }, [favoriteProfileIds, lastUsedProfile, profiles, providerSettingsForProfileIntent.migration, secretBindingsByProfileId, settings.profileEnabledById]);
+    }, [favoriteProfileIds, lastUsedProfile, profileEnabledById, profiles, providerSettingsForProfileIntent.migration, secretBindingsByProfileId]);
 
     const profileMap = useProfileMap(allProfiles);
     const selectableProfiles = React.useMemo(() => {
-        return allProfiles.filter((profile) => isProfileEnabled(profile, settings.profileEnabledById));
-    }, [allProfiles, settings.profileEnabledById]);
+        return allProfiles.filter((profile) => isProfileEnabled(profile, profileEnabledById));
+    }, [allProfiles, profileEnabledById]);
     const selectableProfileMap = useProfileMap(selectableProfiles);
     const activeMachines = useLaunchSelectionMachines();
     const sessions = useSessions();
@@ -511,21 +550,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
     }, [useProfiles, selectedProfileId]);
 
-    const emptyAutocompletePrefixes = React.useMemo(() => ['/'], []);
-    const emptyAutocompleteSuggestions = React.useCallback(async (query: string) => {
-        if (!query.startsWith('/')) {
-            return [];
-        }
-        return getCommandSuggestions(NEW_SESSION_COMMAND_SUGGESTION_SESSION_ID, query);
-    }, []);
-    const handleAutocompleteSuggestionSelect = React.useCallback<AgentInputAutocompleteSelectionHandler>(async (args) => {
-        try {
-            return await resolvePromptInvocationAutocompleteSelection(args);
-        } catch (error) {
-            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));
-            return { handled: true };
-        }
-    }, []);
+    const emptyAutocompleteKinds = NEW_SESSION_COMPOSER_SUGGESTION_KINDS;
 
     const effectiveMachineIdParam = React.useMemo(() => {
         const normalizedMachineIdParam = normalizeOptionalParam(machineIdParam);
@@ -593,6 +618,15 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         serverId: targetServerId,
         enabled: Boolean(selectedMachineId),
     });
+    // New Session draft records have no generation field. Revalidate them
+    // only against the exact current machine/account projection; retained
+    // inputs during a target/account transition are intentionally inert.
+    const composerAttachmentEntriesById = React.useMemo(() => {
+        if (daemonMergedProjection.phase !== 'ready') return null;
+        return normalizePluginUiProjection(
+            daemonMergedProjection.inputs?.pluginProjectionV2 ?? null,
+        ).composerAttachmentsById;
+    }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase]);
     const enabledAgentIds = useEnabledAgentIds();
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
@@ -612,6 +646,21 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
     ]);
+    const eventAuthoringAgentTargetCatalog = React.useMemo(() => {
+        return resolvedBackendEntries.flatMap((entry) => {
+            const agentTarget = resolveAgentExecutionTargetForBackendTarget({
+                backendTarget: entry.backendTarget,
+                daemonMergedProjectionInputs: daemonMergedProjection.inputs,
+            });
+            return agentTarget
+                ? [{
+                    agentTarget,
+                    agentId: entry.agentId,
+                    backendTarget: entry.backendTarget,
+                }]
+                : [];
+        });
+    }, [daemonMergedProjection.inputs, resolvedBackendEntries]);
     const profilePreferredBackendTarget = React.useMemo(() => {
         if (!initialProfileAuthoringIntent.preferredAgentTargetKey) return null;
         return resolveBackendTargetFromRouteParams({
@@ -682,7 +731,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             setSelectedProfileId(null);
             return;
         }
-        if (!isProfileEnabled(selected, settings.profileEnabledById)) {
+        if (!isProfileEnabled(selected, profileEnabledById)) {
             setSelectedProfileId(null);
             return;
         }
@@ -690,7 +739,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             return;
         }
         setSelectedProfileId(null);
-    }, [profileMap, resolvedBackendEntries, selectedProfileId, settings.profileEnabledById, useProfiles]);
+    }, [profileEnabledById, profileMap, resolvedBackendEntries, selectedProfileId, useProfiles]);
 
     useRouteBackendTargetSelectionSync({
         routeBackendTarget,
@@ -726,6 +775,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         enabled: rememberLastEngineSelections,
         selectionsByScope: lastEngineSelectionsByScope,
         serverId: capabilityServerId,
+        accountSettingsScope: draftScope,
+        accountLifetime,
         commit: setLastEngineSelectionsByScope,
     });
     const currentEngineSelectionRef = useLatestRef({
@@ -807,6 +858,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         if (!selectedMachineId) return null;
         return machines.find(m => m.id === selectedMachineId) ?? null;
     }, [selectedMachineId, machines]);
+    const selectedMachineHomeDir = selectedMachine?.metadata?.homeDir ?? null;
     const providerModelProjection = useProviderModelProjection({
         enabled: providersFeatureEnabled && selectedMachineId !== null,
         machineId: selectedMachineId,
@@ -980,7 +1032,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     //
 
     const {
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         automationDraft,
         setAutomationDraft,
@@ -1003,9 +1055,103 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft: hydratedPersistedContentAuthoringDraft,
     });
+    const eventAutomationComposer = usePluginEventAutomationComposer({
+        machineId: selectedMachineId,
+        serverId: targetServerId,
+        projectionPhase: daemonMergedProjection.phase,
+        projectionInputs: daemonMergedProjection.inputs,
+        initialEditSeed: eventAutomationEditSeed,
+        initialExistingSessionServerId: eventAutomationExistingSessionServerId,
+        initialExistingSessionTarget: eventAutomationInitialTarget,
+    });
+    const eventEditAuthoringSeed = React.useMemo(() => {
+        if (eventAutomationEditSeed?.target.kind !== 'newSession') return null;
+        return buildSessionAuthoringDraftFromServerStartSpawnDraftV1({
+            spawn: eventAutomationEditSeed.target.spawn,
+            prompt: eventAutomationEditSeed.prompt,
+            displayText: eventAutomationEditSeed.prompt,
+            agentTargetCatalog: eventAuthoringAgentTargetCatalog,
+        });
+    }, [eventAuthoringAgentTargetCatalog, eventAutomationEditSeed]);
     const [isCreating, setIsCreating] = React.useState(false);
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
     const [pendingLaunchAttempt, setPendingLaunchAttempt] = React.useState<NewSessionLaunchAttempt | null>(null);
+    const newSessionComposerCanSubmitRef = React.useRef(false);
+    const newSessionComposerDocument = useNewSessionComposerDocument({
+        promptStore,
+        persistedAttachments: scopedPersistedDraft?.composerAttachments ?? [],
+        composerAttachmentEntriesById,
+        composerPluginProjection: {
+            machineId: selectedMachineId,
+            serverId: targetServerId,
+            phase: daemonMergedProjection.phase,
+            inputs: daemonMergedProjection.inputs,
+        },
+        scopeKey: draftScope ? serverAccountScopeKeySuffix(draftScope) : null,
+        canSubmitRef: newSessionComposerCanSubmitRef,
+        isSubmitting: isCreating,
+    });
+
+    const newSessionComposerReferenceSearchIsCurrent = newSessionComposerDocument.isReferenceSearchCurrent;
+    const newSessionComposerReferenceHostRef = React.useRef<ComposerReferenceSearchHost | null>(null);
+    const newSessionComposerReferenceHost = React.useMemo<ComposerReferenceSearchHost | null>(() => {
+        const projection = daemonMergedProjection.inputs?.pluginProjectionV2 ?? null;
+        if (
+            daemonMergedProjection.phase !== 'ready'
+            || selectedMachineId === null
+            || projection === null
+        ) {
+            return null;
+        }
+
+        let host: ComposerReferenceSearchHost;
+        host = {
+            machineId: selectedMachineId,
+            serverId: targetServerId,
+            projection,
+            isCurrent: () => (
+                newSessionComposerReferenceHostRef.current === host
+                && newSessionComposerReferenceSearchIsCurrent()
+            ),
+        };
+        return host;
+    }, [
+        daemonMergedProjection.inputs?.pluginProjectionV2,
+        daemonMergedProjection.phase,
+        newSessionComposerReferenceSearchIsCurrent,
+        selectedMachineId,
+        targetServerId,
+    ]);
+    newSessionComposerReferenceHostRef.current = newSessionComposerReferenceHost;
+
+    // Routed through the registry like every other composer host: the eligible-kind
+    // subset is the only thing that decides which triggers resolve here (INV-1),
+    // and a hand-rolled `startsWith('/')` would be a second decision-maker.
+    const emptyAutocompleteSuggestions = React.useCallback(
+        (query: string, signal: AbortSignal) => getSuggestions(null, query, {
+            kinds: NEW_SESSION_COMPOSER_SUGGESTION_KINDS,
+            // There is genuinely no session yet, so say so rather than passing a fake id. The
+            // spawn target is the only correct scope for `@session` here (D-8).
+            serverId: targetServerId,
+            // The machine and folder the user has chosen for the session about to be spawned:
+            // the same addressing an existing session resolves for itself.
+            workspace: resolveNewSessionFileSuggestionScope({
+                targetServerId,
+                selectedMachineId,
+                selectedMachineHomeDir,
+                selectedPath,
+            }),
+            signal,
+            composerReferenceHost: newSessionComposerReferenceHost,
+        }),
+        [
+            newSessionComposerReferenceHost,
+            selectedMachineHomeDir,
+            selectedMachineId,
+            selectedPath,
+            targetServerId,
+        ],
+    );
 
     React.useEffect(() => {
         setResumeSessionId(hydratedResumeSessionId);
@@ -1029,10 +1175,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         if (profileMap.has(selectedProfileId)) {
             const profile = profileMap.get(selectedProfileId)!;
-            return isProfileEnabled(profile, settings.profileEnabledById) ? profile : null;
+            return isProfileEnabled(profile, profileEnabledById) ? profile : null;
         }
         return null;
-    }, [selectedProfileId, profileMap, settings.profileEnabledById]);
+    }, [profileEnabledById, selectedProfileId, profileMap]);
 
     const persistedWindowsRemoteSessionLaunchModeOverride = resolvePersistedWindowsLaunchOverrideForMachine(
         persistedDraft,
@@ -1298,13 +1444,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         if (!profile) {
             return false;
         }
-        if (!isProfileEnabled(profile, settings.profileEnabledById)) {
+        if (!isProfileEnabled(profile, profileEnabledById)) {
             return false;
         }
         // Keep profiles selectable when they still have structural backend support,
         // even if all compatible backends are currently logged out or undiscovered.
         return getCompatibleProfileBackendEntries(profile).length > 0;
-    }, [getCompatibleProfileBackendEntries, profileMap, settings.profileEnabledById]);
+    }, [getCompatibleProfileBackendEntries, profileEnabledById, profileMap]);
 
     const {
         profilesGroupTitles,
@@ -1387,7 +1533,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineSpawnReadiness,
         selectedPath,
         checkoutCreationDraft,
-        sessionPrompt,
+        promptStore,
         agentType,
         backendTarget,
         transcriptStorage,
@@ -1414,9 +1560,26 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedSecretIdByProfileIdByEnvVarName,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         backendNewSessionOptionStateByTargetKey,
+        composerAttachments: newSessionComposerDocument.attachments,
         draftScope,
         launchUserAttemptId,
     });
+    const eventEditAuthoringDraft = React.useMemo(() => {
+        if (eventEditAuthoringSeed?.kind !== 'available') return null;
+        // Name, description, and enabled are ordinary composer-owned metadata;
+        // all session execution facts remain the exact direct-detail seed.
+        return {
+            ...eventEditAuthoringSeed.draft,
+            automation: currentAuthoringDraft.automation,
+        };
+    }, [currentAuthoringDraft.automation, eventEditAuthoringSeed]);
+    const effectiveCurrentAuthoringDraft = eventAutomationEditSeed?.target.kind === 'newSession'
+        ? eventEditAuthoringDraft
+        : currentAuthoringDraft;
+    const directEventEditReady = eventAutomationEditSeed !== null
+        && eventAutomationComposer.editTarget !== null
+        && eventAutomationComposer.editTarget.automationId === automationEditId
+        && eventAutomationComposer.createDraft !== null;
     const onLaunchUserAttemptIdChange = React.useCallback((nextUserAttemptId: string | null) => {
         const normalized = typeof nextUserAttemptId === 'string' && nextUserAttemptId.trim().length > 0
             ? nextUserAttemptId.trim()
@@ -1432,10 +1595,18 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         persistDraftIfEnabled(nextDraft);
     }, [buildCurrentPersistedDraft, persistDraftIfEnabled]);
     const launchIntentSignature = React.useMemo(() => JSON.stringify({
-        draft: currentAuthoringDraft,
+        draft: effectiveCurrentAuthoringDraft,
+        composerDocumentRevision: newSessionComposerDocument.revision,
+        eventAutomationRevision: eventAutomationComposer.revision,
         machineId: selectedMachineId,
         targetServerId: targetServerId ?? null,
-    }), [currentAuthoringDraft, selectedMachineId, targetServerId]);
+    }), [
+        effectiveCurrentAuthoringDraft,
+        eventAutomationComposer.revision,
+        newSessionComposerDocument.revision,
+        selectedMachineId,
+        targetServerId,
+    ]);
     const previousLaunchIntentSignatureRef = React.useRef(launchIntentSignature);
     React.useEffect(() => {
         if (previousLaunchIntentSignatureRef.current === launchIntentSignature) return;
@@ -1473,12 +1644,21 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         modelMode,
         acpSessionModeId,
         sessionConfigOptionOverrides,
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         automationEditId,
+        eventAutomationDraft: automationFeatureEnabled
+            ? eventAutomationComposer.createDraft
+            : null,
+        eventAutomationEdit: eventAutomationEditSeed
+            ? eventAutomationComposer.editTarget
+            : null,
+        eventAutomationTargetKind: eventAutomationComposer.targetKind,
+        resolveEventAutomationTarget: eventAutomationComposer.resolveExecutionTarget,
+        eventAutomationExecutionPermissionMode: eventAutomationComposer.executionPermissionMode,
         resumeSessionId,
         agentNewSessionOptions,
-        currentAuthoringDraft,
+        currentAuthoringDraft: effectiveCurrentAuthoringDraft,
         mcpSelection,
         windowsRemoteSessionLaunchModeOverride,
         machineEnvPresence,
@@ -1489,6 +1669,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineCapabilities,
         targetServerId,
         allowedTargetServerIds,
+        daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         resolvedSettingsAllowedServerIds: resolvedSettingsTarget.allowedServerIds,
         capabilityServerId,
         draftScope,
@@ -1498,9 +1679,41 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         launchUserAttemptId,
         onLaunchUserAttemptIdChange,
         authoringCommitPending: confirmExperimentalProviderModel.pending,
+        sourceContext: sourceContextState.sourceContext,
     });
 
-    const canCreate = canCreateFromAuthoring && !confirmExperimentalProviderModel.pending;
+    // An Event selection has no schedule fallback: until its canonical
+    // composer can produce a current strict V3 draft, submitting would route
+    // the retained automation metadata into the legacy schedule writer.
+    const eventAutomationModeReady = eventAutomationComposer.mode !== 'event'
+        || (
+            automationFeatureEnabled
+            && eventAutomationComposer.createDraft !== null
+            && (
+                eventAutomationComposer.targetKind === 'newSession'
+                || (
+                    eventAutomationComposer.targetKind === 'executionRun'
+                        ? selectedMachineId !== null
+                        : eventAutomationComposer.existingSessionAvailability?.kind === 'ready'
+                )
+            )
+        );
+    const eventTargetNeedsNewSessionInputs = eventAutomationComposer.mode !== 'event'
+        || eventAutomationComposer.targetKind === 'newSession';
+    const canCreate = (eventTargetNeedsNewSessionInputs
+        ? canCreateFromAuthoring
+        : isAutomationSettingsDraftValid(effectiveAutomationDraft))
+        && !confirmExperimentalProviderModel.pending
+        && eventAutomationModeReady
+        // V1 requires the source Session and the target to share a server. Block
+        // submission rather than silently dropping the continuation recipe; the
+        // user can switch back or remove the chip.
+        && !sourceContextState.serverMismatch
+        && (!eventAutomationEditSeed || (automationFeatureEnabled && directEventEditReady));
+    newSessionComposerCanSubmitRef.current = canCreate;
+    React.useEffect(() => {
+        notifyComposerPresentationTargetChanged(newSessionComposerDocument.ref);
+    }, [canCreate, newSessionComposerDocument.ref]);
 
     const {
         connectionStatus,
@@ -1513,6 +1726,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         automationDraft,
         effectiveAutomationDraft,
         setAutomationDraft,
+        eventComposer: automationFeatureEnabled && (
+            !automationEditId || eventAutomationComposer.isEditingEvent
+        )
+            ? eventAutomationComposer
+            : null,
         repoScmSnapshot,
         checkoutChipModel,
         checkoutPickerOpen,
@@ -1526,7 +1744,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         pendingGitWorktreeSourceKindRef,
         shouldReconcileInitialHydratedCheckoutCreationDraftRef,
         router,
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         handleCreateSession,
         backendTarget,
@@ -1550,6 +1768,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setWindowsRemoteSessionLaunchModeOverride,
     });
 
+    // Auto-persist watches the composer text out of render: a keystroke re-arms the debounce
+    // through the store subscription instead of re-running this model.
+    const draftTextSource = React.useMemo(() => ({
+        getLength: () => promptStore.getPrompt().length,
+        subscribe: promptStore.subscribe,
+    }), [promptStore]);
+
     const {
         openProfileEdit,
         handleAddProfile,
@@ -1567,7 +1792,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         persistDraftIfEnabled,
         draftPersistenceEnabled,
         draftPersistenceGenerationRef,
-        draftTextLength: sessionPrompt.length,
+        draftText: draftTextSource,
         draftChangeKey: launchIntentSignature,
     });
 
@@ -1708,7 +1933,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             setFavoriteDirectories,
         },
         footer: {
-            sessionPrompt,
+            promptStore,
+            composerDocument: newSessionComposerDocument,
             setSessionPrompt,
             handleCreateSession,
             canCreate,
@@ -1717,9 +1943,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             providerLaunchError,
             retryProviderLaunch,
             submitAccessibilityLabel,
-            emptyAutocompletePrefixes,
+            emptyAutocompleteKinds,
             emptyAutocompleteSuggestions,
-            onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
             connectionStatus,
             statusBadges: launchStatusBadges,
             machinePopover,
@@ -1729,6 +1954,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             isResumeSupportChecking,
             sessionPromptInputMaxHeight,
             agentInputExtraActionChips,
+            sourceContextPresentation: sourceContextState.presentation,
             attachmentFlowId,
         },
     });
@@ -1754,7 +1980,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             containerStyle: styles.container as any,
         },
         creation: {
-            sessionPrompt,
+            promptStore,
+            composerDocument: newSessionComposerDocument,
             setSessionPrompt,
             handleCreateSession,
             canCreate,
@@ -1763,14 +1990,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             providerLaunchError,
             retryProviderLaunch,
             submitAccessibilityLabel,
-            emptyAutocompletePrefixes,
+            emptyAutocompleteKinds,
             emptyAutocompleteSuggestions,
-            onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
             sessionPromptInputMaxHeight,
             statusBadges: launchStatusBadges,
         },
         agent: {
             agentInputExtraActionChips,
+            sourceContextPresentation: sourceContextState.presentation,
             agentType: selectedUiAgentType as AgentId,
             agentLabel,
             handleAgentClick,

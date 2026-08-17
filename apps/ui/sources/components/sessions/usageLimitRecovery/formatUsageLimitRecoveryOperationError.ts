@@ -17,8 +17,6 @@ export function formatUsageLimitRecoveryOperationError(result: Readonly<{
         case 'session_usage_limit_recovery_control_cwd_unavailable':
             return t('errors.tryAgain');
         default:
-            return code.startsWith('session_usage_limit_recovery_control_')
-                ? t('errors.operationFailed')
-                : code;
+            return t('errors.operationFailed');
     }
 }

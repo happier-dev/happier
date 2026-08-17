@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -33,7 +33,6 @@ const styles = StyleSheet.create((theme) => ({
     wrapper: {
         alignSelf: 'center',
         width: '100%',
-        maxWidth: layout.maxWidth,
         paddingHorizontal: 16,
         paddingTop: 12,
         paddingBottom: 12,
@@ -301,6 +300,9 @@ function ListsRow({ model, onPress }: Readonly<{ model: UsageBannerModel; onPres
 
 export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummaryStrip(props: SettingsUsageSummaryStripProps) {
     const { viewModel, isLoading = false, errorMessage = null, onOpenUsage } = props;
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const wrapperMaxWidthStyle = useLayoutMaxWidthStyle();
     const model = React.useMemo(
         () => (viewModel ? buildUsageBannerModel(viewModel, Date.now()) : null),
         [viewModel],
@@ -315,7 +317,7 @@ export const SettingsUsageSummaryStrip = React.memo(function SettingsUsageSummar
         : undefined;
 
     return (
-        <View style={styles.wrapper}>
+        <View style={[styles.wrapper, wrapperMaxWidthStyle]}>
             <View testID="settings-usage-summary-strip">
                 <InstrumentCard>
                     <View style={styles.card}>

@@ -25,9 +25,6 @@ installSessionActionsCommonModuleMocks({
         }),
 });
 
-vi.mock('@/components/ui/icons/DependabotIcon', () => ({
-    DependabotIcon: 'DependabotIcon',
-}));
 
 const openRightSpy = vi.fn();
 const setRightTabSpy = vi.fn();
@@ -82,7 +79,8 @@ describe('SessionHeaderSubagentsButton', () => {
         expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'agents' });
         expect(setRightTabSpy).toHaveBeenCalledWith('agents');
         expect(findTestInstanceByTypeContainingText(screen, 'Text', '2')).toBeTruthy();
-        expect(findTestInstanceByTypeWithProps(screen, 'DependabotIcon', {
+        expect(findTestInstanceByTypeWithProps(screen, 'Icon', {
+            name: 'robot',
             size: SESSION_HEADER_ICON_SIZE_PX,
         })).toBeTruthy();
     });

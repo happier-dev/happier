@@ -3,6 +3,10 @@ import { listActionSpecs } from '@happier-dev/protocol';
 
 import type { Command } from './types';
 import type { KeyboardCommandId } from '@/keyboard';
+import {
+  isCompactAppDestinationVisible,
+  type CompactAppDestination,
+} from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { storage } from '@/sync/domains/state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
@@ -11,6 +15,7 @@ import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resol
 import { t } from '@/text';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -54,7 +59,7 @@ export type PetCommandControls = Readonly<{
   refreshCodexPets: () => void | Promise<void>;
 }>;
 
-export function buildCommandPaletteCommands(params: Readonly<{
+type BuildCommandPaletteCommandsBaseParams = Readonly<{
   sessionsById: Record<string, any>;
   isDev: boolean;
   activeSessionId: string | null;
@@ -75,7 +80,39 @@ export function buildCommandPaletteCommands(params: Readonly<{
     execute: (actionId: ActionId, parameters: unknown, ctx?: { defaultSessionId?: string | null }) => Promise<unknown>;
   }>;
   alert: (title: string, message: string) => void | Promise<void>;
-}>): Command[] {
+}>;
+
+type CompactAppDestinationCommandParams =
+  | Readonly<{
+    compactAppDestinations?: undefined;
+    onActivateCompactAppDestination?: undefined;
+  }>
+  | Readonly<{
+    compactAppDestinations: readonly CompactAppDestination[];
+    onActivateCompactAppDestination: (destination: CompactAppDestination) => void;
+  }>;
+
+function resolveCompactAppDestinationCommandSubtitle(
+  destination: CompactAppDestination,
+): string | undefined {
+  if (destination.kind !== 'plugin') {
+    return undefined;
+  }
+  const parts = [
+    destination.badge?.label,
+    destination.availability === 'unavailable'
+      ? resolveReasonCopy({
+        reasonCode: destination.unavailableReason,
+        kind: 'pluginRuntime',
+      }).message
+      : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return parts.length === 0 ? undefined : parts.join(' · ');
+}
+
+export function buildCommandPaletteCommands(
+  params: BuildCommandPaletteCommandsBaseParams & CompactAppDestinationCommandParams,
+): Command[] {
   const {
     sessionsById,
     isDev,
@@ -92,7 +129,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: 'new-session',
       title: t('commandPalette.commands.newSessionTitle'),
       subtitle: t('commandPalette.commands.newSessionSubtitle'),
-      icon: 'add-circle-outline',
+      icon: 'plus-circle',
       category: t('commandPalette.commands.sessionsCategory'),
       shortcut: params.shortcutLabels?.['session.new'],
       action: () => nav.push('/new'),
@@ -101,7 +138,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: 'sessions',
       title: t('commandPalette.commands.viewAllSessionsTitle'),
       subtitle: t('commandPalette.commands.viewAllSessionsSubtitle'),
-      icon: 'chatbubbles-outline',
+      icon: 'chats-circle',
       category: t('commandPalette.commands.sessionsCategory'),
       action: () => nav.push('/'),
     },
@@ -109,7 +146,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: 'settings',
       title: t('commandPalette.commands.settingsTitle'),
       subtitle: t('commandPalette.commands.settingsSubtitle'),
-      icon: 'settings-outline',
+      icon: 'sliders-horizontal',
       category: t('commandPalette.commands.navigationCategory'),
       shortcut: params.shortcutLabels?.['settings.open'],
       action: () => nav.push('/settings'),
@@ -118,7 +155,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: 'account',
       title: t('commandPalette.commands.accountTitle'),
       subtitle: t('commandPalette.commands.accountSubtitle'),
-      icon: 'person-circle-outline',
+      icon: 'user-circle',
       category: t('commandPalette.commands.navigationCategory'),
       action: () => nav.push('/settings/account'),
     },
@@ -126,18 +163,36 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: 'connect',
       title: t('commandPalette.commands.connectTerminalTitle'),
       subtitle: t('commandPalette.commands.connectTerminalSubtitle'),
-      icon: 'link-outline',
+      icon: 'link',
       category: t('commandPalette.commands.navigationCategory'),
       action: () => nav.push('/scan/terminal'),
     },
   ];
+
+  if (params.compactAppDestinations !== undefined) {
+    for (const destination of params.compactAppDestinations) {
+      if (!isCompactAppDestinationVisible(destination)) {
+        continue;
+      }
+      cmds.push({
+        id: `app-destination:${destination.id}`,
+        title: destination.title,
+        subtitle: resolveCompactAppDestinationCommandSubtitle(destination),
+        icon: destination.icon,
+        category: destination.group === 'sessions'
+          ? t('commandPalette.commands.sessionsCategory')
+          : t('commandPalette.commands.navigationCategory'),
+        action: () => params.onActivateCompactAppDestination(destination),
+      });
+    }
+  }
 
   if (features.memorySearchEnabled) {
     cmds.push({
       id: 'memory-search',
       title: t('commandPalette.commands.memorySearchTitle'),
       subtitle: t('commandPalette.commands.memorySearchSubtitle'),
-      icon: 'search-outline',
+      icon: 'magnifying-glass',
       category: t('commandPalette.commands.navigationCategory'),
       action: () => nav.push('/search'),
     });
@@ -152,7 +207,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
           id: 'pet-wake',
           title: t('commandPalette.pets.wakeTitle'),
           subtitle: t('commandPalette.pets.wakeSubtitle'),
-          icon: 'paw-outline',
+          icon: 'paw-print',
           category: petCategory,
           action: () => petControls.wake(),
         },
@@ -160,7 +215,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
           id: 'pet-tuck',
           title: t('commandPalette.pets.tuckTitle'),
           subtitle: t('commandPalette.pets.tuckSubtitle'),
-          icon: 'moon-outline',
+          icon: 'moon',
           category: petCategory,
           action: () => petControls.tuck(),
         },
@@ -170,7 +225,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
           id: 'pet-reset-position',
           title: t('commandPalette.pets.resetPositionTitle'),
           subtitle: t('commandPalette.pets.resetPositionSubtitle'),
-          icon: 'locate-outline',
+          icon: 'crosshair',
           category: petCategory,
           action: () => petControls.resetPosition?.(),
         });
@@ -179,7 +234,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
         id: 'pet-refresh-codex',
         title: t('commandPalette.pets.refreshCodexTitle'),
         subtitle: t('commandPalette.pets.refreshCodexSubtitle'),
-        icon: 'refresh-outline',
+        icon: 'arrow-clockwise',
         category: petCategory,
         action: () => petControls.refreshCodexPets(),
       });
@@ -188,7 +243,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: 'ui.pet.choose',
       title: t('commandPalette.pets.chooseTitle'),
       subtitle: t('commandPalette.pets.chooseSubtitle'),
-      icon: 'color-palette-outline',
+      icon: 'palette',
       category: petCategory,
       action: () => nav.push('/settings/pets'),
     });
@@ -201,7 +256,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: `session-${sessionId}`,
       title: label.title,
       subtitle: label.subtitle,
-      icon: 'time-outline',
+      icon: 'clock',
       category: t('commandPalette.commands.recentSessionsCategory'),
       action: () => nav.navigateToSession(sessionId),
     });
@@ -228,7 +283,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
         id: `action:${entry.spec.id}`,
         title: entry.title,
         subtitle: t('commandPalette.commands.executionRunsSubtitle'),
-        icon: 'code-slash-outline',
+        icon: 'code',
         category: t('commandPalette.commands.runsCategory'),
         action: async () => {
           const sessionId = await requireSession(activeSessionId, alert);
@@ -262,7 +317,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
         id: `action:${list.id}`,
         title: t('commandPalette.commands.openSessionRunsTitle'),
         subtitle: activeSessionId ? t('commandPalette.commands.runsForCurrentSessionSubtitle') : t('commandPalette.commands.runsAcrossMachinesSubtitle'),
-        icon: 'list-outline',
+        icon: 'list',
         category: t('commandPalette.commands.runsCategory'),
         action: async () => {
           if (activeSessionId) {
@@ -282,7 +337,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
         id: `action:${reset.id}`,
         title: t('commandPalette.commands.resetVoiceAgentTitle'),
         subtitle: t('commandPalette.commands.voiceSubtitle'),
-        icon: 'refresh-outline',
+        icon: 'arrow-clockwise',
         category: t('commandPalette.commands.voiceCategory'),
         action: async () => {
           await actions.execute('ui.voice_global.reset', {}, { defaultSessionId: activeSessionId });
@@ -295,7 +350,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
     id: 'sign-out',
     title: t('commandPalette.commands.signOutTitle'),
     subtitle: t('commandPalette.commands.signOutSubtitle'),
-    icon: 'log-out-outline',
+    icon: 'sign-out',
     category: t('commandPalette.commands.systemCategory'),
     action: async () => {
       await auth.logout();
@@ -307,7 +362,7 @@ export function buildCommandPaletteCommands(params: Readonly<{
       id: 'dev-menu',
       title: t('commandPalette.commands.developerMenuTitle'),
       subtitle: t('commandPalette.commands.developerMenuSubtitle'),
-      icon: 'code-slash-outline',
+      icon: 'code',
       category: t('commandPalette.commands.developerCategory'),
       action: () => nav.push('/dev'),
     });

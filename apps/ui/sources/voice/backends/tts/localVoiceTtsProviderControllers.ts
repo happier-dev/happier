@@ -3,13 +3,12 @@ import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokor
 import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
 import { speakDeviceText } from '@/voice/local/speakDeviceText';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
-import { speakOpenAiCompatText } from '@/voice/output/TtsController';
 import { DaemonTtsController } from '@/voice/runtime/daemonInference/DaemonTtsController';
 import { resolveDaemonVoiceInferenceExecution } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
-import { readLocalSpeechProviderEnvelope } from '@/sync/domains/settings/voiceLocalSpeechProviderSettings';
+import { readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 export type LocalVoiceTtsRequest = Readonly<{
     sessionId?: string | null;
@@ -179,29 +178,6 @@ async function speakWithLocalNeuralTts(ctx: LocalVoiceTtsRequest): Promise<void>
     await speakWithLocalNeuralDeviceRuntime(ctx, localNeural);
 }
 
-async function speakWithOpenAiCompatTts(ctx: LocalVoiceTtsRequest): Promise<void> {
-    const baseUrl = String(ctx.tts.openaiCompat.baseUrl ?? '').trim();
-    if (!baseUrl) {
-        return;
-    }
-    const model = ctx.tts.openaiCompat.model ?? 'tts-1';
-    const voice = ctx.tts.openaiCompat.voice ?? 'alloy';
-    const format = (ctx.tts.openaiCompat.format ?? 'mp3') as 'mp3' | 'wav';
-
-    await speakOpenAiCompatText({
-        baseUrl,
-        insecureLocalOriginConsent: ctx.tts.openaiCompat.insecureLocalOriginConsent ?? null,
-        insecureLocalConsentMachineId: ctx.tts.openaiCompat.insecureLocalConsentMachineId ?? null,
-        credentialKind: 'tts_api_key',
-        model,
-        voice,
-        format,
-        input: ctx.text,
-        registerPlaybackStopper: ctx.registerPlaybackStopper,
-        onPlaybackStarted: ctx.onSpeaking,
-    }).catch((error) => reportTtsFailure(ctx, error));
-}
-
 export async function speakWithBundledSpeechTts(
     providerId: string,
     ctx: LocalVoiceTtsRequest,
@@ -217,7 +193,8 @@ export async function speakWithBundledSpeechTts(
     const registry = registryModule.createDefaultVoiceProviderRegistry();
     const contribution = registry.get(providerId);
     if (
-        contribution?.source.kind !== 'bundled'
+        !contribution
+        || contribution.source.kind === 'built_in'
         || contribution.kind !== 'voice.speech-engine.v1'
         || (contribution.role !== 'tts' && contribution.role !== 'both')
     ) {
@@ -227,16 +204,14 @@ export async function speakWithBundledSpeechTts(
         providerId,
         contribution,
     );
-    if (!descriptor || descriptor.role !== 'tts') return false;
+    if (!descriptor || (descriptor.role !== 'tts' && descriptor.role !== 'both')) return false;
     const runtime = runtimeModule.createBundledSpeechRuntime({ registry });
-    const envelope = readLocalSpeechProviderEnvelope(ctx.tts, providerId);
     await runtime.speak(providerId, {
         text: ctx.text,
-        providerConfig: envelope === null
-            ? descriptor.defaultConfig
-            : envelope.schemaVersion === descriptor.schemaVersion
-                ? envelope.config
-                : null,
+        providerConfig: readVoiceProviderSettingsConfig(
+            voiceSettingsParse(ctx.settings?.voice),
+            providerId,
+        ),
         registerPlaybackStopper: ctx.registerPlaybackStopper,
         onPlaybackStarted: ctx.onSpeaking,
     }).catch((error) => reportTtsFailure(ctx, error));
@@ -247,7 +222,6 @@ export function createDefaultLocalVoiceTtsProviderControllers(): ReadonlyMap<str
     const entries: Array<readonly [string, LocalVoiceTtsProviderController]> = [
         ['device', { speak: speakWithDeviceSpeech }],
         ['local_neural', { speak: speakWithLocalNeuralTts }],
-        ['openai_compat', { speak: speakWithOpenAiCompatTts }],
     ];
     return new Map(entries);
 }

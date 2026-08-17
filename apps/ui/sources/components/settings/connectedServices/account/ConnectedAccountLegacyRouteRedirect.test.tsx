@@ -37,9 +37,10 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
         entries: [{
             serviceId: 'github',
             service: {
-                pluginId: 'happier.scm.hosting.github',
+                pluginId: 'happier.scm.forge.github',
                 localId: 'github-account',
             },
+            legacyServiceId: 'github',
             connectCommand: 'happier connect github',
             supportsOauth: true,
             executable: true,
@@ -76,7 +77,7 @@ describe('ConnectedAccountLegacyRouteRedirect', () => {
             expect(routerReplaceMock).toHaveBeenCalledWith({
                 pathname: '/(app)/settings/connected-services/account',
                 params: {
-                    pluginId: 'happier.scm.hosting.github',
+                    pluginId: 'happier.scm.forge.github',
                     localId: 'github-account',
                     accountId: 'work',
                 },
@@ -94,7 +95,7 @@ describe('ConnectedAccountLegacyRouteRedirect', () => {
             expect(routerReplaceMock).toHaveBeenCalledWith({
                 pathname: '/(app)/settings/connected-services/account',
                 params: {
-                    pluginId: 'happier.scm.hosting.github',
+                    pluginId: 'happier.scm.forge.github',
                     localId: 'github-account',
                 },
             });

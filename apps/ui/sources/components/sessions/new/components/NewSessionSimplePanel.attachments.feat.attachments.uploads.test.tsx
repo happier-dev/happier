@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -183,12 +184,12 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
                     newSessionSidePadding: 0,
                     newSessionBottomPadding: 0,
                     containerStyle: {},
-                    sessionPrompt: '',
+                    promptStore: createNewSessionPromptStore(''),
                     setSessionPrompt: () => {},
                     handleCreateSession: () => {},
                     canCreate: true,
                     isCreating: false,
-                    emptyAutocompletePrefixes: [],
+                    emptyAutocompleteKinds: [],
                     emptyAutocompleteSuggestions: async () => [],
                     sessionPromptInputMaxHeight: 200,
                     agentInputExtraActionChips: [],
@@ -222,6 +223,80 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
         expect(typeof attachmentChip?.collapsedAction).toBe('function');
     });
 
+    it('projects its semantic Composer document through the attachment-owner and input surface', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const onStructuredInputMentionsChange = vi.fn();
+        const composerDocument = {
+            ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+            revision: 1,
+            attachments: [{
+                v: 1,
+                instanceId: 'issue-42',
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                key: '42',
+                value: { issueId: 42 },
+                presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+            }],
+            structuredInputMentions: [],
+            onStructuredInputMentionsChange,
+            attachmentRowItems: [{
+                kind: 'badge',
+                key: 'issue-42',
+                label: 'Issue #42',
+                availability: 'ready',
+            }],
+            hasSendableAttachments: true,
+            captureSubmissionSnapshot: () => null,
+            clearAcceptedSnapshot: () => false,
+        };
+
+        AgentInputMock.mockClear();
+        await renderScreen(React.createElement(NewSessionSimplePanel, {
+            popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
+            headerHeight: 44,
+            safeAreaTop: 0,
+            safeAreaBottom: 0,
+            newSessionTopPadding: 0,
+            newSessionSidePadding: 0,
+            newSessionBottomPadding: 0,
+            containerStyle: {},
+            promptStore: createNewSessionPromptStore(''),
+            composerDocument: composerDocument as any,
+            setSessionPrompt: () => {},
+            handleCreateSession: () => {},
+            canCreate: true,
+            isCreating: false,
+            emptyAutocompleteKinds: [],
+            emptyAutocompleteSuggestions: async () => [],
+            sessionPromptInputMaxHeight: 200,
+            agentInputExtraActionChips: [],
+            agentType: 'codex',
+            handleAgentClick: () => {},
+            permissionMode: 'default',
+            handlePermissionModeChange: () => {},
+            modelMode: 'default',
+            setModelMode: () => {},
+            modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+            connectionStatus: undefined,
+            machineName: undefined,
+            selectedPath: '',
+            showResumePicker: false,
+            resumeSessionId: null,
+            isResumeSupportChecking: false,
+            useProfiles: false,
+            selectedProfileId: null,
+        }));
+
+        const inputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        expect(inputProps.structuredInputMentions).toEqual([]);
+        expect(inputProps.onStructuredInputMentionsChange).toBe(onStructuredInputMentionsChange);
+        expect(inputProps.hasSendableAttachments).toBe(true);
+        expect(inputProps.attachmentRowItems).toContainEqual(expect.objectContaining({
+            key: 'issue-42',
+            label: 'Issue #42',
+        }));
+    });
+
     it('does not emit raw text nodes under View when the attachment icon renders as text on web', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
@@ -239,12 +314,12 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
                         newSessionSidePadding: 0,
                         newSessionBottomPadding: 0,
                         containerStyle: {},
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: true,
                         isCreating: false,
-                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteKinds: [],
                         emptyAutocompleteSuggestions: async () => [],
                         sessionPromptInputMaxHeight: 200,
                         agentInputExtraActionChips: [],
@@ -338,12 +413,12 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
                     newSessionSidePadding: 0,
                     newSessionBottomPadding: 0,
                     containerStyle: {},
-                    sessionPrompt: 'Investigate this bug',
+                    promptStore: createNewSessionPromptStore('Investigate this bug'),
                     setSessionPrompt: () => {},
                     handleCreateSession,
                     canCreate: true,
                     isCreating: false,
-                    emptyAutocompletePrefixes: [],
+                    emptyAutocompleteKinds: [],
                     emptyAutocompleteSuggestions: async () => [],
                     sessionPromptInputMaxHeight: 200,
                     agentInputExtraActionChips: [],
@@ -450,12 +525,12 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
             newSessionSidePadding: 0,
             newSessionBottomPadding: 0,
             containerStyle: {},
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: () => {},
             handleCreateSession: () => {},
             canCreate: true,
             isCreating: false,
-            emptyAutocompletePrefixes: [],
+            emptyAutocompleteKinds: [],
             emptyAutocompleteSuggestions: async () => [],
             sessionPromptInputMaxHeight: 200,
             agentInputExtraActionChips: [],
@@ -484,5 +559,11 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
         const inputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
         const reviewCommentsChip = inputProps.extraActionChips.find((chip: any) => chip?.key === 'review-comments');
         expect(reviewCommentsChip).toBeTruthy();
+        expect('composerAttachmentBadge' in reviewCommentsChip).toBe(false);
+        expect(inputProps.attachmentRowItems).toContainEqual(expect.objectContaining({
+            kind: 'badge',
+            key: 'review-comments',
+            testID: 'agent-input-review-comments-attachment-badge',
+        }));
     });
 });

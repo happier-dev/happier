@@ -35,7 +35,8 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     >;
     creation: Pick<
         NewSessionSimplePanelProps,
-        | 'sessionPrompt'
+        | 'promptStore'
+        | 'composerDocument'
         | 'setSessionPrompt'
         | 'handleCreateSession'
         | 'canCreate'
@@ -44,15 +45,15 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'providerLaunchError'
         | 'retryProviderLaunch'
         | 'submitAccessibilityLabel'
-        | 'emptyAutocompletePrefixes'
+        | 'emptyAutocompleteKinds'
         | 'emptyAutocompleteSuggestions'
-        | 'onAutocompleteSuggestionSelect'
         | 'sessionPromptInputMaxHeight'
         | 'statusBadges'
     >;
     agent: Pick<
         NewSessionSimplePanelProps,
         | 'agentInputExtraActionChips'
+        | 'sourceContextPresentation'
         | 'agentType'
         | 'agentLabel'
         | 'handleAgentClick'

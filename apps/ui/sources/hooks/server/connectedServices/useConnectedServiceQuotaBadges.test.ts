@@ -2,11 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol';
+import {
+  ConnectedServiceIdSchema,
+  ConnectedServiceQuotaSnapshotV1Schema,
+  type ConnectedAccountDaemonControlResponse,
+} from '@happier-dev/protocol';
 import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
+import type { runConnectedAccountControlCommand } from '@/sync/ops/connectedAccounts/connectedAccountDaemon';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 import { renderHookAndCollectValues } from '../serverFeatureHookHarness.testHelpers';
@@ -25,7 +30,12 @@ const useSettingsSpy = vi.fn(() => ({
 
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 
-const { fetchAccountEncryptionModeSpy, getConnectedServiceQuotaSnapshotPlainSpy, getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
+const {
+  fetchAccountEncryptionModeSpy,
+  getConnectedServiceQuotaSnapshotPlainSpy,
+  getConnectedServiceQuotaSnapshotSealedSpy,
+  runConnectedAccountControlCommandSpy,
+} = vi.hoisted(() => ({
   fetchAccountEncryptionModeSpy: vi.fn<
     (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
   >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
@@ -35,7 +45,48 @@ const { fetchAccountEncryptionModeSpy, getConnectedServiceQuotaSnapshotPlainSpy,
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
   >(async () => null),
+  runConnectedAccountControlCommandSpy: vi.fn<
+    (...args: Parameters<typeof runConnectedAccountControlCommand>) => ReturnType<typeof runConnectedAccountControlCommand>
+  >(),
 }));
+
+function buildConnectedAccountDescription(
+  params: Parameters<typeof runConnectedAccountControlCommand>[0],
+): ConnectedAccountDaemonControlResponse {
+  if (params.command.operation !== 'describeService') {
+    return {
+      status: 'unavailable',
+      code: 'connected_account_fixture_operation_unsupported',
+    } satisfies ConnectedAccountDaemonControlResponse;
+  }
+  return {
+    status: 'described',
+    service: params.command.service,
+    descriptor: {
+      id: params.command.service.localId,
+      title: 'Connected Account Fixture',
+      authentication: {
+        defaultModeId: 'oauth',
+        modes: [{
+          id: 'oauth',
+          kind: 'oauthAuthorizationCode',
+          pkce: 'required',
+          outcomeReconciliation: 'none',
+        }],
+      },
+    },
+    generation: 'generation-1',
+    immutableGenerationId: 'immutable-generation-1',
+    accounts: [],
+    operationTransport: {
+      kind: 'legacy',
+      peerClass: 'revisioned_v2_v3',
+      serviceId: ConnectedServiceIdSchema.parse(
+        params.command.service.localId,
+      ),
+    },
+  } satisfies ConnectedAccountDaemonControlResponse;
+}
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: currentCredentials }),
@@ -44,10 +95,42 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/sync/store/hooks', () => ({
   useSettings: () => useSettingsSpy(),
   useLocalSetting: () => 1,
+  useProfile: () => ({
+    connectedAccountsV4: [],
+  }),
+  useAllMachines: () => [{
+    id: 'machine-a',
+    active: true,
+  }],
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => useFeatureEnabledSpy(featureId),
+}));
+
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+  useActiveServerSnapshot: () => ({
+    serverId: 'server-a',
+    serverUrl: 'https://server-a.example.test',
+    generation: 1,
+  }),
+}));
+
+vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
+  useServerFeaturesRuntimeSnapshot: () => ({
+    status: 'ready' as const,
+    features: {
+      capabilities: {
+        connectedServices: {
+          credentialDelete: { revisionGuard: true },
+        },
+      },
+    },
+  }),
+}));
+
+vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', () => ({
+  runConnectedAccountControlCommand: runConnectedAccountControlCommandSpy,
 }));
 
 vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
@@ -64,6 +147,9 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
 
 beforeEach(() => {
   currentCredentials = stableCredentials;
+  runConnectedAccountControlCommandSpy.mockImplementation(
+    async (params) => buildConnectedAccountDescription(params),
+  );
 });
 
 function buildWeeklyQuotaSnapshot(params: Readonly<{

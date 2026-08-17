@@ -2,25 +2,22 @@ import * as React from 'react';
 
 import {
     voiceRuntimeLevelStore,
-    type VoiceRuntimeLevelChannel,
+    type VoiceRuntimeLevelSourceActivity,
 } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
-function readVoiceLevelSourceActive(channel: VoiceRuntimeLevelChannel): boolean {
-    const snapshot = voiceRuntimeLevelStore.getSnapshot();
-    return channel === 'input' ? snapshot.inputSourceActive : snapshot.outputSourceActive;
-}
-
 /**
- * Subscribes React only to the low-frequency source lifecycle fact. Continuous
- * amplitude stays on the Reanimated shared-value path and does not trigger renders.
+ * The app-level projection of both source lifecycles. The level store changes
+ * this object only when a source opens or closes, so it is safe React input for
+ * the one energy/attempt provider while continuous amplitude remains outside
+ * React on the shared-value path.
  */
-export function useVoiceLevelSourceActive(channel: VoiceRuntimeLevelChannel): boolean {
+export function useVoiceLevelSourceActivity(): VoiceRuntimeLevelSourceActivity {
     return React.useSyncExternalStore(
         React.useCallback(
-            (listener) => voiceRuntimeLevelStore.subscribe(channel, () => listener()),
-            [channel],
+            (listener) => voiceRuntimeLevelStore.subscribeSourceActivity(() => listener()),
+            [],
         ),
-        React.useCallback(() => readVoiceLevelSourceActive(channel), [channel]),
-        React.useCallback(() => readVoiceLevelSourceActive(channel), [channel]),
+        React.useCallback(() => voiceRuntimeLevelStore.getSourceActivitySnapshot(), []),
+        React.useCallback(() => voiceRuntimeLevelStore.getSourceActivitySnapshot(), []),
     );
 }

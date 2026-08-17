@@ -15,7 +15,10 @@ import {
     resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import {
+    resolveLinkedExternalSessionMetadataV1,
+    type PluginContributionIdentityV1,
+} from '@happier-dev/protocol';
 import { deriveAcpBackendIdFromFlavor, isAcpFlavorPrefix } from './acpFlavor';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
@@ -137,7 +140,8 @@ function hasUnconsumedReplaySeed(metadata: Record<string, unknown>): boolean {
 function canFreshSpawnMissingVendorResumeId(metadata: SessionMetadata): boolean {
     const record = asRecord(metadata);
     if (!record) return false;
-    if (Object.hasOwn(record, 'externalSessionV1')) return false;
+    const linkedSession = resolveLinkedExternalSessionMetadataV1(record);
+    if (linkedSession.ok || linkedSession.error !== 'linked_session_not_found') return false;
 
     const fork = readForkLineage(record);
     if (!fork) return true;
@@ -159,7 +163,8 @@ export function canResumeSessionWithOptions(metadata: SessionMetadata | null | u
 
     if (isAcpFlavorPrefix(flavor)) {
         const metadataRecord = asRecord(metadata);
-        if (metadataRecord && Object.hasOwn(metadataRecord, 'externalSessionV1')) return false;
+        const linkedSession = resolveLinkedExternalSessionMetadataV1(metadataRecord);
+        if (linkedSession.ok || linkedSession.error !== 'linked_session_not_found') return false;
         const backendId = getConfiguredAcpBackendId(flavor, metadata);
         return backendId !== null && isConfiguredAcpBackendEnabled(backendId, options);
     }

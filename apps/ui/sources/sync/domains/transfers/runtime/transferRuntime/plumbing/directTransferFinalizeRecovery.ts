@@ -26,6 +26,7 @@ export type TransferFinalizeRecoveryContinuation<TResponse> = Readonly<{
     // Destination-daemon wall clock metadata; never authoritative on the client.
     expiresAt: number;
     actions: readonly ['retry_finalize', 'discard_staged'];
+    isActionable: () => boolean;
     invoke: (
         action: TransferFinalizeRecoveryAction,
     ) => Promise<TransferFinalizeRecoveryActionResult<TResponse>>;
@@ -57,6 +58,7 @@ export function isTransferFinalizeRecoveryFailure<TResponse>(
     return (
         recovery.kind === 'transfer_finalize_recovery'
         && typeof recovery.expiresAt === 'number'
+        && typeof recovery.isActionable === 'function'
         && typeof recovery.invoke === 'function'
         && Array.isArray(recovery.actions)
         && recovery.actions.length === 2
@@ -76,6 +78,25 @@ function createUnavailableResult<TResponse>(input: Readonly<{
     };
 }
 
+// Settlement certainty is owner-local: a transient discard RPC failure and an
+// authoritative missing session share the public session_unavailable result.
+type TransferFinalizeRecoveryOperationOutcome<TResponse> = Readonly<{
+    result: TransferFinalizeRecoveryActionResult<TResponse>;
+    settlesContinuation: boolean;
+}>;
+
+function retainTransferFinalizeRecovery<TResponse>(
+    result: TransferFinalizeRecoveryActionResult<TResponse>,
+): TransferFinalizeRecoveryOperationOutcome<TResponse> {
+    return { result, settlesContinuation: false };
+}
+
+function settleTransferFinalizeRecovery<TResponse>(
+    result: TransferFinalizeRecoveryActionResult<TResponse>,
+): TransferFinalizeRecoveryOperationOutcome<TResponse> {
+    return { result, settlesContinuation: true };
+}
+
 export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly<{
     machineId: string;
     serverId?: string | null;
@@ -91,7 +112,7 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
     let settled: TransferFinalizeRecoveryActionResult<TResponse> | null = null;
 
     const runOnce = (
-        operation: () => Promise<TransferFinalizeRecoveryActionResult<TResponse>>,
+        operation: () => Promise<TransferFinalizeRecoveryOperationOutcome<TResponse>>,
     ): Promise<TransferFinalizeRecoveryActionResult<TResponse>> => {
         if (settled) {
             return Promise.resolve(settled);
@@ -100,11 +121,11 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
             return inFlight;
         }
 
-        inFlight = operation().then((result) => {
-            if (result.status !== 'recovery_required') {
-                settled = result;
+        inFlight = operation().then((outcome) => {
+            if (outcome.settlesContinuation) {
+                settled = outcome.result;
             }
-            return result;
+            return outcome.result;
         }).finally(() => {
             inFlight = null;
         });
@@ -119,35 +140,35 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
                 timeoutMs: params.timeoutMs ?? null,
             });
         } catch {
-            return createUnavailableResult({
+            return settleTransferFinalizeRecovery(createUnavailableResult({
                 reason: 'session_unavailable',
                 error: 'The staged upload is no longer available',
-            });
+            }));
         }
 
         if (response.success !== true) {
             if (response.errorCode === TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE) {
-                return {
+                return retainTransferFinalizeRecovery({
                     status: 'recovery_required',
                     error: response.error,
-                };
+                });
             }
             if (response.errorCode === DIRECT_IMPORT_REMOTE_COMMITTED_RESULT_UNUSABLE_ERROR_CODE) {
-                return createUnavailableResult({
+                return settleTransferFinalizeRecovery(createUnavailableResult({
                     reason: 'result_unusable',
                     error: response.error,
-                });
+                }));
             }
             if (response.errorCode === DIRECT_IMPORT_FINALIZE_OUTCOME_INDETERMINATE_ERROR_CODE) {
-                return createUnavailableResult({
+                return retainTransferFinalizeRecovery(createUnavailableResult({
                     reason: 'outcome_indeterminate',
                     error: response.error,
-                });
+                }));
             }
-            return createUnavailableResult({
+            return settleTransferFinalizeRecovery(createUnavailableResult({
                 reason: 'session_unavailable',
                 error: response.error,
-            });
+            }));
         }
 
         let parsed: TResponse | null;
@@ -157,15 +178,15 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
             parsed = null;
         }
         if (parsed === null) {
-            return createUnavailableResult({
+            return settleTransferFinalizeRecovery(createUnavailableResult({
                 reason: 'result_unusable',
                 error: 'Direct import finalize committed but returned an unusable result',
-            });
+            }));
         }
-        return {
+        return settleTransferFinalizeRecovery({
             status: 'finalized',
             response: parsed,
-        };
+        });
     });
 
     const discard = (): Promise<TransferFinalizeRecoveryActionResult<TResponse>> => runOnce(async () => {
@@ -177,17 +198,17 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
                 timeoutMs: params.timeoutMs ?? null,
             });
             if (result.aborted !== true) {
-                return createUnavailableResult({
+                return settleTransferFinalizeRecovery(createUnavailableResult({
                     reason: 'session_unavailable',
                     error: 'The staged upload could not be discarded because its session is unavailable',
-                });
+                }));
             }
-            return { status: 'discarded' };
+            return settleTransferFinalizeRecovery({ status: 'discarded' });
         } catch {
-            return createUnavailableResult({
+            return retainTransferFinalizeRecovery(createUnavailableResult({
                 reason: 'session_unavailable',
                 error: 'The staged upload could not be discarded because its session is unavailable',
-            });
+            }));
         }
     });
 
@@ -206,6 +227,7 @@ export function createDirectTransferFinalizeRecovery<TResponse>(params: Readonly
         kind: 'transfer_finalize_recovery' as const,
         expiresAt: params.expiresAt,
         actions: Object.freeze(['retry_finalize', 'discard_staged'] as const),
+        isActionable: () => settled === null,
         invoke,
     });
 }

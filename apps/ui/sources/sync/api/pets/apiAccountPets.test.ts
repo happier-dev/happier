@@ -53,13 +53,33 @@ describe("apiAccountPets", () => {
         const { listAccountPets } = await import("./apiAccountPets");
         const result = await listAccountPets(credentials);
 
-        expect(result).toHaveLength(1);
-        expect(result[0]).toEqual(expect.not.objectContaining({
+        expect(result).toMatchObject({ ok: true });
+        if (!result.ok) throw new Error("expected account pet list success");
+        expect(result.pets).toHaveLength(1);
+        expect(result.pets[0]).toEqual(expect.not.objectContaining({
             spritesheetBytes: expect.anything(),
         }));
         const [input, init] = fetchSpy.mock.calls[0] ?? [];
         expect(String(input)).toContain("/v1/account/pets");
         expect(init?.method).toBeUndefined();
         expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer token-1");
+    });
+
+    it("returns the typed unavailable result from a conflict response", async () => {
+        vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => (
+            new Response(JSON.stringify({
+                ok: false,
+                errorCode: "custom_pet_sync_unavailable",
+                error: "custom_pet_sync_unavailable",
+            }), { status: 409 })
+        )));
+
+        const { listAccountPets } = await import("./apiAccountPets");
+
+        await expect(listAccountPets(credentials)).resolves.toEqual({
+            ok: false,
+            errorCode: "custom_pet_sync_unavailable",
+            error: "custom_pet_sync_unavailable",
+        });
     });
 });

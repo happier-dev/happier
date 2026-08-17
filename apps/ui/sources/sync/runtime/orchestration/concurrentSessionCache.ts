@@ -1,7 +1,13 @@
-import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import {
+    TokenStorage,
+    type AuthCredentials,
+    isDataKeyAuthCredentials,
+    isLegacyAuthCredentials,
+    isTokenOnlyAuthCredentials,
+} from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
+import { fetchAndApplyMachines, type MachineDataKeyCacheEntry } from '@/sync/engine/machines/syncMachines';
 import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import {
@@ -46,7 +52,7 @@ import {
     subscribeServerReachabilityNetworkAllowed,
     subscribeServerReachabilityState,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
-import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { createSessionRequestForExplicitServerScope } from './serverScopedRpc/createSessionRequestWithServerScope';
 import {
     createConcurrentServerSocketTransport,
     type ConcurrentServerSocket,
@@ -54,6 +60,7 @@ import {
 import { shouldRefreshConcurrentSessionCacheForUpdate } from './concurrentSessionCacheUpdateClassifier';
 import { startRuntimeActiveGatedInterval } from '@/utils/runtime/isRuntimeActive';
 import { areStoredMachinesEqual, hasMachineDaemonStateAdvanced } from '@/sync/store/domains/areStoredMachinesEqual';
+import { scheduleMachineListDisplayWarmCacheSave } from '@/sync/domains/state/machineDisplayWarmCacheWriter';
 import { registerExternalSessionStatusDemandTransport } from './externalSessions/externalSessionStatusDemandCoordinator';
 
 type ConcurrentTarget = Readonly<{
@@ -82,7 +89,7 @@ type ManagedConcurrentServer = {
     encryption: Encryption | null;
     sessionDataKeys: Map<string, Uint8Array>;
     sessionDataKeyEnvelopes: Map<string, string>;
-    machineDataKeys: Map<string, Uint8Array>;
+    machineDataKeys: Map<string, MachineDataKeyCacheEntry>;
     refreshQueued: boolean;
     refreshInFlight: Promise<void> | null;
     refreshTimer: ReturnType<typeof setTimeout> | null;
@@ -106,12 +113,15 @@ function areAuthCredentialsEquivalent(a: AuthCredentials, b: AuthCredentials): b
     const aLegacy = isLegacyAuthCredentials(a);
     const bLegacy = isLegacyAuthCredentials(b);
     if (aLegacy && bLegacy) return a.secret === b.secret;
-    if (!aLegacy && !bLegacy) {
+    const aDataKey = isDataKeyAuthCredentials(a);
+    const bDataKey = isDataKeyAuthCredentials(b);
+    if (aDataKey && bDataKey) {
         return (
             a.encryption.publicKey === b.encryption.publicKey
             && a.encryption.machineKey === b.encryption.machineKey
         );
     }
+    if (isTokenOnlyAuthCredentials(a) && isTokenOnlyAuthCredentials(b)) return true;
     return false;
 }
 let started = false;
@@ -131,14 +141,13 @@ function normalizeServerId(value: unknown): string {
 
 function createServerRequest(serverUrl: string, token: string): (path: string, init: RequestInit) => Promise<Response> {
     const normalized = normalizeServerUrl(serverUrl);
+    const request = createSessionRequestForExplicitServerScope({
+        serverUrl: normalized,
+        token,
+    });
     return async (path: string, init: RequestInit) => {
         const requestPath = String(path ?? '').startsWith('/') ? String(path) : `/${String(path ?? '')}`;
-        return await runtimeFetchWithServerReachability({
-            serverUrl: normalized,
-            token,
-            url: `${normalized}${requestPath}`,
-            init,
-        });
+        return await request(requestPath, init);
     };
 }
 
@@ -181,8 +190,9 @@ export function resolveConcurrentTargets(params: Readonly<{
     return targets;
 }
 
-async function getOrCreateEncryption(entry: ManagedConcurrentServer): Promise<Encryption> {
+async function getOrCreateEncryption(entry: ManagedConcurrentServer): Promise<Encryption | null> {
     if (entry.encryption) return entry.encryption;
+    if (isTokenOnlyAuthCredentials(entry.credentials)) return null;
     entry.encryption = await createEncryptionFromAuthCredentials(entry.credentials);
     return entry.encryption;
 }
@@ -404,6 +414,14 @@ function updateConcurrentMachineListCache(input: {
                 [serverId]: nextMachines,
             };
         })();
+        const nextMachinesForServer = nextMachineListByServerId?.[serverId];
+        if (Array.isArray(nextMachinesForServer)) {
+            scheduleMachineListDisplayWarmCacheSave({
+                serverId,
+                accountId: state.profile.id,
+                machines: nextMachinesForServer,
+            });
+        }
 
         const nextMachineListStatusByServerId = state.machineListStatusByServerId?.[serverId] === input.status
             ? state.machineListStatusByServerId
@@ -529,7 +547,6 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
     const request = createServerRequest(entry.serverUrl, entry.credentials.token);
     let sessions: Session[] = [];
     let machines: Machine[] = [];
-
     await fetchAndApplySessions({
         serverId: entry.id,
         credentials: entry.credentials,
@@ -671,7 +688,7 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
         encryption: null,
         sessionDataKeys: new Map<string, Uint8Array>(),
         sessionDataKeyEnvelopes: new Map<string, string>(),
-        machineDataKeys: new Map<string, Uint8Array>(),
+        machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
         refreshQueued: false,
         refreshInFlight: null,
         refreshTimer: null,

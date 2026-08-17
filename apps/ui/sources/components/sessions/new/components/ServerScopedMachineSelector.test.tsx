@@ -137,6 +137,93 @@ describe('ServerScopedMachineSelector', () => {
         expect(onSelect).toHaveBeenCalledWith(machine);
     });
 
+    it('accepts an owner-supplied unavailable presentation without creating another picker', async () => {
+        const { ServerScopedMachineSelector } = await import('./ServerScopedMachineSelector');
+        const onSelect = vi.fn();
+        const machine = {
+            id: 'machine-locked',
+            serverId: 'server-b',
+            serverName: 'Server B',
+            active: true,
+            metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
+        } as ServerScopedMachine;
+
+        capturedItemProps.length = 0;
+
+        await renderScreen(React.createElement(ServerScopedMachineSelector, {
+            groups: [{
+                serverId: 'server-b',
+                serverName: 'Server B',
+                loading: false,
+                signedOut: false,
+                machines: [machine],
+            }],
+            selectedMachineId: 'machine-locked',
+            selectedServerId: 'server-b',
+            onSelect,
+            resolveMachineAvailability: () => ({ detail: 'common.unavailable', selectable: false }),
+            testIdPrefix: 'administration-machine',
+        }));
+
+        const item = capturedItemProps.find((props) => props.testID === 'administration-machine-option:machine-locked');
+        expect(item).toEqual(expect.objectContaining({
+            detail: 'common.unavailable',
+            disabled: true,
+            selected: true,
+        }));
+
+        (item?.onPress as (() => void) | undefined)?.();
+
+        expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('keeps same-machine domain rows distinct through owner-supplied exact keys and selection', async () => {
+        const { ServerScopedMachineSelector } = await import('./ServerScopedMachineSelector');
+        type MaterializedServerScopedMachine = ServerScopedMachine & Readonly<{
+            materializationId: string;
+        }>;
+        const baseMachine = {
+            id: 'machine-shared',
+            serverId: 'server-b',
+            serverName: 'Server B',
+            active: true,
+            metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
+        } as ServerScopedMachine;
+        const machines: MaterializedServerScopedMachine[] = [
+            { ...baseMachine, materializationId: 'materialization-a' },
+            { ...baseMachine, materializationId: 'materialization-b' },
+        ];
+
+        capturedItemProps.length = 0;
+
+        await renderScreen(React.createElement(ServerScopedMachineSelector<MaterializedServerScopedMachine>, {
+            groups: [{
+                serverId: 'server-b',
+                serverName: 'Server B',
+                loading: false,
+                signedOut: false,
+                machines,
+            }],
+            selectedMachineId: 'machine-shared',
+            selectedServerId: 'server-b',
+            onSelect: vi.fn(),
+            getMachineKey: (machine) => machine.materializationId,
+            isMachineSelected: (machine) => machine.materializationId === 'materialization-b',
+            testIdPrefix: 'plugin-origin',
+        }));
+
+        expect(capturedItemProps).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                testID: 'plugin-origin-option:materialization-a',
+                selected: false,
+            }),
+            expect.objectContaining({
+                testID: 'plugin-origin-option:materialization-b',
+                selected: true,
+            }),
+        ]));
+    });
+
     it.each([
         ['revoked', { revokedAt: Date.now() }, 'common.unavailable'],
         ['replaced', { replacedByMachineId: 'machine-current' }, 'common.unavailable'],

@@ -1,11 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { DependabotIcon } from '@/components/ui/icons/DependabotIcon';
 import { getPreferredLanguage, t } from '@/text';
 import { LruMap } from '@/utils/cache/lruMap';
 
 import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 
 const EMPTY_SESSION_VIEW_HEADER_ACTION_ITEMS: readonly DropdownMenuItem[] = Object.freeze([]);
 const SESSION_VIEW_HEADER_ACTION_ITEMS_CACHE = new LruMap<string, readonly DropdownMenuItem[]>({
@@ -52,21 +51,21 @@ export function resolveSessionViewHeaderActionItems(input: Readonly<{
         items.push({
             id: 'header.openSubagents',
             title: t('session.openSubagents', { count: input.subagentActiveCount }),
-            icon: <DependabotIcon size={18} color={input.actionIconColor} />,
+            icon: <Icon name="robot" size={ICON_SIZE.md} color={input.actionIconColor} />,
         });
     }
     if (input.sessionExecutionRunsSupported) {
         items.push({
             id: 'header.openRuns',
             title: t('session.openRuns'),
-            icon: <Ionicons name="play-outline" size={18} color={input.actionIconColor} />,
+            icon: <Icon name="play" size={16} color={input.actionIconColor} />,
         });
     }
     if (input.showAutomations) {
         items.push({
             id: 'header.openAutomations',
             title: t('session.openAutomations'),
-            icon: <Ionicons name="timer-outline" size={18} color={input.actionIconColor} />,
+            icon: <Icon name="timer" size={16} color={input.actionIconColor} />,
         });
     }
 

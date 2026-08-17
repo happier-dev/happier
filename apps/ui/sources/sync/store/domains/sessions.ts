@@ -47,12 +47,18 @@ import {
 } from '../../domains/state/sessionPersistence';
 import { prepareSessionLocalStateScopeForActivation } from '../../domains/state/persistence';
 import {
+    advanceSessionComposerSemanticRevision,
+    consumeSessionComposerTextMutationToken,
+    invalidateSessionComposerTextMutationToken,
+    type SessionComposerTextMutationToken,
+} from '../../domains/input/draftValues/sessionDraftValueStore';
+import {
     resolveWarmCacheAccountScope,
     peekSessionListWarmCacheEntries,
     type SessionListCacheEntryV1,
     saveSessionListWarmCacheEntries,
 } from '../../domains/state/warmCachePersistence';
-import { buildSessionListCacheEntriesFromRenderables } from '../../domains/state/warmCacheAdapters';
+import { buildPersistedSessionListCacheEntriesFromRenderables } from '../../domains/state/warmCacheAdapters';
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -170,6 +176,25 @@ function readLoadedStoredSessionMessagesForRenderable(sessionMessages: unknown) 
 export type SessionsDomain = {
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
+    /**
+     * Ids this viewer has watched be deleted.
+     *
+     * Neither session map answers "does this session exist", because both are list-scoped
+     * caches. `sessionListRenderables` is evicted for every row a replace-mode `/v2/sessions`
+     * page omits inside its removal window — and that endpoint filters `archivedAt: null`
+     * server-side, so archiving alone empties it. `sessions` holds only the records this run
+     * actually hydrated, a deliberately small set, so it cannot cover an evicted row either.
+     *
+     * `deleteSession` is the one signal that does mean gone. Every caller reaches it through
+     * `handleDeleteSessionSocketUpdate`, on server evidence only: the socket `delete-session`
+     * update, the socket `session-share-revoked` update (the session survives for its owner but
+     * not for this viewer), an exact session fetch answering `not_found`, and
+     * `retireLocalSession`, the local half of an already-authoritative server DELETE. Those are
+     * the same grounds the session route states. Anything that must distinguish gone from
+     * not-cached — a durable pointer such as a transcript session reference — reads this map
+     * rather than inferring absence.
+     */
+    deletedSessionIds: Record<string, true>;
     sessionListRenderableDelta: import('./sessionListIndexFinalization').SessionListRenderableDelta;
     sessionListRowStateByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
@@ -205,10 +230,15 @@ export type SessionsDomain = {
     getWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => string[];
     setWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
     clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => void;
-    updateSessionDraft: (sessionId: string, draft: string | null) => void;
+    updateSessionDraft: (
+        sessionId: string,
+        draft: string | null,
+        options?: Readonly<{ composerTextMutationToken?: SessionComposerTextMutationToken }>,
+    ) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionResuming: (sessionId: string) => void;
+    armSessionResumingFallback: (sessionId: string) => void;
     clearSessionResuming: (sessionId: string) => void;
     clearSessionThinkingGrace: (sessionId: string) => void;
     applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
@@ -513,7 +543,7 @@ function saveWarmSessionCacheForState(
     const accountId = resolveWarmCacheAccountScope(state.profile?.id);
     if (!activeServerId || !accountId) return;
     const previousWarmCacheEntries = previousEntries ?? peekSessionListWarmCacheEntries(activeServerId, accountId) ?? undefined;
-    const nextEntries = buildSessionListCacheEntriesFromRenderables(state.sessionListRenderables, previousWarmCacheEntries);
+    const nextEntries = buildPersistedSessionListCacheEntriesFromRenderables(state.sessionListRenderables, previousWarmCacheEntries);
     if (previousWarmCacheEntries && nextEntries === previousWarmCacheEntries) return;
     saveSessionListWarmCacheEntries(
         activeServerId,
@@ -654,6 +684,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     return {
         sessions: {},
         sessionListRenderables: {},
+        deletedSessionIds: {},
         sessionListRenderableDelta: {
             revision: 0,
             changedSessionIds: [],
@@ -1890,45 +1921,69 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
             };
         }),
-        updateSessionDraft: (sessionId: string, draft: string | null) => set((state) => {
-            const session = state.sessions[sessionId];
-            // Don't store empty strings, convert to null
-            const normalizedDraft = draft?.trim() ? draft : null;
+        updateSessionDraft: (sessionId: string, draft: string | null, options) => {
+            const draftScope = sessionLocalStateScope;
+            let shouldAdvanceComposerSemanticRevision = false;
+            let shouldInvalidateComposerTextMutationToken = false;
+            set((state) => {
+                const session = state.sessions[sessionId];
+                // Don't store empty strings, convert to null
+                const normalizedDraft = draft?.trim() ? draft : null;
+                const previousDraft = sessionDrafts[sessionId] ?? null;
 
-            // Preserve drafts for sessions that have not been materialized into this store slice yet.
-            const allDrafts: Record<string, string> = { ...sessionDrafts };
-            Object.entries(state.sessions).forEach(([id, sess]) => {
-                if (sess.draft?.trim()) {
-                    allDrafts[id] = sess.draft;
+                // Preserve drafts for sessions that have not been materialized into this store slice yet.
+                const allDrafts: Record<string, string> = { ...sessionDrafts };
+                Object.entries(state.sessions).forEach(([id, sess]) => {
+                    if (sess.draft?.trim()) {
+                        allDrafts[id] = sess.draft;
+                    } else {
+                        delete allDrafts[id];
+                    }
+                });
+                if (normalizedDraft) {
+                    allDrafts[sessionId] = normalizedDraft;
                 } else {
-                    delete allDrafts[id];
+                    delete allDrafts[sessionId];
                 }
+
+                // Persist drafts
+                saveSessionDrafts(allDrafts, draftScope);
+                sessionDrafts = allDrafts;
+                const textMutationAlreadyAdvanced = consumeSessionComposerTextMutationToken(
+                    draftScope,
+                    sessionId,
+                    options?.composerTextMutationToken,
+                );
+                if (
+                    previousDraft !== normalizedDraft
+                    && !textMutationAlreadyAdvanced
+                ) {
+                    shouldInvalidateComposerTextMutationToken = true;
+                    shouldAdvanceComposerSemanticRevision = true;
+                }
+
+                if (!session) return state;
+
+                const updatedSessions = {
+                    ...state.sessions,
+                    [sessionId]: {
+                        ...session,
+                        draft: normalizedDraft
+                    }
+                };
+
+                return {
+                    ...state,
+                    sessions: updatedSessions,
+                };
             });
-            if (normalizedDraft) {
-                allDrafts[sessionId] = normalizedDraft;
-            } else {
-                delete allDrafts[sessionId];
+            if (shouldInvalidateComposerTextMutationToken) {
+                invalidateSessionComposerTextMutationToken(draftScope, sessionId);
             }
-
-            // Persist drafts
-            saveSessionDrafts(allDrafts, sessionLocalStateScope);
-            sessionDrafts = allDrafts;
-
-            if (!session) return state;
-
-            const updatedSessions = {
-                ...state.sessions,
-                [sessionId]: {
-                    ...session,
-                    draft: normalizedDraft
-                }
-            };
-
-            return {
-                ...state,
-                sessions: updatedSessions,
-            };
-        }),
+            if (shouldAdvanceComposerSemanticRevision) {
+                advanceSessionComposerSemanticRevision(draftScope, sessionId);
+            }
+        },
         upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => set((state) => {
             const existing = state.reviewCommentsDraftsBySessionId[sessionId] ?? [];
             const next = existing.some((d) => d.id === draft.id)
@@ -2151,7 +2206,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         markSessionResuming: (sessionId: string) => {
             const resumingAt = Date.now();
             if (!get().sessions[sessionId]) return;
+            resumingTimeouts.cancel(sessionId);
             updateSessionResumingAt(sessionId, resumingAt);
+        },
+        armSessionResumingFallback: (sessionId: string) => {
+            const resumingAt = get().sessions[sessionId]?.resumingAt ?? null;
+            if (resumingAt === null) return;
             resumingTimeouts.schedule(sessionId, SESSION_RESUMING_PRESENTATION_TIMEOUT_MS, () => {
                 const current = get().sessions[sessionId];
                 if ((current?.resumingAt ?? null) !== resumingAt) return;
@@ -2628,6 +2688,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...state,
                 sessions: remainingSessions,
                 sessionListRenderables: remainingRenderables,
+                // The only durable record that this id is gone rather than merely uncached.
+                deletedSessionIds: { ...state.deletedSessionIds, [sessionId]: true as const },
                 sessionMessages: remainingSessionMessages,
                 sessionScmStatus: remainingScmStatus,
                 ...nextTreeExpansionState,

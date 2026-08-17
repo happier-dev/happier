@@ -19,10 +19,11 @@ export function resolvePendingInputServerWireMode(
     snapshot: ServerFeaturesSnapshot | Readonly<{ status: 'loading' }>,
 ): PendingInputServerWireMode {
     if (snapshot.status !== 'ready') return 'indeterminate';
-    const compatibility = snapshot.features.capabilities.compatibility;
+    const pendingInputVersion =
+        snapshot.features.capabilities.session.pendingInput?.protocolVersion;
     if (
-        compatibility?.pendingInput?.currentPendingInputProtocolVersion !== undefined
-        && compatibility.pendingInput.currentPendingInputProtocolVersion >= PENDING_INPUT_PROTOCOL_VERSION_V1
+        pendingInputVersion !== undefined
+        && pendingInputVersion >= PENDING_INPUT_PROTOCOL_VERSION_V1
     ) {
         return 'pending_input_v1';
     }

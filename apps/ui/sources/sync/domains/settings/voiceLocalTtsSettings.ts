@@ -1,27 +1,14 @@
 import { z } from 'zod';
 import { KOKORO_DEFAULT_TTS_PACK_ID, LocalNeuralExecutionSchema } from '@happier-dev/protocol';
 
-import { SecretStringSchema } from '../../encryption/secretSettings';
-import { migrateLegacyGoogleTtsSettings } from './migrations/legacyGoogleSpeechSettingsMigration';
 import {
-  VoiceLocalSpeechProviderIdSchema,
-  VoiceLocalSpeechProviderSettingsRecordSchema,
-} from './voiceLocalSpeechProviderSettings';
+  migrateLegacyGoogleTtsSettings,
+  normalizeLegacySpeechProviderSelection,
+} from './migrations/speechProviders';
+import { VoiceLocalSpeechProviderIdSchema } from './voiceLocalSpeechProviderSettings';
 
 export const VoiceLocalTtsProviderSchema = VoiceLocalSpeechProviderIdSchema;
 export type VoiceLocalTtsProvider = z.infer<typeof VoiceLocalTtsProviderSchema>;
-
-const VoiceLocalTtsOpenAiCompatSchema = z
-  .object({
-    baseUrl: z.string().nullable().default(null),
-    insecureLocalOriginConsent: z.string().url().nullable().default(null),
-    insecureLocalConsentMachineId: z.string().min(1).max(256).nullable().default(null),
-    apiKey: SecretStringSchema.nullable().default(null),
-    model: z.string().default('tts-1'),
-    voice: z.string().default('alloy'),
-    format: z.enum(['mp3', 'wav']).default('mp3'),
-  })
-  .prefault({});
 
 const VoiceLocalTtsLocalNeuralSchema = z
   .object({
@@ -35,10 +22,8 @@ const VoiceLocalTtsLocalNeuralSchema = z
   .prefault({});
 
 const VoiceLocalTtsSchemaV3 = z.object({
-  provider: VoiceLocalTtsProviderSchema.default('openai_compat'),
-  openaiCompat: VoiceLocalTtsOpenAiCompatSchema,
+  provider: VoiceLocalTtsProviderSchema.default('happier.voice.openai-compat/tts'),
   localNeural: VoiceLocalTtsLocalNeuralSchema,
-  providers: VoiceLocalSpeechProviderSettingsRecordSchema.default({}),
   autoSpeakReplies: z.boolean().default(true),
   bargeInEnabled: z.boolean().default(true),
 });
@@ -46,34 +31,13 @@ const VoiceLocalTtsSchemaV3 = z.object({
 type VoiceLocalTtsV3 = z.infer<typeof VoiceLocalTtsSchemaV3>;
 
 function migrateLegacyLocalTts(input: Record<string, unknown>): VoiceLocalTtsV3 {
-  const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : input.baseUrl === null ? null : null;
-  const apiKey = SecretStringSchema.nullable().safeParse(input.apiKey).success
-    ? (SecretStringSchema.nullable().parse(input.apiKey) as any)
-    : null;
-  const model = typeof input.model === 'string' && input.model.trim() ? input.model : 'tts-1';
-  const voice = typeof input.voice === 'string' && input.voice.trim() ? input.voice : 'alloy';
-  const formatRaw = typeof input.format === 'string' ? input.format : 'mp3';
-  const format = formatRaw === 'wav' ? 'wav' : 'mp3';
   const useDeviceTts = input.useDeviceTts === true;
   const autoSpeakReplies = input.autoSpeakReplies !== false;
   const bargeInEnabled = input.bargeInEnabled !== false;
 
-  const provider: VoiceLocalTtsProvider =
-    useDeviceTts ? 'device' : baseUrl && baseUrl.trim().length > 0 ? 'openai_compat' : 'openai_compat';
-
   return {
-    provider,
-    openaiCompat: {
-      baseUrl: baseUrl && baseUrl.trim().length > 0 ? baseUrl.trim() : null,
-      insecureLocalOriginConsent: null,
-      insecureLocalConsentMachineId: null,
-      apiKey,
-      model,
-      voice,
-      format,
-    },
+    provider: useDeviceTts ? 'device' : 'happier.voice.openai-compat/tts',
     localNeural: { model: 'kokoro', assetId: KOKORO_DEFAULT_TTS_PACK_ID, voiceId: null, speed: null, execution: 'auto' },
-    providers: {},
     autoSpeakReplies,
     bargeInEnabled,
   };
@@ -111,23 +75,13 @@ export const VoiceLocalTtsSchema = z.preprocess((raw) => {
     return migrateKokoroProviderToLocalNeural(obj);
   }
 
-  if ('provider' in obj || 'openaiCompat' in obj || 'localNeural' in obj || 'providers' in obj) {
-    // Normalize legacy flat `baseUrl` into `openaiCompat.baseUrl` when present.
-    if (obj.provider === 'openai_compat' && obj.openaiCompat && typeof obj.openaiCompat === 'object') {
-      const legacyBaseUrl = typeof obj.baseUrl === 'string' ? obj.baseUrl.trim() : '';
-      const openaiCompat = obj.openaiCompat as Record<string, unknown>;
-      const hasOpenaiBaseUrl = typeof openaiCompat.baseUrl === 'string' && String(openaiCompat.baseUrl).trim().length > 0;
-      if (!hasOpenaiBaseUrl && legacyBaseUrl) {
-        return {
-          ...obj,
-          openaiCompat: {
-            ...openaiCompat,
-            baseUrl: legacyBaseUrl,
-          },
-        };
-      }
-    }
-    return obj;
+  if ('provider' in obj || 'localNeural' in obj) {
+    return {
+      ...obj,
+      ...(typeof obj.provider === 'string'
+        ? { provider: normalizeLegacySpeechProviderSelection('tts', obj.provider) }
+        : {}),
+    };
   }
 
   // Legacy shape (flat openai-compat fields + `useDeviceTts` toggle).

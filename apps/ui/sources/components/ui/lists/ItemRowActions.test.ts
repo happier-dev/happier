@@ -100,7 +100,7 @@ describe('ItemRowActions', () => {
             title: 'Profile',
             overflowTriggerTestID: 'row-actions-trigger',
             actions: [
-                { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: onEdit },
+                { id: 'edit', title: 'Edit profile', icon: 'pencil-simple', onPress: onEdit },
             ],
         }));
 
@@ -148,7 +148,7 @@ describe('ItemRowActions', () => {
             title: 'Profile',
             overflowTriggerTestID: 'custom-trigger',
             actions: [
-                { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: onEdit },
+                { id: 'edit', title: 'Edit profile', icon: 'pencil-simple', onPress: onEdit },
             ],
             renderOverflowTrigger: ({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => React.createElement(
                 'Pressable',
@@ -187,7 +187,7 @@ describe('ItemRowActions', () => {
             compactThreshold: 400,
             overflowTriggerTestID: 'custom-trigger',
             actions: [
-                { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: vi.fn() },
+                { id: 'edit', title: 'Edit profile', icon: 'pencil-simple', onPress: vi.fn() },
             ],
             renderOverflowTrigger: ({ open, toggle, testID }: any) => React.createElement(
                 'Pressable',
@@ -228,7 +228,7 @@ describe('ItemRowActions', () => {
                 title: 'Profile',
                 overflowTriggerTestID: 'row-actions-trigger',
                 actions: [
-                    { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: vi.fn() },
+                    { id: 'edit', title: 'Edit profile', icon: 'pencil-simple', onPress: vi.fn() },
                 ],
             }));
 
@@ -253,7 +253,7 @@ describe('ItemRowActions', () => {
                 title: 'Profile',
                 compactThreshold: 200,
                 actions: [
-                    { id: 'favorite', title: 'Favorite', icon: 'star-outline', onPress: vi.fn() },
+                    { id: 'favorite', title: 'Favorite', icon: 'star', onPress: vi.fn() },
                 ],
             }));
 
@@ -278,7 +278,7 @@ describe('ItemRowActions', () => {
                 {
                     id: 'disable',
                     title: 'Disable plugin',
-                    icon: 'close-circle-outline',
+                    icon: 'x-circle',
                     inlineTestID: 'disable-plugin',
                     onPress: vi.fn(),
                 },
@@ -293,19 +293,14 @@ describe('ItemRowActions', () => {
             : (style ?? {})) as Record<string, unknown>;
         const base = flatten(action!.props.style({ pressed: false, focused: false }));
         const focused = flatten(action!.props.style({ pressed: false, focused: true }));
-        const hitSlop = typeof action!.props.hitSlop === 'number'
-            ? {
-                top: action!.props.hitSlop,
-                bottom: action!.props.hitSlop,
-                left: action!.props.hitSlop,
-                right: action!.props.hitSlop,
-            }
-            : action!.props.hitSlop as { top?: number; bottom?: number; left?: number; right?: number };
 
+        // The target is the rendered frame and nothing else. `hitSlop` cannot contribute
+        // to it: react-native-web 0.21 implements it only in the legacy `Touchable`
+        // export, so on web — which is what the desktop app ships — a slop-declared
+        // target is a target that does not exist.
+        expect(action!.props.hitSlop).toBeUndefined();
         expect(Number(base.width)).toBeGreaterThanOrEqual(44);
         expect(Number(base.height)).toBeGreaterThanOrEqual(44);
-        expect(Number(base.width) + Number(hitSlop.left ?? 0) + Number(hitSlop.right ?? 0)).toBeGreaterThanOrEqual(44);
-        expect(Number(base.height) + Number(hitSlop.top ?? 0) + Number(hitSlop.bottom ?? 0)).toBeGreaterThanOrEqual(44);
         expect(focused.outlineStyle).toBe('solid');
         expect(focused.outlineWidth).toBeGreaterThanOrEqual(2);
         expect(focused.outlineColor).toBeTruthy();
@@ -324,7 +319,7 @@ describe('ItemRowActions', () => {
                     {
                         id: 'disable',
                         title: 'Disable plugin',
-                        icon: 'close-circle-outline',
+                        icon: 'x-circle',
                         inlineTestID: 'disable-plugin-android',
                         onPress: vi.fn(),
                     },
@@ -337,12 +332,75 @@ describe('ItemRowActions', () => {
                 ? Object.assign({}, ...style.filter(Boolean))
                 : (style ?? {})) as Record<string, unknown>;
             const base = flatten(action!.props.style({ pressed: false, focused: false }));
-            const hitSlop = Number(action!.props.hitSlop ?? 0);
+            expect(action!.props.hitSlop).toBeUndefined();
             expect(Number(base.width)).toBeGreaterThanOrEqual(48);
             expect(Number(base.height)).toBeGreaterThanOrEqual(48);
-            expect(hitSlop).toBe(0);
-            expect(Number(base.width) + (hitSlop * 2)).toBeGreaterThanOrEqual(48);
-            expect(Number(base.height) + (hitSlop * 2)).toBeGreaterThanOrEqual(48);
+        } finally {
+            (Platform as { OS: string }).OS = previousPlatform;
+        }
+    });
+
+    // A row that owns its own density can opt out of the 44px *drawn* box, but it may not opt out
+    // of the touch target. `hitSlop` cannot carry that target — react-native-web ignores it on
+    // Pressable — so the press box is a real, larger frame paired with an equal negative margin:
+    // the pointer gets the frame, the row still measures the drawn 32.
+    it('expands the dense control’s press box without moving the row or overlapping its neighbour', async () => {
+        const { Platform } = await import('react-native');
+        const previousPlatform = Platform.OS;
+        const flatten = (style: unknown) => (Array.isArray(style)
+            ? Object.assign({}, ...style.filter(Boolean))
+            : (style ?? {})) as Record<string, unknown>;
+        const DRAWN_SIZE = 32;
+        const ROW_GAP = 4;
+
+        try {
+            for (const platform of [
+                { os: 'web', minimumTargetSize: 44 },
+                { os: 'android', minimumTargetSize: 48 },
+            ] as const) {
+                (Platform as { OS: string }).OS = platform.os;
+                const { ItemRowActions } = await import('./ItemRowActions');
+                const testIDs = [`dense-a-${platform.os}`, `dense-b-${platform.os}`] as const;
+                const screen = await renderScreen(React.createElement(ItemRowActions, {
+                    title: 'Sidebar',
+                    compactThreshold: 200,
+                    actionControlSizePx: DRAWN_SIZE,
+                    gap: ROW_GAP,
+                    actions: [
+                        { id: 'newSession', title: 'New session', icon: 'plus', inlineTestID: testIDs[0], onPress: vi.fn() },
+                        { id: 'favorite', title: 'Favorite', icon: 'star', inlineTestID: testIDs[1], onPress: vi.fn() },
+                    ],
+                }));
+
+                for (const inlineTestID of testIDs) {
+                    const action = screen.findByTestId(inlineTestID);
+                    expect(action, inlineTestID).toBeTruthy();
+                    expect(action!.props.hitSlop, inlineTestID).toBeUndefined();
+
+                    const box = flatten(action!.props.style({ pressed: false, focused: false }));
+                    const width = Number(box.width);
+                    const height = Number(box.height);
+                    // The frame gives back exactly what it took, per side.
+                    const expandX = -Number(box.marginHorizontal ?? 0);
+                    const expandY = -Number(box.marginVertical ?? 0);
+
+                    // 1. The press box carries the platform floor on the axis that has room.
+                    //    Vertical is free: an icon row has no vertical neighbour.
+                    expect(height, `${inlineTestID} press height`).toBe(platform.minimumTargetSize);
+                    expect(width, `${inlineTestID} press width`).toBeGreaterThan(DRAWN_SIZE);
+                    // Dense pointer layout floor, WCAG 2.2 AA SC 2.5.8.
+                    expect(width, `${inlineTestID} SC 2.5.8`).toBeGreaterThanOrEqual(24);
+
+                    // 2. The row's layout footprint is unchanged — still the drawn 32.
+                    expect(width - (expandX * 2), `${inlineTestID} layout width`).toBe(DRAWN_SIZE);
+                    expect(height - (expandY * 2), `${inlineTestID} layout height`).toBe(DRAWN_SIZE);
+
+                    // 3. Adjacent targets tile, never overlap: each reaches `expandX` into the
+                    //    shared gap, so two of them may not consume more than the gap itself.
+                    //    This is the assertion the previous hitSlop arithmetic could not make.
+                    expect(expandX * 2, `${inlineTestID} overlap`).toBeLessThanOrEqual(ROW_GAP);
+                }
+            }
         } finally {
             (Platform as { OS: string }).OS = previousPlatform;
         }

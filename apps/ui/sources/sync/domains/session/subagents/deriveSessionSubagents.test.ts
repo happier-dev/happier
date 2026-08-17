@@ -9,11 +9,12 @@ function createToolMessage(params: {
     name: string;
     state: 'running' | 'completed' | 'error';
     seq?: number;
+    createdAt?: number;
     input?: any;
     result?: any;
     toolExtras?: Record<string, unknown>;
 }): ToolCallMessage {
-    const now = Date.now();
+    const now = typeof params.createdAt === 'number' ? params.createdAt : Date.now();
     return {
         kind: 'tool-call',
         id: params.id,
@@ -51,6 +52,7 @@ function deriveSubagents(params: {
     session: any;
     messages: readonly Message[];
     activeExecutionRuns?: readonly { runId: string; status?: string | null }[];
+    nowMs?: number;
 }) {
     return deriveSessionSubagents(params);
 }
@@ -474,4 +476,88 @@ describe('deriveSessionSubagents', () => {
         );
     });
 
+});
+
+describe('deriveSessionSubagents: sidechain rows after the owning session runtime is gone', () => {
+    const NOW_MS = 1_800_000_000_000;
+    const MINUTE_MS = 60_000;
+
+    function deriveSidechainStatus(params: {
+        session: any;
+        toolCreatedAt?: number;
+    }): string | undefined {
+        const subagents = deriveSubagents({
+            session: params.session,
+            nowMs: NOW_MS,
+            messages: [
+                createToolMessage({
+                    id: 'message_task_generic',
+                    name: 'SubAgent',
+                    state: 'running',
+                    createdAt: params.toolCreatedAt ?? NOW_MS - 30 * MINUTE_MS,
+                    input: { prompt: 'Search the repo' },
+                    result: { status: 'running' },
+                    toolExtras: { id: 'tool_task_generic' },
+                }),
+            ],
+        });
+        return subagents.find((subagent) => subagent.kind === 'subagent_sidechain')?.status;
+    }
+
+    it('retires an otherwise-running sidechain once the owning session runtime is durably gone', () => {
+        expect(deriveSidechainStatus({
+            session: {
+                metadata: { flavor: 'codex' },
+                active: false,
+                activeAt: NOW_MS - 20 * MINUTE_MS,
+                presence: NOW_MS - 20 * MINUTE_MS,
+            },
+        })).toBe('terminated');
+    });
+
+    it('retires an archived session\'s sidechain even though its final report said running', () => {
+        expect(deriveSidechainStatus({
+            session: {
+                metadata: { flavor: 'codex' },
+                active: false,
+                activeAt: NOW_MS - 20 * MINUTE_MS,
+                presence: NOW_MS - 20 * MINUTE_MS,
+                archivedAt: NOW_MS - 10 * MINUTE_MS,
+            },
+        })).toBe('terminated');
+    });
+
+    it('leaves the sidechain running while the owning session runtime is still attached', () => {
+        expect(deriveSidechainStatus({
+            session: {
+                metadata: { flavor: 'codex' },
+                active: true,
+                activeAt: NOW_MS - 1_000,
+                presence: 'online',
+            },
+        })).toBe('running');
+    });
+
+    it('reads a brief detachment as inactivity rather than death', () => {
+        expect(deriveSidechainStatus({
+            session: {
+                metadata: { flavor: 'codex' },
+                active: false,
+                activeAt: NOW_MS - 5_000,
+                presence: NOW_MS - 5_000,
+            },
+        })).toBe('running');
+    });
+
+    it('leaves the sidechain running when its own evidence is newer than the last time the runtime was seen', () => {
+        expect(deriveSidechainStatus({
+            session: {
+                metadata: { flavor: 'codex' },
+                active: false,
+                activeAt: NOW_MS - 20 * MINUTE_MS,
+                presence: NOW_MS - 20 * MINUTE_MS,
+            },
+            toolCreatedAt: NOW_MS - MINUTE_MS,
+        })).toBe('running');
+    });
 });

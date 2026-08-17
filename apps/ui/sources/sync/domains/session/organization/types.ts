@@ -10,16 +10,51 @@ import type {
 
 export type SessionOrganizationFolderAssignmentValue = string | null;
 
+export type SessionOrganizationDisplayState =
+    | Readonly<{
+        status: 'available';
+        value: unknown | null;
+    }>
+    | Readonly<{
+        status: 'locked';
+        reason:
+            | 'account_key_unavailable'
+            | 'content_unreadable'
+            | 'invalid_stored_display'
+            | 'storage_mode_mismatch';
+    }>;
+
+export type UiSessionOrganizationFolder = Omit<SessionOrganizationFolder, 'displayState'> & Readonly<{
+    displayState: SessionOrganizationDisplayState;
+}>;
+
+export type UiSessionOrganizationTag = Omit<SessionOrganizationTag, 'displayState'> & Readonly<{
+    displayState: SessionOrganizationDisplayState;
+}>;
+
+export type UiSessionOrganizationLabel = Omit<SessionOrganizationLabel, 'displayState'> & Readonly<{
+    displayState: SessionOrganizationDisplayState;
+}>;
+
+export type UiSessionOrganizationSnapshot = Omit<
+    SessionOrganizationSnapshot,
+    'folders' | 'tags' | 'labels'
+> & Readonly<{
+    folders: UiSessionOrganizationFolder[];
+    tags: UiSessionOrganizationTag[];
+    labels: UiSessionOrganizationLabel[];
+}>;
+
 export type NormalizedSessionOrganizationState = Readonly<{
     schemaVersionByServerId: Readonly<Record<string, number>>;
     snapshotVersionByServerId: Readonly<Record<string, number>>;
     pinsBySessionKey: Readonly<Record<string, SessionOrganizationPin>>;
-    foldersByFolderKey: Readonly<Record<string, SessionOrganizationFolder>>;
+    foldersByFolderKey: Readonly<Record<string, UiSessionOrganizationFolder>>;
     folderAssignmentsBySessionKey: Readonly<Record<string, SessionOrganizationFolderAssignmentValue>>;
-    tagsByTagKey: Readonly<Record<string, SessionOrganizationTag>>;
+    tagsByTagKey: Readonly<Record<string, UiSessionOrganizationTag>>;
     tagAssignmentsBySessionKey: Readonly<Record<string, readonly string[]>>;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
-    labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
+    labelsByLabelKey: Readonly<Record<string, UiSessionOrganizationLabel>>;
 }>;
 
 export type SessionOrganizationSnapshotApplyOptions = Partial<Pick<
@@ -40,10 +75,10 @@ export type SessionOrganizationProjection = Readonly<{
     version: number | null;
     pinnedSessionIds: readonly string[];
     pinsBySessionId: Readonly<Record<string, SessionOrganizationPin>>;
-    foldersById: Readonly<Record<string, SessionOrganizationFolder>>;
+    foldersById: Readonly<Record<string, UiSessionOrganizationFolder>>;
     folderAssignmentsBySessionId: Readonly<Record<string, SessionOrganizationFolderAssignmentValue>>;
-    tagsById: Readonly<Record<string, SessionOrganizationTag>>;
+    tagsById: Readonly<Record<string, UiSessionOrganizationTag>>;
     tagAssignmentsBySessionId: Readonly<Record<string, readonly string[]>>;
     orderEntriesByScopeKey: Readonly<Record<string, readonly SessionOrganizationOrderEntry[]>>;
-    labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>;
+    labelsByLabelKey: Readonly<Record<string, UiSessionOrganizationLabel>>;
 }>;

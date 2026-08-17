@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createStore } from 'zustand/vanilla';
 
 import { createMessagesDomain } from './messages';
 
@@ -59,5 +60,63 @@ describe('messages domain: resetSessionMessages', () => {
         expect(get().sessionMessages.s1.isLoaded).toBe(false);
         expect(get().sessionMessages.s1.messageIdsOldestFirst).toHaveLength(0);
         expect(Object.keys(get().sessionMessages.s1.messagesById)).toHaveLength(0);
+    });
+
+    it('replaces a mounted transcript in one loaded store emission', () => {
+        const store = createStore<any>((set, get) => ({
+            ...createMessagesDomain({ set, get } as any),
+            sessionPending: {},
+            sessions: {
+                s1: {
+                    id: 's1',
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    metadataVersion: 1,
+                    metadata: null,
+                    permissionMode: null,
+                    permissionModeUpdatedAt: 0,
+                },
+            },
+        }));
+
+        store.getState().applyMessages('s1', [{
+            id: 'old-message',
+            seq: 1,
+            localId: null,
+            createdAt: 1_000,
+            isSidechain: false,
+            role: 'user',
+            content: { type: 'text', text: 'old' },
+        } as any]);
+        store.getState().applyMessagesLoaded('s1');
+
+        const observed: Array<{ texts: string[]; isLoaded: boolean }> = [];
+        const unsubscribe = store.subscribe((state) => {
+            const transcript = state.sessionMessages.s1;
+            observed.push({
+                texts: transcript.messageIdsOldestFirst.flatMap((messageId: string) => {
+                    const message = transcript.messagesById[messageId];
+                    return message?.kind === 'user-text' ? [message.text] : [];
+                }),
+                isLoaded: transcript.isLoaded,
+            });
+        });
+
+        (store.getState() as any).replaceSessionMessages('s1', [{
+            id: 'replacement-message',
+            seq: 2,
+            localId: null,
+            createdAt: 2_000,
+            isSidechain: false,
+            role: 'user',
+            content: { type: 'text', text: 'replacement' },
+        }]);
+        unsubscribe();
+
+        expect(observed).toEqual([{
+            texts: ['replacement'],
+            isLoaded: true,
+        }]);
     });
 });

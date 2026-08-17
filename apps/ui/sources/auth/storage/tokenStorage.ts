@@ -1,4 +1,7 @@
 import { Platform } from 'react-native';
+import {
+    AccountEncryptionMigrateRequestBindingDigestV1Schema,
+} from '@happier-dev/protocol';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import {
     areServerProfileIdentifiersEquivalent,
@@ -8,6 +11,11 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { digest } from '@/platform/digest';
 import { encodeBase64 } from '@/encryption/base64';
+import {
+    readDeviceLocalStorageString,
+    removeDeviceLocalStorageString,
+    writeDeviceLocalStorageString,
+} from './deviceLocalStorage';
 import {
     readNativeSecureStoreString,
     removeNativeSecureStoreString,
@@ -22,6 +30,8 @@ const PENDING_EXTERNAL_CONNECT_GLOBAL_KEY = 'pending_external_connect__global';
 const AUTH_AUTO_REDIRECT_SUPPRESSED_UNTIL_KEY = 'auth_auto_redirect_suppressed_until';
 const AUTH_AUTO_REDIRECT_SUPPRESSED_UNTIL_GLOBAL_KEY = 'auth_auto_redirect_suppressed_until_global';
 const RECOVERY_KEY_REMINDER_DISMISSED_KEY = 'recovery_key_reminder_dismissed';
+export const ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS =
+    10 * 60 * 1000;
 
 function textToUtf8Bytes(value: string): Uint8Array {
     return new TextEncoder().encode(value);
@@ -103,6 +113,17 @@ async function getServerHashScopeForNormalizedUrl(normalizedUrl: string): Promis
     const normalized = String(normalizedUrl ?? '').trim();
     if (!normalized) return 'default';
     const hash = await digest('SHA-256', textToUtf8Bytes(normalized));
+    return encodeBase64(hash, 'base64url');
+}
+
+async function digestCredentialToken(
+    token: string,
+): Promise<string> {
+    const hash =
+        await digest(
+            'SHA-256',
+            textToUtf8Bytes(token),
+        );
     return encodeBase64(hash, 'base64url');
 }
 
@@ -194,11 +215,13 @@ async function getServerScopedKeys(
     const serverId = resolvedServerId ?? (activeServerUrl && activeServerUrl === normalizedUrl ? activeServerId : null);
 
     if (!serverId) {
-        const hashScope = await getServerHashScopeForNormalizedUrl(normalizedUrl);
-        const legacyHashScope =
+        // Independent digests: the boot gate awaits this, so they run together rather than chained.
+        const [hashScope, legacyHashScope] = await Promise.all([
+            getServerHashScopeForNormalizedUrl(normalizedUrl),
             legacyNormalizedUrlForHash
-                ? await getServerHashScopeForNormalizedUrl(legacyNormalizedUrlForHash)
-                : null;
+                ? getServerHashScopeForNormalizedUrl(legacyNormalizedUrlForHash)
+                : Promise.resolve(null),
+        ]);
         return {
             primary: makeScopedKey(baseKey, hashScope),
             legacy: legacyHashScope && legacyHashScope !== hashScope ? [makeScopedKey(baseKey, legacyHashScope)] : [],
@@ -229,8 +252,8 @@ async function getAuthKeys(
     return await getServerScopedKeys(AUTH_KEY, serverUrlOverride, options);
 }
 
-async function getPendingExternalAuthKey(): Promise<string> {
-    return (await getServerScopedKeys(PENDING_EXTERNAL_AUTH_KEY)).primary;
+async function getPendingExternalAuthKeys(): Promise<ScopedStorageKeys> {
+    return await getServerScopedKeys(PENDING_EXTERNAL_AUTH_KEY);
 }
 
 function getPendingExternalAuthGlobalKey(): string {
@@ -308,21 +331,45 @@ function getRecoveryKeyReminderDismissedKeySync(): string | null {
 const credentialsCacheByKey = new Map<string, string>();
 const recoveryKeyReminderDismissedCacheByKey = new Map<string, string>();
 
-export type AuthCredentials =
-    | Readonly<{
-        token: string;
-        secret: string;
-    }>
-    | Readonly<{
-        token: string;
-        encryption: Readonly<{
-            publicKey: string;
-            machineKey: string;
-        }>;
-    }>;
+export type TokenOnlyAuthCredentials = Readonly<{
+    token: string;
+}>;
 
-export function isLegacyAuthCredentials(credentials: AuthCredentials): credentials is Extract<AuthCredentials, { secret: string }> {
+export type LegacyAuthCredentials = Readonly<{
+    token: string;
+    secret: string;
+}>;
+
+export type DataKeyAuthCredentials = Readonly<{
+    token: string;
+    encryption: Readonly<{
+        publicKey: string;
+        machineKey: string;
+    }>;
+}>;
+
+export type AuthCredentials =
+    | TokenOnlyAuthCredentials
+    | LegacyAuthCredentials
+    | DataKeyAuthCredentials;
+
+export function isLegacyAuthCredentials(credentials: AuthCredentials): credentials is LegacyAuthCredentials {
     return typeof (credentials as any)?.secret === 'string' && (credentials as any).secret.trim().length > 0;
+}
+
+export function isDataKeyAuthCredentials(
+    credentials: AuthCredentials,
+): credentials is DataKeyAuthCredentials {
+    const encryption = (credentials as { encryption?: unknown }).encryption;
+    if (!encryption || typeof encryption !== 'object') return false;
+    const record = encryption as Record<string, unknown>;
+    return isNonEmptyString(record.publicKey) && isNonEmptyString(record.machineKey);
+}
+
+export function isTokenOnlyAuthCredentials(
+    credentials: AuthCredentials,
+): credentials is TokenOnlyAuthCredentials {
+    return !isLegacyAuthCredentials(credentials) && !isDataKeyAuthCredentials(credentials);
 }
 
 export interface PendingExternalAuth {
@@ -333,7 +380,38 @@ export interface PendingExternalAuth {
     serverId?: string;
     serverUrl?: string;
     returnTo?: string;
+    accountEncryptionFirstKey?: Readonly<{
+        accountId: string;
+        requestDigest: string;
+        requestJson: string;
+        createdAt: number;
+        expiresAt: number;
+        pending?: string;
+        migrationSubmissionAttempted?: true;
+        rejectedCredentialTokenDigest?: string;
+    }>;
 }
+
+export type PendingExternalAuthFirstKeyRejectedCredentialMarkResult =
+    | Readonly<{
+        kind: 'recorded';
+        pending: PendingExternalAuth;
+    }>
+    | Readonly<{ kind: 'not_current' }>
+    | Readonly<{ kind: 'write_failed' }>;
+
+export type PendingExternalAuthFirstKeyRejectedCredentialClassification =
+    | Readonly<{
+        kind: 'rejected';
+        pending: PendingExternalAuth;
+    }>
+    | Readonly<{ kind: 'allowed' }>;
+
+export type PendingExternalAuthClearOptions = Readonly<{
+    removeFirstKeyMigrationAttempted?: PendingExternalAuth;
+    serverUrl?: string;
+    serverId?: string;
+}>;
 
 export interface PendingExternalConnect {
     provider: string;
@@ -375,8 +453,151 @@ function isPendingExternalAuthRecord(value: unknown): value is PendingExternalAu
     if (maybe.serverId !== undefined && !isNonEmptyString(maybe.serverId)) return false;
     if (maybe.serverUrl !== undefined && !isNonEmptyString(maybe.serverUrl)) return false;
     if (maybe.returnTo !== undefined && !isInternalReturnTo(maybe.returnTo)) return false;
+    if (maybe.accountEncryptionFirstKey !== undefined) {
+        if (
+            !maybe.accountEncryptionFirstKey
+            || typeof maybe.accountEncryptionFirstKey !== 'object'
+            || Array.isArray(maybe.accountEncryptionFirstKey)
+        ) {
+            return false;
+        }
+        const continuation =
+            maybe.accountEncryptionFirstKey as Record<string, unknown>;
+        if (
+            !isNonEmptyString(continuation.accountId)
+            || continuation.accountId.length > 256
+            || !AccountEncryptionMigrateRequestBindingDigestV1Schema
+                .safeParse(continuation.requestDigest).success
+            || !isNonEmptyString(continuation.requestJson)
+            || !Number.isSafeInteger(continuation.createdAt)
+            || !Number.isSafeInteger(continuation.expiresAt)
+            || Number(continuation.createdAt) < 0
+            || Number(continuation.expiresAt)
+                <= Number(continuation.createdAt)
+            || Number(continuation.expiresAt)
+                - Number(continuation.createdAt)
+                > ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS
+            || (
+                continuation.pending !== undefined
+                && !isNonEmptyString(continuation.pending)
+            )
+            || (
+                continuation.migrationSubmissionAttempted !== undefined
+                && continuation.migrationSubmissionAttempted !== true
+            )
+            || (
+                continuation.migrationSubmissionAttempted === true
+                && !isNonEmptyString(continuation.pending)
+            )
+            || (
+                continuation.rejectedCredentialTokenDigest !== undefined
+                && (
+                    continuation.migrationSubmissionAttempted !== true
+                    || typeof continuation.rejectedCredentialTokenDigest
+                        !== 'string'
+                    || !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(
+                        continuation.rejectedCredentialTokenDigest,
+                    )
+                )
+            )
+        ) {
+            return false;
+        }
+        const keys = Object.keys(continuation);
+        const allowedKeys = new Set([
+            'accountId',
+            'requestDigest',
+            'requestJson',
+            'createdAt',
+            'expiresAt',
+            'pending',
+            'migrationSubmissionAttempted',
+            'rejectedCredentialTokenDigest',
+        ]);
+        if (
+            keys.length
+                !== (
+                    5
+                    + (
+                        continuation.pending === undefined
+                            ? 0
+                            : 1
+                    )
+                    + (
+                        continuation.migrationSubmissionAttempted === undefined
+                            ? 0
+                            : 1
+                    )
+                    + (
+                        continuation.rejectedCredentialTokenDigest === undefined
+                            ? 0
+                            : 1
+                    )
+                )
+            || keys.some((key) => !allowedKeys.has(key))
+        ) {
+            return false;
+        }
+    }
     if (maybe.intent === undefined) return true;
     return maybe.intent === 'signup' || maybe.intent === 'reset';
+}
+
+function isPendingExternalAuthFirstKeyExpired(
+    value: PendingExternalAuth,
+): boolean {
+    const continuation = value.accountEncryptionFirstKey;
+    return Boolean(
+        continuation
+        && continuation.migrationSubmissionAttempted
+            !== true
+        && Date.now() >= continuation.expiresAt,
+    );
+}
+
+function hasAttemptedFirstKeyMigration(
+    value: PendingExternalAuth,
+): boolean {
+    return value.accountEncryptionFirstKey
+        ?.migrationSubmissionAttempted === true;
+}
+
+function matchesAttemptedFirstKeyMigration(
+    value: PendingExternalAuth,
+    expected: PendingExternalAuth,
+): boolean {
+    const continuation = value.accountEncryptionFirstKey;
+    const expectedContinuation =
+        expected.accountEncryptionFirstKey;
+    return Boolean(
+        continuation?.migrationSubmissionAttempted === true
+        && expectedContinuation
+            ?.migrationSubmissionAttempted === true
+        && value.provider.trim().toLowerCase()
+            === expected.provider.trim().toLowerCase()
+        && value.proof === expected.proof
+        && value.secret === expected.secret
+        && value.intent === expected.intent
+        && value.returnTo === expected.returnTo
+        && normalizeServerId(value.serverId)
+            === normalizeServerId(expected.serverId)
+        && normalizeUrl(value.serverUrl ?? '')
+            === normalizeUrl(expected.serverUrl ?? '')
+        && continuation.accountId
+            === expectedContinuation.accountId
+        && continuation.requestDigest
+            === expectedContinuation.requestDigest
+        && continuation.requestJson
+            === expectedContinuation.requestJson
+        && continuation.createdAt
+            === expectedContinuation.createdAt
+        && continuation.expiresAt
+            === expectedContinuation.expiresAt
+        && continuation.pending
+            === expectedContinuation.pending
+        && continuation.rejectedCredentialTokenDigest
+            === expectedContinuation.rejectedCredentialTokenDigest,
+    );
 }
 
 function isPendingExternalConnectRecord(value: unknown): value is PendingExternalConnect {
@@ -420,6 +641,30 @@ function doesPendingExternalStateMatchActiveServer(
     }
 
     return pendingServerUrl === activeServerUrl;
+}
+
+function doesPendingExternalStateMatchServer(
+    value: PendingExternalServerContext,
+    serverUrl: string,
+    serverId?: string,
+): boolean {
+    const expectedServerId = normalizeServerId(serverId ?? null);
+    const pendingServerId = normalizeServerId(
+        typeof value.serverId === 'string'
+            ? value.serverId
+            : null,
+    );
+    if (expectedServerId && pendingServerId) {
+        return areServerProfileIdentifiersEquivalent(
+            expectedServerId,
+            pendingServerId,
+        );
+    }
+    return normalizeUrl(
+        typeof value.serverUrl === 'string'
+            ? value.serverUrl
+            : '',
+    ) === normalizeUrl(serverUrl);
 }
 
 function enrichPendingExternalServerContext<T extends PendingExternalServerContext>(
@@ -554,9 +799,8 @@ function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
         const maybe = parsed as Record<string, unknown>;
         if (!isNonEmptyString(maybe.token)) return null;
 
-        // Credentials must include a restore mechanism:
-        // - legacy secret (stack dev auth), OR
-        // - encryption keypair (dataKey)
+        // Plain/keyless accounts intentionally persist only the bearer token. Account
+        // E2EE material exists only for legacy or data-key credentials.
         const hasLegacySecret = isNonEmptyString(maybe.secret);
         const hasEncryption =
             !!maybe.encryption &&
@@ -564,8 +808,8 @@ function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
             isNonEmptyString((maybe.encryption as Record<string, unknown>).publicKey) &&
             isNonEmptyString((maybe.encryption as Record<string, unknown>).machineKey);
 
-        if (!hasLegacySecret && !hasEncryption) return null;
-        return parsed as AuthCredentials;
+        if (hasLegacySecret || hasEncryption) return parsed as AuthCredentials;
+        return { token: maybe.token };
     } catch {
         return null;
     }
@@ -578,23 +822,14 @@ function parseRecoveryKeyReminderDismissedRaw(raw: string | null): boolean {
 }
 
 async function readCredentialRawByKey(key: string): Promise<string | null> {
-    if (Platform.OS === 'web') {
-        const storage = resolveWebStorageBackend();
-        if (!storage) return null;
-        try {
-            return storage.getItem(key);
-        } catch (error) {
-            console.error('Error getting credentials:', error);
-            return null;
-        }
+    if (Platform.OS !== 'web') {
+        const cached = credentialsCacheByKey.get(key);
+        if (cached) return cached;
     }
 
-    const cached = credentialsCacheByKey.get(key);
-    if (cached) return cached;
-
     try {
-        const stored = await readNativeSecureStoreString(key);
-        if (stored) credentialsCacheByKey.set(key, stored);
+        const stored = await readDeviceLocalStorageString(key);
+        if (stored && Platform.OS !== 'web') credentialsCacheByKey.set(key, stored);
         return stored;
     } catch (error) {
         console.error('Error getting credentials:', error);
@@ -603,21 +838,9 @@ async function readCredentialRawByKey(key: string): Promise<string | null> {
 }
 
 async function writeCredentialRawByKey(key: string, raw: string): Promise<boolean> {
-    if (Platform.OS === 'web') {
-        const storage = resolveWebStorageBackend();
-        if (!storage) return false;
-        try {
-            storage.setItem(key, raw);
-            return true;
-        } catch (error) {
-            console.error('Error setting credentials:', error);
-            return false;
-        }
-    }
-
     try {
-        await writeNativeSecureStoreString(key, raw);
-        credentialsCacheByKey.set(key, raw);
+        await writeDeviceLocalStorageString(key, raw);
+        if (Platform.OS !== 'web') credentialsCacheByKey.set(key, raw);
         return true;
     } catch (error) {
         console.error('Error setting credentials:', error);
@@ -626,26 +849,45 @@ async function writeCredentialRawByKey(key: string, raw: string): Promise<boolea
 }
 
 async function removeCredentialByKey(key: string): Promise<boolean> {
-    if (Platform.OS === 'web') {
-        const storage = resolveWebStorageBackend();
-        if (!storage) return false;
-        try {
-            storage.removeItem(key);
-            return true;
-        } catch (error) {
-            console.error('Error removing credentials:', error);
-            return false;
-        }
-    }
-
     try {
-        await removeNativeSecureStoreString(key);
-        credentialsCacheByKey.delete(key);
+        await removeDeviceLocalStorageString(key);
+        if (Platform.OS !== 'web') credentialsCacheByKey.delete(key);
         return true;
     } catch (error) {
         console.error('Error removing credentials:', error);
         return false;
     }
+}
+
+/**
+ * Single owner for "read the credentials stored under this scope layout".
+ *
+ * The cold-boot gate awaits this, and on native each scope is a keychain round trip. The primary
+ * scope still answers the common case on its own; the legacy scopes only exist for the migration
+ * path, so they are probed together instead of one round trip at a time. The declared scope order
+ * still decides the winner, so precedence and the legacy -> primary migration are unchanged.
+ */
+async function readCredentialsForScopedKeys(keys: ScopedStorageKeys): Promise<AuthCredentials | null> {
+    const primaryRaw = await readCredentialRawByKey(keys.primary);
+    const primaryParsed = parseCredentialsRaw(primaryRaw);
+    if (primaryParsed) return primaryParsed;
+
+    if (keys.legacy.length === 0) return null;
+    const legacyRaws = await Promise.all(keys.legacy.map((legacyKey) => readCredentialRawByKey(legacyKey)));
+
+    for (let index = 0; index < keys.legacy.length; index += 1) {
+        const legacyKey = keys.legacy[index]!;
+        const legacyRaw = legacyRaws[index] ?? null;
+        const legacyParsed = parseCredentialsRaw(legacyRaw);
+        if (!legacyParsed || !legacyRaw) continue;
+
+        const migrated = await writeCredentialRawByKey(keys.primary, legacyRaw);
+        if (migrated) {
+            await removeCredentialByKey(legacyKey);
+        }
+        return legacyParsed;
+    }
+    return null;
 }
 
 type CredentialCleanupTarget = Readonly<{
@@ -696,6 +938,25 @@ function listWebScopedCredentialKeysForCleanup(): string[] {
         return [];
     }
     return keys;
+}
+
+let pendingExternalAuthMutationTail:
+    Promise<void> = Promise.resolve();
+
+async function serializePendingExternalAuthMutation<T>(
+    mutation: () => Promise<T>,
+): Promise<T> {
+    const result =
+        pendingExternalAuthMutationTail.then(
+            mutation,
+            mutation,
+        );
+    pendingExternalAuthMutationTail =
+        result.then(
+            () => undefined,
+            () => undefined,
+        );
+    return await result;
 }
 
 export const TokenStorage = {
@@ -831,46 +1092,14 @@ export const TokenStorage = {
     },
 
     async getCredentials(): Promise<AuthCredentials | null> {
-        const keys = await getAuthKeys();
-        const primaryRaw = await readCredentialRawByKey(keys.primary);
-        const primaryParsed = parseCredentialsRaw(primaryRaw);
-        if (primaryParsed) return primaryParsed;
-
-        for (const legacyKey of keys.legacy) {
-            const legacyRaw = await readCredentialRawByKey(legacyKey);
-            const legacyParsed = parseCredentialsRaw(legacyRaw);
-            if (!legacyParsed || !legacyRaw) continue;
-
-            const migrated = await writeCredentialRawByKey(keys.primary, legacyRaw);
-            if (migrated) {
-                await removeCredentialByKey(legacyKey);
-            }
-            return legacyParsed;
-        }
-        return null;
+        return await readCredentialsForScopedKeys(await getAuthKeys());
     },
 
     async getCredentialsForServerUrl(
         serverUrl: string,
         options: ServerCredentialLookupOptions = {},
     ): Promise<AuthCredentials | null> {
-        const keys = await getServerScopedKeys(AUTH_KEY, serverUrl, options);
-        const primaryRaw = await readCredentialRawByKey(keys.primary);
-        const primaryParsed = parseCredentialsRaw(primaryRaw);
-        if (primaryParsed) return primaryParsed;
-
-        for (const legacyKey of keys.legacy) {
-            const legacyRaw = await readCredentialRawByKey(legacyKey);
-            const legacyParsed = parseCredentialsRaw(legacyRaw);
-            if (!legacyParsed || !legacyRaw) continue;
-
-            const migrated = await writeCredentialRawByKey(keys.primary, legacyRaw);
-            if (migrated) {
-                await removeCredentialByKey(legacyKey);
-            }
-            return legacyParsed;
-        }
-        return null;
+        return await readCredentialsForScopedKeys(await getAuthKeys(serverUrl, options));
     },
 
     async setCredentials(credentials: AuthCredentials): Promise<boolean> {
@@ -920,11 +1149,34 @@ export const TokenStorage = {
         options: ServerCredentialLookupOptions = {},
     ): Promise<boolean> {
         const keys = await getAuthKeys(serverUrl, options);
-        const primaryRemoved = await removeCredentialByKey(keys.primary);
-        for (const legacyKey of keys.legacy) {
-            await removeCredentialByKey(legacyKey);
+        const targetKeys = uniqueStrings([
+            keys.primary,
+            ...keys.legacy,
+        ]);
+        const previousRawByKey = new Map<string, string>();
+        for (const key of targetKeys) {
+            const previousRaw = await readCredentialRawByKey(key);
+            if (previousRaw !== null) {
+                previousRawByKey.set(key, previousRaw);
+            }
         }
-        return primaryRemoved;
+
+        for (const key of targetKeys) {
+            const removed = await removeCredentialByKey(key);
+            if (removed) continue;
+
+            for (const [
+                previousKey,
+                previousRaw,
+            ] of previousRawByKey) {
+                await writeCredentialRawByKey(
+                    previousKey,
+                    previousRaw,
+                );
+            }
+            return false;
+        }
+        return true;
     },
 
     async invalidateCredentialsTokenForServerUrl(
@@ -952,9 +1204,29 @@ export const TokenStorage = {
     },
 
     async readPendingExternalAuthState(): Promise<PendingExternalReadState<PendingExternalAuth>> {
-        const key = await getPendingExternalAuthKey();
-        const scoped = await readStoredJson(key, 'pending external auth', isPendingExternalAuthRecord);
-        if (scoped) {
+        const keys = await getPendingExternalAuthKeys();
+        for (const key of [keys.primary, ...keys.legacy]) {
+            const scoped =
+                await readStoredJson(
+                    key,
+                    'pending external auth',
+                    isPendingExternalAuthRecord,
+                );
+            if (!scoped) continue;
+            if (isPendingExternalAuthFirstKeyExpired(scoped)) {
+                await this.clearPendingExternalAuth(
+                    hasAttemptedFirstKeyMigration(scoped)
+                        ? {
+                            removeFirstKeyMigrationAttempted:
+                                scoped,
+                        }
+                        : undefined,
+                );
+                return {
+                    value: null,
+                    serverMismatch: false,
+                };
+            }
             const serverMismatch = !doesPendingExternalStateMatchActiveServer(scoped, { requireExplicitServerContext: true });
             return {
                 value: scoped,
@@ -964,6 +1236,20 @@ export const TokenStorage = {
         const globalKey = getPendingExternalAuthGlobalKey();
         const global = await readStoredJson(globalKey, 'pending external auth', isPendingExternalAuthRecord);
         if (!global) {
+            return {
+                value: null,
+                serverMismatch: false,
+            };
+        }
+        if (isPendingExternalAuthFirstKeyExpired(global)) {
+            await this.clearPendingExternalAuth(
+                hasAttemptedFirstKeyMigration(global)
+                    ? {
+                        removeFirstKeyMigrationAttempted:
+                            global,
+                    }
+                    : undefined,
+            );
             return {
                 value: null,
                 serverMismatch: false,
@@ -983,31 +1269,537 @@ export const TokenStorage = {
         return state.value;
     },
 
-    async setPendingExternalAuth(value: PendingExternalAuth): Promise<boolean> {
-        const key = await getPendingExternalAuthKey();
-        const storedValue = enrichPendingExternalServerContext(value, { populateMissingServerUrl: false });
-        const ok = await writeStoredJson(key, 'pending external auth', storedValue);
-        if (ok) {
-            const globalKey = getPendingExternalAuthGlobalKey();
-            await writeStoredJson(globalKey, 'pending external auth', storedValue).catch(() => false);
-        }
-        return ok;
-    },
-
-    async clearPendingExternalAuth(): Promise<boolean> {
-        const globalKey = getPendingExternalAuthGlobalKey();
-        const scopedKeys = await resolvePendingExternalScopedKeysForClear(
+    async readPendingExternalAuthStateForServerUrl(
+        serverUrl: string,
+        options: ServerCredentialLookupOptions = {},
+    ): Promise<PendingExternalReadState<PendingExternalAuth>> {
+        const keys = await getServerScopedKeys(
             PENDING_EXTERNAL_AUTH_KEY,
-            globalKey,
+            serverUrl,
+            options,
+        );
+        for (const key of [keys.primary, ...keys.legacy]) {
+            const value = await readStoredJson(
+                key,
+                'pending external auth',
+                isPendingExternalAuthRecord,
+            );
+            if (!value) continue;
+            return {
+                value: isPendingExternalAuthFirstKeyExpired(
+                    value,
+                )
+                    ? null
+                    : value,
+                serverMismatch: !doesPendingExternalStateMatchServer(
+                    value,
+                    serverUrl,
+                    options.serverId ?? undefined,
+                ),
+            };
+        }
+        const global = await readStoredJson(
+            getPendingExternalAuthGlobalKey(),
+            'pending external auth',
             isPendingExternalAuthRecord,
         );
-        let ok = false;
-        for (const key of scopedKeys) {
-            const removed = await removeStoredValue(key, 'pending external auth');
-            ok = removed || ok;
+        if (
+            !global
+            || isPendingExternalAuthFirstKeyExpired(global)
+        ) {
+            return { value: null, serverMismatch: false };
         }
-        await removeStoredValue(globalKey, 'pending external auth').catch(() => false);
-        return ok;
+        return {
+            value: global,
+            serverMismatch: !doesPendingExternalStateMatchServer(
+                global,
+                serverUrl,
+                options.serverId ?? undefined,
+            ),
+        };
+    },
+
+    async readExactPendingExternalAuthFirstKeyMigrationAttempt(
+        params: Readonly<{
+            expected: PendingExternalAuth;
+            serverUrl: string;
+            serverId?: string;
+        }>,
+    ): Promise<PendingExternalAuth | null> {
+        const state =
+            await this.readPendingExternalAuthStateForServerUrl(
+                params.serverUrl,
+                params.serverId
+                    ? { serverId: params.serverId }
+                    : {},
+            );
+        if (
+            state.serverMismatch
+            || !state.value
+            || !matchesAttemptedFirstKeyMigration(
+                state.value,
+                params.expected,
+            )
+        ) {
+            return null;
+        }
+        return state.value;
+    },
+
+    async classifyPendingExternalAuthFirstKeyRejectedCredential(
+        params: Readonly<{
+            serverUrl: string;
+            serverId?: string;
+            token: string;
+        }>,
+    ): Promise<PendingExternalAuthFirstKeyRejectedCredentialClassification> {
+        const state =
+            await this.readPendingExternalAuthStateForServerUrl(
+                params.serverUrl,
+                params.serverId
+                    ? { serverId: params.serverId }
+                    : {},
+            );
+        const rejectedDigest =
+            state.value?.accountEncryptionFirstKey
+                ?.rejectedCredentialTokenDigest;
+        if (
+            state.serverMismatch
+            || !state.value
+            || state.value.accountEncryptionFirstKey
+                ?.migrationSubmissionAttempted !== true
+            || !rejectedDigest
+        ) {
+            return { kind: 'allowed' };
+        }
+        const candidateDigest =
+            await digestCredentialToken(params.token);
+        return candidateDigest === rejectedDigest
+            ? {
+                kind: 'rejected',
+                pending: state.value,
+            }
+            : { kind: 'allowed' };
+    },
+
+    async markPendingExternalAuthFirstKeyRejectedCredential(
+        params: Readonly<{
+            expected: PendingExternalAuth;
+            serverUrl: string;
+            serverId?: string;
+            token: string;
+        }>,
+    ): Promise<PendingExternalAuthFirstKeyRejectedCredentialMarkResult> {
+        return await serializePendingExternalAuthMutation(
+            async () => {
+                const currentCredentials =
+                    await this.getCredentialsForServerUrl(
+                        params.serverUrl,
+                        params.serverId
+                            ? {
+                                serverId:
+                                    params.serverId,
+                            }
+                            : {},
+                    );
+                if (
+                    currentCredentials?.token
+                    !== params.token
+                ) {
+                    return {
+                        kind: 'not_current',
+                    };
+                }
+
+                const keys =
+                    await getServerScopedKeys(
+                        PENDING_EXTERNAL_AUTH_KEY,
+                        params.serverUrl,
+                        params.serverId
+                            ? {
+                                serverId:
+                                    params.serverId,
+                            }
+                            : {},
+                    );
+                let scoped:
+                    | PendingExternalAuth
+                    | null = null;
+                const primary =
+                    await readStoredJson(
+                        keys.primary,
+                        'pending external auth',
+                        isPendingExternalAuthRecord,
+                    );
+                if (primary) {
+                    if (
+                        !matchesAttemptedFirstKeyMigration(
+                            primary,
+                            params.expected,
+                        )
+                    ) {
+                        return {
+                            kind: 'not_current',
+                        };
+                    }
+                    scoped = primary;
+                }
+                for (const key of keys.legacy) {
+                    if (scoped) break;
+                    const candidate =
+                        await readStoredJson(
+                            key,
+                            'pending external auth',
+                            isPendingExternalAuthRecord,
+                        );
+                    if (!candidate) continue;
+                    if (
+                        !matchesAttemptedFirstKeyMigration(
+                            candidate,
+                            params.expected,
+                        )
+                    ) {
+                        return {
+                            kind: 'not_current',
+                        };
+                    }
+                    scoped = candidate;
+                }
+                const globalKey =
+                    getPendingExternalAuthGlobalKey();
+                const global =
+                    await readStoredJson(
+                        globalKey,
+                        'pending external auth',
+                        isPendingExternalAuthRecord,
+                    );
+                const exactGlobal =
+                    global
+                    && doesPendingExternalStateMatchServer(
+                        global,
+                        params.serverUrl,
+                        params.serverId,
+                    )
+                    && matchesAttemptedFirstKeyMigration(
+                        global,
+                        params.expected,
+                    )
+                        ? global
+                        : null;
+                if (
+                    !scoped
+                    && global
+                    && !exactGlobal
+                ) {
+                    return {
+                        kind: 'not_current',
+                    };
+                }
+                const exact = scoped ?? exactGlobal;
+                if (!exact) {
+                    return {
+                        kind: 'not_current',
+                    };
+                }
+
+                const rejectedCredentialTokenDigest =
+                    await digestCredentialToken(
+                        params.token,
+                    );
+                const confirmedCredentials =
+                    await this.getCredentialsForServerUrl(
+                        params.serverUrl,
+                        params.serverId
+                            ? {
+                                serverId:
+                                    params.serverId,
+                            }
+                            : {},
+                    );
+                if (
+                    confirmedCredentials?.token
+                    !== params.token
+                ) {
+                    return {
+                        kind: 'not_current',
+                    };
+                }
+                const updated: PendingExternalAuth = {
+                    ...exact,
+                    accountEncryptionFirstKey: {
+                        ...exact.accountEncryptionFirstKey!,
+                        rejectedCredentialTokenDigest,
+                    },
+                };
+
+                if (scoped) {
+                    const written =
+                        await writeStoredJson(
+                            keys.primary,
+                            'pending external auth',
+                            updated,
+                        );
+                    if (!written) {
+                        return {
+                            kind: 'write_failed',
+                        };
+                    }
+                    if (exactGlobal) {
+                        await writeStoredJson(
+                            globalKey,
+                            'pending external auth',
+                            updated,
+                        ).catch(() => false);
+                    }
+                } else {
+                    const written =
+                        await writeStoredJson(
+                            globalKey,
+                            'pending external auth',
+                            updated,
+                        );
+                    if (!written) {
+                        return {
+                            kind: 'write_failed',
+                        };
+                    }
+                }
+                return {
+                    kind: 'recorded',
+                    pending: updated,
+                };
+            },
+        );
+    },
+
+    async setPendingExternalAuth(value: PendingExternalAuth): Promise<boolean> {
+        return await serializePendingExternalAuthMutation(
+            async () => {
+                const key =
+                    (await getPendingExternalAuthKeys())
+                        .primary;
+                const storedValue =
+                    enrichPendingExternalServerContext(
+                        value,
+                        { populateMissingServerUrl: false },
+                    );
+                const globalKey =
+                    getPendingExternalAuthGlobalKey();
+                const [existingScoped, existingGlobal] =
+                    await Promise.all([
+                        readStoredJson(
+                            key,
+                            'pending external auth',
+                            isPendingExternalAuthRecord,
+                        ),
+                        readStoredJson(
+                            globalKey,
+                            'pending external auth',
+                            isPendingExternalAuthRecord,
+                        ),
+                    ]);
+                if (
+                    existingScoped
+                    && hasAttemptedFirstKeyMigration(
+                        existingScoped,
+                    )
+                    && !matchesAttemptedFirstKeyMigration(
+                        existingScoped,
+                        storedValue,
+                    )
+                ) {
+                    return false;
+                }
+                if (
+                    !existingScoped
+                    && existingGlobal
+                    && hasAttemptedFirstKeyMigration(
+                        existingGlobal,
+                    )
+                    && doesPendingExternalStateMatchActiveServer(
+                        existingGlobal,
+                        { requireExplicitServerContext: true },
+                    )
+                    && !matchesAttemptedFirstKeyMigration(
+                        existingGlobal,
+                        storedValue,
+                    )
+                ) {
+                    return false;
+                }
+                const ok =
+                    await writeStoredJson(
+                        key,
+                        'pending external auth',
+                        storedValue,
+                    );
+                if (ok) {
+                    let canReplaceGlobal = true;
+                    if (
+                        existingGlobal
+                        && hasAttemptedFirstKeyMigration(
+                            existingGlobal,
+                        )
+                        && !matchesAttemptedFirstKeyMigration(
+                            existingGlobal,
+                            storedValue,
+                        )
+                    ) {
+                        const originalKeys =
+                            await getServerScopedKeys(
+                                PENDING_EXTERNAL_AUTH_KEY,
+                                existingGlobal.serverUrl,
+                                {
+                                    serverId:
+                                        existingGlobal.serverId,
+                                },
+                            );
+                        canReplaceGlobal = false;
+                        for (
+                            const originalKey of [
+                                originalKeys.primary,
+                                ...originalKeys.legacy,
+                            ]
+                        ) {
+                            const original =
+                                await readStoredJson(
+                                    originalKey,
+                                    'pending external auth',
+                                    isPendingExternalAuthRecord,
+                                );
+                            if (
+                                original
+                                && matchesAttemptedFirstKeyMigration(
+                                    original,
+                                    existingGlobal,
+                                )
+                            ) {
+                                canReplaceGlobal = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (canReplaceGlobal) {
+                        await writeStoredJson(
+                            globalKey,
+                            'pending external auth',
+                            storedValue,
+                        ).catch(() => false);
+                    }
+                }
+                return ok;
+            },
+        );
+    },
+
+    async clearPendingExternalAuth(
+        options: PendingExternalAuthClearOptions = {},
+    ): Promise<boolean> {
+        return await serializePendingExternalAuthMutation(
+            async () => {
+                const globalKey =
+                    getPendingExternalAuthGlobalKey();
+                const scopedKeys = await (
+                    options.serverUrl
+                        ? getServerScopedKeys(
+                                PENDING_EXTERNAL_AUTH_KEY,
+                                options.serverUrl!,
+                                options.serverId
+                                    ? {
+                                        serverId:
+                                            options.serverId,
+                                    }
+                                    : {},
+                            ).then((keys) => [
+                                keys.primary,
+                                ...keys.legacy,
+                            ])
+                        : resolvePendingExternalScopedKeysForClear(
+                            PENDING_EXTERNAL_AUTH_KEY,
+                            globalKey,
+                            isPendingExternalAuthRecord,
+                        )
+                );
+                const expected =
+                    options.removeFirstKeyMigrationAttempted;
+                if (expected) {
+                    const keys = [...scopedKeys, globalKey];
+                    const observed = await Promise.all(
+                        keys.map(async (key) => ({
+                            key,
+                            value: await readStoredJson(
+                                key,
+                                'pending external auth',
+                                isPendingExternalAuthRecord,
+                            ),
+                        })),
+                    );
+                    const matching = observed.filter(
+                        (entry) =>
+                            entry.value !== null
+                            && matchesAttemptedFirstKeyMigration(
+                                entry.value,
+                                expected,
+                            ),
+                    );
+                    if (matching.length === 0) {
+                        return false;
+                    }
+                    const removedKeys: string[] = [];
+                    for (const entry of matching) {
+                        if (
+                            !await removeStoredValue(
+                                entry.key,
+                                'pending external auth',
+                            )
+                        ) {
+                            for (const removedKey of removedKeys) {
+                                await writeStoredJson(
+                                    removedKey,
+                                    'pending external auth',
+                                    expected,
+                                ).catch(() => false);
+                            }
+                            return false;
+                        }
+                        removedKeys.push(entry.key);
+                    }
+                    return true;
+                }
+                const removeIfAuthorized = async (
+                    key: string,
+                ): Promise<boolean> => {
+                    const value = await readStoredJson(
+                        key,
+                        'pending external auth',
+                        isPendingExternalAuthRecord,
+                    );
+                    if (
+                        value
+                        && hasAttemptedFirstKeyMigration(
+                            value,
+                        )
+                    ) {
+                        return false;
+                    }
+                    return await removeStoredValue(
+                        key,
+                        'pending external auth',
+                    );
+                };
+                let ok = false;
+                for (const key of scopedKeys) {
+                    const removed =
+                        await removeIfAuthorized(key);
+                    ok = removed || ok;
+                }
+                const globalRemoved =
+                    await removeIfAuthorized(globalKey)
+                        .catch(() => false);
+                ok = globalRemoved || ok;
+                return ok;
+            },
+        );
     },
 
     async getPendingExternalConnect(): Promise<PendingExternalConnect | null> {

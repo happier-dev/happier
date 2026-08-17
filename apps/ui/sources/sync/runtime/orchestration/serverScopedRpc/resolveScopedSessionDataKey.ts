@@ -6,39 +6,16 @@ import {
   isTerminalAuthError,
 } from '@/sync/runtime/connectivity/authErrors';
 
+import { getOrCreateScopedCacheTokenKey, resetScopedCacheTokenKeysForTests } from './scopedCacheTokenKey';
+import { createScopedResolutionSingleFlight } from './scopedResolutionSingleFlight';
+
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
 
-function getOrCreateTokenCacheKey(token: string): string {
-  // Avoid using the raw token in cache keys (accidental leaks in error/debug output),
-  // but also avoid collision-prone hashing (which can cause cross-token cache reuse).
-  let key = tokenCacheKeyByToken.get(token);
-  if (key) {
-    // Refresh LRU ordering.
-    tokenCacheKeyByToken.delete(token);
-    tokenCacheKeyByToken.set(token, key);
-    return key;
-  }
-
-  const cryptoAny = (globalThis as any).crypto as { randomUUID?: () => string } | undefined;
-  key =
-    typeof cryptoAny?.randomUUID === 'function'
-      ? cryptoAny.randomUUID()
-      : `tk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-  tokenCacheKeyByToken.set(token, key);
-
-  const max = readMaxSessionKeyCacheEntriesFromEnv();
-  while (tokenCacheKeyByToken.size > max) {
-    const oldest = tokenCacheKeyByToken.keys().next();
-    if (oldest.done) break;
-    tokenCacheKeyByToken.delete(oldest.value);
-  }
-  return key;
-}
-
 function toSessionDataKeyCacheKey(serverId: string, sessionId: string, token: string): string {
-  return `${serverId}::${sessionId}::${getOrCreateTokenCacheKey(token)}`;
+  const tokenKey = getOrCreateScopedCacheTokenKey(token, readMaxSessionKeyCacheEntriesFromEnv());
+  return `${serverId}::${sessionId}::${tokenKey}`;
 }
 
 export type ScopedSessionCryptoContext =
@@ -47,7 +24,7 @@ export type ScopedSessionCryptoContext =
   | Readonly<{ encryptionMode: 'unknown'; sessionDataKey: null }>;
 
 const sessionCryptoContextCache = new Map<string, ScopedSessionCryptoContext>();
-const tokenCacheKeyByToken = new Map<string, string>();
+const sessionCryptoContextResolutions = createScopedResolutionSingleFlight<ScopedSessionCryptoContext>();
 
 function readMaxSessionKeyCacheEntriesFromEnv(): number {
   const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SCOPED_RPC_SESSION_KEY_CACHE_MAX ?? '').trim();
@@ -81,7 +58,7 @@ async function fetchSessionCryptoContext(params: Readonly<{
   serverUrl: string;
   token: string;
   sessionId: string;
-  decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+  decryptEncryptionKey?: (value: string) => Promise<Uint8Array | null>;
   timeoutMs: number;
 }>): Promise<ScopedSessionCryptoContext> {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -123,6 +100,9 @@ async function fetchSessionCryptoContext(params: Readonly<{
     const dek = typeof session.dataEncryptionKey === 'string' ? session.dataEncryptionKey : null;
     if (!dek) return { encryptionMode: 'unknown', sessionDataKey: null };
 
+    if (!params.decryptEncryptionKey) {
+      return { encryptionMode: 'unknown', sessionDataKey: null };
+    }
     const sessionDataKey = await params.decryptEncryptionKey(dek);
     if (!sessionDataKey) return { encryptionMode: 'unknown', sessionDataKey: null };
     return { encryptionMode: 'e2ee', sessionDataKey };
@@ -141,7 +121,7 @@ export async function resolveScopedSessionCryptoContext(params: Readonly<{
   serverUrl: string;
   token: string;
   sessionId: string;
-  decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+  decryptEncryptionKey?: (value: string) => Promise<Uint8Array | null>;
   timeoutMs?: number;
 }>): Promise<ScopedSessionCryptoContext> {
   const sessionId = normalizeId(params.sessionId);
@@ -150,9 +130,18 @@ export async function resolveScopedSessionCryptoContext(params: Readonly<{
   const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
   const keyCacheKey = toSessionDataKeyCacheKey(serverId, sessionId, token);
 
-  let context = getSessionCryptoContextFromCache(keyCacheKey);
-  if (context === undefined) {
-    context = await fetchSessionCryptoContext({
+  const cached = getSessionCryptoContextFromCache(keyCacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  // Coalesce concurrent callers for the same session; the cache is read-await-write, so
+  // without this each one repeats the by-id fetch and its asymmetric envelope open.
+  // `keyCacheKey` covers the target server, the session and the bearer token, and the
+  // token determines the credentials behind the caller's `decryptEncryptionKey`, so a
+  // joiner can only ever adopt a result computed from its own inputs.
+  return await sessionCryptoContextResolutions.run(keyCacheKey, async () => {
+    const context = await fetchSessionCryptoContext({
       serverUrl: params.serverUrl,
       token,
       sessionId,
@@ -163,9 +152,8 @@ export async function resolveScopedSessionCryptoContext(params: Readonly<{
     if (context.encryptionMode !== 'unknown') {
       setSessionCryptoContextCache(keyCacheKey, context);
     }
-  }
-
-  return context;
+    return context;
+  });
 }
 
 export async function resolveScopedSessionDataKey(params: Readonly<{
@@ -182,5 +170,6 @@ export async function resolveScopedSessionDataKey(params: Readonly<{
 
 export function resetScopedSessionDataKeyCacheForTests(): void {
   sessionCryptoContextCache.clear();
-  tokenCacheKeyByToken.clear();
+  sessionCryptoContextResolutions.reset();
+  resetScopedCacheTokenKeysForTests();
 }

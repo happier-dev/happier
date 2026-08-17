@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { McpValueRefV1 } from '@happier-dev/protocol';
@@ -11,6 +10,7 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { t } from '@/text';
 
 import { ValueRefEditorModal, getValueRefEditorModalTitle } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type ValueRefKind = 'env' | 'header';
 
@@ -29,7 +29,7 @@ function describeValueRef(valueRef: McpValueRefV1, secrets: readonly SavedSecret
 export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(props: Readonly<{
     kind: ValueRefKind;
     title: string;
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
     entries: Record<string, McpValueRefV1>;
     secrets: SavedSecret[];
     onChangeSecrets: (next: SavedSecret[]) => void;
@@ -99,7 +99,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
                         testID={`${props.testIdPrefix}.empty`}
                         title={props.emptyTitle}
                         subtitle={props.emptySubtitle}
-                        icon={<Ionicons name={props.iconName} size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name={props.iconName} size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
                 ) : null}
@@ -110,7 +110,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
                         testID={`${props.testIdPrefix}.row.${idx}`}
                         title={key}
                         subtitle={describeValueRef(valueRef, props.secrets)}
-                        icon={<Ionicons name={props.iconName} size={29} color={theme.colors.accent.purple} />}
+                        icon={<Icon name={props.iconName} size={29} color={theme.colors.accent.purple} />}
                         onPress={() => {
                             openEditor({
                                 mode: 'edit',
@@ -143,7 +143,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
                     testID={`${props.testIdPrefix}.add`}
                     title={props.addRowTitle}
                     subtitle={props.addRowSubtitle}
-                    icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
+                    icon={<Icon name="plus-circle" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={handleAdd}
                 />
             </ItemGroup>

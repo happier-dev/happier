@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type {
@@ -10,6 +9,7 @@ import type {
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function localizedPresentationText(
     value: string | Readonly<{ fallback: string }> | undefined,
@@ -33,7 +33,7 @@ export function PluginSettingSwitchField(props: Readonly<{
             testID={testID}
             title={props.field.title}
             subtitle={props.field.subtitle ?? undefined}
-            icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
+            icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
             rightElement={(
                 <Switch
                     value={props.value}
@@ -68,10 +68,19 @@ export function PluginSettingSelectField(props: Readonly<{
     })), [options]);
     const selectedId = JSON.stringify(props.value ?? props.field.defaultValue);
 
+    React.useLayoutEffect(() => {
+        if (props.disabled && open) {
+            setOpen(false);
+        }
+    }, [open, props.disabled]);
+
     return (
         <DropdownMenu
             open={open}
-            onOpenChange={setOpen}
+            onOpenChange={(nextOpen) => {
+                if (nextOpen && props.disabled) return;
+                setOpen(nextOpen);
+            }}
             selectedId={selectedId}
             variant="selectable"
             rowKind="item"
@@ -83,7 +92,8 @@ export function PluginSettingSelectField(props: Readonly<{
             itemTrigger={{
                 title: props.field.title,
                 subtitle: items.find((item) => item.id === selectedId)?.title ?? props.field.subtitle ?? undefined,
-                icon: <Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />,
+                icon: <Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />,
+                itemProps: { disabled: props.disabled },
             }}
             items={items}
             onSelect={(itemId) => {

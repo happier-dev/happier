@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -16,6 +15,7 @@ import { WizardChoiceRow } from '../../ui/WizardChoiceRow';
 
 import type { RemoteSshChecklistCopy } from './copy';
 import { remoteSshChecklistStyles } from './styles';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type RemoteSshChecklistCredentialsPhaseProps = Readonly<{
     testID?: string;
@@ -57,7 +57,7 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
         selected: boolean;
         title: string;
         subtitle: string;
-        icon: React.ComponentProps<typeof Ionicons>['name'];
+        icon: IconName;
         onPress: () => void;
     }>) => (
         <WizardChoiceRow
@@ -102,10 +102,10 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                                 variant="selectable"
                                 selected={props.hostPickerOpen}
                                 onPress={toggle}
-                                left={<Ionicons name="server-outline" size={18} color={theme.colors.text.secondary} />}
+                                left={<Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />}
                                 title={selectedItem?.title ?? t('setupOnboarding.remoteHosts.hostPickerTitle')}
                                 subtitle={selectedItem?.subtitle ?? t('setupOnboarding.remoteHosts.hostPickerSubtitle')}
-                                right={<Ionicons name="chevron-down" size={18} color={theme.colors.text.secondary} />}
+                                right={<Icon name="caret-down" size={16} color={theme.colors.text.secondary} />}
                             />
                         )}
                     />
@@ -130,7 +130,7 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                                 selected: props.saveHost,
                                 title: t('setupOnboarding.remoteHosts.saveHostTitle'),
                                 subtitle: t('setupOnboarding.remoteHosts.saveHostSubtitle'),
-                                icon: 'bookmark-outline',
+                                icon: 'bookmark',
                                 onPress: props.onToggleSaveHost,
                             })}
 
@@ -140,7 +140,7 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                                     selected: props.saveSecretMaterial,
                                     title: t('setupOnboarding.remoteHosts.savePasswordTitle'),
                                     subtitle: t('setupOnboarding.remoteHosts.savePasswordSubtitle'),
-                                    icon: 'key-outline',
+                                    icon: 'key',
                                     onPress: props.onToggleSaveSecretMaterial,
                                 })
                                 : null}
@@ -153,7 +153,7 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                                             selected: props.saveSecretMaterial,
                                             title: t('setupOnboarding.remoteHosts.savePrivateKeyTitle'),
                                             subtitle: t('setupOnboarding.remoteHosts.savePrivateKeySubtitle'),
-                                            icon: 'key-outline',
+                                            icon: 'key',
                                             onPress: props.onToggleSaveSecretMaterial,
                                         })}
                                     </>

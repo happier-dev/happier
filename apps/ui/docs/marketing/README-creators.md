@@ -8,7 +8,8 @@ Happier is an open-source mobile app that lets developers control AI coding agen
 - Runs on YOUR hardware (laptop, desktop, server, Raspberry Pi)
 - No subscription fees or cloud costs - completely free (you still need to pay your AI model provider for Claude Code, Codex, Text to Speech, Speach to Text, etc..)
 - Push notifications when agents need input or hit errors
-- End-to-end encrypted connection between devices
+- End-to-end encrypted by default, with explicit plaintext storage available for
+  self-hosted organizations that manage encryption at the infrastructure layer
 - Run multiple coding agents in parallel
 - Voice input for hands-free control
 - Works with your existing dev setup and tools
@@ -21,7 +22,8 @@ Happier is an open-source mobile app that lets developers control AI coding agen
 - On Happier, I can check on long-running tasks without returning to my desk
 - Happier is open source - I can audit, modify, or self-host everything
 - On Happier, I can run multiple agents in parallel and switch between them instantly
-- Happier keeps my code on my machines with end-to-end encryption
+- With end-to-end encryption enabled, Happier keeps synchronized content encrypted
+  between my devices
 - On Happier, I can keep coding while commuting, eating, or away from my desk
 
 ## Example Hooks
@@ -34,7 +36,8 @@ Happier is an open-source mobile app that lets developers control AI coding agen
 - "I left for lunch and Claude was still working when I got back"
 - "Managing my coding agents from the train saved me 2 hours today"
 - "Finally, a mobile app for Claude Code that doesn't cost more than Netflix"
-- "My code never leaves my laptop, but I can control it from anywhere"
+- "With Happier's end-to-end encryption enabled, my synchronized content stays
+  encrypted between my devices"
 - "Open source alternative to all those $600/year coding apps"
 
 ## Requirements for Content

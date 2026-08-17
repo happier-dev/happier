@@ -1,63 +1,80 @@
 import type {
+    PluginUiContainerV1,
+    PluginUiDestinationBindingV1,
+    PluginUiDestinationReferenceV1,
+    PluginUiTargetKindV1,
+} from '@happier-dev/protocol/plugins/ui';
+import { PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
+
+import type {
     PluginUiProjectionModel,
     PluginUiSurfacePlacementProjection,
 } from './projection';
 import { canRenderPluginUiProjectionEntry, type PluginUiPolicyEvaluationContext } from './policy';
 
-function compareSurfacePlacements(
-    left: PluginUiSurfacePlacementProjection,
-    right: PluginUiSurfacePlacementProjection,
-): number {
-    const leftOrder = typeof left.order === 'number' ? left.order : Number.MAX_SAFE_INTEGER;
-    const rightOrder = typeof right.order === 'number' ? right.order : Number.MAX_SAFE_INTEGER;
-    if (leftOrder !== rightOrder) {
-        return leftOrder - rightOrder;
-    }
-    return left.id.localeCompare(right.id);
+/**
+ * A host insertion slot, read directly from the registry-normalized binding.
+ * This is deliberately not a string-derived placement or target normalizer.
+ */
+export type PluginUiDestinationBindingSlot = Readonly<{
+    container: PluginUiContainerV1;
+    targetKind: PluginUiTargetKindV1;
+}>;
+
+export type PluginSurfaceTargetKind = PluginUiTargetKindV1;
+
+function sortedPlacements(
+    placements: readonly PluginUiSurfacePlacementProjection[],
+): readonly PluginUiSurfacePlacementProjection[] {
+    // V2 projections have no contributor-controlled placement rank. Keep the
+    // host-owned registry selection stable by its generated qualified id rather
+    // than reviving a raw `order` field from a stale projection row.
+    return Object.freeze([...placements].sort((left, right) => left.id.localeCompare(right.id)));
 }
 
-export function selectPluginSurfacePlacementsForPlacement(
+/**
+ * Select all V2 destinations admitted for one host-owned container/target
+ * slot. `binding` is a CLI-produced protocol value: this selector reads it
+ * directly and never rebuilds one from a legacy placement string.
+ */
+export function selectPluginSurfacePlacementsForBinding(
     model: PluginUiProjectionModel,
-    placement: string,
+    slot: PluginUiDestinationBindingSlot,
 ): readonly PluginUiSurfacePlacementProjection[] {
-    return Object.freeze([...(model.surfacePlacementsByPlacement[placement] ?? [])].sort(compareSurfacePlacements));
-}
-
-export function selectRenderablePluginSurfacePlacementsForPlacement(
-    model: PluginUiProjectionModel,
-    placement: string,
-    policyContext?: PluginUiPolicyEvaluationContext,
-): readonly PluginUiSurfacePlacementProjection[] {
-    return Object.freeze(selectPluginSurfacePlacementsForPlacement(model, placement).filter((entry) => (
-        entry.availability.state === 'available'
-        && canRenderPluginUiProjectionEntry(entry, policyContext)
+    return sortedPlacements(Object.values(model.surfacePlacementsById).filter((entry) => (
+        entry.binding.container === slot.container
+        && entry.binding.targetKind === slot.targetKind
     )));
 }
 
-export type PluginRightSidebarPlacementScope = 'session' | 'project' | 'app';
-export type PluginSurfaceTargetKind = 'session' | 'workspace' | 'project' | 'app' | 'browser' | 'services';
-
-function readTargetKind(entry: PluginUiSurfacePlacementProjection): string | null {
-    const target = entry.target;
-    return target && typeof target === 'object' && !Array.isArray(target) && typeof target.kind === 'string'
-        ? target.kind
-        : null;
+export function selectRenderablePluginSurfacePlacementsForBinding(
+    model: PluginUiProjectionModel,
+    slot: PluginUiDestinationBindingSlot,
+    policyContext?: PluginUiPolicyEvaluationContext,
+): readonly PluginUiSurfacePlacementProjection[] {
+    return Object.freeze(selectPluginSurfacePlacementsForBinding(model, slot).filter((entry) => (
+        entry.availability.state === 'available'
+        && canRenderPluginUiProjectionEntry(entry, policyContext)
+    )));
 }
 
 export function doesPluginSurfacePlacementTargetKindMatch(
     entry: PluginUiSurfacePlacementProjection,
     targetKind: PluginSurfaceTargetKind,
 ): boolean {
-    return readTargetKind(entry) === targetKind;
+    return entry.binding.targetKind === targetKind;
 }
+
+export type PluginRightSidebarPlacementScope = Extract<PluginUiTargetKindV1, 'session' | 'project' | 'app'>;
 
 export function selectPluginRightSidebarTabPlacements(
     model: PluginUiProjectionModel,
     scope: PluginRightSidebarPlacementScope,
-    targetKind: PluginSurfaceTargetKind = scope,
 ): readonly PluginUiSurfacePlacementProjection[] {
-    return Object.freeze(selectPluginSurfacePlacementsForPlacement(model, `${scope}.rightSidebarTab`)
-        .filter((entry) => doesPluginSurfacePlacementTargetKindMatch(entry, targetKind)));
+    return selectPluginSurfacePlacementsForBinding(model, {
+        container: 'rightSidebarTab',
+        targetKind: scope,
+    });
 }
 
 export function selectRenderablePluginRightSidebarTabPlacements(
@@ -65,46 +82,45 @@ export function selectRenderablePluginRightSidebarTabPlacements(
     scope: PluginRightSidebarPlacementScope,
     policyContext?: PluginUiPolicyEvaluationContext,
 ): readonly PluginUiSurfacePlacementProjection[] {
-    return Object.freeze(selectPluginRightSidebarTabPlacements(model, scope).filter((entry) => (
-        entry.availability.state === 'available'
-        && canRenderPluginUiProjectionEntry(entry, policyContext)
+    return selectRenderablePluginSurfacePlacementsForBinding(model, {
+        container: 'rightSidebarTab',
+        targetKind: scope,
+    }, policyContext);
+}
+
+/**
+ * List every projected record for one exact qualified destination without
+ * re-qualifying caller text or inferring a host slot. A consumer with a known
+ * slot must still select that exact binding and reject a duplicate rather than
+ * allowing projection order to appoint an owner.
+ */
+export function selectPluginSurfacePlacementsByDestination(
+    model: PluginUiProjectionModel,
+    destination: PluginUiDestinationReferenceV1,
+): readonly PluginUiSurfacePlacementProjection[] {
+    return sortedPlacements(Object.values(model.surfacePlacementsById).filter((entry) => (
+        entry.binding.destination.pluginId === destination.pluginId
+        && entry.binding.destination.localId === destination.localId
     )));
 }
 
 /**
- * The four session-pane placement kinds that replaced the legacy `sessionSurfaces`
- * family (Phase 2.1). Session panes are now canonical `surfacePlacement`
- * contributions on these kinds (see the §16 SurfaceRegistry descriptors).
+ * Narrow adapter for the existing Session details-resource owner. A details
+ * resource names the same qualified destination reference used everywhere
+ * else; bare descriptor ids cannot cross a plugin boundary.
  */
-export const SESSION_SURFACE_PLACEMENT_KINDS: readonly string[] = Object.freeze([
-    'session.details',
-    'session.preview',
-    'session.tool',
-    'session.side',
-]);
-
-/**
- * Resolve a migrated session-pane surface placement by the surface descriptor id a
- * `pluginSessionSurface` tab resource references. Searches the session-pane
- * placement kinds (`session.details/preview/tool/side`) for an entry whose
- * descriptor id (or full projection id) matches. Returns `null` when no session
- * placement matches. This is the canonical replacement for the deleted
- * `sessionSurfacesById[surfaceId]` lookup.
- */
-export function selectPluginSessionSurfacePlacementById(
+export function selectPluginSessionDetailsTabPlacement(
     model: PluginUiProjectionModel,
-    surfaceId: string,
+    destination: unknown,
 ): PluginUiSurfacePlacementProjection | null {
-    const id = surfaceId.trim();
-    if (id.length === 0) {
-        return null;
-    }
-    for (const placementKind of SESSION_SURFACE_PLACEMENT_KINDS) {
-        for (const entry of model.surfacePlacementsByPlacement[placementKind] ?? []) {
-            if (entry.descriptorId === id || entry.id === id) {
-                return entry;
-            }
-        }
-    }
-    return null;
+    const parsedDestination = PluginUiDestinationReferenceV1Schema.safeParse(destination);
+    if (!parsedDestination.success) return null;
+
+    const matches = selectPluginSurfacePlacementsByDestination(model, parsedDestination.data).filter((entry) => (
+        entry.binding.container === 'detailsTab'
+        && entry.binding.targetKind === 'session'
+    ));
+    // A duplicate qualified identity is a projection violation, not a
+    // declaration-order tie-breaker for the details renderer.
+    return matches.length === 1 ? matches[0]! : null;
 }

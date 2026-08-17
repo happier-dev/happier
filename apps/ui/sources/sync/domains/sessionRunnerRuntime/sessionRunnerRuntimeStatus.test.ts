@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol';
 
 import {
-    readActionableStaleSessionRunnerRuntimeState,
+    readStaleSessionRunnerRuntimeState,
     readSessionRunnerRuntimeStateFromMetadata,
 } from './sessionRunnerRuntimeStatus';
 
@@ -59,19 +59,19 @@ describe('session runner runtime status reader', () => {
         })).toBeNull();
     });
 
-    it('returns actionable stale state only when daemon metadata marks restart eligible', () => {
-        expect(readActionableStaleSessionRunnerRuntimeState({
+    it('keeps canonical stale state visible when restart is busy or unavailable', () => {
+        expect(readStaleSessionRunnerRuntimeState({
             metadata: { [SESSION_RUNNER_RUNTIME_METADATA_KEY]: staleRuntimeState },
             sessionId: 's1',
             machineId: 'm1',
         })?.runner.pid).toBe(123);
 
-        expect(readActionableStaleSessionRunnerRuntimeState({
+        expect(readStaleSessionRunnerRuntimeState({
             metadata: { [SESSION_RUNNER_RUNTIME_METADATA_KEY]: { ...staleRuntimeState, versionState: 'current' } },
             sessionId: 's1',
             machineId: 'm1',
         })).toBeNull();
-        expect(readActionableStaleSessionRunnerRuntimeState({
+        expect(readStaleSessionRunnerRuntimeState({
             metadata: {
                 [SESSION_RUNNER_RUNTIME_METADATA_KEY]: {
                     ...staleRuntimeState,
@@ -80,18 +80,32 @@ describe('session runner runtime status reader', () => {
             },
             sessionId: 's1',
             machineId: 'm1',
-        })).toBeNull();
-        expect(readActionableStaleSessionRunnerRuntimeState({
+        })?.plannedRestart).toEqual({
+            supported: true,
+            eligible: false,
+            disabledReason: 'turn_in_progress',
+        });
+        expect(readStaleSessionRunnerRuntimeState({
+            metadata: {
+                [SESSION_RUNNER_RUNTIME_METADATA_KEY]: {
+                    ...staleRuntimeState,
+                    plannedRestart: { supported: false, eligible: false, disabledReason: 'unsupported_backend' },
+                },
+            },
+            sessionId: 's1',
+            machineId: 'm1',
+        })?.plannedRestart.disabledReason).toBe('unsupported_backend');
+        expect(readStaleSessionRunnerRuntimeState({
             metadata: { [SESSION_RUNNER_RUNTIME_METADATA_KEY]: staleRuntimeState },
             sessionId: 'other-session',
             machineId: 'm1',
         })).toBeNull();
-        expect(readActionableStaleSessionRunnerRuntimeState({
+        expect(readStaleSessionRunnerRuntimeState({
             metadata: { [SESSION_RUNNER_RUNTIME_METADATA_KEY]: { ...staleRuntimeState, machineId: null } },
             sessionId: 's1',
             machineId: 'm1',
         })).toBeNull();
-        expect(readActionableStaleSessionRunnerRuntimeState({
+        expect(readStaleSessionRunnerRuntimeState({
             metadata: { [SESSION_RUNNER_RUNTIME_METADATA_KEY]: { ...staleRuntimeState, machineId: 'other-machine' } },
             sessionId: 's1',
             machineId: 'm1',
@@ -99,7 +113,7 @@ describe('session runner runtime status reader', () => {
     });
 
     it('keeps an exact daemon-owned stale runner actionable after the server session becomes inactive', () => {
-        expect(readActionableStaleSessionRunnerRuntimeState({
+        expect(readStaleSessionRunnerRuntimeState({
             metadata: { [SESSION_RUNNER_RUNTIME_METADATA_KEY]: staleRuntimeState },
             sessionId: 's1',
             machineId: 'm1',
@@ -133,18 +147,10 @@ describe('session runner runtime status reader', () => {
                 ...staleRuntimeState,
                 daemon: { ...staleRuntimeState.daemon, currentEntrypointSource: 'unknown' },
             },
-            {
-                ...staleRuntimeState,
-                plannedRestart: {
-                    supported: true,
-                    eligible: true,
-                    disabledReason: 'runner_entrypoint_unknown',
-                },
-            },
         ] as const;
 
         for (const state of cases) {
-            expect(readActionableStaleSessionRunnerRuntimeState({
+            expect(readStaleSessionRunnerRuntimeState({
                 metadata: { [SESSION_RUNNER_RUNTIME_METADATA_KEY]: state },
                 sessionId: 's1',
             })).toBeNull();

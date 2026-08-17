@@ -1,69 +1,212 @@
 import * as React from 'react';
 import { Redirect, useNavigation } from 'expo-router';
+import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
+import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { PluginMachineExecutionOriginSelectorView } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { usePluginMachineExecutionOriginSelection } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import {
+    useActivePluginAccountAvailabilityReader,
+    useActivePluginAccountAvailabilityReleaseClassifier,
+} from '@/sync/domains/plugins/availability/projection';
+import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { t } from '@/text';
 
 import { PluginDetailActionsSection } from './PluginDetailActionsSection';
 import { PluginDetailContributionsSection } from './PluginDetailContributionsSection';
 import { PluginDetailDiagnosticsSection } from './PluginDetailDiagnosticsSection';
 import { PluginDetailGenericSettingsSection } from './PluginDetailGenericSettingsSection';
-import { PluginDetailHeader } from './PluginDetailHeader';
+import { PluginDetailHeader, PluginDetailRecoveryHeader } from './PluginDetailHeader';
+import {
+    PluginDetailInvocationLogsSection,
+    PluginDetailInvocationLogsUnavailableSection,
+} from './PluginDetailInvocationLogsSection';
 import { PluginDetailSummaryGrid } from './PluginDetailSummaryGrid';
-import { usePluginSettingsScreenState } from '../model/usePluginSettingsScreenState';
+import {
+    usePluginSettingsScreenState,
+    type PluginSettingsScreenState,
+} from '../model/usePluginSettingsScreenState';
+import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
+import { PluginAccountDataEraseRecoverySection } from '../PluginAccountDataEraseRecoverySection';
+import { PluginAccountReleaseSelectionSection } from '../PluginAccountReleaseSelectionSection';
 import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
 
 type NavigationLike = Readonly<{
     setOptions?: (options: Readonly<{ headerTitle?: string }>) => void;
 }>;
 
+/**
+ * One screen-owned execution-origin controller feeds both its presentation and
+ * the log reader. Installed-only management stays conditional without hiding a
+ * current daemon projection or inventing installed metadata for it.
+ */
+function PluginDetailCurrentContent(props: Readonly<{
+    pluginId: string;
+    installed: InstalledPluginEntry | null;
+    state: PluginSettingsScreenState;
+    projection: PluginProjectionEntry | null;
+    accountSettingsDeclaration: PluginPortableReleaseManifestV1 | null;
+    accountAvailability: PluginAccountAvailabilityReader | null;
+}>) {
+    const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
+    const selection = usePluginMachineExecutionOriginSelection({
+        pluginId: props.pluginId,
+        classifyRelease,
+    });
+    const accountReleaseVersion = props.installed?.version ?? props.projection?.version ?? null;
+    return (
+        <ItemList style={{ paddingTop: 0 }}>
+            {props.state.readOnlySnapshotNotice ? (
+                <PluginReadOnlySnapshotNotice
+                    testID="settings.plugins.detail.readOnlySnapshot"
+                    reason={props.state.readOnlySnapshotNotice.reason}
+                    onRetry={props.state.refreshPluginTruth}
+                />
+            ) : null}
+            <PluginMachineExecutionOriginSelectorView
+                selection={selection}
+                testIDPrefix="settings.plugins.detail.executionOrigin"
+            />
+            {props.installed ? (
+                <>
+                    <PluginDetailHeader installed={props.installed} projection={props.projection} />
+                    <PluginDetailSummaryGrid
+                        installed={props.installed}
+                        projection={props.projection}
+                    />
+                    <PluginDetailActionsSection
+                        installed={props.installed}
+                        actionInFlight={props.state.isPluginActionInFlight(props.installed.pluginId)}
+                        canRunActions={props.state.canRefreshInstalledPlugins}
+                        onAction={props.state.runInstalledPluginAction}
+                    />
+                    <PluginAccountDataEraseRecoverySection
+                        pluginId={props.installed.pluginId}
+                        testID={`settings.plugins.detail.${props.installed.pluginId}.accountDataErase`}
+                    />
+                </>
+            ) : null}
+            {accountReleaseVersion ? (
+                <PluginAccountReleaseSelectionSection
+                    pluginId={props.pluginId}
+                    version={accountReleaseVersion}
+                    reader={props.accountAvailability}
+                    projection={props.state.pluginProjectionV2}
+                    daemon={{
+                        serverId: props.state.executionServerId,
+                        serverIdentityId: props.state.executionServerIdentityId,
+                        machineId: props.state.executionMachineId,
+                    }}
+                    testID={`settings.plugins.detail.${props.pluginId}.accountRelease`}
+                />
+            ) : null}
+            <PluginDetailGenericSettingsSection
+                pluginId={props.pluginId}
+                projection={props.projection}
+                accountSettingsDeclaration={props.accountSettingsDeclaration}
+                machineId={props.state.executionMachineId}
+                serverId={props.state.executionServerId}
+                accountServerIdentityId={props.state.accountServerIdentityId}
+                daemonServerIdentityId={props.state.executionServerIdentityId}
+                daemonOperationsAvailable={props.state.daemonOperationsAvailable}
+                isDaemonTargetCurrent={props.state.isDaemonSettingsTargetCurrent}
+            />
+            <PluginDetailContributionsSection pluginId={props.pluginId} projection={props.projection} />
+            <PluginDetailInvocationLogsSection
+                pluginId={props.pluginId}
+                selection={selection}
+            />
+            <PluginDetailDiagnosticsSection
+                pluginId={props.pluginId}
+                projection={props.projection}
+                registryDiagnostics={props.state.registryDiagnostics}
+            />
+        </ItemList>
+    );
+}
+
 export const PluginDetailScreen = React.memo(function PluginDetailScreen(props: Readonly<{
     pluginId: string | null;
 }>) {
     const navigation = useNavigation() as NavigationLike;
     const state = usePluginSettingsScreenState();
+    const accountAvailability = useActivePluginAccountAvailabilityReader();
     const installed = props.pluginId ? (state.installedPluginById.get(props.pluginId) ?? null) : null;
+    const projection = props.pluginId ? (state.pluginProjectionById[props.pluginId] ?? null) : null;
+    const accountSettingsDeclaration = React.useMemo(() => {
+        if (projection || !props.pluginId || !accountAvailability) return null;
+        const admission = accountAvailability.readCurrentSettingsDeclaration({ pluginId: props.pluginId });
+        return admission.kind === 'available' ? admission.declaration : null;
+    }, [accountAvailability, projection, props.pluginId]);
+    const accountRecoveryPluginId = React.useMemo(() => {
+        if (installed || projection || !props.pluginId) return null;
+        if (!accountAvailability) return null;
+        const admission = accountAvailability.readMaterializations();
+        return accountSettingsDeclaration !== null
+            || (
+                admission.kind === 'available'
+                && admission.materializations.some((materialization) => materialization.pluginId === props.pluginId)
+            )
+            ? props.pluginId
+            : null;
+    }, [accountAvailability, accountSettingsDeclaration, installed, projection, props.pluginId]);
+    const headerTitle = projection?.title
+        ?? installed?.title
+        ?? (typeof accountSettingsDeclaration?.displayName === 'string'
+            ? accountSettingsDeclaration.displayName
+            : accountSettingsDeclaration?.displayName?.fallback ?? accountRecoveryPluginId ?? '');
 
-    if (!props.pluginId || !installed) {
+    React.useLayoutEffect(() => {
+        if (headerTitle) navigation.setOptions?.({ headerTitle });
+    }, [headerTitle, navigation]);
+
+    if (!props.pluginId || (!installed && !projection && !accountRecoveryPluginId)) {
         return <Redirect href="/settings/plugins" />;
     }
 
-    const projection = state.pluginProjectionById[installed.pluginId] ?? null;
-    const headerTitle = projection?.title ?? installed.title;
+    if (installed || projection) {
+        return (
+            <PluginDetailCurrentContent
+                pluginId={props.pluginId}
+                installed={installed}
+                state={state}
+                projection={projection}
+                accountSettingsDeclaration={accountSettingsDeclaration}
+                accountAvailability={accountAvailability}
+            />
+        );
+    }
 
-    React.useLayoutEffect(() => {
-        navigation.setOptions?.({ headerTitle });
-    }, [headerTitle, navigation]);
-
+    const recoveryPluginId = accountRecoveryPluginId;
+    if (!recoveryPluginId) return <Redirect href="/settings/plugins" />;
     return (
         <ItemList style={{ paddingTop: 0 }}>
-            {state.isReadOnlySnapshot ? (
-                <PluginReadOnlySnapshotNotice testID="settings.plugins.detail.readOnlySnapshot" />
+            <PluginDetailRecoveryHeader
+                pluginId={recoveryPluginId}
+                title={headerTitle}
+            />
+            <PluginReadOnlySnapshotNotice
+                testID={`settings.plugins.detail.${recoveryPluginId}.accountRecovery`}
+                reason="accountRecovery"
+            />
+            {accountSettingsDeclaration ? (
+                <PluginDetailGenericSettingsSection
+                    pluginId={recoveryPluginId}
+                    projection={null}
+                    accountSettingsDeclaration={accountSettingsDeclaration}
+                    machineId={null}
+                    serverId={null}
+                    accountServerIdentityId={state.accountServerIdentityId}
+                    daemonServerIdentityId={null}
+                    daemonOperationsAvailable={false}
+                />
             ) : null}
-            <PluginDetailHeader installed={installed} projection={projection} />
-            <PluginDetailSummaryGrid
-                installed={installed}
-                projection={projection}
+            <PluginAccountDataEraseRecoverySection
+                pluginId={recoveryPluginId}
+                testID={`settings.plugins.detail.${recoveryPluginId}.accountDataErase`}
             />
-            <PluginDetailActionsSection
-                installed={installed}
-                actionInFlight={state.isPluginActionInFlight(installed.pluginId)}
-                canRunActions={state.canRefreshInstalledPlugins}
-                onAction={state.runInstalledPluginAction}
-            />
-            <PluginDetailGenericSettingsSection
-                pluginId={installed.pluginId}
-                projection={projection}
-                machineId={state.primaryMachineId}
-                serverId={state.activeServerId}
-                daemonOperationsAvailable={state.daemonOperationsAvailable}
-            />
-            <PluginDetailContributionsSection pluginId={installed.pluginId} projection={projection} />
-            <PluginDetailDiagnosticsSection
-                pluginId={installed.pluginId}
-                projection={projection}
-                registryDiagnostics={state.registryDiagnostics}
-            />
+            <PluginDetailInvocationLogsUnavailableSection pluginId={recoveryPluginId} />
         </ItemList>
     );
 });

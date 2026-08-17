@@ -3,7 +3,6 @@ import { View, Pressable } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -18,6 +17,7 @@ import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/co
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -184,7 +184,7 @@ export default React.memo(function PathPickerScreen() {
                     padding: 4,
                 })}
             >
-                <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
+                <Icon name="caret-left" size={20} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }, [handleBackPress, theme.colors.chrome.header.foreground]);
@@ -205,8 +205,8 @@ export default React.memo(function PathPickerScreen() {
                     padding: 4,
                 })}
             >
-                <Ionicons
-                    name="checkmark"
+                <Icon
+                    name="check"
                     size={24}
                     color={theme.colors.chrome.header.foreground}
                 />

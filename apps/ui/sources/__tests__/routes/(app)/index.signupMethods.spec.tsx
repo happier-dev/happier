@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWelcomeScreen, waitForWelcomeTestId } from './index.testHelpers';
 import { createExpoRouterMock, standardCleanup } from '@/dev/testkit';
+import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -11,7 +12,21 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 const expoRouterMock = createExpoRouterMock();
 
-const authEntryOptionsState = vi.hoisted(() => ({
+type SignupMethodsAuthEntryOptions = Pick<
+    AuthEntryOptions,
+    | 'serverAvailability'
+    | 'showAnonymousSignup'
+    | 'showProviderSignup'
+    | 'showMtlsLogin'
+    | 'showKeylessProviderLogin'
+    | 'providerSignupTitle'
+    | 'providerKeylessTitle'
+    | 'anonymousSignupTitle'
+    | 'mtlsTitle'
+    | 'primaryAction'
+>;
+
+const authEntryOptionsState = vi.hoisted((): { current: SignupMethodsAuthEntryOptions } => ({
     current: {
         serverAvailability: 'ready',
         showAnonymousSignup: true,
@@ -22,7 +37,10 @@ const authEntryOptionsState = vi.hoisted(() => ({
         providerKeylessTitle: 'Continue with GitHub',
         anonymousSignupTitle: 'Create account',
         mtlsTitle: 'Sign in with certificate',
-        keylessPrimary: false,
+        primaryAction: {
+            kind: 'anonymous' as const,
+            title: 'Create account',
+        },
     },
 }));
 
@@ -43,6 +61,10 @@ vi.mock('@/encryption/libsodium.lib', () => ({
     },
 }));
 vi.mock('react-native-safe-area-context', () => ({
+    initialWindowMetrics: {
+        frame: { x: 0, y: 0, width: 0, height: 0 },
+        insets: { top: 0, bottom: 0, left: 0, right: 0 },
+    },
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
@@ -103,10 +125,10 @@ vi.mock('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry', () => ({
 
         if (options.showKeylessProviderLogin) {
             nodes.push(React.createElement(
-                options.keylessPrimary ? 'ProviderPrimary' : 'KeylessSecondary',
+                options.primaryAction?.kind === 'keyless' ? 'ProviderPrimary' : 'KeylessSecondary',
                 {
-                    key: options.keylessPrimary ? 'welcome-provider-primary' : 'welcome-login-provider',
-                    testID: options.keylessPrimary ? 'welcome-provider-primary' : 'welcome-login-provider',
+                    key: options.primaryAction?.kind === 'keyless' ? 'welcome-provider-primary' : 'welcome-login-provider',
+                    testID: options.primaryAction?.kind === 'keyless' ? 'welcome-provider-primary' : 'welcome-login-provider',
                 },
                 options.providerKeylessTitle,
             ));
@@ -135,7 +157,10 @@ describe('/ (welcome) signup methods', () => {
             providerKeylessTitle: 'Continue with GitHub',
             anonymousSignupTitle: 'Create account',
             mtlsTitle: 'Sign in with certificate',
-            keylessPrimary: false,
+            primaryAction: {
+                kind: 'anonymous',
+                title: 'Create account',
+            },
         };
     });
 
@@ -160,7 +185,10 @@ describe('/ (welcome) signup methods', () => {
             ...authEntryOptionsState.current,
             showAnonymousSignup: false,
             showKeylessProviderLogin: true,
-            keylessPrimary: true,
+            primaryAction: {
+                kind: 'keyless',
+                title: 'Continue with GitHub',
+            },
         };
 
         const screen = await renderWelcomeScreen();
@@ -175,7 +203,6 @@ describe('/ (welcome) signup methods', () => {
         authEntryOptionsState.current = {
             ...authEntryOptionsState.current,
             showKeylessProviderLogin: true,
-            keylessPrimary: false,
         };
 
         const screen = await renderWelcomeScreen();
@@ -191,6 +218,10 @@ describe('/ (welcome) signup methods', () => {
             ...authEntryOptionsState.current,
             showAnonymousSignup: false,
             showMtlsLogin: true,
+            primaryAction: {
+                kind: 'mtls',
+                title: 'Sign in with certificate',
+            },
         };
 
         const screen = await renderWelcomeScreen();
@@ -207,6 +238,7 @@ describe('/ (welcome) signup methods', () => {
             serverAvailability: 'unavailable',
             showAnonymousSignup: false,
             showProviderSignup: false,
+            primaryAction: null,
         };
 
         const screen = await renderWelcomeScreen();

@@ -26,10 +26,10 @@ const { applySettings, happierVoiceSupportState, mockLocalSettings, mockSettings
             ...settingsDefaults,
             voice: {
                 ...settingsDefaults.voice,
-                providerId: 'realtime_elevenlabs',
+                providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 providers: {
                     ...settingsDefaults.voice.providers,
-                    realtime_elevenlabs: { schemaVersion: 2, config: { billingMode: 'happier' } },
+                    'happier.voice.elevenlabs/realtime-elevenlabs': { schemaVersion: 2, config: { billingMode: 'happier' } },
                 },
             },
         } satisfies Settings,

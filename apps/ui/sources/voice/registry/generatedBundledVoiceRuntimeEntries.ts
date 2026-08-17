@@ -9,25 +9,29 @@
  */
 
 import { createBundledConversationRuntimeEntries, type BundledConversationRuntimeEntry } from './bundledConversationRuntimeEntries';
-import { BUNDLED_VOICE_UI_ENTRIES as CODEX_BUNDLED_VOICE_UI_ENTRIES, activate as CODEX_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-codex/ui/voice';
-import { BUNDLED_VOICE_UI_ENTRIES as ELEVENLABS_BUNDLED_VOICE_UI_ENTRIES, activate as ELEVENLABS_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-elevenlabs/ui/voice';
-import { BUNDLED_VOICE_UI_ENTRIES as OPENAI_BUNDLED_VOICE_UI_ENTRIES, activate as OPENAI_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-openai/ui/voice';
-import { BUNDLED_VOICE_UI_ENTRIES as XAI_BUNDLED_VOICE_UI_ENTRIES, activate as XAI_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-xai/ui/voice';
+import { PLUGIN_MANIFEST as CODEX_PLUGIN_MANIFEST } from '@happier-dev/plugins-codex/manifest';
+import { activate as CODEX_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-codex/ui/voice';
+import { PLUGIN_MANIFEST as ELEVENLABS_PLUGIN_MANIFEST } from '@happier-dev/plugins-elevenlabs/manifest';
+import { activate as ELEVENLABS_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-elevenlabs/ui/voice';
+import { PLUGIN_MANIFEST as OPENAI_PLUGIN_MANIFEST } from '@happier-dev/plugins-openai/manifest';
+import { activate as OPENAI_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-openai/ui/voice';
+import { PLUGIN_MANIFEST as XAI_PLUGIN_MANIFEST } from '@happier-dev/plugins-xai/manifest';
+import { activate as XAI_BUNDLED_VOICE_ACTIVATE } from '@happier-dev/plugins-xai/ui/voice';
 
 const CODEX_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries(
-  CODEX_BUNDLED_VOICE_UI_ENTRIES,
+  CODEX_PLUGIN_MANIFEST,
   CODEX_BUNDLED_VOICE_ACTIVATE,
 );
 const ELEVENLABS_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries(
-  ELEVENLABS_BUNDLED_VOICE_UI_ENTRIES,
+  ELEVENLABS_PLUGIN_MANIFEST,
   ELEVENLABS_BUNDLED_VOICE_ACTIVATE,
 );
 const OPENAI_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries(
-  OPENAI_BUNDLED_VOICE_UI_ENTRIES,
+  OPENAI_PLUGIN_MANIFEST,
   OPENAI_BUNDLED_VOICE_ACTIVATE,
 );
 const XAI_BUNDLED_PUBLIC_VOICE_ACTIVATIONS = createBundledConversationRuntimeEntries(
-  XAI_BUNDLED_VOICE_UI_ENTRIES,
+  XAI_PLUGIN_MANIFEST,
   XAI_BUNDLED_VOICE_ACTIVATE,
 );
 

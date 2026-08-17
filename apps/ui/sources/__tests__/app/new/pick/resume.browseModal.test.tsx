@@ -83,7 +83,6 @@ function createSupportedClaudeProjection(params: Readonly<{
                     sources: [{
                         sourceKind: 'claudeConfig',
                         schema: {
-                            passthrough: true,
                             fields: [
                                 { name: 'kind', kind: 'literal', value: 'claudeConfig' },
                                 { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
@@ -162,6 +161,9 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
@@ -293,19 +295,19 @@ describe('ResumePickerScreen browse modal', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'plugin:review-bot': {
-                        providerId: 'plugin:review-bot',
+                        id: 'plugin:review-bot',
                         title: 'Review Bot Plugin',
-                        subtitle: 'plugin provider',
+                        subtitle: 'plugin agent',
                         channel: 'plugin',
                         isBuiltIn: false,
                     },
                 },
                 backendsById: {
                     'plugin-review-bot': {
-                        backendId: 'plugin-review-bot',
-                        providerId: 'plugin:review-bot',
+                        id: 'plugin-review-bot',
+                        agentId: 'plugin:review-bot',
                         title: 'Review Bot (plugin)',
                         subtitle: 'plugin backend',
                         catalogAgentId: null,

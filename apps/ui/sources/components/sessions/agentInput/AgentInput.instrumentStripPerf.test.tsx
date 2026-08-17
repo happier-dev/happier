@@ -18,6 +18,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
 import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
 
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
@@ -168,7 +169,7 @@ const BASE_PROPS = {
     placeholder: 'Type',
     onChangeText: () => {},
     onSend: () => {},
-    autocompletePrefixes: [] as string[],
+    autocompleteKinds: [] as ComposerSuggestionKindId[],
     autocompleteSuggestions: async () => [],
 } as const;
 

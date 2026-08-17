@@ -7,7 +7,6 @@ import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
-import { Ionicons } from '@expo/vector-icons';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 

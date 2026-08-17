@@ -20,7 +20,9 @@ vi.mock('@/sync/encryption/artifactEncryption', () => ({
 
 import { applySocketArtifactUpdate } from './syncArtifacts'
 
-function buildArtifact(overrides: Partial<DecryptedArtifact> = {}): DecryptedArtifact {
+function buildArtifact(
+    overrides: Partial<Extract<DecryptedArtifact, { isDecrypted: true }>> = {},
+): DecryptedArtifact {
     return {
         id: 'a1',
         title: 'old',

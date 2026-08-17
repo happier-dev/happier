@@ -14,182 +14,157 @@ afterEach(async () => {
     vi.useRealTimers();
 });
 
-describe('serverReachabilitySupervisorPool (health probe status)', () => {
-    it('treats a non-ok /health response as unreachable (prevents wrong-server loops)', async () => {
-        vi.useFakeTimers();
+type ObservedState = {
+    phase: string | null;
+    reason: string | null;
+    nextRetryAt: number | null;
+};
 
-        const runtimeFetchSpy = vi.fn(async (input: RequestInfo | URL) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return new Response('nope', { status: 404, headers: { 'Content-Type': 'text/plain' } });
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                throw new Error('Unexpected /v1/auth/ping probe call');
-            }
-            throw new Error(`Unexpected probe URL: ${url}`);
-        });
+async function runProbe(params: Readonly<{
+    token: string | null;
+    respond: (url: string) => Response;
+}>): Promise<{ observed: ObservedState; requestedUrls: string[] }> {
+    const runtimeFetchSpy = vi.fn(async (input: RequestInfo | URL) => params.respond(String(input)));
+    setRuntimeFetch(runtimeFetchSpy);
 
-        setRuntimeFetch(runtimeFetchSpy);
-
-        let lastStatePhase: string | null = null;
-        let lastStateReason: string | null = null;
-        const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
-            lastStatePhase = state.phase;
-            lastStateReason = state.reason;
-        });
-
-        try {
-            await startServerReachabilitySupervisor({
-                serverUrl: 'https://example.test',
-                token: 'token',
-            });
-        } finally {
-            unsubscribe();
-        }
-
-        expect(lastStatePhase).toBe('offline');
-        expect(lastStateReason).toBe('server_unreachable');
-        expect(runtimeFetchSpy.mock.calls.map(([input]) => String(input))).toEqual(['https://example.test/health']);
+    const observed: ObservedState = { phase: null, reason: null, nextRetryAt: null };
+    const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
+        observed.phase = state.phase;
+        observed.reason = state.reason;
+        observed.nextRetryAt = state.nextRetryAt;
     });
 
-    it('treats a 429 /health response as retry_later (respects Retry-After)', async () => {
+    try {
+        await startServerReachabilitySupervisor({
+            serverUrl: 'https://example.test',
+            token: params.token,
+        });
+    } finally {
+        unsubscribe();
+    }
+
+    return { observed, requestedUrls: runtimeFetchSpy.mock.calls.map(([input]) => String(input)) };
+}
+
+describe('serverReachabilitySupervisorPool (readiness probe)', () => {
+    it('issues only the authenticated ping when a token is available', async () => {
+        vi.useFakeTimers();
+
+        const { observed, requestedUrls } = await runProbe({
+            token: 'token',
+            respond: (url) => {
+                if (url.endsWith('/v1/auth/ping')) {
+                    return new Response(JSON.stringify({ ok: true }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                throw new Error(`Unexpected probe URL: ${url}`);
+            },
+        });
+
+        expect(observed.phase).toBe('online');
+        expect(requestedUrls).toEqual(['https://example.test/v1/auth/ping']);
+    });
+
+    it('treats a host that does not serve the authenticated ping as unreachable (prevents wrong-server loops)', async () => {
+        vi.useFakeTimers();
+
+        const { observed, requestedUrls } = await runProbe({
+            token: 'token',
+            respond: (url) => {
+                if (url.endsWith('/v1/auth/ping')) {
+                    return new Response('nope', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+                }
+                throw new Error(`Unexpected probe URL: ${url}`);
+            },
+        });
+
+        expect(observed.phase).toBe('offline');
+        expect(observed.reason).toBe('server_unreachable');
+        expect(requestedUrls).toEqual(['https://example.test/v1/auth/ping']);
+    });
+
+    it('treats a 429 authenticated ping as retry_later (respects Retry-After)', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
 
-        const runtimeFetchSpy = vi.fn(async (input: RequestInfo | URL) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return new Response('rate limited', {
-                    status: 429,
-                    headers: { 'Retry-After': '1' },
-                });
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                throw new Error('Unexpected /v1/auth/ping probe call');
-            }
-            throw new Error(`Unexpected probe URL: ${url}`);
+        const { observed, requestedUrls } = await runProbe({
+            token: 'token',
+            respond: (url) => {
+                if (url.endsWith('/v1/auth/ping')) {
+                    return new Response('rate limited', { status: 429, headers: { 'Retry-After': '1' } });
+                }
+                throw new Error(`Unexpected probe URL: ${url}`);
+            },
         });
 
-        setRuntimeFetch(runtimeFetchSpy);
-
-        let lastStatePhase: string | null = null;
-        let lastStateReason: string | null = null;
-        let lastNextRetryAt: number | null = null;
-        const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
-            lastStatePhase = state.phase;
-            lastStateReason = state.reason;
-            lastNextRetryAt = state.nextRetryAt;
-        });
-
-        try {
-            await startServerReachabilitySupervisor({
-                serverUrl: 'https://example.test',
-                token: 'token',
-            });
-        } finally {
-            unsubscribe();
-        }
-
-        expect(lastStatePhase).toBe('offline');
-        expect(lastStateReason).toBe('probe_failed');
-        expect(lastNextRetryAt).toBe(1000);
-        expect(runtimeFetchSpy.mock.calls.map(([input]) => String(input))).toEqual(['https://example.test/health']);
-    });
-
-    it('preserves planned restart reason from proxy maintenance health responses', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-
-        const runtimeFetchSpy = vi.fn(async (input: RequestInfo | URL) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return new Response('Server reload in progress', {
-                    status: 503,
-                    headers: {
-                        'Retry-After': '2',
-                        'X-Happier-Retry-Reason': 'server_restarting',
-                    },
-                });
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                throw new Error('Unexpected /v1/auth/ping probe call');
-            }
-            throw new Error(`Unexpected probe URL: ${url}`);
-        });
-
-        setRuntimeFetch(runtimeFetchSpy);
-
-        let lastStatePhase: string | null = null;
-        let lastStateReason: string | null = null;
-        let lastNextRetryAt: number | null = null;
-        const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
-            lastStatePhase = state.phase;
-            lastStateReason = state.reason;
-            lastNextRetryAt = state.nextRetryAt;
-        });
-
-        try {
-            await startServerReachabilitySupervisor({
-                serverUrl: 'https://example.test',
-                token: 'token',
-            });
-        } finally {
-            unsubscribe();
-        }
-
-        expect(lastStatePhase).toBe('offline');
-        expect(lastStateReason).toBe('server_restarting');
-        expect(lastNextRetryAt).toBe(2000);
-        expect(runtimeFetchSpy.mock.calls.map(([input]) => String(input))).toEqual(['https://example.test/health']);
+        expect(observed.phase).toBe('offline');
+        expect(observed.reason).toBe('probe_failed');
+        expect(observed.nextRetryAt).toBe(1000);
+        expect(requestedUrls).toEqual(['https://example.test/v1/auth/ping']);
     });
 
     it('preserves planned restart reason from authenticated ping retry-later responses', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
 
-        const runtimeFetchSpy = vi.fn(async (input: RequestInfo | URL) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
-                return new Response(JSON.stringify({ ok: true }), { status: 200 });
-            }
-            if (url.endsWith('/v1/auth/ping')) {
-                return new Response('Server reload in progress', {
-                    status: 503,
-                    headers: {
-                        'Retry-After': '2',
-                        'X-Happier-Retry-Reason': 'server_restarting',
-                    },
-                });
-            }
-            throw new Error(`Unexpected probe URL: ${url}`);
+        const { observed, requestedUrls } = await runProbe({
+            token: 'token',
+            respond: (url) => {
+                if (url.endsWith('/v1/auth/ping')) {
+                    return new Response('Server reload in progress', {
+                        status: 503,
+                        headers: { 'Retry-After': '2', 'X-Happier-Retry-Reason': 'server_restarting' },
+                    });
+                }
+                throw new Error(`Unexpected probe URL: ${url}`);
+            },
         });
 
-        setRuntimeFetch(runtimeFetchSpy);
+        expect(observed.phase).toBe('offline');
+        expect(observed.reason).toBe('server_restarting');
+        expect(observed.nextRetryAt).toBe(2000);
+        expect(requestedUrls).toEqual(['https://example.test/v1/auth/ping']);
+    });
 
-        let lastStatePhase: string | null = null;
-        let lastStateReason: string | null = null;
-        let lastNextRetryAt: number | null = null;
-        const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
-            lastStatePhase = state.phase;
-            lastStateReason = state.reason;
-            lastNextRetryAt = state.nextRetryAt;
+    it('falls back to the unauthenticated health check when there is no token', async () => {
+        vi.useFakeTimers();
+
+        const { observed, requestedUrls } = await runProbe({
+            token: null,
+            respond: (url) => {
+                if (url.endsWith('/health')) {
+                    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+                }
+                throw new Error(`Unexpected probe URL: ${url}`);
+            },
         });
 
-        try {
-            await startServerReachabilitySupervisor({
-                serverUrl: 'https://example.test',
-                token: 'token',
-            });
-        } finally {
-            unsubscribe();
-        }
+        expect(observed.phase).toBe('online');
+        expect(requestedUrls).toEqual(['https://example.test/health']);
+    });
 
-        expect(lastStatePhase).toBe('offline');
-        expect(lastStateReason).toBe('server_restarting');
-        expect(lastNextRetryAt).toBe(2000);
-        expect(runtimeFetchSpy.mock.calls.map(([input]) => String(input))).toEqual([
-            'https://example.test/health',
-            'https://example.test/v1/auth/ping',
-        ]);
+    it('preserves planned restart reason from proxy maintenance health responses (tokenless)', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+
+        const { observed, requestedUrls } = await runProbe({
+            token: null,
+            respond: (url) => {
+                if (url.endsWith('/health')) {
+                    return new Response('Server reload in progress', {
+                        status: 503,
+                        headers: { 'Retry-After': '2', 'X-Happier-Retry-Reason': 'server_restarting' },
+                    });
+                }
+                throw new Error(`Unexpected probe URL: ${url}`);
+            },
+        });
+
+        expect(observed.phase).toBe('offline');
+        expect(observed.reason).toBe('server_restarting');
+        expect(observed.nextRetryAt).toBe(2000);
+        expect(requestedUrls).toEqual(['https://example.test/health']);
     });
 });

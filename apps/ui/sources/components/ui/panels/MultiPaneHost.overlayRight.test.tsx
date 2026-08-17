@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { MultiPaneHost } from './MultiPaneHost';
@@ -7,6 +8,12 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const reducedMotionPreference = vi.hoisted(() => ({ value: false }));
+
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+    useReducedMotionPreference: () => reducedMotionPreference.value,
+}));
 
 const RIGHT_OVERLAY_TEST_ID = 'multi-pane-right-overlay';
 const RIGHT_SCRIM_TEST_ID = 'multi-pane-right-scrim';
@@ -18,6 +25,7 @@ describe('MultiPaneHost (overlayRight)', () => {
 
     beforeEach(() => {
         vi.useFakeTimers();
+        reducedMotionPreference.value = false;
     });
 
     afterEach(() => {
@@ -63,6 +71,7 @@ describe('MultiPaneHost (overlayRight)', () => {
 
     it('closes overlay right on Escape key press (web)', async () => {
         const onCloseRight = vi.fn();
+        const originalPlatform = Platform.OS;
         const fakeWindow = new (globalThis as any).EventTarget();
         (globalThis as any).window = fakeWindow;
         (globalThis as any).KeyboardEvent = class KeyboardEvent extends Event {
@@ -72,8 +81,38 @@ describe('MultiPaneHost (overlayRight)', () => {
                 this.key = init.key;
             }
         };
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
 
-        const tree = (await renderScreen(<MultiPaneHost
+        try {
+            const tree = (await renderScreen(<MultiPaneHost
+                        main={<Main />}
+                        rightPane={<Right />}
+                        detailsPane={null}
+                        layout={{ kind: 'overlayStack', right: 'overlay', details: 'hidden' }}
+                        rightDockWidthPx={360}
+                        detailsDockWidthPx={520}
+                        onCloseRight={onCloseRight}
+                        onCloseDetails={() => {}}
+                        onCommitRightDockWidthPx={() => {}}
+                        onCommitDetailsDockWidthPx={() => {}}
+                    />)).tree;
+
+            expect(tree.findByTestId(RIGHT_SCRIM_TEST_ID)).toBeTruthy();
+            act(() => {
+                (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
+            });
+            expect(onCloseRight).toHaveBeenCalledTimes(0);
+            await flushHookEffects({ advanceTimersMs: OVERLAY_CLOSE_DURATION_MS });
+            expect(onCloseRight).toHaveBeenCalledTimes(1);
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
+    });
+
+    it('closes overlay right immediately when reduced motion is enabled', async () => {
+        reducedMotionPreference.value = true;
+        const onCloseRight = vi.fn();
+        const screen = await renderScreen(<MultiPaneHost
                     main={<Main />}
                     rightPane={<Right />}
                     detailsPane={null}
@@ -84,14 +123,10 @@ describe('MultiPaneHost (overlayRight)', () => {
                     onCloseDetails={() => {}}
                     onCommitRightDockWidthPx={() => {}}
                     onCommitDetailsDockWidthPx={() => {}}
-                />)).tree;
+                />);
 
-        expect(tree.findByTestId(RIGHT_SCRIM_TEST_ID)).toBeTruthy();
-        act(() => {
-            (globalThis as any).window.dispatchEvent(new (globalThis as any).KeyboardEvent('keydown', { key: 'Escape' }));
-        });
-        expect(onCloseRight).toHaveBeenCalledTimes(0);
-        await flushHookEffects({ advanceTimersMs: OVERLAY_CLOSE_DURATION_MS });
+        await screen.pressByTestIdAsync(RIGHT_SCRIM_TEST_ID);
+
         expect(onCloseRight).toHaveBeenCalledTimes(1);
     });
 });

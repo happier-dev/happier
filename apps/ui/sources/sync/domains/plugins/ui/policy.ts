@@ -19,28 +19,6 @@ export {
     isPluginUiPolicyVisible,
 } from './policy/evaluate';
 
-const DEFERRED_POLICY_FIELDS = [
-    'visibility',
-    'enabled',
-    'featureGate',
-    'compatibility',
-] as const;
-
-/**
- * Whether an entry DECLARES any host-evaluated policy field. Retained so the
- * projection/diagnostics surfaces can flag entries that depend on a host
- * evaluation context. This is no longer a "hide" predicate — declared policy is
- * EVALUATED (Phase 1.1) via `evaluatePluginUiPolicy`, not silently hidden.
- */
-export function hasDeferredPluginUiPolicy(
-    entry: PluginUiProjectionEntry | null | undefined,
-): boolean {
-    if (!entry) {
-        return false;
-    }
-    return DEFERRED_POLICY_FIELDS.some((field) => entry[field] !== undefined);
-}
-
 /**
  * Canonical render gate for a plugin-UI projection entry. Replaces the old
  * accept-and-hide behavior: declared `visibility/enabled/featureGate/

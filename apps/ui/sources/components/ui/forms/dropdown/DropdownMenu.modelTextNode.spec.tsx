@@ -1,5 +1,6 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
@@ -67,18 +68,18 @@ describe('DropdownMenu model-style text node guard', () => {
                 id: '__refresh_models__',
                 title: 'Refresh models',
                 subtitle: 'Fetch the latest model list.',
-                icon: renderDropdownItemIcon({ name: 'refresh-outline', color: '#999' }),
+                icon: renderDropdownItemIcon({ name: 'arrow-clockwise', color: '#999' }),
             },
             {
                 id: 'default',
                 title: 'Use CLI settings',
-                icon: renderDropdownItemIcon({ name: 'layers-outline', color: '#999' }),
+                icon: renderDropdownItemIcon({ name: 'stack-simple', color: '#999' }),
             },
             {
                 id: '__custom__',
                 title: 'Custom…',
                 subtitle: 'Enter a model id',
-                icon: renderDropdownItemIcon({ name: 'create-outline', color: '#999' }),
+                icon: renderDropdownItemIcon({ name: 'pencil-simple', color: '#999' }),
             },
         ];
 
@@ -101,5 +102,73 @@ describe('DropdownMenu model-style text node guard', () => {
                 />)).tree;
 
         expect(collectUnexpectedRawTextNodes(tree.toJSON())).toEqual([]);
+    });
+
+    it('opens its Item trigger exactly once with Enter or Space, then Escape closes without selecting a manifest', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const onSelect = vi.fn();
+        const onOpenChange = vi.fn();
+
+        function VoiceManifestSelect() {
+            const [open, setOpen] = React.useState(false);
+            return <DropdownMenu
+                open={open}
+                onOpenChange={(next) => {
+                    onOpenChange(next);
+                    setOpen(next);
+                }}
+                items={[
+                    { id: 'default', title: 'Default manifest' },
+                    { id: 'custom', title: 'Custom manifest' },
+                ]}
+                onSelect={onSelect}
+                search
+                itemTrigger={{
+                    title: 'Voice manifest',
+                    itemProps: { testID: 'voice-manifest-select' },
+                }}
+            />;
+        }
+
+        const screen = await renderScreen(<VoiceManifestSelect />);
+        const trigger = () => screen.findByTestId('voice-manifest-select');
+        const keyEvent = (key: string) => ({
+            key,
+            nativeEvent: { key },
+            preventDefault: vi.fn(),
+            stopPropagation: vi.fn(),
+        });
+
+        const enter = keyEvent('Enter');
+        await act(async () => trigger()?.props.onKeyDown(enter));
+        await act(async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(onOpenChange).toHaveBeenCalledTimes(1);
+        expect(onOpenChange).toHaveBeenLastCalledWith(true);
+        expect(enter.preventDefault).toHaveBeenCalledOnce();
+        expect(onSelect).not.toHaveBeenCalled();
+
+        const escape = keyEvent('Escape');
+        await act(async () => {
+            screen.findByType('TextInput' as any).props.onKeyPress(escape);
+        });
+
+        expect(onOpenChange).toHaveBeenCalledTimes(2);
+        expect(onOpenChange).toHaveBeenLastCalledWith(false);
+        expect(escape.preventDefault).toHaveBeenCalledOnce();
+        expect(onSelect).not.toHaveBeenCalled();
+
+        const space = keyEvent(' ');
+        await act(async () => trigger()?.props.onKeyDown(space));
+        await act(async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(onOpenChange).toHaveBeenCalledTimes(3);
+        expect(onOpenChange).toHaveBeenLastCalledWith(true);
+        expect(space.preventDefault).toHaveBeenCalledOnce();
+        expect(onSelect).not.toHaveBeenCalled();
     });
 });

@@ -1,14 +1,50 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectedSettingsV2, PluginProjectionV2 } from '@happier-dev/protocol';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
 
 import {
     adaptDaemonContributionRegistryProjectionToMergedProjectionInputs,
+    mapV2EditableSettingsGroup,
     type DaemonContributionRegistryProjectionV1Like,
 } from './daemonContributionRegistryProjectionAdapters';
 
 describe('daemon contribution registry projection adapters', () => {
+    it('preserves projected secret custody for the Settings presentation dispatcher', () => {
+        const settings: PluginProjectedSettingsV2 = {
+            id: 'acme.review.settings',
+            pluginId: 'acme.review',
+            version: 1,
+            title: 'Review settings',
+            scope: { kind: 'account' },
+            presentation: { sections: [], subagentSections: [] },
+            target: { kind: 'plugin' },
+            fields: [{
+                id: 'machine-only-token',
+                kind: 'settings.field',
+                version: '1.0.0',
+                valueSchema: { type: 'string' },
+                valueType: 'string',
+                control: 'password',
+                secretCustody: 'daemon',
+                managedServiceOrigin: { endpointSettingId: 'serverBaseUrl' },
+                displayKey: 'Machine-only token',
+                redaction: 'secret',
+                clearWhenEmpty: 'omit',
+                capabilityGates: [],
+                permissionGates: [],
+            }],
+        };
+
+        expect(mapV2EditableSettingsGroup(settings).fields).toEqual([
+            expect.objectContaining({
+                key: 'machine-only-token',
+                secretCustody: 'daemon',
+                managedServiceOrigin: { endpointSettingId: 'serverBaseUrl' },
+            }),
+        ]);
+    });
+
     it('adapts daemon projection v1 into merged backend/provider projection maps', () => {
         const projection: DaemonContributionRegistryProjectionV1Like = {
             v: 1,
@@ -126,7 +162,6 @@ describe('daemon contribution registry projection adapters', () => {
                         kind: 'path',
                         locator: '/plugins/acme-review',
                     },
-                    digest: 'sha256:manifest',
                 },
             },
             agentsById: {
@@ -162,7 +197,17 @@ describe('daemon contribution registry projection adapters', () => {
                     description: 'Refresh Acme resources',
                     scopes: ['settings'],
                     surfaces: ['agent'],
-                    placement: 'detailsPanel',
+                    placementBindings: ['detailsPanel'],
+                    inputHints: {
+                        title: 'Refresh Acme',
+                        submitLabel: 'Refresh',
+                        fields: [{
+                            path: 'reason',
+                            title: 'Reason',
+                            widget: 'textarea',
+                            required: true,
+                        }],
+                    },
                     dangerLevel: 'writesRemote',
                     confirmation: {
                         title: { key: 'actions.refresh.title', fallback: 'Refresh remote resources?' },
@@ -170,6 +215,19 @@ describe('daemon contribution registry projection adapters', () => {
                         confirmLabel: { key: 'actions.refresh.confirm', fallback: 'Refresh' },
                     },
                     available: true,
+                },
+                'acme.review.refresh-provider-state': {
+                    id: 'acme.review.refresh-provider-state',
+                    pluginId: 'acme.review',
+                    title: 'Refresh provider state',
+                    scopes: ['session'],
+                    surfaces: ['plugin'],
+                    inputSchema: {
+                        type: 'object',
+                        properties: { repository: { type: 'string' } },
+                        additionalProperties: false,
+                    },
+                    dangerLevel: 'writesRemote',
                 },
             },
             familiesById: {},
@@ -185,7 +243,18 @@ describe('daemon contribution registry projection adapters', () => {
                     contentType: 'text/markdown',
                 },
             },
-            settingsById: {},
+            settingsById: {
+                'acme.review.settings': {
+                    id: 'settings',
+                    pluginId: 'acme.review',
+                    version: 1,
+                    title: 'Review settings',
+                    scope: { kind: 'daemon' },
+                    presentation: { sections: [], subagentSections: [] },
+                    target: { kind: 'plugin' },
+                    fields: [],
+                },
+            },
             diagnostics: [
                 {
                     version: 1,
@@ -256,7 +325,6 @@ describe('daemon contribution registry projection adapters', () => {
             provenance: expect.objectContaining({
                 sourceKind: 'path',
                 sourceLabel: '/plugins/acme-review',
-                manifestDigest: 'sha256:manifest',
             }),
             diagnostics: [
                 { code: 'registry.warning', message: 'Registry rebuilt with warnings', severity: 'warning' },
@@ -266,11 +334,30 @@ describe('daemon contribution registry projection adapters', () => {
                 expect.objectContaining({
                     id: 'acme.review.refresh',
                     title: 'Refresh Acme',
+                    inputHints: {
+                        title: 'Refresh Acme',
+                        submitLabel: 'Refresh',
+                        fields: [{
+                            path: 'reason',
+                            title: 'Reason',
+                            widget: 'textarea',
+                            required: true,
+                        }],
+                    },
                     dangerLevel: 'writesRemote',
                     confirmation: {
                         title: { key: 'actions.refresh.title', fallback: 'Refresh remote resources?' },
                         body: { key: 'actions.refresh.body', fallback: 'This changes remote resources.' },
                         confirmLabel: { key: 'actions.refresh.confirm', fallback: 'Refresh' },
+                    },
+                }),
+                expect.objectContaining({
+                    id: 'acme.review.refresh-provider-state',
+                    placementBindings: [],
+                    inputSchema: {
+                        type: 'object',
+                        properties: { repository: { type: 'string' } },
+                        additionalProperties: false,
                     },
                 }),
             ],
@@ -281,8 +368,84 @@ describe('daemon contribution registry projection adapters', () => {
                     path: 'resources/review.md',
                 }),
             ],
+            editableSettingsGroups: [
+                expect.objectContaining({
+                    id: 'settings',
+                    scope: { kind: 'daemon' },
+                }),
+            ],
         }));
         expect(adapted.registryDiagnostics).toEqual([]);
+    });
+
+    it('keeps a target semantic diagnostic on the target Settings entry', () => {
+        const projection: PluginProjectionV2 = {
+            v: 2,
+            generation: 42,
+            installedPackagesById: {
+                'happier.channels': {
+                    id: 'happier.channels',
+                    displayName: 'Channels',
+                    version: '0.0.0',
+                    enabled: true,
+                    source: { kind: 'bundled', locator: 'happier.channels' },
+                },
+                'happier.channel.telegram': {
+                    id: 'happier.channel.telegram',
+                    displayName: 'Telegram',
+                    version: '0.0.0',
+                    enabled: true,
+                    source: { kind: 'bundled', locator: 'happier.channel.telegram' },
+                },
+                'happier.scm.forge.github': {
+                    id: 'happier.scm.forge.github',
+                    displayName: 'GitHub',
+                    version: '0.0.0',
+                    enabled: true,
+                    source: { kind: 'bundled', locator: 'happier.scm.forge.github' },
+                },
+            },
+            agentsById: {},
+            backendsById: {},
+            actionsById: {},
+            familiesById: {},
+            toolsById: {},
+            commandsById: {},
+            resourcesById: {},
+            settingsById: {},
+            diagnostics: [{
+                version: 1,
+                id: 'happier.channels:runtime:happier.channels/providers:0',
+                data: {
+                    severity: 'error',
+                    code: 'target_semantics_unavailable',
+                    message: 'Targeted contribution semantics rejected (target_semantics_unavailable).',
+                    details: {
+                        targetPluginId: 'happier.channels',
+                        pointId: 'providers',
+                        protocol: { id: 'happier.channels/providers', version: 1 },
+                    },
+                },
+                plugin: { id: 'happier.channels', version: '0.0.0', source: 'bundled' },
+                contribution: { pluginId: 'happier.channels', localId: 'providers' },
+                stage: 'runtime',
+                generation: 'channels-generation-a',
+                host: 'daemon',
+                platform: 'test',
+                occurredAtMs: 1,
+                resolution: { state: 'current' },
+            }],
+        };
+
+        const adapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+
+        expect(adapted.pluginProjectionById['happier.channels']?.diagnostics).toEqual([{
+            code: 'target_semantics_unavailable',
+            message: 'Targeted contribution semantics rejected (target_semantics_unavailable).',
+            severity: 'error',
+        }]);
+        expect(adapted.pluginProjectionById['happier.channel.telegram']?.diagnostics).toEqual([]);
+        expect(adapted.pluginProjectionById['happier.scm.forge.github']?.diagnostics).toEqual([]);
     });
 
 });

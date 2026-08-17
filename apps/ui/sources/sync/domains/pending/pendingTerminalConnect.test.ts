@@ -38,11 +38,23 @@ describe('pendingTerminalConnect', () => {
         setPendingTerminalConnect({
             publicKeyB64Url: 'abcDEF_123-zzz',
             serverUrl: 'https://stack.example.test',
+            supportsTokenOnly: true,
+            pairing: {
+                secretB64Url: 'pairing-secret',
+                createdAtMs: 1_000,
+                expiresAtMs: 61_000,
+            },
         });
 
         expect(getPendingTerminalConnect()).toEqual({
             publicKeyB64Url: 'abcDEF_123-zzz',
             serverUrl: 'https://stack.example.test',
+            supportsTokenOnly: true,
+            pairing: {
+                secretB64Url: 'pairing-secret',
+                createdAtMs: 1_000,
+                expiresAtMs: 61_000,
+            },
         });
     });
 

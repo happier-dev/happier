@@ -102,6 +102,7 @@ export default function TerminalScreenRoute() {
     usePersistSessionMobileSurface({
         sessionId,
         surface: cockpitEnabled && terminalTabAvailable ? 'terminal' : null,
+        serverId: routeScope.serverId,
     });
 
     const onRequestClose = React.useCallback(() => {

@@ -1,6 +1,7 @@
 import {
     readRuntimeDescriptorV1,
     readServerEnabledBit,
+    normalizeSessionHandoffWorkspaceRootPath,
     SessionHandoffCommitResponseSchema,
     SessionHandoffPrepareTargetResultGetSuccessResponseSchema,
     SessionHandoffPrepareTargetResponseSchema,
@@ -26,6 +27,7 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { sync } from '../sync';
 import { storage } from '../domains/state/storage';
 import { machineRpcWithServerScope } from '../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { isMachineRpcTimeoutError } from '../runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcErrors';
 import { isSocketIoAckTimeoutError } from '../runtime/socketIoAckTimeout';
 
@@ -50,6 +52,7 @@ import { followUpSpawnedSessionWithServerScope } from '../runtime/orchestration/
 import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataPatch';
 import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { readSessionOwnerMetadataView } from '../domains/session/readSessionOwnerMetadataView';
+import { areSessionValuesDeepEqual } from '../store/domains/areStoredSessionsEqual';
 
 type MetadataRecord = Metadata;
 type HandoffErrorResult = Readonly<{
@@ -132,42 +135,63 @@ function resolveTargetPreparePathForCrossPlatformHandoff(params: Readonly<{
 
     const sourcePath = params.sourcePath.trim();
 
-    const normalizeHomeDir = (raw: unknown): string => {
+    const normalizeAbsolutePath = (raw: unknown): Readonly<{
+        normalized: string;
+        separator: '/' | '\\';
+        caseInsensitive: boolean;
+    }> | null => {
         const home = String(raw ?? '').trim();
-        if (!home.startsWith('/')) return '';
-        return home.replace(/\/+$/u, '');
+        const isWindowsAbsolute = /^[A-Za-z]:[\\/]/u.test(home);
+        const isPosixAbsolute = home.startsWith('/');
+        if (!isWindowsAbsolute && !isPosixAbsolute) return null;
+        return {
+            normalized: home.replace(/[\\/]+/gu, '/').replace(/\/+$/u, ''),
+            separator: isWindowsAbsolute ? '\\' : '/',
+            caseInsensitive: isWindowsAbsolute,
+        };
     };
 
     const state = storage.getState();
-    const sourceHomeDir = normalizeHomeDir(state.machines?.[params.sourceMachineId]?.metadata?.homeDir);
-    const targetHomeDir = normalizeHomeDir(state.machines?.[params.targetMachineId]?.metadata?.homeDir);
+    const sourceHomeDir = normalizeAbsolutePath(state.machines?.[params.sourceMachineId]?.metadata?.homeDir);
+    const targetHomeDir = normalizeAbsolutePath(state.machines?.[params.targetMachineId]?.metadata?.homeDir);
     if (!targetHomeDir) {
         // Fail closed: without a known target home directory, rewriting can accidentally redirect a
         // user-selected absolute path into an unrelated location.
         return sourcePath;
     }
 
+    const normalizedSourcePath = sourcePath.replace(/[\\/]+/gu, '/');
     const homePrefixMatches = [
-        sourceHomeDir,
-        sourcePath.match(/^\/Users\/[^/]+/u)?.[0] ?? '',
-        sourcePath.match(/^\/home\/[^/]+/u)?.[0] ?? '',
+        sourceHomeDir?.normalized ?? '',
+        normalizedSourcePath.match(/^\/Users\/[^/]+/u)?.[0] ?? '',
+        normalizedSourcePath.match(/^\/home\/[^/]+/u)?.[0] ?? '',
+        normalizedSourcePath.match(/^[A-Za-z]:\/Users\/[^/]+/iu)?.[0] ?? '',
     ].filter(Boolean);
 
-    const homePrefix = homePrefixMatches.find((prefix) => sourcePath === prefix || sourcePath.startsWith(`${prefix}/`)) ?? '';
+    const compareSourcePath = sourceHomeDir?.caseInsensitive === true
+        ? normalizedSourcePath.toLowerCase()
+        : normalizedSourcePath;
+    const homePrefix = homePrefixMatches.find((prefix) => {
+        const comparePrefix = sourceHomeDir?.caseInsensitive === true ? prefix.toLowerCase() : prefix;
+        return compareSourcePath === comparePrefix || compareSourcePath.startsWith(`${comparePrefix}/`);
+    }) ?? '';
     if (!homePrefix) return sourcePath;
 
     const relativeCandidate =
-        sourcePath === homePrefix
+        normalizedSourcePath.length === homePrefix.length
             ? 'workspace'
-            : sourcePath.slice(homePrefix.length + 1).trim();
+            : normalizedSourcePath.slice(homePrefix.length + 1).trim();
 
     const relative =
         relativeCandidate
         && !relativeCandidate.split('/').some((segment) => segment === '..')
             ? relativeCandidate
-            : (sourcePath.split('/').filter(Boolean).slice(-1)[0] ?? 'workspace');
+            : (normalizedSourcePath.split('/').filter(Boolean).slice(-1)[0] ?? 'workspace');
 
-    return `${targetHomeDir.replace(/\/+$/u, '')}/${relative}`;
+    return [
+        targetHomeDir.normalized.replace(/\//gu, targetHomeDir.separator),
+        relative.replace(/\//gu, targetHomeDir.separator),
+    ].join(targetHomeDir.separator);
 }
 
 const DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS = 15_000;
@@ -178,14 +202,6 @@ const DEFAULT_SOURCE_START_RETRY_INTERVAL_MS = 500;
 
 function defaultSleep(delayMs: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-function isMachineRpcTimeoutError(error: unknown): boolean {
-    return Boolean(
-        error
-        && typeof error === 'object'
-        && (error as { code?: unknown }).code === 'MACHINE_RPC_TIMEOUT',
-    );
 }
 
 function isTransientDaemonRpcAvailabilityError(error: unknown): boolean {
@@ -296,7 +312,27 @@ function readSessionHandoffRuntimeDescriptor(value: unknown): RuntimeDescriptorV
         return undefined;
     }
 
-    return readRuntimeDescriptorV1((value as { runtimeDescriptorV1?: unknown }).runtimeDescriptorV1) ?? undefined;
+    const candidate = value as {
+        runtimeDescriptorV1?: unknown;
+        agentRuntimeDescriptorV1?: unknown;
+    };
+    const canonical = readRuntimeDescriptorV1(candidate.runtimeDescriptorV1);
+    const predecessorEnvelope =
+        candidate.agentRuntimeDescriptorV1
+        && typeof candidate.agentRuntimeDescriptorV1 === 'object'
+        && !Array.isArray(candidate.agentRuntimeDescriptorV1)
+            ? candidate.agentRuntimeDescriptorV1 as Record<string, unknown>
+            : null;
+    const predecessor =
+        predecessorEnvelope
+        && typeof predecessorEnvelope.providerId === 'string'
+        && predecessorEnvelope.provider !== undefined
+            ? readRuntimeDescriptorV1(predecessorEnvelope)
+            : null;
+    if (canonical && predecessor && !areSessionValuesDeepEqual(canonical, predecessor)) {
+        return undefined;
+    }
+    return canonical ?? predecessor ?? undefined;
 }
 
 async function finalizeCommittedSessionHandoffTarget(
@@ -362,7 +398,7 @@ async function finalizeCommittedSessionHandoffTarget(
     if (!finalStabilized.ok) reapplyOptimisticBinding();
 }
 
-function normalizePrepareTargetResponseCandidate(raw: unknown): Record<string, unknown> | null {
+export function normalizePrepareTargetResponseCandidate(raw: unknown): Record<string, unknown> | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         return null;
     }
@@ -1112,19 +1148,9 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         sourceMachineId: started.sourceMachineId,
         targetMachineId: options.targetMachineId,
         targetPath: (() => {
-            const normalizeWorkspaceRootPath = (raw: unknown): string | null => {
-                const candidate = typeof raw === 'string' ? raw.trim() : '';
-                if (!candidate.startsWith('/')) return null;
-                if (candidate.includes('\0')) return null;
-                const segments = candidate.split('/').filter(Boolean);
-                if (segments.length === 0) return null;
-                if (segments.some((segment) => segment === '..')) return null;
-                return `/${segments.join('/')}`;
-            };
-
             // Prefer a daemon-supplied handoff-back target root when present. This avoids relying
             // on hydrated UI state (which can be stale after a cross-machine cutover).
-            const daemonHandoffBackTargetRootPath = normalizeWorkspaceRootPath(
+            const daemonHandoffBackTargetRootPath = normalizeSessionHandoffWorkspaceRootPath(
                 started.response.handoffMetadataV2?.workspaceReplicationHandoffBackTargetRootPath,
             );
             if (
@@ -1145,7 +1171,9 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
             const priorHandoff = metadataForTargetPathOverride?.handoffV1 ?? null;
             const priorSourceMachineId = normalizeId(priorHandoff?.sourceMachineId);
             const requestedTargetMachineId = normalizeId(options.targetMachineId);
-            const priorSourceWorkspaceRootPath = normalizeWorkspaceRootPath(priorHandoff?.sourceWorkspaceRootPath);
+            const priorSourceWorkspaceRootPath = normalizeSessionHandoffWorkspaceRootPath(
+                priorHandoff?.sourceWorkspaceRootPath,
+            );
 
             if (
                 options.workspaceTransfer?.enabled === true

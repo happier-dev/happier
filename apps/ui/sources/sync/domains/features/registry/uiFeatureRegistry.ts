@@ -112,20 +112,6 @@ export const UI_FEATURE_REGISTRY = {
     'connectedServices.accountFallback': {
         settingsToggle: undefined,
     },
-    channelBridges: {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
-            serverVisibilityScope: 'runtime',
-            titleKey: 'settingsFeatures.expChannelBridges',
-            subtitleKey: 'settingsFeatures.expChannelBridgesSubtitle',
-            icon: { ioniconName: 'swap-horizontal-outline', color: '#FF9500' },
-        },
-    },
-    'channelBridges.telegram': {
-        settingsToggle: undefined,
-    },
     'remoteHosts.management': {
         settingsToggle: undefined,
     },
@@ -165,6 +151,9 @@ export const UI_FEATURE_REGISTRY = {
         },
     },
     'sessions.handoff': {
+        settingsToggle: undefined,
+    },
+    'sessions.agentSwitching': {
         settingsToggle: undefined,
     },
     'sessions.usageLimitRecovery': {
@@ -272,13 +261,13 @@ export const UI_FEATURE_REGISTRY = {
     plugins: {
         settingsToggle: undefined,
     },
+    'plugins.webhooks': {
+        settingsToggle: undefined,
+    },
     'plugins.ui': {
         settingsToggle: undefined,
     },
     'plugins.ui.hostedWeb': {
-        settingsToggle: undefined,
-    },
-    'plugins.ui.structuredMessages': {
         settingsToggle: undefined,
     },
     'plugins.ui.reactNativeBundles': {

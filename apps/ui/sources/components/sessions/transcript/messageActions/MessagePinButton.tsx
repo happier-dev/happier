@@ -8,6 +8,7 @@ import { t } from '@/text';
 import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 
 import { buildSessionMessagePinAtPressTime, type MessagePinAvailability } from './resolveMessagePinAvailability';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 
 export function MessagePinButton(props: Readonly<{
     availability: MessagePinAvailability;
@@ -55,9 +56,9 @@ export function MessagePinButton(props: Readonly<{
             ]}
         >
             {pinned ? (
-                <PinSlashIcon size={12} color={iconColor} />
+                <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
             ) : (
-                <PinIcon size={12} color={iconColor} />
+                <PinIcon size={ICON_SIZE.xs} color={iconColor} />
             )}
         </Pressable>
     );

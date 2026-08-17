@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type GestureResponderEvent, type StyleProp, type ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -8,6 +7,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { t } from '@/text';
 
 import { useOptionalSessionListSelectionRow } from './SessionListSelectionContext';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const CHECKBOX_SIZE = 18;
 const CHECKBOX_INNER_SIZE = 14;
@@ -105,7 +105,7 @@ export function SessionListSelectionCheckbox(props: SessionListSelectionCheckbox
                         testID={`session-list-selection-checkbox-inner-${props.sessionId}`}
                         style={[styles.selectedFill, { backgroundColor: theme.colors.state.active.foreground }]}
                     >
-                        <Ionicons name="checkmark" size={10} color={theme.colors.overlay.foreground} />
+                        <Icon name="check" size={10} color={theme.colors.overlay.foreground} />
                     </View>
                 ) : null}
             </View>

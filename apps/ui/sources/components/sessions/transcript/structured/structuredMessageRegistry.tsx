@@ -21,6 +21,7 @@ import { PlanOutputMessageCard } from '@/components/sessions/plans/messages/Plan
 import { DelegateOutputMessageCard } from '@/components/sessions/delegations/messages/DelegateOutputMessageCard';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import { readStructuredUserMessageText } from '@/components/sessions/transcript/structured/readStructuredUserMessageText';
 import { ParticipantMessageCard } from '@/components/sessions/participants/messages/ParticipantMessageCard';
 import { SubagentLaunchMessageCard } from '@/components/sessions/subagents/messages/SubagentLaunchMessageCard';
 import { SubagentCommandMessageCard } from '@/components/sessions/subagents/messages/SubagentCommandMessageCard';
@@ -61,21 +62,42 @@ export type StructuredMessageRegistryEntry<T> = Readonly<{
     render: (payload: T, params: StructuredMessageRendererParams) => React.ReactElement | null;
 }>;
 
+// A structured card that quotes the message body only exists when the message carries one
+// (a `subagent_launch.v1` envelope can ride a tool call, which has no user text). Callers read
+// `renderStructuredMessage(...) != null` to decide whether the structured card *replaces* the
+// surrounding chrome, so that emptiness has to be decided here, before an element exists — a
+// card that returns null from its own body still yields a non-null element and would suppress
+// the chrome in favour of a row that paints nothing.
+function renderUserTextStructuredCard(
+    params: StructuredMessageRendererParams,
+    renderCard: (messageText: string) => React.ReactElement,
+): React.ReactElement | null {
+    const messageText = readStructuredUserMessageText(params.message);
+    if (!messageText) return null;
+    return renderCard(messageText);
+}
+
 const structuredMessageRegistryEntries: readonly StructuredMessageRegistryEntry<any>[] = [
     {
         kind: 'participant_message.v1',
         schema: ParticipantMessageV1Schema,
-        render: (payload, params) => <ParticipantMessageCard payload={payload} message={params.message} />,
+        render: (payload, params) => renderUserTextStructuredCard(params, (messageText) => (
+            <ParticipantMessageCard payload={payload} messageText={messageText} />
+        )),
     },
     {
         kind: 'subagent_launch.v1',
         schema: SubagentLaunchV1Schema,
-        render: (payload, params) => <SubagentLaunchMessageCard payload={payload} message={params.message} />,
+        render: (payload, params) => renderUserTextStructuredCard(params, (messageText) => (
+            <SubagentLaunchMessageCard payload={payload} messageText={messageText} />
+        )),
     },
     {
         kind: 'subagent_command.v1',
         schema: SubagentCommandV1Schema,
-        render: (payload, params) => <SubagentCommandMessageCard payload={payload} message={params.message} />,
+        render: (payload, params) => renderUserTextStructuredCard(params, (messageText) => (
+            <SubagentCommandMessageCard payload={payload} messageText={messageText} />
+        )),
     },
     {
         kind: 'review_comments.v1',

@@ -13,12 +13,18 @@ import type { ManagedLocalServicesState } from '@/sync/domains/local/services/ma
 import type { LocalServiceManagedSnapshotClient } from '@/sync/domains/local/services/managed/useManagedLocalServicesState';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
 import type { LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
+import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 export type SessionRightPanelServicesViewProps = Readonly<{
     sessionId?: string;
     serverId?: string | null;
     machineId?: string | null;
+    /** AppPane-admitted plugin facts; omission retains standalone Session lookup. */
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    projectionInteractionEnabled?: boolean;
+    platform?: LocalServicePreviewPlatform;
     inventoryState?: LocalServiceInventoryState;
     managedState?: ManagedLocalServicesState;
     managedSnapshotClient?: LocalServiceManagedSnapshotClient;
@@ -33,13 +39,21 @@ export type SessionRightPanelServicesViewProps = Readonly<{
 export function SessionRightPanelServicesView(props: SessionRightPanelServicesViewProps = {}): React.ReactElement {
     const sessionId = props.sessionId ?? '';
     const sessionMachineTarget = useSessionMachineTarget(sessionId);
-    const preferredServerId = usePreferredServerIdForSession(sessionId, props.serverId);
-    const machineId = props.machineId ?? sessionMachineTarget?.machineId ?? null;
+    const preferredServerId = usePreferredServerIdForSession(sessionId);
+    // Keep the fallback hooks alive for standalone direct routes. A supplied
+    // pane target, including explicit null, is already AppPane-authoritative.
+    const machineId = props.machineId !== undefined
+        ? props.machineId
+        : sessionMachineTarget?.machineId ?? null;
+    const serverId = props.serverId !== undefined
+        ? props.serverId
+        : preferredServerId;
+    const hasAdmittedPluginProjection = props.pluginUiProjection !== undefined;
 
     return (
         <LocalServicesSurfaceHost
             machineId={machineId}
-            serverId={preferredServerId}
+            serverId={serverId}
             sessionId={props.sessionId}
             inventoryState={props.inventoryState}
             managedState={props.managedState}
@@ -50,6 +64,11 @@ export function SessionRightPanelServicesView(props: SessionRightPanelServicesVi
             publicPreviewStatusClient={props.publicPreviewStatusClient}
             runtimeActionExecute={props.runtimeActionExecute}
             onOpenServiceInBrowser={props.onOpenServiceInBrowser}
+            {...(hasAdmittedPluginProjection ? {
+                pluginUiProjection: props.pluginUiProjection ?? null,
+                projectionInteractionEnabled: props.projectionInteractionEnabled === true,
+                platform: props.platform,
+            } : {})}
             testID="session-rightpanel-services"
         />
     );

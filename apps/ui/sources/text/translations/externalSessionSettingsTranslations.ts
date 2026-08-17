@@ -61,6 +61,7 @@ const en = {
     settingsMachineUnavailable: 'No connected machine',
     browseSearchIncomplete: ({ count }: { count: number }) =>
         `Showing first ${count} — refine your search`,
+    browseAnnotationsIncomplete: 'Some link and import statuses could not be confirmed. Opening an unlinked session checks its current status.',
 };
 
 function translated(value: typeof en): typeof en {
@@ -69,6 +70,71 @@ function translated(value: typeof en): typeof en {
 
 export const externalSessionSettingsTranslations = {
     en,
+    fr: {
+    settingsIntegrationStatusNotInstalled: 'Non installé',
+    settingsIntegrationStatusEnabled: 'Installé et activé',
+    settingsIntegrationStatusDisabled: 'Installé et désactivé',
+    settingsIntegrationStatusNeedsAttention: 'Nécessite ton attention',
+    settingsIntegrationStatusUnsupported: 'Non pris en charge par cette version de l’Agent',
+    settingsIntegrationStatusUnavailable: 'Agent indisponible',
+    settingsIntegrationInventoryLoadingTitle: 'Vérification de l’état de l’intégration',
+    settingsIntegrationInventoryLoadingSubtitle: 'Lecture de l’inventaire complet des intégrations depuis cette machine.',
+    settingsIntegrationInventoryPartialTitle: 'État de l’intégration incomplet',
+    settingsIntegrationInventoryPartialSubtitle: 'Certains enregistrements d’installation n’ont pas pu être lus. Vérifie à nouveau avant de faire des modifications.',
+    settingsIntegrationInventoryErrorTitle: 'État de l’intégration indisponible',
+    settingsIntegrationInventoryErrorSubtitle: 'Le dernier état connu peut être obsolète. Vérifie à nouveau avant de faire des modifications.',
+    settingsIntegrationTitle: 'Surveillance des sessions externes',
+    settingsIntegrationNeedsAttentionTitle: 'Nécessite ton attention',
+    settingsIntegrationDiagnosticMessageUnavailable: 'Cette installation nécessite ton attention avant que la surveillance puisse continuer.',
+    settingsIntegrationRemediationRetry: 'Vérifie à nouveau une fois le problème résolu.',
+    settingsIntegrationRemediationOpenSettings: ({ path }: { path: string }) => `Vérifie le réglage dans ${path}.`,
+    settingsIntegrationRemediationSelectAccount: ({ service }: { service: string }) => `Sélectionne un compte pour ${service}.`,
+    settingsIntegrationRemediationInstallDependency: ({ dependency }: { dependency: string }) => `Installe la dépendance requise : ${dependency}.`,
+    settingsIntegrationRemediationOpenUrl: ({ url }: { url: string }) => `Consulte les instructions sur ${url}.`,
+    settingsIntegrationActionReviewInstall: 'Vérifier et installer',
+    settingsIntegrationActionDisable: 'Désactiver',
+    settingsIntegrationActionEnable: 'Activer',
+    settingsIntegrationActionUninstall: 'Désinstaller',
+    settingsIntegrationActionCheckAgain: 'Vérifier à nouveau',
+    settingsIntegrationReviewTitle: ({ agent }: { agent: string }) => `Vérifier l’intégration ${agent}`,
+    settingsIntegrationReviewBody: ({ entries }: { entries: string }) =>
+        `Happier ne gérera que ces entrées : ${entries}.`,
+    settingsIntegrationReviewBodyUnavailable: 'Vérifie les modifications gérées par l’Agent avant d’installer.',
+    settingsIntegrationPreviewNoMatcher: 'Toutes les sessions correspondantes',
+    settingsIntegrationActionInstall: 'Installer',
+    settingsIntegrationUninstallTitle: ({ agent }: { agent: string }) => `Désinstaller l’intégration ${agent} ?`,
+    settingsIntegrationUninstallBody: 'Cela supprime uniquement les entrées gérées par Happier. Le reste de la configuration de l’Agent est laissé inchangé.',
+    settingsIntegrationActionFailed: 'Happier n’a pas pu mettre à jour cette intégration. Vérifie la machine et réessaie.',
+    settingsAutoLinkUpdateFailed: 'Happier n’a pas pu mettre à jour la liaison automatique. Réessaie.',
+    settingsRestoreUpdateFailed: 'Happier n’a pas pu mettre à jour la préférence de suivi au redémarrage. Réessaie.',
+    settingsIntegrationsGroupTitle: 'Surveillance des sessions externes',
+    settingsIntegrationsFooter: 'Happier ne modifie la configuration de l’Agent qu’après une action explicite. Ouvrir cette page est en lecture seule.',
+    settingsIntegrationsUnavailableTitle: 'Aucune intégration disponible',
+    settingsIntegrationsUnavailableSubtitle: 'Connecte une intégration d’Agent prise en charge pour voir son état et les actions disponibles.',
+    settingsAgentAutoLinkTitle: ({ agent }: { agent: string }) => `Ajouter automatiquement les nouvelles sessions ${agent}`,
+    settingsAutoLinkTitle: 'Ajouter automatiquement les nouvelles sessions externes',
+    browseAutoLinkTitle: 'Ajouter automatiquement les nouvelles sessions',
+    settingsAutoLinkGroupTitle: 'Liaison automatique',
+    settingsAutoLinkGroupFooter: 'La liaison automatique est désactivée par défaut et reste indépendante de la configuration de l’intégration de l’Agent et du suivi passif.',
+    settingsAutoLinkUnavailableTitle: 'Aucune source de liaison automatique disponible',
+    settingsAutoLinkUnavailableSubtitle: 'Aucune portée de source prise en charge n’est disponible sur cette machine.',
+    settingsAutoLinkSubtitle: 'Quand c’est activé, Happier lie les nouvelles sessions prises en charge de cette source sans ouvrir ni reprendre l’Agent.',
+    settingsAutoLinkHint: 'Active ou désactive la liaison automatique pour cette source.',
+    settingsPrivacyGroupTitle: 'Confidentialité',
+    settingsPrivacyTitle: 'Observations limitées et sans contenu',
+    settingsPrivacySubtitle: 'Les intégrations d’Agent de confiance peuvent inspecter des données de hook natives limitées sur cette machine. Happier n’admet et ne synchronise que des observations sans contenu ; les payloads bruts, les chemins, les identifiants, les prompts, le texte des transcriptions et les arguments d’outils ne sont jamais conservés, synchronisés ni journalisés par l’hôte.',
+    settingsAgentActionsGroupTitle: 'Sessions externes',
+    settingsAgentBrowseTitle: ({ agent }: { agent: string }) => `Parcourir les sessions ${agent} externes`,
+    settingsManageAllTitle: 'Gérer toutes les sessions externes',
+    settingsManageAllSubtitle: 'Vérifie les intégrations et le suivi passif sur les machines connectées.',
+    settingsMachineOnline: 'En ligne',
+    settingsMachineOffline: 'Hors ligne',
+    settingsMachineTitle: 'Machine',
+    settingsMachineUnavailable: 'Aucune machine connectée',
+    browseSearchIncomplete: ({ count }: { count: number }) =>
+        `Affichage des ${count} premiers — affine ta recherche`,
+    browseAnnotationsIncomplete: 'Certains états de liaison et d’importation n’ont pas pu être confirmés. Ouvrir une session non liée vérifie son état actuel.',
+},
     ca: translated({
         settingsIntegrationStatusNotInstalled: 'No instal·lada',
         settingsIntegrationStatusEnabled: 'Instal·lada i activada',
@@ -132,6 +198,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: 'No hi ha cap màquina connectada',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `Es mostren les primeres ${count} — afina la cerca`,
+        browseAnnotationsIncomplete: 'No s’han pogut confirmar alguns estats d’enllaç i d’importació. Obrir una sessió no enllaçada en comprova l’estat actual.',
     }),
     es: translated({
         settingsIntegrationStatusNotInstalled: 'No instalada',
@@ -196,6 +263,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: 'No hay ninguna máquina conectada',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `Se muestran las primeras ${count} — afina la búsqueda`,
+        browseAnnotationsIncomplete: 'No se pudieron confirmar algunos estados de vínculo e importación. Abrir una sesión sin vincular comprueba su estado actual.',
     }),
     it: translated({
         settingsIntegrationStatusNotInstalled: 'Non installata',
@@ -260,6 +328,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: 'Nessun computer collegato',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `Visualizzazione dei primi ${count} risultati — affina la ricerca`,
+        browseAnnotationsIncomplete: 'Non è stato possibile confermare alcuni stati di collegamento e importazione. Aprendo una sessione non collegata ne controlli lo stato attuale.',
     }),
     ja: translated({
         settingsIntegrationStatusNotInstalled: '未インストール',
@@ -324,6 +393,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: '接続済みのマシンがありません',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `最初の ${count} 件を表示中 — 検索条件を絞り込んでください`,
+        browseAnnotationsIncomplete: '一部のリンクとインポートの状態を確認できませんでした。リンクされていないセッションを開くと、現在の状態を確認します。',
     }),
     pl: translated({
         settingsIntegrationStatusNotInstalled: 'Nie zainstalowano',
@@ -388,6 +458,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: 'Brak połączonej maszyny',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `Wyświetlono pierwsze ${count} — zawęź wyszukiwanie`,
+        browseAnnotationsIncomplete: 'Nie udało się potwierdzić części stanów połączeń i importów. Otwarcie niepołączonej sesji sprawdzi jej bieżący stan.',
     }),
     pt: translated({
         settingsIntegrationStatusNotInstalled: 'Não instalada',
@@ -452,6 +523,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: 'Nenhuma máquina ligada',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `A mostrar as primeiras ${count} — refine a pesquisa`,
+        browseAnnotationsIncomplete: 'Não foi possível confirmar alguns estados de ligação e importação. Abrir uma sessão não ligada verifica o estado atual.',
     }),
     ru: translated({
         settingsIntegrationStatusNotInstalled: 'Не установлена',
@@ -516,6 +588,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: 'Нет подключённой машины',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `Показаны первые ${count} — уточните поиск`,
+        browseAnnotationsIncomplete: 'Не удалось подтвердить часть состояний связывания и импорта. При открытии несвязанной сессии проверяется её текущее состояние.',
     }),
     zhHans: translated({
         settingsIntegrationStatusNotInstalled: '未安装',
@@ -580,6 +653,7 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: '没有已连接的机器',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `显示前 ${count} 个结果 — 请缩小搜索范围`,
+        browseAnnotationsIncomplete: '无法确认部分关联和导入状态。打开未关联的会话会检查其当前状态。',
     }),
     zhHant: translated({
         settingsIntegrationStatusNotInstalled: '未安裝',
@@ -644,5 +718,6 @@ export const externalSessionSettingsTranslations = {
         settingsMachineUnavailable: '沒有已連接的機器',
         browseSearchIncomplete: ({ count }: { count: number }) =>
             `顯示前 ${count} 個結果 — 請縮小搜尋範圍`,
+        browseAnnotationsIncomplete: '無法確認部分連結和匯入狀態。開啟未連結的工作階段會檢查其目前狀態。',
     }),
 };

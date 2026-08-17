@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,15 +10,29 @@ import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/r
 import type {
     ServerScopedMachine,
     ServerScopedMachineGroup,
+    ServerScopedMachinePresentation,
 } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
-type ServerScopedMachineSelectorProps = Readonly<{
-    groups: ReadonlyArray<ServerScopedMachineGroup>;
+type ServerScopedMachineSelectorProps<TMachine extends ServerScopedMachinePresentation> = Readonly<{
+    groups: ReadonlyArray<ServerScopedMachineGroup<TMachine>>;
     selectedMachineId: string | null;
     selectedServerId: string | null;
-    onSelect: (machine: ServerScopedMachine) => void;
+    onSelect: (machine: TMachine) => void;
+    /**
+     * Lets a consuming domain project its own already-decided availability
+     * facts while retaining this component as the one grouped-machine picker.
+     */
+    resolveMachineAvailability?: (machine: TMachine) => Readonly<{
+        detail: string;
+        selectable: boolean;
+    }>;
+    /** Exact row identity for domains whose choice is finer than machine id. */
+    getMachineKey?: (machine: TMachine) => string;
+    /** Exact selection predicate for domains whose choice is finer than machine id. */
+    isMachineSelected?: (machine: TMachine) => boolean;
     testIdPrefix?: string;
 }>;
 
@@ -31,7 +44,7 @@ const emptyTextStyle = {
     paddingVertical: 8,
 };
 
-function resolveGroupedMachineAvailability(machine: ServerScopedMachine): Readonly<{
+function resolveGroupedMachineAvailability(machine: ServerScopedMachinePresentation): Readonly<{
     detail: string;
     selectable: boolean;
 }> {
@@ -57,7 +70,9 @@ function resolveGroupedMachineAvailability(machine: ServerScopedMachine): Readon
     };
 }
 
-export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorProps) {
+export function ServerScopedMachineSelector<
+    TMachine extends ServerScopedMachinePresentation = ServerScopedMachine,
+>(props: ServerScopedMachineSelectorProps<TMachine>) {
     const { theme } = useUnistyles();
     const optionTestIdPrefix = props.testIdPrefix ? `${props.testIdPrefix}-option` : undefined;
     const readinessTestIdPrefix = props.testIdPrefix ? `${props.testIdPrefix}-readiness` : undefined;
@@ -91,16 +106,19 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                         ) : null}
                         {!group.loading && !group.signedOut
                             ? group.machines.map((machine) => {
-                                const isSelected = props.selectedMachineId === machine.id
-                                    && props.selectedServerId === group.serverId;
-                                const availability = resolveGroupedMachineAvailability(machine);
+                                const machineKey = props.getMachineKey?.(machine) ?? machine.id;
+                                const isSelected = props.isMachineSelected?.(machine)
+                                    ?? (props.selectedMachineId === machine.id
+                                        && props.selectedServerId === group.serverId);
+                                const availability = props.resolveMachineAvailability?.(machine)
+                                    ?? resolveGroupedMachineAvailability(machine);
                                 return (
                                     <Item
-                                        key={`${group.serverId}::${machine.id}`}
-                                        testID={optionTestIdPrefix ? `${optionTestIdPrefix}:${machine.id}` : undefined}
+                                        key={`${group.serverId}::${machineKey}`}
+                                        testID={optionTestIdPrefix ? `${optionTestIdPrefix}:${machineKey}` : undefined}
                                         title={machine.metadata?.displayName || machine.metadata?.host || machine.id}
                                         subtitle={machine.metadata?.host || machine.id}
-                                        icon={<Ionicons name="desktop-outline" size={20} color={theme.colors.text.secondary} />}
+                                        icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
                                         selected={isSelected}
                                         detail={availability.detail}
                                         detailTestID={readinessTestIdPrefix ? `${readinessTestIdPrefix}:${machine.id}` : undefined}

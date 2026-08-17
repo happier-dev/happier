@@ -30,9 +30,11 @@ const getServerProfileByIdMock = vi.fn((id: string) => {
     return profile ?? null;
 });
 const removeServerProfileMock = vi.fn((..._args: unknown[]) => undefined);
+const listServerProfilesMock = vi.fn<() => ServerProfile[]>(() => []);
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 }),
     getServerProfileById: (...args: [string]) => getServerProfileByIdMock(...args),
+    listServerProfiles: () => listServerProfilesMock(),
     upsertServerProfile: (...args: unknown[]) => upsertServerProfileMock(...args),
     removeServerProfile: (...args: unknown[]) => removeServerProfileMock(...args),
     resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
@@ -57,6 +59,8 @@ describe('useServerAutoAddFromRoute (canonical URL adoption)', () => {
         upsertServerProfileMock.mockReset();
         getServerProfileByIdMock.mockReset();
         removeServerProfileMock.mockReset();
+        listServerProfilesMock.mockReset();
+        listServerProfilesMock.mockReturnValue([]);
         getServerFeaturesSnapshotMock.mockReset();
         getServerFeaturesSnapshotMock.mockResolvedValue({
             status: 'ready',
@@ -99,6 +103,47 @@ describe('useServerAutoAddFromRoute (canonical URL adoption)', () => {
         expect(removeServerProfileMock).toHaveBeenCalledWith('p1');
         expect(onSwitchServerById).toHaveBeenCalledWith('p2', expect.anything());
         expect(onAfterSuccess).toHaveBeenCalled();
+    });
+
+    it('does not treat an existing same-url profile as transient canonical-adoption state', async () => {
+        const existingProfile = {
+            id: 'p1',
+            serverUrl: 'http://127.0.0.1:3005',
+            name: 'Existing local',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+        };
+        listServerProfilesMock.mockReturnValue([existingProfile]);
+        upsertServerProfileMock
+            .mockReturnValueOnce(existingProfile)
+            .mockReturnValueOnce({
+                id: 'p2',
+                serverUrl: 'https://canonical.example.test',
+                name: 'Existing local',
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: 0,
+            });
+
+        const { useServerAutoAddFromRoute } = await import('./useServerAutoAddFromRoute');
+
+        function Probe() {
+            useServerAutoAddFromRoute({
+                enabled: true,
+                url: existingProfile.serverUrl,
+                validateServerReachable: async () => true,
+                setError: vi.fn(),
+                onSwitchServerById: vi.fn(async () => {}),
+                onAfterSuccess: vi.fn(),
+                source: 'url',
+            });
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(removeServerProfileMock).not.toHaveBeenCalled();
     });
 
     it('does not auto-adopt a canonicalServerUrl with a different host when the input URL looks shareable', async () => {

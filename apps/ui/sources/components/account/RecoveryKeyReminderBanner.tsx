@@ -1,6 +1,5 @@
 import React from 'react';
 import { Pressable, type GestureResponderEvent } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -12,6 +11,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function isRecoveryKeyReminderEnabled(features: ReturnType<typeof getCachedReadyServerFeatures>): boolean | null {
     if (!features) return null;
@@ -55,7 +55,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
             <Item
                 title={t('settingsAccount.secretKey')}
                 subtitle={t('settingsAccount.backupDescription')}
-                icon={<Ionicons name="key-outline" size={28} color={theme.colors.text.secondary} />}
+                icon={<Icon name="key" color={theme.colors.text.secondary} />}
                 onPress={() => {
                     Modal.show({
                         component: SecretKeyBackupModal,
@@ -76,7 +76,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
                         }}
                         hitSlop={12}
                     >
-                        <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
+                        <Icon name="x" size={20} color={theme.colors.text.secondary} />
                     </Pressable>
                 }
             />

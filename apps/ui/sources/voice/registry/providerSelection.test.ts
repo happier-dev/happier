@@ -10,16 +10,19 @@ import {
   selectVoiceProviderOption,
 } from './providerSelection';
 
+const ELEVENLABS_PROVIDER_ID = 'happier.voice.elevenlabs/realtime-elevenlabs';
+const CODEX_PROVIDER_ID = 'happier.agent.codex/realtime-codex';
+
 describe('voice registry provider selection', () => {
   it('projects deterministic provider-owned selection rows', () => {
     const settings = voiceSettingsParse({ providerId: null });
     const rows = projectVoiceProviderSelectionRows(settings, createDefaultVoiceProviderRegistry());
     expect(rows.map((row) => `${row.providerId}:${row.optionId}`)).toEqual([
-      'realtime_elevenlabs:happier',
-      'realtime_elevenlabs:byo',
-      'realtime_openai:byo',
-      'realtime_grok:byo',
-      'realtime_codex:experimental',
+      'happier.voice.elevenlabs/realtime-elevenlabs:happier',
+      'happier.voice.elevenlabs/realtime-elevenlabs:byo',
+      'happier.voice.openai/realtime-openai:byo',
+      'happier.voice.xai/realtime-grok:byo',
+      'happier.agent.codex/realtime-codex:experimental',
       'local_conversation:local',
     ]);
     expect(rows.map((row) => row.titleKey)).toEqual([
@@ -35,10 +38,10 @@ describe('voice registry provider selection', () => {
   it('selects a mode through a bounded config patch and provider-owned validator', () => {
     const settings = voiceSettingsParse({ providerId: null });
     const registry = createDefaultVoiceProviderRegistry();
-    const selected = selectVoiceProviderOption(settings, registry, 'realtime_elevenlabs', 'byo');
+    const selected = selectVoiceProviderOption(settings, registry, ELEVENLABS_PROVIDER_ID, 'byo');
     expect(selected).toMatchObject({
-      providerId: 'realtime_elevenlabs',
-      providers: { realtime_elevenlabs: { schemaVersion: 2, config: { billingMode: 'byo' } } },
+      providerId: ELEVENLABS_PROVIDER_ID,
+      providers: { [ELEVENLABS_PROVIDER_ID]: { schemaVersion: 2, config: { billingMode: 'byo' } } },
     });
     expect(projectVoiceProviderSelectionRows(selected!, registry).find((row) => row.optionId === 'byo')?.selected).toBe(true);
   });
@@ -52,7 +55,6 @@ describe('voice registry provider selection', () => {
         roles: ['realtime_conversation'],
         platforms: ['web'],
         capabilities: {
-          readiness: { requirements: [] },
           turn: { cancelResponse: true, bargeIn: false },
         },
         settings: {
@@ -79,22 +81,22 @@ describe('voice registry provider selection', () => {
       throw new Error('expected conversation declaration');
     }
     const registry = createVoiceProviderRegistry({
-      bundled: [{
-        kind: 'voice.conversation-provider.v1',
+      bundledContributions: [{
         pluginId: 'acme.external-voice',
         providerId: 'acme.external-voice/conversation',
+        declaration,
+      }],
+      bundledPresentations: [{
+        providerId: 'acme.external-voice/conversation',
         settingsSectionId: 'acme.external-voice/conversation',
-        roles: ['realtime_conversation'],
-        requirements: [],
         selectionOptions: [{
           id: 'default',
           modeId: 'default',
           order: 10,
           titleKey: 'External Voice',
           subtitleKey: 'acme.external-voice',
-          configPatch: { mode: 'default', profile: 'balanced' },
+          configPatch: { profile: 'balanced' },
         }],
-        declaration,
       }],
     });
 
@@ -111,7 +113,6 @@ describe('voice registry provider selection', () => {
         'acme.external-voice/conversation': {
           schemaVersion: 2,
           config: {
-            mode: 'default',
             profile: 'balanced',
           },
         },
@@ -123,7 +124,7 @@ describe('voice registry provider selection', () => {
     const settings = voiceSettingsParse({
       providerId: null,
       providers: {
-        realtime_codex: {
+        [CODEX_PROVIDER_ID]: {
           schemaVersion: 2,
           config: {
             globalConnectedServices: null,
@@ -137,12 +138,12 @@ describe('voice registry provider selection', () => {
     const selected = selectVoiceProviderOption(
       settings,
       registry,
-      'realtime_codex',
+      CODEX_PROVIDER_ID,
       'experimental',
     );
 
-    expect(selected?.providerId).toBe('realtime_codex');
-    expect(selected?.providers.realtime_codex).toEqual({
+    expect(selected?.providerId).toBe(CODEX_PROVIDER_ID);
+    expect(selected?.providers[CODEX_PROVIDER_ID]).toEqual({
       schemaVersion: 2,
       config: {
         globalConnectedServices: null,
@@ -154,7 +155,7 @@ describe('voice registry provider selection', () => {
     const settings = voiceSettingsParse({
       providerId: null,
       providers: {
-        realtime_codex: {
+        [CODEX_PROVIDER_ID]: {
           schemaVersion: 3,
           config: {
             globalConnectedServices: null,
@@ -168,7 +169,7 @@ describe('voice registry provider selection', () => {
     expect(selectVoiceProviderOption(
       settings,
       createDefaultVoiceProviderRegistry(),
-      'realtime_codex',
+      CODEX_PROVIDER_ID,
       'experimental',
     )).toBeNull();
     expect(JSON.stringify(settings)).toBe(before);
@@ -176,39 +177,70 @@ describe('voice registry provider selection', () => {
 
   it('removes disabled-package rows while preserving the inert settings envelope', () => {
     const settings = voiceSettingsParse({
-      providerId: 'realtime_elevenlabs',
-      providers: { realtime_elevenlabs: { schemaVersion: 1, config: { billingMode: 'byo', future: 'preserved' } } },
+      providerId: ELEVENLABS_PROVIDER_ID,
+      providers: { [ELEVENLABS_PROVIDER_ID]: { schemaVersion: 1, config: { billingMode: 'byo', future: 'preserved' } } },
     });
     const before = JSON.stringify(settings);
     const registry = createDefaultVoiceProviderRegistry({ enabledPluginIds: new Set(['happier.voice.google']) });
-    expect(projectVoiceProviderSelectionRows(settings, registry).some((row) => row.providerId === 'realtime_elevenlabs')).toBe(false);
+    expect(projectVoiceProviderSelectionRows(settings, registry).some((row) => row.providerId === ELEVENLABS_PROVIDER_ID)).toBe(false);
     expect(JSON.stringify(settings)).toBe(before);
-    expect(selectVoiceProviderOption(settings, registry, 'realtime_elevenlabs', 'byo')).toBeNull();
+    expect(selectVoiceProviderOption(settings, registry, ELEVENLABS_PROVIDER_ID, 'byo')).toBeNull();
   });
 
   it('resolves descriptor-owned display metadata for a fake second provider without host edits', () => {
+    const providerId = 'happier.voice.second/conversation';
     const settings = voiceSettingsParse({
-      providerId: 'realtime_second_provider',
+      providerId,
       providers: {
-        realtime_second_provider: { schemaVersion: 1, config: { mode: 'live' } },
+        [providerId]: { schemaVersion: 1, config: { mode: 'live' } },
       },
     });
-    const registry = createVoiceProviderRegistry({
-      bundled: [{
-        kind: 'voice.conversation-provider.v1',
-        pluginId: 'happier.voice.second',
-        providerId: 'realtime_second_provider',
-        settingsSectionId: 'voice.provider.realtime_second_provider',
+    const declaration = PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        id: 'conversation',
+        title: 'Second Voice',
+        kind: 'conversation',
         roles: ['realtime_conversation'],
-        requirements: [],
+        platforms: ['web'],
+        capabilities: { turn: { cancelResponse: false, bargeIn: false } },
+        settings: {
+          schemaVersion: 1,
+          fields: [{
+            id: 'mode',
+            title: 'Mode',
+            schema: { type: 'string', enum: ['live'] },
+            default: 'live',
+            presentation: {
+              control: 'select',
+              options: [{ value: 'live', title: 'Live' }],
+            },
+          }],
+        },
+        client: {
+          artifactId: 'voice-runtime-web',
+          modulePath: './voiceRuntime',
+          exportName: 'activate',
+        },
+      }],
+    }).voiceProviders[0]!;
+    if (declaration.kind !== 'conversation') throw new Error('expected conversation declaration');
+    const registry = createVoiceProviderRegistry({
+      bundledContributions: [{
+        pluginId: 'happier.voice.second',
+        providerId,
+        declaration,
+      }],
+      bundledPresentations: [{
+        providerId,
+        settingsSectionId: 'voice.provider.second',
         selectionOptions: [{
           id: 'live',
           modeId: 'live',
           order: 10,
           titleKey: 'settingsVoice.second.live',
           subtitleKey: 'settingsVoice.second.liveSubtitle',
+          configPatch: { mode: 'live' },
         }],
-        projectSettings: () => ({ status: 'ready', modeId: 'live' }),
       }],
     });
 
@@ -217,8 +249,8 @@ describe('voice registry provider selection', () => {
 
   it('returns null display metadata for a disabled or unready contribution', () => {
     const settings = voiceSettingsParse({
-      providerId: 'realtime_elevenlabs',
-      providers: { realtime_elevenlabs: { schemaVersion: 1, config: { billingMode: 'byo' } } },
+      providerId: ELEVENLABS_PROVIDER_ID,
+      providers: { [ELEVENLABS_PROVIDER_ID]: { schemaVersion: 1, config: { billingMode: 'byo' } } },
     });
     const disabled = createDefaultVoiceProviderRegistry({ enabledPluginIds: new Set(['happier.voice.google']) });
     expect(resolveSelectedVoiceProviderTitleKey(settings, disabled)).toBeNull();

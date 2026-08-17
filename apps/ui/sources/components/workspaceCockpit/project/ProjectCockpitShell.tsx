@@ -9,7 +9,7 @@ import { ProjectGitSurface } from '@/components/projects/detail/surfaces/Project
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { ProjectRightPanelBrowserView } from '@/components/projects/detail/browser/ProjectRightPanelBrowserView';
 import { ProjectRightPanelServicesView } from '@/components/projects/detail/services/ProjectRightPanelServicesView';
-import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
 import { useProjectSurfaceActions } from '@/components/projects/detail/useProjectSurfaceActions';
@@ -44,7 +44,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
         surface: props.surface,
     });
 
-    const workspaceCacheKey = React.useMemo(() => buildWorkspaceCacheKey({
+    const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
         serverId: props.workspaceRef.serverId,
         machineId: props.workspaceRef.machineId,
         rootPath: props.activeRootPath,
@@ -87,10 +87,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
             <View testID="project-files-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
                 <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.text.secondary} />}>
                     <ProjectBrowseFilesSurface
-                        workspaceCacheKey={workspaceCacheKey}
-                        serverId={props.workspaceRef.serverId}
-                        machineId={props.workspaceRef.machineId}
-                        rootPath={props.activeRootPath}
+                        scope={workspaceScope}
                         onOpenFile={openFileInDetails}
                         onOpenFilePinned={openFileInDetailsPinned}
                     />

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal, type CustomModalInjectedProps } from '@/modal';
@@ -35,6 +34,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 
 import { PATH_BROWSER_CONFIRM_TEST_ID, PATH_BROWSER_CREATE_FOLDER_TEST_ID, PATH_BROWSER_MODAL_TEST_ID } from './pathBrowserTestIds';
 import { MachinePathBrowserListRow } from './MachinePathBrowserListRow';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     machineId: string;
@@ -948,7 +948,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 accessibilityRole="button"
                 accessibilityLabel={t('files.createFolderA11y')}
             >
-                <Ionicons name="folder-outline" size={18} color={theme.colors.chrome.header.foreground} />
+                <Icon name="folder" size={16} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }, [createFolderInDirectory, isCreatingFolder, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
@@ -1011,7 +1011,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         priority: number;
         order: number;
         icon: React.ReactNode;
-        menuIcon: React.ComponentProps<typeof Ionicons>['name'];
+        menuIcon: IconName;
         accessibilityLabel: string;
         disabled?: boolean;
         selected?: boolean;
@@ -1025,13 +1025,13 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 priority: 1,
                 order: 0,
                 icon: (
-                    <Octicons
-                        name="filter"
+                    <Icon
+                        name="funnel-simple"
                         size={16}
                         color={filterSelected ? theme.colors.text.link : theme.colors.text.secondary}
                     />
                 ),
-                menuIcon: 'funnel-outline',
+                menuIcon: 'funnel-simple',
                 accessibilityLabel: t('files.toolbar.hiddenFiles'),
                 selected: filterSelected,
                 onPress: () => setShowHidden((prev) => !prev),
@@ -1040,8 +1040,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 id: 'path-browser-refresh',
                 priority: 0,
                 order: 1,
-                icon: <Octicons name="sync" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'refresh-outline',
+                icon: <Icon name="arrows-clockwise" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'arrow-clockwise',
                 accessibilityLabel: t('common.refresh'),
                 onPress: refresh,
             },
@@ -1052,8 +1052,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 id: 'path-browser-clear-search',
                 priority: 2,
                 order: 2,
-                icon: <Octicons name="x" size={16} color={theme.colors.text.secondary} />,
-                menuIcon: 'close-outline',
+                icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
+                menuIcon: 'x',
                 accessibilityLabel: t('files.clearSearchA11y'),
                 onPress: () => setSearchQuery(''),
             });
@@ -1067,14 +1067,14 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             {
                 id: 'path-browser-collapse-all',
                 title: t('files.repositoryCollapseAll'),
-                icon: 'contract-outline',
+                icon: 'arrows-in',
                 disabled: expandedPaths.length === 0,
                 onPress: collapseAll,
             },
             {
                 id: 'path-browser-create-folder',
                 title: t('files.createFolderA11y'),
-                icon: 'folder-outline',
+                icon: 'folder',
                 disabled: !selectedDirectoryPath || isCreatingFolder,
                 onPress: () => {
                     if (!selectedDirectoryPath) return;
@@ -1087,7 +1087,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             items.push({
                 id: 'path-browser-close',
                 title: t('common.close'),
-                icon: 'close-outline',
+                icon: 'x',
                 onPress: () => props.onRequestClose?.(),
             });
         }
@@ -1140,7 +1140,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                             accessibilityRole="button"
                             accessibilityLabel={t('files.createFolderA11y')}
                         >
-                            <Ionicons name="folder-outline" size={18} color={theme.colors.chrome.header.foreground} />
+                            <Icon name="folder" size={16} color={theme.colors.chrome.header.foreground} />
                         </Pressable>
                         <Pressable
                             onPress={handleClose}
@@ -1149,7 +1149,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                             accessibilityRole="button"
                             accessibilityLabel={t('common.close')}
                         >
-                            <Octicons name="x" size={18} color={theme.colors.chrome.header.foreground} />
+                            <Icon name="x" size={16} color={theme.colors.chrome.header.foreground} />
                         </Pressable>
                     </View>
                 </View>
@@ -1201,7 +1201,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     items={[{
                         id: 'create-folder',
                         title: t('files.createFolderA11y'),
-                        icon: <Ionicons name="folder-outline" size={16} color={theme.colors.text.primary} />,
+                        icon: <Icon name="folder" size={16} color={theme.colors.text.primary} />,
                     }]}
                     onSelect={(itemId) => {
                         const directoryPath = contextMenuDirectoryPath;

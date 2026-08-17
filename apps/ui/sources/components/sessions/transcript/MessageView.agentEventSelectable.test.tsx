@@ -60,8 +60,8 @@ vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => 
     extractWorkspaceFileMentions: () => [],
 }));
 
-vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
-    LinkedWorkspaceFilesRow: () => null,
+vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({
+    StructuredReferencesRow: () => null,
 }));
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -110,7 +110,7 @@ describe('MessageView (agent events)', () => {
         };
 
         const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
-        const icons = screen.findAllByType('Ionicons' as any);
+        const icons = screen.findAllByType('Icon' as any);
 
         expect(icons.length).toBeGreaterThan(0);
 

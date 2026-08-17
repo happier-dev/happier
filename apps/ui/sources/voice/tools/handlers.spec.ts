@@ -1,16 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
-import {
-  primeServerFeaturesSnapshot,
-  resetServerFeaturesClientForTests,
-} from '@/sync/api/capabilities/serverFeaturesClient';
 
 const trackPermissionResponse = vi.fn();
 const sendMessage = vi.fn();
+const submitMessage = vi.fn();
 const ensureSessionVisibleForMessageRoute = vi.fn();
 const refreshSessionMessages = vi.fn();
 const getSessionEncryption = vi.fn<(sessionId: string) => unknown>((_sessionId) => ({}));
@@ -20,7 +16,7 @@ const executionRunGet = vi.fn();
 const executionRunSend = vi.fn();
 const executionRunStop = vi.fn();
 const executionRunAction = vi.fn();
-const spawnSession = vi.fn();
+const machineRpcWithServerScope = vi.fn();
 const setActiveServerAndSwitch = vi.fn(async (_params?: any) => false);
 const routerNavigate = vi.fn();
 const refreshFromActiveServer = vi.fn(async () => {});
@@ -220,6 +216,7 @@ vi.mock('@/track', () => ({
 vi.mock('@/sync/sync', () => ({
   sync: {
     sendMessage: (sessionId: string, message: string) => sendMessage(sessionId, message),
+    submitMessage: (...args: any[]) => submitMessage(...args),
     ensureSessionVisibleForMessageRoute: (sessionId: string, options?: { forceRefresh?: boolean }) =>
       ensureSessionVisibleForMessageRoute(sessionId, options),
     refreshSessionMessages: (sessionId: string) => refreshSessionMessages(sessionId),
@@ -237,6 +234,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', (
   sessionRpcWithServerScope: (args: any) => sessionRpcWithServerScope(args),
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+  machineRpcWithServerScope: (args: any) => machineRpcWithServerScope(args),
+}));
+
 vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
   teleportVoiceAgentToSessionRoot: (args: any) => teleportVoiceAgentToSessionRoot(args),
 }));
@@ -248,10 +249,6 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
   sessionExecutionRunSend: (sessionId: string, request: any, opts?: any) => executionRunSend(sessionId, request, opts),
   sessionExecutionRunStop: (sessionId: string, request: any, opts?: any) => executionRunStop(sessionId, request, opts),
   sessionExecutionRunAction: (sessionId: string, request: any, opts?: any) => executionRunAction(sessionId, request, opts),
-}));
-
-vi.mock('@/sync/ops/machines', () => ({
-  machineSpawnNewSession: (options: any) => spawnSession(options),
 }));
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
@@ -285,6 +282,8 @@ describe('voice tool handlers', () => {
     registerStorageStateReader(readMockStorageState);
     trackPermissionResponse.mockReset();
     sendMessage.mockReset();
+    submitMessage.mockReset();
+    submitMessage.mockResolvedValue(undefined);
     ensureSessionVisibleForMessageRoute.mockReset();
     refreshSessionMessages.mockReset();
     sendSessionMessageWithServerScope.mockReset();
@@ -295,34 +294,94 @@ describe('voice tool handlers', () => {
     executionRunSend.mockReset();
     executionRunStop.mockReset();
     executionRunAction.mockReset();
-    spawnSession.mockReset();
+    machineRpcWithServerScope.mockReset();
     setActiveServerAndSwitch.mockReset();
     routerNavigate.mockReset();
     refreshFromActiveServer.mockReset();
     applySettingsLocal.mockReset();
     teleportVoiceAgentToSessionRoot.mockReset();
-    resetServerFeaturesClientForTests();
     useVoiceTargetStore.getState().setPrimaryActionSessionId(null);
     useVoiceTargetStore.getState().setTrackedSessionIds([]);
   });
 
-  it('routes sendSessionMessage to sync.sendMessage for the resolved session', async () => {
-    sendSessionMessageWithServerScope.mockResolvedValue({ ok: true });
-
+  it('routes sendSessionMessage through canonical Voice Message admission for the resolved session', async () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
 
     const result = await tools.sendSessionMessage({ message: 'hi' });
 
     expect(JSON.parse(result)).toMatchObject({ ok: true });
-    expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', message: 'hi' }));
+    expect(submitMessage).toHaveBeenCalledWith('s1', 'hi', undefined, undefined, {
+      callerSurface: 'voice_turn',
+      forceImmediate: true,
+      hostAdmissionOrigin: 'voice',
+    });
+    expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
 
+  });
+
+  it('does not admit a Voice session message after its invocation was cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const result = await (tools.sendSessionMessage as any)({ message: 'hi' }, { signal: controller.signal });
+
+    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'tool_cancelled' });
+    expect(submitMessage).not.toHaveBeenCalled();
+  });
+
+  it('reports a target update requirement from canonical Voice admission without retaining an unknown outcome', async () => {
+    submitMessage.mockRejectedValueOnce(Object.assign(
+      new Error('The selected remote session requires an updated agent runtime before Voice can send a message.'),
+      { code: 'session_input_target_update_required' },
+    ));
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const result = await tools.sendSessionMessage({ message: 'hi' });
+
+    expect(JSON.parse(result)).toEqual({
+      ok: false,
+      errorCode: 'session_input_target_update_required',
+      errorMessage: 'session_input_target_update_required',
+      sessionId: 's1',
+    });
   });
 
   it('exposes review.start through the catalog voice binding', async () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
     expect(tools.startReview).toEqual(expect.any(Function));
+  });
+
+  it('starts an execution run through the canonical Voice Action binding', async () => {
+    const startArgs = {
+      intent: 'voice_agent',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    };
+    executionRunStart.mockResolvedValue({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const result = await tools.startExecutionRun(startArgs);
+
+    expect(executionRunStart).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining(startArgs),
+      { serverId: 'server-a' },
+    );
+    expect(JSON.parse(result)).toMatchObject({ ok: true, runId: 'run_1' });
   });
 
   it('can apply an execution run action via sessionExecutionRunAction', async () => {
@@ -388,54 +447,64 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 
-  it('can spawn a session via machineSpawnNewSession', async () => {
-    spawnSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
-
-    const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
-
-    const res = await tools.spawnSession({ tag: 't1' });
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: expect.any(String) }));
-    expect(JSON.parse(res)).toMatchObject({ type: 'success', sessionId: 's_new' });
-  });
-
-  it('preserves the canonical typed Provider refusal through the public voice tool response', async () => {
-    primeServerFeaturesSnapshot({
-      serverId: 'server-a',
-      snapshot: {
-        status: 'ready',
-        features: FeaturesResponseSchema.parse({
-          features: { providers: { enabled: false } },
-          capabilities: {},
-        }),
+  it('routes strict V2 session creation through the canonical Voice Action executor', async () => {
+    const spawnInput = {
+      creationKey: 'manual:voice-v2-contract',
+      executionTarget: {
+        serverId: 'server-a',
+        machineId: 'm1',
       },
-    });
-    const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
-
-    const response = JSON.parse(await tools.spawnSession({
-      backendTargetKey: 'backend:codex',
-      path: '/tmp/s1',
-      modelId: 'gpt-5',
-      providerConnectionId: 'pc_openrouter',
-    }));
-
-    expect(spawnSession).not.toHaveBeenCalled();
-    expect(response).toMatchObject({
-      ok: false,
-      errorCode: 'provider_feature_disabled',
-      errorDetail: {
-        kind: 'provider_error',
-        providerError: {
-          v: 1,
-          code: 'provider_feature_disabled',
-          connectionId: 'pc_openrouter',
-          machineId: 'm1',
-          retryable: false,
-          action: 'review_features',
+      directory: '/tmp/s1',
+      agentTarget: {
+        kind: 'agent',
+        identity: {
+          pluginId: 'happier.agent.codex',
+          localId: 'codex',
         },
       },
+      initialMessage: 'Inspect this project.',
+    };
+    const spawnResult = {
+      type: 'success' as const,
+      disposition: 'created' as const,
+      sessionId: 's_new',
+      executionTarget: {
+        serverId: 'server-a',
+        machineId: 'm1',
+      },
+      organizationPlacement: {
+        folderId: null,
+        tagIds: [],
+      },
+      initialInput: {
+        status: 'notRequested' as const,
+      },
+    };
+    machineRpcWithServerScope.mockResolvedValue(spawnResult);
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const response = JSON.parse(await tools.spawnSession(spawnInput));
+
+    expect(machineRpcWithServerScope).toHaveBeenCalledWith({
+      serverId: 'server-a',
+      machineId: 'm1',
+      method: RPC_METHODS.SESSION_SPAWN_NEW,
+      payload: spawnInput,
+      signal: undefined,
     });
+    expect(response).toEqual({ ok: true, ...spawnResult });
+  });
+
+  it('rejects retired flat spawnSession arguments before dispatching', async () => {
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const response = JSON.parse(await tools.spawnSession({ tag: 't1' }));
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(machineRpcWithServerScope).not.toHaveBeenCalled();
   });
 
   it('lists recent paths without exposing raw paths', async () => {
@@ -521,37 +590,6 @@ describe('voice tool handlers', () => {
     expect(parsed.items.some((item: any) => item.label === 'leeroy — a-host')).toBe(true);
     expect(parsed.items.every((item: any) => item.machineId === undefined)).toBe(true);
     expect(parsed.items.every((item: any) => !String(item.label ?? '').includes('m1_alias'))).toBe(true);
-  });
-
-  it('can spawn a session using an explicit path', async () => {
-    spawnSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
-
-    const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
-
-    await tools.spawnSession({ path: '/tmp/s2' });
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'm1', directory: '/tmp/s2' }));
-  });
-
-  it('allows selecting agentId + modelId when spawning a session via voice', async () => {
-    spawnSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
-
-    const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
-
-    await tools.spawnSession({ path: '/tmp/s1', agentId: 'codex', modelId: 'gpt-5' });
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      backendTarget: { kind: 'backend', backendId: 'codex' },
-      modelSelection: {
-        v: 1,
-        ref: {
-          agentTargetKey: 'backend:codex',
-          modelId: 'gpt-5',
-          providerConnectionId: null,
-        },
-        updatedAt: expect.any(Number),
-      },
-    }));
   });
 
   it('can list machines and servers for voice discovery', async () => {
@@ -945,16 +983,19 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(result)).toMatchObject({ ok: true, sessionId: 's1', requestId: 'req_question_after_force_refresh' });
   });
 
-  it('routes sendSessionMessage to an explicit sessionId override', async () => {
-    sendSessionMessageWithServerScope.mockResolvedValue({ ok: true });
-
+  it('routes sendSessionMessage to an explicit sessionId through canonical Voice admission', async () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
 
     const result = await tools.sendSessionMessage({ sessionId: 's2', message: 'hello' });
 
     expect(JSON.parse(result)).toMatchObject({ ok: true });
-    expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's2', message: 'hello' }));
+    expect(submitMessage).toHaveBeenCalledWith('s2', 'hello', undefined, undefined, {
+      callerSurface: 'voice_turn',
+      forceImmediate: true,
+      hostAdmissionOrigin: 'voice',
+    });
+    expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
   });
 
   it('can set the primary action session', async () => {
@@ -1252,5 +1293,6 @@ describe('voice tool handlers', () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.errorCode).toBe('action_disabled');
     expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();
+    expect(submitMessage).not.toHaveBeenCalled();
   });
 });

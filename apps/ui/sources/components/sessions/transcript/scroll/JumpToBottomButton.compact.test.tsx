@@ -68,7 +68,7 @@ describe('JumpToBottomButton compact layout', () => {
         expect(screen.getTextContent()).not.toContain('settingsSession.transcript.jumpToBottomButtonLabel');
         expect(screen.getTextContent()).toContain('3');
         expect(screen.findByTestId('jump')?.props.accessibilityLabel).toBe('new-activity:3');
-        expect(screen.findByType('Ionicons')).toBeTruthy();
+        expect(screen.findByType('Icon')).toBeTruthy();
     });
 
     it('uses compact layout for activity presentation on large screens', async () => {

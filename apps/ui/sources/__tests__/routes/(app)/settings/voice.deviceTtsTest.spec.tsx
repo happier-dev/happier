@@ -5,6 +5,7 @@ import {
     renderSettingsView,
     standardCleanup,
 } from '@/dev/testkit';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import {
     getVoiceSettingsRouteModalMockRef,
@@ -66,12 +67,17 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => {
     return {
         ...actual,
         useAllMachines: () => [],
-        useProfile: () => null,
+        useProfile: () => profileDefaults,
     };
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
+    subscribeActiveServer: () => () => {},
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({ credentials: null }),
 }));
 
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
@@ -129,7 +135,7 @@ describe('VoiceSettingsScreen (device TTS)', () => {
         });
 
         await import('@/modal');
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
         expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
@@ -159,7 +165,7 @@ describe('VoiceSettingsScreen (device TTS)', () => {
         });
 
         await import('@/modal');
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
         expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 
@@ -188,7 +194,7 @@ describe('VoiceSettingsScreen (device TTS)', () => {
             providerId: 'local_direct',
         });
         await import('@/modal');
-        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+        const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
         expect(screen.findRowByTitle('settingsVoice.local.testTts')).toBeTruthy();
 

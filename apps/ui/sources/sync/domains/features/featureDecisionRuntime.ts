@@ -17,6 +17,7 @@ import {
     getCachedServerFeaturesSnapshot,
     getServerFeaturesSnapshot,
     getServerFeaturesSnapshotRetryDelayMs,
+    subscribeServerFeaturesSnapshot,
     type ServerFeaturesSnapshot,
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
@@ -33,17 +34,19 @@ export type ServerFeaturesMainSelectionSnapshot =
     | Readonly<{ status: 'loading'; serverIds: string[]; snapshotsByServerId: Record<string, ServerFeaturesSnapshot> }>
     | Readonly<{ status: 'ready'; serverIds: string[]; snapshotsByServerId: Record<string, ServerFeaturesSnapshot> }>;
 
+const LOADING_SERVER_FEATURES_SNAPSHOT = Object.freeze({ status: 'loading' as const });
+
 export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: boolean }>): ServerFeaturesRuntimeSnapshot {
     const enabled = options?.enabled ?? true;
     const [snapshot, setSnapshot] = React.useState<ServerFeaturesRuntimeSnapshot>(() => {
-        if (!enabled) return { status: 'loading' };
+        if (!enabled) return LOADING_SERVER_FEATURES_SNAPSHOT;
         const cached = getCachedServerFeaturesSnapshot();
-        return cached ?? { status: 'loading' };
+        return cached ?? LOADING_SERVER_FEATURES_SNAPSHOT;
     });
 
     React.useEffect(() => {
         if (!enabled) {
-            setSnapshot({ status: 'loading' });
+            setSnapshot(LOADING_SERVER_FEATURES_SNAPSHOT);
             return;
         }
 
@@ -92,15 +95,24 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
             if (!serverId) return;
 
             const cached = getCachedServerFeaturesSnapshot({ serverId });
-            setSnapshot(cached ?? { status: 'loading' });
+            setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
             requestLoad(serverId, 'useServerFeaturesSnapshot.subscribeActiveServer');
+        });
+        const unsubscribeSnapshot = subscribeServerFeaturesSnapshot(() => {
+            if (cancelled) return;
+            const active = getActiveServerSnapshot();
+            const serverId = normalizeId(active.serverId);
+            const cached = getCachedServerFeaturesSnapshot(
+                serverId ? { serverId } : undefined,
+            );
+            setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
         });
 
         const initialActive = getActiveServerSnapshot();
         const initialServerId = typeof (initialActive as any)?.serverId === 'string' ? String((initialActive as any).serverId).trim() : '';
         if (initialServerId) {
             const cached = getCachedServerFeaturesSnapshot({ serverId: initialServerId });
-            setSnapshot(cached ?? { status: 'loading' });
+            setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
             requestLoad(initialServerId, 'useServerFeaturesSnapshot.initialLoad');
         } else {
             const cached = getCachedServerFeaturesSnapshot();
@@ -112,6 +124,7 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
             cancelled = true;
             if (retryTimer) clearTimeout(retryTimer);
             unsubscribe();
+            unsubscribeSnapshot();
         };
     }, [enabled]);
 
@@ -125,21 +138,26 @@ export function useServerFeaturesSnapshotForServerId(
     const enabled = options?.enabled ?? true;
     const serverId = normalizeId(serverIdRaw);
     const [snapshot, setSnapshot] = React.useState<ServerFeaturesRuntimeSnapshot>(() => {
-        if (!enabled) return { status: 'loading' };
-        if (!serverId) return { status: 'loading' };
+        if (!enabled) return LOADING_SERVER_FEATURES_SNAPSHOT;
+        if (!serverId) return LOADING_SERVER_FEATURES_SNAPSHOT;
         const cached = getCachedServerFeaturesSnapshot({ serverId });
-        return cached ?? { status: 'loading' };
+        return cached ?? LOADING_SERVER_FEATURES_SNAPSHOT;
     });
 
     React.useEffect(() => {
         if (!enabled) {
-            setSnapshot({ status: 'loading' });
+            setSnapshot(LOADING_SERVER_FEATURES_SNAPSHOT);
             return () => undefined;
         }
 
         let cancelled = false;
         let requestToken = 0;
         let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        const unsubscribeSnapshot = subscribeServerFeaturesSnapshot(() => {
+            if (cancelled || !serverId) return;
+            const cached = getCachedServerFeaturesSnapshot({ serverId });
+            setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
+        });
 
         const load = async (serverId: string) => {
             const token = requestToken + 1;
@@ -160,20 +178,22 @@ export function useServerFeaturesSnapshotForServerId(
         };
 
         if (!serverId) {
-            setSnapshot({ status: 'loading' });
+            setSnapshot(LOADING_SERVER_FEATURES_SNAPSHOT);
             return () => {
                 cancelled = true;
                 if (retryTimer) clearTimeout(retryTimer);
+                unsubscribeSnapshot();
             };
         }
 
         const cached = getCachedServerFeaturesSnapshot({ serverId });
-        setSnapshot(cached ?? { status: 'loading' });
+        setSnapshot(cached ?? LOADING_SERVER_FEATURES_SNAPSHOT);
         fireAndForget(load(serverId), { tag: 'useServerFeaturesSnapshotForServerId.initialLoad' });
 
         return () => {
             cancelled = true;
             if (retryTimer) clearTimeout(retryTimer);
+            unsubscribeSnapshot();
         };
     }, [enabled, serverId]);
 
@@ -237,24 +257,46 @@ export function useServerFeaturesMainSelectionSnapshot(
     });
 
     React.useEffect(() => {
-        let cancelled = false;
-        let requestToken = 0;
-        let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-        const cleanup = () => {
-            cancelled = true;
-            if (retryTimer) clearTimeout(retryTimer);
-        };
-
         if (!enabled) {
             setState({ status: 'ready', serverIds, snapshotsByServerId: {} });
-            return cleanup;
+            return;
         }
 
         if (serverIds.length === 0) {
             setState({ status: 'ready', serverIds, snapshotsByServerId: {} });
-            return cleanup;
+            return;
         }
+
+        let cancelled = false;
+        let requestToken = 0;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        const unsubscribeSnapshot = subscribeServerFeaturesSnapshot(() => {
+            if (cancelled) return;
+            const snapshotsByServerId: Record<string, ServerFeaturesSnapshot> = {};
+            for (const serverId of serverIds) {
+                const cached = getCachedServerFeaturesSnapshot({ serverId });
+                if (cached) snapshotsByServerId[serverId] = cached;
+            }
+            setState((current) => {
+                const ready = Object.keys(snapshotsByServerId).length === serverIds.length;
+                const nextStatus = ready ? 'ready' as const : 'loading' as const;
+                if (
+                    current.status === nextStatus
+                    && current.serverIds.length === serverIds.length
+                    && current.serverIds.every((id, index) => id === serverIds[index])
+                    && serverIds.every((id) => current.snapshotsByServerId[id] === snapshotsByServerId[id])
+                ) {
+                    return current;
+                }
+                return { status: nextStatus, serverIds, snapshotsByServerId };
+            });
+        });
+
+        const cleanup = () => {
+            cancelled = true;
+            if (retryTimer) clearTimeout(retryTimer);
+            unsubscribeSnapshot();
+        };
 
         const load = async (serverIds: string[]) => {
             const token = requestToken + 1;

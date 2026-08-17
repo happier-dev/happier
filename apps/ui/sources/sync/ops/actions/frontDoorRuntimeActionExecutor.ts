@@ -5,6 +5,27 @@ import { createDefaultActionExecutor } from './defaultActionExecutor';
 type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'>;
 
 /**
+ * The canonical `ActionExecutor.execute` front door, lazily resolved.
+ *
+ * Unlike {@link createFrontDoorRuntimeActionExecutor} this preserves the
+ * discriminated `ActionExecuteResult`, so a caller that must distinguish success
+ * from failure — the plugin-surface action dispatcher, which rejects failures as
+ * typed public errors — is not handed a collapsed value it would have to
+ * re-inspect (UI-D08).
+ */
+export function createFrontDoorActionExecute(
+  executor?: ActionExecutorLike,
+): ActionExecutorLike['execute'] {
+  // Lazily resolve the default executor on first dispatch so that mounting a surface (which often
+  // renders nothing) never eagerly builds the full executor dependency graph.
+  let resolved: ActionExecutorLike | null = executor ?? null;
+  return async (actionId, input, context) => {
+    const target = resolved ?? (resolved = createDefaultActionExecutor());
+    return target.execute(actionId, input, context);
+  };
+}
+
+/**
  * Canonical front-door bridge: adapts `ActionExecutor.execute` into the `RuntimeActionExecute`
  * shape that runtime-action consumers (local-services panes, browser-panel host API) depend on.
  *
@@ -21,12 +42,9 @@ type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, '
 export function createFrontDoorRuntimeActionExecutor(
   executor?: ActionExecutorLike,
 ): RuntimeActionExecute {
-  // Lazily resolve the default executor on first dispatch so that mounting a surface (which often
-  // renders nothing) never eagerly builds the full executor dependency graph.
-  let resolved: ActionExecutorLike | null = executor ?? null;
+  const execute = createFrontDoorActionExecute(executor);
   return async ({ actionId, input, context }) => {
-    const target = resolved ?? (resolved = createDefaultActionExecutor());
-    const result = await target.execute(actionId, input, context);
+    const result = await execute(actionId, input, context);
     return result.ok ? result.result : result;
   };
 }

@@ -33,6 +33,7 @@ import { formatIdentifierLabel } from '../shared';
 import { shareUsageRecapCardImage } from '../../usageAnalyticsExport';
 import type { UsageRecapCardId } from '../../buildUsageRecapCardModels';
 import { buildRecapStorySlides, type RecapStorySlide, type RecapStorySlideId } from './buildRecapStorySlides';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Opt-in recap story mode (L6 T4) — the ONLY place the theatrical layer lives.
@@ -329,7 +330,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
                         style={styles.controlButton}
                         onPress={share}
                     >
-                        <SafeIonicons name="share-outline" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="share" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
                     <Pressable
                         testID="usage-recap-story-close"
@@ -338,7 +339,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
                         style={styles.controlButton}
                         onPress={() => props.onDismiss?.()}
                     >
-                        <SafeIonicons name="close" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="x" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
                 </View>
 

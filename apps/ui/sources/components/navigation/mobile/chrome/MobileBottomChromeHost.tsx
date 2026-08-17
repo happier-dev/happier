@@ -131,7 +131,8 @@ export const MobileBottomChromeHost = React.memo(() => {
     const { sidebarTabAvailable: sessionTerminalTabAvailable } = useSessionTerminalAvailability();
     const routeSessionId = resolveRouteSessionId(pathname);
     const routeWorkspaceRefId = resolveRouteWorkspaceRefId(pathname);
-    const sessionLastMobileSurface = useSessionLastMobileSurface(routeSessionId);
+    const routeServerId = normalizeRouteParam(params.serverId);
+    const sessionLastMobileSurface = useSessionLastMobileSurface(routeSessionId, routeServerId);
     const projectLastMobileSurface = useProjectLastMobileSurface(routeWorkspaceRefId);
     const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
     const persistProjectLastMobileSurface = usePersistProjectLastMobileSurface();
@@ -139,7 +140,6 @@ export const MobileBottomChromeHost = React.memo(() => {
     const cockpitRegistration = useSessionCockpitChromeRegistration();
     const dismissingSessionId = useSessionCockpitDismissingSessionId();
     const explicitMobileSurfaceHint = normalizeRouteParam(params.mobileSurface);
-    const routeServerId = normalizeRouteParam(params.serverId);
     const sessionLastMobileSurfaceBySessionId = React.useMemo(() => (
         routeSessionId && sessionLastMobileSurface
             ? { [routeSessionId]: sessionLastMobileSurface }
@@ -194,8 +194,8 @@ export const MobileBottomChromeHost = React.memo(() => {
     }, [activeTab, pathname, routeOwnedMainTab, router, setActiveTab]);
 
     const persistSessionSurface = React.useCallback((sessionId: string, surface: SessionMobileSurface) => {
-        persistSessionLastMobileSurface(sessionId, surface);
-    }, [persistSessionLastMobileSurface]);
+        persistSessionLastMobileSurface(sessionId, surface, routeServerId);
+    }, [persistSessionLastMobileSurface, routeServerId]);
 
     const handleSessionCockpitSurfacePress = React.useCallback((sessionId: string, surface: SessionMobileSurface) => {
         const matchingRegistration =
@@ -226,6 +226,56 @@ export const MobileBottomChromeHost = React.memo(() => {
         routeServerId,
         router,
         sessionTerminalTabAvailable,
+    ]);
+
+    // The nested tab navigator is the source of truth for history/native Back.
+    // This outer route owner observes its already-registered active surface and
+    // mirrors only a post-initial transition into the route. It does not add a
+    // second selection store or write path: the navigator's state-change owner
+    // persists the qualified value before this route hint is replaced.
+    const observedCockpitSurfaceRef = React.useRef<Readonly<{
+        sessionId: string;
+        surface: SessionMobileSurface;
+    }> | null>(null);
+    React.useEffect(() => {
+        const registration = cockpitRegistration;
+        if (!routeSessionId || !registration || registration.sessionId !== routeSessionId) {
+            observedCockpitSurfaceRef.current = null;
+            return;
+        }
+
+        const next = {
+            sessionId: registration.sessionId,
+            surface: registration.activeSurface,
+        } as const;
+        const previous = observedCockpitSurfaceRef.current;
+        observedCockpitSurfaceRef.current = next;
+        // Registration is populated after the navigator's initial route has
+        // mounted. Do not rewrite a restored deep link merely because its
+        // chrome registered; subsequent actual state changes are authoritative.
+        if (!previous || previous.sessionId !== next.sessionId || previous.surface === next.surface) {
+            return;
+        }
+
+        if (!shouldRouteSessionCockpitSurfacePressThroughUrl({
+            pathname,
+            sessionId: next.sessionId,
+            surface: next.surface,
+            terminalTabAvailable: registration.terminalTabAvailable,
+            explicitRootSurfaceHint: explicitMobileSurfaceHint,
+        })) {
+            return;
+        }
+        router.replace(resolveSessionRoutePathForSurface(next.sessionId, next.surface, {
+            serverId: routeServerId,
+        }));
+    }, [
+        cockpitRegistration,
+        explicitMobileSurfaceHint,
+        pathname,
+        routeServerId,
+        routeSessionId,
+        router,
     ]);
 
     const buildMainChrome = React.useCallback((tab: TabType): BottomChromeItem => ({
@@ -291,6 +341,8 @@ export const MobileBottomChromeHost = React.memo(() => {
                         activeSurface={activeSurface}
                         terminalTabAvailable={terminalTabAvailable}
                         openDetailsTabCount={openDetailsTabCount}
+                        pluginPlacements={matchingRegistration?.pluginPlacements}
+                        projectionGeneration={matchingRegistration?.projectionGeneration}
                         onSurfacePress={(surface) => handleSessionCockpitSurfacePress(sessionCockpitModel.sessionId, surface)}
                     />
                 ),

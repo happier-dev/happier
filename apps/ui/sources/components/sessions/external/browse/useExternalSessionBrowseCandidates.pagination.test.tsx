@@ -19,27 +19,33 @@ const params = {
     source: { kind: 'codexHome' as const, home: 'user' as const },
 };
 
+type CandidateFixture = Readonly<{
+    remoteSessionId: string;
+    title?: string;
+    updatedAtMs: number;
+    details?: Record<string, unknown>;
+    candidateKey?: string;
+    linkData?: Readonly<Record<string, unknown>>;
+    linkedSessionId?: string;
+    imported?: boolean;
+    materializedThrough?: number;
+}>;
+
 function page(
-    candidates: readonly Readonly<{
-        remoteSessionId: string;
-        title?: string;
-        updatedAtMs: number;
-        details?: Record<string, unknown>;
-        candidateKey?: string;
-        linkData?: Readonly<Record<string, unknown>>;
-        linkedSessionId?: string;
-        imported?: boolean;
-        materializedThrough?: number;
-    }>[],
+    candidates: readonly CandidateFixture[],
     nextCursor: string | null,
 ) {
     return { ok: true, candidates, nextCursor } as const;
 }
 
-function preparationPage(scanned: number, total?: number) {
+function preparationPage(
+    scanned: number,
+    total?: number,
+    candidates: readonly CandidateFixture[] = [],
+) {
     return {
         ok: true,
-        candidates: [],
+        candidates,
         nextCursor: null,
         preparation: {
             kind: 'building_candidate_index' as const,
@@ -93,6 +99,101 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         await flushHookEffects();
     });
 
+    it('paginates with the search mode that produced an opaque cursor', async () => {
+        const fullRootPage = createDeferred<ReturnType<typeof page> & Readonly<{
+            searchIncomplete: true;
+        }>>();
+        candidatesListSpy
+            .mockResolvedValueOnce({
+                ...page([
+                    { remoteSessionId: 'fast-result', title: 'Fast result', updatedAtMs: 1 },
+                ], 'shared-cursor'),
+                searchIncomplete: true,
+            })
+            .mockImplementationOnce(() => fullRootPage.promise)
+            .mockResolvedValueOnce({
+                ...page([
+                    { remoteSessionId: 'fast-page-two', title: 'Fast page two', updatedAtMs: 3 },
+                ], 'fast-cursor-two'),
+                searchIncomplete: true,
+            })
+            .mockResolvedValueOnce(page([
+                { remoteSessionId: 'full-page-two', title: 'Full page two', updatedAtMs: 4 },
+            ], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params,
+            searchTerm: 'result',
+        }));
+
+        expect(hook.getCurrent().nextCursor).toBe('shared-cursor');
+        const fastPaginationRequestKey = hook.getCurrent().paginationRequestKey;
+
+        await act(async () => {
+            await hook.getCurrent().loadMore();
+        });
+
+        expect(candidatesListSpy).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            cursor: 'shared-cursor',
+            searchMode: 'fast',
+        }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+        expect(hook.getCurrent().nextCursor).toBe('fast-cursor-two');
+
+        fullRootPage.resolve({
+            ...page([
+                { remoteSessionId: 'full-result', title: 'Full result', updatedAtMs: 2 },
+            ], 'shared-cursor'),
+            searchIncomplete: true,
+        });
+        await flushHookEffects();
+
+        expect(hook.getCurrent().nextCursor).toBe('shared-cursor');
+        expect(hook.getCurrent().paginationRequestKey).not.toBe(fastPaginationRequestKey);
+
+        await act(async () => {
+            await hook.getCurrent().loadMore();
+        });
+
+        expect(candidatesListSpy).toHaveBeenNthCalledWith(4, expect.objectContaining({
+            cursor: 'shared-cursor',
+            searchMode: 'full',
+        }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+        expect(hook.getCurrent().candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+            'fast-result',
+            'fast-page-two',
+            'full-result',
+            'full-page-two',
+        ]);
+    });
+
+    it('replaces a completed full-search preview with its canonical page order', async () => {
+        candidatesListSpy
+            .mockResolvedValueOnce({
+                ...page([
+                    { remoteSessionId: 'preview-older', title: 'Preview older', updatedAtMs: 1 },
+                ], 'fast-cursor'),
+                searchIncomplete: true,
+            })
+            .mockResolvedValueOnce(page([
+                { remoteSessionId: 'full-newest', title: 'Full newest', updatedAtMs: 3 },
+                { remoteSessionId: 'preview-older', title: 'Preview older', updatedAtMs: 1 },
+            ], 'full-cursor'));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params,
+            searchTerm: 'preview',
+        }));
+
+        await flushHookEffects();
+
+        expect(hook.getCurrent().candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+            'full-newest',
+            'preview-older',
+        ]);
+        expect(hook.getCurrent().nextCursor).toBe('full-cursor');
+        expect(hook.getCurrent().searchIncomplete).toBe(false);
+    });
+
     it('identity-merges page mutations and keeps loaded rows visible after a page failure', async () => {
         candidatesListSpy
             .mockResolvedValueOnce(page([
@@ -144,6 +245,77 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
                 imported: true,
                 materializedThrough: 100,
             }),
+        ]);
+    });
+
+    it('surfaces when the daemon could not confirm every candidate annotation', async () => {
+        candidatesListSpy.mockResolvedValueOnce({
+            ...page([{
+                remoteSessionId: 'one',
+                updatedAtMs: 1,
+            }], null),
+            annotationsIncomplete: true,
+        });
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        await flushHookEffects();
+
+        expect(hook.getCurrent().annotationsIncomplete).toBe(true);
+        expect(hook.getCurrent().candidates).toEqual([
+            expect.objectContaining({ remoteSessionId: 'one' }),
+        ]);
+    });
+
+    it('retains annotation uncertainty while an appended page preserves earlier rows', async () => {
+        candidatesListSpy
+            .mockResolvedValueOnce({
+                ...page([{
+                    remoteSessionId: 'one',
+                    updatedAtMs: 1,
+                }], 'cursor-1'),
+                annotationsIncomplete: true,
+            })
+            .mockResolvedValueOnce(page([{
+                remoteSessionId: 'two',
+                updatedAtMs: 2,
+            }], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        await act(async () => {
+            await hook.getCurrent().loadMore();
+        });
+
+        expect(hook.getCurrent().annotationsIncomplete).toBe(true);
+        expect(hook.getCurrent().candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['one', 'two']);
+    });
+
+    it('clears annotation uncertainty when a root replacement confirms the visible rows', async () => {
+        candidatesListSpy
+            .mockResolvedValueOnce({
+                ...page([{
+                    remoteSessionId: 'one',
+                    updatedAtMs: 1,
+                }], null),
+                annotationsIncomplete: true,
+            })
+            .mockResolvedValueOnce(page([{
+                remoteSessionId: 'one',
+                updatedAtMs: 2,
+            }], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        expect(hook.getCurrent().annotationsIncomplete).toBe(true);
+
+        await act(async () => {
+            await hook.getCurrent().reload();
+        });
+
+        expect(hook.getCurrent().annotationsIncomplete).toBe(false);
+        expect(hook.getCurrent().candidates).toEqual([
+            expect.objectContaining({ remoteSessionId: 'one', updatedAtMs: 2 }),
         ]);
     });
 
@@ -244,12 +416,13 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
             .mockImplementationOnce(() => stalePage.promise)
             .mockResolvedValueOnce(page([
                 { remoteSessionId: 'new-root', title: 'New root', updatedAtMs: 2 },
-            ], null));
+            ], 'old-cursor'));
         const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
         const hook = await renderHook(
             (hookParams: typeof params) => useExternalSessionBrowseCandidates(hookParams),
             { initialProps: params },
         );
+        const firstScopePaginationRequestKey = hook.getCurrent().paginationRequestKey;
 
         await act(async () => {
             void hook.getCurrent().loadMore();
@@ -259,6 +432,8 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         await hook.rerender({ ...params, machineId: 'machine-2' });
 
         expect(hook.getCurrent().candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['new-root']);
+        expect(hook.getCurrent().nextCursor).toBe('old-cursor');
+        expect(hook.getCurrent().paginationRequestKey).not.toBe(firstScopePaginationRequestKey);
         expect(hook.getCurrent().loadingMore).toBe(false);
 
         stalePage.resolve(page([
@@ -267,6 +442,66 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         await flushHookEffects();
 
         expect(hook.getCurrent().candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['new-root']);
+    });
+
+    it.each([
+        ['machine', { ...params, machineId: null }],
+        ['Agent', { ...params, providerId: null }],
+        ['source', { ...params, source: null }],
+    ] as const)('aborts and clears a valid scope when its %s selection becomes invalid', async (_scopeKind, invalidParams) => {
+        const stalePage = createDeferred<ReturnType<typeof page>>();
+        let staleSignal: AbortSignal | undefined;
+        candidatesListSpy
+            .mockResolvedValueOnce(page([
+                { remoteSessionId: 'loaded-result', title: 'Loaded result', updatedAtMs: 1 },
+            ], 'stale-cursor'))
+            .mockImplementationOnce((_request, options: Readonly<{ signal?: AbortSignal }>) => {
+                staleSignal = options.signal;
+                return stalePage.promise;
+            });
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        type NullableBrowseParams = {
+            machineId: string | null;
+            providerId: typeof params.providerId | null;
+            source: typeof params.source | null;
+        };
+        const initialParams: NullableBrowseParams = params;
+        const hook = await renderHook(
+            (hookParams: NullableBrowseParams) => useExternalSessionBrowseCandidates(hookParams),
+            { initialProps: initialParams },
+        );
+
+        expect(hook.getCurrent().candidates).toEqual([
+            expect.objectContaining({ remoteSessionId: 'loaded-result' }),
+        ]);
+        await act(async () => {
+            void hook.getCurrent().loadMore();
+        });
+        expect(hook.getCurrent().loadingMore).toBe(true);
+        expect(staleSignal?.aborted).toBe(false);
+
+        await hook.rerender(invalidParams);
+
+        expect(staleSignal?.aborted).toBe(true);
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [],
+            nextCursor: null,
+            loading: false,
+            loadingMore: false,
+            searchAugmenting: false,
+            searchIncomplete: false,
+            preparation: null,
+            autoLinkPolicyScope: null,
+            error: null,
+        });
+
+        stalePage.resolve(page([
+            { remoteSessionId: 'stale-result', title: 'Stale result', updatedAtMs: 1 },
+        ], null));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().candidates).toEqual([]);
+        expect(candidatesListSpy).toHaveBeenCalledTimes(2);
     });
 
     it('hides the previous source policy while a changed scope is loading', async () => {
@@ -396,6 +631,162 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         });
     });
 
+    it('renders the candidates a preparing index has already served', async () => {
+        /**
+         * A preparing index serves stored identity rows, never hydrated ones, so a
+         * partial row carries no title until the completed generation supplies it.
+         */
+        const servedRows: readonly CandidateFixture[] = [
+            { remoteSessionId: 'partial-one', updatedAtMs: 2 },
+            { remoteSessionId: 'partial-two', updatedAtMs: 1 },
+        ];
+        const nextChunk = createDeferred<ReturnType<typeof preparationPage>>();
+        const completedPage = createDeferred<ReturnType<typeof page>>();
+        candidatesListSpy
+            .mockResolvedValueOnce(preparationPage(50, 100, servedRows))
+            .mockImplementationOnce(() => nextChunk.promise)
+            .mockImplementationOnce(() => completedPage.promise);
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [
+                expect.objectContaining({ remoteSessionId: 'partial-one', title: undefined }),
+                expect.objectContaining({ remoteSessionId: 'partial-two' }),
+            ],
+            loading: true,
+            error: null,
+            preparation: { kind: 'building_candidate_index', scanned: 50, total: 100 },
+        });
+
+        const servedCandidates = hook.getCurrent().candidates;
+        nextChunk.resolve(preparationPage(120, 200, servedRows.map((row) => ({ ...row }))));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().preparation).toMatchObject({ scanned: 120, total: 200 });
+        expect(hook.getCurrent().candidates).toBe(servedCandidates);
+
+        completedPage.resolve(page([
+            { remoteSessionId: 'complete-one', title: 'Complete one', updatedAtMs: 3 },
+        ], null));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [expect.objectContaining({ remoteSessionId: 'complete-one' })],
+            loading: false,
+            preparation: null,
+        });
+    });
+
+    it('stops a stalled cold index while keeping the candidates it already served actionable and marked incomplete', async () => {
+        const servedRows: readonly CandidateFixture[] = [
+            { remoteSessionId: 'served', updatedAtMs: 4 },
+        ];
+        candidatesListSpy
+            .mockResolvedValueOnce(preparationPage(50, 100, servedRows))
+            .mockResolvedValueOnce(preparationPage(50, 100, servedRows))
+            .mockResolvedValueOnce(page([
+                { remoteSessionId: 'must-not-publish', updatedAtMs: 9 },
+            ], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [expect.objectContaining({ remoteSessionId: 'served' })],
+            candidatesAuthoritative: true,
+            preparationStopped: true,
+            loading: false,
+            preparation: null,
+            nextCursor: null,
+            error: null,
+        });
+    });
+
+    it('stops at the cold-index request cap while keeping the candidates it already served actionable and marked incomplete', async () => {
+        const servedRows: readonly CandidateFixture[] = [
+            { remoteSessionId: 'served', updatedAtMs: 4 },
+        ];
+        let scanned = 0;
+        candidatesListSpy.mockImplementation(() => {
+            scanned += 10;
+            return Promise.resolve(preparationPage(scanned, 1_000_000, servedRows));
+        });
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(250);
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [expect.objectContaining({ remoteSessionId: 'served' })],
+            candidatesAuthoritative: true,
+            preparationStopped: true,
+            loading: false,
+            preparation: null,
+            error: null,
+        });
+    });
+
+    it('clears the authority of rows a superseded generation served when preparation restarts', async () => {
+        const servedRows: readonly CandidateFixture[] = [
+            { remoteSessionId: 'superseded', updatedAtMs: 4 },
+        ];
+        const restartedChunk = createDeferred<ReturnType<typeof preparationPage>>();
+        candidatesListSpy
+            .mockResolvedValue(page([
+                { remoteSessionId: 'restarted', updatedAtMs: 6 },
+            ], null))
+            .mockResolvedValueOnce(preparationPage(50, 100, servedRows))
+            .mockResolvedValueOnce(preparationPage(10, 100))
+            .mockImplementationOnce(() => restartedChunk.promise);
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(3);
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [expect.objectContaining({ remoteSessionId: 'superseded' })],
+            candidatesAuthoritative: false,
+            preparationStopped: false,
+            loading: true,
+            preparation: { kind: 'building_candidate_index', scanned: 10, total: 100 },
+            error: null,
+        });
+
+        restartedChunk.resolve(preparationPage(40, 100, [
+            { remoteSessionId: 'restarted', updatedAtMs: 6 },
+        ]));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [expect.objectContaining({ remoteSessionId: 'restarted' })],
+            candidatesAuthoritative: true,
+        });
+    });
+
+    it('fails a restarted index that then stalls instead of presenting superseded rows as its result', async () => {
+        const servedRows: readonly CandidateFixture[] = [
+            { remoteSessionId: 'superseded', updatedAtMs: 4 },
+        ];
+        candidatesListSpy
+            .mockResolvedValueOnce(preparationPage(50, 100, servedRows))
+            .mockResolvedValueOnce(preparationPage(10, 100))
+            .mockResolvedValueOnce(preparationPage(10, 100))
+            .mockResolvedValueOnce(page([
+                { remoteSessionId: 'must-not-publish', updatedAtMs: 9 },
+            ], null));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(3);
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [],
+            candidatesAuthoritative: false,
+            preparationStopped: false,
+            loading: false,
+            preparation: null,
+            error: 'externalSessions.browseFailedToLoad',
+        });
+    });
+
     it('aborts and fences cold-index continuation when the hook unmounts', async () => {
         const nextChunk = createDeferred<ReturnType<typeof preparationPage>>();
         const observedSignals: AbortSignal[] = [];
@@ -461,6 +852,7 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
             loading: false,
             preparation: null,
             error: 'externalSessions.browseIndexingCancelled',
+            cancelled: true,
         });
 
         nextChunk.resolve(preparationPage(100, 100));
@@ -475,6 +867,7 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         expect(hook.getCurrent()).toMatchObject({
             candidates: [expect.objectContaining({ remoteSessionId: 'recovered' })],
             error: null,
+            cancelled: false,
         });
     });
 
@@ -633,6 +1026,38 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
             error: null,
             loading: false,
             searchIncomplete: false,
+        });
+    });
+
+    it('bounds automatic empty full-search continuation at twenty pages', async () => {
+        candidatesListSpy.mockResolvedValueOnce({
+            ...page([], 'fast-cursor'),
+            searchIncomplete: true,
+        });
+        for (let pageNumber = 1; pageNumber <= 20; pageNumber += 1) {
+            candidatesListSpy.mockResolvedValueOnce({
+                ...page([], `full-cursor-${pageNumber}`),
+                searchIncomplete: true,
+            });
+        }
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params,
+            searchTerm: 'deep result',
+        }));
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(21);
+        expect(candidatesListSpy).toHaveBeenNthCalledWith(21, expect.objectContaining({
+            cursor: 'full-cursor-19',
+            limit: 50,
+            searchMode: 'full',
+        }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [],
+            nextCursor: 'full-cursor-20',
+            loading: false,
+            searchAugmenting: false,
+            searchIncomplete: true,
         });
     });
 });

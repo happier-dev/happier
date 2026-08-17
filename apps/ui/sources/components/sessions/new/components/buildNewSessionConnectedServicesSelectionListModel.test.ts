@@ -42,6 +42,35 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it('leaves connected-account-only selection empty instead of presenting native auth as persisted', () => {
+        const model = buildModel({
+            bindingsByServiceId: {},
+            includeNativeAuthOption: false,
+        });
+
+        expect(model.selectedOptionId).toBeNull();
+        expect(firstStaticSection(model).options.some((option) =>
+            option.id === createNativeServiceOptionId('anthropic')
+        )).toBe(false);
+    });
+
+    it('does not visually replace an unavailable exact binding with the general default profile', () => {
+        const model = buildModel({
+            bindingsByServiceId: {
+                anthropic: {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'unavailable-exact-account',
+                },
+            },
+            defaultProfileIdByServiceId: { anthropic: 'work' },
+            includeNativeAuthOption: false,
+            allowDefaultProfileFallback: false,
+        });
+
+        expect(model.selectedOptionId).toBeNull();
+    });
+
     it('puts connected account rows first and binds the selected account directly', () => {
         const setBindingForService = vi.fn();
         const model = buildModel({ setBindingForService });

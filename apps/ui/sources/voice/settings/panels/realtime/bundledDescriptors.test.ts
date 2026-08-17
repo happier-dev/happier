@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import {
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+} from '@happier-dev/protocol';
 
-import { getBundledVoiceUiEntry } from '@/voice/registry/internalContributions';
+import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
 import { parseRealtimeSettingsDescriptor, resolveRealtimeProviderConfig } from './descriptor';
@@ -13,25 +17,32 @@ function readPrivacyDisclosure(value: unknown): unknown {
   return isRecord(value) ? value.privacyDisclosure : null;
 }
 
+function readPrivacyDisclosureFallback(value: unknown): string {
+  const disclosure = readPrivacyDisclosure(value);
+  if (typeof disclosure === 'string') return disclosure;
+  return isRecord(disclosure) && typeof disclosure.fallback === 'string'
+    ? disclosure.fallback
+    : '';
+}
+
 describe('bundled realtime provider settings projection', () => {
-  for (const providerId of ['realtime_elevenlabs', 'realtime_openai', 'realtime_grok', 'realtime_codex']) {
+  for (const [legacyProviderId, pluginId, localId] of [
+    ['happier.voice.elevenlabs/realtime-elevenlabs', 'happier.voice.elevenlabs', 'realtime-elevenlabs'],
+    ['happier.voice.openai/realtime-openai', 'happier.voice.openai', 'realtime-openai'],
+    ['happier.voice.xai/realtime-grok', 'happier.voice.xai', 'realtime-grok'],
+    ['happier.agent.codex/realtime-codex', 'happier.agent.codex', 'realtime-codex'],
+  ] as const) {
+    const providerId = buildQualifiedPluginContributionKey(
+      createPluginContributionIdentity({ pluginId, localId }),
+    );
     it(`renders ${providerId} through the same descriptor and settings-owner boundary`, () => {
-      const entry = getBundledVoiceUiEntry(providerId);
+      const entry = getBundledVoiceProviderEntry(providerId);
       expect(entry?.kind).toBe('voice.conversation-provider.v1');
       if (!entry || entry.kind !== 'voice.conversation-provider.v1') throw new Error('missing bundled provider');
-      const createSettingsSection = entry.internal.createSettingsSection;
+      const createSettingsSection = entry.presentation?.createSettingsSection;
       const registryEntry = createDefaultVoiceProviderRegistry().get(providerId);
-      const internalProviderSettings = 'providerSettings' in entry.internal
-        ? entry.internal.providerSettings
-        : undefined;
-      if (registryEntry?.providerSettings && internalProviderSettings) {
-        expect(registryEntry.providerSettings.schemaVersion).toBe(internalProviderSettings.schemaVersion);
-        expect(registryEntry.providerSettings.defaultConfig).toEqual(internalProviderSettings.defaultConfig);
-        expect(registryEntry.providerSettings.parseConfig(internalProviderSettings.defaultConfig))
-          .toEqual(internalProviderSettings.parseConfig(internalProviderSettings.defaultConfig));
-      }
-      const providerSettings = registryEntry?.providerSettings ?? internalProviderSettings;
-      if (providerId === 'realtime_codex') {
+      const providerSettings = registryEntry?.providerSettings;
+      if (legacyProviderId === 'happier.agent.codex/realtime-codex') {
         expect(createSettingsSection).toBeUndefined();
         expect(providerSettings)
           .toMatchObject({
@@ -41,10 +52,7 @@ describe('bundled realtime provider settings projection', () => {
             },
             connectedServicesBinding: {
               id: 'globalConnectedServices',
-              agent: {
-                pluginId: 'happier.agent.codex',
-                localId: 'codex',
-              },
+              agent: 'codex',
               serviceIds: ['openai-codex'],
             },
           });
@@ -55,28 +63,38 @@ describe('bundled realtime provider settings projection', () => {
         expect(registryEntry?.projectSettings?.({
           schemaVersion: 2,
           config: { globalConnectedServices: null },
-        })).toEqual({ status: 'ready', modeId: 'experimental' });
+        })).toEqual({ status: 'missing_required_setting', modeId: 'experimental' });
         return;
       }
-      if (providerId === 'realtime_elevenlabs') {
+      if (legacyProviderId === 'happier.voice.elevenlabs/realtime-elevenlabs') {
         expect(readPrivacyDisclosure(providerSettings)).toBe(
           'Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.',
         );
       }
-      if (providerId === 'realtime_openai' || providerId === 'realtime_grok') {
+      if (legacyProviderId === 'happier.voice.openai/realtime-openai' || legacyProviderId === 'happier.voice.xai/realtime-grok') {
         expect(readPrivacyDisclosure(providerSettings)).toMatchObject({
-          key: providerId === 'realtime_openai'
+          key: legacyProviderId === 'happier.voice.openai/realtime-openai'
             ? 'settingsVoice.realtimeProviders.openai.privacyDisclosure'
             : 'settingsVoice.realtimeProviders.xai.privacyDisclosure',
         });
+        const disclosure = readPrivacyDisclosureFallback(providerSettings);
+        expect(disclosure).toMatch(/audio/iu);
+        expect(disclosure).toMatch(/context/iu);
+        expect(disclosure).toMatch(/client-tool definitions/iu);
+        expect(disclosure).toMatch(/delegated results/iu);
+        expect(disclosure).toMatch(/server and relay do not carry live audio/iu);
+        expect(disclosure).toMatch(/may retain/iu);
+        expect(disclosure).toMatch(/context-sharing controls are separate/iu);
         expect(providerSettings).not.toHaveProperty('defaultConfig.mode');
-        expect(
-          isRecord(providerSettings)
+        expect(isRecord(providerSettings)
           && typeof providerSettings.parseConfig === 'function'
-          && isRecord(internalProviderSettings)
-            ? providerSettings.parseConfig(internalProviderSettings.defaultConfig)
-            : null,
-        ).not.toBeNull();
+          && isRecord(providerSettings.defaultConfig)
+          ? providerSettings.parseConfig(providerSettings.defaultConfig)
+          : null).not.toBeNull();
+      }
+      if (legacyProviderId === 'happier.voice.openai/realtime-openai') {
+        expect(createSettingsSection).toBeUndefined();
+        return;
       }
       expect(typeof createSettingsSection).toBe('function');
       if (typeof createSettingsSection !== 'function') throw new Error('invalid bundled provider settings descriptor');

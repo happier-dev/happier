@@ -85,7 +85,11 @@ async function callScmPreferMachine<
         } as T;
     }
 
-    const cwd = resolveMachineAbsolutePath({ rootPath: machineTarget.basePath, requestPath: request.cwd });
+    const cwd = resolveMachineAbsolutePath({
+        rootPath: machineTarget.basePath,
+        agentRootPath: machineTarget.agentBasePath,
+        requestPath: request.cwd,
+    });
     const serverId = resolvePreferredServerIdForSessionId(sessionId);
     try {
         return await runMachineScmRpc<T, R>(

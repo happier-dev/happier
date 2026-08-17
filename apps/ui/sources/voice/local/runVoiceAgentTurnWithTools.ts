@@ -1,10 +1,12 @@
 import {
   createVoiceToolHandlers,
   resolveVoiceToolEffectClass,
+  type VoiceToolHandler,
 } from '@/voice/tools/handlers';
 import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import {
   readVoiceAgentActionEffectId,
+  type VoiceAgentAcceptedOutputV1,
   type VoiceAgentSendTurnOptions,
 } from '@/voice/agent/types';
 import {
@@ -13,7 +15,6 @@ import {
 } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 import {
   formatVoiceToolResultsFollowUp,
-  type VoiceAgentOutputEventV1,
   VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX,
 } from '@happier-dev/protocol';
 import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
@@ -480,7 +481,8 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   currentToolSessionId?: string | null;
   voiceAgentSessions: VoiceAgentSessionsLike;
   signal?: AbortSignal;
-  onOutputEvent?: (event: VoiceAgentOutputEventV1) => void | Promise<void>;
+  onOutputEvent?: (output: VoiceAgentAcceptedOutputV1) => void | Promise<void>;
+  onUserTranscriptAccepted?: () => void | Promise<void>;
   onAssistantTurn?: (params: Readonly<{
     assistantText: string;
     actions: ReadonlyArray<unknown>;
@@ -516,6 +518,12 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
 
   const directPermissionDecision = resolveDirectPermissionDecision(params.userText);
   let outerTranscriptCommitted = false;
+  let userTranscriptAccepted = false;
+  const noteUserTranscriptAccepted = async () => {
+    if (userTranscriptAccepted) return;
+    userTranscriptAccepted = true;
+    await params.onUserTranscriptAccepted?.();
+  };
   if (directPermissionDecision) {
     if (!params.voiceAgentSessions.commitUserTranscript) {
       throw new Error('voice_user_transcript_commit_required');
@@ -526,6 +534,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       params.durableLocalId,
     );
     outerTranscriptCommitted = true;
+    await noteUserTranscriptAccepted();
     const userActionShortcutResult = parseToolResult(
       await (tools as any).answerUserActionRequest({
         decision: mapDirectDecisionToUserActionDecision(directPermissionDecision),
@@ -586,7 +595,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     effectId: string;
     toolName: string;
     args: unknown;
-    handler: (input: unknown) => Promise<string>;
+    handler: VoiceToolHandler;
   }>): Promise<Readonly<{
     result: LocalVoiceAgentToolResultEntry;
     completedOrReused: boolean;
@@ -612,7 +621,10 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
 
     const outcome = (async (): Promise<LocalVoiceAgentToolResultEntry> => {
       try {
-        const parsedResult = parseToolResult(await input.handler(input.args));
+        const parsedResult = parseToolResult(await input.handler(input.args, {
+          ...(params.signal ? { signal: params.signal } : {}),
+          effectId: input.effectId,
+        }));
         const result = readToolResultErrorCode(parsedResult) === 'action_failed'
           ? createLocalToolErrorResult(input.toolName, input.args, 'outcome_unknown')
           : { t: input.toolName, args: input.args, result: parsedResult };
@@ -640,7 +652,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       const toolName = typeof action?.t === 'string' ? action.t.trim() : '';
       if (!toolName) continue;
 
-      const handler = (tools as any)[toolName] as ((input: unknown) => Promise<string>) | undefined;
+      const handler = (tools as Record<string, VoiceToolHandler>)[toolName];
       if (typeof handler !== 'function') {
         results.push({
           t: toolName,
@@ -667,7 +679,10 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       }
 
       try {
-        const value = await handler(action?.args ?? null);
+        const value = await handler(action?.args ?? null, {
+          ...(params.signal ? { signal: params.signal } : {}),
+          ...(effectId ? { effectId } : {}),
+        });
         throwIfAborted(params.signal);
         results.push({
           t: toolName,
@@ -701,18 +716,16 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     const response = await params.voiceAgentSessions.sendTurn(
       params.sessionId,
       nextPrompt,
-      turnIndex === 0
-        ? {
-            ...(params.onOutputEvent ? { onOutputEvent: params.onOutputEvent } : {}),
-            ...(params.signal ? { signal: params.signal } : {}),
-            userTranscript: outerTranscriptCommitted
-              ? { mode: 'suppress' as const }
-              : { mode: 'persist' as const, localId: params.durableLocalId },
-          }
-        : {
-            ...(params.signal ? { signal: params.signal } : {}),
-            userTranscript: { mode: 'suppress' as const },
-          },
+      {
+        ...(params.onOutputEvent ? { onOutputEvent: params.onOutputEvent } : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
+        ...(turnIndex === 0
+          ? { onUserTranscriptAccepted: noteUserTranscriptAccepted }
+          : {}),
+        userTranscript: turnIndex === 0 && !outerTranscriptCommitted
+          ? { mode: 'persist' as const, localId: params.durableLocalId }
+          : { mode: 'suppress' as const },
+      },
     );
 
     throwIfAborted(params.signal);

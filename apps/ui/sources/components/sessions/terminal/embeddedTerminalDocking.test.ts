@@ -39,8 +39,8 @@ describe('embeddedTerminalDocking', () => {
         const pane: AppPaneScopeApi = {
             scopeId: 'session:s1',
             scopeState: {
-                right: { isOpen: false, activeTabId: null, tabState: {} },
-                bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
+                bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
                 details: {
                     isOpen: true,
                     activeTabKey: 'file:README.md',
@@ -76,10 +76,12 @@ describe('embeddedTerminalDocking', () => {
             openRight: vi.fn(),
             closeRight: vi.fn(),
             setRightTab: vi.fn(),
+            selectRightDestination: vi.fn(),
             setRightTabState: vi.fn(),
             openBottom: vi.fn(),
             closeBottom: vi.fn(),
             setBottomTab: vi.fn(),
+            selectBottomDestination: vi.fn(),
             setBottomTabState: vi.fn(),
             openDetailsTab: vi.fn(),
             replaceDetailsTab: vi.fn(),

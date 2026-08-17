@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type GestureResponderEvent } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { FilesystemBrowserRow } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
@@ -8,6 +7,7 @@ import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/fi
 import { t } from '@/text';
 
 import { getPathBrowserRowTestId, getPathBrowserToggleTestId } from './pathBrowserTestIds';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type MachinePathBrowserListRowProps = Readonly<{
     node: FilesystemBrowserNode;
@@ -66,22 +66,22 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
     }, [props, props.node.path]);
 
     const rightElement = props.selected
-        ? <Ionicons name="checkmark-circle" size={18} color={theme.colors.button.primary.background} />
+        ? <Icon name="check-circle" size={16} color={theme.colors.button.primary.background} />
         : undefined;
 
     const icon = props.node.type === 'directory'
         ? (
             <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons
-                    name={props.node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
+                <Icon
+                    name={props.node.isExpanded ? 'folder-open' : 'folder'}
                     size={16}
                     color={theme.colors.text.link}
                 />
             </View>
         )
         : props.node.type === 'file'
-            ? <Ionicons name="document-outline" size={18} color={theme.colors.text.link} />
-            : <Ionicons name="folder-outline" size={18} color={theme.colors.text.link} />;
+            ? <Icon name="file" size={16} color={theme.colors.text.link} />
+            : <Icon name="folder" size={16} color={theme.colors.text.link} />;
 
     return (
         <FilesystemBrowserRow
@@ -166,8 +166,8 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
                                     justifyContent: 'center',
                                 }}
                             >
-                                <Ionicons
-                                    name={props.node.isExpanded ? 'chevron-down' : 'chevron-forward'}
+                                <Icon
+                                    name={props.node.isExpanded ? 'caret-down' : 'caret-right'}
                                     size={16}
                                     color={theme.colors.text.secondary}
                                 />

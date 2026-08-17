@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -15,6 +14,7 @@ import type {
     ConnectedServicesProviderStateSharingSettingsV1,
 } from '@happier-dev/protocol';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const UNSUPPORTED_PROVIDER_STATE_SHARING_CAPABILITY: ConnectedServicesProviderStateSharingCapability = {
     config: {
@@ -68,21 +68,21 @@ function buildConfigModeOptions(params: Readonly<{
             id: 'linked',
             title: t('connectedServices.providerStateSharing.configLinkedTitle'),
             subtitle: t('connectedServices.providerStateSharing.configLinkedSubtitle'),
-            icon: <Ionicons name="link-outline" size={22} color={params.colors.blue} />,
+            icon: <Icon name="link" size={20} color={params.colors.blue} />,
             disabled: !supportedModes.has('linked'),
         },
         {
             id: 'copied',
             title: t('connectedServices.providerStateSharing.configCopiedTitle'),
             subtitle: t('connectedServices.providerStateSharing.configCopiedSubtitle'),
-            icon: <Ionicons name="copy-outline" size={22} color={params.colors.indigo} />,
+            icon: <Icon name="copy" size={20} color={params.colors.indigo} />,
             disabled: !supportedModes.has('copied'),
         },
         {
             id: 'isolated',
             title: t('connectedServices.providerStateSharing.configIsolatedTitle'),
             subtitle: t('connectedServices.providerStateSharing.configIsolatedSubtitle'),
-            icon: <Ionicons name="lock-closed-outline" size={22} color={params.colors.secondary} />,
+            icon: <Icon name="lock" size={20} color={params.colors.secondary} />,
             disabled: !supportedModes.has('isolated'),
         },
     ];
@@ -199,7 +199,7 @@ export function ProviderStateSharingRows({
                     subtitle: configDisabled
                         ? resolveUnavailableReasonLabel(resolvedCapability.config.unavailableReason)
                         : undefined,
-                    icon: <Ionicons name="settings-outline" size={22} color={theme.colors.accent.blue} />,
+                    icon: <Icon name="sliders-horizontal" size={20} color={theme.colors.accent.blue} />,
                     showSelectedSubtitle: !configDisabled,
                     itemProps: {
                         testID: `connected-services-provider-state-sharing-agent-${agentId}-config`,
@@ -219,7 +219,7 @@ export function ProviderStateSharingRows({
                             ? t('connectedServices.providerStateSharing.stateEnabledSubtitle')
                             : t('connectedServices.providerStateSharing.stateDisabledSubtitle')
                 }
-                icon={<Ionicons name="albums-outline" size={22} color={theme.colors.accent.blue} />}
+                icon={<Icon name="stack" size={20} color={theme.colors.accent.blue} />}
                 disabled={stateDisabled}
                 rightElement={(
                     <Switch

@@ -2,7 +2,10 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useResizableDockedPaneCore, type DockedPaneResizeCommitMeta } from '@/components/ui/panels/resizable/resizableDockedPaneCore';
-import { ResizablePaneDividerHandle } from '@/components/ui/panels/resizable/ResizablePaneDividerHandle';
+import {
+    ResizablePaneDividerHandle,
+    resolveResizablePaneNativeTouchTargetSize,
+} from '@/components/ui/panels/resizable/ResizablePaneDividerHandle';
 import type { SplitCanvasAxis } from '../model/splitCanvasTypes';
 
 function roundRatio(value: number): number {
@@ -24,6 +27,7 @@ export const SplitCanvasDivider = React.memo((props: Readonly<{
     const {
         panHandlers,
         webHandleProps,
+        accessibilityHandleProps,
     } = useResizableDockedPaneCore({
         axis: props.axis === 'row' ? 'x' : 'y',
         resizeEdge: 'end',
@@ -42,13 +46,22 @@ export const SplitCanvasDivider = React.memo((props: Readonly<{
     });
 
     const vertical = props.axis === 'row';
+    const nativeTouchTargetSize = resolveResizablePaneNativeTouchTargetSize();
+    const visualHandleSize = vertical ? 10 : 18;
+    const targetSize = nativeTouchTargetSize ?? visualHandleSize;
+    const layoutCompensation = (targetSize - visualHandleSize) / 2;
 
     return (
         <View
             testID={`split-canvas-divider-${props.splitId}`}
             style={{
-                width: vertical ? 10 : '100%',
-                height: vertical ? '100%' : 18,
+                width: vertical ? targetSize : '100%',
+                height: vertical ? '100%' : targetSize,
+                ...(nativeTouchTargetSize === null
+                    ? null
+                    : vertical
+                        ? { marginHorizontal: -layoutCompensation }
+                        : { marginVertical: -layoutCompensation }),
                 flexShrink: 0,
                 position: 'relative',
             }}
@@ -59,6 +72,7 @@ export const SplitCanvasDivider = React.memo((props: Readonly<{
                 interactionProps={Platform.OS === 'web'
                     ? (webHandleProps as any)
                     : (panHandlers as any)}
+                accessibilityHandleProps={accessibilityHandleProps}
                 style={{
                     position: 'absolute',
                     ...(vertical

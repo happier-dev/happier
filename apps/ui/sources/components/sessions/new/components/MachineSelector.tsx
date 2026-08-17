@@ -1,6 +1,5 @@
 import React from 'react';
 import { Pressable, type View as RNView } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { SearchableListSelector } from '@/components/ui/forms/SearchableListSelector';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -11,6 +10,7 @@ import { t } from '@/text';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveMachinePickerPresence } from './resolveMachinePickerPresence';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export interface MachineSelectorProps {
     machines: ReadonlyArray<Machine>;
@@ -48,6 +48,12 @@ export interface MachineSelectorProps {
      * When true, offline machines are visible but non-selectable (greyed out + not-allowed cursor on web).
      */
     disableOfflineMachines?: boolean;
+    /**
+     * Keeps the selected revoked or replaced machine visible as a disabled row.
+     * New-session callers keep the default false; administration surfaces opt in
+     * so a persisted target does not disappear while unavailable.
+     */
+    includeSelectedUnavailableMachine?: boolean;
     dropdownTitle?: string;
     dropdownSubtitle?: string | null;
     dropdownTestID?: string;
@@ -91,6 +97,7 @@ export function MachineSelector({
     noItemsMessage: noItemsMessageProp,
     testIdPrefix,
     disableOfflineMachines = true,
+    includeSelectedUnavailableMachine = false,
     dropdownTitle,
     dropdownSubtitle,
     dropdownTestID,
@@ -116,18 +123,23 @@ export function MachineSelector({
     const getMachineReadinessTestID = React.useCallback((machine: Machine) => {
         return machineReadinessTestIdPrefix ? `${machineReadinessTestIdPrefix}:${machine.id}` : undefined;
     }, [machineReadinessTestIdPrefix]);
+    const selectedMachineId = selectedMachine?.id ?? null;
+    const isVisibleForPicker = React.useCallback((machine: Machine) => {
+        return isMachineVisibleForLaunchSelection(machine)
+            || (includeSelectedUnavailableMachine && machine.id === selectedMachineId);
+    }, [includeSelectedUnavailableMachine, selectedMachineId]);
 
     const visibleMachines = React.useMemo(
-        () => machines.filter(isMachineVisibleForLaunchSelection),
-        [machines],
+        () => machines.filter(isVisibleForPicker),
+        [isVisibleForPicker, machines],
     );
     const visibleRecentMachines = React.useMemo(
-        () => recentMachines.filter(isMachineVisibleForLaunchSelection),
-        [recentMachines],
+        () => recentMachines.filter(isVisibleForPicker),
+        [isVisibleForPicker, recentMachines],
     );
     const visibleFavoriteMachines = React.useMemo(
-        () => favoriteMachines.filter(isMachineVisibleForLaunchSelection),
-        [favoriteMachines],
+        () => favoriteMachines.filter(isVisibleForPicker),
+        [favoriteMachines, isVisibleForPicker],
     );
     const launchPinnedRecentMachines = React.useMemo(
         () => disableOfflineMachines
@@ -168,7 +180,6 @@ export function MachineSelector({
         visibleMachines,
         visibleRecentMachinesWithoutFavorites,
     ]);
-    const selectedMachineId = selectedMachine?.id ?? null;
     const machineById = React.useMemo(() => {
         return new Map([
             ...visibleMachines,
@@ -189,10 +200,11 @@ export function MachineSelector({
                     onToggleFavorite(machine);
                 }}
             >
-                <Ionicons
-                    name={isFavorite ? 'star' : 'star-outline'}
-                    size={22}
+                <Icon
+                    name="star"
+                    size={20}
                     color={isFavorite ? selectedColor : theme.colors.text.secondary}
+                    weight={isFavorite ? 'fill' : 'regular'}
                 />
             </Pressable>
         );
@@ -202,7 +214,7 @@ export function MachineSelector({
         machine: Machine,
         category: string,
         isFavorite: boolean,
-        iconName: React.ComponentProps<typeof Ionicons>['name'],
+        iconName: IconName,
     ): DropdownMenuItem => {
         const presence = resolveMachinePickerPresence(machine);
         const unavailable = !presence.selectable;
@@ -214,7 +226,7 @@ export function MachineSelector({
             category,
             disabled: disableOfflineMachines && unavailable,
             icon: (
-                <Ionicons
+                <Icon
                     name={iconName}
                     size={20}
                     color={theme.colors.text.secondary}
@@ -230,7 +242,7 @@ export function MachineSelector({
                 machine,
                 favoritesSectionTitle,
                 true,
-                'desktop-outline',
+                'desktop',
             ))
             : [];
         const recentItems = showRecent
@@ -238,14 +250,14 @@ export function MachineSelector({
                 machine,
                 recentSectionTitle,
                 favoriteMachineIdSet.has(machine.id),
-                'time-outline',
+                'clock',
             ))
             : [];
         const allItems = visibleAllMachines.map((machine) => toDropdownItem(
             machine,
             allSectionTitle,
             favoriteMachineIdSet.has(machine.id),
-            'desktop-outline',
+            'desktop',
         ));
 
         return favoriteGroupPlacement === 'beforeRecent'
@@ -293,8 +305,8 @@ export function MachineSelector({
                         showSelectedDetail: false,
                         showSelectedSubtitle: false,
                         icon: (
-                            <Ionicons
-                                name="desktop-outline"
+                            <Icon
+                                name="desktop"
                                 size={24}
                                 color={theme.colors.text.secondary}
                             />
@@ -313,15 +325,15 @@ export function MachineSelector({
                 getItemTitle: (machine) => machine.metadata?.displayName || machine.metadata?.host || machine.id,
                 getItemSubtitle: undefined,
                 getItemIcon: () => (
-                    <Ionicons
-                        name="desktop-outline"
+                    <Icon
+                        name="desktop"
                         size={24}
                         color={theme.colors.text.secondary}
                     />
                 ),
                 getRecentItemIcon: () => (
-                    <Ionicons
-                        name="time-outline"
+                    <Icon
+                        name="clock"
                         size={24}
                         color={theme.colors.text.secondary}
                     />

@@ -21,7 +21,13 @@ export type ResizableDockedPaneVerticalProps = Readonly<{
 export const ResizableDockedPaneVertical = React.memo((props: ResizableDockedPaneVerticalProps) => {
     const { theme } = useUnistyles();
     const resizeEdge = props.resizeEdge ?? 'top';
-    const { effectiveSizePx, canResize, panHandlers, webHandleProps } = useResizableDockedPaneCore({
+    const {
+        effectiveSizePx,
+        canResize,
+        panHandlers,
+        webHandleProps,
+        accessibilityHandleProps,
+    } = useResizableDockedPaneCore({
         axis: 'y',
         resizeEdge: resizeEdge === 'top' ? 'start' : 'end',
         sizePx: props.heightPx,
@@ -46,10 +52,12 @@ export const ResizableDockedPaneVertical = React.memo((props: ResizableDockedPan
             {canResize ? (
                 <ResizablePaneDividerHandle
                     axis="y"
+                    edge={resizeEdge === 'top' ? 'start' : 'end'}
                     testID={props.resizeHandleTestID ?? (props.testID ? `${props.testID}-resize-handle` : undefined)}
                     interactionProps={Platform.OS === 'web'
                         ? (webHandleProps as any)
                         : (panHandlers as any)}
+                    accessibilityHandleProps={accessibilityHandleProps}
                     style={{
                         position: 'absolute',
                         left: 0,

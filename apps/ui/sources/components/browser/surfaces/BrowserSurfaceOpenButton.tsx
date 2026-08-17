@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, type StyleProp, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -7,6 +6,7 @@ import type { BrowserSurfaceUnavailableReason } from '@/components/browser/surfa
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function decisionEnabled(decision: ReturnType<typeof useFeatureDecision>): boolean {
     return decision?.state === 'enabled';
@@ -62,9 +62,9 @@ export function BrowserSurfaceOpenButton(props: Readonly<{
             }}
             style={[props.style, disabled ? props.disabledStyle : null]}
         >
-            <Ionicons
-                name="globe-outline"
-                size={18}
+            <Icon
+                name="globe"
+                size={16}
                 color={disabled ? theme.colors.text.disabled : props.iconColor ?? theme.colors.text.secondary}
             />
         </Pressable>

@@ -19,7 +19,7 @@ describe('synthesizeKokoroWav (native)', () => {
 
     await expect(prepareKokoroTts(
       {
-        assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        assetSetId: 'kokoro-en-v0_19',
         timeoutMs: 5000,
         signal: new AbortController().signal,
       },
@@ -39,7 +39,7 @@ describe('synthesizeKokoroWav (native)', () => {
     const ensureInstalled = vi.fn(async () => ({
       packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-unavailable',
       manifest: {
-        packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        packId: 'kokoro-en-v0_19',
         kind: 'tts_sherpa',
         model: 'kokoro',
         version: 'installed-before-publication-was-disabled',
@@ -56,7 +56,7 @@ describe('synthesizeKokoroWav (native)', () => {
     };
     const opts = {
       text: 'hello',
-      assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+      assetSetId: 'kokoro-en-v0_19',
       voiceId: 'af_bella',
       speed: 1,
       timeoutMs: 5000,
@@ -209,16 +209,35 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 
-  it('fails closed to the unavailable canonical Kokoro pack when assetSetId is missing', async () => {
+  it('uses the exact published canonical Kokoro pack when assetSetId is missing', async () => {
+    class File {
+      uri: string;
+      constructor(...uris: any[]) {
+        this.uri = typeof uris[0] === 'string' ? uris[0] : 'file:///tmp/out.wav';
+      }
+      async arrayBuffer() {
+        return new Uint8Array([1, 2, 3, 4]).buffer;
+      }
+      delete = vi.fn().mockResolvedValue(undefined);
+    }
     const kokoroNativeModule = {
       initialize: vi.fn().mockResolvedValue(undefined),
       listVoices: vi.fn().mockResolvedValue([]),
       synthesizeToWavFile: vi.fn().mockResolvedValue({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 }),
       cancel: vi.fn().mockResolvedValue(undefined),
     };
-    const ensureInstalled = vi.fn();
+    const ensureInstalled = vi.fn().mockResolvedValue({
+      packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-82m-v1.0-onnx-q8-wasm',
+      manifest: {
+        packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        kind: 'tts_sherpa',
+        model: 'kokoro',
+        version: 'kokoro-int8-multi-lang-v1_1',
+        files: [],
+      } as any,
+    });
 
-    await expect(synthesizeKokoroWav(
+    await synthesizeKokoroWav(
       {
         text: 'hello',
         assetSetId: null,
@@ -229,12 +248,21 @@ describe('synthesizeKokoroWav (native)', () => {
       },
       {
         kokoroNativeModule,
-        fs: { File: class {}, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+        resolveOutWavPath: () => 'file:///tmp/out.wav',
         ensureInstalled,
       },
-    )).rejects.toThrow('model_pack_publication_unavailable');
+    );
 
-    expect(ensureInstalled).not.toHaveBeenCalled();
+    expect(ensureInstalled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        mode: 'require_installed',
+      }),
+      expect.anything(),
+    );
+    expect(kokoroNativeModule.initialize).toHaveBeenCalledOnce();
+    expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledOnce();
   });
 
   it('preserves an explicit unknown experiment id for custom Kokoro development', async () => {
@@ -345,12 +373,95 @@ describe('synthesizeKokoroWav (native)', () => {
 
     controller.abort();
 
-    await expect(promise).rejects.toThrow(/aborted/i);
     expect(kokoroNativeModule.cancel).toHaveBeenCalledTimes(1);
 
-    // Prevent unhandled rejections in the test process.
     const settle: (v: { wavPath: string; sampleRate: number }) => void = synthesizeResolve ?? (() => {});
     settle({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 });
+
+    await expect(promise).rejects.toThrow(/aborted/i);
+  });
+
+  it('cancels the exact native job on deadline and waits for its settlement before cleanup', async () => {
+    vi.useFakeTimers();
+    try {
+      const fileDelete = vi.fn().mockResolvedValue(undefined);
+      class File {
+        uri: string;
+        constructor(...uris: any[]) {
+          this.uri = typeof uris[0] === 'string' ? uris[0] : 'file:///tmp/out.wav';
+        }
+        async arrayBuffer() {
+          return new Uint8Array([1]).buffer;
+        }
+        delete = fileDelete;
+      }
+
+      let rejectNativeSynthesis: (error: Error) => void = () => {};
+      const nativeSynthesis = new Promise<{ wavPath: string; sampleRate: number }>((_resolve, reject) => {
+        rejectNativeSynthesis = reject;
+      });
+      const kokoroNativeModule = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        listVoices: vi.fn().mockResolvedValue([]),
+        synthesizeToWavFile: vi.fn().mockImplementation(() => nativeSynthesis),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const promise = synthesizeKokoroWav(
+        {
+          text: 'hello',
+          assetSetId: 'kokoro-timeout-cleanup-test',
+          voiceId: 'af_bella',
+          speed: 1,
+          timeoutMs: 5,
+          signal: new AbortController().signal,
+        },
+        {
+          kokoroNativeModule,
+          fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+          resolveOutWavPath: () => 'file:///tmp/out.wav',
+          ensureInstalled: async () => ({
+            packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-timeout-cleanup-test',
+            manifest: {
+              packId: 'kokoro-timeout-cleanup-test',
+              kind: 'tts_sherpa',
+              model: 'kokoro',
+              version: '1.0.0',
+              voices: [{ id: 'af_bella', title: 'Bella', sid: 0 }],
+              files: [],
+            } as any,
+          }),
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      const jobId = kokoroNativeModule.synthesizeToWavFile.mock.calls[0]?.[0]?.jobId;
+      expect(typeof jobId).toBe('string');
+
+      await vi.advanceTimersByTimeAsync(5);
+
+      expect(kokoroNativeModule.cancel).toHaveBeenCalledWith({ jobId });
+      expect(fileDelete).not.toHaveBeenCalled();
+
+      let settled = false;
+      void promise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      rejectNativeSynthesis(new Error('native_cancelled'));
+
+      await expect(promise).rejects.toThrow('timeout');
+      expect(fileDelete).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('falls back to built-in voiceId mapping when manifest has no voices', async () => {

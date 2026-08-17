@@ -75,6 +75,7 @@ describe('SessionRetentionNotice', () => {
 
         const retentionNotice = screen.findByTestId('session-retention-notice');
         expect(retentionNotice).not.toBeNull();
+        expect(screen.findByTestId('session-retention-notice-icon')).not.toBeNull();
         expect(screen.getTextContent()).toContain('server.retention.sessions');
         expect(screen.getTextContent()).toContain('This server deletes inactive sessions after 30 days of inactivity.');
     });

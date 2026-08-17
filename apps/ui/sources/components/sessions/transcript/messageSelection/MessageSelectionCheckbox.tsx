@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { TranscriptSelectableMessageRole } from './_types';
 import { formatMessageSelectionRowAccessibilityLabel } from './messageSelectionAccessibility';
 import { useOptionalTranscriptSelectionRow } from './TranscriptMessageSelectionContext';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function MessageSelectionCheckbox(props: Readonly<{
     messageId: string;
@@ -36,9 +36,9 @@ export function MessageSelectionCheckbox(props: Readonly<{
                 pressed ? styles.checkboxPressed : null,
             ]}
         >
-            <Ionicons
-                name={row.isSelected ? 'checkbox-outline' : 'square-outline'}
-                size={18}
+            <Icon
+                name={row.isSelected ? 'check-square' : 'square'}
+                size={16}
                 color={row.isSelected ? theme.colors.state.active.foreground : theme.colors.text.secondary}
             />
         </Pressable>

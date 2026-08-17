@@ -26,6 +26,32 @@ function resetLiveSecrets() {
     liveSecretListeners.clear();
 }
 
+/**
+ * Saved secrets are read through the canonical settings-store hook, so the live-update contract
+ * lives at that seam: a store change while the surface is mounted has to re-render it. This
+ * stand-in publishes to the same listener set `updateLiveSecrets` drives, so a surface that
+ * snapshots the list once instead of subscribing fails these tests. Both the hooks module and the
+ * barrel that re-exports it are mocked, because the surfaces import it under both specifiers. The
+ * cast at the barrel narrows the generic settings hook to the single key these surfaces read.
+ */
+function useLiveSecretsSetting(name: string): SavedSecret[] {
+    if (name !== 'secrets') {
+        throw new Error(`Unexpected setting key in test: ${name}`);
+    }
+
+    const [, forceUpdate] = React.useReducer((value: number) => value + 1, 0);
+
+    React.useEffect(() => {
+        const listener = () => forceUpdate();
+        liveSecretListeners.add(listener);
+        return () => {
+            liveSecretListeners.delete(listener);
+        };
+    }, []);
+
+    return liveSecrets;
+}
+
 installValueRefsCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -54,30 +80,21 @@ installValueRefsCommonModuleMocks({
             }),
         });
     },
-    storage: async (_importOriginal) => {
+    storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useSettingMutable: ((name: string) => {
-                if (name !== 'secrets') {
-                    throw new Error(`Unexpected setting key in test: ${name}`);
-                }
-
-                const ReactModule = require('react') as typeof React;
-                const [, forceUpdate] = ReactModule.useReducer((value: number) => value + 1, 0);
-
-                ReactModule.useEffect(() => {
-                    const listener = () => forceUpdate();
-                    liveSecretListeners.add(listener);
-                    return () => {
-                        liveSecretListeners.delete(listener);
-                    };
-                }, []);
-
-                return [liveSecrets, updateLiveSecrets] as const;
-            }) as typeof import('@/sync/domains/state/storage').useSettingMutable,
+            useSetting: useLiveSecretsSetting as unknown as typeof import('@/sync/domains/state/storage').useSetting,
         });
     },
 });
+
+vi.mock('@/sync/store/hooks', () => ({
+    useSetting: useLiveSecretsSetting,
+}));
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: () => ({ mutateAccountSettings: vi.fn() }),
+}));
 
 vi.mock('@/components/ui/text/Text', () => ({
     ...createPassThroughModule(['Text', 'TextInput']),

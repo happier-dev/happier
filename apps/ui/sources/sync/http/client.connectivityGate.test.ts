@@ -52,7 +52,9 @@ function installTokenStorageMock(params: { failGetCredentials?: boolean } = {}) 
 function installRuntimeFetchMock() {
     const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : String(input);
-        if (url.endsWith('/health')) {
+        // "The network is down" must fail every readiness route: an authenticated client probes /v1/auth/ping,
+        // a tokenless one probes /health.
+        if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
             throw new TypeError('Network request failed');
         }
         if (url.endsWith('/v1/account/profile')) {
@@ -259,8 +261,8 @@ describe('serverFetch connectivity supervision', () => {
         await firstAssertion;
         await secondAssertion;
 
-        const healthCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/health'));
-        expect(healthCalls).toHaveLength(1);
+        const probeCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/v1/auth/ping'));
+        expect(probeCalls).toHaveLength(1);
     });
 
     it('does not get retried by default backoff when reachability times out', async () => {
@@ -291,8 +293,8 @@ describe('serverFetch connectivity supervision', () => {
 
         // If the error were treated as retryable, the backoff loop would schedule a retry and re-run the probe.
         await vi.advanceTimersByTimeAsync(10);
-        const healthCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/health'));
-        expect(healthCalls).toHaveLength(1);
+        const probeCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/v1/auth/ping'));
+        expect(probeCalls).toHaveLength(1);
     });
 
     it('does not mark the server unreachable when a request is aborted by the caller', async () => {

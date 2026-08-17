@@ -11,7 +11,8 @@ export function isReleasedServerV021CompatibilitySnapshot(
   snapshot: ServerFeaturesSnapshot,
 ): boolean {
   if (snapshot.status !== 'ready') return false;
-  return snapshot.features.capabilities.compatibility === undefined
+  return snapshot.features.capabilities.session.runtimeActivity === undefined
+    && snapshot.features.capabilities.session.pendingInput === undefined
     && snapshot.features.features.sharing.pendingQueueV2.enabled === true
     && snapshot.features.features.sharing.pendingDeliveryState.enabled !== true;
 }

@@ -1,3 +1,4 @@
+import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 const SessionModeOptionSchema = z.object({
@@ -19,6 +20,20 @@ const SessionModelOptionChoiceSchema = z.object({
     name: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
 });
+
+/**
+ * Producer-declared rule: while this boolean option is effectively on, `optionIds` are not
+ * user-controllable and (when `forcedValue` is present) actually run at that value. Zod strips
+ * unknown keys by default, so this must stay declared on every option schema or the fact
+ * silently disappears between the agent that authored it and the control the user sees.
+ *
+ * This is the canonical read-side schema itself, not a restatement of it:
+ * `AgentModelOptionOverrideRuleReadSchema` owns the bounds AND the unknown-key policy (see its
+ * doc comment in `packages/protocol/src/models/descriptor.ts`), shared with the CLI's fork-side
+ * reader so the two cannot drift. `sync/domains/state/storageTypes` and
+ * `sessionControl/configOptionsControl` both consume this binding rather than validating again.
+ */
+export const SessionOptionOverrideRuleSchema = AgentModelOptionOverrideRuleReadSchema;
 
 const SessionModelOptionSchema = z.object({
     id: z.string().trim().min(1),
@@ -66,6 +81,7 @@ const SessionConfigOptionSchema = z.object({
     currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
     options: z.array(SessionConfigOptionSelectOptionSchema).optional(),
     groups: z.array(SessionConfigOptionSelectGroupSchema).optional(),
+    overridesWhenOn: SessionOptionOverrideRuleSchema.optional(),
 });
 
 const SessionConfigOptionsStateSchema = z.object({

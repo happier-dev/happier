@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 
 import { CodeView } from '@/components/ui/media/CodeView';
 import { Item } from '@/components/ui/lists/Item';
@@ -11,15 +10,16 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { Typography } from '@/constants/Typography';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { useSession } from '@/sync/domains/state/storage';
 import { machineReadSessionLogTail } from '@/sync/ops';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 const LOG_TAIL_MAX_BYTES = 200_000;
@@ -46,9 +46,7 @@ export default function SessionLogScreen() {
         return raw.length > 0 ? raw : null;
     }, [ownerMetadata]);
 
-    const resolvedMachineId = React.useMemo(() => {
-        return session?.id ? readMachineTargetForSession(session.id)?.machineId ?? null : null;
-    }, [ownerMetadata, session?.id, session?.updatedAt]);
+    const resolvedMachineId = useSessionMachineTarget(sessionId)?.machineId ?? null;
 
     const [tailText, setTailText] = React.useState('');
     const [resolvedLogPath, setResolvedLogPath] = React.useState<string | null>(null);
@@ -100,7 +98,7 @@ export default function SessionLogScreen() {
     if (!sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="hourglass-outline" size={48} color={theme.colors.text.secondary} />
+                <Icon name="hourglass" size={48} color={theme.colors.text.secondary} />
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 17, marginTop: 16, ...Typography.default('semiBold') }}>
                     {t('common.loading')}
                 </Text>
@@ -111,7 +109,7 @@ export default function SessionLogScreen() {
     if (!session) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="trash-outline" size={48} color={theme.colors.text.secondary} />
+                <Icon name="trash" size={48} color={theme.colors.text.secondary} />
                 <Text style={{ color: theme.colors.text.primary, fontSize: 20, marginTop: 16, ...Typography.default('semiBold') }}>
                     {t('errors.sessionDeleted')}
                 </Text>
@@ -128,7 +126,7 @@ export default function SessionLogScreen() {
                 <Item
                     title={t('sessionLog.logPathTitle')}
                     subtitle={resolvedLogPath || metadataLogPath || t('sessionLog.unavailable')}
-                    icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="file-text" size={29} color={theme.colors.accent.indigo} />}
                     showChevron={false}
                     copy={resolvedLogPath || metadataLogPath || false}
                     disabled={!resolvedLogPath && !metadataLogPath}
@@ -136,14 +134,14 @@ export default function SessionLogScreen() {
                 <Item
                     title={t('sessionLog.refreshTailTitle')}
                     subtitle={loading ? t('common.loading') : t('sessionLog.refreshTailSubtitle', { maxBytes: LOG_TAIL_MAX_BYTES.toLocaleString() })}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => void refreshTail()}
                     showChevron={false}
                 />
                 <Item
                     title={t('sessionLog.copyVisibleTitle')}
                     subtitle={tailText.length > 0 ? t('sessionLog.copyVisibleSubtitleLoaded') : t('sessionLog.copyVisibleSubtitleEmpty')}
-                    icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="copy" size={29} color={theme.colors.accent.blue} />}
                     showChevron={false}
                     disabled={tailText.length === 0}
                     copy={tailText.length > 0 ? tailText : false}
@@ -155,7 +153,7 @@ export default function SessionLogScreen() {
                     <Item
                         title={t('sessionLog.readErrorTitle')}
                         subtitle={error}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                        icon={<Icon name="warning-circle" size={29} color={theme.colors.state.danger.foreground} />}
                         showChevron={false}
                     />
                 </ItemGroup>

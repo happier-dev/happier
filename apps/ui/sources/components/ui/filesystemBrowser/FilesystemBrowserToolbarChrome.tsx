@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
@@ -8,6 +7,7 @@ import { t } from '@/text';
 
 import { FileBrowserToolbar, FileBrowserToolbarIconButton } from './FileBrowserToolbar';
 import { resolveFilesystemBrowserToolbarState, type FilesystemBrowserToolbarAction } from './filesystemBrowserToolbarState';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type { FilesystemBrowserToolbarAction } from './filesystemBrowserToolbarState';
 
@@ -80,7 +80,7 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
             accessibilityState={props.accessibilityState}
             onPress={props.onPress}
         >
-            <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.text.secondary} />
+            <Icon name="dots-three" size={16} color={theme.colors.text.secondary} />
         </FileBrowserToolbarIconButton>
     ), [overflowTriggerTestID, theme.colors.text.secondary]);
 

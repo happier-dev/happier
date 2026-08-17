@@ -1,5 +1,5 @@
+import { HappierInfoState } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { View } from 'react-native';
 
 import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
 
@@ -21,13 +21,20 @@ type EmptyStateProps = Readonly<{
 
 /**
  * Generic, app-wide empty state: themed icon + title + subtitle + optional
- * action. Reuses {@link CenteredInfoTile} for the icon/title/subtitle layout
- * (the canonical centered info tile) and adds the action slot it lacks. i18n is
- * the caller's responsibility — pass already-translated strings.
+ * action. i18n is the caller's responsibility — pass already-translated strings.
+ *
+ * The centered wrapper and the action slot's offset are the shared presentation
+ * owner (UI-T27), which the plugin loading/empty/error states render too. This
+ * adapter supplies {@link CenteredInfoTile}, which is where core's Unistyles
+ * typography lives.
  */
 export const EmptyState = React.memo((props: EmptyStateProps) => {
     return (
-        <View testID={props.testID} style={{ width: '100%', alignItems: 'center' }}>
+        <HappierInfoState
+            testID={props.testID}
+            actionTestID={props.actionTestID}
+            action={props.action}
+        >
             <CenteredInfoTile
                 icon={props.icon}
                 title={props.title}
@@ -36,15 +43,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
                 descriptionTestID={props.subtitleTestID}
                 paddingHorizontal={props.paddingHorizontal}
             />
-            {props.action != null ? (
-                <View
-                    testID={props.actionTestID}
-                    style={{ width: '100%', maxWidth: 520, alignItems: 'center', marginTop: 16 }}
-                >
-                    {props.action}
-                </View>
-            ) : null}
-        </View>
+        </HappierInfoState>
     );
 });
 

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 
 import { createVoiceCaptureAdmissionBinding } from '@/voice/runtime/input/VoiceCaptureAdmissionBinding';
 import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 
 import { createVoiceDictationController } from './VoiceDictationController';
+
+const ORIGINAL_PLATFORM_OS = Platform.OS;
 
 const EXPECTED_DICTATION_LIMITS = {
     captureDurationMs: 60_000,
@@ -82,6 +85,7 @@ function createPendingCaptureStartHarness() {
 
 afterEach(() => {
     vi.useRealTimers();
+    (Platform as unknown as { OS: string }).OS = ORIGINAL_PLATFORM_OS;
 });
 
 describe('createVoiceDictationController', () => {
@@ -107,11 +111,7 @@ describe('createVoiceDictationController', () => {
                     sttBinding: 'explicit',
                     language: 'de-CH',
                     stt: {
-                        provider: 'openai_compat',
-                        openaiCompat: {
-                            baseUrl: 'https://speech.example.test',
-                            model: 'whisper-dictation',
-                        },
+                        provider: 'happier.voice.openai-compat/stt',
                     },
                 },
             },
@@ -135,7 +135,7 @@ describe('createVoiceDictationController', () => {
                         local_conversation: expect.objectContaining({
                             config: expect.objectContaining({
                                 stt: expect.objectContaining({
-                                    provider: 'openai_compat',
+                                    provider: 'happier.voice.openai-compat/stt',
                                 }),
                             }),
                         }),
@@ -181,7 +181,7 @@ describe('createVoiceDictationController', () => {
                     dictation: {
                         sttBinding: 'same_as_local',
                         language: null,
-                        stt: { provider: 'openai_compat' },
+                        stt: { provider: 'happier.voice.openai-compat/stt' },
                     },
                 },
             }),
@@ -195,7 +195,7 @@ describe('createVoiceDictationController', () => {
     });
 
     it('re-resolves the persisted Dictation selection before every normal start', async () => {
-        let provider: 'device' | 'openai_compat' = 'device';
+        let provider: 'device' | 'happier.voice.openai-compat/stt' = 'device';
         const captureOwner = {
             startCapture: vi.fn(async (_request: { provider: string }) => {}),
             stopCapture: vi.fn(async (args: { provider: string }) => (
@@ -229,7 +229,7 @@ describe('createVoiceDictationController', () => {
 
         await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
         await controller.toggle('session-1');
-        provider = 'openai_compat';
+        provider = 'happier.voice.openai-compat/stt';
         await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
 
         expect(captureOwner.startCapture.mock.calls.map(([request]) => request.provider))
@@ -255,12 +255,12 @@ describe('createVoiceDictationController', () => {
                     dictation: {
                         sttBinding: 'explicit',
                         language: null,
-                        stt: { provider: 'openai_compat' },
+                        stt: { provider: 'happier.voice.openai-compat/stt' },
                     },
                     providers: {
                         local_conversation: {
                             schemaVersion: 1,
-                            config: { stt: { provider: 'openai_compat' } },
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
                         },
                     },
                 },
@@ -294,6 +294,98 @@ describe('createVoiceDictationController', () => {
             sessionId: null,
             status: 'idle',
         });
+    });
+
+    it('records web Auto local-neural Dictation before using the single-shot transcription owner', async () => {
+        (Platform as unknown as { OS: string }).OS = 'web';
+        const captureOwner = {
+            startCapture: vi.fn(async () => {}),
+            stopCapture: vi.fn(async () => ({
+                provider: 'recorded_audio' as const,
+                uri: 'file:///daemon-dictation.m4a',
+            })),
+            stopSession: vi.fn(async () => {}),
+        };
+        const transcribeRecordedAudio = vi.fn(async () => 'daemon transcript');
+        const controller = createVoiceDictationController({
+            captureOwner,
+            ...TEST_RECORDED_AUDIO_BOUNDARY,
+            getSettings: () => ({
+                voice: {
+                    dictation: {
+                        sttBinding: 'explicit',
+                        language: null,
+                        stt: {
+                            provider: 'local_neural',
+                            localNeural: {
+                                assetId: 'sherpa-streaming-zipformer-bilingual-zh-en',
+                                execution: 'auto',
+                            },
+                        },
+                    },
+                },
+            }),
+            transcribeRecordedAudio,
+        });
+
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+        expect(captureOwner.startCapture).toHaveBeenCalledWith(expect.objectContaining({
+            provider: 'recorded_audio',
+        }));
+
+        await expect(controller.toggle('session-1')).resolves.toEqual({
+            kind: 'completed',
+            text: 'daemon transcript',
+        });
+        expect(transcribeRecordedAudio).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-1',
+            uri: 'file:///daemon-dictation.m4a',
+        }));
+    });
+
+    it('pins the selected execution machine for the whole recorded-audio attempt', async () => {
+        (Platform as unknown as { OS: string }).OS = 'web';
+        let executionMachineId: string | null = 'machine-ready-at-start';
+        const captureOwner = {
+            startCapture: vi.fn(async () => {}),
+            stopCapture: vi.fn(async () => ({
+                provider: 'recorded_audio' as const,
+                uri: 'file:///daemon-dictation.m4a',
+            })),
+            stopSession: vi.fn(async () => {}),
+        };
+        const transcribeRecordedAudio = vi.fn(async () => 'open the project settings');
+        const controller = createVoiceDictationController({
+            captureOwner,
+            ...TEST_RECORDED_AUDIO_BOUNDARY,
+            getSettings: () => ({
+                voice: {
+                    dictation: {
+                        sttBinding: 'explicit',
+                        stt: {
+                            provider: 'local_neural',
+                            localNeural: {
+                                assetId: 'dummy',
+                                execution: 'auto',
+                            },
+                        },
+                    },
+                },
+            }),
+            resolveExecutionMachineId: () => executionMachineId,
+            transcribeRecordedAudio,
+        });
+
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+        executionMachineId = null;
+        await expect(controller.toggle('session-1')).resolves.toEqual({
+            kind: 'completed',
+            text: 'open the project settings',
+        });
+
+        expect(transcribeRecordedAudio).toHaveBeenCalledWith(expect.objectContaining({
+            executionMachineId: 'machine-ready-at-start',
+        }));
     });
 
     it('returns streaming device text without creating a recorded-audio transcription', async () => {
@@ -357,7 +449,7 @@ describe('createVoiceDictationController', () => {
                     providers: {
                         local_conversation: {
                             schemaVersion: 1,
-                            config: { stt: { provider: 'openai_compat' } },
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
                         },
                     },
                 },
@@ -377,6 +469,55 @@ describe('createVoiceDictationController', () => {
         await expect(completion).resolves.toEqual({ kind: 'cancelled' });
         expect(captureOwner.stopSession).toHaveBeenCalledWith('session-1');
         expect(controller.getSnapshot().status).toBe('idle');
+    });
+
+    it('removes a recorded-audio artifact that settles after cancellation', async () => {
+        let resolveStoppedCapture!: (result: Readonly<{
+            provider: 'recorded_audio';
+            uri: string;
+        }>) => void;
+        const captureOwner = {
+            startCapture: vi.fn(async () => {}),
+            stopCapture: vi.fn(() => new Promise<Readonly<{
+                provider: 'recorded_audio';
+                uri: string;
+            }>>((resolve) => {
+                resolveStoppedCapture = resolve;
+            })),
+            stopSession: vi.fn(async () => {}),
+        };
+        const deleteRecordedAudio = vi.fn(async () => {});
+        const controller = createVoiceDictationController({
+            captureOwner,
+            getSettings: () => ({
+                voice: {
+                    dictation: {
+                        sttBinding: 'explicit',
+                        language: null,
+                        stt: { provider: 'happier.voice.openai-compat/stt' },
+                    },
+                },
+            }),
+            measureRecordedAudioBytes: vi.fn(async () => 4),
+            deleteRecordedAudio,
+            transcribeRecordedAudio: vi.fn(),
+        });
+
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+        const completion = controller.toggle('session-1');
+        await vi.waitFor(() => {
+            expect(captureOwner.stopCapture).toHaveBeenCalledTimes(1);
+        });
+
+        await controller.cancel('session-1');
+        resolveStoppedCapture({
+            provider: 'recorded_audio',
+            uri: 'file:///late-dictation.m4a',
+        });
+
+        await expect(completion).resolves.toEqual({ kind: 'cancelled' });
+        expect(deleteRecordedAudio).toHaveBeenCalledOnce();
+        expect(deleteRecordedAudio).toHaveBeenCalledWith('file:///late-dictation.m4a');
     });
 
     it('treats End Dictation during capture startup as cancellation', async () => {
@@ -650,6 +791,7 @@ describe('createVoiceDictationController', () => {
                     id: 1,
                     sessionId: 'session-1',
                     kind: 'provider_error',
+                    reason: 'provider_unavailable',
                 },
             });
         });
@@ -729,7 +871,7 @@ describe('createVoiceDictationController', () => {
                     providers: {
                         local_conversation: {
                             schemaVersion: 1,
-                            config: { stt: { provider: 'openai_compat' } },
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
                         },
                     },
                 },
@@ -790,7 +932,7 @@ describe('createVoiceDictationController', () => {
                     providers: {
                         local_conversation: {
                             schemaVersion: 1,
-                            config: { stt: { provider: 'openai_compat' } },
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
                         },
                     },
                 },
@@ -844,7 +986,7 @@ describe('createVoiceDictationController', () => {
                     providers: {
                         local_conversation: {
                             schemaVersion: 1,
-                            config: { stt: { provider: 'openai_compat' } },
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
                         },
                     },
                 },
@@ -967,7 +1109,7 @@ describe('createVoiceDictationController', () => {
                     providers: {
                         local_conversation: {
                             schemaVersion: 1,
-                            config: { stt: { provider: 'openai_compat' } },
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
                         },
                     },
                 },

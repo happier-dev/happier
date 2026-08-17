@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -7,6 +6,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     readMemoryCoveragePolicy,
     withMemoryCoveragePolicy,
@@ -82,7 +82,7 @@ export const MemorySettingsCoverageSection = React.memo(function MemorySettingsC
                 }}
                 itemTrigger={{
                     title: t('memorySearchSettings.coverage.triggerTitle'),
-                    icon: <Ionicons name="filter-outline" size={29} color={theme.colors.accent.indigo} />,
+                    icon: <Icon name="funnel-simple" size={29} color={theme.colors.accent.indigo} />,
                 }}
             />
         </ItemGroup>

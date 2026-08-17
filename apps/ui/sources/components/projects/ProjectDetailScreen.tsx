@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
@@ -12,6 +11,8 @@ import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/st
 import { useDeviceType } from '@/utils/platform/responsive';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
+import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
@@ -22,6 +23,7 @@ import { ProjectRightPanel } from './detail/ProjectRightPanel';
 import { ProjectDetailsMainPanel } from './detail/ProjectDetailsMainPanel';
 import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
 import { useProjectOverviewMode } from './detail/useProjectOverviewMode';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const ProjectDetailScreen = React.memo((props: Readonly<{
     workspaceRefId: string;
@@ -30,6 +32,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     showWorktrees?: boolean;
     onSelectRootPath?: (path: string) => void;
     onSetShowWorktrees?: (nextValue: boolean) => void;
+    onPluginSurfaceOpenChange?: (handler: PluginSurfaceOpenHandler | undefined) => void;
 }>) => {
     const { theme } = useUnistyles();
     const deviceType = useDeviceType();
@@ -41,6 +44,13 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const scopeId = React.useMemo(() => buildProjectPaneScopeId(props.workspaceRefId), [props.workspaceRefId]);
     const pane = useAppPaneScope(scopeId);
     const workspaceRef = useWorkspaceRefById(props.workspaceRefId);
+    // This direct Project adapter is the one public target/currentness source
+    // consumed by AppPane. Keep the projection lookup here rather than giving
+    // AppPane a fallback lookup keyed by an opaque scope id.
+    const pluginProjection = useScopedPluginUiProjection({
+        machineId: workspaceRef?.machineId ?? null,
+        serverId: workspaceRef?.serverId ?? null,
+    });
     const [localActiveRootPath, setLocalActiveRootPath] = React.useState<string | null>(null);
     const controlledActiveRootPath = props.activeRootPath ?? null;
     const workspaceRootPath = workspaceRef?.rootPath ?? '';
@@ -74,6 +84,13 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         const right = pane.scopeState?.right ?? null;
         if (!right) return;
         if (right.isOpen === true) return;
+        if (right.selectedDestination != null) {
+            // Reopening is a layout action, not a destination choice. Passing
+            // the retained built-in tab here would replace a restored plugin
+            // selection before its current projection can resolve.
+            pane.openRight();
+            return;
+        }
         const preferredTab = resolveProjectRightTabId(right.activeTabId);
         pane.openRight({ tabId: preferredTab });
         pane.setRightTab(preferredTab);
@@ -174,13 +191,53 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         workspaceRef,
     ]);
 
+    const projectSurfaceScope = React.useMemo(() => (
+        workspaceRef
+            ? {
+                targetKind: 'project' as const,
+                projectId: workspaceRef.id,
+                machineId: workspaceRef.machineId,
+                serverId: workspaceRef.serverId,
+                pluginUiProjection: pluginProjection.pluginUiProjection,
+                projectionPhase: pluginProjection.phase,
+                interactionEnabled: pluginProjection.interactionEnabled,
+                platform: pluginProjection.platform,
+            }
+            : null
+    ), [
+        pluginProjection.interactionEnabled,
+        pluginProjection.phase,
+        pluginProjection.platform,
+        pluginProjection.pluginUiProjection,
+        workspaceRef,
+    ]);
+    const renderProjectRightSidebar = React.useCallback(() => (
+        workspaceRef
+            ? <ProjectRightPanel
+                scopeId={scopeId}
+                workspaceRef={workspaceRef}
+                activeRootPath={resolvedActiveRootPath}
+                activeWorktreeId={resolvedActiveWorktreeId}
+                onSelectRootPath={handleSelectRootPath}
+            />
+            : null
+    ), [handleSelectRootPath, resolvedActiveRootPath, resolvedActiveWorktreeId, scopeId, workspaceRef]);
+    const projectRightPaneBuiltinAdapter = React.useMemo(() => ({
+        destinationIds: ['git', 'files', 'browser', 'services'],
+        defaultDestinationId: 'files',
+        render: renderProjectRightSidebar,
+    }), [renderProjectRightSidebar]);
+    const projectRightSidebarAdapter = React.useMemo(() => ({
+        render: renderProjectRightSidebar,
+    }), [renderProjectRightSidebar]);
+
     if (!workspaceRef) {
         return (
             <ItemList>
                 <ItemGroup>
                     <View style={{ alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 }}>
-                        <Ionicons
-                            name="warning-outline"
+                        <Icon
+                            name="warning"
                             size={48}
                             color={theme.colors.text.secondary}
                             style={{ marginBottom: 12 }}
@@ -212,10 +269,14 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     }
 
     return (
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1 }} {...pane.overlayFocusReturnCaptureProps}>
             <AppPaneScopeHost
                 scopeId={scopeId}
+                onPluginSurfaceOpenChange={props.onPluginSurfaceOpenChange}
                 detailsPaneEnabled={false}
+                surfaceScope={projectSurfaceScope!}
+                rightPaneBuiltinAdapter={projectRightPaneBuiltinAdapter}
+                rightSidebarAdapter={projectRightSidebarAdapter}
                 main={(
                     <ProjectDetailsMainPanel
                         scopeId={scopeId}
@@ -226,17 +287,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                         onSelectRootPath={handleSelectRootPath}
                     />
                 )}
-                rightPane={(
-                    <ProjectRightPanel
-                        scopeId={scopeId}
-                        workspaceRef={workspaceRef}
-                        activeRootPath={resolvedActiveRootPath}
-                        activeWorktreeId={resolvedActiveWorktreeId}
-                        onSelectRootPath={handleSelectRootPath}
-                    />
-                )}
-                detailsPane={null}
-                bottomPane={null}
             />
             <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
         </View>

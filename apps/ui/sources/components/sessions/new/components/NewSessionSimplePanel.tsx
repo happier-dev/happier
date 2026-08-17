@@ -2,6 +2,9 @@ import * as React from 'react';
 import type { ViewStyle } from 'react-native';
 import { Keyboard, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { projectAgentInputAttachmentRowItems } from '@/components/sessions/agentInput/agentInputContracts';
+import type { AgentInputExtraActionPresentation } from '@/components/sessions/agentInput/agentInputContracts';
+import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { t } from '@/text';
@@ -21,6 +24,11 @@ import {
 } from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
+import {
+    useNewSessionPromptValue,
+    type NewSessionPromptStore,
+} from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
+import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
 
 const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
 
@@ -34,7 +42,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     newSessionBottomPadding: number;
     shouldBottomAnchor?: boolean;
     containerStyle: ViewStyle;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
+    composerDocument?: NewSessionComposerDocument;
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     canCreate: boolean;
@@ -42,12 +51,13 @@ export type NewSessionSimplePanelProps = Readonly<{
     pendingLaunchAttempt?: NewSessionLaunchAttempt | null;
     providerLaunchError?: ProviderErrorV1 | null;
     retryProviderLaunch?: () => void;
-    emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
+    emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
-    onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
     sessionPromptInputMaxHeight?: number;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
+    /** Removable "continue from this Session" chip and its attachment row. */
+    sourceContextPresentation?: AgentInputExtraActionPresentation | null;
     agentType: React.ComponentProps<typeof AgentInput>['agentType'];
     agentLabel?: React.ComponentProps<typeof AgentInput>['agentLabel'];
     handleAgentClick: React.ComponentProps<typeof AgentInput>['onAgentClick'];
@@ -106,20 +116,35 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
         agentInputAttachments,
         addWebFiles,
         addPickedAttachments,
-        extraActionChips,
+        actionChips,
+        attachmentRowItems,
         handleSend,
     } = useNewSessionAttachmentsController({
         flowId: props.attachmentFlowId,
         isCreating: props.isCreating,
-        sessionPrompt: props.sessionPrompt,
+        promptStore: props.promptStore,
         handleCreateSession: props.handleCreateSession,
         selectedProfileId: props.selectedProfileId,
         targetServerId: props.targetServerId,
         selectedMachineId: props.selectedMachineId ?? null,
         selectedMachineHomeDir: props.selectedMachineHomeDir,
         selectedPath: props.selectedPath,
-        baseActionChips: props.agentInputExtraActionChips,
+        baseActionChips: [
+            ...(props.agentInputExtraActionChips ?? []),
+            ...(props.composerDocument?.extraActionChips ?? []),
+        ],
+        sourceContextPresentation: props.sourceContextPresentation ?? null,
+        composerDocument: props.composerDocument,
     });
+    const projectedAttachmentRowItems = React.useMemo(() => (
+        projectAgentInputAttachmentRowItems({
+            items: [
+                ...(props.composerDocument?.attachmentRowItems ?? []),
+                ...attachmentRowItems,
+            ],
+            transferAttachments: agentInputAttachments,
+        })
+    ), [agentInputAttachments, attachmentRowItems, props.composerDocument?.attachmentRowItems]);
 
     const composerReservedHeight = props.newSessionBottomPadding
         + (shouldBottomAnchor ? 0 : props.safeAreaTop + props.newSessionTopPadding);
@@ -174,11 +199,12 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                             attachmentsController={{
                                 attachmentsUploadsEnabled,
                                 filePickerRef,
-                                hasSendableAttachments,
-                                agentInputAttachments,
+                                hasSendableAttachments: hasSendableAttachments
+                                    || props.composerDocument?.hasSendableAttachments === true,
                                 addWebFiles,
                                 addPickedAttachments,
-                                extraActionChips,
+                                actionChips,
+                                attachmentRowItems: projectedAttachmentRowItems,
                                 handleSend,
                             }}
                         />
@@ -227,10 +253,10 @@ type NewSessionSimplePanelComposerProps = Readonly<{
         attachmentsUploadsEnabled: boolean;
         filePickerRef: React.ComponentPropsWithRef<typeof AttachmentFilePicker>['ref'];
         hasSendableAttachments: boolean;
-        agentInputAttachments: React.ComponentProps<typeof AgentInput>['attachments'];
         addWebFiles: NonNullable<React.ComponentProps<typeof AgentInput>['onAttachmentsAdded']>;
         addPickedAttachments: React.ComponentProps<typeof AttachmentFilePicker>['onAttachmentsPicked'];
-        extraActionChips: React.ComponentProps<typeof AgentInput>['extraActionChips'];
+        actionChips: React.ComponentProps<typeof AgentInput>['extraActionChips'];
+        attachmentRowItems: React.ComponentProps<typeof AgentInput>['attachmentRowItems'];
         handleSend: React.ComponentProps<typeof AgentInput>['onSend'];
     }>;
 }>;
@@ -240,6 +266,9 @@ function NewSessionSimplePanelComposer({
     reservedHeight,
     attachmentsController,
 }: NewSessionSimplePanelComposerProps): React.ReactElement {
+    // Subscribed here, at the leaf that renders the input: a keystroke re-renders this
+    // composer and nothing above it — not the panel, and not the screen model.
+    const sessionPrompt = useNewSessionPromptValue(props.promptStore);
     const { height: windowHeight } = useWindowDimensions();
     const availablePanelHeight = useComposerAvailablePanelHeight();
     const initialAvailablePanelHeight = React.useMemo(() => {
@@ -278,17 +307,27 @@ function NewSessionSimplePanelComposer({
                         error={props.providerLaunchError}
                         retry={props.retryProviderLaunch}
                     />
-                    <AgentInput
-                        value={props.sessionPrompt}
+                    <PluginContextualResourceStoreProvider>
+                        {props.composerDocument?.beforeComposer}
+                        <AgentInput
+                        value={sessionPrompt}
                         onChangeText={props.setSessionPrompt}
+                        structuredInputMentions={props.composerDocument?.structuredInputMentions}
+                        onStructuredInputMentionsChange={props.composerDocument?.onStructuredInputMentionsChange}
+                        onComposerFocusChange={props.composerDocument?.onComposerFocusChange}
+                        onComposerFocusRequestChange={props.composerDocument?.onComposerFocusRequestChange}
+                        onComposerActionBarLayoutChange={props.composerDocument?.onComposerActionBarLayoutChange}
+                        composerDecorations={props.composerDocument?.composerDecorations ?? []}
+                        composerInputLock={props.composerDocument?.composerInputLock ?? null}
                         onSend={attachmentsController.handleSend}
-                        isSendDisabled={!props.canCreate}
+                        isSendDisabled={!props.canCreate || props.composerDocument?.composerInputLock !== null}
+                        disabled={props.composerDocument?.composerInputLock?.mode === 'editAndSubmit'}
                         isSending={props.isCreating}
                         placeholder={t('session.inputPlaceholder')}
-                        autocompletePrefixes={props.emptyAutocompletePrefixes}
+                        autocompleteKinds={props.emptyAutocompleteKinds}
                         autocompleteSuggestions={props.emptyAutocompleteSuggestions}
-                        onAutocompleteSuggestionSelect={props.onAutocompleteSuggestionSelect}
-                        extraActionChips={attachmentsController.extraActionChips}
+                        extraActionChips={attachmentsController.actionChips}
+                        attachmentRowItems={attachmentsController.attachmentRowItems}
                         inputMaxHeight={props.sessionPromptInputMaxHeight}
                         maxPanelHeight={maxPanelHeight}
                         panelMaxHeightMode="host-constrained"
@@ -301,7 +340,6 @@ function NewSessionSimplePanelComposer({
                         onAgentPickerSelect={props.onAgentPickerSelect}
                         agentPickerApplyLabel={props.agentPickerApplyLabel}
                         agentPickerProbe={props.agentPickerProbe}
-                        attachments={attachmentsController.agentInputAttachments}
                         onAttachmentsAdded={attachmentsController.attachmentsUploadsEnabled ? attachmentsController.addWebFiles : undefined}
                         hasSendableAttachments={attachmentsController.hasSendableAttachments}
                         permissionMode={props.permissionMode}
@@ -345,7 +383,9 @@ function NewSessionSimplePanelComposer({
                                 onEnvVarsClick: undefined,
                             }
                             : {})}
-                    />
+                        />
+                        {props.composerDocument?.afterComposer}
+                    </PluginContextualResourceStoreProvider>
                     {attachmentsController.attachmentsUploadsEnabled ? (
                         <AttachmentFilePicker
                             ref={attachmentsController.filePickerRef}

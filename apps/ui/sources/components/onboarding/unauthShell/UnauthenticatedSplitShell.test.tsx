@@ -245,6 +245,7 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
+                retentionSummary="This relay cleans up subagent transcripts after 7 days."
                 onOpenRelayCustomFlow={() => {}}
                 onBrandHeroGetStarted={() => {}}
             >
@@ -252,6 +253,8 @@ describe('UnauthenticatedSplitShell', () => {
             </UnauthenticatedSplitShell>,
         );
         expect(screenWelcome.findByTestId('welcome-footer-links')).toBeTruthy();
+        expect(screenWelcome.findByTestId('welcome-footer-retention')).toBeTruthy();
+        expect(screenWelcome.getTextContent()).toContain('This relay cleans up subagent transcripts after 7 days.');
 
         const screenOther = await renderScreen(
             <UnauthenticatedSplitShell
@@ -369,8 +372,19 @@ describe('StagePane', () => {
             expect(noiseStyle.backgroundRepeat).toBe('repeat');
         }
 
+        // ONE planet framing recipe (spec §1). The stage used to select its own
+        // `desktopComposition="horizon"` crop ('50%' / '86%'), which anchored the
+        // disc centred and read as a floating ball cut off at the narration
+        // divider; it now makes the same `PlanetBackground` call the welcome
+        // brand pane makes. Asserting parity against a real brand-mode render —
+        // rather than restating a literal — is what this file is uniquely placed
+        // to check: it fails if either pane grows its own framing again.
+        const brandPane = await renderScreen(<StagePane mode="brand" />);
+        const brandPlanet = brandPane.findByTestId('planet-background-desktop');
         const planet = screen.findByTestId('planet-background-desktop');
-        expect(planet?.props.contentPosition).toMatchObject({ left: '50%', top: '86%' });
+        expect(brandPlanet?.props.contentPosition).toBeTruthy();
+        expect(planet?.props.contentFit).toBe(brandPlanet?.props.contentFit);
+        expect(planet?.props.contentPosition).toEqual(brandPlanet?.props.contentPosition);
 
         const wallpaperHost = screen.findByTestId('unauth-shell-stage-wallpaper-host');
         const style = flattenStyle(wallpaperHost?.props.style);

@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type ScrollEdgeIndicatorVisibility = Readonly<{
     top?: boolean;
@@ -27,8 +27,8 @@ export function ScrollEdgeIndicators(props: {
 
     if (!edges.top && !edges.bottom && !edges.left && !edges.right) return null;
 
-    const renderIndicatorIcon = React.useCallback((name: React.ComponentProps<typeof Ionicons>['name']) => {
-        return normalizeNodeForView(<Ionicons name={name} size={size} color={props.color} />);
+    const renderIndicatorIcon = React.useCallback((name: IconName) => {
+        return normalizeNodeForView(<Icon name={name} size={size} color={props.color} />);
     }, [props.color, size]);
 
     return (
@@ -50,7 +50,7 @@ export function ScrollEdgeIndicators(props: {
                         props.topStyle,
                     ]}
                 >
-                    {renderIndicatorIcon('chevron-up')}
+                    {renderIndicatorIcon('caret-up')}
                 </View>
             ) : null}
 
@@ -71,7 +71,7 @@ export function ScrollEdgeIndicators(props: {
                         props.bottomStyle,
                     ]}
                 >
-                    {renderIndicatorIcon('chevron-down')}
+                    {renderIndicatorIcon('caret-down')}
                 </View>
             ) : null}
 
@@ -93,7 +93,7 @@ export function ScrollEdgeIndicators(props: {
                     ]}
                 >
                     <View style={{ width: '100%', alignItems: 'center' }}>
-                        {renderIndicatorIcon('chevron-back')}
+                        {renderIndicatorIcon('caret-left')}
                     </View>
                 </View>
             ) : null}
@@ -116,7 +116,7 @@ export function ScrollEdgeIndicators(props: {
                     ]}
                 >
                     <View style={{ width: '100%', alignItems: 'center' }}>
-                        {renderIndicatorIcon('chevron-forward')}
+                        {renderIndicatorIcon('caret-right')}
                     </View>
                 </View>
             ) : null}

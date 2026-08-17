@@ -9,6 +9,7 @@ import {
     peekServerReachabilityToken,
     reportServerUnreachable,
     ServerReachabilityWaitTimeoutError,
+    invalidateServerReachabilitySupervisor,
     waitForServerReachable,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import {
@@ -16,6 +17,13 @@ import {
     readServerReachabilityWaitTimeoutMs,
 } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { notifyAuthCredentialsInvalidated } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import {
+    AccountStoredContentCompatibilityUnavailableError,
+    readAccountStoredContentCompatibilityRequestDeclaration,
+    resolveAccountStoredContentCompatibilityHeaders,
+    stripAccountStoredContentCompatibilityHeader,
+} from './accountStoredContentCompatibility';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -80,6 +88,23 @@ function resolveRequestTimeoutMs(method: string, optionTimeoutMs: number | undef
 
 const inFlightControllers = new Set<AbortController>();
 let abortSequence = 0;
+
+// A marked first-key migration keeps the rejected credential bytes as recovery
+// custody. Fence only the exact rejected bearer in memory so later HTTP calls
+// cannot silently reuse it as ordinary auth. Canonical credential replacement
+// or removal clears the fence when the next request observes current storage.
+const rejectedFirstKeyBearerByServer = new Map<string, string>();
+const classifiedAllowedBearerByServer = new Map<string, string>();
+
+function resolveRejectedFirstKeyBearerKey(params: Readonly<{
+    serverId: string;
+    serverUrl: string;
+}>): string {
+    return JSON.stringify([
+        params.serverId,
+        params.serverUrl,
+    ]);
+}
 
 const debugLogThrottleMs = 5_000;
 const lastDebugLogMsByKey = new Map<string, number>();
@@ -209,11 +234,123 @@ export async function serverFetch(
         && !!activeServerUrl
         && absoluteRequestUrl.origin !== activeServerUrl.origin;
 
-    const headers = new Headers(init?.headers ?? {});
+    const requestedCompatibilityDeclaration =
+        readAccountStoredContentCompatibilityRequestDeclaration(init);
+    const compatibility = normalizedPath === '/v1/features'
+        ? null
+        : resolveAccountStoredContentCompatibilityHeaders(
+            init?.headers,
+            {
+                serverUrl: snapshot.serverUrl,
+                ...(requestedCompatibilityDeclaration
+                    ? { declaration: requestedCompatibilityDeclaration }
+                    : {}),
+            },
+        );
+    if (
+        requestedCompatibilityDeclaration
+        && compatibility?.status === 'unavailable'
+    ) {
+        throw new AccountStoredContentCompatibilityUnavailableError(
+            compatibility.reason,
+        );
+    }
+    const headers = compatibility?.status === 'available'
+        ? compatibility.headers
+        : stripAccountStoredContentCompatibilityHeader(init?.headers);
+    const rejectedFirstKeyBearerKey =
+        resolveRejectedFirstKeyBearerKey(snapshot);
+    let rejectedFirstKeyBearer =
+        rejectedFirstKeyBearerByServer.get(
+            rejectedFirstKeyBearerKey,
+        ) ?? null;
     let usedToken: string | null = null;
     if (options.includeAuth !== false) {
         const credentials = await TokenStorage.getCredentials();
-        if (credentials?.token) {
+        if (!credentials?.token) {
+            rejectedFirstKeyBearerByServer.delete(
+                rejectedFirstKeyBearerKey,
+            );
+            classifiedAllowedBearerByServer.delete(
+                rejectedFirstKeyBearerKey,
+            );
+            rejectedFirstKeyBearer = null;
+        }
+        if (
+            rejectedFirstKeyBearer
+            && credentials?.token
+            !== rejectedFirstKeyBearer
+        ) {
+            rejectedFirstKeyBearerByServer.delete(
+                rejectedFirstKeyBearerKey,
+            );
+            classifiedAllowedBearerByServer.delete(
+                rejectedFirstKeyBearerKey,
+            );
+            rejectedFirstKeyBearer = null;
+        }
+        if (
+            credentials?.token
+            && (
+                rejectedFirstKeyBearer
+                === credentials.token
+                || classifiedAllowedBearerByServer
+                    .get(
+                        rejectedFirstKeyBearerKey,
+                    )
+                    !== credentials.token
+            )
+        ) {
+            const classification =
+                await TokenStorage
+                    .classifyPendingExternalAuthFirstKeyRejectedCredential({
+                        serverId:
+                            snapshot.serverId,
+                        serverUrl:
+                            snapshot.serverUrl,
+                        token:
+                            credentials.token,
+                    });
+            if (
+                classification.kind
+                === 'rejected'
+            ) {
+                rejectedFirstKeyBearer =
+                    credentials.token;
+                rejectedFirstKeyBearerByServer.set(
+                    rejectedFirstKeyBearerKey,
+                    credentials.token,
+                );
+                classifiedAllowedBearerByServer.delete(
+                    rejectedFirstKeyBearerKey,
+                );
+                fireAndForget(
+                    invalidateServerReachabilitySupervisor({
+                        serverUrl:
+                            snapshot.serverUrl,
+                        token: null,
+                    }),
+                    {
+                        tag:
+                            'serverFetch.persistedFirstKeyRejectedBearerReachability',
+                    },
+                );
+            } else {
+                rejectedFirstKeyBearerByServer.delete(
+                    rejectedFirstKeyBearerKey,
+                );
+                rejectedFirstKeyBearer = null;
+                classifiedAllowedBearerByServer.set(
+                    rejectedFirstKeyBearerKey,
+                    credentials.token,
+                );
+            }
+        }
+        if (
+            credentials?.token
+            && credentials.token
+            !== rejectedFirstKeyBearer
+        ) {
             usedToken = credentials.token;
             headers.set('Authorization', `Bearer ${credentials.token}`);
         }
@@ -223,6 +360,13 @@ export async function serverFetch(
     const explicitAuthHeader = headers.get('Authorization') ?? '';
     if (!usedToken && explicitAuthHeader.startsWith('Bearer ')) {
         usedToken = explicitAuthHeader.slice(7).trim() || null;
+    }
+    if (
+        usedToken
+        && usedToken === rejectedFirstKeyBearer
+    ) {
+        headers.delete('Authorization');
+        usedToken = null;
     }
     const hasAuthorization = explicitAuthHeader.trim().length > 0;
     if (hasAuthorization) {
@@ -292,10 +436,18 @@ export async function serverFetch(
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
                 if (isActiveOrigin && retryMode !== 'none') {
+                    const reachabilityToken =
+                        peekServerReachabilityToken(
+                            snapshot.serverUrl,
+                        ) ?? null;
                     const tokenForReachability =
                         usedToken
-                        ?? peekServerReachabilityToken(snapshot.serverUrl)
-                        ?? null;
+                        ?? (
+                            reachabilityToken
+                            === rejectedFirstKeyBearer
+                                ? null
+                                : reachabilityToken
+                        );
                     try {
                         await waitForServerReachable({
                             serverUrl: snapshot.serverUrl,
@@ -386,11 +538,77 @@ export async function serverFetch(
                 break;
             }
 
-            // If the active token is rejected, clear it to prevent the UI from getting stuck in a persistent 401 loop.
-            // The follow-up request (if any) will re-read credentials and may pick up a refreshed token, or allow the
-            // UI to present a clean sign-in state for that server scope.
+            // Classify the rejected active token before deleting it. Marked
+            // first-key recovery custody must remain exact; otherwise removal
+            // prevents a persistent 401 loop and permits a refreshed token.
             let invalidatedStoredCredentials = false;
             try {
+                // Load the first-key owner lazily: it uses serverFetch for recovery
+                // requests, so a static import here would create a module cycle.
+                const {
+                    guardAccountEncryptionFirstKeyCredentialMutation,
+                    markAccountEncryptionFirstKeyRejectedCredential,
+                } = await import(
+                    '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth'
+                );
+                const guard =
+                    await guardAccountEncryptionFirstKeyCredentialMutation({
+                        serverId: snapshot.serverId,
+                        serverUrl: snapshot.serverUrl,
+                    });
+                if (guard.kind !== 'allowed') {
+                    const marked =
+                        await markAccountEncryptionFirstKeyRejectedCredential({
+                            recovery:
+                                guard.recovery,
+                            token: usedToken,
+                        });
+                    if (
+                        marked.kind
+                        !== 'recorded'
+                    ) {
+                        break;
+                    }
+                    const alreadyFenced =
+                        rejectedFirstKeyBearerByServer
+                            .get(
+                                rejectedFirstKeyBearerKey,
+                            )
+                        === usedToken;
+                    rejectedFirstKeyBearerByServer.set(
+                        rejectedFirstKeyBearerKey,
+                        usedToken,
+                    );
+                    classifiedAllowedBearerByServer.delete(
+                        rejectedFirstKeyBearerKey,
+                    );
+                    fireAndForget(
+                        invalidateServerReachabilitySupervisor({
+                            serverUrl:
+                                snapshot.serverUrl,
+                            token: null,
+                        }),
+                        {
+                            tag:
+                                'serverFetch.firstKeyRejectedBearerReachability',
+                        },
+                    );
+                    if (!alreadyFenced) {
+                        notifyAuthCredentialsInvalidated({
+                            kind:
+                                'first_key_recovery_required',
+                            serverId:
+                                snapshot.serverId,
+                            serverUrl:
+                                snapshot.serverUrl,
+                            recovery:
+                                marked.recovery,
+                        });
+                    }
+                    // The rejected bearer is retained only as exact first-key
+                    // recovery custody. It must not be retried as normal auth.
+                    break;
+                }
                 invalidatedStoredCredentials = await TokenStorage.invalidateCredentialsTokenForServerUrl(snapshot.serverUrl, usedToken, {
                     serverId: snapshot.serverId,
                 });
@@ -399,9 +617,9 @@ export async function serverFetch(
             }
             if (invalidatedStoredCredentials) {
                 notifyAuthCredentialsInvalidated({
+                    kind: 'credentials_removed',
                     serverId: snapshot.serverId,
                     serverUrl: snapshot.serverUrl,
-                    token: usedToken,
                 });
             }
 

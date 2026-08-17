@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import {
+    SessionModelSelectionV1Schema,
+    SessionServerStartSpawnDraftV1Schema,
+    type SessionModelSelectionV1,
+} from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
@@ -11,7 +15,10 @@ import {
     buildNewSessionAuthoringDraftFromResolvedInputs,
     buildNewSessionAuthoringDraftFromPersistedDraft,
     buildNewSessionAuthoringDraftFromTempData,
+    buildSessionAuthoringDraftFromServerStartSpawnDraftV1,
+    buildSessionServerStartSpawnDraftV1FromAuthoringDraft,
     buildPersistedNewSessionDraftFromAuthoringDraft,
+    buildSessionSpawnNewInputV2FromAuthoringDraft,
     buildSpawnSessionOptionsFromAuthoringDraft,
     buildNewSessionTempDataFromAuthoringDraft,
     hydrateSessionAuthoringDraftFromAutomationTemplate,
@@ -38,6 +45,336 @@ function modelSelection(
 }
 
 describe('sessionAuthoringDraftAdapters', () => {
+    it('hydrates every representable strict server-start field through an exact catalog Agent target', () => {
+        const spawn = SessionServerStartSpawnDraftV1Schema.parse({
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            directory: '/workspace/project',
+            organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1'] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'acme.review-agent', localId: 'review-agent' },
+            },
+            modelSelection: modelSelection('backend:review-agent', 'review-model', 30, 'provider-1'),
+            profileId: 'profile-1',
+            permissionMode: 'plan',
+            agentModeId: 'plan',
+            configuration: {
+                mode: { value: 'plan', updatedAtMs: 10 },
+                model: { value: 'review-model', updatedAtMs: 30 },
+                permissionIntent: { value: 'plan', updatedAtMs: 20 },
+                options: {
+                    reasoning: { value: 'high', updatedAtMs: 40 },
+                    safe: { value: true, updatedAtMs: 41 },
+                },
+                providerSessionResume: {
+                    kind: 'provider_session.v1',
+                    providerSessionId: 'provider-session-1',
+                },
+            },
+            connectedServices: {
+                v: 1,
+                bindingsByServiceId: {
+                    github: { source: 'connected', selection: 'profile', profileId: 'github-1' },
+                },
+            },
+            mcpSelection: {
+                v: 1,
+                managedServersEnabled: false,
+                forceIncludeServerIds: ['review'],
+                forceExcludeServerIds: ['legacy'],
+            },
+            transcriptStorage: 'direct',
+            terminal: {
+                mode: 'tmux',
+                tmux: { sessionName: 'review-automation' },
+                windows: { launchMode: 'windows_terminal', console: 'visible', windowName: 'review' },
+            },
+            checkoutCreationDraft: {
+                kind: 'git_worktree',
+                displayName: 'Review branch',
+                baseRef: 'main',
+            },
+        });
+
+        const result = buildSessionAuthoringDraftFromServerStartSpawnDraftV1({
+            spawn,
+            prompt: 'Review the changed files',
+            agentTargetCatalog: [{
+                agentTarget: spawn.agentTarget,
+                agentId: 'reviewAgent',
+                backendTarget: { kind: 'backend', backendId: 'review-agent' },
+            }],
+        });
+
+        expect(result).toEqual({
+            kind: 'available',
+            draft: expect.objectContaining({
+                targetType: 'new_session',
+                directory: '/workspace/project',
+                prompt: 'Review the changed files',
+                displayText: 'Review the changed files',
+                agentId: 'reviewAgent',
+                backendTarget: { kind: 'backend', backendId: 'review-agent' },
+                modelSelection: modelSelection('backend:review-agent', 'review-model', 30, 'provider-1'),
+                profileId: 'profile-1',
+                permissionMode: 'plan',
+                permissionModeUpdatedAt: 20,
+                acpSessionModeId: 'plan',
+                sessionConfigOptionOverrides: {
+                    v: 1,
+                    updatedAt: 41,
+                    overrides: {
+                        reasoning: { value: 'high', updatedAt: 40 },
+                        safe: { value: true, updatedAt: 41 },
+                    },
+                },
+                resumeSessionId: 'provider-session-1',
+                connectedServices: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        github: { source: 'connected', selection: 'profile', profileId: 'github-1' },
+                    },
+                },
+                mcpSelection: {
+                    v: 1,
+                    managedServersEnabled: false,
+                    forceIncludeServerIds: ['review'],
+                    forceExcludeServerIds: ['legacy'],
+                },
+                transcriptStorage: 'direct',
+                terminal: {
+                    mode: 'tmux',
+                    tmux: { sessionName: 'review-automation' },
+                    windows: { launchMode: 'windows_terminal', console: 'visible', windowName: 'review' },
+                },
+                windowsRemoteSessionLaunchMode: 'windows_terminal',
+                windowsRemoteSessionConsole: 'visible',
+                windowsTerminalWindowName: 'review',
+                checkoutCreationDraft: {
+                    kind: 'git_worktree',
+                    displayName: 'Review branch',
+                    baseRef: 'main',
+                },
+            }),
+        });
+    });
+
+    it('fails closed instead of selecting a fallback Agent when the strict target is absent from the current catalog', () => {
+        const spawn = SessionServerStartSpawnDraftV1Schema.parse({
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            directory: '/workspace/project',
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'acme.review-agent', localId: 'review-agent' },
+            },
+            permissionMode: 'default',
+            configuration: {
+                mode: { value: null, updatedAtMs: 10 },
+                model: { value: null, updatedAtMs: 10 },
+                permissionIntent: { value: 'default', updatedAtMs: 10 },
+                options: {},
+            },
+        });
+
+        expect(buildSessionAuthoringDraftFromServerStartSpawnDraftV1({
+            spawn,
+            prompt: 'Review the changed files',
+            agentTargetCatalog: [{
+                agentTarget: {
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                },
+                agentId: 'codex',
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+            }],
+        })).toEqual({
+            kind: 'unavailable',
+            reason: 'agent_target_unavailable',
+        });
+    });
+
+    it('rejects a server-start configuration that cannot be represented without changing its target-bound model', () => {
+        const spawn = SessionServerStartSpawnDraftV1Schema.parse({
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            directory: '/workspace/project',
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'acme.review-agent', localId: 'review-agent' },
+            },
+            modelSelection: modelSelection('backend:review-agent', 'review-model', 30),
+            permissionMode: 'default',
+            configuration: {
+                mode: { value: null, updatedAtMs: 10 },
+                model: { value: 'other-model', updatedAtMs: 30 },
+                permissionIntent: { value: 'default', updatedAtMs: 10 },
+                options: {},
+            },
+        });
+
+        expect(buildSessionAuthoringDraftFromServerStartSpawnDraftV1({
+            spawn,
+            prompt: 'Review the changed files',
+            agentTargetCatalog: [{
+                agentTarget: spawn.agentTarget,
+                agentId: 'reviewAgent',
+                backendTarget: { kind: 'backend', backendId: 'review-agent' },
+            }],
+        })).toEqual({
+            kind: 'unavailable',
+            reason: 'configuration_model_mismatch',
+        });
+    });
+
+    it('builds the reserved server-start draft without caller-selected creation or initial-input facts', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Review this',
+            displayText: 'Review this',
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: 'vendor-session-1',
+            permissionMode: 'default',
+            permissionModeUpdatedAt: 123,
+            modelSelection: modelSelection('backend:codex'),
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: { mode: 'integrated' },
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            windowsTerminalWindowName: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const spawn = buildSessionServerStartSpawnDraftV1FromAuthoringDraft({
+            draft,
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+            permissionMode: 'default',
+            configurationUpdatedAtMs: 999,
+        });
+
+        expect(spawn).toMatchObject({
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            configuration: {
+                providerSessionResume: {
+                    kind: 'provider_session.v1',
+                    providerSessionId: 'vendor-session-1',
+                },
+            },
+            terminal: { mode: 'integrated' },
+        });
+        expect('creationKey' in spawn).toBe(false);
+        expect('initialMessage' in spawn).toBe(false);
+    });
+
+    it('maps authored resume and Windows launch intent through the strict V2 nested owners', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Review this',
+            displayText: 'Review this',
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: 'vendor-session-1',
+            permissionMode: 'default',
+            permissionModeUpdatedAt: 123,
+            modelSelection: modelSelection('backend:codex'),
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: { mode: 'integrated' },
+            windowsRemoteSessionLaunchMode: 'windows_terminal',
+            windowsRemoteSessionConsole: 'visible',
+            windowsTerminalWindowName: 'happier-qa',
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: 'plan',
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft,
+            creationKey: 'attempt-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+            permissionMode: 'default',
+            configurationUpdatedAtMs: 999,
+        })).toMatchObject({
+            configuration: {
+                providerSessionResume: {
+                    kind: 'provider_session.v1',
+                    providerSessionId: 'vendor-session-1',
+                },
+            },
+            terminal: {
+                mode: 'integrated',
+                windows: {
+                    launchMode: 'windows_terminal',
+                    console: 'visible',
+                    windowName: 'happier-qa',
+                },
+            },
+        });
+    });
+
+    it('carries a source-context continuation recipe onto the strict spawn input, and omits it otherwise', () => {
+        const draft = buildNewSessionAuthoringDraftFromTempData({
+            machineId: 'machine-1',
+            directory: '/repo',
+            agentType: 'codex',
+        } as any);
+        const base = {
+            draft,
+            creationKey: 'attempt-1',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            agentTarget: {
+                kind: 'agent' as const,
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+            permissionMode: 'default' as const,
+            configurationUpdatedAtMs: 999,
+        };
+
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
+            ...base,
+            sourceContext: {
+                v: 1,
+                kind: 'session_replay',
+                sourceSessionId: 'parent_1',
+                forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+            },
+        }).sourceContext).toEqual({
+            v: 1,
+            kind: 'session_replay',
+            sourceSessionId: 'parent_1',
+            forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+        });
+
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({ ...base, sourceContext: null }).sourceContext)
+            .toBeUndefined();
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft(base).sourceContext).toBeUndefined();
+    });
+
     it('preserves an absent draft model selection so migrated profile intent can fill it on read', () => {
         const draft = buildNewSessionAuthoringDraftFromTempData({
             prompt: 'Review this',
@@ -1194,7 +1531,18 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
         });
 
-        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+        const composerAttachments = [{
+            v: 1 as const,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: {
+                label: 'Issue #42',
+                typeLabel: 'Issue',
+            },
+        }];
+        const persistedDraftInput = {
             draft,
             machineId: 'machine-1',
             selectedSecretId: 'secret-1',
@@ -1205,7 +1553,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             sessionOnlySecretValueEncByProfileIdByEnvVarName: {
                 'profile-1': {
-                    GITHUB_TOKEN: { _isSecretValue: true, value: 'enc::token' },
+                    GITHUB_TOKEN: { _isSecretValue: true as const, value: 'enc::token' },
                 },
             },
             backendNewSessionOptionStateByTargetKey: {
@@ -1213,13 +1561,16 @@ describe('sessionAuthoringDraftAdapters', () => {
                     experimentalCodexAcp: true,
                 },
             },
+            composerAttachments,
             updatedAt: 987,
-        });
+        };
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft(persistedDraftInput);
 
         expect(persistedDraft).toEqual({
             input: 'Review the queued invoices',
             selectedMachineId: 'machine-1',
             selectedPath: '/tmp/project',
+            composerAttachments,
             checkoutCreationDraft: {
                 kind: 'git_worktree',
                 displayName: 'feature/auth',

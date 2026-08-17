@@ -1,8 +1,8 @@
 import type { ComponentProps } from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import type { PluginContributionIdentityV1, ScmBackendId } from '@happier-dev/protocol';
+import type { IconName } from '@/components/ui/icons/Icon';
 
-export type ScmBackendSettingsIconName = ComponentProps<typeof Ionicons>['name'];
+export type ScmBackendSettingsIconName = IconName;
 
 export type ScmBackendSettingsInfoItem = Readonly<{
     id: string;

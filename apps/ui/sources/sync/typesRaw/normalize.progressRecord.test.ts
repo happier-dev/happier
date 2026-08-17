@@ -25,6 +25,30 @@ describe('typesRaw progress record handling', () => {
     expect(normalized).toBeNull();
   });
 
+  it('accepts Claude tool_progress heartbeat records and drops them during normalization', () => {
+    const raw: any = {
+      role: 'agent',
+      content: {
+        type: 'output',
+        data: {
+          type: 'tool_progress',
+          uuid: 'tool-progress-1',
+          tool_name: 'Bash',
+          tool_use_id: 'tool-1',
+          elapsed_time_seconds: 30,
+          heartbeat: true,
+        },
+      },
+      meta: { source: 'cli' },
+    };
+
+    const parsed = RawRecordSchema.safeParse(raw);
+    expect(parsed.success).toBe(true);
+
+    const normalized = normalizeRawMessage('msg-tool-progress', null, 1000, raw);
+    expect(normalized).toBeNull();
+  });
+
   it.each(['turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
     'accepts codex %s records and drops them during normalization',
     (type) => {

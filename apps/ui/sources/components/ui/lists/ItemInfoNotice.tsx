@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ItemInfoNoticeProps = Readonly<{
     testID?: string;
@@ -30,7 +30,7 @@ export function ItemInfoNotice(props: ItemInfoNoticeProps) {
                 subtitleLines={0}
                 icon={(
                     <React.Fragment>
-                        <Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />
+                        <Icon name="info" size={20} color={theme.colors.text.secondary} />
                     </React.Fragment>
                 )}
                 mode="info"

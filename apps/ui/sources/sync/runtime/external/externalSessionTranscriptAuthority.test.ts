@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol';
+import {
+    projectExternalSessionOperationSharedPresentationV1,
+    type ExternalSessionOperationProgressV1,
+} from '@happier-dev/protocol';
 
 import {
     createExternalSessionTranscriptLeaseScopeKeyFromLink,
@@ -45,6 +48,10 @@ const acceptedPartialOperationProgress = {
     },
     retryTargetPhase: 'importing',
 } satisfies ExternalSessionOperationProgressV1;
+const acceptedPartialOperationPresentation =
+    projectExternalSessionOperationSharedPresentationV1(
+        acceptedPartialOperationProgress,
+    );
 
 describe('resolveExternalSessionTranscriptAuthority', () => {
     it('projects sharing from the same canonical authority decision without changing the live transcript source', () => {
@@ -53,6 +60,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             agentReachable: true,
             liveSourceKey,
             acceptedThroughServerSeq: null,
+            transcriptShareable: null,
+            operationPresentation: null,
             operationProgress: null,
         } as const;
 
@@ -70,12 +79,33 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             currentStorageState: 'snapshot_complete',
             publishedThroughServerSeq: 12,
             materializedThroughSourceAt: 1_700_000_000_000,
+            transcriptShareable: true,
         })).toEqual({
             authority: { kind: 'live_agent', sourceKey: liveSourceKey },
             sharing: {
                 kind: 'published_snapshot',
                 materializedThroughSourceAt: 1_700_000_000_000,
             },
+        });
+        expect(resolveExternalSessionTranscriptAuthorityState({
+            ...common,
+            currentStorageState: 'snapshot_complete',
+            publishedThroughServerSeq: 12,
+            materializedThroughSourceAt: 1_700_000_000_000,
+            transcriptShareable: false,
+        })).toEqual({
+            authority: { kind: 'live_agent', sourceKey: liveSourceKey },
+            sharing: { kind: 'unavailable', reason: 'invalid_publication' },
+        });
+        expect(resolveExternalSessionTranscriptAuthorityState({
+            ...common,
+            currentStorageState: 'snapshot_complete',
+            publishedThroughServerSeq: 12,
+            materializedThroughSourceAt: 1_700_000_000_000,
+            transcriptShareable: null,
+        })).toEqual({
+            authority: { kind: 'live_agent', sourceKey: liveSourceKey },
+            sharing: { kind: 'unavailable', reason: 'invalid_publication' },
         });
     });
 
@@ -89,6 +119,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
                 acceptedThroughServerSeq: currentStorageState === 'server_partial' ? 8 : null,
                 publishedThroughServerSeq: currentStorageState === 'snapshot_complete' ? 12 : null,
                 materializedThroughSourceAt: currentStorageState === 'snapshot_complete' ? 1_700_000_000_000 : null,
+                transcriptShareable: currentStorageState === 'snapshot_complete' ? true : null,
+                operationPresentation: null,
                 operationProgress: null,
             })).toEqual({ kind: 'live_agent', sourceKey: liveSourceKey });
         }
@@ -103,6 +135,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: 12,
             materializedThroughSourceAt: 1_700_000_000_000,
+            transcriptShareable: true,
+            operationPresentation: null,
             operationProgress: null,
         })).toEqual({
             kind: 'server_snapshot',
@@ -118,6 +152,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: null,
             materializedThroughSourceAt: 1_700_000_000_000,
+            transcriptShareable: false,
+            operationPresentation: null,
             operationProgress: null,
         })).toEqual({ kind: 'unavailable', reason: 'invalid_publication' });
     });
@@ -131,6 +167,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: 12,
             materializedThroughSourceAt: 1_700_000_000_000,
+            transcriptShareable: true,
+            operationPresentation: null,
             operationProgress: null,
         })).toEqual({ kind: 'live_agent', sourceKey: liveSourceKey });
     });
@@ -143,6 +181,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: 12,
             materializedThroughSourceAt: 1_700_000_000_000,
+            transcriptShareable: true,
+            operationPresentation: null,
             operationProgress: null,
         };
         expect([
@@ -161,18 +201,41 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: 8,
             publishedThroughServerSeq: null,
             materializedThroughSourceAt: null,
+            transcriptShareable: false,
         };
 
         expect(resolveExternalSessionTranscriptAuthority({
             ...input,
+            operationPresentation: acceptedPartialOperationPresentation,
             operationProgress: null,
         })).toEqual({ kind: 'unavailable', reason: 'initial_partial_not_permitted' });
         expect(resolveExternalSessionTranscriptAuthority({
             ...input,
+            operationPresentation: acceptedPartialOperationPresentation,
             operationProgress: acceptedPartialOperationProgress,
-        })).toEqual({ kind: 'server_partial', maxServerSeq: 8 });
+        })).toEqual({
+            kind: 'server_partial',
+            maxServerSeq: 8,
+            operationKey: JSON.stringify([
+                1,
+                'operation-1',
+                4,
+                'materialize',
+                'awaiting_user_resume',
+                'importing',
+            ]),
+        });
         expect(resolveExternalSessionTranscriptAuthority({
             ...input,
+            operationPresentation: {
+                ...acceptedPartialOperationPresentation,
+                revision: acceptedPartialOperationPresentation.revision + 1,
+            },
+            operationProgress: acceptedPartialOperationProgress,
+        })).toEqual({ kind: 'unavailable', reason: 'initial_partial_not_permitted' });
+        expect(resolveExternalSessionTranscriptAuthority({
+            ...input,
+            operationPresentation: acceptedPartialOperationPresentation,
             operationProgress: {
                 ...acceptedPartialOperationProgress,
                 checkpoint: {
@@ -196,6 +259,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: null,
             materializedThroughSourceAt: null,
+            transcriptShareable: null,
+            operationPresentation: null,
             operationProgress: null,
         })).toEqual({ kind: 'hosted' });
     });
@@ -209,6 +274,8 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: null,
             materializedThroughSourceAt: null,
+            transcriptShareable: false,
+            operationPresentation: null,
             operationProgress: null,
         })).toEqual({ kind: 'unavailable', reason: 'legacy_external_unknown' });
 
@@ -220,11 +287,13 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: null,
             materializedThroughSourceAt: null,
+            transcriptShareable: false,
+            operationPresentation: null,
             operationProgress: null,
         })).toEqual({ kind: 'unavailable', reason: 'invalid_authority_state' });
     });
 
-    it('binds live and snapshot cache identities to their authority generations', () => {
+    it('binds live, partial-operation, and snapshot cache identities to their authority generations', () => {
         const firstLiveKey = createExternalSessionTranscriptLiveSourceKey({
             machineId: 'machine-1',
             agentId: 'codex',
@@ -262,6 +331,15 @@ describe('resolveExternalSessionTranscriptAuthority', () => {
             kind: 'server_snapshot',
             maxServerSeq: 8,
             materializedThroughSourceAt: 101,
+        }));
+        expect(externalSessionTranscriptAuthorityKey({
+            kind: 'server_partial',
+            maxServerSeq: 8,
+            operationKey: 'operation-1:revision-4',
+        })).not.toBe(externalSessionTranscriptAuthorityKey({
+            kind: 'server_partial',
+            maxServerSeq: 8,
+            operationKey: 'operation-1:revision-6',
         }));
     });
 

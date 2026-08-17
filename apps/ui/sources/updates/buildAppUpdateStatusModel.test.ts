@@ -20,6 +20,24 @@ function fakeT(key: string): string {
 }
 
 describe('buildAppUpdateStatusModel', () => {
+    it('offers a refresh when the same UI origin reports a different deployment', () => {
+        const model = buildAppUpdateStatusModel({
+            platformOs: 'web',
+            nativeUpdateUrl: null,
+            webUi: { updateAvailable: true },
+            desktop: { status: 'idle', availableVersion: null, error: null },
+            ota: { isUpdatePending: false },
+            releaseNotes: { hasUnread: false },
+            changelog: { hasUnread: false },
+            t: fakeT,
+        });
+        expect(model).toMatchObject({
+            visible: true,
+            kind: 'web-ui',
+            actionLabel: 'Apply update',
+        });
+    });
+
     it('prioritizes native store updates over desktop, OTA, release-notes, and changelog states', () => {
         const model = buildAppUpdateStatusModel({
             platformOs: 'ios',

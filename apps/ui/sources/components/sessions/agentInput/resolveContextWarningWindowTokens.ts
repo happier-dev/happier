@@ -1,9 +1,11 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
+import { resolveSessionModelSelectionDisposition } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { getAgentStaticModels, resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
+import { getAgentStaticModels } from '@happier-dev/agents';
 import {
     readSessionProviderBindingMetadataV1,
     type SessionContextUsageSnapshotV1,
@@ -50,7 +52,10 @@ type ContextUsageData = Readonly<{
 
 export function resolveContextWindowTokens(params: Readonly<{
     agentId: AgentId;
+    agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
+    sessionActive?: boolean;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     usageData?: ContextUsageData;
 }>): number | null {
     const snapshotContextWindowTokens = normalizeContextWindowTokens(
@@ -77,31 +82,49 @@ export function resolveContextWindowTokens(params: Readonly<{
 
 function resolveAssumedContextWindowTokens(params: Readonly<{
     agentId: AgentId;
+    agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
+    sessionActive?: boolean;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     usageData?: ContextUsageData;
 }>): number | null {
+    if (typeof params.sessionActive !== 'boolean') {
+        return null;
+    }
+    const agentTargetKey = params.agentTargetKey ?? buildAgentUniverseBackendTargetKey(params.agentId);
+    const disposition = resolveSessionModelSelectionDisposition({
+        agentId: params.agentId,
+        agentTargetKey,
+        metadata: params.metadata,
+        sessionActive: params.sessionActive,
+        currentRunnerProcessIdentity: params.currentRunnerProcessIdentity ?? null,
+    });
+    const contextSelection = disposition.contextSelection;
+    if (params.sessionActive && contextSelection === null) {
+        return null;
+    }
     const providerBinding = readSessionProviderBindingMetadataV1(params.metadata);
-    const selectionIntent = resolveModelSelectionIntentFromSessionMetadata(
-        params.metadata,
-        buildAgentUniverseBackendTargetKey(params.agentId),
-    );
-    const overrideModelId = normalizeModelId(selectionIntent?.selection?.modelId);
     const sessionModelsState = readSessionModelsState(params.metadata);
-    if (providerBinding !== null) {
+    const selectedModelId = normalizeModelId(contextSelection?.modelId);
+    if (contextSelection !== null && contextSelection.providerConnectionId !== null) {
+        const bindingModel = providerBinding?.connectionId === contextSelection.providerConnectionId
+            && normalizeModelId(providerBinding.model?.id) === selectedModelId
+            ? providerBinding.model
+            : null;
+        const bindingContextWindowTokens = normalizeContextWindowTokens(bindingModel?.contextWindowTokens);
+        if (bindingContextWindowTokens !== null) return bindingContextWindowTokens;
         if (!sessionModelsState || sessionModelsState.agentId !== params.agentId) return null;
-        const activeProviderModelId = normalizeModelId(sessionModelsState.currentModelId);
-        const activeProviderModel = Array.isArray(sessionModelsState.availableModels)
+        const selectedProviderModel = Array.isArray(sessionModelsState.availableModels)
             ? sessionModelsState.availableModels.find(
-                (model) => normalizeModelId(model.id) === activeProviderModelId,
+                (model) => normalizeModelId(model.id) === selectedModelId,
             )
             : null;
-        return normalizeContextWindowTokens(activeProviderModel?.contextWindowTokens);
+        return normalizeContextWindowTokens(selectedProviderModel?.contextWindowTokens);
     }
-    let activeModelId = overrideModelId;
+
     if (sessionModelsState && sessionModelsState.agentId === params.agentId) {
-        activeModelId = overrideModelId || normalizeModelId(sessionModelsState.currentModelId);
         const matchingModel = Array.isArray(sessionModelsState.availableModels)
-            ? sessionModelsState.availableModels.find((model) => normalizeModelId(model.id) === activeModelId)
+            ? sessionModelsState.availableModels.find((model) => normalizeModelId(model.id) === selectedModelId)
             : null;
         const contextWindowTokens = normalizeContextWindowTokens(matchingModel?.contextWindowTokens)
             ?? resolveBehaviorContextWindowTokensForModel(params.agentId, matchingModel);
@@ -112,13 +135,13 @@ function resolveAssumedContextWindowTokens(params: Readonly<{
 
     const behaviorContextWindowTokens = resolveBehaviorContextWindowTokensForModel(
         params.agentId,
-        { id: activeModelId },
+        { id: selectedModelId },
     );
     if (behaviorContextWindowTokens !== null) {
         return behaviorContextWindowTokens;
     }
 
-    return resolveCatalogContextWindowTokens(params.agentId, activeModelId)
+    return resolveCatalogContextWindowTokens(params.agentId, selectedModelId)
         ?? normalizeContextWindowTokens(
             resolveAgentUiBehavior(params.agentId).contextWindow?.getDefaultContextWindowTokens?.(),
         );
@@ -126,7 +149,10 @@ function resolveAssumedContextWindowTokens(params: Readonly<{
 
 export function resolveContextWarningWindowTokens(params: Readonly<{
     agentId: AgentId;
+    agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
+    sessionActive?: boolean;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     usageData?: ContextUsageData;
 }>): number | null {
     const contextWindowTokens = resolveContextWindowTokens(params);

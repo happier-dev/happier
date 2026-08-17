@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -12,6 +11,7 @@ import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { resolveTerminalErrorCopy } from '@/components/sessions/terminal/terminalErrorCopy';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type EmbeddedTerminalPaneFrameProps = Readonly<{
     title: string;
@@ -79,7 +79,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
         <View testID={testId('root')} style={styles.container}>
             <View style={styles.toolbar}>
                 <View style={styles.toolbarLeft}>
-                    <Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />
+                    <Icon name="terminal" size={16} color={theme.colors.text.secondary} />
                     <Text style={styles.toolbarTitle} numberOfLines={1}>
                         {props.title}
                     </Text>
@@ -89,7 +89,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                     {props.onPaste ? (
                         <IconButton
                             testID={testId('paste')}
-                            iconName="clipboard-outline"
+                            iconName="clipboard"
                             accessibilityLabel={t('common.paste')}
                             tooltip={t('common.paste')}
                             variant="plain"
@@ -100,7 +100,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                     ) : null}
                     <IconButton
                         testID={testId('clear')}
-                        iconName="trash-outline"
+                        iconName="trash"
                         accessibilityLabel={t('common.reset')}
                         tooltip={t('common.reset')}
                         variant="plain"
@@ -110,7 +110,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                     />
                     <IconButton
                         testID={testId('restart')}
-                        iconName="refresh-outline"
+                        iconName="arrow-clockwise"
                         accessibilityLabel={t('common.refresh')}
                         tooltip={t('common.refresh')}
                         variant="plain"
@@ -121,7 +121,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                     {props.onRequestClose ? (
                         <IconButton
                             testID={testId('close')}
-                            iconName="close-outline"
+                            iconName="x"
                             accessibilityLabel={t('common.close')}
                             tooltip={t('common.close')}
                             variant="plain"
@@ -145,7 +145,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.copy')}
                             onPress={onCopyUrl}
                         >
-                            <Ionicons name="copy-outline" size={18} color={theme.colors.text.primary} />
+                            <Icon name="copy" size={16} color={theme.colors.text.primary} />
                         </PrimaryCircleIconButton>
                         <PrimaryCircleIconButton
                             active={false}
@@ -153,7 +153,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.open')}
                             onPress={onOpenUrl}
                         >
-                            <Ionicons name="open-outline" size={18} color={theme.colors.text.primary} />
+                            <Icon name="arrow-square-out" size={16} color={theme.colors.text.primary} />
                         </PrimaryCircleIconButton>
                         <PrimaryCircleIconButton
                             active={false}
@@ -161,7 +161,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.close')}
                             onPress={props.controller.dismissDetectedUrl}
                         >
-                            <Ionicons name="close-outline" size={18} color={theme.colors.text.primary} />
+                            <Icon name="x" size={16} color={theme.colors.text.primary} />
                         </PrimaryCircleIconButton>
                     </View>
                 </View>

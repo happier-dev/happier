@@ -1,5 +1,26 @@
 # Changelog
 
+## Release 2026-08-09.1 - 2026-08-09
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": {
+    "message": "This development release delivers the latest fixes and improvements for Happier's public dev channel."
+  },
+  "appStore": {
+    "whatsNew": "This development release delivers the latest fixes and improvements for Happier's public dev channel."
+  },
+  "playStore": {
+    "whatsNew": "This development release delivers the latest fixes and improvements for Happier's public dev channel."
+  },
+  "storyDeck": {
+    "summary": "This development release delivers the latest fixes and improvements for Happier's public dev channel."
+  }
+}
+-->
+
+This development release delivers the latest fixes and improvements for Happier's public dev channel.
+
 ## Version 0.2.1 - 2026-04-05
 
 This is a massive release. Here's everything that changed.

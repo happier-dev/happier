@@ -1,5 +1,6 @@
 import { decodeAutomationTemplate } from './automationTemplateCodec';
-import { AUTOMATION_TEMPLATE_ENVELOPE_KIND, encodeAutomationTemplateForTransport, tryDecodeAutomationTemplateEnvelope } from './automationTemplateTransport';
+import { AUTOMATION_TEMPLATE_ENVELOPE_KIND, encodeAutomationTemplateForTransport, resolveAutomationTemplatePayload } from './automationTemplateTransport';
+import { AutomationTemplateEncryptionMaterialUnavailableError } from './automationTemplateAvailability';
 import type { AutomationTemplate } from './automationTypes';
 import {
     buildAutomationTemplateFromSessionAuthoringDraft,
@@ -28,19 +29,21 @@ export async function updateExistingSessionAutomationTemplateMessage(params: {
     templateCiphertext: string;
     message: string;
     draft?: SessionAuthoringDraft;
-    decryptRaw: (payloadCiphertext: string) => Promise<unknown | null>;
-    encryptRaw: (value: unknown) => Promise<string>;
+    decryptRaw?: (payloadCiphertext: string) => Promise<unknown | null>;
+    encryptRaw?: (value: unknown) => Promise<string>;
     fallbackDraft?: SessionAuthoringDraft;
 }): Promise<string> {
-    const envelope = tryDecodeAutomationTemplateEnvelope(params.templateCiphertext);
-    if (!envelope) {
+    const payload = await resolveAutomationTemplatePayload({
+        templateCiphertext: params.templateCiphertext,
+        decryptRaw: params.decryptRaw,
+    });
+    if (payload.kind === 'invalid') {
         throw new Error('Invalid automation template envelope payload');
     }
-
-    const payload = envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND
-        ? await params.decryptRaw(envelope.payloadCiphertext)
-        : envelope.payload;
-    const template = decodeTemplateFromDecryptedRaw(payload);
+    if (payload.kind === 'locked') {
+        throw new AutomationTemplateEncryptionMaterialUnavailableError();
+    }
+    const template = decodeTemplateFromDecryptedRaw(payload.payload);
 
     const existingSessionId = template.existingSessionId?.trim() ?? '';
     if (!existingSessionId) {
@@ -73,9 +76,19 @@ export async function updateExistingSessionAutomationTemplateMessage(params: {
         displayText: nextMessage,
     });
 
-    return await encodeAutomationTemplateForTransport({
-        accountMode: envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND ? 'e2ee' : 'plain',
-        template: nextTemplate,
-        encryptRaw: params.encryptRaw,
-    });
+    try {
+        return await encodeAutomationTemplateForTransport({
+            accountMode: payload.envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND ? 'e2ee' : 'plain',
+            template: nextTemplate,
+            ...(params.encryptRaw ? { encryptRaw: params.encryptRaw } : {}),
+        });
+    } catch (error) {
+        if (
+            error instanceof Error
+            && error.message === 'encryptRaw is required to encode encrypted automation templates'
+        ) {
+            throw new AutomationTemplateEncryptionMaterialUnavailableError();
+        }
+        throw error;
+    }
 }

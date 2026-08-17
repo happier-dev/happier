@@ -815,7 +815,7 @@ describe('getSessionStatus', () => {
         });
     });
 
-    it('keeps offline precedence over the explicit resuming marker', async () => {
+    it('keeps the explicit resuming lifecycle visible through the temporary offline attach gap', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const now = 1_000_000;
         const status = getSessionStatus(createBaseSession({
@@ -825,12 +825,13 @@ describe('getSessionStatus', () => {
         }), now, 0);
 
         expect(status).toMatchObject({
-            state: 'disconnected',
-            isConnected: false,
+            state: 'resuming',
+            isConnected: true,
+            isPulsing: true,
         });
     });
 
-    it('does not keep the explicit resuming state after its bounded presentation window', async () => {
+    it('trusts the store-owned resuming marker instead of independently aging it out', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const now = 1_000_000;
         const status = getSessionStatus(createBaseSession({
@@ -839,7 +840,11 @@ describe('getSessionStatus', () => {
             resumingAt: now - 30_001,
         }), now, 0);
 
-        expect(status.state).toBe('disconnected');
+        expect(status).toMatchObject({
+            state: 'resuming',
+            isConnected: true,
+            isPulsing: true,
+        });
     });
 
     it('does not treat stale optimisticThinkingAt as thinking', async () => {

@@ -2,7 +2,12 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { deriveAccountMachineKeyFromRecoverySecret, openTerminalProvisioningV2Payload } from '@happier-dev/protocol';
+import {
+    deriveAccountMachineKeyFromRecoverySecret,
+    openTerminalProvisioningV3Response,
+    openTerminalProvisioningV2Payload,
+    openTerminalProvisioningV3Payload,
+} from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
 
@@ -24,6 +29,10 @@ const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: {
 }) => true);
 const authApproveSpy = vi.fn();
 const refreshFromActiveServerSpy = vi.fn(async () => {});
+const fetchAccountEncryptionModeSpy = vi.fn(
+    async (): Promise<{ mode: 'plain' | 'e2ee'; updatedAt: number }> => ({ mode: 'plain', updatedAt: 0 }),
+);
+const isRuntimeFeatureEnabledSpy = vi.fn(async (_params: { featureId: string }) => true);
 
 let authCredentials: any = null;
 let storedCredentials: any = undefined;
@@ -45,6 +54,10 @@ afterEach(() => {
     upsertActivateAndSwitchServerSpy.mockReset();
     authApproveSpy.mockReset();
     refreshFromActiveServerSpy.mockReset();
+    fetchAccountEncryptionModeSpy.mockReset();
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+    isRuntimeFeatureEnabledSpy.mockReset();
+    isRuntimeFeatureEnabledSpy.mockResolvedValue(true);
 });
 
 installSessionHooksCommonModuleMocks({
@@ -100,7 +113,11 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentials: vi.fn(async () => (storedCredentials === undefined ? authCredentials : storedCredentials)),
     },
+    isDataKeyAuthCredentials: (creds: { encryption?: { machineKey?: string } } | null) =>
+        typeof creds?.encryption?.machineKey === 'string',
     isLegacyAuthCredentials: (creds: { secret?: string } | null) => typeof creds?.secret === 'string' && creds.secret.length > 0,
+    isTokenOnlyAuthCredentials: (creds: { secret?: string; encryption?: unknown } | null) =>
+        Boolean(creds) && typeof creds?.secret !== 'string' && !creds?.encryption,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
@@ -146,6 +163,14 @@ vi.mock('@/auth/flows/approve', () => ({
     authApprove: authApproveSpy,
 }));
 
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+    fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
+}));
+
+vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
+    isRuntimeFeatureEnabled: isRuntimeFeatureEnabledSpy,
+}));
+
 vi.mock('@/encryption/base64', () => ({
     decodeBase64: vi.fn((value: string, variant?: string) => {
         const normalized = variant === 'base64url' ? value : value;
@@ -164,10 +189,25 @@ vi.mock('@/sync/domains/state/storageStore', () => {
     return { storage, getStorage: () => storage };
 });
 
-function buildTerminalConnectUrl(params: Readonly<{ terminalPublicKey: Uint8Array; serverUrl?: string }>): string {
+function buildTerminalConnectUrl(params: Readonly<{
+    terminalPublicKey: Uint8Array;
+    serverUrl?: string;
+    pairing?: Readonly<{
+        secret: Uint8Array;
+        createdAtMs: number;
+        expiresAtMs: number;
+    }>;
+    supportsTokenOnly?: boolean;
+}>): string {
     const publicKeyB64Url = Buffer.from(params.terminalPublicKey).toString('base64url');
     const server = encodeURIComponent(params.serverUrl ?? 'https://api.happier.dev');
-    return `happier://terminal?key=${publicKeyB64Url}&server=${server}`;
+    const pairing = params.pairing
+        ? `&pairingSecret=${Buffer.from(params.pairing.secret).toString('base64url')}`
+            + `&createdAt=${params.pairing.createdAtMs}`
+            + `&expiresAt=${params.pairing.expiresAtMs}`
+            + (params.supportsTokenOnly ? '&supportsTokenOnly=1' : '')
+        : '';
+    return `happier://terminal?key=${publicKeyB64Url}&server=${server}${pairing}`;
 }
 
 function createDataKeyCredentials(params: Readonly<{ token: string; machineKeyByte: number; publicKeyByte?: number }>) {
@@ -185,6 +225,10 @@ function createLegacyCredentials(params: Readonly<{ token: string; secretByte: n
         token: params.token,
         secret: Buffer.from(new Uint8Array(32).fill(params.secretByte)).toString('base64url'),
     } as const;
+}
+
+function createTokenOnlyCredentials(params: Readonly<{ token: string }>) {
+    return { token: params.token } as const;
 }
 
 describe('useConnectTerminal unauthenticated flow', () => {
@@ -443,6 +487,149 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const opened = openTerminalProvisioningV2Payload({ payload: responseV2!, recipientSecretKeyOrSeed: terminalSecretKey });
         expect(opened).not.toBeNull();
         expect(Array.from(opened!)).toEqual(Array.from(contentPrivateKey));
+    });
+
+    it('authenticates a v3 response with the QR-only pairing secret when the link provides one', async () => {
+        authApproveSpy.mockResolvedValue('approved');
+        authCredentials = createDataKeyCredentials({ token: 'token-1', machineKeyByte: 7 });
+        contentPrivateKey = new Uint8Array(32).fill(7);
+        const terminalSecretKey = new Uint8Array(32).fill(5);
+        const terminalPublicKey = tweetnacl.box.keyPair.fromSecretKey(terminalSecretKey).publicKey;
+        const pairingSecret = new Uint8Array(32).fill(12);
+        const createdAtMs = 1_800_000_000_000;
+        const expiresAtMs = createdAtMs + 60_000;
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+        await renderScreen(React.createElement(Probe));
+
+        await act(async () => {
+            await hookApi!.processAuthUrl(buildTerminalConnectUrl({
+                terminalPublicKey,
+                pairing: { secret: pairingSecret, createdAtMs, expiresAtMs },
+                supportsTokenOnly: true,
+            }));
+        });
+
+        const responseV3 = authApproveSpy.mock.calls[0]?.[3] as Uint8Array | undefined;
+        expect(responseV3).toBeDefined();
+        expect(openTerminalProvisioningV3Payload({
+            payload: responseV3!,
+            recipientSecretKeyOrSeed: terminalSecretKey,
+            pairingSecret,
+            terminalEphemeralPublicKey: terminalPublicKey,
+            createdAtMs,
+            expiresAtMs,
+            nowMs: createdAtMs + 1,
+        })).toEqual(contentPrivateKey);
+    });
+
+    it('provisions token-only credentials only as authenticated v3 after plain policy is proven', async () => {
+        authApproveSpy.mockResolvedValue('approved');
+        authCredentials = createTokenOnlyCredentials({ token: 'plain-token' });
+        const terminalSecretKey = new Uint8Array(32).fill(5);
+        const terminalPublicKey = tweetnacl.box.keyPair.fromSecretKey(terminalSecretKey).publicKey;
+        const pairingSecret = new Uint8Array(32).fill(12);
+        const createdAtMs = 1_800_000_000_000;
+        const expiresAtMs = createdAtMs + 60_000;
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+        await renderScreen(React.createElement(Probe));
+
+        let result = false;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(buildTerminalConnectUrl({
+                terminalPublicKey,
+                pairing: { secret: pairingSecret, createdAtMs, expiresAtMs },
+                supportsTokenOnly: true,
+            }));
+        });
+
+        expect(result).toBe(true);
+        expect(fetchAccountEncryptionModeSpy).toHaveBeenCalledWith(
+            authCredentials,
+            { retry: 'none' },
+        );
+        expect(isRuntimeFeatureEnabledSpy.mock.calls.map(([params]) => params.featureId)).toEqual([
+            'encryption.plaintextStorage',
+            'e2ee.keylessAccounts',
+        ]);
+        const responseV3 = authApproveSpy.mock.calls[0]?.[3] as Uint8Array | undefined;
+        expect(responseV3).toBeDefined();
+        expect(openTerminalProvisioningV3Response({
+            payload: responseV3!,
+            recipientSecretKeyOrSeed: terminalSecretKey,
+            pairingSecret,
+            terminalEphemeralPublicKey: terminalPublicKey,
+            createdAtMs,
+            expiresAtMs,
+            nowMs: createdAtMs + 1,
+        })).toEqual({ type: 'tokenOnly' });
+        expect(authApproveSpy.mock.calls[0]?.[2]).toEqual(new Uint8Array());
+    });
+
+    it.each([
+        {
+            name: 'the QR has no authenticated pairing context',
+            configure: () => {},
+            withPairing: false,
+            supportsTokenOnly: true,
+        },
+        {
+            name: 'the authenticated reader did not advertise token-only support',
+            configure: () => {},
+            withPairing: true,
+            supportsTokenOnly: false,
+        },
+        {
+            name: 'the authenticated account mode is E2EE',
+            configure: () => fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 }),
+            withPairing: true,
+            supportsTokenOnly: true,
+        },
+        {
+            name: 'a required server feature decision is unavailable',
+            configure: () => isRuntimeFeatureEnabledSpy.mockResolvedValueOnce(false),
+            withPairing: true,
+            supportsTokenOnly: true,
+        },
+    ])('fails closed for token-only pairing when $name', async ({ configure, withPairing, supportsTokenOnly }) => {
+        configure();
+        authCredentials = createTokenOnlyCredentials({ token: 'plain-token' });
+        const terminalSecretKey = new Uint8Array(32).fill(5);
+        const terminalPublicKey = tweetnacl.box.keyPair.fromSecretKey(terminalSecretKey).publicKey;
+        const pairingSecret = new Uint8Array(32).fill(12);
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+        await renderScreen(React.createElement(Probe));
+
+        let result = true;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl(buildTerminalConnectUrl({
+                terminalPublicKey,
+                ...(withPairing
+                    ? { pairing: { secret: pairingSecret, createdAtMs: 1_000, expiresAtMs: 61_000 } }
+                    : {}),
+                supportsTokenOnly,
+            }));
+        });
+
+        expect(result).toBe(false);
+        expect(authApproveSpy).not.toHaveBeenCalled();
     });
 
     it('uses refreshed credentials after a server switch instead of the stale sync encryption key', async () => {

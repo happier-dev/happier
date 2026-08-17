@@ -1,16 +1,16 @@
 import type * as React from 'react';
-import type { Ionicons } from '@expo/vector-icons';
 
 import { t } from '@/text';
 
 import { getSessionActionMetadata } from './sessionActionMetadata';
+import type { IconName } from '@/components/ui/icons/Icon';
 import {
     SESSION_BULK_ACTION_IDS,
     type SessionBulkActionId,
     type SessionBulkActionTarget,
 } from './sessionBulkActionTypes';
 
-type BulkActionIconName = React.ComponentProps<typeof Ionicons>['name'];
+type BulkActionIconName = IconName;
 
 export type SessionBulkActionDescriptor = Readonly<{
     id: SessionBulkActionId;

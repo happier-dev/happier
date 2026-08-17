@@ -82,6 +82,8 @@ describe('AutomationSettingsForm', () => {
         expect(toggleItem?.props.subtitle).toBe('automations.form.toggleEnabledSubtitle');
         expect(toggleItem?.props.rightElement).toBeDefined();
         expect(toggleItem?.props.rightElement?.props.value).toBe(true);
+        expect(toggleItem?.props.rightElement?.props.accessibilityLabel).toBe('automations.form.toggleEnabledTitle');
+        expect(toggleItem?.props.rightElement?.props.accessibilityHint).toBe('automations.form.toggleEnabledSubtitle');
     });
 
     it('can hide the built-in enabled toggle group for inline composer usage', async () => {

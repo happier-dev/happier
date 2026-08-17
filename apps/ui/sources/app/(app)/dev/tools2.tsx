@@ -15,7 +15,6 @@ export default function Tools2Screen() {
             name: 'Read', state: 'completed' as const, input: {
                 file_path: '/Users/steve/project/src/components/Header.tsx', offset: 100, limit: 50
             }, createdAt: Date.now() - 2000, startedAt: Date.now() - 1900, completedAt: Date.now() - 1000, description: null, result: `import React from 'react';
-	import { View, Text } from 'react-native';
 	import { StyleSheet } from 'react-native-unistyles';
 	
 	export const Header = ({ title }) => {

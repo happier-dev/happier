@@ -120,16 +120,9 @@ function currentPendingInputFeaturesResponse(): Response {
     return Response.json({
         features: {},
         capabilities: {
-            compatibility: {
-                v: 1,
-                sessionSync: {
-                    v: 1,
-                    enforcement: 'observe',
-                    minimumSessionSyncProtocolVersion: 2,
-                    currentSessionSyncProtocolVersion: 2,
-                    declarationTransport: 'headers-v1',
-                },
-                pendingInput: { currentPendingInputProtocolVersion: 1 },
+            session: {
+                runtimeActivity: { protocolVersion: 2 },
+                pendingInput: { protocolVersion: 1 },
             },
         },
     });
@@ -178,6 +171,29 @@ function createSession(params: { sessionId: string; metadata?: Session['metadata
         presence: 'online',
         optimisticThinkingAt: null,
     };
+}
+
+function composerAttachmentRawRecord(params: Readonly<{
+    text: string;
+    instanceId: string;
+}>) {
+    return {
+        role: 'user',
+        content: { type: 'text', text: params.text },
+        meta: {
+            happierStructuredInputV1: {
+                v: 1,
+                composerAttachments: [{
+                    v: 1,
+                    instanceId: params.instanceId,
+                    attachment: { pluginId: 'com.acme.context', localId: 'context' },
+                    key: `context-${params.instanceId}`,
+                    value: { itemId: '42' },
+                    presentation: { label: 'Context #42', typeLabel: 'Plugin context' },
+                }],
+            },
+        },
+    } as const;
 }
 
 function tokenForSub(sub: string): string {
@@ -555,6 +571,200 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
 
         sessionRpcSpy.mockRestore();
+    });
+
+    it('surfaces a plugin Composer attachment runtime refusal instead of accepting the pending message', async () => {
+        const sessionId = 's_composer_attachment_runtime_refusal';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        // Current ../remote-dev compatibility vector: cdb9408c04d7af35b3947e9fbff27ed0b92663c9
+        // (protocol 9aed280c82776cb2a6245f68de817420ae74fa2d, resolver 073c13dc3b9e8fa1dd236227b32a31d18c39a715,
+        // Codex turn input bc247a5ba760c83fdce896790fe46e62d81dc1db). Its passthrough input preserves this
+        // r1.0 plugin-owned attachment-only field, while its resolver and turn adapter ignore it; an explicit
+        // target refusal must therefore be terminal here rather than a false provider acceptance.
+        const predecessorAttachmentOnlyInput = {
+            happierStructuredInputV1: {
+                v: 1,
+                composerAttachments: [{
+                    v: 1,
+                    instanceId: 'plugin-context-1',
+                    attachment: { pluginId: 'com.acme.context', localId: 'context' },
+                    key: 'context-42',
+                    value: { itemId: '42' },
+                    presentation: { label: 'Context #42', typeLabel: 'Plugin context' },
+                }],
+            },
+        };
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({
+            ok: false,
+            error: 'session_user_message_composer_attachments_unavailable',
+            errorCode: 'session_user_message_composer_attachments_unavailable',
+        } as any);
+        const emitWithAck = vi.fn();
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+        await expect(sync.sendMessage(
+            sessionId,
+            'Use the attached plugin context',
+            undefined,
+            predecessorAttachmentOnlyInput,
+        )).rejects.toMatchObject({
+            name: 'HappyError',
+            code: 'session_user_message_composer_attachments_unavailable',
+        });
+
+        expect(sessionRpcSpy).toHaveBeenCalledWith(
+            sessionId,
+            SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+            expect.objectContaining({
+                meta: expect.objectContaining(predecessorAttachmentOnlyInput),
+            }),
+            { timeoutMs: 7_500 },
+        );
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
+    });
+
+    it('does not treat a typed Composer attachment refusal as a legacy transport fallback', async () => {
+        const sessionId = 's_composer_attachment_runtime_refusal_no_fallback';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const attachmentMeta = {
+            happierStructuredInputV1: {
+                v: 1,
+                composerAttachments: [{
+                    v: 1,
+                    instanceId: 'plugin-context-2',
+                    attachment: { pluginId: 'com.acme.context', localId: 'context' },
+                    key: 'context-43',
+                    value: { itemId: '43' },
+                    presentation: { label: 'Context #43', typeLabel: 'Plugin context' },
+                }],
+            },
+        };
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({
+            ok: false,
+            error: 'connect_error: composer attachment resolution unavailable',
+            errorCode: 'session_user_message_composer_attachments_unavailable',
+        } as any);
+        const emitWithAck = vi.fn();
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+        await expect(sync.sendMessage(
+            sessionId,
+            'Keep this attachment selected',
+            undefined,
+            attachmentMeta,
+        )).rejects.toMatchObject({
+            name: 'HappyError',
+            code: 'session_user_message_composer_attachments_unavailable',
+        });
+
+        expect(sessionRpcSpy).toHaveBeenCalledOnce();
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
+    });
+
+    it('fails closed instead of using the raw socket path when the Composer runtime RPC is unavailable', async () => {
+        const sessionId = 's_composer_attachment_runtime_rpc_unavailable';
+        storage.getState().applySessions([createSession({ sessionId })]);
+        const attachmentMeta = {
+            happierStructuredInputV1: {
+                v: 1,
+                composerAttachments: [{
+                    v: 1,
+                    instanceId: 'plugin-context-rpc-unavailable-1',
+                    attachment: { pluginId: 'com.acme.context', localId: 'context' },
+                    key: 'context-rpc-unavailable-1',
+                    value: { itemId: '42' },
+                    presentation: { label: 'Context #42', typeLabel: 'Plugin context' },
+                }],
+            },
+        };
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC')
+            .mockRejectedValue(createRpcMethodNotAvailableError());
+        const emitWithAck = vi.fn();
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+        await expect(sync.sendMessage(
+            sessionId,
+            'Keep this attachment selected.',
+            undefined,
+            attachmentMeta,
+        )).rejects.toMatchObject({
+            name: 'HappyError',
+            code: 'session_user_message_composer_attachments_runtime_required',
+        });
+
+        expect(sessionRpcSpy).toHaveBeenCalledOnce();
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
+    });
+
+    it('keeps legacy image input usable when a predecessor-compatible runtime accepts it', async () => {
+        const sessionId = 's_legacy_image_input_runtime_acceptance';
+        storage.getState().applySessions([createSession({
+            sessionId,
+            metadata: { version: '0.2.10' } as any,
+        })]);
+
+        const legacyImageInput = {
+            happierStructuredInputV1: {
+                v: 1,
+                imageInputs: [{
+                    id: 'legacy-image-1',
+                    kind: 'image',
+                    url: 'https://example.test/legacy-image.png',
+                    mimeType: 'image/png',
+                }],
+            },
+        };
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
+        const emitWithAck = vi.fn();
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+        await expect(sync.sendMessage(
+            sessionId,
+            'Keep the legacy image available',
+            undefined,
+            legacyImageInput,
+        )).resolves.toEqual({
+            localId: expect.any(String),
+            persistence: 'provider_direct',
+            providerAcceptancePending: true,
+        });
+
+        expect(sessionRpcSpy).toHaveBeenCalledWith(
+            sessionId,
+            SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+            expect.objectContaining({
+                meta: expect.objectContaining(legacyImageInput),
+            }),
+            { timeoutMs: 7_500 },
+        );
+        expect(emitWithAck).not.toHaveBeenCalled();
     });
 
     it('rejects an explicit blank Pending local id before transport instead of substituting one', async () => {
@@ -1618,7 +1828,6 @@ describe('sync.sendMessage optimistic thinking', () => {
             });
 
             expect(runtimeFetchMock.mock.calls.map(([input]) => String(input))).toEqual([
-                'https://reachability-auth.test/health',
                 'https://reachability-auth.test/v1/auth/ping',
             ]);
             expect(send).not.toHaveBeenCalled();
@@ -1678,6 +1887,51 @@ describe('sync.sendMessage optimistic thinking', () => {
             }),
             expect.anything(),
         );
+    });
+
+    it('fails closed for selected Composer attachments when an older attached CLI cannot expose the runtime RPC', async () => {
+        const sessionId = 's_active_legacy_cli_composer_attachment';
+        storage.getState().applySessions([createSession({
+            sessionId,
+            metadata: {
+                version: '0.0.9',
+            } as any,
+        })]);
+        const attachmentMeta = {
+            happierStructuredInputV1: {
+                v: 1,
+                composerAttachments: [{
+                    v: 1,
+                    instanceId: 'plugin-context-legacy-cli-1',
+                    attachment: { pluginId: 'com.acme.context', localId: 'context' },
+                    key: 'context-legacy-cli-1',
+                    value: { itemId: '42' },
+                    presentation: { label: 'Context #42', typeLabel: 'Plugin context' },
+                }],
+            },
+        };
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
+        const emitWithAck = vi.fn();
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+        await expect(sync.sendMessage(
+            sessionId,
+            'Keep this attachment selected.',
+            undefined,
+            attachmentMeta,
+        )).rejects.toMatchObject({
+            name: 'HappyError',
+            code: 'session_user_message_composer_attachments_runtime_required',
+        });
+
+        expect(sessionRpcSpy).not.toHaveBeenCalled();
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
     });
 
 
@@ -1752,6 +2006,109 @@ describe('sync.sendMessage optimistic thinking', () => {
             createdAt: Date.now(),
         });
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('replays a selected Composer attachment pending row through the canonical runtime RPC', async () => {
+        const sessionId = 's_pending_composer_attachment_runtime_rpc';
+        const localId = 'pending-composer-runtime-rpc';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+        const rawRecord = composerAttachmentRawRecord({
+            text: 'Use the selected Composer attachment.',
+            instanceId: 'pending-composer-runtime-rpc-1',
+        });
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId,
+            localId,
+            createdAt: 111,
+            updatedAt: 111,
+            text: rawRecord.content.text,
+            rawRecord,
+        });
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
+        const emitWithAck = vi.fn();
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+        await expect(sync.sendPendingMessageNow(sessionId, {
+            localId,
+            createdAt: 111,
+            rawRecord,
+            text: rawRecord.content.text,
+        })).resolves.toEqual({
+            type: 'committed',
+            persistence: 'provider_direct',
+            providerAcceptancePending: true,
+        });
+
+        expect(sessionRpcSpy).toHaveBeenCalledWith(
+            sessionId,
+            SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+            expect.objectContaining({
+                localId,
+                meta: expect.objectContaining(rawRecord.meta),
+            }),
+            { timeoutMs: 7_500 },
+        );
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                localId,
+                createdAt: 111,
+                rawRecord,
+                deliveryStatus: 'accepted',
+            }),
+        ]);
+    });
+
+    it('keeps a selected Composer attachment pending when its runtime RPC is unavailable', async () => {
+        const sessionId = 's_pending_composer_attachment_runtime_unavailable';
+        const localId = 'pending-composer-runtime-unavailable';
+        storage.getState().applySessions([createSession({
+            sessionId,
+            metadata: { version: '0.0.9' } as any,
+        })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+        const rawRecord = composerAttachmentRawRecord({
+            text: 'Keep this selected Composer attachment.',
+            instanceId: 'pending-composer-runtime-unavailable-1',
+        });
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId,
+            localId,
+            createdAt: 111,
+            updatedAt: 111,
+            text: rawRecord.content.text,
+            rawRecord,
+        });
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC');
+        const emitWithAck = vi.fn();
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+        await expect(sync.sendPendingMessageNow(sessionId, {
+            localId,
+            createdAt: 111,
+            rawRecord,
+            text: rawRecord.content.text,
+        })).rejects.toMatchObject({
+            name: 'HappyError',
+            code: 'session_user_message_composer_attachments_runtime_required',
+        });
+
+        expect(sessionRpcSpy).not.toHaveBeenCalled();
+        expect(emitWithAck).not.toHaveBeenCalled();
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({ localId, createdAt: 111, rawRecord }),
+        ]);
     });
 
     it('sendPendingMessageNow removes the pending row when the server rejects the message', async () => {
@@ -2376,6 +2733,46 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
+    it('refreshes the exact pending session and surfaces an actionable error when an action loses its mutation race', async () => {
+        const sessionId = 's_pending_action_conflict';
+        const localId = 'pending-action-conflict-local';
+        const outboxScope = storage.getState().profileScope!;
+        const pending = pendingOutboxFixture({ sessionId, localId, text: 'steer me now' });
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }),
+            encryptionMode: 'plain',
+        }]);
+        savePendingOutboxMessage(pending, outboxScope);
+        replayPersistedPendingOutboxForSession(sessionId, outboxScope);
+
+        const { sync } = await import('./sync');
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const requests: Array<{ path: string; method: string }> = [];
+        vi.spyOn(apiSocket, 'request').mockImplementation(async (path, init) => {
+            requests.push({ path, method: init?.method ?? 'GET' });
+            if (init?.method === 'PATCH') {
+                return Response.json({ error: 'action-conflict' }, { status: 409 });
+            }
+            return Response.json({ pending: [], discarded: [] });
+        });
+
+        await expect(sync.sendPendingMessageNow(sessionId, {
+            localId,
+            createdAt: pending.createdAt,
+            rawRecord: pending.rawRecord,
+            text: pending.text,
+            deliveryIntent: 'steer_now',
+        })).rejects.toMatchObject({
+            code: 'action-conflict',
+            message: expect.stringContaining('changed'),
+        });
+
+        expect(requests).toEqual([
+            { path: `/v2/sessions/${sessionId}/pending/${localId}/action`, method: 'PATCH' },
+            { path: `/v2/sessions/${sessionId}/pending?includeDiscarded=1`, method: 'GET' },
+        ]);
+    });
+
     it('normalizes an omitted pending delivery intent onto the canonical durable action path', async () => {
         const sessionId = 's_pending_default_action';
         const localId = 'pending-default-action-local';
@@ -2465,6 +2862,106 @@ describe('sync.sendMessage optimistic thinking', () => {
         );
         expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
         vi.useRealTimers();
+    });
+
+    it('replays a selected Composer attachment retry through the canonical runtime RPC', async () => {
+        vi.useFakeTimers();
+        try {
+            const sessionId = 's_pending_composer_attachment_retry_runtime_rpc';
+            const localId = 'pending-composer-retry-runtime-rpc';
+            storage.getState().applySessions([createSession({ sessionId })]);
+
+            const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+            await encryption.initializeSessions(new Map([[sessionId, null]]));
+            const rawRecord = composerAttachmentRawRecord({
+                text: 'Retry with this selected Composer attachment.',
+                instanceId: 'pending-composer-retry-runtime-rpc-1',
+            });
+            storage.getState().upsertPendingMessage(sessionId, {
+                id: localId,
+                localId,
+                createdAt: 111,
+                updatedAt: 111,
+                text: rawRecord.content.text,
+                rawRecord,
+            });
+
+            const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
+            const emitWithAck = vi.fn();
+            const { sync } = await import('./sync');
+            sync.encryption = encryption;
+            sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+            (sync as any).schedulePendingMessageCommitRetry({ sessionId, localId });
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            expect(sessionRpcSpy).toHaveBeenCalledWith(
+                sessionId,
+                SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+                expect.objectContaining({
+                    localId,
+                    meta: expect.objectContaining(rawRecord.meta),
+                }),
+                { timeoutMs: 7_500 },
+            );
+            expect(emitWithAck).not.toHaveBeenCalled();
+            expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+                expect.objectContaining({
+                    localId,
+                    createdAt: 111,
+                    rawRecord,
+                    deliveryStatus: 'accepted',
+                }),
+            ]);
+            expect((sync as any).pendingMessageCommitRetryTimers.has(`${sessionId}:${localId}`)).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('keeps a selected Composer attachment retry pending when the runtime RPC is unavailable', async () => {
+        vi.useFakeTimers();
+        try {
+            const sessionId = 's_pending_composer_attachment_retry_runtime_unavailable';
+            const localId = 'pending-composer-retry-runtime-unavailable';
+            storage.getState().applySessions([createSession({
+                sessionId,
+                metadata: { version: '0.0.9' } as any,
+            })]);
+
+            const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+            await encryption.initializeSessions(new Map([[sessionId, null]]));
+            const rawRecord = composerAttachmentRawRecord({
+                text: 'Keep this retry selected Composer attachment.',
+                instanceId: 'pending-composer-retry-runtime-unavailable-1',
+            });
+            storage.getState().upsertPendingMessage(sessionId, {
+                id: localId,
+                localId,
+                createdAt: 111,
+                updatedAt: 111,
+                text: rawRecord.content.text,
+                rawRecord,
+            });
+
+            const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC');
+            const emitWithAck = vi.fn();
+            const { sync } = await import('./sync');
+            sync.encryption = encryption;
+            sync.setMessageTransport({ emitWithAck, send: vi.fn() });
+
+            (sync as any).schedulePendingMessageCommitRetry({ sessionId, localId });
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            expect(sessionRpcSpy).not.toHaveBeenCalled();
+            expect(emitWithAck).not.toHaveBeenCalled();
+            expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+                expect.objectContaining({ localId, createdAt: 111, rawRecord }),
+            ]);
+            expect((sync as any).pendingMessageCommitRetryTimers.has(`${sessionId}:${localId}`)).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('drops pending retry for inactive replay forks that cannot resume before socket emit', async () => {
@@ -2890,7 +3387,7 @@ describe('sync.sendMessage optimistic thinking', () => {
     it.each([
         { didUpdate: true, operation: 'enqueue', shouldRetain: false },
         { didUpdate: true, operation: 'cancel', shouldRetain: true },
-        { didUpdate: false, operation: 'enqueue', shouldRetain: true },
+        { didUpdate: false, operation: 'enqueue', shouldRetain: false },
     ] as const)(
         'an action PATCH with didUpdate=$didUpdate handles same-scope $operation custody without touching another scope',
         async ({ didUpdate, operation, shouldRetain }) => {

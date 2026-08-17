@@ -28,15 +28,24 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import {
+    DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1,
+    WorkspaceFileViewerPreferencesV1Schema,
+    applyWorkspaceFileViewerPreferenceMutationV1,
+} from '@happier-dev/protocol';
+import type { OpenableContentStatResultV1 } from '@happier-dev/protocol';
 
 import { refreshWorkspaceFileDetails, type WorkspaceFileDetailsFileContent } from '@/components/workspaces/files/details/workspaceFileDetails/refreshWorkspaceFileDetails';
 import { useWorkspaceFileEditorState } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState';
 import { useMarkdownFileEditMode } from '@/components/workspaces/files/details/workspaceFileDetails/useMarkdownFileEditMode';
 import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
 import {
+    storage,
     useProjectForSession,
     useSession,
     useSetting,
+    useSettings,
+    useSettingsVersion,
     useWorkspaceReviewCommentsDrafts,
     useWorkspaceScmCommitSelectionPatches,
     useWorkspaceScmCommitSelectionPaths,
@@ -56,10 +65,48 @@ import { resolveFileDetailsRenderableDiff } from './workspaceFileDetails/resolve
 import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
 import { buildWorkspaceFileReferenceAnchorKey } from '@/utils/workspaceFileReferences/resolveWorkspaceFileReference';
 import { extractSelectedDiffLineKeysFromPatch } from '@/scm/scmPatchSelection';
+import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/details/surfaces';
+import type { DetailsTab, DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
+import {
+    PluginDetailsViewerChoiceChrome,
+    createPluginDetailsDestinationTab,
+    usePluginDetailsDestinationLaunchStaging,
+    type PluginDetailsViewerChoiceModel,
+} from '@/components/appShell/panes/details/surfaces/pluginDetailsDestination';
+import { createWorkspaceFileOpenableContentBinding, type PluginSurfaceOpenableContentBinding } from '@/components/plugins/surfaces/pluginSurfaceOpenableContent';
+import { resolvePluginSurfaceDestinationLabel } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
+import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
+import { useDeviceType } from '@/utils/platform/responsive';
+import {
+    resolveWorkspaceFileViewerCandidates,
+    resolveWorkspaceFileViewerChoiceModel,
+    isWorkspaceFileOpenableContentViewerEligible,
+    type WorkspaceFileViewerChoice,
+    type WorkspaceFileViewerChoiceModel,
+    type WorkspaceFileViewerMatch,
+} from './workspaceFileDetails/resolveWorkspaceFileViewer';
 
 export type WorkspaceFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
     anchor: ReviewCommentAnchor;
+}>;
+
+/**
+ * The details renderer contributes its current scoped host facts; this shared
+ * file-details owner remains responsible for selecting and launching an
+ * openable-content viewer.
+ */
+export type WorkspaceFileOpenableContentViewerHost = Readonly<{
+    targetKind: 'session' | 'project';
+    projection: PluginUiProjectionModel | null | undefined;
+    /** The mounted details host's current platform, not an authored viewer capability. */
+    platform: LocalServicePreviewPlatform;
+    details: DetailsSurfaceRenderInputV1;
+    scopedLaunchFacts: PluginSurfaceScopedLaunchFacts;
 }>;
 
 export type WorkspaceFileDetailsViewProps = Readonly<{
@@ -70,7 +117,300 @@ export type WorkspaceFileDetailsViewProps = Readonly<{
     sessionIdForAugmentation?: string | null;
     presentation?: 'screen' | 'panel';
     onStartEditingFile?: () => void;
+    openableContentViewer?: WorkspaceFileOpenableContentViewerHost;
 }>;
+
+function toBuiltinDetailsTab(tab: DetailsTabState): DetailsTab {
+    return {
+        key: tab.key,
+        kind: tab.kind,
+        title: tab.title,
+        ...(tab.subtitle === undefined ? {} : { subtitle: tab.subtitle }),
+        resource: tab.resource,
+    };
+}
+
+function detailsTabIntent(tab: DetailsTabState): 'pinned' | 'preview' {
+    return tab.isPreview ? 'preview' : 'pinned';
+}
+
+function unavailableViewerChoiceId(choice: Extract<WorkspaceFileViewerChoice, { kind: 'unavailable' }>): string {
+    return `unavailable:${choice.preference.pluginId}:${choice.preference.contributionLocalId}`;
+}
+
+function findWorkspaceFileViewerChoice(
+    model: WorkspaceFileViewerChoiceModel,
+    candidateId: string,
+): WorkspaceFileViewerChoice | null {
+    for (const choice of model.choices) {
+        if (choice.kind === 'builtin' && candidateId === 'builtin') return choice;
+        if (choice.kind === 'plugin' && candidateId === choice.candidate.candidate.entry.id) return choice;
+        if (choice.kind === 'unavailable' && candidateId === unavailableViewerChoiceId(choice)) return choice;
+    }
+    return null;
+}
+
+function readWorkspaceFileViewerPreferences(value: unknown) {
+    const parsed = WorkspaceFileViewerPreferencesV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1;
+}
+
+function createWorkspaceFileViewerChoiceChromeModel(input: Readonly<{
+    model: WorkspaceFileViewerChoiceModel;
+    selectedPluginViewerId: string | null;
+    canSelect: boolean;
+    selectCandidate: (candidateId: string, details: DetailsSurfaceRenderInputV1) => Promise<void>;
+    details: DetailsSurfaceRenderInputV1;
+}>): PluginDetailsViewerChoiceModel {
+    return Object.freeze({
+        candidates: Object.freeze(input.model.choices.map((choice) => {
+            if (choice.kind === 'builtin') {
+                const selected = input.selectedPluginViewerId === null;
+                return Object.freeze({
+                    id: 'builtin',
+                    label: t('common.default'),
+                    selected,
+                    ...(input.canSelect || selected ? {} : { disabled: true }),
+                });
+            }
+            if (choice.kind === 'plugin') {
+                const selected = choice.candidate.candidate.entry.id === input.selectedPluginViewerId;
+                return Object.freeze({
+                    id: choice.candidate.candidate.entry.id,
+                    label: resolvePluginSurfaceDestinationLabel(choice.candidate.candidate.placement),
+                    detail: choice.candidate.identity.pluginId,
+                    selected,
+                    ...(input.canSelect || selected ? {} : { disabled: true }),
+                });
+            }
+            return Object.freeze({
+                id: unavailableViewerChoiceId(choice),
+                label: `${choice.preference.pluginId}/${choice.preference.contributionLocalId}`,
+                detail: t('common.unavailable'),
+                selected: false,
+                disabled: true,
+            });
+        })),
+        selectCandidate: async (candidateId) => {
+            await input.selectCandidate(candidateId, input.details);
+        },
+    });
+}
+
+function stageWorkspaceFilePluginViewer(input: Readonly<{
+    stage: ReturnType<typeof usePluginDetailsDestinationLaunchStaging>;
+    host: WorkspaceFileOpenableContentViewerHost;
+    binding: PluginSurfaceOpenableContentBinding;
+    selected: WorkspaceFileViewerMatch;
+    model: WorkspaceFileViewerChoiceModel;
+    currentDetails: DetailsSurfaceRenderInputV1;
+    originalBuiltinTab: DetailsTab;
+    originalBuiltinTabState: DetailsTabState;
+    canSelect: boolean;
+    selectCandidate: (candidateId: string, details: DetailsSurfaceRenderInputV1) => Promise<void>;
+}>): boolean {
+    const replaceTab = input.currentDetails.callbacks.replaceTab;
+    if (!replaceTab) return false;
+    const selectedPluginViewerId = input.selected.candidate.entry.id;
+    const receipt = input.stage({
+        placement: input.selected.candidate.placement,
+        targetKind: input.host.targetKind,
+        scopedLaunchFacts: input.host.scopedLaunchFacts,
+        input: input.binding.ref,
+        binding: Object.freeze({ openableContent: input.binding }),
+        viewerChoice: (context) => createWorkspaceFileViewerChoiceChromeModel({
+            model: input.model,
+            selectedPluginViewerId,
+            canSelect: input.canSelect,
+            selectCandidate: input.selectCandidate,
+            details: context.details,
+        }),
+        unavailableFallback: (fallback) => {
+            fallback.details.callbacks.replaceTab?.(
+                fallback.details.tab.key,
+                input.originalBuiltinTab,
+                { intent: detailsTabIntent(input.originalBuiltinTabState) },
+            );
+        },
+    });
+    if (!receipt) return false;
+    replaceTab(
+        input.currentDetails.tab.key,
+        createPluginDetailsDestinationTab({
+            destination: receipt.resource.destination,
+            ...(receipt.resource.instanceKey === undefined ? {} : { instanceKey: receipt.resource.instanceKey }),
+            title: resolvePluginSurfaceDestinationLabel(input.selected.candidate.placement),
+        }),
+        {
+            intent: detailsTabIntent(input.originalBuiltinTabState),
+            restoreSourceOnRehydrate: true,
+        },
+    );
+    return true;
+}
+
+function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
+    scope: WorkspaceScopeBase | null;
+    filePath: string;
+    host: WorkspaceFileOpenableContentViewerHost | undefined;
+}>): React.ReactElement | null {
+    const settings = useSettings();
+    const settingsVersion = useSettingsVersion();
+    const stage = usePluginDetailsDestinationLaunchStaging();
+    const host = props.host;
+    const deviceType = useDeviceType();
+    const runtimeFormFactor = host
+        ? resolvePluginUiRuntimeFormFactor({ deviceType })
+        : 'tablet';
+    const binding = React.useMemo(() => (
+        props.scope && host
+            ? createWorkspaceFileOpenableContentBinding({ target: props.scope, filePath: props.filePath })
+            : null
+    ), [host?.targetKind, props.filePath, props.scope]);
+    const candidates = React.useMemo(() => (
+        host?.projection
+            ? resolveWorkspaceFileViewerCandidates({
+                projection: host.projection,
+                targetKind: host.targetKind,
+                platform: host.platform,
+                formFactor: runtimeFormFactor,
+            })
+            : []
+    ), [host?.platform, host?.projection, host?.targetKind, runtimeFormFactor]);
+    const [stat, setStat] = React.useState<OpenableContentStatResultV1 | null>(null);
+
+    React.useEffect(() => {
+        if (!binding) {
+            setStat(null);
+            return;
+        }
+        const controller = new AbortController();
+        let current = true;
+        void binding.stat({ signal: controller.signal }).then((next) => {
+            if (current) setStat(next);
+        });
+        return () => {
+            current = false;
+            controller.abort();
+        };
+    }, [binding]);
+
+    const preferences = React.useMemo(() => (
+        readWorkspaceFileViewerPreferences(settings.workspaceFileViewerPreferencesV1)
+    ), [settings.workspaceFileViewerPreferencesV1]);
+    const choiceModel = React.useMemo(() => (
+        stat?.status === 'ready'
+            ? resolveWorkspaceFileViewerChoiceModel({
+                metadata: stat,
+                preferences,
+                availablePluginViewers: candidates,
+            })
+            : null
+    ), [candidates, preferences, stat]);
+    const originalBuiltinTabState = host?.details.tab ?? null;
+    const originalBuiltinTab = React.useMemo(() => (
+        originalBuiltinTabState ? toBuiltinDetailsTab(originalBuiltinTabState) : null
+    ), [originalBuiltinTabState]);
+
+    const selectCandidate = React.useCallback(async (
+        candidateId: string,
+        currentDetails: DetailsSurfaceRenderInputV1,
+    ) => {
+        if (!host || !binding || !stat || stat.status !== 'ready' || !originalBuiltinTab || !originalBuiltinTabState) return;
+        const currentSettingsState = storage.getState();
+        if (currentSettingsState.settingsVersion === null) return;
+        const currentChoiceModel = resolveWorkspaceFileViewerChoiceModel({
+            metadata: stat,
+            preferences: readWorkspaceFileViewerPreferences(
+                currentSettingsState.settings.workspaceFileViewerPreferencesV1,
+            ),
+            availablePluginViewers: candidates,
+        });
+        const choice = findWorkspaceFileViewerChoice(currentChoiceModel, candidateId);
+        if (!choice || choice.kind === 'unavailable') return;
+        const viewer = choice.kind === 'builtin'
+            ? { kind: 'builtin' as const }
+            : {
+                kind: 'plugin' as const,
+                pluginId: choice.candidate.identity.pluginId,
+                contributionLocalId: choice.candidate.identity.localId,
+            };
+        try {
+            const result = await getSyncSingleton().mutateAccountSettingsOnce({
+                expectedSettingsVersion: currentSettingsState.settingsVersion,
+                mutate: (raw) => Object.freeze({
+                    settings: {
+                        ...applyWorkspaceFileViewerPreferenceMutationV1(raw, {
+                            kind: 'select',
+                            selector: currentChoiceModel.preferenceSelector,
+                            viewer,
+                        }),
+                    },
+                    value: undefined,
+                }),
+            });
+            if (result.status !== 'applied') return;
+        } catch {
+            return;
+        }
+
+        if (choice.kind === 'builtin') {
+            currentDetails.callbacks.replaceTab?.(
+                currentDetails.tab.key,
+                originalBuiltinTab,
+                { intent: detailsTabIntent(originalBuiltinTabState) },
+            );
+            return;
+        }
+        stageWorkspaceFilePluginViewer({
+            stage,
+            host,
+            binding,
+            selected: choice.candidate,
+            model: currentChoiceModel,
+            currentDetails,
+            originalBuiltinTab,
+            originalBuiltinTabState,
+            canSelect: true,
+            selectCandidate,
+        });
+    }, [binding, candidates, host, originalBuiltinTab, originalBuiltinTabState, stage, stat]);
+
+    React.useEffect(() => {
+        if (
+            !host?.details.active
+            || !binding
+            || !choiceModel
+            || choiceModel.selected.kind !== 'plugin'
+            || !originalBuiltinTab
+            || !originalBuiltinTabState
+        ) {
+            return;
+        }
+        stageWorkspaceFilePluginViewer({
+            stage,
+            host,
+            binding,
+            selected: choiceModel.selected.candidate,
+            model: choiceModel,
+            currentDetails: host.details,
+            originalBuiltinTab,
+            originalBuiltinTabState,
+            canSelect: settingsVersion !== null,
+            selectCandidate,
+        });
+    }, [binding, choiceModel, host, originalBuiltinTab, originalBuiltinTabState, selectCandidate, settingsVersion, stage]);
+
+    if (!host || !choiceModel || choiceModel.selected.kind !== 'builtin') return null;
+    const viewerChoice = createWorkspaceFileViewerChoiceChromeModel({
+        model: choiceModel,
+        selectedPluginViewerId: null,
+        canSelect: settingsVersion !== null,
+        selectCandidate,
+        details: host.details,
+    });
+    return <PluginDetailsViewerChoiceChrome model={viewerChoice} />;
+}
 
 type WorkspaceFileDetailsPersistedDraft = Readonly<{
     isEditingFile: boolean;
@@ -455,6 +795,10 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         persistedDraft: persistedDraft ?? null,
         persistDraft,
     });
+    const openableContentViewerEligible = isWorkspaceFileOpenableContentViewerEligible({
+        isEditingFile,
+        hasPersistedEditingDraft: persistedDraft?.isEditingFile === true,
+    });
 
     // Raw <-> Rich edit-mode state for markdown files (Lane I / R-A20). Owns the
     // flush-then-reseed dance + eligibility so this view stays thin; the rich
@@ -623,7 +967,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         && (scmSnapshot?.capabilities?.writeDiscard === true),
     );
     const fileHeaderRightElement = showDownloadAction || showDiscardAction ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
             {showDownloadAction ? (
                 <WorkspaceFileDownloadButton
                     testID="file-header-download"
@@ -704,6 +1048,13 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     markdownRichEligible={markdownRichEligible}
                     markdownRichDisabledReason={markdownRichDisabledReason}
                 />
+                {props.openableContentViewer && openableContentViewerEligible ? (
+                    <WorkspaceFileOpenableContentViewerControls
+                        scope={scope}
+                        filePath={filePath}
+                        host={props.openableContentViewer}
+                    />
+                ) : null}
                 {previewTooLarge && error ? (
                     <View
                         testID="file-preview-unavailable-banner"

@@ -25,7 +25,7 @@ export function buildRelayChoices(params: Readonly<{
             id: 'cloud',
             title: t('setupOnboarding.relayCloudTitle'),
             subtitle: t('setupOnboarding.relayCloudSubtitle'),
-            icon: 'cloud-outline',
+            icon: 'cloud',
             badge: t('setupOnboarding.recommendedBadge'),
         });
     }
@@ -35,7 +35,7 @@ export function buildRelayChoices(params: Readonly<{
             id: 'thisComputer',
             title: t(thisComputerTitleKey),
             subtitle: t(thisComputerSubtitleKey),
-            icon: 'laptop-outline',
+            icon: 'laptop',
             disabled: false,
         });
     }
@@ -45,7 +45,7 @@ export function buildRelayChoices(params: Readonly<{
             id: 'remoteComputer',
             title: t('setupOnboarding.relayOnRemoteComputerTitle'),
             subtitle: t('setupOnboarding.relayOnRemoteComputerSubtitle'),
-            icon: 'desktop-outline',
+            icon: 'desktop',
         });
     }
 

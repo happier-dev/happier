@@ -1,8 +1,7 @@
 import {
-  openSessionOwnerMetadataV1,
-  projectSessionOwnerCompatibilityViewV1,
   SessionSharedMetadataV1Schema,
   SessionTurnsProjectionV1Schema,
+  type AccountEncryptionCurrentnessResponse,
   type SessionTurnsProjectionV1,
   type V2SessionByIdResponse,
 } from '@happier-dev/protocol';
@@ -15,10 +14,8 @@ import type {
   Metadata,
   Session,
 } from '@/sync/domains/state/storageTypes';
-import { MetadataSchema } from '@/sync/domains/state/storageTypes';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
 import {
   createNotAuthenticatedError,
@@ -42,6 +39,11 @@ import {
   parseCompatSessionByIdResponse,
   scanSessionByIdFromCompatList,
 } from './sessionHttpCompat';
+import {
+  hasSessionShareRecipientAuthority,
+  projectSessionLayout1OwnerMetadata,
+  readSessionLayout1OwnerMetadata,
+} from './readSessionLayout1OwnerProjection';
 
 type SessionEncryption = {
   encryptRaw?: (payload: unknown) => Promise<string>;
@@ -52,7 +54,10 @@ type SessionEncryption = {
 
 export type SessionByIdEncryption = {
   decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
-  initializeSessions: (sessionKeys: Map<string, Uint8Array | null>) => Promise<void>;
+  initializeSessions: (
+    sessionKeys: Map<string, Uint8Array | null>,
+    options?: Readonly<{ shouldContinue?: () => boolean }>,
+  ) => Promise<void>;
   getSessionEncryption: (sessionId: string) => SessionEncryption | null;
 };
 
@@ -73,8 +78,7 @@ type HydratedSessionById = Omit<
 export type HydratedSessionMetadataTupleMutationSnapshot =
   SessionMetadataTupleMutationSnapshotV1<Metadata, AgentState>;
 
-const sessionByIdHttpReadsByRequest = new WeakMap<SessionByIdRequest, Map<string, Promise<SessionByIdHttpRead>>>();
-const scopedSessionByIdHttpReads = new Map<string, Promise<SessionByIdHttpRead>>();
+const sessionByIdHttpReadsByAuthority = new WeakMap<object, Map<string, Promise<SessionByIdHttpRead>>>();
 
 function buildSessionByIdHttpReadKey(params: Readonly<{
   sessionId: string;
@@ -93,21 +97,20 @@ async function readSessionByIdHttp(params: Readonly<{
   serverId?: string | null;
   token: string;
   request: SessionByIdRequest;
+  requestAuthority?: object;
   timeoutMs: number;
 }>): Promise<SessionByIdHttpRead> {
   const key = buildSessionByIdHttpReadKey(params);
-  const scopedServerId = String(params.serverId ?? '').trim();
+  const requestAuthority = params.requestAuthority ?? params.request;
+  const existingReadsForAuthority = sessionByIdHttpReadsByAuthority.get(
+    requestAuthority,
+  );
   let readsForRequest: Map<string, Promise<SessionByIdHttpRead>>;
-  if (scopedServerId) {
-    readsForRequest = scopedSessionByIdHttpReads;
+  if (existingReadsForAuthority) {
+    readsForRequest = existingReadsForAuthority;
   } else {
-    const existingReadsForRequest = sessionByIdHttpReadsByRequest.get(params.request);
-    if (existingReadsForRequest) {
-      readsForRequest = existingReadsForRequest;
-    } else {
-      readsForRequest = new Map<string, Promise<SessionByIdHttpRead>>();
-      sessionByIdHttpReadsByRequest.set(params.request, readsForRequest);
-    }
+    readsForRequest = new Map<string, Promise<SessionByIdHttpRead>>();
+    sessionByIdHttpReadsByAuthority.set(requestAuthority, readsForRequest);
   }
 
   const existing = readsForRequest.get(key);
@@ -206,10 +209,13 @@ export async function fetchAndApplySessionById(params: Readonly<{
   sessionId: string;
   serverId?: string | null;
   credentials: AuthCredentials;
+  accountCurrentness?: AccountEncryptionCurrentnessResponse;
+  fetchAccountCurrentness?: () => Promise<AccountEncryptionCurrentnessResponse>;
   encryption: SessionByIdEncryption;
   sessionDataKeys: Map<string, Uint8Array>;
   sessionDataKeyEnvelopes?: SessionDataKeyEnvelopeCache;
   request: (path: string, init: RequestInit) => Promise<Response>;
+  requestAuthority?: object;
   applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
   getExistingSession?: (sessionId: string) => Session | null | undefined;
   log: { log: (message: string) => void };
@@ -248,6 +254,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
       serverId: params.serverId,
       token: params.credentials.token,
       request: params.request,
+      requestAuthority: params.requestAuthority,
       timeoutMs,
     });
     responseOk = response.ok;
@@ -341,7 +348,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
       sessionKeys.set(sessionId, null);
     }
 
-    await params.encryption.initializeSessions(sessionKeys);
+    await params.encryption.initializeSessions(sessionKeys, {
+      shouldContinue: isCurrent,
+    });
     if (!isCurrent()) return staleResult();
     const decrypted = sessionKeys.get(sessionId) ?? null;
     if (decrypted) {
@@ -360,32 +369,67 @@ export async function fetchAndApplySessionById(params: Readonly<{
   }
 
   const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
-  const hasFullAgentStateProjection = metadataLayoutVersion === 0
-    || (
-      typeof row.ownerMetadata === 'string'
-      && typeof row.agentStateVersion === 'number'
-      && Object.prototype.hasOwnProperty.call(row, 'agentState')
-    );
   const agentStateVersion = row.agentStateVersion ?? 0;
-  const [decryptedMetadata, agentState] = encryptionMode === 'plain'
-    ? [
-      parsePlainSessionMetadata(row.metadata, row.metadataLayoutVersion),
-      hasFullAgentStateProjection
-        ? parsePlainSessionAgentState(row.agentState ?? null)
-        : null,
-    ] as const
-    : await Promise.all([
-      metadataLayoutVersion === 1
-        ? sessionEncryption!.decryptMetadataPayload?.(row.metadataVersion, row.metadata)
+  const recipientAuthority = metadataLayoutVersion === 1
+    && hasSessionShareRecipientAuthority(row.share);
+  let accountCurrentness = params.accountCurrentness;
+  if (
+    metadataLayoutVersion === 1
+    && !recipientAuthority
+    && row.ownerMetadata != null
+    && !accountCurrentness
+    && params.fetchAccountCurrentness
+  ) {
+    accountCurrentness = await params.fetchAccountCurrentness();
+    if (!isCurrent()) return staleResult();
+  }
+  const accountMode = accountCurrentness?.mode;
+  if (
+    metadataLayoutVersion === 1
+    && !recipientAuthority
+    && row.ownerMetadata != null
+    && !accountMode
+  ) {
+    params.log.log(`[sessionById] Account currentness unavailable for ${sessionId}`);
+    return {
+      ok: false,
+      session: null,
+      errorCode: 'account_currentness_unavailable',
+    };
+  }
+  const ownerMetadataRead = metadataLayoutVersion === 1
+      ? readSessionLayout1OwnerMetadata({
+          share: row.share,
+          accountMode,
+          ownerMetadataEnvelope: row.ownerMetadata,
+          credentials: params.credentials,
+        })
+    : null;
+  if (ownerMetadataRead?.kind === 'unavailable') {
+    params.log.log(`[sessionById] Owner metadata unavailable for ${sessionId}`);
+    return { ok: false, session: null, errorCode: 'owner_metadata_unavailable' };
+  }
+  const decryptedMetadataPromise = encryptionMode === 'plain'
+    ? Promise.resolve(parsePlainSessionMetadata(row.metadata, row.metadataLayoutVersion))
+    : metadataLayoutVersion === 1
+      ? (
+          sessionEncryption!.decryptMetadataPayload?.(row.metadataVersion, row.metadata)
           ?? Promise.resolve(null)
-        : sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata),
-      hasFullAgentStateProjection
-        ? sessionEncryption!.decryptAgentState(
-          agentStateVersion,
-          row.agentState ?? null,
         )
-        : Promise.resolve(null),
-    ]);
+      : sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata);
+  const agentStatePromise = metadataLayoutVersion === 1
+    && ownerMetadataRead?.kind !== 'owner'
+      ? Promise.resolve(null)
+      : encryptionMode === 'plain'
+        ? Promise.resolve(parsePlainSessionAgentState(row.agentState ?? null))
+        : sessionEncryption!.decryptAgentState(
+            agentStateVersion,
+            row.agentState ?? null,
+          );
+  const [decryptedMetadata, agentState] = await Promise.all([
+    decryptedMetadataPromise,
+    agentStatePromise,
+  ]);
   if (!isCurrent()) return staleResult();
   const metadata = encryptionMode === 'plain'
     ? decryptedMetadata
@@ -403,28 +447,25 @@ export async function fetchAndApplySessionById(params: Readonly<{
     params.log.log(`[sessionById] Shared metadata unavailable for ${sessionId}`);
     return { ok: false, session: null, errorCode: 'metadata_unavailable' };
   }
-  const ownerMetadata = row.metadataLayoutVersion === 1
-    && typeof row.ownerMetadata === 'string'
-    ? openSessionOwnerMetadataV1({
-      material: resolveAccountScopedCryptoMaterialFromCredentials(params.credentials),
-      ciphertext: row.ownerMetadata,
-    })
+  const ownerProjection = metadataLayoutVersion === 1 && layout1SharedMetadata
+    ? projectSessionLayout1OwnerMetadata({
+        sharedMetadata: layout1SharedMetadata,
+        ownerMetadataRead: ownerMetadataRead!,
+      })
     : null;
-  const projectedOwnerMetadataView = metadataLayoutVersion === 1
-    && layout1SharedMetadata
-    && ownerMetadata
-      ? MetadataSchema.safeParse(
-          projectSessionOwnerCompatibilityViewV1({
-            sharedMetadata: layout1SharedMetadata,
-            ownerMetadata,
-          }),
-        )
-      : null;
+  if (ownerProjection?.kind === 'unavailable') {
+    params.log.log(`[sessionById] Owner metadata unavailable for ${sessionId}`);
+    return { ok: false, session: null, errorCode: 'owner_metadata_unavailable' };
+  }
+  const ownerMetadata = ownerProjection?.kind === 'owner'
+    ? ownerProjection.ownerMetadata
+    : null;
   const ownerMetadataView = metadataLayoutVersion === 0
     ? metadata
-    : projectedOwnerMetadataView?.success
-      ? projectedOwnerMetadataView.data
+    : ownerProjection?.kind === 'owner'
+      ? ownerProjection.ownerMetadataView
       : null;
+  if (!isCurrent()) return staleResult();
 
   const accessLevel = row.share?.accessLevel;
   const normalizedAccessLevel = accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
@@ -507,7 +548,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
         })()
         : metadataLayoutVersion === 1
           ? (
-        typeof row.ownerMetadata === 'string'
+        ownerProjection?.kind === 'owner'
         && ownerMetadata
         && ownerMetadataView
         && typeof row.agentStateVersion === 'number'
@@ -517,7 +558,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
             metadataLayoutVersion: 1,
             metadataVersion: row.metadataVersion,
             sharedMetadataCiphertext: row.metadata,
-            ownerMetadataCiphertext: row.ownerMetadata,
+            ownerMetadataEnvelope: ownerProjection.ownerMetadataEnvelope,
             agentStateVersion: row.agentStateVersion,
             agentStateCiphertext: row.agentState ?? null,
             value: {
@@ -544,7 +585,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
           )
           : null;
   const {
-    ownerMetadata: _ownerMetadataCiphertext,
+    ownerMetadata: _ownerMetadataEnvelope,
     ...rowWithoutOwnerMetadata
   } = row;
 

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type {
@@ -24,6 +23,7 @@ import { t } from '@/text';
 
 import { ValueRefEditorModal, getValueRefEditorModalTitle } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
 import { McpBindingOverridesValuePatchGroup } from '@/components/settings/mcpServers/bindingOverrides/McpBindingOverridesValuePatchGroup';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const ENV_KEY_REGEX = /^[A-Z_][A-Z0-9_]*$/;
 const HEADER_KEY_REGEX = /^[A-Za-z0-9-]+$/;
@@ -226,7 +226,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
                     <Item
                         title={t('settings.mcpServersOverridesCommandTitle')}
                         subtitle={t('settings.mcpServersOverridesCommandSubtitle')}
-                        icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.purple} />}
+                        icon={<Icon name="terminal" size={29} color={theme.colors.accent.purple} />}
                         rightElement={<Switch value={commandOverrideEnabled} onValueChange={setCommandOverrideEnabled} />}
                         onPress={() => setCommandOverrideEnabled((v) => !v)}
                         showChevron={false}
@@ -249,7 +249,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
                     <Item
                         title={t('settings.mcpServersOverridesArgsTitle')}
                         subtitle={t('settings.mcpServersOverridesArgsSubtitle')}
-                        icon={<Ionicons name="list-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="list" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={argsOverrideEnabled} onValueChange={setArgsOverrideEnabled} />}
                         onPress={() => setArgsOverrideEnabled((v) => !v)}
                         showChevron={false}
@@ -275,7 +275,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
                     <Item
                         title={t('settings.mcpServersOverridesUrlTitle')}
                         subtitle={t('settings.mcpServersOverridesUrlSubtitle')}
-                        icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.purple} />}
+                        icon={<Icon name="link" size={29} color={theme.colors.accent.purple} />}
                         rightElement={<Switch value={urlOverrideEnabled} onValueChange={setUrlOverrideEnabled} />}
                         onPress={() => setUrlOverrideEnabled((v) => !v)}
                         showChevron={false}
@@ -319,7 +319,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
                 <Item
                     testID="mcp.bindingOverrides.save"
                     title={t('common.save')}
-                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.state.success.foreground} />}
+                    icon={<Icon name="floppy-disk" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={onSave}
                 />
             </ItemGroup>

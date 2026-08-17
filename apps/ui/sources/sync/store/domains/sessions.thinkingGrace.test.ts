@@ -77,6 +77,7 @@ function mockSessionsDomainBoundaries() {
     }));
     vi.doMock('@/agents/registry/registryCore', () => ({
         AGENT_IDS: [],
+        CANONICAL_AGENT_IDS: [],
         DEFAULT_AGENT_ID: 'openai',
         resolveAgentIdFromFlavor: vi.fn(() => null),
     }));
@@ -173,6 +174,9 @@ describe('sessions domain: thinking grace', () => {
         expect(get().sessions.s1?.resumingAt).toBe(nowMs);
         expect(get().sessionListRenderables.s1?.resumingAt).toBe(nowMs);
         expect(get().sessionListRowStateByServerId.server_1?.s1?.resumingAt).toBe(nowMs);
+        expect([...scheduledTimeouts.values()].filter((timeout) => timeout.delay === 30_000)).toHaveLength(0);
+
+        domain.armSessionResumingFallback('s1');
         const decay = [...scheduledTimeouts.values()].find((timeout) => timeout.delay === 30_000);
         expect(decay).toBeDefined();
 
@@ -223,6 +227,8 @@ describe('sessions domain: thinking grace', () => {
 
         domain.markSessionResuming('s1');
         expect(get().sessions.s1?.resumingAt).toBe(nowMs);
+        expect([...scheduledTimeouts.values()].filter((timeout) => timeout.delay === 30_000)).toHaveLength(0);
+        domain.armSessionResumingFallback('s1');
         const secondDecay = [...scheduledTimeouts.values()].find((timeout) => timeout.delay === 30_000);
         expect(secondDecay).toBeDefined();
         secondDecay?.callback();

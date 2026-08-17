@@ -13,7 +13,6 @@ export function buildPromptAssetExportHref(args: Readonly<{
 
     const params = new URLSearchParams();
     params.set('assetTypeId', args.link.assetTypeId);
-    params.set('machineId', args.link.machineId);
     params.set('scope', args.link.scope);
     if (typeof args.link.workspacePath === 'string' && args.link.workspacePath.length > 0) {
         params.set('workspacePath', args.link.workspacePath);

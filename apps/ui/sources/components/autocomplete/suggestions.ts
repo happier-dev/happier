@@ -1,402 +1,420 @@
-import {
-    FileMentionSuggestion,
-    SkillMentionSuggestion,
-    VendorPluginMentionSuggestion,
-} from '@/components/sessions/agentInput/components/AgentInputSuggestionView';
-import * as React from 'react';
-import type { FileItem } from '@/sync/domains/input/suggestionFile';
-import { storage } from '@/sync/domains/state/storage';
+import { log } from '@/log';
 import { ensureSessionSuggestionCatalogs } from '@/sync/ops/sessionCatalogs';
-import type { AutocompleteSuggestion } from './autocompleteTypes';
-import { getCommandSuggestions } from './commandSuggestions';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
 
-type VendorPluginCatalogItem = Readonly<{
-    name: string;
-    displayName?: string;
-    description?: string;
-    vendorPluginRef: string;
-    marketplace?: string;
-    source?: string;
-    installed?: boolean;
-    enabled?: boolean;
-    mentionable?: boolean;
-    backendId?: string;
-    agentId?: string;
+import type {
+    AutocompleteSuggestion,
+    AutocompleteSuggestionUpdate,
+} from './autocompleteTypes';
+import {
+    readComposerSuggestionCatalogs,
+    type ComposerSuggestionCatalogs,
+} from './composerSuggestionCatalogs';
+import {
+    resolveComposerSuggestionKindsForTrigger,
+    resolveComposerSuggestionScope,
+    type ComposerReferenceSearchHost,
+    type ComposerSuggestionKindDefinition,
+    type ComposerSuggestionKindId,
+} from './composerSuggestionKinds';
+import type { PluginContributedActionDescriptor } from '@/components/plugins/actions/pluginContributedActionController';
+import {
+    COMPOSER_SUGGESTION_KIND_IDS,
+    parseComposerSuggestionQuery,
+    type ComposerSuggestionTrigger,
+} from './composerSuggestionGrammar';
+
+export type { ComposerSuggestionCatalogs } from './composerSuggestionCatalogs';
+
+/**
+ * The composer suggestion dispatcher.
+ *
+ * It parses the active token once, resolves the eligible kinds for that trigger
+ * from the registry, and fans out over all of them. Kind-specific behaviour lives
+ * in `composerSuggestionKinds.ts`; nothing here knows what a file, plugin, skill
+ * or command is.
+ *
+ * **No kind suppresses another (INV-2).** The predecessor asked a path-likeness
+ * question about the query and used the answer to discard a whole kind: a bare
+ * `@gm` returned zero files whenever one enabled plugin matched, and `@src/foo`
+ * returned zero plugins. Both directions are gone; every eligible kind resolves,
+ * and the result is a flat list ordered by section.
+ */
+
+/**
+ * Wall clock one kind gets to produce rows for one query.
+ *
+ * `Promise.allSettled` alone does not satisfy INV-2: it does not settle until
+ * every promise settles, so a single hung kind would hide every healthy section
+ * (D-25). The catalog kinds perform daemon RPC, so "hung" is a real state and not
+ * a hypothetical one. Past this bound the kind contributes no rows, the other
+ * sections still render, and the user has typed on anyway.
+ */
+export const COMPOSER_SUGGESTION_KIND_DEADLINE_MS = 2_500;
+
+const EMPTY_CATALOGS: ComposerSuggestionCatalogs = Object.freeze({});
+const KIND_DEADLINE_EXPIRED = Symbol('composer-suggestion-kind-deadline-expired');
+
+export type GetSuggestionsOptions = Readonly<{
+    /** Bypasses the session-metadata catalog read entirely (test seam, SB-8). */
+    catalogs?: ComposerSuggestionCatalogs;
+    /** The host's eligible-kind subset (R-9). Defaults to every registered kind. */
+    kinds?: readonly ComposerSuggestionKindId[];
+    /**
+     * The machine + folder this composer's file search is addressed to.
+     *
+     * A composer attached to an existing session must NOT resolve this itself — it goes
+     * through `resolveSessionComposerSuggestions`, which is the one place a session becomes a
+     * workspace address. This option exists for the new-session composer, the one host with
+     * no session to resolve one from.
+     */
+    workspace?: FileSuggestionScope | null;
+    /**
+     * The server whose sessions are referenceable, when the host has no session to derive it
+     * from. Only the new-session composer sets it (D-8).
+     */
+    serverId?: string | null;
+    /**
+     * Aborts when this query is superseded or the host goes away (D-15).
+     *
+     * Public reference and file search receive this signal all the way to their
+     * daemon effects. Catalog hydration remains deliberately independent so a
+     * cold query can warm the next one after its picker work is superseded.
+     */
+    signal?: AbortSignal;
+    /** Current session-composer daemon facts for the reference kind only. */
+    composerReferenceHost?: ComposerReferenceSearchHost | null;
+    /** Controller-admitted external Actions for the slash kind. */
+    contributedActions?: readonly PluginContributedActionDescriptor[];
+    /** Current aggregate rows as individual kinds settle; final settlement is marked complete. */
+    onUpdate?: AutocompleteSuggestionUpdate;
 }>;
 
-type SkillCatalogItem = Readonly<{
-    id?: string;
-    name: string;
-    displayName?: string;
-    description?: string;
-    path?: string;
-    enabled?: boolean;
-    origin?: string;
-    source?: string;
-    projectionKind?: string;
-    projectionRef?: string;
-    backendId?: string;
-    agentId?: string;
-}>;
-
-type SuggestionCatalogOverrides = Readonly<{
-    files?: readonly FileItem[];
-    vendorPlugins?: readonly VendorPluginCatalogItem[];
-    skills?: readonly SkillCatalogItem[];
-}>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
+function describeSuggestionFailure(reason: unknown): string {
+    if (reason instanceof Error) return reason.message;
+    return typeof reason === 'string' ? reason : 'unknown error';
 }
 
-function readArray(value: unknown, keys: readonly string[]): readonly unknown[] {
-    if (Array.isArray(value)) return value;
-    if (!isRecord(value)) return [];
-    const catalog = value.catalog;
-    if (isRecord(catalog) && Array.isArray(catalog.items)) return catalog.items;
-    for (const key of keys) {
-        const child = value[key];
-        if (Array.isArray(child)) return child;
-    }
-    return [];
-}
+/**
+ * Settles `work` under a deadline and an abort signal without leaking either the
+ * timer or the abort listener when the normal path wins.
+ */
+function withKindDeadline<T>(
+    work: Promise<T>,
+    deadlineMs: number,
+    signal: AbortSignal | undefined,
+): Promise<T | typeof KIND_DEADLINE_EXPIRED> {
+    return new Promise<T | typeof KIND_DEADLINE_EXPIRED>((resolve, reject) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
 
-function readString(value: unknown): string | undefined {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
+        const finish = (apply: () => void) => {
+            if (settled) return;
+            settled = true;
+            if (timer !== undefined) clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+            apply();
+        };
 
-function readBoolean(value: unknown): boolean | undefined {
-    return typeof value === 'boolean' ? value : undefined;
-}
-
-function deriveVendorPluginName(vendorPluginRef: string): string {
-    const withoutScheme = vendorPluginRef.replace(/^plugin:\/\//, '');
-    const markerIndex = withoutScheme.indexOf('@');
-    return markerIndex > 0 ? withoutScheme.slice(0, markerIndex) : withoutScheme;
-}
-
-function normalizeVendorPlugin(value: unknown): VendorPluginCatalogItem | null {
-    if (!isRecord(value)) return null;
-    const vendorPluginRef = readString(value.vendorPluginRef)
-        ?? readString(value.mentionPath)
-        ?? readString(value.path)
-        ?? readString(value.ref);
-    if (!vendorPluginRef) return null;
-    const displayName = readString(value.displayName);
-    const name = readString(value.name) ?? deriveVendorPluginName(vendorPluginRef);
-    const description = readString(value.description);
-    const marketplace = readString(value.marketplace ?? value.marketplaceId);
-    const source = readString(value.source);
-    const backendId = readString(value.backendId);
-    const agentId = readString(value.agentId);
-    const installed = readBoolean(value.installed);
-    const enabled = readBoolean(value.enabled);
-    const mentionable = readBoolean(value.mentionable);
-    return {
-        name,
-        vendorPluginRef,
-        ...(displayName ? { displayName } : {}),
-        ...(description ? { description } : {}),
-        ...(marketplace ? { marketplace } : {}),
-        ...(source ? { source } : {}),
-        ...(installed !== undefined ? { installed } : {}),
-        ...(enabled !== undefined ? { enabled } : {}),
-        ...(mentionable !== undefined ? { mentionable } : {}),
-        ...(backendId ? { backendId } : {}),
-        ...(agentId ? { agentId } : {}),
-    };
-}
-
-function normalizeSkillOrigin(value: string | undefined): Readonly<{
-    origin?: string;
-    backendId?: string;
-    projectionRef?: string;
-}> {
-    if (value === 'vendor' || value === 'happier') return { origin: value };
-    if (value === 'codex_native') return { origin: 'vendor', backendId: 'codex' };
-    if (value === 'opencode_native') return { origin: 'vendor', backendId: 'opencode' };
-    if (value === 'claude_native') return { origin: 'vendor', backendId: 'claude' };
-    if (value === 'pi_native') return { origin: 'vendor', backendId: 'pi' };
-    if (value === 'happier_projected' || value === 'text_fallback_only') {
-        return { origin: 'happier', projectionRef: value };
-    }
-    return {};
-}
-
-function normalizeSkill(value: unknown): SkillCatalogItem | null {
-    if (!isRecord(value)) return null;
-    const id = readString(value.id);
-    const name = readString(value.name);
-    if (!name) return null;
-    const displayName = readString(value.displayName);
-    const description = readString(value.description);
-    const path = readString(value.path);
-    const originMetadata = normalizeSkillOrigin(
-        readString(value.origin) ?? readString(value.source) ?? readString(value.projectionKind),
-    );
-    const source = readString(value.source);
-    const projectionKind = readString(value.projectionKind);
-    const projectionRef = readString(value.projectionRef) ?? originMetadata.projectionRef;
-    const backendId = readString(value.backendId) ?? originMetadata.backendId;
-    const agentId = readString(value.agentId);
-    return {
-        ...(id ? { id } : {}),
-        name,
-        ...(displayName ? { displayName } : {}),
-        ...(description ? { description } : {}),
-        ...(path ? { path } : {}),
-        ...(value.enabled === false ? { enabled: false } : {}),
-        ...(originMetadata.origin ? { origin: originMetadata.origin } : {}),
-        ...(source ? { source } : {}),
-        ...(projectionKind ? { projectionKind } : {}),
-        ...(projectionRef ? { projectionRef } : {}),
-        ...(backendId ? { backendId } : {}),
-        ...(agentId ? { agentId } : {}),
-    };
-}
-
-function readCatalogsFromSession(sessionId: string): SuggestionCatalogOverrides {
-    const session = storage.getState().sessions[sessionId];
-    const metadata = session ? readSessionOwnerMetadataView(session) : null;
-    if (!metadata || typeof metadata !== 'object') return {};
-    const record = metadata as Record<string, unknown>;
-    const vendorPluginRaw = record.sessionVendorPluginCatalogV1 ?? record.vendorPluginCatalogV1 ?? record.vendorPlugins;
-    const skillsRaw = record.sessionSkillCatalogV1 ?? record.skillCatalogV1 ?? record.skills;
-    return {
-        vendorPlugins: readArray(vendorPluginRaw, ['vendorPlugins', 'plugins', 'items'])
-            .map(normalizeVendorPlugin)
-            .filter((item): item is VendorPluginCatalogItem => item !== null),
-        skills: readArray(skillsRaw, ['skills', 'items'])
-            .map(normalizeSkill)
-            .filter((item): item is SkillCatalogItem => item !== null),
-    };
-}
-
-function matchesQuery(value: string, query: string): boolean {
-    const haystack = value.trim().toLowerCase();
-    const needle = query.trim().toLowerCase();
-    return needle.length === 0 || haystack.includes(needle);
-}
-
-function isPathLikeAtQuery(queryWithoutPrefix: string): boolean {
-    return (
-        queryWithoutPrefix.startsWith('/')
-        || queryWithoutPrefix.startsWith('\\')
-        || queryWithoutPrefix.startsWith('.')
-        || queryWithoutPrefix.startsWith('~')
-        || queryWithoutPrefix.includes('/')
-        || queryWithoutPrefix.includes('\\')
-    );
-}
-
-function getPluginQuery(query: string): { pluginOnly: boolean; searchTerm: string } {
-    const withoutAt = query.startsWith('@') ? query.slice(1) : query;
-    if (withoutAt.startsWith('plugin:')) {
-        return { pluginOnly: true, searchTerm: withoutAt.slice('plugin:'.length) };
-    }
-    if (withoutAt.startsWith('plugins:')) {
-        return { pluginOnly: true, searchTerm: withoutAt.slice('plugins:'.length) };
-    }
-    return { pluginOnly: false, searchTerm: withoutAt };
-}
-
-function buildFileSuggestion(file: FileItem): AutocompleteSuggestion {
-    return {
-        key: `file-${file.fullPath}`,
-        text: `@${file.fullPath}`,
-        component: () => React.createElement(FileMentionSuggestion, {
-            fileName: file.fileName,
-            filePath: file.filePath,
-            fileType: file.fileType,
-        }),
-    };
-}
-
-function resolveCatalogRequestForQuery(query: string): { vendorPlugins?: boolean; skills?: boolean } | null {
-    if (query.startsWith('@')) {
-        const pluginQuery = getPluginQuery(query);
-        const queryWithoutAt = query.slice(1);
-        if (pluginQuery.pluginOnly || !isPathLikeAtQuery(queryWithoutAt)) {
-            return { vendorPlugins: true };
+        function onAbort() {
+            finish(() => reject(new Error('superseded')));
         }
-    }
 
-    if (query.startsWith('$')) {
-        return { skills: true };
-    }
-
-    return null;
+        signal?.addEventListener('abort', onAbort);
+        timer = setTimeout(
+            () => finish(() => resolve(KIND_DEADLINE_EXPIRED)),
+            deadlineMs,
+        );
+        work.then(
+            (value) => finish(() => resolve(value)),
+            (error: unknown) => finish(() => reject(error)),
+        );
+    });
 }
 
-async function searchSuggestionFiles(sessionId: string, searchTerm: string): Promise<readonly FileItem[]> {
-    const { searchFiles } = await import('@/sync/domains/input/suggestionFile');
-    return searchFiles(sessionId, searchTerm, { limit: 12 });
-}
+type PendingColdSuggestionKind = Readonly<{
+    definition: ComposerSuggestionKindDefinition;
+    work: Promise<readonly AutocompleteSuggestion[]>;
+    abort(): void;
+}>;
 
-export async function getFileMentionSuggestions(sessionId: string, query: string): Promise<AutocompleteSuggestion[]> {
-    // Remove the "@" prefix for searching
-    const searchTerm = query.slice(1);
-    
-    try {
-        // Use the file search cache with fuzzy matching
-        const files = await searchSuggestionFiles(sessionId, searchTerm);
+type KindWork = PendingColdSuggestionKind;
 
-        // Convert FileItem to suggestion format
-        return files.map(buildFileSuggestion);
-    } catch {
-        return [];
-    }
-}
-
-function getVendorPluginMentionSuggestions(
-    query: string,
-    catalogs: SuggestionCatalogOverrides,
+function collectSuggestionRows(
+    definitions: readonly ComposerSuggestionKindDefinition[],
+    rowsByKind: readonly (readonly AutocompleteSuggestion[] | null)[],
 ): AutocompleteSuggestion[] {
-    const { searchTerm } = getPluginQuery(query);
-    const seen = new Set<string>();
-    const out: AutocompleteSuggestion[] = [];
-    for (const plugin of catalogs.vendorPlugins ?? []) {
-        const mentionable = plugin.mentionable ?? (plugin.installed === true && plugin.enabled === true);
-        if (!mentionable) continue;
-        if (seen.has(plugin.vendorPluginRef)) continue;
-        const label = plugin.displayName ?? plugin.name;
-        if (!matchesQuery(plugin.name, searchTerm) && !matchesQuery(label, searchTerm)) continue;
-        seen.add(plugin.vendorPluginRef);
-        out.push({
-            key: `vendor-plugin-${plugin.vendorPluginRef}`,
-            text: `@${plugin.name}`,
-            structuredInput: {
-                kind: 'vendorPlugin',
-                vendorPluginRef: plugin.vendorPluginRef,
-                label,
-                ...(plugin.backendId ? { backendId: plugin.backendId } : {}),
-                ...(plugin.agentId ? { agentId: plugin.agentId } : {}),
-            },
-            component: () => React.createElement(VendorPluginMentionSuggestion, {
-                name: plugin.name,
-                displayName: label,
-                description: plugin.description,
-                source: plugin.marketplace ?? plugin.source,
-            }),
-        });
+    const suggestions: AutocompleteSuggestion[] = [];
+    for (let index = 0; index < definitions.length; index += 1) {
+        const rows = rowsByKind[index];
+        if (!rows) continue;
+        suggestions.push(...rows.slice(0, definitions[index]!.limit));
     }
-    return out;
+    return suggestions;
 }
 
-function getSkillMentionSuggestions(query: string, catalogs: SuggestionCatalogOverrides): AutocompleteSuggestion[] {
-    const searchTerm = query.startsWith('$') ? query.slice(1) : query;
-    const seen = new Set<string>();
-    const out: AutocompleteSuggestion[] = [];
-    for (const skill of catalogs.skills ?? []) {
-        if (skill.enabled === false) continue;
-        const identity = [
-            skill.id,
-            skill.origin ?? skill.source,
-            skill.backendId,
-            skill.agentId,
-            skill.projectionRef ?? skill.projectionKind,
-            skill.path,
-            skill.name,
-        ]
-            .map((value) => typeof value === 'string' ? value.trim() : '')
-            .filter((value) => value.length > 0)
-            .join(':')
-            .toLowerCase();
-        const suggestionKey = typeof skill.id === 'string' && skill.id.trim().length > 0
-            ? skill.id.trim()
-            : identity;
-        if (seen.has(identity)) continue;
-        const label = skill.displayName ?? skill.name;
-        if (!matchesQuery(skill.name, searchTerm) && !matchesQuery(label, searchTerm)) continue;
-        seen.add(identity);
-        out.push({
-            key: `skill-${suggestionKey}`,
-            text: `$${skill.name}`,
-            structuredInput: {
-                kind: 'skill',
-                ...(skill.id ? { id: skill.id } : {}),
-                name: skill.name,
-                ...(skill.path ? { path: skill.path } : {}),
-                ...(skill.displayName ? { displayName: skill.displayName } : {}),
-                ...(skill.description ? { description: skill.description } : {}),
-                ...(skill.origin ?? skill.source ? { origin: skill.origin ?? skill.source } : {}),
-                ...(skill.projectionKind ? { projectionKind: skill.projectionKind } : {}),
-                ...(skill.projectionRef ?? skill.projectionKind ? { projectionRef: skill.projectionRef ?? skill.projectionKind } : {}),
-                ...(skill.backendId ? { backendId: skill.backendId } : {}),
-                ...(skill.agentId ? { agentId: skill.agentId } : {}),
-            },
-            component: () => React.createElement(SkillMentionSuggestion, {
-                name: skill.name,
-                displayName: label,
-                description: skill.description,
-                source: skill.origin ?? skill.source ?? skill.projectionRef ?? skill.projectionKind,
-            }),
-        });
-    }
-    return out;
+function sameSuggestionRows(
+    left: readonly AutocompleteSuggestion[] | null,
+    right: readonly AutocompleteSuggestion[],
+): boolean {
+    return left !== null
+        && left.length === right.length
+        && left.every((suggestion, index) => suggestion === right[index]);
 }
 
-async function getAtMentionSuggestions(
-    sessionId: string,
-    query: string,
-    catalogs: SuggestionCatalogOverrides,
+function startKindWork(
+    definition: ComposerSuggestionKindDefinition,
+    args: KindResolveArgs,
+): KindWork {
+    const controller = new AbortController();
+    const onParentAbort = () => controller.abort(args.signal?.reason);
+    if (args.signal?.aborted) {
+        onParentAbort();
+    } else {
+        args.signal?.addEventListener('abort', onParentAbort, { once: true });
+    }
+    const work = resolveKindCandidates(definition, {
+        ...args,
+        signal: controller.signal,
+    }).finally(() => {
+        args.signal?.removeEventListener('abort', onParentAbort);
+    });
+    return {
+        definition,
+        work,
+        abort: () => {
+            args.signal?.removeEventListener('abort', onParentAbort);
+            controller.abort('composer-suggestion-kind-no-longer-needed');
+        },
+    };
+}
+
+/**
+ * The deadline is allowed to trim a kind only after another kind has produced
+ * rows. When every section is still empty, keep this one-shot query alive for
+ * the first late result; the caller can still supersede it through `signal`.
+ */
+function waitForColdSuggestionRows(
+    pending: readonly PendingColdSuggestionKind[],
+    signal: AbortSignal | undefined,
 ): Promise<AutocompleteSuggestion[]> {
-    const pluginQuery = getPluginQuery(query);
-    const queryWithoutAt = query.startsWith('@') ? query.slice(1) : query;
-    const isPathLikeQuery = isPathLikeAtQuery(queryWithoutAt);
-    const vendorPluginSuggestions = getVendorPluginMentionSuggestions(query, catalogs);
+    if (signal?.aborted) return Promise.resolve([]);
 
-    if (pluginQuery.pluginOnly) {
-        return vendorPluginSuggestions;
-    }
+    return new Promise<AutocompleteSuggestion[]>((resolve) => {
+        let settled = false;
+        let remaining = pending.length;
 
-    if (!isPathLikeQuery && !catalogs.files) {
-        return vendorPluginSuggestions;
-    }
+        const finish = (suggestions: AutocompleteSuggestion[]) => {
+            if (settled) return;
+            settled = true;
+            signal?.removeEventListener('abort', onAbort);
+            for (const item of pending) item.abort();
+            resolve(suggestions);
+        };
+        const onAbort = () => finish([]);
 
-    const fileSuggestions = catalogs.files
-        ? catalogs.files.map(buildFileSuggestion)
-        : await getFileMentionSuggestions(sessionId, query);
-    if (isPathLikeQuery) {
-        return fileSuggestions;
+        signal?.addEventListener('abort', onAbort);
+        for (const { definition, work } of pending) {
+            void work.then(
+                (rows) => {
+                    if (settled) return;
+                    const suggestions = rows.slice(0, definition.limit);
+                    if (suggestions.length > 0) {
+                        finish(suggestions);
+                        return;
+                    }
+                    remaining -= 1;
+                    if (remaining === 0) finish([]);
+                },
+                (reason: unknown) => {
+                    if (settled) return;
+                    log.log(`[composer-suggestions] kind "${definition.id}" contributed no rows: ${describeSuggestionFailure(reason)}`);
+                    remaining -= 1;
+                    if (remaining === 0) finish([]);
+                },
+            );
+        }
+    });
+}
+
+type KindResolveArgs = Readonly<{
+    sessionId: string | null;
+    workspace: FileSuggestionScope | null;
+    serverId: string | null;
+    trigger: ComposerSuggestionTrigger;
+    query: string;
+    scopedQuery: string;
+    scope: string | null;
+    catalogOverrides: ComposerSuggestionCatalogs | undefined;
+    signal: AbortSignal | undefined;
+    composerReferenceHost: ComposerReferenceSearchHost | null | undefined;
+    contributedActions: readonly PluginContributedActionDescriptor[] | undefined;
+    publish?: (suggestions: readonly AutocompleteSuggestion[]) => void;
+}>;
+
+/**
+ * Hydrates only the catalog this kind declares, then resolves it.
+ *
+ * The hydration lives inside the per-kind promise on purpose: a shared `ensure`
+ * awaited before the fan-out would put the plugin catalog's daemon RPC on the
+ * critical path of the Files section, which is the same INV-2 violation in a
+ * different costume.
+ */
+async function resolveKindCandidates(
+    definition: ComposerSuggestionKindDefinition,
+    args: KindResolveArgs,
+): Promise<readonly AutocompleteSuggestion[]> {
+    let catalogs = args.catalogOverrides ?? EMPTY_CATALOGS;
+    // A catalog is a SESSION's published snapshot, so a host with no session has none to
+    // hydrate or read. That is not the same as an empty catalog arriving late: the kinds that
+    // declare one contribute nothing here, and the ones that do not are untouched (INV-2).
+    if (definition.catalog && !args.catalogOverrides && args.sessionId) {
+        const catalogRequest: { vendorPlugins?: boolean; skills?: boolean } = {};
+        catalogRequest[definition.catalog] = true;
+        await ensureSessionSuggestionCatalogs(args.sessionId, catalogRequest);
+        catalogs = readComposerSuggestionCatalogs(args.sessionId);
     }
-    return [
-        ...fileSuggestions,
-        ...vendorPluginSuggestions,
-    ];
+    return await definition.resolve({
+        sessionId: args.sessionId,
+        workspace: args.workspace,
+        serverId: args.serverId,
+        trigger: args.trigger,
+        query: args.query,
+        scopedQuery: args.scopedQuery,
+        scope: args.scope,
+        catalogs,
+        limit: definition.limit,
+        signal: args.signal,
+        composerReferenceHost: args.composerReferenceHost,
+        contributedActions: args.contributedActions,
+        ...(args.publish ? { publish: args.publish } : {}),
+    });
 }
 
 export async function getSuggestions(
-    sessionId: string,
+    sessionId: string | null,
     query: string,
-    catalogOverrides?: SuggestionCatalogOverrides,
+    options?: GetSuggestionsOptions,
 ): Promise<AutocompleteSuggestion[]> {
-    if (!query || query.length === 0) {
-        return [];
-    }
-    if (!catalogOverrides) {
-        const catalogRequest = resolveCatalogRequestForQuery(query);
-        if (catalogRequest) {
-            await ensureSessionSuggestionCatalogs(sessionId, catalogRequest);
-        }
-    }
-    const catalogs = catalogOverrides ?? readCatalogsFromSession(sessionId);
-    
-    // Check if it's a command (starts with /)
-    if (query.startsWith('/')) {
-        return await getCommandSuggestions(sessionId, query);
-    }
-    
-    // Check if it's a file mention (starts with @)
-    if (query.startsWith('@')) {
-        return await getAtMentionSuggestions(sessionId, query, catalogs);
-    }
+    const parsed = parseComposerSuggestionQuery(query);
+    if (!parsed) return [];
 
-    if (query.startsWith('$')) {
-        return getSkillMentionSuggestions(query, catalogs);
+    const scope = resolveComposerSuggestionScope(parsed.trigger, parsed.query);
+    const triggerKinds = resolveComposerSuggestionKindsForTrigger(
+        options?.kinds ?? COMPOSER_SUGGESTION_KIND_IDS,
+        parsed.trigger,
+    );
+    // A scope alias narrows the trigger to exactly one kind by explicit user
+    // intent (`@plugin:foo`). That is not the implicit suppression INV-2 forbids.
+    const definitions = scope.kind
+        ? triggerKinds.filter((definition) => definition.id === scope.kind)
+        : triggerKinds;
+    if (definitions.length === 0) return [];
+
+    const signal = options?.signal;
+    if (signal?.aborted) return [];
+
+    const args: KindResolveArgs = {
+        sessionId,
+        workspace: options?.workspace ?? null,
+        serverId: options?.serverId ?? null,
+        trigger: parsed.trigger,
+        query: parsed.query,
+        scopedQuery: scope.scopedQuery,
+        scope: scope.scope,
+        catalogOverrides: options?.catalogs,
+        signal,
+        composerReferenceHost: options?.composerReferenceHost,
+        contributedActions: options?.contributedActions,
+    };
+
+    const rowsByKind: Array<readonly AutocompleteSuggestion[] | null> = definitions.map(() => null);
+    let acceptsLiveUpdates = true;
+    let lastPublishedRows: AutocompleteSuggestion[] | null = null;
+    let lastPublicationWasComplete = false;
+    const publishCurrentRows = (complete: boolean) => {
+        if (!options?.onUpdate || signal?.aborted) return;
+        const suggestions = collectSuggestionRows(definitions, rowsByKind);
+        if (
+            sameSuggestionRows(lastPublishedRows, suggestions)
+            && (!complete || lastPublicationWasComplete)
+        ) {
+            return;
+        }
+        lastPublishedRows = suggestions;
+        lastPublicationWasComplete = complete;
+        options.onUpdate(suggestions, { complete });
+    };
+    const work = definitions.map((definition, index) => startKindWork(definition, {
+        ...args,
+        publish: (rows) => {
+            if (!acceptsLiveUpdates || signal?.aborted) return;
+            rowsByKind[index] = rows.slice(0, definition.limit);
+            publishCurrentRows(false);
+        },
+    }));
+    for (let index = 0; index < work.length; index += 1) {
+        const kindWork = work[index]!;
+        void kindWork.work.then(
+            (rows) => {
+                if (!acceptsLiveUpdates || signal?.aborted) return;
+                rowsByKind[index] = rows.slice(0, kindWork.definition.limit);
+                publishCurrentRows(false);
+            },
+            () => {},
+        );
     }
-    
-    // No suggestions for other queries
+    const settled = await Promise.allSettled(work.map((kindWork) => withKindDeadline(
+        kindWork.work,
+        COMPOSER_SUGGESTION_KIND_DEADLINE_MS,
+        signal,
+    )));
+    // A superseded query contributes nothing, and reports nothing: a rejection
+    // caused by the user typing the next character is not a diagnostic.
+    if (signal?.aborted) return [];
+
+    acceptsLiveUpdates = false;
+    const pendingColdKinds: PendingColdSuggestionKind[] = [];
+    for (let index = 0; index < settled.length; index += 1) {
+        const definition = definitions[index]!;
+        const result = settled[index]!;
+        if (result.status === 'rejected') {
+            log.log(`[composer-suggestions] kind "${definition.id}" contributed no rows: ${describeSuggestionFailure(result.reason)}`);
+            continue;
+        }
+        if (result.value === KIND_DEADLINE_EXPIRED) {
+            pendingColdKinds.push(work[index]!);
+            continue;
+        }
+        // D-22's per-trigger budget is only real if each kind is actually bounded.
+        // `limit` reaches the resolver as a query hint, but a catalog-backed kind
+        // cannot push it into its source, so the bound is enforced here — once, for
+        // every kind, including kinds added later.
+        rowsByKind[index] = result.value.slice(0, definition.limit);
+    }
+    const suggestions = collectSuggestionRows(definitions, rowsByKind);
+    if (suggestions.length > 0) {
+        for (const { definition, abort } of pendingColdKinds) {
+            log.log(`[composer-suggestions] kind "${definition.id}" contributed no rows: exceeded ${COMPOSER_SUGGESTION_KIND_DEADLINE_MS}ms`);
+            abort();
+        }
+        publishCurrentRows(true);
+        return suggestions;
+    }
+    if (pendingColdKinds.length > 0) {
+        // A cold query is deliberately allowed to outlive the normal deadline so
+        // its first late row can still appear. That extended wait must be visible:
+        // without this diagnostic, an empty picker and a silent transport are
+        // indistinguishable while the user decides whether to keep typing.
+        for (const { definition } of pendingColdKinds) {
+            log.log(`[composer-suggestions] still waiting on ${definition.id} after ${COMPOSER_SUGGESTION_KIND_DEADLINE_MS}ms`);
+        }
+        const lateSuggestions = await waitForColdSuggestionRows(pendingColdKinds, signal);
+        if (!signal?.aborted) {
+            options?.onUpdate?.(lateSuggestions, { complete: true });
+        }
+        return lateSuggestions;
+    }
+    publishCurrentRows(true);
     return [];
 }

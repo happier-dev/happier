@@ -47,14 +47,21 @@ function buildRuntimeState(
     };
 }
 
+function buildFetchedRuntimeStatus(identity: SessionRunnerRuntimeStatusIdentity) {
+    return {
+        state: buildRuntimeState(identity),
+        runnerProcessIdentity: {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        },
+    } as const;
+}
+
 describe('sessionRunnerRuntimeStatusRetention', () => {
-    it('scopes retained snapshots to the exact server, machine, and session identity', () => {
+    it('scopes retained V1 snapshots to the exact server, machine, and session identity', () => {
         const retention = createSessionRunnerRuntimeStatusRetention();
         const identity = buildIdentity();
-        retention.completeRefresh(
-            retention.beginRefresh(identity),
-            buildRuntimeState(identity),
-        );
+        retention.completeRefresh(retention.beginRefresh(identity), buildFetchedRuntimeStatus(identity));
         const retained = retention.read(identity);
 
         expect(retention.read(identity)).toBe(retained);
@@ -65,35 +72,39 @@ describe('sessionRunnerRuntimeStatusRetention', () => {
         const mismatchedIdentity = buildIdentity({ sessionId: 'session-2' });
         retention.completeRefresh(
             retention.beginRefresh(identity),
-            buildRuntimeState(mismatchedIdentity),
+            buildFetchedRuntimeStatus(mismatchedIdentity),
         );
-        expect(retention.read(identity)).toBe(retained);
+        expect(retention.read(identity)?.state).toBe(retained?.state);
+        expect(retention.read(identity)?.runnerProcessIdentity).toBeNull();
         expect(retention.read(mismatchedIdentity)).toBeNull();
     });
 
-    it('keeps the last validated snapshot when refresh is unavailable', () => {
+    it('retains last-known V1 presentation but deauthorizes a V2 runner witness while refresh is pending or unavailable', () => {
         const retention = createSessionRunnerRuntimeStatusRetention();
         const identity = buildIdentity();
-        retention.completeRefresh(
-            retention.beginRefresh(identity),
-            buildRuntimeState(identity),
-        );
+        retention.completeRefresh(retention.beginRefresh(identity), buildFetchedRuntimeStatus(identity));
         const retained = retention.read(identity);
+        expect(retained?.runnerProcessIdentity).toEqual({
+            pid: 123,
+            processStartTimeMs: 1_000,
+        });
 
-        expect(retention.read(identity)).toBe(retained);
+        const refresh = retention.beginRefresh(identity);
+        expect(retention.read(identity)?.state).toBe(retained?.state);
+        expect(retention.read(identity)?.runnerProcessIdentity).toBeNull();
+        retention.completeRefresh(refresh, null);
+        expect(retention.read(identity)?.state).toBe(retained?.state);
+        expect(retention.read(identity)?.runnerProcessIdentity).toBeNull();
 
+        const recoveredRefresh = retention.beginRefresh(identity);
         retention.completeRefresh(
-            retention.beginRefresh(identity),
-            null,
+            recoveredRefresh,
+            buildFetchedRuntimeStatus(identity),
         );
-        expect(retention.read(identity)).toBe(retained);
-
-        const neverValidatedIdentity = buildIdentity({ sessionId: 'session-2' });
-        retention.completeRefresh(
-            retention.beginRefresh(neverValidatedIdentity),
-            null,
-        );
-        expect(retention.read(neverValidatedIdentity)).toBeNull();
+        expect(retention.read(identity)?.runnerProcessIdentity).toEqual({
+            pid: 123,
+            processStartTimeMs: 1_000,
+        });
     });
 
     it('rejects an older same-identity refresh after a newer valid refresh completes', () => {
@@ -103,19 +114,15 @@ describe('sessionRunnerRuntimeStatusRetention', () => {
         const newerRefresh = retention.beginRefresh(identity);
         const olderState = buildRuntimeState(identity);
         const newerState = {
-            ...buildRuntimeState(identity),
+            ...olderState,
             versionState: 'current',
-            plannedRestart: {
-                supported: true,
-                eligible: false,
-            },
+            plannedRestart: { supported: true, eligible: false },
         } satisfies SessionRunnerRuntimeStateV1;
 
-        retention.completeRefresh(newerRefresh, newerState);
+        retention.completeRefresh(newerRefresh, { state: newerState, runnerProcessIdentity: null });
         const newerSnapshot = retention.read(identity);
-        retention.completeRefresh(olderRefresh, olderState);
+        retention.completeRefresh(olderRefresh, { state: olderState, runnerProcessIdentity: null });
 
-        expect(newerState.observedAtMs).toBe(olderState.observedAtMs);
         expect(retention.read(identity)).toBe(newerSnapshot);
         expect(retention.read(identity)?.state).toBe(newerState);
     });
@@ -125,15 +132,12 @@ describe('sessionRunnerRuntimeStatusRetention', () => {
         const oldestIdentity = buildIdentity({ sessionId: 'session-0' });
         retention.completeRefresh(
             retention.beginRefresh(oldestIdentity),
-            buildRuntimeState(oldestIdentity),
+            buildFetchedRuntimeStatus(oldestIdentity),
         );
 
         for (let index = 1; index <= 32; index += 1) {
             const identity = buildIdentity({ sessionId: `session-${index}` });
-            retention.completeRefresh(
-                retention.beginRefresh(identity),
-                buildRuntimeState(identity),
-            );
+            retention.completeRefresh(retention.beginRefresh(identity), buildFetchedRuntimeStatus(identity));
         }
 
         expect(retention.read(oldestIdentity)).toBeNull();
@@ -141,7 +145,7 @@ describe('sessionRunnerRuntimeStatusRetention', () => {
         expect(retention.read(buildIdentity({ sessionId: 'session-32' }))).not.toBeNull();
     });
 
-    it('bounds pending-only identities and rejects a completion after its ticket is evicted', () => {
+    it('bounds pending-only identities and rejects completion after ticket eviction', () => {
         const retention = createSessionRunnerRuntimeStatusRetention();
         const oldestIdentity = buildIdentity({ sessionId: 'session-0' });
         const oldestRefresh = retention.beginRefresh(oldestIdentity);
@@ -150,10 +154,7 @@ describe('sessionRunnerRuntimeStatusRetention', () => {
             retention.beginRefresh(buildIdentity({ sessionId: `session-${index}` }));
         }
 
-        retention.completeRefresh(
-            oldestRefresh,
-            buildRuntimeState(oldestIdentity),
-        );
+        retention.completeRefresh(oldestRefresh, buildFetchedRuntimeStatus(oldestIdentity));
         expect(retention.read(oldestIdentity)).toBeNull();
     });
 });

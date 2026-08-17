@@ -19,7 +19,7 @@ export function buildProfileActions(params: {
         actions.push({
             id: 'envVars',
             title: t('profiles.actions.viewEnvironmentVariables'),
-            icon: 'list-outline',
+            icon: 'list',
             onPress: params.onViewEnvironmentVariables,
         });
     }
@@ -28,7 +28,7 @@ export function buildProfileActions(params: {
     const favoriteAction: ItemAction = {
         id: 'favorite',
         title: params.isFavorite ? t('profiles.actions.removeFromFavorites') : t('profiles.actions.addToFavorites'),
-        icon: params.isFavorite ? 'star' : 'star-outline',
+        icon: 'star',
         onPress: params.onToggleFavorite,
     };
     if (favoriteColor) {
@@ -37,14 +37,14 @@ export function buildProfileActions(params: {
     actions.push({
         id: 'edit',
         title: t('profiles.actions.editProfile'),
-        icon: 'create-outline',
+        icon: 'pencil-simple',
         onPress: params.onEdit,
     });
 
     actions.push({
         id: 'copy',
         title: t('profiles.actions.duplicateProfile'),
-        icon: 'copy-outline',
+        icon: 'copy',
         onPress: params.onDuplicate,
     });
 
@@ -52,7 +52,7 @@ export function buildProfileActions(params: {
         actions.push({
             id: 'delete',
             title: t('profiles.actions.deleteProfile'),
-            icon: 'trash-outline',
+            icon: 'trash',
             destructive: true,
             onPress: params.onDelete,
         });

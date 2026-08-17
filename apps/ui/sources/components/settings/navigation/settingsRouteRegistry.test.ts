@@ -22,6 +22,7 @@ describe('settingsRouteRegistry', () => {
         expect(resolveSettingsRouteParentPathname('/settings/session')).toBe('/settings');
         expect(resolveSettingsRouteParentPathname('/settings/session/transcript/advanced')).toBe('/settings/session/transcript');
         expect(resolveSettingsRouteParentPathname('/settings/prompts/docs/doc%2F1/export')).toBe('/settings/prompts/docs/doc%2F1');
+        expect(resolveSettingsRouteParentPathname('/settings/plugins/examples.descriptor-only/settings')).toBe('/settings/plugins/examples.descriptor-only');
         expect(resolveSettingsRouteParentPathname('/session/s1')).toBeNull();
     });
 
@@ -30,5 +31,18 @@ describe('settingsRouteRegistry', () => {
         expect(names).toContain('providers/[connectionId]/models');
         expect(names).toContain('agents/[agentId]/models');
         expect(names).toContain('plugins/panels');
+        expect(names).toContain('plugins/webhooks');
+        expect(names).toContain('plugins/[pluginId]/[pageId]');
+    });
+
+    it('registers each Voice intent as a nested settings destination', () => {
+        const names = getSettingsStackScreenDefinitions(translate as never).map((definition) => definition.name);
+
+        expect(names).toEqual(expect.arrayContaining([
+            'voice/dictation',
+            'voice/conversations',
+            'voice/privacy',
+            'voice/advanced',
+        ]));
     });
 });

@@ -1,13 +1,18 @@
 import * as React from 'react';
-import { Animated, Platform, View } from 'react-native';
+import { Animated, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { MultiPaneHost, type MultiPaneHostProps } from './MultiPaneHost';
 import { ResizableDockedPaneVertical } from './resizable/ResizableDockedPaneVertical';
-import { ESCAPE_KEY_BLOCKER_PRIORITIES, markEscapeEventHandled, registerEscapeKeyBlocker } from './escapeKeyHandling';
-import { usePaneAnimatedPresence } from './motion/usePaneAnimatedPresence';
 import { PaneAnimatedScrimPressable } from './motion/PaneAnimatedScrimPressable';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import {
+    ModalPaneBoundaryView,
+    useModalPaneBoundary,
+    useModalPanePresentation,
+} from './ModalPaneBoundary';
+import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
+import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { t } from '@/text';
 
 export type BottomPanePresentation = 'docked' | 'overlay';
 
@@ -20,6 +25,7 @@ export type MultiPaneHostWithBottomProps = MultiPaneHostProps & Readonly<{
     onCloseBottom: () => void;
     onCommitBottomDockHeightPx: (heightPx: number) => void;
     onDragBottomDockHeightPx?: (heightPx: number | null) => void;
+    bottomOverlayFocusReturnRef?: FocusReturnMutableRef;
 }>;
 
 export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBottomProps) => {
@@ -32,113 +38,58 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
         onCloseBottom,
         onCommitBottomDockHeightPx,
         onDragBottomDockHeightPx,
+        bottomOverlayFocusReturnRef,
         ...multiPaneProps
     } = props;
 
     const { theme } = useUnistyles();
-    const reduceMotion = useReducedMotionPreference();
-    const overlayDurationMs = reduceMotion ? motionTokens.durationMs.instant : motionTokens.durationMs.base;
-    // Shared pane progress also drives docked height interpolation, which requires the JS driver.
-    const overlayUseNativeDriver = false;
     const overlayZIndexBase = 80;
-
-    const [bottomOverlayClosing, setBottomOverlayClosing] = React.useState(false);
-    const bottomOverlayCloseTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    React.useEffect(() => {
-        return () => {
-            if (bottomOverlayCloseTimeoutRef.current) clearTimeout(bottomOverlayCloseTimeoutRef.current);
-        };
-    }, []);
-
-    const bottomTargetOpenBase = Boolean(bottomPane);
-    const bottomTargetOpen = bottomTargetOpenBase && !(bottomPresentation === 'overlay' && bottomOverlayClosing);
-    const bottomPresence = usePaneAnimatedPresence({
-        targetOpen: bottomTargetOpen,
+    const bottomPresence = useModalPanePresentation({
+        targetOpen: Boolean(bottomPane),
         node: bottomPane,
-        durationMs: overlayDurationMs,
-        useNativeDriver: overlayUseNativeDriver,
+        overlay: bottomPresentation === 'overlay',
+        onClose: onCloseBottom,
     });
     const shouldRenderBottomPane = bottomPresence.present;
     const renderedBottomPane = bottomPresence.node;
-
-    React.useEffect(() => {
-        if (!bottomPane) return;
-        return registerEscapeKeyBlocker(ESCAPE_KEY_BLOCKER_PRIORITIES.bottomPane);
-    }, [bottomPane]);
-
-    const requestCloseOverlayBottom = React.useCallback(() => {
-        if (bottomOverlayCloseTimeoutRef.current) {
-            clearTimeout(bottomOverlayCloseTimeoutRef.current);
-            bottomOverlayCloseTimeoutRef.current = null;
-        }
-
-        if (bottomPresentation !== 'overlay' || !bottomPresence.present) {
-            onCloseBottom();
-            return;
-        }
-
-        if (reduceMotion) {
-            onCloseBottom();
-            return;
-        }
-
-        setBottomOverlayClosing(true);
-        Animated.timing(bottomPresence.progress, {
-            toValue: 0,
-            duration: overlayDurationMs,
-            easing: motionTokens.easing.standard,
-            useNativeDriver: overlayUseNativeDriver,
-        }).start();
-        bottomOverlayCloseTimeoutRef.current = setTimeout(() => {
-            bottomOverlayCloseTimeoutRef.current = null;
-            onCloseBottom();
-            setBottomOverlayClosing(false);
-        }, overlayDurationMs);
-    }, [bottomPresentation, bottomPresence.present, bottomPresence.progress, onCloseBottom, overlayDurationMs, overlayUseNativeDriver, reduceMotion]);
-
-    React.useLayoutEffect(() => {
-        const maybeWindow: any = (globalThis as any).window;
-        if (!maybeWindow?.addEventListener) return;
-        if (!bottomPane) return;
-
-        const onKeyDownCapture = (event: any) => {
-            if (event?.key !== 'Escape') return;
-            if (event?.defaultPrevented) return;
-            const target = event?.target;
-            const tagNameRaw = typeof target?.tagName === 'string' ? target.tagName : '';
-            const tagName = String(tagNameRaw).toLowerCase();
-            if (tagName === 'input' || tagName === 'textarea') return;
-            if (target?.isContentEditable) return;
-
-            markEscapeEventHandled(event);
-            event?.preventDefault?.();
-            event?.stopImmediatePropagation?.();
-            event?.stopPropagation?.();
-
-            if (bottomPresentation === 'overlay' && bottomPresence.present) {
-                requestCloseOverlayBottom();
-                return;
-            }
-
-            onCloseBottom();
-        };
-
-        maybeWindow.addEventListener('keydown', onKeyDownCapture, true);
-        return () => {
-            maybeWindow.removeEventListener?.('keydown', onKeyDownCapture, true);
-        };
-    }, [bottomPane, bottomPresentation, bottomPresence.present, onCloseBottom, requestCloseOverlayBottom]);
+    const isBottomOverlayPresented = bottomPresentation === 'overlay' && bottomPresence.present;
+    const bottomModalLabel = t('ui.modalPane.bottom');
+    const bottomModalBoundary = useModalPaneBoundary({
+        active: isBottomOverlayPresented,
+        label: bottomModalLabel,
+        onRequestClose: bottomPresence.requestClose,
+        focusReturnRef: bottomOverlayFocusReturnRef,
+        discardPendingFocusReturn: bottomPane != null && bottomPresentation !== 'overlay',
+        escapeEnabled: shouldRenderBottomPane,
+        escapePriority: isBottomOverlayPresented
+            ? ESCAPE_LAYER_PRIORITIES.overlay
+            : ESCAPE_LAYER_PRIORITIES.pane,
+        allowEditableEscape: isBottomOverlayPresented,
+    });
+    const {
+        nativeAccessibilityFocusAnchor: bottomNativeAccessibilityFocusAnchor,
+        nativeBackLayer: bottomNativeBackLayer,
+        ...bottomModalOverlayProps
+    } = bottomModalBoundary.overlayProps;
 
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-            <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
-                <MultiPaneHost {...multiPaneProps} />
-            </View>
+            <ModalPaneBoundaryView
+                ref={bottomModalBoundary.setUnderlayFocusRef}
+                testID={isBottomOverlayPresented ? 'multi-pane-bottom-underlay' : undefined}
+                style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}
+                {...bottomModalBoundary.underlayProps}
+            >
+                <PluginSurfaceFocusEligibilityProvider active={!isBottomOverlayPresented}>
+                    <MultiPaneHost {...multiPaneProps} />
+                </PluginSurfaceFocusEligibilityProvider>
+            </ModalPaneBoundaryView>
 
             {shouldRenderBottomPane ? (
                 <Animated.View
-                    testID={bottomPresentation === 'overlay' ? 'multi-pane-bottom-overlay' : undefined}
+                    ref={isBottomOverlayPresented ? bottomModalBoundary.setOverlayFocusRef : undefined}
+                    testID={isBottomOverlayPresented ? 'multi-pane-bottom-overlay' : undefined}
+                    {...(isBottomOverlayPresented ? bottomModalOverlayProps : {})}
                     style={
                         bottomPresentation === 'overlay'
                             ? {
@@ -183,8 +134,8 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                                 }],
                             }
                     }
-                >
-                    <ResizableDockedPaneVertical
+                    >
+                        <ResizableDockedPaneVertical
                         testID={bottomPresentation === 'overlay' ? 'multi-pane-bottom-overlay-pane' : 'multi-pane-bottom-dock'}
                         resizeHandleTestID={
                             bottomPresentation === 'overlay'
@@ -197,18 +148,29 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                         resizeEdge="top"
                         onCommitHeightPx={onCommitBottomDockHeightPx}
                         onDragHeightPx={onDragBottomDockHeightPx}
-                    >
-                        {renderedBottomPane}
-                    </ResizableDockedPaneVertical>
+                        >
+                            <ModalPaneBoundaryView
+                                nativeAccessibilityFocusAnchor={bottomNativeAccessibilityFocusAnchor}
+                                nativeBackLayer={bottomNativeBackLayer}
+                                style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+                            >
+                                <PluginSurfaceFocusEligibilityProvider
+                                    active={bottomPresentation !== 'overlay' || !bottomPresence.closing}
+                                >
+                                    {renderedBottomPane}
+                                </PluginSurfaceFocusEligibilityProvider>
+                            </ModalPaneBoundaryView>
+                        </ResizableDockedPaneVertical>
                 </Animated.View>
             ) : null}
 
-            {bottomPresentation === 'overlay' && bottomPresence.present ? (
+            {isBottomOverlayPresented ? (
                 <>
                     <PaneAnimatedScrimPressable
                         testID="multi-pane-bottom-scrim"
                         accessibilityRole="button"
-                        onPress={requestCloseOverlayBottom}
+                        accessibilityLabel={t('ui.modalPane.dismiss', { pane: bottomModalLabel })}
+                        onPress={bottomPresence.requestClose}
                         animatedStyle={{
                             position: 'absolute',
                             top: 0,

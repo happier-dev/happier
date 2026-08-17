@@ -55,6 +55,323 @@ describe('reducer', () => {
             expect(state.localIds.has('local123')).toBe(true);
         });
 
+        it('applies semantic marked same-server-id user updates while leaving unmarked deliveries inert', () => {
+            const state = createReducer();
+            const initial: NormalizedMessage = {
+                id: 'server-user-row',
+                localId: 'voice-realtime:attempt:user:item',
+                createdAt: 1_000,
+                seq: 7,
+                role: 'user',
+                content: { type: 'text', text: 'initial transcript' },
+                isSidechain: false,
+                meta: { displayText: 'initial display text' },
+            };
+
+            expect(reducer(state, [initial]).messages).toEqual([
+                expect.objectContaining({
+                    kind: 'user-text',
+                    realID: initial.id,
+                    localId: initial.localId,
+                    createdAt: initial.createdAt,
+                    seq: initial.seq,
+                    text: 'initial transcript',
+                    displayText: 'initial display text',
+                }),
+            ]);
+            expect(reducer(state, [initial]).messages).toEqual([]);
+
+            const unmarkedDuplicate: NormalizedMessage = {
+                ...initial,
+                content: { type: 'text', text: 'unmarked duplicate transcript' },
+            };
+            expect(reducer(state, [unmarkedDuplicate]).messages).toEqual([]);
+
+            const corrected: NormalizedMessage & { isAuthoritativeUpdate: true } = {
+                ...initial,
+                content: { type: 'text', text: 'corrected transcript' },
+                isAuthoritativeUpdate: true,
+            };
+            expect(reducer(state, [corrected]).messages).toEqual([
+                expect.objectContaining({
+                    kind: 'user-text',
+                    realID: initial.id,
+                    localId: initial.localId,
+                    createdAt: initial.createdAt,
+                    seq: initial.seq,
+                    text: 'corrected transcript',
+                }),
+            ]);
+            expect(reducer(state, [corrected]).messages).toEqual([]);
+
+            const displayTextChanged: NormalizedMessage = {
+                ...corrected,
+                meta: { displayText: 'corrected display text' },
+            };
+            expect(reducer(state, [displayTextChanged]).messages).toEqual([
+                expect.objectContaining({
+                    kind: 'user-text',
+                    realID: initial.id,
+                    text: 'corrected transcript',
+                    displayText: 'corrected display text',
+                }),
+            ]);
+
+            const displayTextRetracted: NormalizedMessage = {
+                ...corrected,
+                meta: undefined,
+            };
+            const retracted = reducer(state, [displayTextRetracted]);
+            expect(retracted.messages).toEqual([
+                expect.objectContaining({
+                    kind: 'user-text',
+                    realID: initial.id,
+                    text: 'corrected transcript',
+                }),
+            ]);
+            expect(retracted.messages[0]).not.toHaveProperty('displayText');
+            expect(reducer(state, [displayTextRetracted]).messages).toEqual([]);
+        });
+
+        it('replaces a marked same-server-id agent row while leaving an unmarked durable duplicate inert', () => {
+            const state = createReducer();
+            const initial: NormalizedMessage = {
+                id: 'server-agent-row',
+                localId: 'voice-realtime:attempt:assistant:item',
+                createdAt: 1_000,
+                seq: 8,
+                role: 'agent',
+                content: [{
+                    type: 'text',
+                    text: 'initial assistant transcript',
+                    uuid: 'server-agent-row',
+                    parentUUID: null,
+                }],
+                isSidechain: false,
+            };
+
+            expect(reducer(state, [initial]).messages).toEqual([
+                expect.objectContaining({
+                    kind: 'agent-text',
+                    realID: initial.id,
+                    localId: initial.localId,
+                    createdAt: initial.createdAt,
+                    seq: initial.seq,
+                    text: 'initial assistant transcript',
+                }),
+            ]);
+
+            const unmarkedDuplicate: NormalizedMessage = {
+                ...initial,
+                content: [{
+                    type: 'text',
+                    text: 'unmarked durable duplicate',
+                    uuid: 'server-agent-row',
+                    parentUUID: null,
+                }],
+            };
+            expect(reducer(state, [unmarkedDuplicate]).messages).toEqual([]);
+            expect([...state.messages.values()].filter((message) => message.realID === initial.id)).toEqual([
+                expect.objectContaining({ text: 'initial assistant transcript' }),
+            ]);
+
+            const corrected: NormalizedMessage = {
+                ...initial,
+                isAuthoritativeUpdate: true,
+                content: [{
+                    type: 'text',
+                    text: 'corrected assistant transcript',
+                    uuid: 'server-agent-row',
+                    parentUUID: null,
+                }],
+            };
+            expect(reducer(state, [corrected]).messages).toEqual([
+                expect.objectContaining({
+                    kind: 'agent-text',
+                    realID: initial.id,
+                    localId: initial.localId,
+                    createdAt: initial.createdAt,
+                    seq: initial.seq,
+                    text: 'corrected assistant transcript',
+                }),
+            ]);
+            expect(reducer(state, [corrected]).messages).toEqual([]);
+        });
+
+        it('claims a marked agent correction before parser conversion can create a second row', () => {
+            const state = createReducer();
+            const initial: NormalizedMessage = {
+                id: 'server-agent-parser-row',
+                localId: 'voice-realtime:attempt:assistant:parser-item',
+                createdAt: 1_000,
+                seq: 8,
+                role: 'agent',
+                content: [{
+                    type: 'text',
+                    text: 'initial assistant transcript',
+                    uuid: 'server-agent-parser-row',
+                    parentUUID: null,
+                }],
+                isSidechain: false,
+            };
+            const initialResult = reducer(state, [initial]);
+            expect(initialResult.messages).toHaveLength(1);
+            const originalServerIdMapping = state.messageIds.get(initial.id);
+
+            const unmarkedDuplicate: NormalizedMessage = {
+                ...initial,
+                content: [{
+                    type: 'text',
+                    text: 'Claude AI usage limit reached|123',
+                    uuid: 'server-agent-parser-row',
+                    parentUUID: null,
+                }],
+            };
+            expect(reducer(state, [unmarkedDuplicate]).messages).toEqual([]);
+            expect([...state.messages.values()].filter((message) => message.realID === initial.id)).toEqual([
+                expect.objectContaining({
+                    id: initialResult.messages[0]?.id,
+                    text: 'initial assistant transcript',
+                    event: null,
+                }),
+            ]);
+
+            const corrected: NormalizedMessage = {
+                ...initial,
+                isAuthoritativeUpdate: true,
+                content: [{
+                    type: 'text',
+                    text: 'Claude AI usage limit reached|123',
+                    uuid: 'server-agent-parser-row',
+                    parentUUID: null,
+                }],
+            };
+
+            const result = reducer(state, [corrected]);
+            expect(result.messages).toEqual([
+                expect.objectContaining({
+                    id: initialResult.messages[0]?.id,
+                    realID: initial.id,
+                    text: 'Claude AI usage limit reached|123',
+                }),
+            ]);
+            const rowsForServerMessage = [...state.messages.values()].filter((message) => message.realID === initial.id);
+            expect(rowsForServerMessage).toEqual([
+                expect.objectContaining({
+                    id: initialResult.messages[0]?.id,
+                    text: 'Claude AI usage limit reached|123',
+                    event: null,
+                }),
+            ]);
+            expect(state.messageIds.get(initial.id)).toBe(originalServerIdMapping);
+        });
+
+        it('retracts a marked ordinary agent row action reference even when its text is unchanged', () => {
+            const state = createReducer();
+            const messageActionReference = {
+                v: 1,
+                sessionId: 'session-1',
+                messageId: 'server-agent-reference-row',
+                observedRevision: 'revision-1',
+            } as const;
+            const initial: NormalizedMessage = {
+                id: 'server-agent-reference-row',
+                localId: null,
+                createdAt: 1_000,
+                seq: 8,
+                role: 'agent',
+                content: [{
+                    type: 'text',
+                    text: 'same durable agent text',
+                    uuid: 'server-agent-reference-row',
+                    parentUUID: null,
+                }],
+                isSidechain: false,
+                messageActionReference,
+            };
+
+            expect(reducer(state, [initial]).messages).toEqual([
+                expect.objectContaining({
+                    kind: 'agent-text',
+                    realID: initial.id,
+                    messageActionReference,
+                }),
+            ]);
+
+            const retracted: NormalizedMessage = {
+                ...initial,
+                isAuthoritativeUpdate: true,
+            };
+            delete (retracted as { messageActionReference?: unknown }).messageActionReference;
+
+            const retractionResult = reducer(state, [retracted]);
+            expect(retractionResult.messages).toEqual([
+                expect.objectContaining({
+                    kind: 'agent-text',
+                    realID: initial.id,
+                    text: 'same durable agent text',
+                }),
+            ]);
+            expect(retractionResult.messages[0]).not.toHaveProperty('messageActionReference');
+            expect(reducer(state, [retracted]).messages).toEqual([]);
+        });
+
+        it('refreshes a server-issued message action reference even when the durable user content is unchanged', () => {
+            const state = createReducer();
+            const messageActionReference = {
+                v: 1,
+                sessionId: 'session-1',
+                messageId: 'msg-actionable',
+                observedRevision: 'revision-4',
+            } as const;
+
+            const first = reducer(state, [{
+                id: 'msg-actionable',
+                localId: null,
+                createdAt: 1_000,
+                role: 'user',
+                content: { type: 'text', text: 'Actionable text' },
+                isSidechain: false,
+                messageActionReference,
+            }]);
+
+            expect(first.messages).toEqual([expect.objectContaining({
+                kind: 'user-text',
+                messageActionReference,
+            })]);
+
+            const refreshedReference = {
+                ...messageActionReference,
+                observedRevision: 'revision-5',
+            } as const;
+            const refreshed = reducer(state, [{
+                id: 'msg-actionable',
+                localId: null,
+                createdAt: 1_000,
+                role: 'user',
+                content: { type: 'text', text: 'Actionable text' },
+                isSidechain: false,
+                messageActionReference: refreshedReference,
+            }]);
+
+            expect(refreshed.messages).toEqual([expect.objectContaining({
+                kind: 'user-text',
+                messageActionReference: refreshedReference,
+            })]);
+
+            const revoked = reducer(state, [{
+                id: 'msg-actionable',
+                localId: null,
+                createdAt: 1_000,
+                role: 'user',
+                content: { type: 'text', text: 'Actionable text' },
+                isSidechain: false,
+            }]);
+
+            expect(revoked.messages).toHaveLength(1);
+            expect(revoked.messages[0]?.messageActionReference).toBeUndefined();
+        });
+
         it('should deduplicate user messages by localId', () => {
             const state = createReducer();
 
@@ -303,6 +620,72 @@ describe('reducer', () => {
             if (result.messages[0].kind === 'agent-text') {
                 expect(result.messages[0].text).toBe('Hello from Claude!');
             }
+        });
+
+        it('preserves a persisted structured presentation as one immutable agent transcript row', () => {
+            const state = createReducer();
+            const structuredPresentation = {
+                v: 1 as const,
+                profile: 'pluginTranscriptV1' as const,
+                owner: { pluginId: 'acme.preview', contributionLocalId: 'report-card' },
+                snapshot: {
+                    kind: 'status' as const,
+                    label: 'Report',
+                    value: 'Ready',
+                },
+            };
+            const message: NormalizedMessage = {
+                id: 'agent-structured',
+                localId: null,
+                createdAt: 1_000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: '',
+                    uuid: 'agent-structured',
+                    parentUUID: null,
+                }],
+                structuredPresentation,
+            };
+
+            const first = reducer(state, [message]);
+            expect(first.messages).toEqual([expect.objectContaining({
+                kind: 'agent-text',
+                text: '',
+                structuredPresentation,
+            })]);
+            expect(reducer(state, [message]).messages).toEqual([]);
+
+            const correctedStructuredPresentation = {
+                ...structuredPresentation,
+                snapshot: {
+                    ...structuredPresentation.snapshot,
+                    value: 'Corrected',
+                },
+            };
+            const corrected: NormalizedMessage = {
+                ...message,
+                structuredPresentation: correctedStructuredPresentation,
+                isAuthoritativeUpdate: true,
+            };
+            expect(reducer(state, [corrected]).messages).toEqual([expect.objectContaining({
+                kind: 'agent-text',
+                structuredPresentation: correctedStructuredPresentation,
+            })]);
+
+            const retracted: NormalizedMessage = {
+                ...message,
+                isAuthoritativeUpdate: true,
+            };
+            delete (retracted as { structuredPresentation?: unknown }).structuredPresentation;
+            const retractionResult = reducer(state, [retracted]);
+            expect(retractionResult.messages).toEqual([expect.objectContaining({
+                kind: 'agent-text',
+                text: '',
+            })]);
+            expect(retractionResult.messages[0]).not.toHaveProperty('structuredPresentation');
+            expect(reducer(state, [retracted]).messages).toEqual([]);
         });
 
         it('should process multiple text blocks in one agent message', () => {

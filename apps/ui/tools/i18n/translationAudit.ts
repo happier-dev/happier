@@ -46,6 +46,16 @@ export type UntranslatedString = Readonly<{
     value: string;
 }>;
 
+export function findMissingKeys(
+    enRoot: unknown,
+    locale: { code: string; root: unknown },
+): ReadonlyArray<Readonly<{ locale: string; key: string }>> {
+    const localeKeys = new Set(flattenTranslationLeaves(locale.root).map((leaf) => leaf.key));
+    return flattenTranslationLeaves(enRoot)
+        .filter((leaf) => !localeKeys.has(leaf.key))
+        .map((leaf) => ({ locale: locale.code, key: leaf.key }));
+}
+
 const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'OK',
     'Git',
@@ -225,6 +235,7 @@ export function findUntranslatedStrings(
 
 export type LocaleAuditReport = Readonly<{
     untranslatedStrings: ReadonlyArray<UntranslatedString>;
+    missingKeys: ReadonlyArray<Readonly<{ locale: string; key: string }>>;
 }>;
 
 export function auditTranslations(args: Readonly<{
@@ -237,6 +248,7 @@ export function auditTranslations(args: Readonly<{
         if (locale.code === 'en') continue;
         out[locale.code] = {
             untranslatedStrings: findUntranslatedStrings(args.en, locale),
+            missingKeys: findMissingKeys(args.en, locale),
         };
     }
 

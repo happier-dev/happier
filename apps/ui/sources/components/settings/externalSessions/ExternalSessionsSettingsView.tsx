@@ -6,16 +6,12 @@ import {
 } from '@happier-dev/protocol';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { ContextBar } from '@/components/contextBar/ContextBar';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { Switch } from '@/components/ui/forms/Switch';
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
 import {
     readExternalSessionFollowPolicy,
@@ -23,6 +19,8 @@ import {
 } from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import { useAllMachines, useAllSessions, useSetting, useSettings } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
@@ -30,9 +28,14 @@ import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { ExternalSessionsIntegrationSection } from './ExternalSessionsIntegrationSection';
+import { supportsExternalSessionBackgroundFollow } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
+import {
+    ExternalSessionsIntegrationSection,
+    type ExternalSessionsSettingsSupplementalRow,
+} from './ExternalSessionsIntegrationSection';
 import { useExternalSessionsIntegrationController } from './externalSessionsIntegrationController';
 import { useExternalSessionsAutoLinkSources } from './useExternalSessionsAutoLinkSources';
+import { Icon } from '@/components/ui/icons/Icon';
 import type {
     ExternalSessionsAutoLinkSourceDescriptor,
     ExternalSessionsIntegrationDescriptor,
@@ -104,8 +107,74 @@ function buildFollowRows(
     return rows;
 }
 
+const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(props: Readonly<{
+    row: FollowRow;
+    pending: boolean;
+    mutationStatus: 'error' | 'unsupported' | undefined;
+    onSetEnabled: (row: FollowRow, enabled: boolean) => Promise<void>;
+}>) {
+    const { theme } = useUnistyles();
+    const link = readExternalSessionLink(readSessionOwnerMetadataView(props.row.session));
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: link?.machineId ?? null,
+        serverId: props.row.session.serverId ?? null,
+        enabled: link !== null,
+    });
+    const supportsBackgroundFollow = link !== null
+        && daemonMergedProjection.phase === 'ready'
+        && supportsExternalSessionBackgroundFollow({
+            providerId: link.agentId,
+            source: link.source,
+            projection: daemonMergedProjection.inputs?.pluginProjectionV2,
+        });
+
+    if (daemonMergedProjection.phase === 'ready' && !supportsBackgroundFollow) {
+        return (
+            <Item
+                testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
+                mode="info"
+                title={props.row.title}
+                subtitle={resolveFollowStatusSubtitle('unsupported')}
+                icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
+                showChevron={false}
+            />
+        );
+    }
+
+    const status = props.mutationStatus ?? props.row.status;
+    const disabled = props.pending
+        || !props.row.canChange
+        || (!props.row.enabled && props.mutationStatus === 'unsupported');
+    return (
+        <Item
+            testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
+            title={props.row.title}
+            subtitle={resolveFollowStatusSubtitle(status)}
+            icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
+            loading={props.pending}
+            disabled={disabled}
+            rightElement={(
+                <Switch
+                    testID={`settings-external-sessions-follow-toggle-${props.row.session.id}`}
+                    accessibilityLabel={props.row.title}
+                    accessibilityHint={t('externalSessions.settingsFollowToggleHint')}
+                    value={props.row.enabled}
+                    disabled={disabled}
+                    onValueChange={(enabled) => {
+                        void props.onSetEnabled(props.row, enabled);
+                    }}
+                />
+            )}
+            rightElementOutsidePressable
+            showChevron={false}
+            onPress={() => {
+                void props.onSetEnabled(props.row, !props.row.enabled);
+            }}
+        />
+    );
+});
+
 export type ExternalSessionsSettingsViewProps = Readonly<{
-    initialMachineId?: string | null;
     integrationInventoryEnabled?: boolean;
     integrations?: readonly ExternalSessionsIntegrationDescriptor[] | null;
     autoLinkSources?: readonly ExternalSessionsAutoLinkSourceDescriptor[] | null;
@@ -133,28 +202,20 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
         () => buildFollowRows(sessions, machineOnlineById),
         [machineOnlineById, sessions],
     );
-    const selectableMachines = React.useMemo(
-        () => machines.filter((machine) => machine.revokedAt == null),
-        [machines],
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.externalSessions,
     );
-    const defaultMachineId = selectableMachines.find(isMachineOnline)?.id
-        ?? selectableMachines[0]?.id
-        ?? null;
-    const {
-        machineId: selectedMachineId,
-        setMachineId: setSelectedMachineId,
-    } = useContextBarSelection({
-        selectionKey: 'externalSessionsSettings',
-        defaultMachineId,
-        initialMachineId: props.initialMachineId,
-    });
-    const selectedMachine = selectableMachines.find(
-        (machine) => machine.id === selectedMachineId,
-    ) ?? selectableMachines[0] ?? null;
+    const executionTarget = administrationTargetSelection.resolveExecutionTarget();
+    const isExecutionTargetCurrent = React.useCallback(() => {
+        if (!executionTarget) return false;
+        const current = administrationTargetSelection.resolveExecutionTarget();
+        return current?.target.serverIdentityId === executionTarget.target.serverIdentityId
+            && current.target.machineId === executionTarget.target.machineId;
+    }, [administrationTargetSelection.resolveExecutionTarget, executionTarget]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
-        machineId: selectedMachine?.id ?? null,
-        serverId: null,
-        enabled: selectedMachine !== null,
+        machineId: executionTarget?.machine.id ?? null,
+        serverId: executionTarget?.serverId ?? null,
+        enabled: executionTarget !== null,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready'
         ? daemonMergedProjection.inputs
@@ -194,22 +255,18 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
         knownAgents: projectedExternalSessionAgents,
     });
     const integrationController = useExternalSessionsIntegrationController({
-        machineId: selectedMachine?.id ?? null,
+        machineId: executionTarget?.machine.id ?? null,
+        serverId: executionTarget?.serverId ?? null,
         projectionGeneration: `${
             daemonMergedProjectionInputs?.pluginProjectionV2?.generation ?? 'unavailable'
-        }:${selectedMachine?.daemonStateVersion ?? 0}`,
+        }:${executionTarget?.machine.daemonStateVersion ?? 0}`,
         agent: null,
         knownAgents: projectedExternalSessionAgents,
-        enabled: props.integrationInventoryEnabled === true && props.integrations === undefined,
+        enabled: props.integrationInventoryEnabled === true
+            && props.integrations === undefined
+            && executionTarget !== null,
+        isExecutionTargetCurrent,
     });
-    const machineItems = React.useMemo((): DropdownMenuItem[] => selectableMachines.map((machine) => ({
-        id: machine.id,
-        title: machine.metadata?.displayName ?? machine.metadata?.host ?? machine.id,
-        subtitle: isMachineOnline(machine)
-            ? t('externalSessions.settingsMachineOnline')
-            : t('externalSessions.settingsMachineOffline'),
-        icon: <SafeIonicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
-    })), [selectableMachines, theme.colors.text.secondary]);
     const hasActiveFollowPolicy = rows.some((row) => row.enabled);
     const pendingSessionIdsRef = React.useRef(new Set<string>());
     const [pendingSessionIds, setPendingSessionIds] = React.useState<ReadonlySet<string>>(
@@ -317,137 +374,150 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
         }
     }, [mutationStatusBySessionId]);
 
-    return (
-        <ItemList style={{ paddingTop: 0 }}>
-            <ContextBar
-                mode="machine_only"
-                machine={{
-                    title: t('externalSessions.settingsMachineTitle'),
-                    selectedId: selectedMachine?.id ?? null,
-                    subtitle: selectedMachine?.metadata?.displayName
-                        ?? selectedMachine?.metadata?.host
-                        ?? t('externalSessions.settingsMachineUnavailable'),
-                    items: machineItems,
-                    onSelect: setSelectedMachineId,
-                }}
-            />
-            <ExternalSessionsIntegrationSection
-                integrations={props.integrations === undefined
-                    ? integrationController.integrations
-                    : props.integrations}
-                autoLinkSources={props.autoLinkSources === undefined
-                    ? persistedAutoLinkSources
-                    : props.autoLinkSources}
-                machineId={selectedMachine?.id ?? null}
-                agent={null}
-                operations={props.integrationOperations === undefined
-                    ? integrationController.operations
-                    : props.integrationOperations}
-                inventoryState={props.integrations === undefined
-                    ? integrationController.inventoryState
-                    : undefined}
-                onRetryInventory={props.integrations === undefined
-                    ? integrationController.retryInventory
-                    : null}
-            />
-            <ItemGroup
-                title={t('externalSessions.settingsFollowGroupTitle')}
-                footer={t('externalSessions.settingsRestoreFooter')}
-            >
-                <Item
-                    testID="settings-external-sessions-restore-item"
-                    title={t('externalSessions.settingsRestoreTitle')}
-                    subtitle={settings.keepPassivelyFollowingAfterRestart
-                        ? t('externalSessions.settingsRestoreEnabledSubtitle')
-                        : t('externalSessions.settingsRestoreDisabledSubtitle')}
-                    icon={<SafeIonicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={(
-                        <Switch
-                            testID="settings-external-sessions-restore-toggle"
-                            accessibilityLabel={t('externalSessions.settingsRestoreTitle')}
-                            value={settings.keepPassivelyFollowingAfterRestart}
-                            disabled={restartFollowMutationPending}
-                            onValueChange={setRestartFollowEnabled}
-                        />
-                    )}
-                    rightElementOutsidePressable
-                    loading={restartFollowMutationPending}
-                    disabled={restartFollowMutationPending}
-                    showChevron={false}
-                    onPress={() => setRestartFollowEnabled(!settings.keepPassivelyFollowingAfterRestart)}
-                />
-                <Item
-                    testID="settings-external-sessions-notifications-info"
-                    mode="info"
-                    title={t('externalSessions.settingsNotificationsTitle')}
-                    subtitle={hasActiveFollowPolicy
-                        ? t('externalSessions.settingsNotificationsActiveSubtitle')
-                        : t('externalSessions.settingsNotificationsInactiveSubtitle')}
-                    icon={<SafeIonicons name="notifications-outline" size={29} color={theme.colors.text.secondary} />}
-                    showChevron={false}
-                />
-            </ItemGroup>
-
-            <ItemGroup
-                title={t('externalSessions.settingsActiveFollowsGroupTitle')}
-                footer={t('externalSessions.settingsActiveFollowsFooter')}
-            >
-                {rows.length === 0 ? (
+    const supplementalRows = React.useMemo<readonly ExternalSessionsSettingsSupplementalRow[]>(() => {
+        const result: ExternalSessionsSettingsSupplementalRow[] = [{
+            key: 'follow-policy',
+            render: () => (
+                <ItemGroup
+                    title={t('externalSessions.settingsFollowGroupTitle')}
+                    footer={t('externalSessions.settingsRestoreFooter')}
+                >
                     <Item
-                        testID="settings-external-sessions-follow-empty"
+                        testID="settings-external-sessions-restore-item"
+                        title={t('externalSessions.settingsRestoreTitle')}
+                        subtitle={settings.keepPassivelyFollowingAfterRestart
+                            ? t('externalSessions.settingsRestoreEnabledSubtitle')
+                            : t('externalSessions.settingsRestoreDisabledSubtitle')}
+                        icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={(
+                            <Switch
+                                testID="settings-external-sessions-restore-toggle"
+                                accessibilityLabel={t('externalSessions.settingsRestoreTitle')}
+                                value={settings.keepPassivelyFollowingAfterRestart}
+                                disabled={restartFollowMutationPending}
+                                onValueChange={setRestartFollowEnabled}
+                            />
+                        )}
+                        rightElementOutsidePressable
+                        loading={restartFollowMutationPending}
+                        disabled={restartFollowMutationPending}
+                        showChevron={false}
+                        onPress={() => setRestartFollowEnabled(!settings.keepPassivelyFollowingAfterRestart)}
+                    />
+                    <Item
+                        testID="settings-external-sessions-notifications-info"
                         mode="info"
-                        title={t('externalSessions.settingsActiveFollowsEmptyTitle')}
-                        subtitle={t('externalSessions.settingsActiveFollowsEmptySubtitle')}
-                        icon={<SafeIonicons name="link-outline" size={29} color={theme.colors.text.secondary} />}
+                        title={t('externalSessions.settingsNotificationsTitle')}
+                        subtitle={hasActiveFollowPolicy
+                            ? t('externalSessions.settingsNotificationsActiveSubtitle')
+                            : t('externalSessions.settingsNotificationsInactiveSubtitle')}
+                        icon={<Icon name="bell" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
-                ) : rows.map((row) => {
-                    const pending = pendingSessionIds.has(row.session.id);
-                    const mutationStatus = mutationStatusBySessionId.get(row.session.id);
-                    const status = mutationStatus ?? row.status;
-                    const disabled = pending
-                        || !row.canChange
-                        || (!row.enabled && mutationStatus === 'unsupported');
-                    return (
-                        <Item
-                            key={row.session.id}
-                            testID={`settings-external-sessions-follow-item-${row.session.id}`}
-                            title={row.title}
-                            subtitle={resolveFollowStatusSubtitle(status)}
-                            icon={<SafeIonicons name="link-outline" size={29} color={theme.colors.text.secondary} />}
-                            loading={pending}
-                            disabled={disabled}
-                            rightElement={(
-                                <Switch
-                                    testID={`settings-external-sessions-follow-toggle-${row.session.id}`}
-                                    accessibilityLabel={row.title}
-                                    accessibilityHint={t('externalSessions.settingsFollowToggleHint')}
-                                    value={row.enabled}
-                                    disabled={disabled}
-                                    onValueChange={(enabled) => {
-                                        void setSessionFollowEnabled(row, enabled);
-                                    }}
-                                />
-                            )}
-                            rightElementOutsidePressable
-                            showChevron={false}
-                            onPress={() => setSessionFollowEnabled(row, !row.enabled)}
-                        />
-                    );
-                })}
-            </ItemGroup>
+                </ItemGroup>
+            ),
+        }];
 
-            <ItemGroup title={t('externalSessions.settingsSafetyGroupTitle')}>
-                <Item
-                    testID="settings-external-sessions-passive-info"
-                    mode="info"
-                    title={t('externalSessions.settingsPassiveTitle')}
-                    subtitle={t('externalSessions.settingsPassiveSubtitle')}
-                    icon={<SafeIonicons name="eye-outline" size={29} color={theme.colors.text.secondary} />}
-                    showChevron={false}
-                />
-            </ItemGroup>
-        </ItemList>
+        const followChunkSize = 12;
+        for (let offset = 0; offset < Math.max(rows.length, 1); offset += followChunkSize) {
+            const isFirst = offset === 0;
+            const isLast = offset + followChunkSize >= rows.length;
+            const chunk = rows.slice(offset, offset + followChunkSize);
+            result.push({
+                key: `active-follows:${offset}`,
+                render: () => (
+                    <ItemGroup
+                        title={isFirst ? t('externalSessions.settingsActiveFollowsGroupTitle') : undefined}
+                        footer={isLast ? t('externalSessions.settingsActiveFollowsFooter') : undefined}
+                        virtualizedSegment={{ first: isFirst, last: isLast }}
+                    >
+                        {chunk.length === 0 ? (
+                            <Item
+                                testID="settings-external-sessions-follow-empty"
+                                mode="info"
+                                title={t('externalSessions.settingsActiveFollowsEmptyTitle')}
+                                subtitle={t('externalSessions.settingsActiveFollowsEmptySubtitle')}
+                                icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
+                                showChevron={false}
+                            />
+                        ) : chunk.map((row) => (
+                            <ExternalSessionFollowItem
+                                key={row.session.id}
+                                row={row}
+                                pending={pendingSessionIds.has(row.session.id)}
+                                mutationStatus={mutationStatusBySessionId.get(row.session.id)}
+                                onSetEnabled={setSessionFollowEnabled}
+                            />
+                        ))}
+                    </ItemGroup>
+                ),
+            });
+        }
+
+        result.push({
+            key: 'safety',
+            render: () => (
+                <ItemGroup title={t('externalSessions.settingsSafetyGroupTitle')}>
+                    <Item
+                        testID="settings-external-sessions-passive-info"
+                        mode="info"
+                        title={t('externalSessions.settingsPassiveTitle')}
+                        subtitle={t('externalSessions.settingsPassiveSubtitle')}
+                        icon={<Icon name="eye" size={29} color={theme.colors.text.secondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            ),
+        });
+        return result;
+    }, [
+        hasActiveFollowPolicy,
+        mutationStatusBySessionId,
+        pendingSessionIds,
+        restartFollowMutationPending,
+        rows,
+        setRestartFollowEnabled,
+        setSessionFollowEnabled,
+        settings.keepPassivelyFollowingAfterRestart,
+        theme.colors.accent.blue,
+        theme.colors.text.secondary,
+    ]);
+
+    return (
+        <ExternalSessionsIntegrationSection
+            virtualized
+            virtualizedHeader={<MachineAdministrationTargetSelector
+                selection={administrationTargetSelection}
+                testIDPrefix="settings-external-sessions-target"
+            />}
+            integrations={props.integrations === undefined
+                ? integrationController.integrations
+                : props.integrations}
+            autoLinkSources={props.autoLinkSources === undefined
+                ? persistedAutoLinkSources
+                : props.autoLinkSources}
+            machineId={executionTarget?.machine.id ?? null}
+            agent={null}
+            operations={props.integrationOperations === undefined
+                ? integrationController.operations
+                : props.integrationOperations}
+            inventoryState={props.integrations === undefined
+                ? integrationController.inventoryState
+                : undefined}
+            onRetryInventory={props.integrations === undefined
+                ? integrationController.retryInventory
+                : null}
+            hasMoreInventory={props.integrations === undefined
+                ? integrationController.hasMoreInventory
+                : false}
+            loadingMoreInventory={props.integrations === undefined
+                ? integrationController.loadingMoreInventory
+                : false}
+            onLoadMoreInventory={props.integrations === undefined
+                ? integrationController.loadMoreInventory
+                : null}
+            supplementalRows={supplementalRows}
+        />
     );
 });
 

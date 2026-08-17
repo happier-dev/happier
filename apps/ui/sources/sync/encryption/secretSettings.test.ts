@@ -78,10 +78,20 @@ describe('secretSettings', () => {
         ).toBeNull();
     });
 
-    it('returns the original structure unchanged when sealing with a null key', () => {
+    it('refuses to leave a marked plaintext secret unsealed when no local key is available', () => {
         const input = { secret: { _isSecretValue: true, value: 'sk-test' } };
-        const sealed = sealSecretsDeep(input, null);
 
-        expect(sealed).toBe(input);
+        expect(() => sealSecretsDeep(input, null)).toThrow(
+            expect.objectContaining({
+                code: 'local_secret_unavailable',
+                message: 'Local settings secret key is unavailable',
+            }),
+        );
+    });
+
+    it('keeps ordinary non-secret settings usable when no local key is available', () => {
+        const input = { analyticsOptOut: true };
+
+        expect(sealSecretsDeep(input, null)).toBe(input);
     });
 });

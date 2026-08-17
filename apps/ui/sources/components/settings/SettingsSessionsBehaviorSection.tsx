@@ -1,16 +1,14 @@
 import * as React from 'react';
 
 import type { SettingsBelowFoldSectionsProps } from '@/components/settings/settingsBelowFoldSectionTypes';
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { SettingsCatalogOverviewGroup } from '@/components/settings/SettingsCatalogOverviewGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type SettingsSessionsBehaviorSectionProps = Readonly<Pick<SettingsBelowFoldSectionsProps,
     | 'automationsNeedLocalEnablement'
-    | 'executionRunsEnabled'
-    | 'externalSessionsEnabled'
     | 'router'
     | 'showAutomations'
     | 'terminalUseTmux'
@@ -19,66 +17,33 @@ type SettingsSessionsBehaviorSectionProps = Readonly<Pick<SettingsBelowFoldSecti
 
 export const SettingsSessionsBehaviorSection = React.memo(function SettingsSessionsBehaviorSection({
     automationsNeedLocalEnablement,
-    executionRunsEnabled,
-    externalSessionsEnabled,
     router,
     showAutomations,
     terminalUseTmux,
     theme,
 }: SettingsSessionsBehaviorSectionProps) {
     return (
-        <ItemGroup title={t('settings.sessionsBehavior')}>
-            <Item
-                title={t('settings.sessions')}
-                subtitle={terminalUseTmux ? t('settings.sessionSubtitleTmuxEnabled') : t('settings.sessionSubtitleMessageSendingAndTmux')}
-                icon={<SafeIonicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
-                onPress={() => router.push(SETTINGS_ROUTES.session)}
-            />
-            {externalSessionsEnabled ? (
-                <Item
-                    testID="settings-external-sessions-item"
-                    title={t('externalSessions.settingsTitle')}
-                    subtitle={t('externalSessions.settingsEntrySubtitle')}
-                    icon={<SafeIonicons name="link-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push(SETTINGS_ROUTES.externalSessions)}
-                />
-            ) : null}
-            <Item
-                title={t('common.actions')}
-                subtitle={t('settings.actionsSubtitle')}
-                icon={<SafeIonicons name="flash-outline" size={29} color={theme.colors.accent.orange} />}
-                onPress={() => router.push(SETTINGS_ROUTES.actions)}
-            />
-            <Item
-                title={t('settings.transcript')}
-                subtitle={t('settings.transcriptSubtitle')}
-                icon={<SafeIonicons name="chatbubbles-outline" size={29} color={theme.colors.accent.indigo} />}
-                onPress={() => router.push(SETTINGS_ROUTES.transcript)}
-            />
-            <Item
-                title={t('settings.permissions')}
-                subtitle={t('settings.permissionsSubtitle')}
-                icon={<SafeIonicons name="shield-outline" size={29} color={theme.colors.accent.indigo} />}
-                onPress={() => router.push(SETTINGS_ROUTES.permissions)}
-            />
-            {showAutomations ? (
+        <SettingsCatalogOverviewGroup
+            groupId="groupSessionsBehavior"
+            router={router}
+            theme={theme}
+            resolveSubtitle={(page, defaultSubtitle) => (
+                page.id === 'session'
+                    ? terminalUseTmux
+                        ? t('settings.sessionSubtitleTmuxEnabled')
+                        : t('settings.sessionSubtitleMessageSendingAndTmux')
+                    : defaultSubtitle
+            )}
+            append={showAutomations ? (
                 <Item
                     title={t('settings.automations')}
                     subtitle={automationsNeedLocalEnablement
                         ? t('settingsFeatures.expAutomationsSubtitle')
                         : t('settings.automationsSubtitle')}
-                    icon={<SafeIonicons name="timer-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="timer" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => router.push(automationsNeedLocalEnablement ? SETTINGS_ROUTES.features : '/automations')}
                 />
             ) : null}
-            {executionRunsEnabled ? (
-                <Item
-                    title={t('runs.title')}
-                    subtitle={t('settings.executionRunsSubtitle')}
-                    icon={<SafeIonicons name="play-outline" size={29} color={theme.colors.state.success.foreground} />}
-                    onPress={() => router.push('/runs')}
-                />
-            ) : null}
-        </ItemGroup>
+        />
     );
 });

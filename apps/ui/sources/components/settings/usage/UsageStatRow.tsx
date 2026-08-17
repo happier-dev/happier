@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const Ionicons = SafeIonicons;
 
@@ -24,7 +25,7 @@ export const USAGE_ROW_MIN_HEIGHT = 36;
 type UsageStatRowProps = Readonly<{
     label: string;
     value: string;
-    icon?: React.ComponentProps<typeof Ionicons>['name'];
+    icon?: IconName;
     testID?: string;
 }>;
 
@@ -34,7 +35,7 @@ export const UsageStatRow = React.memo(function UsageStatRow({ label, value, ico
         <View style={styles.row} testID={testID}>
             {icon ? (
                 <View style={styles.icon}>
-                    <Ionicons name={icon} size={16} color={theme.colors.text.tertiary} />
+                    <Icon name={icon} size={16} color={theme.colors.text.tertiary} />
                 </View>
             ) : null}
             <Text style={styles.label} numberOfLines={1}>{label}</Text>

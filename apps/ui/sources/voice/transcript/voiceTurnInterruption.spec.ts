@@ -77,6 +77,40 @@ describe('markVoiceConversationAssistantTurnInterrupted', () => {
         expect(entries.find((entry) => entry.id === 'u1')).not.toHaveProperty('interrupted');
     });
 
+    it('resolves a projected local identity to the authoritative persisted row identity', () => {
+        const conversationSessionId = 'conv-interrupt-persisted-identity';
+        const persisted = {
+            ...assistantMessage('server-assistant-1', ASSISTANT_TEXT, 300),
+            realID: 'server-assistant-1',
+            localId: 'voice-realtime:attempt-1:assistant:assistant-1',
+        };
+        const state = {
+            sessionMessages: {
+                [conversationSessionId]: {
+                    messages: [persisted],
+                },
+            },
+        };
+
+        markVoiceConversationAssistantTurnInterrupted({
+            conversationSessionId,
+            assistantEntryId: persisted.localId,
+            getState: () => state,
+        });
+
+        expect(isVoiceTurnInterrupted(persisted.localId)).toBe(false);
+        expect(isVoiceTurnInterrupted(persisted.realID)).toBe(true);
+        expect(selectVoiceTranscriptEntriesForConversationSession(
+            state,
+            conversationSessionId,
+        )).toEqual([
+            expect.objectContaining({
+                id: persisted.realID,
+                interrupted: true,
+            }),
+        ]);
+    });
+
     it('does not misattribute interruption to N-1 when the current output has no authoritative final', () => {
         const conversationSessionId = 'conv-interrupt-no-final';
         const state = {

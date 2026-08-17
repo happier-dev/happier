@@ -101,12 +101,6 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     enabled: overrides.connectedServicesQuotasEnabled ?? false,
                 },
             },
-            channelBridges: {
-                enabled: false,
-                telegram: {
-                    enabled: false,
-                },
-            },
             updates: {
                 ota: {
                     enabled: overrides.updatesOtaEnabled ?? true,
@@ -125,6 +119,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     enabled: false,
                 },
                 handoff: {
+                    enabled: false,
+                },
+                agentSwitching: {
                     enabled: false,
                 },
                 usageLimitRecovery: {
@@ -182,10 +179,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             plugins: {
                 enabled: false,
+                webhooks: { enabled: false },
                 ui: {
                     enabled: false,
                     hostedWeb: { enabled: false },
-                    structuredMessages: { enabled: false },
                     reactNativeBundles: {
                         enabled: false,
                         devHotReload: { enabled: false },
@@ -286,6 +283,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             localServices: DEFAULT_LOCAL_SERVICE_CAPABILITIES,
             browser: DEFAULT_BROWSER_CAPABILITIES,
             devices: DEFAULT_DEVICE_CAPABILITIES,
+            plugins: { uiArtifactHosting: { enabled: false } },
             sharing: DEFAULT_SHARING_CAPABILITIES,
             server: {},
             serverIdentity: { serverIdentityId: null },

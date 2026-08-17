@@ -5,6 +5,10 @@ import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
+import {
+    readSessionMobileSurfaceWithPredecessor,
+    resolveSessionMobileSurfacePersistenceKeys,
+} from '@/sync/domains/settings/mobileSurfacePersistence';
 
 const runAfterInteractionsSpy = vi.hoisted(() => vi.fn(() => () => {}));
 const hydrateSessionForRouteSpy = vi.hoisted(
@@ -17,6 +21,10 @@ const hydrateSessionForRouteSpy = vi.hoisted(
 let deviceType: 'phone' | 'tablet' | 'desktop' = 'desktop';
 let mobileWorkspaceExperience: 'classic' | 'cockpit' = 'classic';
 let lastMobileSurfaceBySessionId: Record<string, string> = {};
+let activeServerAccountScope: { serverId: string; accountId: string } | null = {
+    serverId: 'server-b',
+    accountId: 'account-a',
+};
 let terminalTabAvailable = false;
 let sessionsById: Record<string, unknown> = {};
 const storageListeners = new Set<() => void>();
@@ -25,9 +33,19 @@ const routeParams = vi.hoisted(() => ({
     value: { id: 'session-1' } as Record<string, string | undefined>,
 }));
 const activeServerRuntimeState = vi.hoisted(() => ({
-    snapshot: { generation: 1 },
+    snapshot: { serverId: 'server-b', serverUrl: 'https://example.test', generation: 1 },
     listener: null as null | (() => void),
 }));
+
+function readRouteSessionMobileSurface(sessionId: string | null, serverId?: string | null): string | null {
+    const keys = resolveSessionMobileSurfacePersistenceKeys({
+        sessionId,
+        activeScope: activeServerAccountScope,
+        activeServerId: activeServerRuntimeState.snapshot.serverId,
+        targetServerId: serverId ?? null,
+    });
+    return readSessionMobileSurfaceWithPredecessor(lastMobileSurfaceBySessionId, keys).surface;
+}
 
 installSessionRouteCommonModuleMocks({
     reactNative: async () => {
@@ -64,6 +82,8 @@ installSessionRouteCommonModuleMocks({
                     if (key === 'sessionLastMobileSurfaceBySessionId') return lastMobileSurfaceBySessionId;
                     return null;
                 }) as any,
+                useSessionLastMobileSurface: readRouteSessionMobileSurface as any,
+                useActiveServerAccountScope: () => activeServerAccountScope,
                 getStorage: (() => ({
                     getState: () => ({
                         localSettings: {
@@ -195,12 +215,13 @@ describe('session route index', () => {
         deviceType = 'desktop';
         mobileWorkspaceExperience = 'classic';
         lastMobileSurfaceBySessionId = {};
+        activeServerAccountScope = { serverId: 'server-b', accountId: 'account-a' };
         terminalTabAvailable = false;
         sessionsById = {};
         storageListeners.clear();
         terminalAvailabilityCalls.length = 0;
         routeParams.value = { id: 'session-1' };
-        activeServerRuntimeState.snapshot = { generation: 1 };
+        activeServerRuntimeState.snapshot = { serverId: 'server-b', serverUrl: 'https://example.test', generation: 1 };
         activeServerRuntimeState.listener = null;
     });
 
@@ -271,13 +292,13 @@ describe('session route index', () => {
         expect(screen.findAllByType('SessionCockpitShell')).toHaveLength(0);
     });
 
-    it('prefers the route server-scoped persisted mobile surface over the legacy bare session id entry', async () => {
+    it('restores only the route Account realm-qualified mobile surface, never the legacy bare entry', async () => {
         deviceType = 'phone';
         mobileWorkspaceExperience = 'cockpit';
         routeParams.value = { id: 'session-1', serverId: 'server-b' };
         lastMobileSurfaceBySessionId = {
             'session-1': 'git',
-            'server-b:session-1': 'tabs',
+            'mobile-surface-selection:v2:session:8:server-b9:account-a:9:session-1': 'tabs',
         };
         const Route = await import('@/app/(app)/session/[id]');
 
@@ -295,7 +316,7 @@ describe('session route index', () => {
         expect(activeServerRuntimeState.listener).not.toBeNull();
 
         await act(async () => {
-            activeServerRuntimeState.snapshot = { generation: 2 };
+            activeServerRuntimeState.snapshot = { serverId: 'server-b', serverUrl: 'https://example.test', generation: 2 };
             activeServerRuntimeState.listener?.();
         });
 
@@ -308,7 +329,9 @@ describe('session route index', () => {
         deviceType = 'phone';
         mobileWorkspaceExperience = 'cockpit';
         routeParams.value = { id: 'session-1', serverId: 'server-b' };
-        lastMobileSurfaceBySessionId = { 'session-1': 'git' };
+        lastMobileSurfaceBySessionId = {
+            'mobile-surface-selection:v2:session:8:server-b9:account-a:9:session-1': 'git',
+        };
         const Route = await import('@/app/(app)/session/[id]');
 
         const screen = await renderScreen(React.createElement(Route.default));

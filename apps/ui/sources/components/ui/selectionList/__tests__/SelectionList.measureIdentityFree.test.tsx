@@ -20,9 +20,9 @@ vi.mock('react-native', async () => {
  *
  * The fix introduces a `mode?: 'measure' | 'normal'` prop on
  * `SelectionListBodyProps` that, when set to 'measure', suppresses ALL
- * identity-bearing output the body owns. The orchestrator passes
- * `<SelectionListBody mode='measure' …/>` as `measureChildren` so the
- * boundary is explicit at the API level instead of post-hoc cloning.
+ * identity-bearing output the body owns. The orchestrator renders
+ * `<SelectionListBody mode='measure' …/>` inside its single measure host so
+ * the boundary is explicit at the API level instead of post-hoc cloning.
  *
  * This integration test mounts the real SelectionList and asserts that the
  * live DOM contains exactly ONE element with each identity (listbox testID,
@@ -94,8 +94,9 @@ describe('SelectionList identity-free measure path (FR3-1 / FR3-8)', () => {
     it('keeps the measure host mounted (RUX-14 contract) but with no listbox role descendant', async () => {
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(<SelectionList {...defaultProps()} />);
-        // The measure host's container testID is `sl:animatedHeight:measure`.
-        const measure = screen.findByTestId('sl:animatedHeight:measure');
+        // The measure host's container testID is `sl:measure` — the
+        // orchestrator owns the one measure host in the tree.
+        const measure = screen.findByTestId('sl:measure');
         expect(measure).not.toBeNull();
         // No descendant of the measure host should advertise role="listbox"
         // — the measure body must be identity-free at the API boundary.

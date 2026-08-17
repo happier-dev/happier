@@ -1,4 +1,3 @@
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -11,12 +10,13 @@ import { t } from '@/text';
 import type { AgentInputControlId } from './agentInputControlTypes';
 import { resolveSessionModeChipPresentation } from './resolveSessionModeChipPresentation';
 import { formatResumeChipLabel, RESUME_CHIP_ICON_NAME, RESUME_CHIP_ICON_SIZE } from '../layout/ResumeChip';
+import { Icon, type IconName, ICON_SIZE } from '@/components/ui/icons/Icon';
 
 export function buildCoreCollapsedControlActions(opts: Readonly<{
     tint: string;
     agentId: AgentId;
     profileLabel: string | null;
-    profileIcon: string;
+    profileIcon: IconName;
     envVarsCount?: number;
     agentLabel?: string | null;
     engineLabel?: string | null;
@@ -44,7 +44,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         controlActionsById.profile = [{
             id: 'profile',
             label: opts.profileLabel ?? t('profiles.noProfile'),
-            icon: <Ionicons name={opts.profileIcon as any} size={16} color={opts.tint} />,
+            icon: <Icon name={opts.profileIcon} size={16} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
@@ -60,7 +60,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
                 opts.envVarsCount === undefined
                     ? t('agentInput.envVars.title')
                     : t('agentInput.envVars.titleWithCount', { count: opts.envVarsCount }),
-            icon: <Ionicons name="list-outline" size={16} color={opts.tint} />,
+            icon: <Icon name="list" size={16} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
@@ -100,9 +100,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         controlActionsById.mode = [{
             id: 'mode',
             label: opts.sessionModeLabel,
-            icon: sessionModePresentation.iconKind === 'octicon'
-                ? <Octicons name={sessionModePresentation.iconName} size={16} color={opts.tint} />
-                : <Ionicons name={sessionModePresentation.iconName} size={16} color={opts.tint} />,
+            icon: <Icon name={sessionModePresentation.iconName} size={ICON_SIZE.sm} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
@@ -120,7 +118,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         controlActionsById.machine = [{
             id: 'machine',
             label: machineLabel,
-            icon: <Ionicons name="desktop-outline" size={16} color={opts.tint} />,
+            icon: <Icon name="desktop" size={16} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
@@ -136,7 +134,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         controlActionsById.path = [{
             id: 'path',
             label: pathLabel,
-            icon: <Ionicons name="folder-outline" size={16} color={opts.tint} />,
+            icon: <Icon name="folder" size={16} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
@@ -155,7 +153,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
                 labelTitle: resumeChipTitle,
                 labelOptional: resumeChipTitle,
             }),
-            icon: <Ionicons name={RESUME_CHIP_ICON_NAME} size={RESUME_CHIP_ICON_SIZE} color={opts.tint} />,
+            icon: <Icon name={RESUME_CHIP_ICON_NAME} size={RESUME_CHIP_ICON_SIZE} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
@@ -169,7 +167,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         controlActionsById.files = [{
             id: 'files',
             label: t('agentInput.actionMenu.files'),
-            icon: <Octicons name="git-branch" size={16} color={opts.tint} />,
+            icon: <Icon name="git-branch" size={16} color={opts.tint} />,
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();
@@ -182,7 +180,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         controlActionsById.stop = [{
             id: 'stop',
             label: t('agentInput.actionMenu.stop'),
-            icon: <Octicons name="stop" size={16} color={opts.tint} />,
+            icon: <Icon name="stop" size={16} color={opts.tint} />,
             onPress: () => {
                 opts.dismiss();
                 opts.onStop?.();

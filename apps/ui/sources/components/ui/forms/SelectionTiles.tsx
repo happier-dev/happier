@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Pressable, Platform, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 import {
     ITEM_CHEVRON_SIZE,
@@ -18,7 +18,7 @@ export interface SelectionTile<T extends string> {
     id: T;
     title: string;
     subtitle?: string;
-    icon?: React.ComponentProps<typeof Ionicons>['name'];
+    icon?: IconName;
     disabled?: boolean;
     badge?: string;
 }
@@ -150,7 +150,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
             {props.options.map((option) => {
                 const selected = isSelected(props, option.id);
                 const disabled = option.disabled === true;
-                const iconName = option.icon ?? (selected ? 'checkmark-circle' : 'ellipse-outline');
+                const iconName = option.icon ?? (selected ? 'check-circle' : 'circle');
                 const borderColor = selected
                     ? theme.colors.button.primary.background
                     : theme.colors.border.default;
@@ -193,7 +193,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
                             <View style={[styles.headerRow, compact && !hasSubtitle ? styles.headerRowCentered : null]}>
                                 <View style={[styles.titleRow, compact && !hasSubtitle ? styles.titleRowCentered : null]}>
                                     <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
-                                        <Ionicons
+                                        <Icon
                                             name={iconName}
                                             size={compact ? 16 : 29}
                                             color={iconColor}

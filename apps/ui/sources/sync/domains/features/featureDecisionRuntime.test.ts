@@ -106,6 +106,55 @@ describe('featureDecisionRuntime', () => {
         vi.unstubAllGlobals();
     });
 
+    it('reprojects a mounted runtime snapshot when the same server cache entry changes', async () => {
+        vi.resetModules();
+        const {
+            primeServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+        } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        primeServerFeaturesSnapshot({
+            serverId: 'server-a',
+            snapshot: {
+                status: 'ready',
+                features: createFeaturesPayload({ voiceEnabled: false }),
+            },
+        });
+        const { useServerFeaturesRuntimeSnapshot } = await import('./featureDecisionRuntime');
+        const seen: Array<ReturnType<typeof useServerFeaturesRuntimeSnapshot>> = [];
+
+        function Test() {
+            const snapshot = useServerFeaturesRuntimeSnapshot();
+            React.useEffect(() => {
+                seen.push(snapshot);
+            }, [snapshot]);
+            return React.createElement('View');
+        }
+
+        const screen = await renderScreen(React.createElement(Test));
+        expect(seen.at(-1)).toMatchObject({
+            status: 'ready',
+            features: { features: { voice: { enabled: false } } },
+        });
+
+        await act(async () => {
+            primeServerFeaturesSnapshot({
+                serverId: 'server-a',
+                snapshot: {
+                    status: 'ready',
+                    features: createFeaturesPayload({ voiceEnabled: true }),
+                },
+            });
+            await flushHookEffects(2);
+        });
+
+        expect(seen.at(-1)).toMatchObject({
+            status: 'ready',
+            features: { features: { voice: { enabled: true } } },
+        });
+        await screen.unmount();
+    });
+
     it('keeps app.ui.onboardingTour fail-closed until the rollout env explicitly enables it', async () => {
         const env = process.env as Record<string, string | undefined>;
         const enableKey = 'EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED';
@@ -946,15 +995,25 @@ describe('featureDecisionRuntime', () => {
         }
     });
 
-    it('keeps disabled main-selection snapshots stable for equivalent server id arrays', async () => {
+    it('keeps a disabled main-selection snapshot empty and stable across cache notifications', async () => {
         vi.resetModules();
 
+        const {
+            deleteServerFeaturesSnapshot,
+            primeServerFeaturesSnapshot,
+            resetServerFeaturesClientForTests,
+        } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
         const { useServerFeaturesMainSelectionSnapshot } = await import('./featureDecisionRuntime');
 
         let renders = 0;
+        const seen: Array<ReturnType<typeof useServerFeaturesMainSelectionSnapshot>> = [];
         function Test() {
             renders += 1;
-            useServerFeaturesMainSelectionSnapshot(['server-a'], { enabled: false });
+            const snapshot = useServerFeaturesMainSelectionSnapshot(['server-a'], { enabled: false });
+            React.useEffect(() => {
+                seen.push(snapshot);
+            }, [snapshot]);
             return React.createElement('View');
         }
 
@@ -962,6 +1021,40 @@ describe('featureDecisionRuntime', () => {
         await flushHookEffects(6);
 
         expect(renders).toBeLessThanOrEqual(2);
+        expect(seen.at(-1)).toEqual({
+            status: 'ready',
+            serverIds: ['server-a'],
+            snapshotsByServerId: {},
+        });
+        const settledSnapshot = seen.at(-1);
+        const settledSeenCount = seen.length;
+
+        await act(async () => {
+            primeServerFeaturesSnapshot({
+                serverId: 'server-a',
+                snapshot: {
+                    status: 'ready',
+                    features: createFeaturesPayload({ voiceEnabled: true }),
+                },
+            });
+            await flushHookEffects(2);
+        });
+        expect(seen).toHaveLength(settledSeenCount);
+        expect(seen.at(-1)).toBe(settledSnapshot);
+
+        await act(async () => {
+            deleteServerFeaturesSnapshot({ serverId: 'server-a' });
+            await flushHookEffects(2);
+        });
+        expect(seen).toHaveLength(settledSeenCount);
+        expect(seen.at(-1)).toBe(settledSnapshot);
+
+        await act(async () => {
+            resetServerFeaturesClientForTests();
+            await flushHookEffects(2);
+        });
+        expect(seen).toHaveLength(settledSeenCount);
+        expect(seen.at(-1)).toBe(settledSnapshot);
 
         await act(async () => {
             screen.tree.unmount();

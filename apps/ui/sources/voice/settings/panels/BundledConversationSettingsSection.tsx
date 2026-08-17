@@ -3,7 +3,6 @@ import { Linking } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Modal } from '@/modal';
 import {
   voiceSettingsParse,
   writeVoiceProviderSettingsConfig,
@@ -14,35 +13,38 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
   createBundledConversationUi,
   type BundledConversationProviderClient,
-  type BundledConversationTtsConfigInput,
   type BundledConversationVoiceCatalogItem,
 } from '@/voice/credentials/bundledConversationClient';
-import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
+import {
+  VoiceCredentialItem,
+  type VoiceCredentialItemStatus,
+} from '@/voice/credentials/CredentialItem';
+import { shouldUseVoiceCredentialSourceMutationForSavedSecret } from '@/voice/credentials/accountVoiceCredential';
 import {
   getExternalVoiceProviderRegistrationsRevision,
   subscribeExternalVoiceProviderRegistrations,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import { showBundledVoiceAgentReuseDialog } from '@/voice/settings/modals/showBundledVoiceAgentReuseDialog';
 import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
 
 import {
   parseRealtimeSettingsDescriptor,
-  readRealtimeProviderConfigPath,
+  readRealtimeSavedSecretCredentialPurpose,
   resolveRealtimeProviderConfig,
-  updateRealtimeProviderConfig,
   type RealtimeProviderSettingsOwner,
   type RealtimeSettingsDescriptor,
-  type RealtimeSettingsFieldDescriptor,
 } from './realtime/descriptor';
 import {
   RealtimeProviderFields,
   type RealtimeCatalogState,
 } from './realtime/RealtimeProviderFields';
+import {
+  VoiceCredentialSourceField,
+  type VoiceCredentialSourceFieldStatus,
+} from './realtime/VoiceCredentialSourceField';
 import { VoiceGlobalConnectedServicesBindingField } from './realtime/VoiceGlobalConnectedServicesBindingField';
-
-type Autoprovision = NonNullable<NonNullable<ReturnType<typeof createBundledConversationUi>>['autoprovision']>;
+import { VoiceProviderSettingsActions } from './realtime/VoiceProviderSettingsActions';
 
 const providerRegistry = createDefaultVoiceProviderRegistry();
 
@@ -79,139 +81,8 @@ function normalizeCatalogRows(
   });
 }
 
-const ELEVENLABS_PROVISION_FAILURE_STAGES = new Set([
-  'list_agents',
-  'list_tools',
-  'create_tool',
-  'update_tool',
-  'create_agent',
-  'update_agent',
-]);
-
-function formatAutoprovisionFailureMessage(error: unknown): string {
-  const value = record(error);
-  const stage = typeof value?.stage === 'string'
-    && ELEVENLABS_PROVISION_FAILURE_STAGES.has(value.stage)
-    ? value.stage
-    : null;
-  const message = tLoose('settingsVoice.byo.autoprovFailed');
-  return stage ? `${message}\n\n[${stage}]` : message;
-}
-
 async function fetchCatalog(client: BundledConversationProviderClient, signal?: AbortSignal | null) {
-  if (client.fetchVoiceCatalog) return normalizeCatalogRows(await client.fetchVoiceCatalog(signal));
-  if (client.listVoices) return normalizeCatalogRows(await client.listVoices(signal));
-  throw new Error('voice_provider_catalog_unavailable');
-}
-
-function AutoprovisionItems(props: Readonly<{
-  field: RealtimeSettingsFieldDescriptor;
-  autoprovision: Autoprovision;
-  config: Readonly<Record<string, unknown>>;
-  credentialExists: boolean;
-  targetKey: string;
-  onAgentId: (agentId: string) => void;
-}>) {
-  const busyRef = React.useRef(false);
-  const [busy, setBusy] = React.useState<'create' | 'update' | null>(null);
-  const operationControllerRef = React.useRef<AbortController | null>(null);
-  const targetKeyRef = React.useRef(props.targetKey);
-  targetKeyRef.current = props.targetKey;
-  const targetGenerationRef = React.useRef(0);
-  React.useEffect(() => {
-    operationControllerRef.current?.abort();
-    operationControllerRef.current = null;
-    targetGenerationRef.current += 1;
-    busyRef.current = false;
-    setBusy(null);
-  }, [props.targetKey]);
-  React.useEffect(() => () => {
-    operationControllerRef.current?.abort();
-    operationControllerRef.current = null;
-    targetGenerationRef.current += 1;
-  }, []);
-  const agentIdValue = readRealtimeProviderConfigPath(props.config, props.field.pathSegments);
-  const agentId = typeof agentIdValue === 'string' && agentIdValue.trim() ? agentIdValue : null;
-  const ttsPath = typeof props.field.ttsPath === 'string' ? props.field.ttsPath.split('.') : [];
-  const ttsValue = ttsPath.length > 0 ? record(readRealtimeProviderConfigPath(props.config, ttsPath)) : null;
-  if (!ttsValue) return null;
-  const tts = ttsValue as BundledConversationTtsConfigInput;
-
-  const run = (kind: 'create' | 'update') => {
-    if (busyRef.current || !props.credentialExists || (kind === 'update' && !agentId)) return;
-    const targetKey = props.targetKey;
-    const targetGeneration = targetGenerationRef.current;
-    const controller = new AbortController();
-    operationControllerRef.current = controller;
-    const targetIsCurrent = () => targetKeyRef.current === targetKey
-      && targetGenerationRef.current === targetGeneration
-      && !controller.signal.aborted;
-    busyRef.current = true;
-    setBusy(kind);
-    fireAndForget((async () => {
-      try {
-        if (kind === 'update' && agentId) {
-          await props.autoprovision.updateAgent({ agentId, tts }, controller.signal);
-          if (!targetIsCurrent()) return;
-          await Modal.alertAsync(t('common.success'), tLoose('settingsVoice.byo.autoprovUpdated'));
-          return;
-        }
-        const existing = await props.autoprovision.findExistingAgents(controller.signal);
-        if (!targetIsCurrent()) return;
-        if (existing.length > 0) {
-          const candidate = existing[0]!;
-          const decision = await showBundledVoiceAgentReuseDialog({
-            existingAgentId: candidate.agentId,
-            existingAgentName: candidate.name,
-          });
-          if (!targetIsCurrent()) return;
-          if (decision === 'cancel') return;
-          if (decision === 'update_existing') {
-            await props.autoprovision.updateAgent(
-              { agentId: candidate.agentId, tts },
-              controller.signal,
-            );
-            if (!targetIsCurrent()) return;
-            props.onAgentId(candidate.agentId);
-            await Modal.alertAsync(t('common.success'), tLoose('settingsVoice.byo.autoprovUpdated'));
-            return;
-          }
-        }
-        const created = await props.autoprovision.createAgent({ tts }, controller.signal);
-        if (!targetIsCurrent()) return;
-        props.onAgentId(created.agentId);
-        await Modal.alertAsync(t('common.success'), t('settingsVoice.byo.autoprovCreated', { agentId: created.agentId }));
-      } catch (error) {
-        if (!targetIsCurrent()) return;
-        await Modal.alertAsync(t('common.error'), formatAutoprovisionFailureMessage(error));
-      } finally {
-        if (targetIsCurrent()) {
-          operationControllerRef.current = null;
-          busyRef.current = false;
-          setBusy(null);
-        }
-      }
-    })(), { tag: `BundledConversationSettings.autoprovision.${kind}` });
-  };
-
-  return <>
-    <Item
-      testID="voice-realtime-autoprovision-create"
-      title={tLoose(String(props.field.titleKey ?? 'settingsVoice.byo.autoprovCreate'))}
-      subtitle={tLoose(String(props.field.subtitleKey ?? 'settingsVoice.byo.autoprovCreateSubtitle'))}
-      loading={busy === 'create'}
-      disabled={busy !== null || !props.credentialExists}
-      onPress={() => run('create')}
-    />
-    <Item
-      testID="voice-realtime-autoprovision-update"
-      title={tLoose('settingsVoice.byo.autoprovUpdate')}
-      subtitle={tLoose('settingsVoice.byo.autoprovUpdateSubtitle')}
-      loading={busy === 'update'}
-      disabled={busy !== null || !props.credentialExists || !agentId}
-      onPress={() => run('update')}
-    />
-  </>;
+  return normalizeCatalogRows(await client.fetchVoiceCatalog(signal));
 }
 
 function UnavailableSettings(props: Readonly<{ status: string }>) {
@@ -255,13 +126,30 @@ export function BundledConversationSettingsSection(props: Readonly<{
     [envelope, owner],
   );
   const config = resolved?.status === 'ready' ? resolved.config : null;
-  const latestProviderConfigRef = React.useRef<Readonly<Record<string, unknown>> | null>(config);
-  latestProviderConfigRef.current = config;
   const billingMode = config && typeof config.billingMode === 'string' ? config.billingMode : null;
   const byoActive = descriptor?.mode === 'byo' || billingMode === 'byo';
-  const authentication = config ? record(config.authentication) : null;
-  const savedSecretActive = authentication?.source === undefined
-    || authentication.source === 'voice_saved_secret';
+  const providerEntry = providerId ? providerRegistry.get(providerId) : null;
+  const settingsActions = providerEntry?.kind === 'voice.conversation-provider.v1'
+    && providerEntry.declaration?.kind === 'conversation'
+    ? providerEntry.declaration.settings?.actions ?? []
+    : [];
+  const contribution = React.useMemo(() => (
+    providerEntry?.kind === 'voice.conversation-provider.v1'
+      && providerEntry.declaration?.kind === 'conversation'
+      ? Object.freeze({
+          pluginId: providerEntry.pluginId,
+          localId: providerEntry.declaration.id,
+        })
+      : null
+  ), [providerEntry]);
+  const credentialDeclaration = providerEntry?.kind === 'voice.conversation-provider.v1'
+    && providerEntry.declaration?.kind === 'conversation'
+    ? providerEntry.declaration.credentials ?? null
+    : null;
+  const credentialProviderDeclaration = providerEntry?.kind === 'voice.conversation-provider.v1'
+    && providerEntry.declaration?.kind === 'conversation'
+    ? providerEntry.declaration
+    : null;
   const visibleDescriptor = React.useMemo<RealtimeSettingsDescriptor | null>(() => {
     if (!descriptor || byoActive || !descriptor.modes.includes('byo')) return descriptor;
     return Object.freeze({ ...descriptor, fields: Object.freeze(descriptor.fields.filter((field) => field.kind === 'welcome')) });
@@ -269,9 +157,23 @@ export function BundledConversationSettingsSection(props: Readonly<{
   const credentialTargetKey = providerId ?? '';
   const [credentialState, setCredentialState] = React.useState<Readonly<{
     targetKey: string;
-    status: Readonly<{ exists: boolean }> | null;
+    status: VoiceCredentialItemStatus | null;
   }> | null>(null);
   const credentialAvailability = credentialState?.targetKey === credentialTargetKey ? credentialState.status : null;
+  const [credentialSourceState, setCredentialSourceState] = React.useState<Readonly<{
+    targetKey: string;
+    status: VoiceCredentialSourceFieldStatus;
+  }> | null>(null);
+  const credentialSourceStatus = credentialSourceState?.targetKey === credentialTargetKey
+    ? credentialSourceState.status
+    : null;
+  const credentialUsable = credentialDeclaration && credentialDeclaration.sources.length > 1
+    ? credentialSourceStatus?.selection.kind === 'connectedAccount'
+      ? credentialSourceStatus.usable
+      : credentialSourceStatus?.selection.kind === 'savedSecret'
+        ? credentialAvailability?.usable === true
+        : false
+    : credentialAvailability?.usable === true;
   const [catalogState, setCatalogState] = React.useState<Readonly<{
     targetKey: string;
     value: RealtimeCatalogState;
@@ -287,7 +189,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
   }, [props.setVoice, providerId]);
 
   const requestCatalog = React.useCallback(() => {
-    if (!bundledUi?.client || credentialAvailability?.exists !== true) return;
+    if (!bundledUi?.client || !credentialUsable) return;
     if (catalog.phase === 'loading') return;
     const client = bundledUi.client;
     catalogRequestRef.current.controller?.abort();
@@ -305,7 +207,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
         setCatalogState({ targetKey, value: { phase: 'error' } });
       }
     });
-  }, [bundledUi, catalog.phase, credentialAvailability?.exists, credentialTargetKey]);
+  }, [bundledUi, catalog.phase, credentialTargetKey, credentialUsable]);
 
   React.useEffect(() => {
     catalogRequestRef.current.controller?.abort();
@@ -315,9 +217,17 @@ export function BundledConversationSettingsSection(props: Readonly<{
 
   React.useEffect(() => () => catalogRequestRef.current.controller?.abort(), []);
 
-  const onCredentialStatusChanged = React.useCallback((status: Readonly<{ exists: boolean }>) => {
+  const onCredentialStatusChanged = React.useCallback((status: VoiceCredentialItemStatus) => {
     setCredentialState({ targetKey: credentialTargetKey, status });
   }, [credentialTargetKey]);
+  const onCredentialSourceStatusChanged = React.useCallback((status: VoiceCredentialSourceFieldStatus) => {
+    setCredentialSourceState({ targetKey: credentialTargetKey, status });
+  }, [credentialTargetKey]);
+  const credentialSourceIsCurrent = React.useCallback(() => {
+    if (!providerId) return false;
+    if (resolveVoiceProviderId(latestVoiceRef.current.providerId) !== providerId) return false;
+    return providerRegistry.get(providerId)?.kind === 'voice.conversation-provider.v1';
+  }, [providerId]);
   const onCredentialChanged = React.useCallback(
     () => setCatalogState({ targetKey: credentialTargetKey, value: { phase: 'idle' } }),
     [credentialTargetKey],
@@ -331,30 +241,22 @@ export function BundledConversationSettingsSection(props: Readonly<{
 
   const credential = descriptor.credential;
   const credentialSettingsVisible = byoActive
-    && savedSecretActive
-    && credential.kind === 'api_key';
+    && credential.kind === 'api_key'
+    && credentialDeclaration?.sources.some((source) => source.kind === 'savedSecret') === true;
+  const credentialSourceVisible = byoActive
+    && contribution !== null
+    && credentialDeclaration !== null
+    && credentialDeclaration.sources.some((source) => source.kind === 'connectedAccount');
   const accountCredentialSlot = providerRegistry.get(providerId)?.accountCredentialSlot;
   const primarySettingsVisible = credentialSettingsVisible
-    || visibleDescriptor.fields.length > 0;
+    || credentialSourceVisible
+    || visibleDescriptor.fields.length > 0
+    || settingsActions.length > 0;
   const visibleLinks = byoActive
     ? Object.entries(descriptor.links).flatMap(([kind, rawUrl]) => (
       typeof rawUrl === 'string' ? [{ kind, url: rawUrl }] : []
     ))
     : [];
-  const renderAutoprovision = (field: RealtimeSettingsFieldDescriptor) => bundledUi.autoprovision ? <AutoprovisionItems
-    field={field}
-    autoprovision={bundledUi.autoprovision}
-    config={config}
-    credentialExists={credentialAvailability?.exists === true}
-    targetKey={credentialTargetKey}
-    onAgentId={(agentId) => {
-      const latestConfig = latestProviderConfigRef.current;
-      if (!latestConfig) return;
-      const next = updateRealtimeProviderConfig(owner, latestConfig, field.pathSegments, agentId);
-      if (next) persistConfig(next);
-    }}
-  /> : null;
-
   if (!primarySettingsVisible && visibleLinks.length === 0) return null;
 
   return <>
@@ -362,13 +264,29 @@ export function BundledConversationSettingsSection(props: Readonly<{
       title={descriptor.titleKey ? tLoose(descriptor.titleKey) : tLoose('settingsVoice.realtimeProviders.setup.title')}
       footer={descriptor.footerKey ? tLoose(descriptor.footerKey) : undefined}
     >
+      {!credentialSourceVisible || !contribution || !credentialDeclaration || !credentialProviderDeclaration ? null : <VoiceCredentialSourceField
+        contribution={contribution}
+        declaration={credentialProviderDeclaration}
+        credentials={credentialDeclaration}
+        popoverBoundaryRef={props.popoverBoundaryRef}
+        onStatusChanged={onCredentialSourceStatusChanged}
+        isCurrent={credentialSourceIsCurrent}
+      />}
       {!credentialSettingsVisible ? null : <VoiceCredentialItem
         key={credentialTargetKey}
         title={tLoose(String(credential.titleKey ?? 'settingsVoice.realtimeProviders.credential.title'))}
         promptTitle={tLoose(String(credential.promptTitleKey ?? 'settingsVoice.realtimeProviders.credential.promptTitle'))}
         promptDescription={tLoose(String(credential.promptBodyKey ?? 'settingsVoice.realtimeProviders.credential.promptBody'))}
-        providerId={providerId}
+        contribution={contribution}
         credentialSlotId={credential.kind}
+        credentialSourcePurpose={shouldUseVoiceCredentialSourceMutationForSavedSecret(
+          credentialSourceVisible ? credentialSourceStatus?.selection : null,
+        )
+          ? credentialSourceVisible
+            ? credentialDeclaration?.slot.purpose
+            : readRealtimeSavedSecretCredentialPurpose(descriptor) ?? undefined
+          : undefined}
+        credentialSourceDeclaration={credentialProviderDeclaration ?? undefined}
         recipientContract={accountCredentialSlot?.id === credential.kind
           ? accountCredentialSlot.recipientContract
           : null}
@@ -385,7 +303,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
         owner={owner}
         config={config}
         onConfigChange={persistConfig}
-        credentialExists={credentialAvailability?.exists === true}
+        credentialStatus={credentialAvailability?.status ?? 'missing'}
         catalog={catalog}
         onRequestCatalog={requestCatalog}
         popoverBoundaryRef={props.popoverBoundaryRef}
@@ -394,7 +312,13 @@ export function BundledConversationSettingsSection(props: Readonly<{
           voice,
           selection === 'off' ? 'off' : selection === 'on_first_turn' ? 'on_first_turn' : 'immediate',
         ))}
-        renderAutoprovision={renderAutoprovision}
+        renderAfterField={(field) => <VoiceProviderSettingsActions
+          providerId={providerId}
+          owner={owner}
+          actions={settingsActions}
+          config={config}
+          placement={{ kind: 'afterField', fieldId: field.path }}
+        />}
         renderConnectedServicesBinding={(field, value, onChange) => (
           <VoiceGlobalConnectedServicesBindingField
             agentId={field.agentId}
@@ -405,6 +329,13 @@ export function BundledConversationSettingsSection(props: Readonly<{
             onChange={onChange}
           />
         )}
+      />
+      <VoiceProviderSettingsActions
+        providerId={providerId}
+        owner={owner}
+        actions={settingsActions}
+        config={config}
+        placement={{ kind: 'contributionFooter' }}
       />
     </ItemGroup>}
 

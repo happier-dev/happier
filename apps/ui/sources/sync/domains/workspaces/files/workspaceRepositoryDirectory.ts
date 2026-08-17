@@ -5,6 +5,7 @@ import {
     type RepositoryDirectoryEntry,
 } from '@/sync/domains/input/repositoryDirectoryEntries';
 import { warmInFlight } from '@/sync/domains/input/warmInFlight';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { markWorkspaceRepositoryDirectoryChanged } from './workspaceRepositoryDirectoryRevision';
 
 function joinPathAbsolute(rootPath: string, directoryPath: string): string {
@@ -67,42 +68,55 @@ export function clearCachedWorkspaceRepositoryDirectoryEntries(input: Readonly<{
     markWorkspaceRepositoryDirectoryChanged(input.workspaceCacheKey);
 }
 
+/**
+ * The two functions below both **key** a cache entry and **route** an RPC. They therefore take
+ * the workspace as ONE `scope` and derive the key from it here, rather than accepting a
+ * `workspaceCacheKey` alongside a separate `machineId`/`rootPath`/`serverId` address: with two
+ * independent arguments a caller can file the entry under one workspace while reading through
+ * another, which is exactly the defect this module's sibling file-search owner shipped.
+ *
+ * The purely key-addressed functions above (`get`/`set`/`clearCached…`) keep taking a
+ * `workspaceCacheKey`. They issue no RPC, so they name only one identity and cannot disagree
+ * with anything.
+ */
 export async function warmWorkspaceRepositoryDirectoryCache(input: Readonly<{
-    workspaceCacheKey: string;
-    machineId: string;
-    rootPath: string;
+    scope: WorkspaceScopeBase;
     directoryPath: string;
-    serverId?: string | null;
 }>): Promise<ListRepositoryDirectoryEntriesResult> {
+    const workspaceCacheKey = tryBuildWorkspaceCacheKey(input.scope);
+    if (!workspaceCacheKey) return { ok: false, error: 'unknown_error' };
+
     const cached = getCachedWorkspaceRepositoryDirectoryEntries({
-        workspaceCacheKey: input.workspaceCacheKey,
+        workspaceCacheKey,
         directoryPath: input.directoryPath,
     });
     if (cached) {
         return { ok: true, entries: cached };
     }
 
-    const key = getCacheKey(input.workspaceCacheKey, input.directoryPath);
+    const key = getCacheKey(workspaceCacheKey, input.directoryPath);
     return await warmInFlight(workspaceRepositoryDirectoryWarmInFlight, key, async () => (
         await listWorkspaceRepositoryDirectoryEntries(input)
     ));
 }
 
 export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
-    workspaceCacheKey: string;
-    machineId: string;
-    rootPath: string;
+    scope: WorkspaceScopeBase;
     directoryPath: string;
-    serverId?: string | null;
 }>): Promise<ListRepositoryDirectoryEntriesResult> {
-    const absPath = joinPathAbsolute(input.rootPath, input.directoryPath);
+    const workspaceCacheKey = tryBuildWorkspaceCacheKey(input.scope);
+    if (!workspaceCacheKey) return { ok: false, error: 'unknown_error' };
+
+    // The RAW scope path, never the normalized one: `normalizeFileSystemPath` lowercases
+    // Windows drive and UNC paths, and this is the daemon's `path` argument.
+    const absPath = joinPathAbsolute(input.scope.rootPath, input.directoryPath);
     const response = await machineFilesystemListDirectory(
-        input.machineId,
+        input.scope.machineId,
         {
             path: absPath,
             includeFiles: true,
         },
-        { serverId: input.serverId },
+        { serverId: input.scope.serverId },
     );
     if (!response.ok) {
         return { ok: false, error: response.error || 'unknown_error' };
@@ -125,7 +139,7 @@ export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
 
     const sorted = sortRepositoryDirectoryEntries(entries);
     setCachedWorkspaceRepositoryDirectoryEntries({
-        workspaceCacheKey: input.workspaceCacheKey,
+        workspaceCacheKey,
         directoryPath: input.directoryPath,
         entries: sorted,
     });

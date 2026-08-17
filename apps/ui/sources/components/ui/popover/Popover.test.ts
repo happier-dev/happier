@@ -1064,7 +1064,7 @@ describe('Popover (web)', () => {
     it('falls back to a timer when requestAnimationFrame is throttled before portal measurement', async () => {
         restorePopoverWebGlobals?.();
         restorePopoverWebGlobals = withPopoverWebGlobals({
-            requestAnimationFrame: vi.fn(() => 1 as never),
+            requestAnimationFrame: vi.fn(() => 1),
         });
         vi.useFakeTimers();
 

@@ -48,7 +48,6 @@ import {
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import { selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
-import type { PluginSurfaceHostApi } from '@/components/plugins/surfaces';
 import type {
     BrowserPresentationSlotState,
     BrowserSurfaceLifecycleSnapshot,
@@ -234,7 +233,6 @@ export function BrowserSurfaceHost(props: Readonly<{
         serverId?: string | null;
         sessionId?: string | null;
     }>;
-    pluginSurfaceHostApi?: PluginSurfaceHostApi;
     simulatorPreviewRuntime?: SimulatorPreviewSurfaceRuntime | null;
     /**
      * A3 (PATCH-01/MC-6): the daemon-command sink for daemon-authoritative views (chromiumSidecar /
@@ -699,8 +697,9 @@ export function BrowserSurfaceHost(props: Readonly<{
                 pluginUiProjection={props.pluginUiProjection}
                 projectionInteractionEnabled={props.pluginUiInteractionEnabled}
                 localServicePreviewState={props.localServicePreviewState}
-                localServicePreviewServerId={props.localServicePreviewServerId}
-                hostApi={props.pluginSurfaceHostApi}
+                executionMachineId={props.pluginBrowserActionContext?.machineId}
+                executionServerId={props.pluginBrowserActionContext?.serverId}
+                executionSessionId={props.pluginBrowserActionContext?.sessionId}
                 nowMs={props.nowMs}
                 testID={props.testID}
             />

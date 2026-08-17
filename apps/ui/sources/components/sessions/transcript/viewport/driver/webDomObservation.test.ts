@@ -306,4 +306,50 @@ describe('createWebDomScrollObservation', () => {
         expect(afterWriteMovement.isGenuineUserMovement).toBe(false);
         expect(observation.getState().streak).toEqual({ direction: -1, count: 1 });
     });
+
+    it('revokes a stale certified movement chain through any programmatic write', () => {
+        // ONE RULE FOR EVERY PROGRAMMATIC WRITER. A write relocates the reader, so once their
+        // raw input has gone stale it ends the certified chain — jump, restore, entry
+        // placement, resize re-pin and gap nudge alike. The one exemption this owner used to
+        // carry existed for the stabilization corrector re-asserting a hold the reader already
+        // owned; that writer is gone (Legend MVCP owns a parked reader), and an exemption for
+        // a writer that no longer exists is a second rule for nobody.
+        const runGestureAcrossWrite = (): boolean => {
+            const observation = createWebDomScrollObservation();
+            const element = new FakeScroller(10_000, 600, 7_000);
+            observation.recordUserScrollInput({ direction: -1, nowMs: 1_000 });
+            element.scrollTop = 6_900;
+            const gesture = observation.observeGenuineScrollMovement({
+                distanceFromBottom: 2_500,
+                fallbackObservedScrollTop: 7_000,
+                isTrusted: true,
+                metrics: metrics(element),
+                pinThresholdPx: 60,
+                semanticContext: { atEndNonUserCause: 'layout', isUserInputActive: false, nowMs: 1_000 },
+                sustainFrames: 2,
+            });
+            expect(gesture.isGenuineUserMovement).toBe(true);
+
+            // The app writes while the reader's raw input is already stale (>320ms).
+            observation.recordProgrammaticScrollTopWrite({
+                element,
+                targetScrollTop: 6_980,
+            });
+
+            // The same gesture's next frame: unclassified on its own, an inertia continuation
+            // of the certified chain if that chain survived the write.
+            element.scrollTop = 6_800;
+            return observation.observeGenuineScrollMovement({
+                distanceFromBottom: 2_600,
+                fallbackObservedScrollTop: null,
+                isTrusted: true,
+                metrics: metrics(element),
+                pinThresholdPx: 60,
+                semanticContext: { atEndNonUserCause: 'layout', isUserInputActive: false, nowMs: 1_300 },
+                sustainFrames: 2,
+            }).isGenuineUserMovement;
+        };
+
+        expect(runGestureAcrossWrite()).toBe(false);
+    });
 });

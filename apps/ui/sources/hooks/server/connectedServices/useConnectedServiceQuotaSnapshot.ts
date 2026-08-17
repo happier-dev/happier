@@ -37,7 +37,6 @@ export type UseConnectedServiceQuotaSnapshotResult = Readonly<{
     snapshot: ReturnType<typeof getQuotaSnapshotEntry>['snapshot'];
     loading: boolean;
     error: string | null;
-    isStale: boolean;
     nowMs: number;
     recoveryCreditSummary: ConnectedServiceQuotaRecoveryCreditSummary | null;
     recoveryCreditMachineId: string | null;
@@ -143,7 +142,6 @@ export function useConnectedServiceQuotaSnapshot(params: Readonly<{
 
     const snapshot = entry.snapshot;
     const nowMs = Date.now();
-    const isStale = snapshot ? nowMs - snapshot.fetchedAt > snapshot.staleAfterMs : false;
     const recoveryCreditSummary = summarizeConnectedServiceQuotaRecoveryCredits(snapshot?.recoveryCredits, nowMs);
     const recoveryCreditMachineId = useConnectedServiceRecoveryCreditMachineTarget({ serviceId, profileId });
 
@@ -214,7 +212,6 @@ export function useConnectedServiceQuotaSnapshot(params: Readonly<{
         snapshot,
         loading: entry.loading,
         error: actionError ?? entry.error,
-        isStale,
         nowMs,
         recoveryCreditSummary,
         recoveryCreditMachineId,

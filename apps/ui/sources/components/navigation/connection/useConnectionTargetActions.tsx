@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
 import { getServerSelectionTargetIconName, getServerSelectionTargetSubtitle } from '@/sync/domains/server/selection/serverSelectionTargets';
 import type { ServerSelectionTarget } from '@/sync/domains/server/selection/serverSelectionTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type UseConnectionTargetActionsParams = Readonly<{
     targets: ReadonlyArray<ServerSelectionTarget>;
@@ -22,14 +22,14 @@ export function useConnectionTargetActions(params: UseConnectionTargetActionsPar
                 label: target.name,
                 subtitle: getServerSelectionTargetSubtitle(target),
                 icon: (
-                    <Ionicons
+                    <Icon
                         name={getServerSelectionTargetIconName(target)}
-                        size={18}
+                        size={16}
                         color={params.iconColor}
                     />
                 ),
                 right: isSelected
-                    ? <Ionicons name="checkmark" size={16} color={params.selectedColor} />
+                    ? <Icon name="check" size={16} color={params.selectedColor} />
                     : null,
                 selected: isSelected,
                 disabled: isSelected,

@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { ThinkingPulseLabel } from '@/components/sessions/transcript/motion/ThinkingPulseLabel';
 import { Typography } from '@/constants/Typography';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props: {
     id: string;
@@ -42,7 +42,7 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
                 <View style={styles.labelContainer}>
                     <View style={styles.labelRow}>
                         <View style={styles.labelGutter}>
-                            <Ionicons name="sparkles-outline" size={16} color={theme.colors.text.secondary} />
+                            <Icon name="sparkle" size={16} color={theme.colors.text.secondary} />
                         </View>
                         <ThinkingPulseLabel
                             label={props.label}
@@ -61,8 +61,8 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
                     </View>
                 </View>
                 <View style={styles.headerRight}>
-                    <Ionicons
-                        name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+                    <Icon
+                        name={expanded ? 'caret-up' : 'caret-down'}
                         size={16}
                         color={theme.colors.text.secondary}
                     />

@@ -1,6 +1,7 @@
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { storage } from '@/sync/domains/state/storage';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import type { SessionTranscriptGetResult } from '@happier-dev/protocol/actions';
 
 import {
   clampInt,
@@ -12,7 +13,7 @@ import {
   toRoleAndText,
 } from './shared';
 
-export async function getSessionRecentMessagesForVoiceTool(params: Readonly<{
+type VoiceRecentMessagesParams = Readonly<{
   sessionId: string;
   defaultSessionId?: string | null;
   limit?: number;
@@ -20,10 +21,28 @@ export async function getSessionRecentMessagesForVoiceTool(params: Readonly<{
   includeUser?: boolean;
   includeAssistant?: boolean;
   maxCharsPerMessage?: number | null;
-}>): Promise<
-  | Readonly<{ ok: true; sessionId: string; messages: readonly any[]; nextCursor: string | null }>
-  | Readonly<{ ok: false; errorCode: string; errorMessage: string }>
-> {
+}>;
+
+type VoiceRecentMessage = Readonly<{
+  id: unknown;
+  role: 'assistant' | 'user' | 'tool';
+  text: string;
+  createdAt: unknown;
+}>;
+
+type VoiceRecentMessagesProjection =
+  | Readonly<{
+      ok: true;
+      sessionId: string;
+      messages: readonly VoiceRecentMessage[];
+      nextCursor: string | null;
+      rawRowsScanned: number;
+    }>
+  | Readonly<{ ok: false; errorCode: string; errorMessage: string }>;
+
+async function readSessionRecentMessagesForVoiceProjection(
+  params: VoiceRecentMessagesParams,
+): Promise<VoiceRecentMessagesProjection> {
   const state: any = storage.getState();
   const prefs = resolveVoiceUpdatesPrefs((state?.settings ?? {}) as any);
   if (!prefs.shareRecentMessages) return { ok: false, errorCode: 'recent_messages_disabled', errorMessage: 'recent_messages_disabled' };
@@ -87,5 +106,82 @@ export async function getSessionRecentMessagesForVoiceTool(params: Readonly<{
         id: String(outMessages[0]?.id ?? ''),
       })
     : null;
-  return { ok: true, sessionId: requestedSessionId, messages: outMessages, nextCursor };
+  return {
+    ok: true,
+    sessionId: requestedSessionId,
+    messages: outMessages,
+    nextCursor,
+    rawRowsScanned: messages.length,
+  };
+}
+
+export async function getSessionRecentMessagesForVoiceTool(
+  params: VoiceRecentMessagesParams,
+): Promise<
+  | Readonly<{ ok: true; sessionId: string; messages: readonly any[]; nextCursor: string | null }>
+  | Readonly<{ ok: false; errorCode: string; errorMessage: string }>
+> {
+  const result = await readSessionRecentMessagesForVoiceProjection(params);
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    sessionId: result.sessionId,
+    messages: result.messages,
+    nextCursor: result.nextCursor,
+  };
+}
+
+function isCanonicalTranscriptTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export async function getSessionTranscriptForVoiceTool(params: VoiceRecentMessagesParams & Readonly<{
+  projection?: 'externalShareableV1';
+  roles?: readonly ('user' | 'assistant')[];
+}>): Promise<SessionTranscriptGetResult> {
+  if (params.projection === 'externalShareableV1') {
+    return {
+      ok: false,
+      errorCode: 'external_shareable_projection_unavailable',
+      errorMessage: 'external_shareable_projection_unavailable',
+    };
+  }
+
+  const roleSet = Array.isArray(params.roles) ? new Set(params.roles) : null;
+  const result = await readSessionRecentMessagesForVoiceProjection({
+    sessionId: params.sessionId,
+    ...(params.defaultSessionId !== undefined ? { defaultSessionId: params.defaultSessionId } : {}),
+    ...(params.limit !== undefined ? { limit: params.limit } : {}),
+    ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
+    includeUser: roleSet ? roleSet.has('user') : true,
+    includeAssistant: roleSet ? roleSet.has('assistant') : true,
+    ...(params.maxCharsPerMessage !== undefined ? { maxCharsPerMessage: params.maxCharsPerMessage } : {}),
+  });
+  if (!result.ok) return result;
+
+  return {
+    ok: true,
+    sessionId: result.sessionId,
+    items: result.messages.flatMap((message) => {
+      if (typeof message.id !== 'string' || !isCanonicalTranscriptTimestamp(message.createdAt)) return [];
+      return [{
+        id: message.id,
+        createdAt: message.createdAt,
+        semanticRole: message.role,
+        role: message.role,
+        kind: message.role === 'tool' ? 'tool_call' : 'message',
+        text: message.text,
+      }];
+    }),
+    nextCursor: result.nextCursor,
+    hasMore: result.nextCursor !== null,
+    diagnostics: {
+      rawRowsScanned: result.rawRowsScanned,
+      // This projection reads the already-normalized local store, so no raw transport page exists.
+      pagesFetched: 0,
+      scanLimitReached: false,
+      // It publishes text only and never materializes raw payloads.
+      payloadTruncations: 0,
+    },
+  };
 }

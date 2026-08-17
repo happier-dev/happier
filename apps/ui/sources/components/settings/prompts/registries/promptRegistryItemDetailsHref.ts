@@ -1,12 +1,10 @@
 import type { PromptRegistryItemSummaryV1 } from '@happier-dev/protocol';
 
 export function buildPromptRegistryItemDetailsHref(args: Readonly<{
-  machineId: string;
   item: PromptRegistryItemSummaryV1;
   workspacePath?: string | null;
 }>): string {
   const params = new URLSearchParams({
-    machineId: args.machineId,
     sourceId: args.item.sourceId,
     itemId: args.item.itemId,
     title: args.item.title,

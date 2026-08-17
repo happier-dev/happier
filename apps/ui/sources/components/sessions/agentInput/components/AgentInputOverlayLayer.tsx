@@ -234,7 +234,10 @@ export function AgentInputOverlayLayer(props: Readonly<{
         },
     ];
 
-    if (props.activeExtraCollapsedPopoverChip?.collapsedContentPopover) {
+    if (
+        props.activeExtraCollapsedPopoverChip?.collapsedContentPopover
+        && !props.activeExtraCollapsedPopoverChip.renderCollapsedPopover
+    ) {
         sharedContentPopovers.push({
             key: `collapsedExtra:${props.activeExtraCollapsedPopoverChip.key}`,
             open: true,
@@ -365,7 +368,21 @@ export function AgentInputOverlayLayer(props: Readonly<{
                 );
             })() : null}
 
-            {props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (() => {
+            {props.activeExtraCollapsedPopoverChip?.renderCollapsedPopover ? (() => {
+                const chip = props.activeExtraCollapsedPopoverChip;
+                const renderCollapsedPopover = chip.renderCollapsedPopover;
+                if (!renderCollapsedPopover) return null;
+                const anchorRef = props.activeExtraCollapsedPopoverAnchor === 'chip'
+                    ? (props.extraChipAnchorRefsByKey[chip.key] ?? props.actionMenuAnchorRef)
+                    : props.actionMenuAnchorRef;
+                return renderCollapsedPopover({
+                    anchorRef,
+                    onRequestClose: props.onActiveExtraCollapsedPopoverChipClose,
+                });
+            })() : null}
+
+            {!props.activeExtraCollapsedPopoverChip?.renderCollapsedPopover
+                && props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover ? (() => {
                 const popover = props.activeExtraCollapsedPopoverChip.collapsedOptionsPopover;
                 const anchorRef = props.activeExtraCollapsedPopoverAnchor === 'chip'
                     ? (props.extraChipAnchorRefsByKey[props.activeExtraCollapsedPopoverChip.key] ?? props.actionMenuAnchorRef)

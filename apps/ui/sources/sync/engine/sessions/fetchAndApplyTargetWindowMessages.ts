@@ -13,6 +13,7 @@ import {
     type SessionMessagesEncryption,
     type SessionMessagesPageOptions,
 } from './sessionMessagesPagePipeline';
+import type { SessionReceivedMessages } from './sessionMessageCurrentness';
 
 type TargetWindowTarget =
     | Readonly<{ kind: 'seq'; seq: number }>
@@ -157,7 +158,7 @@ export async function fetchAndApplyTargetWindowMessages(params: {
     isSessionKnown?: (sessionId: string) => boolean;
     isRouteMessageIdLoaded?: (routeMessageId: string) => boolean;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Map<string, number>>;
+    sessionReceivedMessages: SessionReceivedMessages;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     getWindowState: () => SessionMessagesWindowState;
     setWindowState: (state: SessionMessagesWindowState) => void;

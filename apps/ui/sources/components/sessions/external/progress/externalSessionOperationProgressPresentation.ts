@@ -93,6 +93,12 @@ const TERMINAL_STATUSES = new Set<ExternalSessionOperationStatusV1>([
     'discarded',
 ]);
 
+export function isExternalSessionOperationDismissibleStatus(
+    status: ExternalSessionOperationStatusV1,
+): boolean {
+    return TERMINAL_STATUSES.has(status);
+}
+
 const PHASE_LABEL_KEYS: Readonly<
     Record<ExternalSessionOperationPhaseV1, ExternalSessionOperationTranslationKey>
 > = {
@@ -168,6 +174,18 @@ function isExternalLinkedTakeoverRecovery(
             progress.error.code === 'source_unavailable'
             || progress.error.code === 'internal_error'
         );
+}
+
+function isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(
+    progress: ExternalSessionOperationProgressV1,
+): boolean {
+    return progress.request.plan === 'takeover'
+        && progress.request.targetStorageMode === 'external-linked'
+        && progress.status === 'reconciliation_required'
+        && progress.phase === 'admitting'
+        && progress.retryTargetPhase === 'admitting'
+        && progress.error?.code === 'reconciliation_required'
+        && progress.error.retryable === true;
 }
 
 function resolveStepStatus(
@@ -284,7 +302,7 @@ function resolveActions(
     effectiveStatus: ExternalSessionOperationStatusV1,
     originAvailability: ExternalSessionOperationOriginAvailability,
 ): ExternalSessionOperationProgressPresentation['actions'] {
-    if (TERMINAL_STATUSES.has(effectiveStatus)) {
+    if (isExternalSessionOperationDismissibleStatus(effectiveStatus)) {
         return [{
             kind: 'dismiss',
             titleKey: 'externalSessions.operationActionDismiss',
@@ -292,10 +310,19 @@ function resolveActions(
             destructive: false,
         }];
     }
-    if (
-        progress.status === 'reconciliation_required'
-        || progress.error?.code === 'external_writer_conflict'
-    ) {
+    const retryableAdmissionAcknowledgement =
+        isRetryableExternalLinkedAdmissionAcknowledgementReconciliation(progress);
+    if (progress.status === 'reconciliation_required') {
+        return retryableAdmissionAcknowledgement
+            ? [{
+                kind: 'retry',
+                titleKey: 'common.retry',
+                enabled: originAvailability === 'online',
+                destructive: false,
+            }]
+            : [];
+    }
+    if (progress.error?.code === 'external_writer_conflict') {
         return [];
     }
 

@@ -110,6 +110,7 @@ vi.mock('@/sync/sync', () => ({
 vi.mock('@/auth/terminal/terminalProvisioning', () => ({
   buildTerminalResponseV1: vi.fn(() => new Uint8Array()),
   buildTerminalResponseV2: vi.fn(() => new Uint8Array([1, 2, 3])),
+  buildTerminalResponseV3: vi.fn(() => new Uint8Array([3, 2, 1])),
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => {

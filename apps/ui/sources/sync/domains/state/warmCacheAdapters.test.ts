@@ -4,11 +4,32 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import {
     buildMachineDisplayCacheEntryFromRenderable,
     buildMachineDisplayCacheEntriesFromRenderables,
+    buildPersistedSessionListCacheEntriesFromRenderables,
     buildSessionListRenderableFromCacheEntry,
     buildSessionListCacheEntryFromRenderable,
     buildSessionListCacheEntriesFromRenderables,
+    SESSION_LIST_WARM_CACHE_MAX_ENTRIES,
 } from './warmCacheAdapters';
 import type { SessionListCacheEntryV1 } from './warmCachePersistence';
+
+function makeWindowRenderable(id: string, meaningfulActivityAt: number): SessionListRenderableSession {
+    return {
+        id,
+        seq: 1,
+        createdAt: 5,
+        updatedAt: meaningfulActivityAt,
+        meaningfulActivityAt,
+        active: true,
+        activeAt: meaningfulActivityAt,
+        archivedAt: null,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: null,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online' as const,
+    } as unknown as SessionListRenderableSession;
+}
 
 describe('warmCacheAdapters', () => {
     it('does not preserve or resurrect legacy private cache fields after the privacy layout contracts', () => {
@@ -237,6 +258,48 @@ describe('warmCacheAdapters', () => {
 
         expect(nextEntries).toBe(previousEntries);
         keysSpy.mockRestore();
+    });
+
+    it('evicts a stale entry when a same-size renderable set swapped one member', () => {
+        const previousEntries = buildSessionListCacheEntriesFromRenderables({
+            a: makeWindowRenderable('a', 20),
+            b: makeWindowRenderable('b', 20),
+        });
+        const nextEntries = buildSessionListCacheEntriesFromRenderables(
+            { b: makeWindowRenderable('b', 20), c: makeWindowRenderable('c', 20) },
+            previousEntries,
+        );
+
+        expect(Object.keys(nextEntries).sort()).toEqual(['b', 'c']);
+    });
+
+    it('persists only the most recent window of sessions, ordered by the server list key', () => {
+        const renderables: Record<string, SessionListRenderableSession> = {};
+        const total = SESSION_LIST_WARM_CACHE_MAX_ENTRIES + 25;
+        for (let index = 0; index < total; index += 1) {
+            const id = `s${String(index).padStart(4, '0')}`;
+            renderables[id] = makeWindowRenderable(id, 1_000 + index);
+        }
+
+        const persisted = buildPersistedSessionListCacheEntriesFromRenderables(renderables);
+
+        expect(Object.keys(persisted)).toHaveLength(SESSION_LIST_WARM_CACHE_MAX_ENTRIES);
+        expect(persisted['s0000']).toBeUndefined();
+        expect(persisted[`s${String(total - 1).padStart(4, '0')}`]).toBeDefined();
+
+        // Capping must not cost referential stability, or every fetch would rewrite the blob.
+        expect(buildPersistedSessionListCacheEntriesFromRenderables(renderables, persisted)).toBe(persisted);
+    });
+
+    it('leaves the in-memory metadata fallback uncapped', () => {
+        const renderables: Record<string, SessionListRenderableSession> = {};
+        const total = SESSION_LIST_WARM_CACHE_MAX_ENTRIES + 25;
+        for (let index = 0; index < total; index += 1) {
+            const id = `s${String(index).padStart(4, '0')}`;
+            renderables[id] = makeWindowRenderable(id, 1_000 + index);
+        }
+
+        expect(Object.keys(buildSessionListCacheEntriesFromRenderables(renderables))).toHaveLength(total);
     });
 
     it('reuses shared empty maps when renderables are empty', () => {

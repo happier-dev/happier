@@ -1,4 +1,3 @@
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -13,6 +12,8 @@ import { useFriendRequests } from '@/sync/domains/state/storage';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { desktopSidebarChromeStyles } from './desktopSidebarChromeStyles';
+import { DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX } from './desktopChromeMetrics';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 
 type SidebarHeaderActionsResult = Readonly<{
     headerActions: ItemAction[];
@@ -46,8 +47,12 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 title: t('tabs.inbox'),
                 inlineTestID: 'sidebar-inbox-button',
                 icon: (
+                    // The box here is not a second control box: it is the same size as the one
+                    // ItemRowActions draws, and it is what the dot is positioned against -- the
+                    // same anchor the overflow visual uses, so the dot does not move when this
+                    // action collapses into the overflow.
                     <View style={[styles.iconButton, styles.notificationButton]}>
-                        <Octicons name="inbox" size={20} color={theme.colors.chrome.header.foreground} />
+                        <Icon name="mailbox" size={ICON_SIZE.md} color={theme.colors.chrome.header.foreground} />
                         {inboxHasContent ? <View style={styles.indicatorDot} /> : null}
                     </View>
                 ),
@@ -61,7 +66,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 title: t('tabs.friends'),
                 icon: (
                     <View style={[styles.iconButton, styles.notificationButton]}>
-                        <Ionicons name="people-outline" size={24} color={theme.colors.chrome.header.foreground} />
+                        <Icon name="users" size={ICON_SIZE.md} color={theme.colors.chrome.header.foreground} />
                         {friendRequestCount > 0 ? (
                             <View style={styles.badge}>
                                 <Text style={styles.badgeText}>
@@ -80,9 +85,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             title: t('tabs.projects'),
             inlineTestID: 'nav-projects',
             icon: (
-                <View style={styles.iconButton}>
-                    <Ionicons name="folder-outline" size={24} color={theme.colors.chrome.header.foreground} />
-                </View>
+                <Icon name="folder" size={ICON_SIZE.md} color={theme.colors.chrome.header.foreground} />
             ),
             onPress: () => navigate('/projects', 'SidebarView.nav.projects'),
         });
@@ -92,9 +95,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             title: t('settings.title'),
             inlineTestID: 'nav-settings',
             icon: (
-                <View style={styles.iconButton}>
-                    <Ionicons name="cog-outline" size={24} color={theme.colors.chrome.header.foreground} />
-                </View>
+                <Icon name="sliders-horizontal" size={ICON_SIZE.md} color={theme.colors.chrome.header.foreground} />
             ),
             onPress: () => navigate('/settings', 'SidebarView.nav.settings'),
         });
@@ -104,9 +105,9 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             title: t('newSession.title'),
             inlineTestID: 'nav-new-session',
             icon: (
-                <View style={styles.trailingIconButton}>
-                    <Ionicons name="add-outline" size={24} color={theme.colors.chrome.header.foreground} />
-                </View>
+                // No wrapper: the control box centres this glyph. The old flex-end box was 24 wide
+                // inside a wider control, which left the "+" 2px off its own centre.
+                <Icon name="plus" size={ICON_SIZE.md} color={theme.colors.chrome.header.foreground} />
             ),
             onPress: () => navigate('/new', 'SidebarView.nav.newSession'),
         });
@@ -123,7 +124,6 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         styles.iconButton,
         styles.indicatorDot,
         styles.notificationButton,
-        styles.trailingIconButton,
         theme.colors.chrome.header.foreground,
     ]);
 
@@ -137,7 +137,14 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 inlineTestID: 'sidebar-inbox-button',
                 icon: (
                     <View style={styles.topNotificationButton}>
-                        <Octicons name="inbox" size={15} color={theme.colors.chrome.header.foreground} />
+                        {/* The one glyph in the top strip that is built here rather than named, so
+                            it has to reach for the strip's size itself or it stays behind when the
+                            others move. */}
+                        <Icon
+                            name="mailbox"
+                            size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                            color={theme.colors.chrome.header.foreground}
+                        />
                         {inboxHasContent ? <View style={styles.topIndicatorDot} /> : null}
                     </View>
                 ),
@@ -149,7 +156,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             id: 'settings',
             title: t('settings.title'),
             inlineTestID: 'nav-settings',
-            icon: 'cog-outline' as const,
+            icon: 'sliders-horizontal' as const,
             onPress: () => navigate('/settings', 'SidebarView.nav.settings'),
         });
 
@@ -169,7 +176,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
 
         return (
             <View style={[styles.iconButton, styles.notificationButton]}>
-                <Ionicons name="ellipsis-horizontal" size={14} color={theme.colors.chrome.header.foreground} />
+                <Icon name="dots-three" size={ICON_SIZE.md} color={theme.colors.chrome.header.foreground} />
                 {shouldShowBadge ? (
                     <View style={styles.badge}>
                         <Text style={styles.badgeText}>

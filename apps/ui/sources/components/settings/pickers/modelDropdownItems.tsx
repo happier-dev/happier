@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { Ionicons } from '@expo/vector-icons';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
@@ -23,7 +22,7 @@ export function getModelDropdownMenuItems(params: {
         title: opt.label,
         subtitle: opt.description,
         icon: renderDropdownItemIcon({
-            name: 'layers-outline',
+            name: 'stack-simple',
             color: params.iconColor,
             size: iconSize,
         }),
@@ -41,7 +40,7 @@ export function getModelDropdownMenuItems(params: {
 
     const icon = phase === 'idle'
         ? renderDropdownItemIcon({
-            name: 'refresh-outline',
+            name: 'arrow-clockwise',
             color: params.iconColor,
             size: iconSize,
         })

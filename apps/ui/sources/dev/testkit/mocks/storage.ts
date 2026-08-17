@@ -1,6 +1,9 @@
 import { vi } from 'vitest';
 
-import type { Settings } from '@/sync/domains/settings/settings';
+import type {
+    Settings,
+    WritableSettingsKey,
+} from '@/sync/domains/settings/settings';
 import type { StorageState } from '@/sync/store/types';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
@@ -8,6 +11,7 @@ import {
     createStorageModuleStub as createStorageModuleRuntimeStub,
     createLiveStorageStoreMock as createLiveStorageRuntimeStoreMock,
     createStorageStoreMock as createStorageRuntimeStoreMock,
+    createUseCurrentSecretBindingsByProfileIdMutableMock,
     createUseLocalSettingMock as createUseLocalSettingRuntimeMock,
     createUseLocalSettingMutableMock as createUseLocalSettingRuntimeMutableMock,
     createUseSettingMock as createUseSettingRuntimeMock,
@@ -34,21 +38,37 @@ function createVitestMutableSetter(): MutableSetter {
 
 export async function createStorageModuleMock(options: CreateStorageModuleMockOptions): Promise<StorageModule> {
     const module = await mergeModuleMock<StorageModule>(options);
+    const overrides = options.overrides as Partial<StorageModule>;
+    const moduleWithCurrentSecretBindings: StorageModule = !Object.prototype.hasOwnProperty.call(
+        overrides,
+        'useCurrentSecretBindingsByProfileIdMutable',
+    ) && (
+        Object.prototype.hasOwnProperty.call(overrides, 'useSetting')
+        || Object.prototype.hasOwnProperty.call(overrides, 'useSettingMutable')
+    )
+        ? {
+            ...module,
+            useCurrentSecretBindingsByProfileIdMutable:
+                createUseCurrentSecretBindingsByProfileIdMutableMock(module.useSetting, {
+                    createMutableSetter: createVitestMutableSetter,
+                }),
+        }
+        : module;
     const storageOverride = (options.overrides as { storage?: unknown }).storage;
     if (isStorageStoreLike(storageOverride) && typeof storageOverride !== 'function') {
         const storage = adaptStorageStoreLike(storageOverride);
         return {
-            ...module,
+            ...moduleWithCurrentSecretBindings,
             storage,
             getStorage: () => storage,
         };
     }
     if (typeof (options.overrides as { getStorage?: unknown }).getStorage === 'function') {
-        return module;
+        return moduleWithCurrentSecretBindings;
     }
     return {
-        ...module,
-        getStorage: () => module.storage,
+        ...moduleWithCurrentSecretBindings,
+        getStorage: () => moduleWithCurrentSecretBindings.storage,
     };
 }
 
@@ -83,13 +103,13 @@ export function createUseSettingMutableMock(useSetting: StorageModule['useSettin
 }
 
 type UseSettingMutableMockReader = (
-    key: keyof Settings,
+    key: WritableSettingsKey,
 ) => readonly [unknown, (...args: never[]) => unknown];
 
 export function createUseSettingMutableMockFromReader(
     reader: UseSettingMutableMockReader,
 ): StorageModule['useSettingMutable'] {
-    return ((key: keyof Settings) => {
+    return ((key: WritableSettingsKey) => {
         const result = reader(key);
         if (!Array.isArray(result) || result.length !== 2 || typeof result[1] !== 'function') {
             throw new TypeError(`Mutable setting fixture '${String(key)}' must return a value/setter tuple`);

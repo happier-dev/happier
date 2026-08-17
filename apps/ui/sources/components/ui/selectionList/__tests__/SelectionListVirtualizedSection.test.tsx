@@ -14,6 +14,7 @@ vi.mock('react-native', async () => {
 
 const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
+    renderItemLimit: 20,
 });
 
 vi.mock('@legendapp/list/react-native', () => ({
@@ -45,6 +46,33 @@ function hasAncestor(node: any, possibleAncestor: any): boolean {
 }
 
 describe('SelectionListVirtualizedSection', () => {
+    it('constructs lazy visuals only for the rendered window in the single-section path', async () => {
+        legendListState.reset();
+        const constructVisual = vi.fn((id: string) => <React.Fragment>{id}</React.Fragment>);
+        const options: readonly SelectionListOption[] = Array.from({ length: 1_000 }, (_, index) => ({
+            id: `lazy-${index}`,
+            label: `Lazy ${index}`,
+            subtitleContent: () => constructVisual(`subtitle-${index}`),
+            icon: () => constructVisual(`icon-${index}`),
+            rightAccessory: () => constructVisual(`accessory-${index}`),
+        }));
+        const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
+        await renderScreen(
+            <SelectionListVirtualizedSection
+                section={{ id: 'lazy', options }}
+                stepId="root"
+                rootTestID="sl"
+                selectedOptionId={null}
+                onSelect={() => {}}
+                onPushStep={() => {}}
+                virtualization="force"
+            />,
+        );
+
+        expect(legendListState.props?.data).toHaveLength(1_000);
+        expect(constructVisual).toHaveBeenCalledTimes(60);
+    });
+
     it('renders FlashList path when row count exceeds the threshold (auto mode)', async () => {
         legendListState.reset();
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
@@ -55,7 +83,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
         expect(legendListState.props).not.toBeNull();
@@ -76,7 +105,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
         // FlashList must NOT be mounted in auto mode at exactly threshold.
@@ -93,7 +123,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
                 virtualization="force"
             />,
         );
@@ -122,7 +153,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -132,6 +164,64 @@ describe('SelectionListVirtualizedSection', () => {
         expect(row).toBeTruthy();
         expect(action).toBeTruthy();
         expect(hasAncestor(action, row)).toBe(false);
+    });
+
+    it('renders the canonical row surface for virtualized rows (custom content, ellipsize modes, chevron retention, expanded body)', async () => {
+        legendListState.reset();
+        const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
+        const section: SelectionListSection = {
+            ...makeSection(60),
+            options: [
+                {
+                    id: 'custom',
+                    label: 'Custom body',
+                    content: <Pressable testID="virtualized-custom-body" onPress={() => {}} />,
+                },
+                {
+                    id: 'clamped',
+                    label: 'A very long label',
+                    subtitle: 'A very long subtitle',
+                    labelEllipsizeMode: 'middle',
+                    subtitleEllipsizeMode: 'head',
+                    rightAccessory: <React.Fragment />,
+                    keepChevronWithAccessory: true,
+                    openStep: { id: 'child', sections: [] },
+                },
+                {
+                    id: 'expanded',
+                    label: 'Selected row',
+                    expandedContent: <Pressable testID="virtualized-expanded" onPress={() => {}} />,
+                },
+                ...makeOptions(57, 'remaining'),
+            ],
+        };
+        const screen = await renderScreen(
+            <SelectionListVirtualizedSection
+                section={section}
+                stepId="root"
+                rootTestID="sl"
+                selectedOptionId="expanded"
+                onSelect={() => {}}
+                onPushStep={() => {}}
+            />,
+        );
+
+        // `option.content` is honored (the divergent renderer dropped it).
+        expect(screen.findByTestId('virtualized-custom-body')).not.toBeNull();
+
+        const clamped = screen.findAllByTestId('sl:root:option:clamped')
+            .find((node) => typeof node.type === 'function');
+        expect(clamped).toBeTruthy();
+        expect(clamped!.props.titleEllipsizeMode).toBe('middle');
+        expect(clamped!.props.subtitleEllipsizeMode).toBe('head');
+        expect(clamped!.props.keepChevronWithRightElement).toBe(true);
+
+        // The selected row's expanded body renders, outside its pressable.
+        const expanded = screen.findByTestId('virtualized-expanded');
+        expect(expanded).not.toBeNull();
+        for (const rowNode of screen.findAllByTestId('sl:root:option:expanded')) {
+            expect(hasAncestor(expanded, rowNode)).toBe(false);
+        }
     });
 
     it('never renders FlashList when virtualization is never, even with large counts', async () => {
@@ -144,7 +234,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
                 virtualization="never"
             />,
         );
@@ -163,7 +254,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
         expect(legendListState.props).not.toBeNull();
@@ -182,7 +274,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
         expect(legendListState.props).not.toBeNull();
@@ -205,7 +298,8 @@ describe('SelectionListVirtualizedSection', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
         expect(legendListState.props).not.toBeNull();

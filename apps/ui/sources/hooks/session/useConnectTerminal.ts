@@ -2,10 +2,21 @@ import * as React from 'react';
 import { router } from 'expo-router';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 import { useAuth } from '@/auth/context/AuthContext';
-import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import {
+    TokenStorage,
+    type AuthCredentials,
+    isDataKeyAuthCredentials,
+    isLegacyAuthCredentials,
+    isTokenOnlyAuthCredentials,
+} from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { authApprove } from '@/auth/flows/approve';
-import { buildTerminalResponseV1, buildTerminalResponseV2 } from '@/auth/terminal/terminalProvisioning';
+import {
+    buildTerminalResponseV1,
+    buildTerminalResponseV2,
+    buildTerminalResponseV3,
+    buildTerminalTokenOnlyResponseV3,
+} from '@/auth/terminal/terminalProvisioning';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
@@ -15,6 +26,8 @@ import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/d
 import { buildTerminalConnectAuthRedirectHref, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { storage } from '@/sync/domains/state/storageStore';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
 
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
@@ -22,13 +35,21 @@ interface UseConnectTerminalOptions {
     allowLoopbackServerOverride?: boolean;
 }
 
+function hasTokenOnlyTerminalCredentials(credentials: AuthCredentials): boolean {
+    return isTokenOnlyAuthCredentials(credentials);
+}
+
 function resolveTerminalProvisioningContentPrivateKey(credentials: AuthCredentials): Uint8Array {
-    if (!isLegacyAuthCredentials(credentials)) {
+    if (isDataKeyAuthCredentials(credentials)) {
         const machineKey = decodeBase64(credentials.encryption.machineKey, 'base64');
         if (machineKey.length !== 32) {
             throw new Error('Invalid dataKey credential key lengths');
         }
         return machineKey;
+    }
+
+    if (!isLegacyAuthCredentials(credentials)) {
+        throw new Error('Terminal provisioning requires E2EE credentials');
     }
 
     const secretKey = decodeBase64(credentials.secret, 'base64url');
@@ -61,7 +82,12 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
 
             if (effectiveParsedServerUrl) {
                 if (currentServerUrl && !isSameServerUrl(currentServerUrl, effectiveParsedServerUrl)) {
-                    setPendingTerminalConnect({ publicKeyB64Url: parsed.publicKeyB64Url, serverUrl: effectiveParsedServerUrl });
+                    setPendingTerminalConnect({
+                        publicKeyB64Url: parsed.publicKeyB64Url,
+                        serverUrl: effectiveParsedServerUrl,
+                        ...(parsed.pairing ? { pairing: parsed.pairing } : {}),
+                        ...(parsed.supportsTokenOnly ? { supportsTokenOnly: true } : {}),
+                    });
                     await upsertActivateAndSwitchServer({
                         serverUrl: effectiveParsedServerUrl,
                         source: 'url',
@@ -80,6 +106,8 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 setPendingTerminalConnect({
                     publicKeyB64Url: parsed.publicKeyB64Url,
                     serverUrl: effectiveParsedServerUrl || currentServerUrl || getActiveServerUrl(),
+                    ...(parsed.pairing ? { pairing: parsed.pairing } : {}),
+                    ...(parsed.supportsTokenOnly ? { supportsTokenOnly: true } : {}),
                 });
                 await Modal.alertAsync(t('terminal.connectTerminal'), t('modals.pleaseSignInFirst'), [
                     { text: t('common.continue') },
@@ -96,20 +124,61 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 storage.getState().settings?.terminalConnectLegacySecretExportEnabled,
             );
 
-            const contentPrivateKey = resolveTerminalProvisioningContentPrivateKey(activeCredentials);
-            const responseV2 = buildTerminalResponseV2({
-                contentPrivateKey,
-                terminalEphemeralPublicKey: publicKey,
-            });
-
-            const responseV1 =
-                allowLegacySecretExportEnabled && isLegacyAuthCredentials(activeCredentials)
-                    ? () =>
-                        buildTerminalResponseV1({
-                            legacySecretB64Url: activeCredentials.secret,
+            const pairingSecret = parsed.pairing
+                ? decodeBase64(parsed.pairing.secretB64Url, 'base64url')
+                : null;
+            let responseV2: Uint8Array;
+            let responseV1: Uint8Array | (() => Uint8Array);
+            if (hasTokenOnlyTerminalCredentials(activeCredentials)) {
+                if (!parsed.pairing || pairingSecret?.length !== 32 || parsed.supportsTokenOnly !== true) {
+                    throw new Error('Token-only terminal pairing requires an authenticated compatible reader');
+                }
+                const [accountMode, plaintextStorageEnabled, keylessAccountsEnabled] = await Promise.all([
+                    fetchAccountEncryptionMode(activeCredentials, { retry: 'none' }),
+                    isRuntimeFeatureEnabled({ featureId: 'encryption.plaintextStorage' }),
+                    isRuntimeFeatureEnabled({ featureId: 'e2ee.keylessAccounts' }),
+                ]);
+                if (
+                    accountMode.mode !== 'plain'
+                    || !plaintextStorageEnabled
+                    || !keylessAccountsEnabled
+                ) {
+                    throw new Error('Token-only terminal pairing is not permitted by the active account policy');
+                }
+                responseV2 = buildTerminalTokenOnlyResponseV3({
+                    terminalEphemeralPublicKey: publicKey,
+                    pairingSecret,
+                    createdAtMs: parsed.pairing.createdAtMs,
+                    expiresAtMs: parsed.pairing.expiresAtMs,
+                });
+                responseV1 = new Uint8Array();
+            } else {
+                const contentPrivateKey = resolveTerminalProvisioningContentPrivateKey(activeCredentials);
+                responseV2 =
+                    parsed.pairing && pairingSecret?.length === 32
+                        ? buildTerminalResponseV3({
+                            contentPrivateKey,
                             terminalEphemeralPublicKey: publicKey,
+                            pairingSecret,
+                            createdAtMs: parsed.pairing.createdAtMs,
+                            expiresAtMs: parsed.pairing.expiresAtMs,
                         })
-                    : new Uint8Array();
+                        : buildTerminalResponseV2({
+                            contentPrivateKey,
+                            terminalEphemeralPublicKey: publicKey,
+                        });
+
+                const legacyCredentials =
+                    isLegacyAuthCredentials(activeCredentials) ? activeCredentials : null;
+                responseV1 =
+                    allowLegacySecretExportEnabled && legacyCredentials
+                        ? () =>
+                            buildTerminalResponseV1({
+                                legacySecretB64Url: legacyCredentials.secret,
+                                terminalEphemeralPublicKey: publicKey,
+                            })
+                        : new Uint8Array();
+            }
 
             const approvalResult = await authApprove(activeCredentials.token, publicKey, responseV1, responseV2);
 

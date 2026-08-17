@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
 import { installLocalTtsCommonModuleMocks } from '../localTtsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,14 +30,19 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     ),
 }));
 
-import { createLocalTtsProviderRegistry, localTtsProviderSpecs } from './registry';
+import { createLocalTtsProviderRegistry, listLocalTtsProviderSpecs } from './registry';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 
 describe('local TTS provider registry', () => {
   it('contains every built-in TTS provider while provider settings remain an open id domain', () => {
-    expect(new Set(localTtsProviderSpecs.map((spec) => spec.id))).toEqual(
-      new Set(['device', 'openai_compat', 'google_cloud', 'local_neural']),
+    expect(new Set(listLocalTtsProviderSpecs().map((spec) => spec.id))).toEqual(
+      new Set([
+        'device',
+        'happier.voice.openai-compat/tts',
+        'happier.voice.google/google-cloud-tts',
+        'local_neural',
+      ]),
     );
   });
 
@@ -44,47 +50,67 @@ describe('local TTS provider registry', () => {
     const registry = createLocalTtsProviderRegistry(createDefaultVoiceProviderRegistry({
       enabledPluginIds: new Set(['happier.voice.elevenlabs']),
     }));
-    expect(registry.list.map((spec) => spec.id)).not.toContain('google_cloud');
-    expect(registry.get('google_cloud')).toBeNull();
+    expect(registry.list.map((spec) => spec.id)).not.toContain('happier.voice.google/google-cloud-tts');
+    expect(registry.get('happier.voice.google/google-cloud-tts')).toBeNull();
   });
 
   it('admits a second bundled TTS package from its registry contribution without host provider changes', () => {
-    const fakeProviderId = 'acme_speech';
+    const fakeProviderId = 'acme.voice/speech';
+    const declaration = VoiceProviderContributionSchema.parse({
+      id: 'speech',
+      title: 'Acme Speech',
+      kind: 'speech',
+      roles: ['conversation_tts'],
+      platforms: ['web'],
+      credentials: {
+        slot: { id: 'api_key', purpose: 'voice.speech.synthesize', title: 'API key' },
+        requirement: { kind: 'always' },
+        sources: [{
+          kind: 'savedSecret',
+          secretKinds: ['apiKey'],
+          rawGrants: [{
+            realm: 'daemon',
+            phase: 'speech',
+            request: { kind: 'environment', keys: ['ACME_VOICE_API_KEY'] },
+          }],
+        }],
+      },
+      settings: {
+        schemaVersion: 2,
+        fields: [{
+          id: 'voiceName',
+          title: 'Voice',
+          schema: { type: 'string', minLength: 1, maxLength: 256 },
+          default: 'acme-v1',
+          presentation: { control: 'text' },
+        }],
+      },
+    });
+    if (declaration.kind !== 'speech') throw new Error('expected speech declaration');
     const registry = createLocalTtsProviderRegistry(createVoiceProviderRegistry({
-      bundled: [{
-        kind: 'voice.speech-engine.v1',
+      bundledContributions: [{
         pluginId: 'acme.voice',
         providerId: fakeProviderId,
-        role: 'tts',
+        declaration,
+      }],
+      bundledPresentations: [{
+        providerId: fakeProviderId,
         settingsSectionId: 'voice.tts.acme',
-        roles: ['conversation_tts'],
-        requirements: [],
-        internal: {
-          createSettingsSpec: (providerId: string) => providerId === fakeProviderId ? {
-            kind: 'voice.internal.speech-settings.v1',
-            providerId,
-            role: 'tts',
-            schemaVersion: 3,
+        createSettingsSpec: () => ({
             titleKey: 'acme.title',
             subtitleKey: 'acme.subtitle',
             detailKey: 'acme.detail',
-            iconName: 'volume-high-outline',
-            credential: { kind: 'api_key', titleKey: 'acme.key', promptTitleKey: 'acme.key', promptBodyKey: 'acme.key', androidRestricted: false, androidRestrictedBodyKey: null },
-            fields: [],
-            runtime: {},
-            defaultConfig: { voiceName: 'acme-v3' },
-            parseConfig: (value: unknown) => value && typeof value === 'object' ? {} : null,
-            parseLegacyConfig: () => null,
-            readLegacySecret: () => null,
-            migrateLegacy: () => null,
-            classifyLegacyCredential: () => 'importable',
+            iconName: 'speaker-high',
+            credential: { titleKey: 'acme.key', promptTitleKey: 'acme.key', promptBodyKey: 'acme.key' },
+            fields: [{
+              fieldId: 'voiceName',
+              titleKey: 'acme.voice.title',
+              subtitleKey: 'acme.voice.subtitle',
+            }],
             test: {
-              kind: 'synthesize',
-              missingValueKey: 'voiceName',
               missingValueMessageKey: 'acme.voice.missing',
             },
-          } : null,
-        },
+          }),
       }],
     }));
 

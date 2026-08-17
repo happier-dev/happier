@@ -7,9 +7,9 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Typography } from '@/constants/Typography';
-import { Ionicons } from '@expo/vector-icons';
 import { Modal } from '@/modal';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export default function PurchasesDevScreen() {
     // Get purchases directly from storage
@@ -105,7 +105,7 @@ export default function PurchasesDevScreen() {
                             <Item
                                 key={index}
                                 title={productId}
-                                icon={<Ionicons name="checkmark-circle" size={29} color="#34C759" />}
+                                icon={<Icon name="check-circle" size={29} color="#34C759" />}
                                 showChevron={false}
                             />
                         ))
@@ -123,8 +123,8 @@ export default function PurchasesDevScreen() {
                                 key={id}
                                 title={id}
                                 icon={
-                                    <Ionicons
-                                        name={isActive ? "checkmark-circle" : "close-circle"}
+                                    <Icon
+                                        name={isActive ? "check-circle" : "x-circle"}
                                         size={29}
                                         color={isActive ? "#34C759" : "#8E8E93"}
                                     />
@@ -164,7 +164,7 @@ export default function PurchasesDevScreen() {
                             title={isPurchasing ? "Purchasing..." : "Purchase"}
                             icon={isPurchasing ?
                                 <ActivitySpinner size="small" color="#007AFF" /> :
-                                <Ionicons name="card-outline" size={29} color="#007AFF" />
+                                <Icon name="credit-card" size={29} color="#007AFF" />
                             }
                             onPress={handlePurchase}
                             disabled={isPurchasing}
@@ -177,14 +177,14 @@ export default function PurchasesDevScreen() {
                 <ItemGroup title="Actions">
                     <Item
                         title="Refresh Purchases"
-                        icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
+                        icon={<Icon name="arrow-clockwise" size={29} color="#007AFF" />}
                         onPress={() => sync.refreshPurchases()}
                     />
                     <Item
                         title={loadingOfferings ? "Loading Offerings..." : "Log Offerings"}
                         icon={loadingOfferings ?
                             <ActivitySpinner size="small" color="#007AFF" /> :
-                            <Ionicons name="document-text-outline" size={29} color="#007AFF" />
+                            <Icon name="file-text" size={29} color="#007AFF" />
                         }
                         onPress={fetchOfferings}
                         disabled={loadingOfferings}

@@ -1,8 +1,11 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
+const APP_ROOT = resolve(import.meta.dirname, '../..');
 
 type BabelApi = {
   cache: ((value: boolean) => void) & {
@@ -96,5 +99,26 @@ describe('babel.config.js', () => {
       workletizableModules: expect.arrayContaining(['remend']),
     }));
     expect(cacheUsingCalls).toContain('1');
+  });
+
+  it.each([true, false])('transforms the Voice History consumer error class for Metro (isDev=%s)', (isDev) => {
+    const babel = require('@babel/core') as typeof import('@babel/core');
+    const filename = resolve(
+      APP_ROOT,
+      'sources/voice/history/defaultVoiceHistoryConsumer.ts',
+    );
+
+    expect(() => babel.transformSync(readFileSync(filename, 'utf8'), {
+      filename,
+      root: APP_ROOT,
+      babelrc: false,
+      configFile: resolve(APP_ROOT, 'babel.config.js'),
+      caller: {
+        name: 'metro',
+        platform: 'web',
+        isDev,
+        supportsStaticESM: false,
+      } as never,
+    })).not.toThrow();
   });
 });

@@ -15,8 +15,18 @@ import {
     clearCachedMachineDoctorSnapshot,
     writeCachedMachineDoctorSnapshot,
 } from '@/components/machines/doctorSnapshot/machineDoctorSnapshotCache';
+import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 const machineCollectBugReportDiagnosticsMock = vi.hoisted(() => vi.fn());
+const voiceSessionSnapshot = vi.hoisted((): { current: VoiceSessionSnapshot } => ({
+    current: {
+        adapterId: null,
+        sessionId: null,
+        status: 'disconnected' as const,
+        mode: 'idle' as const,
+        canStop: false,
+    },
+}));
 const state = vi.hoisted(() => {
     const createMachine = (displayName: string) => ({
         id: 'machine-1',
@@ -211,6 +221,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
+vi.mock('@/voice/session/voiceSession', () => ({
+    useVoiceSessionSnapshot: () => voiceSessionSnapshot.current,
+}));
+
 vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => state.isMachineOnline,
 }));
@@ -218,6 +232,13 @@ vi.mock('@/utils/sessions/machineUtils', () => ({
 describe('SystemStatusView runtime inventory', () => {
     beforeEach(() => {
         state.reset();
+        voiceSessionSnapshot.current = {
+            adapterId: null,
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        };
         machineCollectBugReportDiagnosticsMock.mockReset();
         clearCachedMachineDoctorSnapshot({ serverId: 'srv_1', machineId: 'machine-1' });
         clearCachedMachineDoctorSnapshot({ serverId: 'srv_2', machineId: 'machine-1' });
@@ -355,6 +376,22 @@ describe('SystemStatusView runtime inventory', () => {
         expect(text).toContain('machine.doctorRepairSummary');
         expect(text).toContain('machine.doctorRepairFindingsSummary');
         expect(text).toContain('MULTIPLE_HAPPIER_INSTALLATIONS_ON_PATH');
+    });
+
+    it('reports the canonical Voice session status rather than a copied sync-store projection', async () => {
+        voiceSessionSnapshot.current = {
+            adapterId: 'realtime_openai',
+            sessionId: 'session-1',
+            status: 'connecting',
+            mode: 'idle',
+            canStop: true,
+        };
+        const { SystemStatusView } = await import('@/components/settings/systemStatus/SystemStatusView');
+        const screen = await renderScreen(React.createElement(SystemStatusView));
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.getTextContent()).toContain('connecting');
     });
 
     it('refreshes machine attribution using machine targets rather than target keys', async () => {

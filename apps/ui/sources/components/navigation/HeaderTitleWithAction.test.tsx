@@ -43,7 +43,7 @@ describe('HeaderTitleWithAction', () => {
             <HeaderTitleWithAction
                 title="Runs"
                 actionLabel="Refresh"
-                actionIconName="refresh"
+                actionIconName="arrow-clockwise"
                 actionLoading={true}
                 onActionPress={vi.fn()}
             />,

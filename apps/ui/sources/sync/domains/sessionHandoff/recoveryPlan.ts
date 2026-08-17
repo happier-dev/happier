@@ -1,4 +1,5 @@
 import {
+    projectSessionMetadataForAgentHandoff,
     resolveAgentIdFromSessionMetadata,
     resolveVendorHandoffIdFromSessionMetadata,
     type AgentId,
@@ -63,10 +64,10 @@ export type SessionHandoffRecoveryPlan = Readonly<{
     }>;
 }>;
 
-function resolveVendorResumeId(metadata: Metadata): string | undefined {
-    const agentId = resolveRecoveryAgentId(metadata);
-    if (!agentId) return undefined;
-
+function resolveVendorResumeId(
+    agentId: AgentId,
+    metadata: ReturnType<typeof projectSessionMetadataForAgentHandoff>,
+): string | undefined {
     return resolveVendorHandoffIdFromSessionMetadata(agentId, metadata) ?? undefined;
 }
 
@@ -83,10 +84,12 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
     if (!agent || !directory) return null;
 
     const codexBackendMode = normalizeCodexBackendMode(input.sourceMetadata.codexBackendMode);
+    const agentMetadata = projectSessionMetadataForAgentHandoff(input.sourceMetadata);
     const sourceRecoveryPatch = buildSessionHandoffSourceRecoveryResumePatch({
         agentId: agent,
-        metadata: input.sourceMetadata,
+        metadata: agentMetadata,
     });
+    const vendorResumeId = resolveVendorResumeId(agent, agentMetadata);
 
     return {
         handoffId: input.handoffId,
@@ -96,7 +99,7 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
             machineId: input.sourceMachineId,
             directory,
             agent,
-            ...(resolveVendorResumeId(input.sourceMetadata) ? { resume: resolveVendorResumeId(input.sourceMetadata) } : {}),
+            ...(vendorResumeId ? { resume: vendorResumeId } : {}),
             transcriptStorage: input.sessionStorageMode,
             serverId: typeof input.serverId === 'string' ? input.serverId.trim() || null : null,
             ...(readRuntimeDescriptorV1FromMetadata(input.sourceMetadata)

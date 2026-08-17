@@ -1,13 +1,15 @@
 import * as React from 'react';
-import { Animated, Easing, Platform, Pressable, View } from 'react-native';
+import { Animated, Easing, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import type { WorkspaceDownloadState, WorkspaceUploadState } from '@/hooks/workspaces/transfers/useWorkspaceFileTransfers';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 const BAR_HEIGHT = 4;
 
@@ -23,7 +25,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: 20,
     },
     label: {
         flex: 1,
@@ -41,16 +43,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         height: BAR_HEIGHT,
         borderRadius: 999,
         backgroundColor: theme.colors.text.link,
-    },
-    cancelButton: {
-        width: 28,
-        height: 28,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
     },
 }));
 
@@ -95,6 +87,7 @@ function TransferProgressBar(props: Readonly<{ progress: number }>): React.React
 function UploadRow(props: Readonly<{ state: Extract<WorkspaceUploadState, { status: 'preflighting' | 'uploading' }>; onCancel: () => void }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const totalFiles = props.state.totalFiles;
     const completedFiles = props.state.completedFiles;
     const label =
@@ -112,18 +105,18 @@ function UploadRow(props: Readonly<{ state: Extract<WorkspaceUploadState, { stat
     return (
         <View testID="repository-tree-upload-status" style={{ gap: 8 }}>
             <View style={styles.row}>
-                <Ionicons name="cloud-upload-outline" size={16} color={theme.colors.text.secondary} />
+                <Icon name="cloud-arrow-up" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.label}>{label}</Text>
-                <Pressable
+                <IconButton
                     testID="repository-tree-upload-cancel"
-                    accessibilityRole="button"
                     accessibilityLabel={t('common.cancel')}
+                    iconName="x"
+                    iconSize={16}
+                    size={28}
+                    minimumInteractiveTargetSize={minimumInteractiveTargetSize}
+                    interactiveTargetGapPx={20}
                     onPress={props.onCancel}
-                    style={styles.cancelButton}
-                    hitSlop={10}
-                >
-                    <Ionicons name="close" size={16} color={theme.colors.text.secondary} />
-                </Pressable>
+                />
             </View>
             {props.state.status === 'uploading' ? <TransferProgressBar progress={progress} /> : null}
         </View>
@@ -133,6 +126,7 @@ function UploadRow(props: Readonly<{ state: Extract<WorkspaceUploadState, { stat
 function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { status: 'downloading' }>; onCancel: () => void }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const label = t('files.transfers.downloading', {
         name: props.state.name,
         downloaded: formatByteSize(props.state.downloadedBytes),
@@ -143,18 +137,18 @@ function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { 
     return (
         <View testID="repository-tree-download-status" style={{ gap: 8 }}>
             <View style={styles.row}>
-                <Ionicons name="download-outline" size={16} color={theme.colors.text.secondary} />
+                <Icon name="download" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.label}>{label}</Text>
-                <Pressable
+                <IconButton
                     testID="repository-tree-download-cancel"
-                    accessibilityRole="button"
                     accessibilityLabel={t('common.cancel')}
+                    iconName="x"
+                    iconSize={16}
+                    size={28}
+                    minimumInteractiveTargetSize={minimumInteractiveTargetSize}
+                    interactiveTargetGapPx={20}
                     onPress={props.onCancel}
-                    style={styles.cancelButton}
-                    hitSlop={10}
-                >
-                    <Ionicons name="close" size={16} color={theme.colors.text.secondary} />
-                </Pressable>
+                />
             </View>
             <TransferProgressBar progress={progress} />
         </View>

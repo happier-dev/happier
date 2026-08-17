@@ -1,10 +1,19 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+    type PluginUiSurfacePlacementProjection,
+} from '@/sync/domains/plugins/ui/projection';
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const appShellProjectionState = vi.hoisted(() => ({
+    value: null as PluginUiProjectionModel | null,
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -32,10 +41,6 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: React.PropsWithChildren) => React.createElement('ItemGroup', props, props.children),
 }));
 
-vi.mock('@/components/ui/icons/SafeIonicons', () => ({
-    SafeIonicons: 'SafeIonicons',
-}));
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
@@ -43,47 +48,54 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     useAppShellPluginUiProjection: () => ({
-        pluginUiProjection: null,
+        pluginUiProjection: appShellProjectionState.value,
         machineId: null,
         serverId: null,
         platform: 'ios',
     }),
 }));
 
+const appSidebarBinding = normalizePluginUiDestinationBindingV1({
+    pluginId: 'happier.dev.inspector',
+    destinationId: 'app-panel',
+    rendererId: 'inspector-panel-renderer',
+    container: 'rightSidebarTab',
+    target: { kind: 'app' },
+});
+if (!appSidebarBinding) throw new Error('App panel fixture needs a normalized V2 binding');
+
 const appSidebarPlacement = {
     id: 'surfacePlacement:happier.dev.inspector:app-panel',
     pluginId: 'happier.dev.inspector',
     contributionKind: 'surfacePlacement',
     descriptorId: 'app-panel',
-    placement: 'app.rightSidebarTab',
+    binding: appSidebarBinding,
     target: { kind: 'app' },
-    renderer: { kind: 'reactNative', rendererId: 'inspectorPanel' },
-    display: { developerFallback: 'Inspector' },
+    renderer: { kind: 'reactNative', contributionId: 'inspector-panel-renderer' },
+    display: { titleKey: 'app-panel', developerFallback: 'Inspector' },
     availability: { state: 'available', reason: 'available', diagnostics: [] },
+    headerActions: [],
     order: 10,
     rightSidebar: {
-        tabId: 'inspector',
         scope: 'app',
         section: 'plugin',
-        order: 10,
         disabledPolicy: 'hide',
         collisionPolicy: 'reject',
         lifecycle: { retention: 'unmountOnDisable', unmountOnGenerationChange: true },
     },
-} as const;
+} as const satisfies PluginUiSurfacePlacementProjection;
 
-function projectionWith(...placements: readonly unknown[]): PluginUiProjectionModel {
+function projectionWith(...placements: readonly PluginUiSurfacePlacementProjection[]): PluginUiProjectionModel {
     return {
         ...EMPTY_PLUGIN_UI_PROJECTION,
-        surfacePlacementsByPlacement: {
-            'app.rightSidebarTab': placements,
-        },
-    } as unknown as PluginUiProjectionModel;
+        surfacePlacementsById: Object.freeze(Object.fromEntries(placements.map((entry) => [entry.id, entry]))),
+    };
 }
 
 afterEach(() => {
     standardCleanup();
     routerPushSpy.mockClear();
+    appShellProjectionState.value = null;
 });
 
 describe('NativeAppPluginPanelsSettingsEntry', () => {
@@ -91,10 +103,10 @@ describe('NativeAppPluginPanelsSettingsEntry', () => {
         'exposes renderable app-scoped plugin panels through native settings navigation on %s',
         async (platform) => {
             const { NativeAppPluginPanelsSettingsEntry } = await import('./NativeAppPluginPanelsSettingsEntry');
+            appShellProjectionState.value = projectionWith(appSidebarPlacement);
             const screen = await renderScreen(
                 <NativeAppPluginPanelsSettingsEntry
                     platform={platform}
-                    pluginUiProjection={projectionWith(appSidebarPlacement)}
                 />,
             );
 
@@ -109,13 +121,13 @@ describe('NativeAppPluginPanelsSettingsEntry', () => {
 
     it('does not advertise the native route when no app panel is renderable', async () => {
         const { NativeAppPluginPanelsSettingsEntry } = await import('./NativeAppPluginPanelsSettingsEntry');
+        appShellProjectionState.value = projectionWith({
+            ...appSidebarPlacement,
+            availability: { state: 'fallback', reason: 'feature_disabled', diagnostics: [] },
+        });
         const screen = await renderScreen(
             <NativeAppPluginPanelsSettingsEntry
                 platform="ios"
-                pluginUiProjection={projectionWith({
-                    ...appSidebarPlacement,
-                    availability: { state: 'fallback', reason: 'feature_disabled', diagnostics: [] },
-                })}
             />,
         );
 
@@ -124,10 +136,10 @@ describe('NativeAppPluginPanelsSettingsEntry', () => {
 
     it('leaves the established web/desktop path unchanged', async () => {
         const { NativeAppPluginPanelsSettingsEntry } = await import('./NativeAppPluginPanelsSettingsEntry');
+        appShellProjectionState.value = projectionWith(appSidebarPlacement);
         const screen = await renderScreen(
             <NativeAppPluginPanelsSettingsEntry
                 platform="web"
-                pluginUiProjection={projectionWith(appSidebarPlacement)}
             />,
         );
 

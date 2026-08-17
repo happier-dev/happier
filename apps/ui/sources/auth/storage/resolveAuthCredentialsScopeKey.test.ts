@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { resolveAuthCredentialsScopeKey } from './resolveAuthCredentialsScopeKey';
 
 describe('resolveAuthCredentialsScopeKey', () => {
+    it('scopes token-only credentials without requiring or embedding encryption material', () => {
+        const credentials = {
+            token: 'RAW_TOKEN_ONLY_VALUE_THAT_MUST_NOT_APPEAR',
+        } as const;
+
+        const scopeKey = resolveAuthCredentialsScopeKey(credentials);
+
+        expect(scopeKey).toContain('token-only');
+        expect(scopeKey).not.toContain(credentials.token);
+        expect(resolveAuthCredentialsScopeKey({ ...credentials })).toBe(scopeKey);
+        expect(resolveAuthCredentialsScopeKey({ token: `${credentials.token}_changed` })).not.toBe(scopeKey);
+    });
+
     it('does not embed raw legacy credential material', () => {
         const credentials = {
             token: 'RAW_TOKEN_VALUE_THAT_MUST_NOT_APPEAR_IN_SCOPE_KEY',

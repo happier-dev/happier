@@ -162,7 +162,7 @@ describe('machineSpawnNewSession error mapping', () => {
   it.each([
     ['no model selection', undefined],
     ['a native model selection', nativeModelSelection],
-  ])('uses the legacy-compatible spawn RPC for %s', async (_label, modelSelection) => {
+  ])('uses the versioned asynchronous spawn RPC for %s', async (_label, modelSelection) => {
     machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-native' });
 
     const { machineSpawnNewSession } = await import('./machines');
@@ -177,8 +177,58 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(result).toMatchObject({ type: 'success', sessionId: 'session-native' });
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-      method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
     }));
+  });
+
+  it.each([
+    RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    RPC_ERROR_CODES.METHOD_NOT_FOUND,
+  ])('falls back to legacy spawn only after definitive provider-safe absence: %s', async (rpcErrorCode) => {
+    machineRpcWithServerScopeMock
+      .mockRejectedValueOnce(Object.assign(new Error('RPC method absent'), { rpcErrorCode }))
+      .mockResolvedValueOnce({ type: 'success', sessionId: 'session-legacy' });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      spawnNonce: 'same-spawn-nonce',
+      serverId: 'server-b',
+    });
+
+    expect(result).toMatchObject({ type: 'success', sessionId: 'session-legacy' });
+    expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+      payload: expect.objectContaining({ spawnNonce: 'same-spawn-nonce' }),
+    }));
+    expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      payload: expect.objectContaining({ spawnNonce: 'same-spawn-nonce' }),
+    }));
+  });
+
+  it('does not replay spawn through legacy after an ambiguous provider-safe timeout', async () => {
+    machineRpcWithServerScopeMock
+      .mockRejectedValueOnce(new Error('machine RPC timed out'))
+      .mockResolvedValueOnce({ status: 'unsupported' });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    await expect(machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      spawnNonce: 'ambiguous-spawn-nonce',
+      serverId: 'server-b',
+    })).resolves.toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+    });
+
+    expect(machineRpcWithServerScopeMock.mock.calls.some(([call]) => (
+      call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION
+    ))).toBe(false);
   });
 
   it('keeps startup instructions out of ordinary spawn and admits them only through the trusted hidden-system seam', async () => {
@@ -214,7 +264,7 @@ describe('machineSpawnNewSession error mapping', () => {
 
     const spawnPayloads = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION)
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)
       .map((call) => call.payload);
     expect(spawnPayloads).toHaveLength(2);
     expect(spawnPayloads[0]).not.toHaveProperty('agentSessionStartupInstructionsV1');
@@ -242,11 +292,13 @@ describe('machineSpawnNewSession error mapping', () => {
   });
 
   it('returns a descriptive error when daemon RPC method is not available', async () => {
-    machineRpcWithServerScopeMock.mockRejectedValueOnce(
-      Object.assign(new Error('RPC method not available'), {
+    machineRpcWithServerScopeMock
+      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
         rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-      }),
-    );
+      }))
+      .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), {
+        rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+      }));
 
     const { machineSpawnNewSession } = await import('./machines');
     const result = await machineSpawnNewSession({
@@ -349,7 +401,7 @@ describe('machineSpawnNewSession error mapping', () => {
       sessionId: 'session-after-timeout',
     });
     expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
       payload: expect.objectContaining({
         spawnNonce: 'ui-session-spawn-timeout-spawn-1',
       }),
@@ -358,6 +410,38 @@ describe('machineSpawnNewSession error mapping', () => {
       method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
       payload: { spawnNonce: 'ui-session-spawn-timeout-spawn-1' },
     }));
+  });
+
+  it('returns terminal child-exit resolution and clears durable launch custody', async () => {
+    const errorMessage = 'Child process exited before session webhook (pid=8892, code=1, signal=null)';
+    machineRpcWithServerScopeMock
+      .mockResolvedValueOnce({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        errorMessage: 'Session startup timed out',
+      })
+      .mockResolvedValueOnce({
+        status: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage,
+      });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    await expect(machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      serverId: 'server-b',
+      userAttemptId: 'attempt-child-exit',
+      spawnNonce: 'nonce-child-exit',
+    })).resolves.toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+      errorMessage,
+    });
+
+    expect(readSpawnAttemptCustodyState({ serverId: 'server-b', accountId: 'account-a' }))
+      .toEqual({ status: 'missing' });
   });
 
   it('consumes the Remote predecessor accepted-pending success and resolves the sent nonce', async () => {
@@ -443,7 +527,7 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(randomUUIDMock).toHaveBeenCalledTimes(1);
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.payload.spawnNonce).toBe('ui-session-spawn-remote-predecessor-retry-1');
   });
@@ -476,7 +560,7 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(randomUUIDMock).toHaveBeenCalledTimes(1);
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]).toEqual(expect.objectContaining({
       payload: expect.objectContaining({
@@ -492,7 +576,7 @@ describe('machineSpawnNewSession error mapping', () => {
       let spawnCalls = 0;
       let resolverCalls = 0;
       machineRpcWithServerScopeMock.mockImplementation(async (call: { method?: string }) => {
-        if (call.method === RPC_METHODS.SPAWN_HAPPY_SESSION) {
+        if (call.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
           spawnCalls += 1;
           return spawnCalls === 1
             ? { type: 'success', spawnNonce: 'nonce-a', sessionIdStatus: 'pending' }
@@ -562,7 +646,7 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(randomUUIDMock).toHaveBeenCalledTimes(4);
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls.map((call) => call.payload.spawnNonce)).toEqual([
       'ui-session-spawn-derived-attempt-spawn-2',
       'ui-session-spawn-derived-attempt-spawn-4',
@@ -611,7 +695,7 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(randomUUIDMock).toHaveBeenCalledTimes(2);
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls).toEqual([
       expect.objectContaining({
         payload: expect.objectContaining({
@@ -667,7 +751,7 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(randomUUIDMock).not.toHaveBeenCalled();
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]).toEqual(expect.objectContaining({
       payload: expect.objectContaining({
@@ -730,7 +814,7 @@ describe('machineSpawnNewSession error mapping', () => {
 
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls.map((call) => call.payload.spawnNonce)).toEqual(['launch-1', 'launch-2']);
   });
 
@@ -765,7 +849,7 @@ describe('machineSpawnNewSession error mapping', () => {
 
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls).toHaveLength(1);
   });
 
@@ -807,7 +891,7 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(randomUUIDMock).not.toHaveBeenCalled();
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls).toHaveLength(1);
   });
 
@@ -935,7 +1019,7 @@ describe('machineSpawnNewSession error mapping', () => {
 
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
-      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION);
+      .filter((call) => call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
     expect(spawnCalls.map((call) => call.payload.spawnNonce)).toEqual(['nonce-a', 'nonce-b']);
   });
 
@@ -953,7 +1037,7 @@ describe('machineSpawnNewSession error mapping', () => {
     } as any);
 
     const spawnCall = machineRpcWithServerScopeMock.mock.calls.find(([call]) =>
-      call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION,
+      call?.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
     )?.[0];
     expect(spawnCall?.payload).toEqual(expect.objectContaining({
       spawnNonce: 'new-session-spawn-1',
@@ -1029,6 +1113,40 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(result.errorCode).toBe(SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT);
     expect(typeof result.errorMessage).toBe('string');
     expect(result.errorMessage.length).toBeGreaterThan(0);
+  });
+
+  it('reconciles a scoped machine RPC timeout through the submitted nonce without spawning twice', async () => {
+    machineRpcWithServerScopeMock
+      .mockRejectedValueOnce(Object.assign(new Error('scoped spawn exceeded its RPC budget'), {
+        code: 'MACHINE_RPC_TIMEOUT',
+      }))
+      .mockResolvedValueOnce({
+        status: 'success',
+        sessionId: 'session-after-scoped-timeout',
+      });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      spawnNonce: 'spawn-nonce-scoped-timeout',
+    });
+
+    expect(result).toMatchObject({
+      type: 'success',
+      sessionId: 'session-after-scoped-timeout',
+      spawnAttemptCustody: {
+        status: 'completed',
+        spawnNonce: 'spawn-nonce-scoped-timeout',
+        createdSessionId: 'session-after-scoped-timeout',
+      },
+    });
+    expect(machineRpcWithServerScopeMock.mock.calls.map(([call]) => call.method)).toEqual([
+      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
+    ]);
   });
 
   it('maps mid-spawn socket disconnects to SESSION_WEBHOOK_TIMEOUT so nonce recovery can run', async () => {
@@ -1172,6 +1290,44 @@ describe('machineSpawnNewSession error mapping', () => {
       pollIntervalMs: 0,
     })).resolves.toEqual({ status: 'success', sessionId: 'session-after-pending' });
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds a hanging resolver probe by the remaining settlement deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      machineRpcWithServerScopeMock.mockImplementation((params: Readonly<{ timeoutMs?: number }>) => (
+        new Promise((_resolve, reject) => {
+          if (typeof params.timeoutMs === 'number') {
+            setTimeout(() => reject(new Error('resolver transport timed out')), params.timeoutMs);
+          }
+        })
+      ));
+
+      const { machineResolveSpawnSessionByNonceUntilSettled } = await import('./machines');
+      const resultPromise = machineResolveSpawnSessionByNonceUntilSettled({
+        machineId: 'machine-1',
+        serverId: 'server-b',
+        spawnNonce: 'spawn-nonce-hanging-resolver',
+        timeoutMs: 10,
+        pollIntervalMs: 1_000,
+      });
+      const finiteResult = Promise.race([
+        resultPromise,
+        new Promise<{ status: 'test_timeout' }>((resolve) => {
+          setTimeout(() => resolve({ status: 'test_timeout' }), 100);
+        }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(finiteResult).resolves.toEqual({ status: 'transport_error' });
+      expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+      const probeTimeoutMs = machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.timeoutMs;
+      expect(probeTimeoutMs).toBeGreaterThan(0);
+      expect(probeTimeoutMs).toBeLessThanOrEqual(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('waits one second between spawn nonce probes by default', async () => {

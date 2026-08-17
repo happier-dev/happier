@@ -123,10 +123,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: () => [[], 0, () => {}, () => {}],
 }));
@@ -190,7 +186,7 @@ describe('AgentInput (chip ordering)', () => {
                     placeholder: 'placeholder',
                     onChangeText: () => {},
                     onSend: () => {},
-                    autocompletePrefixes: [],
+                    autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
                     onPermissionClick: () => {},
                     agentType: 'codex',
@@ -232,7 +228,7 @@ describe('AgentInput (chip ordering)', () => {
         expect(modeIndex).toBeLessThan(permissionIndex);
     }, 90_000);
 
-    it('keeps machine on the secondary wrap row after the send button and before path/resume', async () => {
+    it('keeps machine on the secondary wrap row before path/resume, with the trailing cluster read last', async () => {
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -241,7 +237,7 @@ describe('AgentInput (chip ordering)', () => {
                     placeholder: 'placeholder',
                     onChangeText: () => {},
                     onSend: () => {},
-                    autocompletePrefixes: [],
+                    autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
                     onMachineClick: () => {},
                     machineName: 'Local dev machine',
@@ -272,12 +268,18 @@ describe('AgentInput (chip ordering)', () => {
 
         const allNodes = flattenJson(tree!.toJSON() as JsonNode);
         const sendIndex = allNodes.findIndex((node) => node.props?.testID === 'new-session-composer-send');
+        const wrapRowIndex = allNodes.findIndex((node) => node.props?.testID === 'agentInput-pathResumeRow');
         const machineIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-machine-chip');
         const pathIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-path-chip');
 
-        expect(sendIndex).toBeGreaterThanOrEqual(0);
-        expect(machineIndex).toBeGreaterThan(sendIndex);
+        // Machine belongs to the wrapped second row, ahead of path and resume.
+        expect(wrapRowIndex).toBeGreaterThanOrEqual(0);
+        expect(machineIndex).toBeGreaterThan(wrapRowIndex);
         expect(pathIndex).toBeGreaterThan(machineIndex);
+        // The trailing cluster is the chip column's sibling and stands beside
+        // *both* rows, so it reads after the whole column rather than splitting
+        // it — the same order the eye takes: options first, then the action.
+        expect(sendIndex).toBeGreaterThan(pathIndex);
     }, 90_000);
 
     it('keeps recipient ahead of delivery in the primary wrap row', async () => {
@@ -289,7 +291,7 @@ describe('AgentInput (chip ordering)', () => {
                     placeholder: 'placeholder',
                     onChangeText: () => {},
                     onSend: () => {},
-                    autocompletePrefixes: [],
+                    autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
                     onPermissionClick: () => {},
                     extraActionChips: [

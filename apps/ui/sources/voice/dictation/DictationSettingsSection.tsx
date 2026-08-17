@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 
-import { Ionicons } from '@expo/vector-icons';
 import {
   VoiceRuntimePlatformSchema,
   type VoiceRuntimePlatform,
@@ -12,22 +11,31 @@ import { LANGUAGES } from '@/constants/Languages';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import { t } from '@/text';
+import {
+  readLocalConversationVoiceSettings,
+  writeLocalConversationVoiceSettings,
+  type VoiceSettings,
+} from '@/sync/domains/settings/voiceSettings';
+import { useSettings } from '@/sync/domains/state/storage';
+import { t, tLoose } from '@/text';
 import {
   getLocalSttProviderSpec,
-  localSttProviderSpecs,
+  useLocalSttProviderSpecs,
 } from '@/voice/settings/panels/localStt/providers/registry';
 import type {
   VoiceDaemonRouteDiagnosticReason,
   VoiceProviderLocalAvailability,
 } from '@/voice/settings/voiceProviderLocalAvailability';
+import { resolveVoiceProviderReadinessPresentation } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { selectVoiceSpeechProvider } from '@/voice/registry/providerSelection';
+import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 
 import {
   voiceDictationSettingsDefaults,
 } from './voiceDictationSettings';
 import { resolveVoiceDictationReadiness } from './voiceDictationReadiness';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -36,19 +44,14 @@ function resolveRuntimePlatform(): VoiceRuntimePlatform | 'unknown' {
   return parsed.success ? parsed.data : 'unknown';
 }
 
-function readinessSubtitle(status: ReturnType<typeof resolveVoiceDictationReadiness>['status']): string {
-  switch (status) {
-    case 'ready':
-      return t('settingsVoice.dictation.readiness.ready');
-    case 'needs_setup':
-      return t('settingsVoice.dictation.readiness.needsSetup');
-    case 'installing':
-      return t('settingsVoice.dictation.readiness.installing');
-    case 'incompatible':
-      return t('settingsVoice.dictation.readiness.incompatible');
-    case 'unavailable':
-      return t('settingsVoice.dictation.readiness.unavailable');
+function readinessSubtitle(readiness: ReturnType<typeof resolveVoiceDictationReadiness>): string {
+  if (readiness.status === 'ready') {
+    return t('settingsVoice.dictation.readiness.ready');
   }
+  const presentation = resolveVoiceProviderReadinessPresentation(readiness, tLoose);
+  return [presentation.reason, presentation.action]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join(' · ');
 }
 
 export function DictationSettingsSection(props: Readonly<{
@@ -56,23 +59,37 @@ export function DictationSettingsSection(props: Readonly<{
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   executionMachineId: string | null;
+  executionMachineSelectionKind?: 'resolved' | 'selected_unreachable' | 'none';
   localAvailability: VoiceProviderLocalAvailability;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  onRecoveryAction?: (action: VoiceRoleReadiness['recoveryAction']) => void;
 }>) {
   const { theme } = useUnistyles();
+  const providerSpecs = useLocalSttProviderSpecs('dictation_stt');
+  const accountSettings = useSettings();
   const dictation = props.voice.dictation ?? voiceDictationSettingsDefaults;
   const [openMenu, setOpenMenu] = React.useState<null | 'provider' | 'language'>(null);
-  const [checkedReadiness, setCheckedReadiness] = React.useState<ReturnType<
-    typeof resolveVoiceDictationReadiness
-  > | null>(null);
+  const [readinessChecked, setReadinessChecked] = React.useState(false);
+  const checkedReadiness = readinessChecked
+    ? resolveVoiceDictationReadiness({
+        registry: voiceProviderRegistry,
+        settings: { ...accountSettings, voice: props.voice },
+        platform: resolveRuntimePlatform(),
+        executionMachineId: props.executionMachineId,
+        executionMachineSelectionKind: props.executionMachineSelectionKind,
+        localAvailability: props.localAvailability,
+      })
+    : null;
   const selectedId = dictation.sttBinding === 'same_as_local'
     ? 'same_as_local'
     : dictation.stt.provider;
-  const providerSpec = dictation.sttBinding === 'explicit'
-    ? getLocalSttProviderSpec(dictation.stt.provider)
-    : null;
+  const localConversation = readLocalConversationVoiceSettings(props.voice);
+  const selectedStt = dictation.sttBinding === 'explicit'
+    ? dictation.stt
+    : localConversation.stt;
+  const providerSpec = getLocalSttProviderSpec(selectedStt.provider, 'dictation_stt');
   const setDictation = (next: typeof dictation): void => {
-    setCheckedReadiness(null);
+    setReadinessChecked(false);
     props.setVoice({ ...props.voice, dictation: next });
   };
 
@@ -104,17 +121,17 @@ export function DictationSettingsSection(props: Readonly<{
               title: t('settingsVoice.dictation.sameAsLocal'),
               subtitle: t('settingsVoice.dictation.sameAsLocalSubtitle'),
               icon: (
-                <Ionicons name="link-outline" size={22} color={theme.colors.text.secondary} />
+                <Icon name="link" size={20} color={theme.colors.text.secondary} />
               ),
             },
-            ...localSttProviderSpecs.map((spec) => ({
+            ...providerSpecs.map((spec) => ({
               id: spec.id,
               title: spec.title,
               subtitle: spec.subtitle,
               icon: (
-                <Ionicons
+                <Icon
                   name={spec.iconName as any}
-                  size={22}
+                  size={20}
                   color={theme.colors.text.secondary}
                 />
               ),
@@ -124,11 +141,23 @@ export function DictationSettingsSection(props: Readonly<{
             if (id === 'same_as_local') {
               setDictation({ ...dictation, sttBinding: 'same_as_local' });
             } else {
-              setDictation({
-                ...dictation,
-                sttBinding: 'explicit',
-                stt: { ...dictation.stt, provider: id as typeof dictation.stt.provider },
-              });
+              const voice = selectVoiceSpeechProvider(
+                props.voice,
+                voiceProviderRegistry,
+                id,
+                'dictation_stt',
+              );
+              if (voice) {
+                setReadinessChecked(false);
+                props.setVoice({
+                  ...voice,
+                  dictation: {
+                    ...dictation,
+                    sttBinding: 'explicit',
+                    stt: { ...dictation.stt, provider: id as typeof dictation.stt.provider },
+                  },
+                });
+              }
             }
             setOpenMenu(null);
           }}
@@ -157,7 +186,7 @@ export function DictationSettingsSection(props: Readonly<{
               title: t('settingsVoice.language.autoDetect'),
               subtitle: t('settingsVoice.language.autoDetectSubtitle'),
               icon: (
-                <Ionicons name="sparkles-outline" size={20} color={theme.colors.text.secondary} />
+                <Icon name="sparkle" size={20} color={theme.colors.text.secondary} />
               ),
             },
             ...LANGUAGES.flatMap((language) => typeof language.code === 'string' && language.code
@@ -166,7 +195,7 @@ export function DictationSettingsSection(props: Readonly<{
                   title: language.name,
                   subtitle: language.code,
                   icon: (
-                    <Ionicons name="language-outline" size={20} color={theme.colors.text.secondary} />
+                    <Icon name="translate" size={20} color={theme.colors.text.secondary} />
                   ),
                 }]
               : []),
@@ -179,10 +208,23 @@ export function DictationSettingsSection(props: Readonly<{
 
         {providerSpec ? (
           <providerSpec.Settings
-            cfgStt={dictation.stt}
-            setStt={(stt) => setDictation({ ...dictation, stt })}
+            cfgStt={selectedStt}
+            setStt={(stt) => {
+              if (dictation.sttBinding === 'explicit') {
+                setDictation({ ...dictation, stt });
+                return;
+              }
+              setReadinessChecked(false);
+              props.setVoice(writeLocalConversationVoiceSettings(props.voice, {
+                ...localConversation,
+                stt,
+              }));
+            }}
+            voice={props.voice}
+            setVoice={props.setVoice}
             popoverBoundaryRef={props.popoverBoundaryRef}
             daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+            showProcessingDisclosure={false}
           />
         ) : null}
       </ItemGroup>
@@ -196,23 +238,18 @@ export function DictationSettingsSection(props: Readonly<{
           title={t('settingsVoice.dictation.readiness.check')}
           subtitle={t('settingsVoice.dictation.readiness.checkSubtitle')}
           accessibilityRole="button"
-          onPress={() => {
-            setCheckedReadiness(resolveVoiceDictationReadiness({
-              registry: voiceProviderRegistry,
-              settings: { voice: props.voice },
-              platform: resolveRuntimePlatform(),
-              executionMachineId: props.executionMachineId,
-              daemon: props.localAvailability.daemon ?? null,
-              localAvailability: props.localAvailability,
-            }));
-          }}
+          onPress={() => setReadinessChecked(true)}
         />
         {checkedReadiness ? (
           <Item
             testID="settings.voice.dictation.readiness"
             mode="info"
             title={t('settingsVoice.dictation.readiness.result')}
-            subtitle={readinessSubtitle(checkedReadiness.status)}
+            subtitle={readinessSubtitle(checkedReadiness)}
+            accessibilityRole={checkedReadiness.recoveryAction === 'none' ? undefined : 'button'}
+            onPress={checkedReadiness.recoveryAction === 'none'
+              ? undefined
+              : () => props.onRecoveryAction?.(checkedReadiness.recoveryAction)}
           />
         ) : null}
       </ItemGroup>

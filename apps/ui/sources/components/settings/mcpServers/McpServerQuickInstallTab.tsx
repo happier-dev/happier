@@ -1,25 +1,20 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ImportedMcpInputResolutionV1 } from '@/sync/domains/settings/mcpServers/materializeImportedMcpServerDrafts';
 import type { McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
 import { buildQuickInstallMcpDraft, listMcpQuickInstallPresets } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
 
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { t } from '@/text';
 
 import { McpInputMappingEditor } from './McpInputMappingEditor';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstallTab(props: Readonly<{
-    machineItems: readonly DropdownMenuItem[];
-    selectedMachineId: string | null;
-    onSelectMachine: (machineId: string) => void;
-    machineMenuOpen: boolean;
-    onMachineMenuOpenChange: (open: boolean) => void;
+    canExecute: boolean;
     selectedPresetIds: readonly McpQuickInstallPresetId[];
     onTogglePresetId: (presetId: McpQuickInstallPresetId) => void;
     inputMappingsByPreset: Partial<Record<McpQuickInstallPresetId, Record<string, ImportedMcpInputResolutionV1>>>;
@@ -43,22 +38,6 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
     return (
         <>
             <ItemGroup title={t('settings.mcpServersQuickInstallTitle')} footer={t('settings.mcpServersQuickInstallSubtitle')}>
-                <DropdownMenu
-                    open={props.machineMenuOpen}
-                    onOpenChange={props.onMachineMenuOpenChange}
-                    items={props.machineItems}
-                    selectedId={props.selectedMachineId}
-                    onSelect={props.onSelectMachine}
-                    itemTrigger={{
-                        title: t('settings.mcpServersDetectedMachineTitle'),
-                        subtitle: props.selectedMachineId ?? t('settings.mcpServersNoMachineSelected'),
-                        icon: <Ionicons name="laptop-outline" size={29} color={theme.colors.accent.indigo} />,
-                    }}
-                    rowKind="item"
-                    connectToTrigger
-                    variant="default"
-                />
-
                 {presets.map((preset) => {
                     const selected = selectedPresetIdSet.has(preset.id);
                     return (
@@ -67,12 +46,12 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                             testID={`mcp.server.quickInstall.preset.${preset.id}`}
                             title={preset.title}
                             subtitle={preset.description}
-                            icon={<Ionicons name="flash-outline" size={29} color={theme.colors.state.success.foreground} />}
+                            icon={<Icon name="lightning" size={29} color={theme.colors.state.success.foreground} />}
                             selected={selected}
                             rightElement={(
-                                <Ionicons
-                                    name="checkmark-circle"
-                                    size={22}
+                                <Icon
+                                    name="check-circle"
+                                    size={20}
                                     color={theme.colors.text.primary}
                                     style={{ opacity: selected ? 1 : 0 }}
                                 />
@@ -89,7 +68,7 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                         testID="mcp.server.quickInstall.empty"
                         title={t('settings.mcpServersQuickInstallEmptyTitle')}
                         subtitle={t('settings.mcpServersQuickInstallEmptySubtitle')}
-                        icon={<Ionicons name="flash-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="lightning" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -112,7 +91,7 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                                             key={`${draft.preset.id}:${warning}`}
                                             title={draft.preset.title}
                                             subtitle={warning}
-                                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                                            icon={<Icon name="warning-circle" size={29} color={theme.colors.text.secondary} />}
                                             showChevron={false}
                                             mode="info"
                                         />
@@ -129,7 +108,7 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                 onSecondaryPress={props.onCancel}
                 secondaryTestID="mcp.server.quickInstall.cancel"
                 primaryLabel={t('settings.mcpServersQuickInstallAction')}
-                primaryDisabled={selectedDrafts.length === 0 || hasMappingIssues}
+                primaryDisabled={!props.canExecute || selectedDrafts.length === 0 || hasMappingIssues}
                 onPrimaryPress={props.onInstall}
                 primaryTestID="mcp.server.quickInstall.install"
             />

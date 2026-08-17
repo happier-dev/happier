@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -46,7 +46,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                     accessibilityRole="button"
                     accessibilityLabel={props.workspaceExperienceToggleA11yLabel}
                 >
-                    <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.text.secondary} />
+                    <Icon name="arrows-left-right" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
             {props.showWorktreesButton && props.onOpenWorktrees ? (
@@ -57,7 +57,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                     accessibilityRole="button"
                     accessibilityLabel={t('files.branchMenu.category.worktrees')}
                 >
-                    <Octicons name="git-branch" size={16} color={theme.colors.text.secondary} />
+                    <Icon name="git-branch" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
             <Pressable
@@ -67,7 +67,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                 accessibilityRole="button"
                 accessibilityLabel={t('settings.terminal')}
             >
-                <Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />
+                <Icon name="terminal" size={16} color={theme.colors.text.secondary} />
             </Pressable>
         </View>
     );

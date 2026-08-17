@@ -1,9 +1,7 @@
 import {
   VoiceProviderOperationErrorCodeSchema,
   DaemonVoiceInferenceErrorCodeSchema,
-  DaemonVoiceOpenAiCompatErrorCodeSchema,
 } from '@happier-dev/protocol';
-import { MissingSttBaseUrlError, transcribeRecordedAudioWithHttpStt } from '@/voice/input/HttpSttController';
 import { prepareDaemonVoiceInferenceSttSource } from '@/voice/input/prepareDaemonVoiceInferenceSttSource';
 import {
   parseLocalVoiceSttSettings,
@@ -14,9 +12,7 @@ import { resolveDaemonVoiceInferenceExecution } from '@/voice/runtime/daemonInfe
 import { createBundledSpeechRuntime } from '@/voice/runtime/bundledSpeech/bundledSpeechRuntime';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { readBundledSpeechSettingsDescriptorFromEntry } from '@/voice/settings/panels/bundledSpeech/descriptor';
-import { readLocalSpeechProviderEnvelope } from '@/sync/domains/settings/voiceLocalSpeechProviderSettings';
-
-export { MissingSttBaseUrlError };
+import { readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 export class MissingBundledSpeechCredentialError extends Error {
   readonly providerId: string;
@@ -31,11 +27,9 @@ export class MissingBundledSpeechCredentialError extends Error {
 const RECORDED_AUDIO_STT_FAILURE_CODES: ReadonlySet<string> = new Set([
   ...VoiceProviderOperationErrorCodeSchema.options,
   ...DaemonVoiceInferenceErrorCodeSchema.options,
-  ...DaemonVoiceOpenAiCompatErrorCodeSchema.options,
   'machine_unavailable',
   'invalid_response',
   'transfer_failed',
-  'legacy_credential_unavailable',
 ]);
 
 /**
@@ -54,6 +48,8 @@ export function resolveRecordedAudioTranscriptionFailureReason(error: unknown): 
 export type RecordedAudioTranscriptionRequest = Readonly<{
   sessionId?: string | null;
   uri: string;
+  webBlob?: Blob | null;
+  executionMachineId?: string | null;
   settings: any;
   signal?: AbortSignal | null;
 }>;
@@ -100,11 +96,15 @@ async function transcribeWithLocalNeuralRecordedAudio(params: RecordedAudioTrans
   });
   const preparedSource = await prepareDaemonVoiceInferenceSttSource({
     uri: params.uri,
+    webBlob: params.webBlob,
   });
   if (params.signal?.aborted) return null;
 
   const transcription = await new DaemonSttController().transcribeRecordedAudio({
     sessionId: params.sessionId ?? null,
+    machineTarget: params.executionMachineId
+      ? { machineId: params.executionMachineId }
+      : null,
     source: preparedSource.source,
     inputMimeType: preparedSource.inputMimeType,
     packId,
@@ -115,61 +115,53 @@ async function transcribeWithLocalNeuralRecordedAudio(params: RecordedAudioTrans
   return transcription.text.trim() || null;
 }
 
-async function transcribeWithOpenAiCompatRecordedAudio(params: RecordedAudioTranscriptionContext): Promise<string | null> {
-  return await transcribeRecordedAudioWithHttpStt({
-    uri: params.uri,
-    settings: params.settings,
-    signal: params.signal ?? undefined,
-  });
-}
-
 type RecordedAudioSttProvider = RecordedAudioTranscriptionContext['stt']['provider'];
 
 function createDefaultRecordedAudioTranscriptionControllers(): ReadonlyMap<string, RecordedAudioSttProviderController> {
-  const registry = createDefaultVoiceProviderRegistry();
-  const bundledRuntime = createBundledSpeechRuntime({ registry });
-  const entries: Array<readonly [string, RecordedAudioSttProviderController]> = [
+  return new Map<string, RecordedAudioSttProviderController>([
     ['device', { transcribe: async () => null }],
     ['local_neural', { transcribe: transcribeWithLocalNeuralRecordedAudio }],
-    ['openai_compat', { transcribe: transcribeWithOpenAiCompatRecordedAudio }],
-  ];
-  for (const providerId of bundledRuntime.sttProviderIds()) {
-    const descriptor = readBundledSpeechSettingsDescriptorFromEntry(
-      providerId,
-      registry.get(providerId),
-    );
-    if (!descriptor) continue;
-    entries.push([providerId, {
-      transcribe: async (params) => {
-        const envelope = readLocalSpeechProviderEnvelope(params.stt, providerId);
-        const providerConfig = envelope === null
-          ? descriptor.defaultConfig
-          : envelope.schemaVersion === descriptor.schemaVersion
-            ? envelope.config
-            : null;
-        try {
-          return await bundledRuntime.transcribeRecordedAudio(providerId, {
-            uri: params.uri,
-            providerConfig,
-            fallbackLanguage: resolveRecordedAudioLanguage({ explicitLanguage: null, settings: params.settings }),
-            signal: params.signal,
-          });
-        } catch (error) {
-          if ((error as { code?: unknown } | null)?.code === 'credential_unavailable') {
-            throw new MissingBundledSpeechCredentialError(providerId);
-          }
-          throw error;
-        }
-      },
-    }]);
+  ]);
+}
+
+async function transcribeWithRegisteredSpeechProvider(input: Readonly<{
+  params: RecordedAudioTranscriptionContext;
+  providerId: string;
+  registry: ReturnType<typeof createDefaultVoiceProviderRegistry>;
+  runtime: ReturnType<typeof createBundledSpeechRuntime>;
+}>): Promise<string | null> {
+  const descriptor = readBundledSpeechSettingsDescriptorFromEntry(
+    input.providerId,
+    input.registry.get(input.providerId),
+  );
+  if (!descriptor) {
+    throw Object.assign(new Error('voice_stt_provider_unavailable'), { code: 'provider_unavailable' });
   }
-  return new Map(entries);
+  const providerConfig = readVoiceProviderSettingsConfig(
+    voiceSettingsParse(input.params.settings?.voice),
+    input.providerId,
+  );
+  try {
+    return await input.runtime.transcribeRecordedAudio(input.providerId, {
+      uri: input.params.uri,
+      providerConfig,
+      fallbackLanguage: resolveRecordedAudioLanguage({ explicitLanguage: null, settings: input.params.settings }),
+      signal: input.params.signal,
+    });
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === 'credential_unavailable') {
+      throw new MissingBundledSpeechCredentialError(input.providerId);
+    }
+    throw error;
+  }
 }
 
 export function createRecordedAudioTranscriptionController(options?: Readonly<{
   controllers?: Partial<Record<RecordedAudioSttProvider, RecordedAudioSttProviderController>>;
 }>): RecordedAudioTranscriptionController {
   const controllers = new Map(createDefaultRecordedAudioTranscriptionControllers());
+  const registry = createDefaultVoiceProviderRegistry();
+  const speechRuntime = createBundledSpeechRuntime({ registry });
   for (const [providerId, controller] of Object.entries(options?.controllers ?? {})) {
     if (controller) controllers.set(providerId, controller);
   }
@@ -180,11 +172,17 @@ export function createRecordedAudioTranscriptionController(options?: Readonly<{
       const stt = parseLocalVoiceSttSettings(adapter?.stt);
       const provider = stt.provider;
       const controller = controllers.get(provider);
-      if (!controller) throw Object.assign(new Error('voice_stt_provider_unavailable'), { code: 'provider_unavailable' });
-      return await controller.transcribe({
+      const context = {
         ...params,
         adapter,
         stt,
+      };
+      if (controller) return await controller.transcribe(context);
+      return await transcribeWithRegisteredSpeechProvider({
+        params: context,
+        providerId: provider,
+        registry,
+        runtime: speechRuntime,
       });
     },
   };

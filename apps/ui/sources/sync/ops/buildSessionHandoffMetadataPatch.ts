@@ -1,29 +1,24 @@
-import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { projectSessionMetadataForAgentHandoff } from '@happier-dev/agents';
+import {
+    applyRuntimeDescriptorSessionMetadata,
+    projectCurrentAgentSessionView,
+} from '@happier-dev/agents/session/state/metadataWriters';
 import {
     buildLinkedExternalSessionMetadataV1,
     readLinkedExternalSessionV1FromMetadata,
     removeLinkedExternalSessionMetadataV1,
+    normalizeSessionHandoffWorkspaceRootPath,
     type ExternalSessionsSource,
     type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
-import { getAgentBehavior, writeAgentVendorResumeIdToMetadata, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentBehavior, type AgentId } from '@/agents/catalog/catalog';
 
 import type { Metadata } from '../domains/state/storageTypes';
 
 type MetadataRecord = Metadata;
 type SessionHandoffStorageMode = 'direct' | 'persisted';
 type SessionHandoffTransportStrategy = 'direct_peer' | 'server_routed_stream';
-
-function normalizeWorkspaceRootPath(raw: unknown): string | null {
-    const candidate = typeof raw === 'string' ? raw.trim() : '';
-    if (!candidate.startsWith('/')) return null;
-    if (candidate.includes('\0')) return null;
-    const segments = candidate.split('/').filter(Boolean);
-    if (segments.length === 0) return null;
-    if (segments.some((segment) => segment === '..')) return null;
-    return `/${segments.join('/')}`;
-}
 
 export function buildSessionHandoffMetadataPatch(input: Readonly<{
     metadata: MetadataRecord;
@@ -40,22 +35,38 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
     targetDirectSource: ExternalSessionsSource | Record<string, unknown>;
     targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): MetadataRecord {
-    const sourceWorkspaceRootPath = normalizeWorkspaceRootPath(
+    const sourceWorkspaceRootPath = normalizeSessionHandoffWorkspaceRootPath(
         (input.sourceMetadataForHandoff ?? input.metadata).path,
     );
-    const targetWorkspaceRootPath = normalizeWorkspaceRootPath(input.targetPath);
+    const targetWorkspaceRootPath = normalizeSessionHandoffWorkspaceRootPath(input.targetPath);
 
-    let next: MetadataRecord = writeAgentVendorResumeIdToMetadata({
+    // Handoff moves the SAME Agent to another machine, so its current
+    // projections stay true and are carried. The projector still seals the
+    // one-flat-vendor-key invariant: any other Agent's stale resume key or
+    // continuity proof is dropped before the target's id is written.
+    let next: MetadataRecord = projectCurrentAgentSessionView({
         ...input.metadata,
         machineId: input.targetMachineId,
         path: input.targetPath,
-        flavor: input.agentId,
-    }, input.agentId, input.targetRemoteSessionId);
+    }, {
+        agentId: input.agentId,
+        nativeResumeIdentity: {
+            v: 1,
+            vendorResumeId: input.targetRemoteSessionId,
+            continuityProof: null,
+        },
+        // The provider patch below is the authoritative descriptor writer for a
+        // handoff, so the projector leaves the slot empty rather than round-tripping
+        // the source descriptor through a second normalization.
+        agentScopedCurrentState: 'carry',
+    }) as MetadataRecord;
 
     const providerPatch = getAgentBehavior(input.agentId).sessionHandoff?.buildProviderPatch?.({
         agentId: input.agentId,
-        metadata: next,
-        sourceMetadataForHandoff: input.sourceMetadataForHandoff,
+        metadata: projectSessionMetadataForAgentHandoff(next),
+        sourceMetadataForHandoff: input.sourceMetadataForHandoff
+            ? projectSessionMetadataForAgentHandoff(input.sourceMetadataForHandoff)
+            : undefined,
         targetRemoteSessionId: input.targetRemoteSessionId,
         targetDirectSource: input.targetDirectSource,
         targetRuntimeDescriptor: input.targetRuntimeDescriptor,

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook, renderScreen, flushHookEffects } from '@/dev/testkit';
@@ -132,7 +133,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router: createRouter(),
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: vi.fn(),
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'backend', backendId: 'claude' },
@@ -233,7 +234,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: vi.fn(),
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'backend', backendId: 'claude' },
@@ -332,7 +333,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: vi.fn(),
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'backend', backendId: 'claude' },
@@ -435,7 +436,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt: 'hello',
+            promptStore: createNewSessionPromptStore('hello'),
             setSessionPrompt,
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'backend', backendId: 'claude' },
@@ -535,9 +536,9 @@ describe('useNewSessionAgentInputPresentation', () => {
             reload: vi.fn<Router['reload']>(),
             prefetch: vi.fn<Router['prefetch']>(),
         } as unknown as Router;
-        let sessionPrompt = '';
+        const promptStore = createNewSessionPromptStore('');
         const setSessionPrompt = vi.fn((next: string | ((previous: string) => string)) => {
-            sessionPrompt = typeof next === 'function' ? next(sessionPrompt) : next;
+            promptStore.setPrompt(next);
         });
 
         const renderPresentation = () => useNewSessionAgentInputPresentation({
@@ -579,7 +580,7 @@ describe('useNewSessionAgentInputPresentation', () => {
             pendingGitWorktreeSourceKindRef: { current: 'current' },
             shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
             router,
-            sessionPrompt,
+            promptStore,
             setSessionPrompt,
             handleCreateSession: vi.fn(),
             backendTarget: { kind: 'backend', backendId: 'claude' },
@@ -608,7 +609,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         });
         const firstChips = hook.getCurrent().agentInputExtraActionChips;
 
-        sessionPrompt = 'hello';
+        promptStore.setPrompt('hello');
         await hook.rerender();
 
         expect(hook.getCurrent().agentInputExtraActionChips).toBe(firstChips);
@@ -628,6 +629,6 @@ describe('useNewSessionAgentInputPresentation', () => {
         const { onPickPath } = contentNode.props as { onPickPath: (path: string) => void };
         onPickPath('/repo/file.ts');
 
-        expect(sessionPrompt).toBe('hello @file.ts ');
+        expect(promptStore.getPrompt()).toBe('hello @file.ts ');
     });
 });

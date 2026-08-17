@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -14,6 +13,7 @@ import {
 import type { BrowserPlatformV1 } from '@happier-dev/protocol';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
+import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { t } from '@/text';
 
 import { createBrowserViewDetailsSurfaceRenderer } from './browserDetailsSurfaceRenderer';
@@ -24,6 +24,7 @@ import {
     resolveBrowserTabPresentation,
 } from './browserSurfaceDetailsTabModel';
 import { createOpenBrowserTargetInWorkspace, type OpenBrowserTargetScope } from './openBrowserTargetInWorkspace';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Mobile browser surface, mounted on BOTH the session cockpit and the project cockpit. It hosts the
@@ -48,6 +49,14 @@ export function BrowserScopedWorkspace(props: Readonly<{
     launchpadRefreshStatus?: 'idle' | 'refreshing' | 'error';
     launchpadRefreshError?: string | null;
     productModels?: BrowserSurfaceProductModels | null;
+    /**
+     * The exact already-admitted plugin projection for this Browser surface.
+     * Browser target identity is presentation context only; plugin effects use
+     * this projection's currentness and execution facts.
+     */
+    pluginProjection?: PluginUiProjectionCurrentness;
+    /** Session-only action context; project Browser surfaces deliberately pass `null`. */
+    pluginBrowserActionSessionId?: string | null;
     testID?: string;
 }>): React.ReactElement {
     const pane = useAppPaneScope(props.scopeId);
@@ -65,6 +74,13 @@ export function BrowserScopedWorkspace(props: Readonly<{
             platform: props.platform,
             localServicePreviewState: props.localServicePreviewState,
             localServicePreviewServerId: props.localServicePreviewServerId,
+            machineId: props.pluginProjection?.machineId ?? null,
+            serverId: props.pluginProjection?.serverId ?? null,
+            pluginUiProjection: props.pluginProjection?.pluginUiProjection,
+            pluginUiInteractionEnabled: props.pluginProjection?.phase === 'current'
+                && props.pluginProjection?.interactionEnabled === true,
+            pluginBrowserProjection: props.pluginProjection?.pluginBrowserProjection,
+            pluginBrowserActionSessionId: props.pluginBrowserActionSessionId,
             launchpadRows: props.launchpadRows,
             launchpadRefreshStatus: props.launchpadRefreshStatus,
             launchpadRefreshError: props.launchpadRefreshError,
@@ -79,6 +95,13 @@ export function BrowserScopedWorkspace(props: Readonly<{
         props.localServicePreviewServerId,
         props.localServicePreviewState,
         props.platform,
+        props.pluginBrowserActionSessionId,
+        props.pluginProjection?.interactionEnabled,
+        props.pluginProjection?.phase,
+        props.pluginProjection?.machineId,
+        props.pluginProjection?.pluginBrowserProjection,
+        props.pluginProjection?.pluginUiProjection,
+        props.pluginProjection?.serverId,
         props.productModels,
     ]);
 
@@ -126,7 +149,7 @@ export function BrowserScopedWorkspace(props: Readonly<{
             onPress={openLaunchpad}
             hitSlop={10}
         >
-            <Octicons name="plus" size={16} color={theme.colors.text.secondary} />
+            <Icon name="plus" size={16} color={theme.colors.text.secondary} />
         </Pressable>
     ), [openLaunchpad, props.testID, theme.colors.text.secondary]);
 

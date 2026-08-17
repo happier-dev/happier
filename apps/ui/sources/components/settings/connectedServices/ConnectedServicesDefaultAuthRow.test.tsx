@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 import { AGENTS_CORE } from '@happier-dev/agents';
-import type { ConnectedServiceId, ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
+import type {
+    AccountProfile,
+    ConnectedServiceId,
+} from '@happier-dev/protocol';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,6 +61,25 @@ type SelectionListProps = Readonly<{
     };
 }>;
 
+type ConnectedServiceProfile = AccountProfile['connectedServicesV2'][number]['profiles'][number];
+
+function connectedProfile(params: Readonly<{
+    profileId: string;
+    kind: ConnectedServiceProfile['kind'];
+    providerEmail?: string | null;
+}>): ConnectedServiceProfile {
+    return {
+        profileId: params.profileId,
+        status: 'connected',
+        kind: params.kind,
+        providerEmail: params.providerEmail ?? null,
+        providerAccountId: null,
+        expiresAt: null,
+        lastUsedAt: null,
+        health: null,
+    };
+}
+
 function findSelectionListProps(tree: renderer.ReactTestRenderer): SelectionListProps {
     return tree.root.findByProps({
         testID: 'new-session.connected-services.selection-list',
@@ -104,23 +126,6 @@ async function openPickerModal(
     return (await renderScreen(<Content {...config.props} />)).tree;
 }
 
-function findPoolSuggestion(
-    tree: renderer.ReactTestRenderer,
-    agentId: string,
-    serviceId: string,
-): { accept: () => void; dismiss: () => void } {
-    const prefix = `settings-connected-services-pool-adoption-suggestion-${agentId}-${serviceId}`;
-    const acceptNode = tree.root.findAll((candidate) => candidate.props?.testID === `${prefix}-accept`)[0];
-    const dismissNode = tree.root.findAll((candidate) => candidate.props?.testID === `${prefix}-dismiss`)[0];
-    if (!acceptNode || !dismissNode) {
-        throw new Error(`Expected pool adoption suggestion for ${agentId}/${serviceId}`);
-    }
-    return {
-        accept: () => acceptNode.props.onPress(),
-        dismiss: () => dismissNode.props.onPress(),
-    };
-}
-
 function hasPoolSuggestion(
     tree: renderer.ReactTestRenderer,
     agentId: string,
@@ -147,7 +152,8 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={false}
                 accountProfileConnectedServicesV2={[{
                     serviceId: 'anthropic' as ConnectedServiceId,
-                    profiles: [{ profileId: 'work', status: 'connected', kind: 'token', providerEmail: 'work@example.com' }],
+                    profiles: [connectedProfile({ profileId: 'work', kind: 'token', providerEmail: 'work@example.com' })],
+                    groups: [],
                 }]}
                 settings={{
                     connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
@@ -192,8 +198,9 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                     {
                         serviceId: 'anthropic' as ConnectedServiceId,
                         profiles: [
-                            { profileId: 'work', status: 'connected', kind: 'token', providerEmail: 'work@example.com' },
+                            connectedProfile({ profileId: 'work', kind: 'token', providerEmail: 'work@example.com' }),
                         ],
+                        groups: [],
                     },
                 ]}
                 settings={{
@@ -285,8 +292,9 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                     {
                         serviceId: 'anthropic' as ConnectedServiceId,
                         profiles: [
-                            { profileId: 'work', status: 'connected', kind: 'token', providerEmail: 'work@example.com' },
+                            connectedProfile({ profileId: 'work', kind: 'token', providerEmail: 'work@example.com' }),
                         ],
+                        groups: [],
                     },
                 ]}
                 settings={{
@@ -322,16 +330,17 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="codex"
                 agentTitle="Codex"
-                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as any] } }}
+                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as ConnectedServiceId] } }}
                 accountGroupsEnabled={true}
                 accountProfileConnectedServicesV2={[
                     {
-                        serviceId: 'openai-codex' as any,
-                        profiles: [{ profileId: 'fresh', status: 'connected', kind: 'oauth' }],
+                        serviceId: 'openai-codex' as ConnectedServiceId,
+                        profiles: [connectedProfile({ profileId: 'fresh', kind: 'oauth' })],
                         groups: [{
                             groupId: 'primary',
                             displayName: 'Primary pool',
                             activeProfileId: 'fresh',
+                            generation: 0,
                             memberProfileIds: ['fresh'],
                         }],
                     },
@@ -371,12 +380,12 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="codex"
                 agentTitle="Codex"
-                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as any] } }}
+                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as ConnectedServiceId] } }}
                 accountGroupsEnabled={true}
                 accountProfileConnectedServicesV2={[
                     {
-                        serviceId: 'openai-codex' as any,
-                        profiles: [{ profileId: 'work', status: 'connected', kind: 'oauth' }],
+                        serviceId: 'openai-codex' as ConnectedServiceId,
+                        profiles: [connectedProfile({ profileId: 'work', kind: 'oauth' })],
                         groups: [],
                     },
                 ]}
@@ -422,15 +431,17 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                     {
                         serviceId: 'claude-subscription' as ConnectedServiceId,
                         profiles: [
-                            { profileId: 'claude-oauth', status: 'connected', kind: 'oauth', providerEmail: 'oauth@example.com' },
-                            { profileId: 'claude-setup', status: 'connected', kind: 'token', providerEmail: 'setup@example.com' },
+                            connectedProfile({ profileId: 'claude-oauth', kind: 'oauth', providerEmail: 'oauth@example.com' }),
+                            connectedProfile({ profileId: 'claude-setup', kind: 'token', providerEmail: 'setup@example.com' }),
                         ],
+                        groups: [],
                     },
                     {
                         serviceId: 'anthropic' as ConnectedServiceId,
                         profiles: [
-                            { profileId: 'api', status: 'connected', kind: 'token', providerEmail: 'api@example.com' },
+                            connectedProfile({ profileId: 'api', kind: 'token', providerEmail: 'api@example.com' }),
                         ],
+                        groups: [],
                     },
                 ]}
                 settings={{
@@ -470,117 +481,48 @@ describe('ConnectedServicesDefaultAuthRow', () => {
         });
     });
 
-    function renderProfileDefaultInReadyPool(overrides: Readonly<{
-        dismissedPoolAdoptionSuggestionKeys?: Record<string, boolean>;
-        onDismissPoolAdoptionSuggestion?: (key: string) => void;
-        setDefaultAuthSettings?: (next: ConnectedServicesDefaultAuthByAgentIdV1) => void;
-        autoSwitch?: boolean;
-        includeMember?: boolean;
-    }> = {}) {
-        const autoSwitch = overrides.autoSwitch ?? true;
-        const includeMember = overrides.includeMember ?? true;
-        return import('./ConnectedServicesDefaultAuthRow').then(({ ConnectedServicesDefaultAuthRow }) =>
-            renderScreen(
-                <ConnectedServicesDefaultAuthRow
-                    agentId="codex"
-                    agentTitle="Codex"
-                    agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as any] } }}
-                    accountGroupsEnabled={true}
-                    accountProfileConnectedServicesV2={[
-                        {
-                            serviceId: 'openai-codex' as any,
-                            profiles: [
-                                { profileId: 'work', status: 'connected', kind: 'oauth' },
-                                { profileId: 'backup', status: 'connected', kind: 'oauth' },
-                            ],
-                            groups: [{
-                                groupId: 'primary',
-                                displayName: 'Primary pool',
-                                activeProfileId: 'work',
-                                memberProfileIds: includeMember ? ['work', 'backup'] : ['backup'],
-                                autoSwitch,
-                            }],
-                        },
-                    ]}
-                    settings={{
-                        connectedServicesProfileLabelByKey: {},
-                        connectedServicesDefaultProfileByServiceId: {},
-                        connectedServicesDefaultAuthByAgentIdV1: {
-                            v: 1,
-                            bindingsByAgentId: {
-                                codex: {
-                                    v: 1,
-                                    bindingsByServiceId: {
-                                        'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
-                                    },
+    it('does not infer a pool-adoption suggestion from the current V2 group projection', async () => {
+        const { ConnectedServicesDefaultAuthRow } = await import('./ConnectedServicesDefaultAuthRow');
+        const { tree } = await renderScreen(
+            <ConnectedServicesDefaultAuthRow
+                agentId="codex"
+                agentTitle="Codex"
+                agentCore={{ connectedServices: { supportedServiceIds: ['openai-codex' as ConnectedServiceId] } }}
+                accountGroupsEnabled={true}
+                accountProfileConnectedServicesV2={[{
+                    serviceId: 'openai-codex' as ConnectedServiceId,
+                    profiles: [
+                        connectedProfile({ profileId: 'work', kind: 'oauth' }),
+                        connectedProfile({ profileId: 'backup', kind: 'oauth' }),
+                    ],
+                    groups: [{
+                        groupId: 'primary',
+                        displayName: 'Primary pool',
+                        activeProfileId: 'work',
+                        generation: 0,
+                        memberProfileIds: ['work', 'backup'],
+                    }],
+                }]}
+                settings={{
+                    connectedServicesProfileLabelByKey: {},
+                    connectedServicesDefaultProfileByServiceId: {},
+                    connectedServicesDefaultAuthByAgentIdV1: {
+                        v: 1,
+                        bindingsByAgentId: {
+                            codex: {
+                                v: 1,
+                                bindingsByServiceId: {
+                                    'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
                                 },
                             },
                         },
-                    }}
-                    setDefaultAuthSettings={overrides.setDefaultAuthSettings ?? vi.fn()}
-                    onOpenConnectedServicesSettings={vi.fn()}
-                    dismissedPoolAdoptionSuggestionKeys={overrides.dismissedPoolAdoptionSuggestionKeys}
-                    onDismissPoolAdoptionSuggestion={overrides.onDismissPoolAdoptionSuggestion}
-                />,
-            ),
-        );
-    }
-
-    it('suggests adopting a ready autoSwitch pool when the default is a lone member profile, and accepting writes the pool as the stored default', async () => {
-        const setDefaultAuthSettings = vi.fn();
-        const { tree } = await renderProfileDefaultInReadyPool({ setDefaultAuthSettings });
-
-        expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(true);
-
-        await act(async () => {
-            findPoolSuggestion(tree, 'codex', 'openai-codex').accept();
-        });
-
-        // Accepting writes the literal stored default to the pool (no silent resolution-time rewrite).
-        expect(setDefaultAuthSettings).toHaveBeenCalledWith({
-            v: 1,
-            bindingsByAgentId: {
-                codex: {
-                    v: 1,
-                    bindingsByServiceId: {
-                        'openai-codex': { source: 'connected', selection: 'group', groupId: 'primary' },
                     },
-                },
-            },
-        });
-    });
+                }}
+                setDefaultAuthSettings={vi.fn()}
+                onOpenConnectedServicesSettings={vi.fn()}
+            />,
+        );
 
-    it('dismissing the pool suggestion suppresses it and records the dismissal without changing the stored default', async () => {
-        const setDefaultAuthSettings = vi.fn();
-        const onDismissPoolAdoptionSuggestion = vi.fn();
-        const { tree } = await renderProfileDefaultInReadyPool({
-            setDefaultAuthSettings,
-            onDismissPoolAdoptionSuggestion,
-        });
-
-        await act(async () => {
-            findPoolSuggestion(tree, 'codex', 'openai-codex').dismiss();
-        });
-
-        expect(onDismissPoolAdoptionSuggestion).toHaveBeenCalledWith('codex:openai-codex:primary');
-        expect(setDefaultAuthSettings).not.toHaveBeenCalled();
-        expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(false);
-    });
-
-    it('does not show the pool suggestion when it was previously dismissed', async () => {
-        const { tree } = await renderProfileDefaultInReadyPool({
-            dismissedPoolAdoptionSuggestionKeys: { 'codex:openai-codex:primary': true },
-        });
-        expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(false);
-    });
-
-    it('does not show the pool suggestion when the pool is not autoSwitch', async () => {
-        const { tree } = await renderProfileDefaultInReadyPool({ autoSwitch: false });
-        expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(false);
-    });
-
-    it('does not show the pool suggestion when the default profile is not a member of the pool', async () => {
-        const { tree } = await renderProfileDefaultInReadyPool({ includeMember: false });
         expect(hasPoolSuggestion(tree, 'codex', 'openai-codex')).toBe(false);
     });
 });

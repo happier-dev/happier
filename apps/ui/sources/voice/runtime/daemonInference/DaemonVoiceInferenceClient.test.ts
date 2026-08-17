@@ -756,25 +756,30 @@ describe('DaemonVoiceInferenceClient', () => {
         events: [{ type: 'partial' as const, seq: payload.seq, text: 'hel', isEndpoint: false, confidence: null }],
       };
     });
+    const createStreamingSttTransport = vi.fn(async ({ compatibilityTransport }) => ({
+      carrierAdapter: createDaemonSpeechStreamCarrierAdapter({
+        routeKind: 'loopback_direct',
+        binaryCapable: true,
+      }),
+      transport: {
+        ...compatibilityTransport,
+        chunk: tunnelChunk,
+      },
+    }));
     const client = new DaemonVoiceInferenceClient({
       createRequestId: () => 'stream-request-1',
-      createStreamingSttTransport: async ({ compatibilityTransport }) => ({
-        carrierAdapter: createDaemonSpeechStreamCarrierAdapter({
-          routeKind: 'loopback_direct',
-          binaryCapable: true,
-        }),
-        transport: {
-          ...compatibilityTransport,
-          chunk: tunnelChunk,
-        },
-      }),
+      createStreamingSttTransport,
     });
 
     const sender = await client.createStreamingSttSender({
+      sessionId: 'qa-session',
       packId: 'stt-pack-1',
       language: 'en',
     });
     expect(sender.transportKind).toBe('binary_tunnel');
+    expect(createStreamingSttTransport).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'qa-session',
+    }));
 
     await sender.start();
     await expect(sender.pushChunk(new Uint8Array([112, 99, 109]))).resolves.toEqual([
@@ -1001,6 +1006,87 @@ describe('DaemonVoiceInferenceClient', () => {
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
       method: 'daemon.voiceInference.stt.transcribe',
+    }));
+  });
+
+  it('uploads the admitted Chrome WebM file through the real web source reader', async () => {
+    const { openLocalUploadSourceReader } = await vi.importActual<
+      typeof import('@/sync/runtime/files/localUploadSourceReader')
+    >('@/sync/runtime/files/localUploadSourceReader');
+    const source = {
+      kind: 'web' as const,
+      file: new File(
+        [new Uint8Array(1_080)],
+        'recording.webm',
+        { type: 'audio/webm;codecs=opus' },
+      ),
+    };
+    const recipientKeyPair = createTransferRecipientKeyPair();
+    machineRpcWithServerScopeMock.mockImplementation(async (input: any) => {
+      if (input.method === 'daemon.voiceInference.stt.upload.init') {
+        return {
+          success: true,
+          uploadId: 'upload-chrome-webm',
+          chunkSizeBytes: 64 * 1024,
+          recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+        };
+      }
+      if (input.method === 'daemon.voiceInference.stt.upload.chunk') {
+        return { success: true };
+      }
+      if (input.method === 'daemon.voiceInference.stt.upload.finalize') {
+        return {
+          success: true,
+          uploadId: 'upload-chrome-webm',
+          path: '/tmp/upload-chrome-webm.webm',
+          sizeBytes: 1_080,
+          sha256: 'abc',
+        };
+      }
+      if (input.method === 'daemon.voiceInference.stt.transcribe') {
+        return {
+          ok: true,
+          requestId: 'stt-chrome-webm',
+          text: 'open the project settings',
+          language: 'en',
+          modelPackId: 'stt-pack-qa',
+        };
+      }
+      throw new Error(`unexpected method: ${input.method}`);
+    });
+
+    const { DaemonVoiceInferenceClient } = await import('./DaemonVoiceInferenceClient');
+    const client = new DaemonVoiceInferenceClient({
+      openLocalUploadSourceReader,
+      createRequestId: () => 'stt-chrome-webm',
+    });
+    resolveVoiceHomeDaemonMachineIdMock.mockReturnValue(null);
+
+    await expect(client.transcribeRecordedAudio({
+      sessionId: 'qa-session-target',
+      machineTarget: { machineId: 'machine-ready-at-start' },
+      source,
+      inputMimeType: 'audio/webm;codecs=opus',
+      packId: 'stt-pack-qa',
+      language: 'en',
+      normalization: {
+        inputTransport: 'upload_transfer',
+        strategy: 'daemon_decode',
+        systemFfmpegAllowed: false,
+      },
+    })).resolves.toEqual({
+      text: 'open the project settings',
+      language: 'en',
+      modelPackId: 'stt-pack-qa',
+    });
+
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-ready-at-start',
+      method: 'daemon.voiceInference.stt.upload.init',
+      payload: expect.objectContaining({
+        sizeBytes: 1_080,
+        inputMimeType: 'audio/webm;codecs=opus',
+      }),
     }));
   });
 

@@ -1,6 +1,9 @@
 import {
     listDetailsWorkspaceGroupIds,
 } from './detailsWorkspaceSplitCanvas';
+import {
+    getOwnDetailsWorkspaceRecordEntry,
+} from './detailsWorkspaceTypes';
 import type {
     DetailsWorkspaceGroupView,
     PaneDetailsState,
@@ -8,7 +11,12 @@ import type {
 } from './detailsWorkspaceTypes';
 
 function getFocusedGroupId(details: PaneDetailsState): string | null {
-    if (details.focusedGroupId && details.groupsById[details.focusedGroupId]) return details.focusedGroupId;
+    if (
+        details.focusedGroupId
+        && getOwnDetailsWorkspaceRecordEntry(details.groupsById, details.focusedGroupId)
+    ) {
+        return details.focusedGroupId;
+    }
     const groupIds = listDetailsWorkspaceGroupIds(details.root);
     return groupIds[0] ?? null;
 }
@@ -18,10 +26,10 @@ function buildGroupView(
     groupId: string,
     focusedGroupId: string | null,
 ): DetailsWorkspaceGroupView | null {
-    const group = details.groupsById[groupId];
+    const group = getOwnDetailsWorkspaceRecordEntry(details.groupsById, groupId);
     if (!group) return null;
     const tabs = group.tabKeys
-        .map((tabKey) => details.tabsByKey[tabKey] ?? null)
+        .map((tabKey) => getOwnDetailsWorkspaceRecordEntry(details.tabsByKey, tabKey) ?? null)
         .filter((tab): tab is NonNullable<typeof tab> => tab != null);
     const activeTabKey = group.activeTabKey && tabs.some((tab) => tab.key === group.activeTabKey)
         ? group.activeTabKey
@@ -51,5 +59,6 @@ export function buildDetailsWorkspaceStateView(details: PaneDetailsState): PaneD
         root: details.root,
         focusedGroupId,
         maximizedGroupId: details.maximizedGroupId,
+        overlay: details.overlay,
     };
 }

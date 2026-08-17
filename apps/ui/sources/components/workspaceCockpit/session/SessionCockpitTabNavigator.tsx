@@ -10,24 +10,30 @@ import {
 } from '@react-navigation/native';
 import { Platform, StyleSheet, View, type ViewProps } from 'react-native';
 
-import { usePersistSessionLastMobileSurface } from '@/sync/domains/state/storage';
+import {
+    useActiveServerAccountScope,
+    usePersistSessionLastMobileSurface,
+} from '@/sync/domains/state/storage';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
-import {
-    resolveSessionRightSidebarTabs,
-} from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
-import {
-    resolveRightSidebarMobileProjection,
-} from '@/components/appShell/rightSidebar/rightSidebarMobileProjection';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import { PluginSurfacePaneLaunchScope } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import {
     isSessionPluginMobileSurface,
     normalizeSessionMobileSurface,
     type SessionMobileSurface,
 } from './sessionCockpitState';
+import {
+    resolveSessionCockpitMobileCatalog,
+    resolveSessionCockpitMobileNavigatorSurfaces,
+} from './sessionCockpitMobileCatalog';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { SessionCockpitSurfaceNavigationProvider } from './SessionCockpitSurfaceNavigation';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import {
     SessionCockpitSurfaceScreen,
     type SessionCockpitSurfaceScreenProps,
@@ -61,40 +67,24 @@ type SessionCockpitTabNavigatorProps = Omit<SessionCockpitSurfaceScreenProps, 's
     initialSurface: SessionMobileSurface;
 }>;
 
-function resolveAvailableSurfaces(input: Readonly<{
-    terminalTabAvailable: boolean;
-    pluginProjection: ReturnType<typeof useScopedPluginUiProjection>;
-}>): readonly SessionMobileSurface[] {
-    const pluginPlacements = input.pluginProjection.pluginUiProjection
-        ? selectPluginRightSidebarTabPlacements(input.pluginProjection.pluginUiProjection, 'session')
-        : [];
-    const projectedSurfaces = resolveRightSidebarMobileProjection({
-        scope: 'session',
-        tabs: resolveSessionRightSidebarTabs({
-            presentation: 'mobile',
-            terminalTabAvailable: input.terminalTabAvailable,
-            pluginPlacements,
-            projectionGeneration: input.pluginProjection.pluginUiProjection?.generation ?? null,
-        }),
-    })
-        .map((entry): SessionMobileSurface => (
-            entry.owner === 'plugin'
-                ? entry.tabId as SessionMobileSurface
-                : entry.surface as SessionMobileSurface
-        ));
-    const projectedSet = new Set(projectedSurfaces);
-    return Object.freeze([
-        'chat',
-        ...(projectedSet.has('browse') ? ['browse' as const] : []),
-        ...(projectedSet.has('git') ? ['git' as const] : []),
-        'tabs',
-        ...projectedSurfaces.filter((surface) => (
-            surface !== 'browse'
-            && surface !== 'git'
-            && surface !== 'terminal'
-        )),
-        ...(projectedSet.has('terminal') ? ['terminal' as const] : []),
-    ]);
+type RetainedPluginSurfaceSelection = Readonly<{
+    sessionId: string;
+    serverId: string | null;
+    accountRealmKey: string | null;
+    surface: SessionMobileSurface;
+}>;
+
+function retainedPluginSelectionMatchesRealm(
+    selection: RetainedPluginSurfaceSelection | null,
+    realm: Readonly<{
+        sessionId: string;
+        serverId: string | null;
+        accountRealmKey: string | null;
+    }>,
+): selection is RetainedPluginSurfaceSelection {
+    return selection?.sessionId === realm.sessionId
+        && selection.serverId === realm.serverId
+        && selection.accountRealmKey === realm.accountRealmKey;
 }
 
 function resolveInitialSurface(
@@ -107,56 +97,177 @@ function resolveInitialSurface(
     return initialSurface;
 }
 
+function isNavigationStateRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    return typeof value === 'object' && value !== null;
+}
+
+/**
+ * `NavigationContainer` is the sole source of truth for a native/history tab
+ * transition. Follow its selected child rather than inferring a surface from a
+ * press callback, which does not run for Android/iOS Back.
+ */
+export function resolveSessionCockpitSurfaceFromNavigationState(state: unknown): SessionMobileSurface | null {
+    let currentState: unknown = state;
+    let resolvedSurface: SessionMobileSurface | null = null;
+    while (isNavigationStateRecord(currentState)) {
+        const routes = Array.isArray(currentState.routes) ? currentState.routes : [];
+        const rawIndex = currentState.index;
+        const index = typeof rawIndex === 'number' && Number.isInteger(rawIndex)
+            ? rawIndex
+            : 0;
+        const route = routes[index];
+        if (!isNavigationStateRecord(route)) break;
+
+        const surface = normalizeSessionMobileSurface(
+            typeof route.name === 'string' ? route.name : null,
+        );
+        if (surface) {
+            resolvedSurface = surface;
+        }
+        currentState = route.state;
+    }
+    return resolvedSurface;
+}
+
 export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNavigatorProps) => {
     const terminalTabAvailable = props.terminalTabAvailable !== false;
+    const deviceType = useDeviceType();
+    const activeServerAccountScope = useActiveServerAccountScope();
+    const persistenceAccountRealmKey = activeServerAccountScope
+        ? serverAccountScopeKeySuffix(activeServerAccountScope)
+        : null;
     const sessionMachineTarget = useSessionMachineTarget(props.sessionId);
     const sessionServerId = usePreferredServerIdForSession(props.sessionId, props.routeServerId);
+    const retentionRealm = React.useMemo(() => Object.freeze({
+        sessionId: props.sessionId,
+        serverId: sessionServerId ?? null,
+        accountRealmKey: persistenceAccountRealmKey,
+    }), [persistenceAccountRealmKey, props.sessionId, sessionServerId]);
     const pluginProjection = useScopedPluginUiProjection({
         machineId: sessionMachineTarget?.machineId ?? null,
         serverId: sessionServerId,
     });
-    const surfaces = resolveAvailableSurfaces({ terminalTabAvailable, pluginProjection });
+    const runtimeAdmission = React.useMemo(() => Object.freeze({
+        platform: pluginProjection.platform,
+        formFactor: resolvePluginUiRuntimeFormFactor({ deviceType }),
+    }), [deviceType, pluginProjection.platform]);
+    const pluginPlacements = React.useMemo(() => (
+        pluginProjection.pluginUiProjection
+            ? selectPluginRightSidebarTabPlacements(pluginProjection.pluginUiProjection, 'session')
+            : []
+    ), [pluginProjection.pluginUiProjection]);
+    const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({
+        terminalTabAvailable,
+        pluginPlacements,
+        projectionGeneration: pluginProjection.pluginUiProjection?.generation ?? null,
+        runtimeAdmission,
+    }), [
+        pluginPlacements,
+        pluginProjection.pluginUiProjection?.generation,
+        runtimeAdmission,
+        terminalTabAvailable,
+    ]);
+    const projectedSurfaces = React.useMemo(() => resolveSessionCockpitMobileNavigatorSurfaces({ catalog }), [catalog]);
+    const [retainedPluginSelection, setRetainedPluginSelection] = React.useState<RetainedPluginSurfaceSelection | null>(() => (
+        isSessionPluginMobileSurface(props.initialSurface) && projectedSurfaces.includes(props.initialSurface)
+            ? Object.freeze({ ...retentionRealm, surface: props.initialSurface })
+            : null
+    ));
+    const retainedPluginSurface = retainedPluginSelectionMatchesRealm(retainedPluginSelection, retentionRealm)
+        ? retainedPluginSelection.surface
+        : null;
+    React.useEffect(() => {
+        // A null projection is still establishing, so keep the incumbent bridge
+        // behavior that waits for a current plugin screen. Once the projection
+        // has settled, retain the exact restored identity even when it no longer
+        // resolves: the existing screen owner will render its typed tombstone
+        // instead of silently replacing the user's destination with Chat.
+        if (!isSessionPluginMobileSurface(props.initialSurface) || !pluginProjection.pluginUiProjection) {
+            return;
+        }
+        setRetainedPluginSelection((current) => (
+            retainedPluginSelectionMatchesRealm(current, retentionRealm)
+                ? current
+                : Object.freeze({ ...retentionRealm, surface: props.initialSurface })
+        ));
+    }, [pluginProjection.pluginUiProjection, props.initialSurface, retentionRealm]);
+    const surfaces = React.useMemo(() => resolveSessionCockpitMobileNavigatorSurfaces({
+        catalog,
+        retainedPluginSurface,
+    }), [catalog, retainedPluginSurface]);
     const initialSurface = resolveInitialSurface(props.initialSurface, surfaces);
     const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
-    const persistSessionSurface = React.useCallback((surface: SessionMobileSurface) => {
-        persistSessionLastMobileSurface(props.sessionId, surface);
-    }, [persistSessionLastMobileSurface, props.sessionId]);
+    const lastCommittedNavigationSurfaceRef = React.useRef<Readonly<{
+        sessionId: string;
+        serverId: string | null;
+        accountRealmKey: string | null;
+        surface: SessionMobileSurface;
+    }> | null>(null);
+    const commitNavigatorSurface = React.useCallback((surface: SessionMobileSurface) => {
+        const persistenceServerId = sessionServerId ?? null;
+        const alreadyCommittedForCurrentRealm = lastCommittedNavigationSurfaceRef.current?.sessionId === props.sessionId
+            && lastCommittedNavigationSurfaceRef.current?.serverId === persistenceServerId
+            && lastCommittedNavigationSurfaceRef.current?.accountRealmKey === persistenceAccountRealmKey
+            && lastCommittedNavigationSurfaceRef.current?.surface === surface;
+        if (!surfaces.includes(surface) || alreadyCommittedForCurrentRealm) {
+            return;
+        }
+        lastCommittedNavigationSurfaceRef.current = {
+            sessionId: props.sessionId,
+            serverId: persistenceServerId,
+            accountRealmKey: persistenceAccountRealmKey,
+            surface,
+        };
+        setRetainedPluginSelection(isSessionPluginMobileSurface(surface)
+            ? Object.freeze({ ...retentionRealm, surface })
+            : null);
+        persistSessionLastMobileSurface(props.sessionId, surface, persistenceServerId);
+    }, [persistSessionLastMobileSurface, props.sessionId, retentionRealm, sessionServerId, surfaces]);
+    const handleNavigatorStateChange = React.useCallback((state: unknown) => {
+        const surface = resolveSessionCockpitSurfaceFromNavigationState(state);
+        if (!surface) return;
+        commitNavigatorSurface(surface);
+    }, [commitNavigatorSurface]);
 
     return (
         <NavigationIndependentTree>
-            <NavigationContainer linking={DISABLED_NAVIGATION_LINKING}>
-                <Tab.Navigator
-                    backBehavior="history"
-                    initialRouteName={initialSurface}
-                    screenOptions={SESSION_COCKPIT_TAB_SCREEN_OPTIONS}
-                    tabBar={(tabBarProps) => (
-                        <SessionCockpitNavigatorInitialSurfaceBridge
-                            {...tabBarProps}
-                            fallbackInitialSurface={isSessionPluginMobileSurface(props.initialSurface) ? 'chat' : initialSurface}
-                            requestedInitialSurface={props.initialSurface}
-                            sessionId={props.sessionId}
-                        />
-                    )}
-                >
-                    {surfaces.map((surface) => (
-                        <Tab.Screen key={surface} name={surface}>
-                            {({ navigation }) => (
-                                <SessionCockpitSceneActivityBoundary surface={surface}>
-                                    <SessionCockpitSurfaceNavigationProvider
-                                        value={{
-                                            switchSurface: (targetSurface) => {
-                                                navigation.navigate(targetSurface);
-                                                persistSessionSurface(targetSurface);
-                                            },
-                                        }}
-                                    >
-                                        <SessionCockpitSurfaceScreen {...props} surface={surface} />
-                                    </SessionCockpitSurfaceNavigationProvider>
-                                </SessionCockpitSceneActivityBoundary>
-                            )}
-                        </Tab.Screen>
-                    ))}
-                </Tab.Navigator>
+            <NavigationContainer
+                linking={DISABLED_NAVIGATION_LINKING}
+                onStateChange={handleNavigatorStateChange}
+            >
+                <PluginSurfacePaneLaunchScope>
+                    <Tab.Navigator
+                        backBehavior="history"
+                        initialRouteName={initialSurface}
+                        screenOptions={SESSION_COCKPIT_TAB_SCREEN_OPTIONS}
+                        tabBar={(tabBarProps) => (
+                            <SessionCockpitNavigatorInitialSurfaceBridge
+                                {...tabBarProps}
+                                fallbackInitialSurface={isSessionPluginMobileSurface(props.initialSurface) ? 'chat' : initialSurface}
+                                requestedInitialSurface={props.initialSurface}
+                            />
+                        )}
+                    >
+                        {surfaces.map((surface) => (
+                            <Tab.Screen key={surface} name={surface}>
+                                {({ navigation }) => (
+                                    <SessionCockpitSceneActivityBoundary surface={surface}>
+                                        <SessionCockpitSurfaceNavigationProvider
+                                            value={{
+                                                switchSurface: (targetSurface) => {
+                                                    navigation.navigate(targetSurface);
+                                                    commitNavigatorSurface(targetSurface);
+                                                },
+                                            }}
+                                        >
+                                            <SessionCockpitSurfaceScreen {...props} surface={surface} />
+                                        </SessionCockpitSurfaceNavigationProvider>
+                                    </SessionCockpitSceneActivityBoundary>
+                                )}
+                            </Tab.Screen>
+                        ))}
+                    </Tab.Navigator>
+                </PluginSurfacePaneLaunchScope>
             </NavigationContainer>
         </NavigationIndependentTree>
     );
@@ -180,7 +291,9 @@ const SessionCockpitSceneActivityBoundary = React.memo((props: Readonly<{
             importantForAccessibility={isWeb ? undefined : (isFocused ? 'auto' : 'no-hide-descendants')}
             pointerEvents={isFocused ? 'auto' : 'none'}
         >
-            {props.children}
+            <PluginSurfaceFocusEligibilityProvider active={isFocused}>
+                {props.children}
+            </PluginSurfaceFocusEligibilityProvider>
         </WebInertView>
     );
 });
@@ -188,14 +301,8 @@ const SessionCockpitSceneActivityBoundary = React.memo((props: Readonly<{
 const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTabBarProps & Readonly<{
     fallbackInitialSurface: SessionMobileSurface;
     requestedInitialSurface: SessionMobileSurface;
-    sessionId: string;
 }>) => {
-    const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
     const activeSurface = normalizeSessionMobileSurface(props.state.routes[props.state.index]?.name) ?? 'chat';
-
-    const persistSessionSurface = React.useCallback((surface: SessionMobileSurface) => {
-        persistSessionLastMobileSurface(props.sessionId, surface);
-    }, [persistSessionLastMobileSurface, props.sessionId]);
 
     const restoredInitialPluginSurfaceRef = React.useRef<SessionMobileSurface | null>(null);
     React.useEffect(() => {
@@ -222,10 +329,8 @@ const SessionCockpitNavigatorInitialSurfaceBridge = React.memo((props: BottomTab
 
         restoredInitialPluginSurfaceRef.current = requestedSurface;
         props.navigation.navigate(route.name);
-        persistSessionSurface(requestedSurface);
     }, [
         activeSurface,
-        persistSessionSurface,
         props.fallbackInitialSurface,
         props.navigation,
         props.requestedInitialSurface,

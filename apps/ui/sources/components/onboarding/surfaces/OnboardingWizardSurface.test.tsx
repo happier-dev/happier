@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import type { AuthCredentialLifecycleResult } from '@/auth/context/AuthContext';
+import type { AccountEncryptionFirstKeyRecoveryHandle } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 
@@ -119,7 +121,18 @@ const activeServerSubscriptionMock = vi.hoisted(() => {
     };
 });
 const listServerProfilesMock = vi.hoisted(() => vi.fn<() => ServerProfile[]>(() => []));
-const removeServerProfileUiActionMock = vi.hoisted(() => vi.fn(async (_params: unknown) => undefined));
+const removeServerProfileUiActionMock = vi.hoisted(() => vi.fn<
+    (_params: unknown) => Promise<AuthCredentialLifecycleResult>
+>(async () => ({ kind: 'completed' })));
+const presentFirstKeyCredentialLifecycleMock = vi.hoisted(() => vi.fn(async (params: {
+    run: () => Promise<AuthCredentialLifecycleResult>;
+    onCompleted?: () => void | Promise<void>;
+}) => {
+    const result = await params.run();
+    if (result.kind === 'completed') {
+        await params.onCompleted?.();
+    }
+}));
 const serverProfilesSubscriptionMock = vi.hoisted(() => {
     let generation = 0;
     const listeners = new Set<(generation: number) => void>();
@@ -466,6 +479,9 @@ vi.mock('@/modal', () => modalMock.module);
 vi.mock('@/components/serverProfiles/removeServerProfileUiAction', () => ({
     removeServerProfileUiAction: (params: unknown) => removeServerProfileUiActionMock(params),
 }));
+vi.mock('@/components/account/presentFirstKeyCredentialLifecycle', () => ({
+    presentFirstKeyCredentialLifecycle: presentFirstKeyCredentialLifecycleMock,
+}));
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
@@ -513,7 +529,10 @@ const baseAuthOptions = {
     providerKeylessTitle: '',
     anonymousSignupTitle: 'Create account',
     mtlsTitle: 'Sign in with certificate',
-    primarySignupTitle: 'Create account',
+    primaryAction: {
+        kind: 'anonymous' as const,
+        title: 'Create account',
+    },
     mtlsPrimary: false,
     keylessPrimary: false,
     autoRedirect: {
@@ -562,6 +581,8 @@ describe('OnboardingWizardSurface', () => {
         modalConfirmMock.mockReset();
         modalConfirmMock.mockImplementation(async () => true);
         removeServerProfileUiActionMock.mockReset();
+        removeServerProfileUiActionMock.mockResolvedValue({ kind: 'completed' });
+        presentFirstKeyCredentialLifecycleMock.mockClear();
         serverProfilesSubscriptionMock.reset();
         relayAccessWizardMockState.emitSelectedProviderFromEffect = false;
         relayAccessWizardMockState.effectSelectionProviderId = 'lan';
@@ -1716,7 +1737,10 @@ describe('OnboardingWizardSurface', () => {
                     showProviderSignup: true,
                     providerId: 'github',
                     providerSignupTitle: 'Continue with GitHub',
-                    primarySignupTitle: 'Continue with GitHub',
+                    primaryAction: {
+                        kind: 'provider-keyed',
+                        title: 'Continue with GitHub',
+                    },
                 },
                 onCreateAccount: vi.fn(),
                 onCreateAccountViaProvider,
@@ -1748,7 +1772,10 @@ describe('OnboardingWizardSurface', () => {
                     showAnonymousSignup: false,
                     showMtlsLogin: true,
                     mtlsPrimary: true,
-                    primarySignupTitle: 'Sign in with certificate',
+                    primaryAction: {
+                        kind: 'mtls',
+                        title: 'Sign in with certificate',
+                    },
                 },
                 onCreateAccount: vi.fn(),
                 onCreateAccountViaProvider: vi.fn(),
@@ -1908,7 +1935,7 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.login');
     });
 
-    it('returns from secret key login back to restore and then back to welcome when restore is opened from welcome', async () => {
+    it('opens secret key login without waiting for a redundant active-server switch, then returns to restore and welcome', async () => {
         activeServerSnapshotMock.serverUrl = '';
         getResetToDefaultServerIdMock.mockReturnValue('');
         listServerProfilesMock.mockReturnValue([
@@ -1922,6 +1949,12 @@ describe('OnboardingWizardSurface', () => {
                 source: 'manual',
             },
         ]);
+        upsertActivateAndSwitchServerMock
+            .mockResolvedValueOnce(true)
+            .mockImplementationOnce(async () => {
+                await new Promise<void>((resolve) => setTimeout(resolve, 50));
+                return true;
+            });
 
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
@@ -1962,11 +1995,9 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const restoreStep = screen.findByType('RestoreIndexEmbedded' as never) as unknown as ReactTestInstance;
-        await act(async () => {
-            (restoreStep.props as any).onOpenSecretKeyLogin?.();
+        act(() => {
+            void (restoreStep.props as any).onOpenSecretKeyLogin?.();
         });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
         expect(screen.findAllByType('SecretKeyLoginEmbedded' as never)).toHaveLength(1);
 
         const backFromSecretKey = screen.findByTestId('onboarding-wizard-back')!;
@@ -1986,6 +2017,57 @@ describe('OnboardingWizardSurface', () => {
 
         expect(findAllInCurrentWizardBodyByType(screen, 'RestoreIndexEmbedded' as never)).toHaveLength(0);
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
+    });
+
+    it('opens lost access without waiting for a redundant active-server switch', async () => {
+        activeServerSnapshotMock.serverUrl = '';
+        getResetToDefaultServerIdMock.mockReturnValue('');
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: 'relay-b',
+                name: 'Relay B',
+                serverUrl: 'https://relay-b.example.test',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'manual',
+            },
+        ]);
+        upsertActivateAndSwitchServerMock
+            .mockResolvedValueOnce(true)
+            .mockImplementationOnce(async () => {
+                await new Promise<void>((resolve) => setTimeout(resolve, 50));
+                return true;
+            });
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        const relayRow = screen.findByTestId('onboarding-wizard-relay:profile:relay-b')!;
+        await act(async () => {
+            await relayRow.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+
+        expect(getOnboardingStepId(screen)).toBe('auth');
+        const lostAccess = screen.findByTestId('onboarding-wizard-lost-access')!;
+        act(() => {
+            void lostAccess.props.onPress?.();
+        });
+
+        expect(getOnboardingStepId(screen)).toBe('auth_lost_access');
     });
 
     it('only advances to relay URL entry after pressing Continue when selecting the custom relay option', async () => {
@@ -2233,6 +2315,42 @@ describe('OnboardingWizardSurface', () => {
             source: 'url',
             scope: 'device',
         });
+    });
+
+    it('continues from the default active saved relay without reactivating it', async () => {
+        const activeRelayUrl = 'http://happier-repo-dev-a1cc5e0671.localhost:53288';
+        setPreAuthMatrixPlatform('web');
+        activeServerSnapshotMock.serverUrl = activeRelayUrl;
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: 'active-local-relay',
+                name: 'happier-repo-dev-a1cc5e0671',
+                serverUrl: activeRelayUrl,
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'manual',
+            },
+        ]);
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            <OnboardingWizardSurface
+                layout="portrait"
+                isDesktopShell={false}
+                authEntryOptions={baseAuthOptions}
+                initialStepId="relay_select"
+                onCreateAccount={vi.fn()}
+                onCreateAccountViaProvider={vi.fn()}
+                onLoginWithKeylessProvider={vi.fn()}
+                onLoginWithMtls={vi.fn()}
+            />,
+        );
+
+        await pressOnboarding(screen, 'onboarding-wizard-primary');
+
+        expect(getOnboardingStepId(screen)).toBe('auth');
+        expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -3455,6 +3573,55 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(true);
     });
 
+    it('keeps the selected saved relay when marked custody blocks profile removal', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay-a.example.test';
+        listServerProfilesMock.mockReturnValue([
+            {
+                id: 'relay-a',
+                name: 'Relay A',
+                serverUrl: 'https://relay-a.example.test',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+                source: 'manual',
+            },
+        ]);
+        removeServerProfileUiActionMock.mockResolvedValueOnce({
+            kind: 'finish_encryption_setup',
+            recovery: {} as AccountEncryptionFirstKeyRecoveryHandle,
+        });
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+            }),
+        );
+
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const relayRow = screen.findByProps({ testID: 'onboarding-wizard-relay:profile:relay-a' } as never);
+        await act(async () => {
+            const removeAction = relayRow?.props.menuActions?.find((action: any) => action.id === 'remove');
+            await removeAction?.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(presentFirstKeyCredentialLifecycleMock).toHaveBeenCalledTimes(1);
+        const relayRowAfter = screen.findByProps({
+            testID: 'onboarding-wizard-relay:profile:relay-a',
+        } as never);
+        expect(relayRowAfter?.props.selected).toBe(true);
+        expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(false);
+    });
+
     it('removes a saved relay even when modal confirm is unavailable', async () => {
         modalConfirmMock.mockImplementation(async () => false);
         activeServerSnapshotMock.serverUrl = 'https://relay-a.example.test';
@@ -3486,6 +3653,7 @@ describe('OnboardingWizardSurface', () => {
                 profilesState.splice(index, 1);
                 serverProfilesSubscriptionMock.bump();
             }
+            return { kind: 'completed' };
         });
 
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
@@ -4162,7 +4330,9 @@ describe('OnboardingWizardSurface', () => {
 
         const cloudChoice = screen.root.findAll((node) => {
             const props = node.props as Record<string, unknown>;
-            return props.testID === 'onboarding-wizard-relay:cloud' && props.icon === 'cloud-outline';
+            return props.testID === 'onboarding-wizard-relay:cloud'
+                && typeof props.badge === 'string'
+                && props.secondaryAction != null;
         })[0] as unknown as ReactTestInstance | undefined;
 
         expect(cloudChoice?.props.badge).toBe('common.unreachable');
@@ -4247,6 +4417,7 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const primaryButton = screen.findByTestId('onboarding-wizard-primary')!;
+        expect(primaryButton.props.disabled).toBe(false);
 
         await act(async () => {
             await primaryButton.props.onPress?.();

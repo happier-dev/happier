@@ -20,6 +20,8 @@ import type {
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 
+import type { StageFrame } from './stage/stageFrames';
+
 const authState = vi.hoisted(() => ({
     isAuthenticated: false,
     credentials: null as null | { token: string; secret: string },
@@ -40,6 +42,16 @@ const demoWorldState = vi.hoisted(() => ({
 
 const stageSurfaceModuleState = vi.hoisted(() => ({
     voiceLoads: 0,
+    preloadedSurfaceIds: [] as string[][],
+}));
+
+const windowDimensionsState = vi.hoisted(() => ({
+    width: 1280,
+    height: 820,
+}));
+
+const platformState = vi.hoisted(() => ({
+    os: 'web' as 'android' | 'ios' | 'web',
 }));
 
 const setupControllerState = vi.hoisted(() => ({
@@ -79,7 +91,17 @@ const setPendingSetupIntentMock = vi.hoisted(() => vi.fn<(value: PendingSetupInt
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
-        useWindowDimensions: () => ({ width: 1280, height: 820, scale: 2, fontScale: 1 }),
+        Platform: {
+            get OS() {
+                return platformState.os;
+            },
+        },
+        useWindowDimensions: () => ({
+            width: windowDimensionsState.width,
+            height: windowDimensionsState.height,
+            scale: 2,
+            fontScale: 1,
+        }),
     });
 });
 
@@ -143,6 +165,7 @@ vi.mock('react-native-reanimated', () => ({
         out: (value: unknown) => value,
     },
     useAnimatedStyle: (factory: () => unknown) => factory(),
+    useAnimatedProps: (factory: () => unknown) => factory(),
     useSharedValue: (value: unknown) => ({ value }),
     cancelAnimation: vi.fn(),
     withDelay: (_delayMs: number, value: unknown) => value,
@@ -205,6 +228,18 @@ vi.mock('./stage/DemoStage', () => ({
     ),
 }));
 
+// Chunk loading is the real boundary here: the surface registry stays real (the
+// frame table reads its device support), only the module import is recorded.
+vi.mock('./stage/stageSurfaces', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./stage/stageSurfaces')>();
+    return {
+        ...actual,
+        preloadStageSurfaces: vi.fn(async (surfaceIds: readonly string[]) => {
+            stageSurfaceModuleState.preloadedSurfaceIds.push([...surfaceIds]);
+        }),
+    };
+});
+
 vi.mock('./stage/surfaces/JourneyVoiceStageSurface', async () => {
     stageSurfaceModuleState.voiceLoads += 1;
     const ReactModule = await import('react');
@@ -260,7 +295,7 @@ function createWizardSurfaceProps(): OnboardingWizardSurfaceProps {
             providerKeylessTitle: '',
             anonymousSignupTitle: '',
             mtlsTitle: '',
-            primarySignupTitle: '',
+            primaryAction: null,
             mtlsPrimary: false,
             keylessPrimary: false,
             autoRedirect: {
@@ -284,6 +319,29 @@ async function flushJourneyEffects(): Promise<void> {
     await flushHookEffects({ cycles: 8, turns: 4, frames: 1 });
 }
 
+type DemoStageMountProps = Readonly<{
+    frames: readonly StageFrame[];
+    activeFrameId: string;
+    upcomingFrameIds?: readonly string[];
+}>;
+
+function readMountedDemoStages(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+): readonly DemoStageMountProps[] {
+    return screen.findAllByType('DemoStage' as never).map((node) => node.props as DemoStageMountProps);
+}
+
+function isRendererElementWithTestId(
+    element: React.ReactElement<unknown>,
+    testID: string,
+): element is React.ReactElement<Readonly<{ testID: string }>> {
+    const props = element.props;
+    return typeof props === 'object'
+        && props !== null
+        && 'testID' in props
+        && props.testID === testID;
+}
+
 describe('OnboardingJourneyHost', () => {
     beforeEach(() => {
         authState.isAuthenticated = false;
@@ -296,6 +354,10 @@ describe('OnboardingJourneyHost', () => {
         demoWorldState.deferNextSeed = false;
         demoWorldState.resolveSeed = null;
         stageSurfaceModuleState.voiceLoads = 0;
+        stageSurfaceModuleState.preloadedSurfaceIds = [];
+        windowDimensionsState.width = 1280;
+        windowDimensionsState.height = 820;
+        platformState.os = 'web';
         setupControllerState.calls = 0;
         setupControllerState.lastProps = null;
         setupControllerState.current.stepId = 'setup_this_computer';
@@ -339,6 +401,97 @@ describe('OnboardingJourneyHost', () => {
         const { ONBOARDING_JOURNEY_SPLIT_ORIENTATION } = await import('./OnboardingJourneyHost');
 
         expect(ONBOARDING_JOURNEY_SPLIT_ORIENTATION).toBe('narration-right');
+    });
+
+    it('provides a landmarked bypass that focuses journey content without taking the product setup skip', async () => {
+        demoWorldState.bypassWorldMutation = true;
+        const focusContent = vi.fn();
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+        const screen = await renderScreen(
+            <OnboardingJourneyHost
+                surface="web"
+                isDesktopShell
+                initialBeatId="A2"
+                preAuthController={createPreAuthController()}
+                wizardSurfaceProps={createWizardSurfaceProps()}
+                testID="journey-host"
+            />,
+            {
+                createNodeMock: (element) => (
+                    isRendererElementWithTestId(element, 'journey-host-main-content')
+                        ? { focus: focusContent }
+                        : {}
+                ),
+            },
+        );
+        await flushJourneyEffects();
+
+        const bypass = screen.findByTestId('journey-host-skip-to-content');
+        const navigation = screen.findByTestId('journey-host-navigation-landmark');
+        const main = screen.findByTestId('journey-host-main-content');
+
+        expect(navigation?.props.role).toBe('navigation');
+        expect(main?.props).toMatchObject({ role: 'main', tabIndex: -1 });
+        expect(bypass?.props).toMatchObject({
+            accessibilityRole: 'link',
+            role: 'link',
+        });
+        expect(screen.findByTestId('journey-host-desktop-current-beat:A2')).not.toBeNull();
+
+        await screen.pressByTestIdAsync('journey-host-skip-to-content');
+
+        expect(focusContent).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('journey-host-desktop-current-beat:A2')).not.toBeNull();
+        expect(setupControllerState.calls).toBe(0);
+    });
+
+    it('shows the relay retention disclosure in the auth beat footer', async () => {
+        demoWorldState.bypassWorldMutation = true;
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+        const screen = await renderScreen(
+            <OnboardingJourneyHost
+                surface="web"
+                isDesktopShell
+                initialBeatId="S2"
+                retentionSummary="This relay cleans up subagent transcripts after 7 days."
+                preAuthController={createPreAuthController()}
+                wizardSurfaceProps={createWizardSurfaceProps()}
+                testID="journey-host"
+            />,
+        );
+        await flushJourneyEffects();
+
+        expect(screen.findByTestId('journey-host-retention-disclosure')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(
+            'This relay cleans up subagent transcripts after 7 days.',
+        );
+    });
+
+    it.each([
+        ['ios', 44],
+        ['android', 48],
+    ] as const)('uses the canonical %s native bypass target size of %i', async (platform, minimumTargetSize) => {
+        demoWorldState.bypassWorldMutation = true;
+        platformState.os = platform;
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+        const screen = await renderScreen(
+            <OnboardingJourneyHost
+                surface="native"
+                isDesktopShell={false}
+                initialBeatId="A2"
+                preAuthController={createPreAuthController()}
+                wizardSurfaceProps={createWizardSurfaceProps()}
+                testID="journey-host"
+            />,
+        );
+        await flushJourneyEffects();
+
+        const bypass = screen.findByTestId('journey-host-skip-to-content');
+
+        expect(bypass?.props.accessibilityRole).toBe('button');
+        expect(bypass?.props.style).toEqual(expect.arrayContaining([
+            expect.objectContaining({ minHeight: minimumTargetSize }),
+        ]));
     });
 
     it('does not load dream stage surfaces for the planet-only opening beat', async () => {
@@ -801,6 +954,46 @@ describe('OnboardingJourneyHost', () => {
         expect(screen.getTextContent()).toContain('Restore controller body');
     });
 
+    it('advances the journey after the S1 Continue action moves a saved relay controller to auth', async () => {
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+
+        function SavedRelayControllerHarness(): React.ReactElement {
+            const [stepId, setStepId] = React.useState<'relay_select' | 'auth'>('relay_select');
+            const isRelaySelection = stepId === 'relay_select';
+            return (
+                <OnboardingJourneyHost
+                    surface="desktop"
+                    isDesktopShell
+                    initialBeatId="S1"
+                    preAuthController={createPreAuthController({
+                        stepId,
+                        currentStepIndex: isRelaySelection ? 0 : 1,
+                        primaryLabel: isRelaySelection ? 'Continue' : 'Sign in',
+                        body: isRelaySelection
+                            ? <Text testID="saved-relay-body">Saved relay selection</Text>
+                            : <Text testID="auth-body">Auth</Text>,
+                        onPrimary: async () => {
+                            setStepId('auth');
+                        },
+                    })}
+                    wizardSurfaceProps={createWizardSurfaceProps()}
+                    testID="journey-host"
+                />
+            );
+        }
+
+        const screen = await renderScreen(<SavedRelayControllerHarness />);
+        await flushJourneyEffects();
+
+        expect(screen.findByTestId('journey-host-desktop-current-beat:S1')).not.toBeNull();
+        await screen.pressByTestIdAsync('journey-host-desktop-config-primary');
+        await flushJourneyEffects();
+
+        expect(screen.findByTestId('journey-host-desktop-current-beat:S1')).toBeNull();
+        expect(screen.findByTestId('journey-host-desktop-current-beat:S2')).not.toBeNull();
+        expect(screen.findByTestId('auth-body')).not.toBeNull();
+    });
+
     it('drives S1 to the relay selection controller step without a debug step parameter', async () => {
         const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
         const goToStep = vi.fn();
@@ -967,6 +1160,102 @@ describe('OnboardingJourneyHost', () => {
         });
         expect(onExit).toHaveBeenCalledTimes(1);
     });
+
+    it('warms the surfaces the journey reaches next while a planet-hero beat mounts no stage', async () => {
+        demoWorldState.bypassWorldMutation = true;
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+
+        const screen = await renderScreen(
+            <OnboardingJourneyHost
+                surface="desktop"
+                isDesktopShell
+                initialBeatId="A1"
+                preAuthController={createPreAuthController()}
+                wizardSurfaceProps={createWizardSurfaceProps()}
+                testID="journey-host"
+            />,
+        );
+        await flushJourneyEffects();
+
+        // A1 shows the planet only, so no stage exists to warm anything while the
+        // user reads the opening slide, and stepping to A2 paid a cold chunk fetch.
+        expect(readMountedDemoStages(screen)).toHaveLength(0);
+        expect(stageSurfaceModuleState.preloadedSurfaceIds).toEqual([['sessions-list', 'session-view']]);
+
+        await screen.unmount();
+        await flushJourneyEffects();
+    });
+
+    it('renders the phone canvas and hands the journey-ordered next frames to the stage in the story cut', async () => {
+        demoWorldState.bypassWorldMutation = true;
+        windowDimensionsState.width = 390;
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+
+        const screen = await renderScreen(
+            <OnboardingJourneyHost
+                surface="web"
+                isDesktopShell={false}
+                initialBeatId="A2"
+                preAuthController={createPreAuthController()}
+                wizardSurfaceProps={createWizardSurfaceProps()}
+                testID="journey-host"
+            />,
+        );
+        await flushJourneyEffects();
+
+        const stages = readMountedDemoStages(screen);
+        expect(stages).toHaveLength(1);
+        const stage = stages[0];
+        expect(stage?.activeFrameId).toBe('sessions-list.hero');
+        // A phone-width host cannot show the 1280x800 window, so the frame plays
+        // on the phone canvas.
+        expect(stage?.frames.find((frame) => frame.id === 'sessions-list.hero')?.device).toBe('phone');
+        // Warming follows the JOURNEY's order: the story cut skips A3/A5, so the
+        // frames after A2 are A4's and A6's — not the frame table's neighbours.
+        expect(stage?.upcomingFrameIds).toEqual(['session-view.phone', 'session-view.spotlight']);
+
+        await screen.unmount();
+        await flushJourneyEffects();
+    });
+
+    it('keeps the user on their beat when a mid-journey width change switches the cut', async () => {
+        demoWorldState.bypassWorldMutation = true;
+        const { OnboardingJourneyHost } = await import('./OnboardingJourneyHost');
+        const journey = (): React.ReactElement => (
+            <OnboardingJourneyHost
+                surface="web"
+                isDesktopShell
+                initialBeatId="A5"
+                preAuthController={createPreAuthController()}
+                wizardSurfaceProps={createWizardSurfaceProps()}
+                testID="journey-host"
+            />
+        );
+
+        const screen = await renderScreen(journey());
+        await flushJourneyEffects();
+        // The split layout is the journey's other stage site: it warms from the
+        // same beat order (A5 -> A6, A7 in the wide cut).
+        expect(readMountedDemoStages(screen)).toEqual([expect.objectContaining({
+            activeFrameId: 'subagents.hero',
+            upcomingFrameIds: ['session-view.spotlight', 'sessions-list.spotlight'],
+        })]);
+
+        // Resizing the browser below the mobile breakpoint switches the journey to
+        // the curated story cut, which does not play A5 at all.
+        windowDimensionsState.width = 390;
+        await screen.update(journey());
+        await flushJourneyEffects();
+
+        expect(screen.findAllByTestId('journey-host-mobile-page')).toHaveLength(12);
+        // A5 has no phone cut, so the journey lands on the nearest beat that cut
+        // kept (A4) instead of throwing the user back to the opening slide.
+        expect(readMountedDemoStages(screen).map((stage) => stage.activeFrameId)).toEqual(['session-view.phone']);
+
+        await screen.unmount();
+        await flushJourneyEffects();
+    });
+
 });
 
 describe('resolveJourneyLayoutMode', () => {
@@ -985,6 +1274,35 @@ describe('resolveJourneyLayoutMode', () => {
         expect(resolveJourneyLayoutMode({ surface: 'desktop', windowWidth: 1440 })).toBe('split');
         // Native always uses the story presentation regardless of width.
         expect(resolveJourneyLayoutMode({ surface: 'native', windowWidth: 1440 })).toBe('story');
+    });
+
+    it('feeds beat curation and the stage canvas from that one decision, so a narrow browser runs the phone cut', async () => {
+        const {
+            resolveJourneyCurationSurface,
+            resolveJourneyLayoutMode,
+            resolveJourneyStageHostDevice,
+        } = await import('./OnboardingJourneyHost');
+        const { JOURNEY_STORY_SURFACE, getJourneyBeatsForSurface } = await import('./state/journeyBeats');
+
+        // A 390px browser window is a phone: the presentation owner already routes
+        // it to the story pager, so curation must run the same curated cut instead
+        // of the wide 19-beat script (which drags in the seven beats curation hides
+        // to avoid cramped phone frames), and the stage must use the phone canvas.
+        const narrowWebLayoutMode = resolveJourneyLayoutMode({ surface: 'web', windowWidth: 390 });
+        expect(narrowWebLayoutMode).toBe('story');
+        expect(resolveJourneyCurationSurface({ surface: 'web', layoutMode: narrowWebLayoutMode })).toBe(JOURNEY_STORY_SURFACE);
+        expect(resolveJourneyStageHostDevice(narrowWebLayoutMode)).toBe('phone');
+
+        const narrowWebBeatIds = getJourneyBeatsForSurface(
+            resolveJourneyCurationSurface({ surface: 'web', layoutMode: narrowWebLayoutMode }),
+        ).map((beat) => beat.id);
+        expect(narrowWebBeatIds).toEqual(['A1', 'A2', 'A4', 'A6', 'A7', 'A12', 'A14', 'S1', 'S2', 'S3', 'S4', 'S5']);
+
+        // The wide cut keeps the platform surface and the desktop canvas.
+        expect(resolveJourneyCurationSurface({ surface: 'web', layoutMode: 'split' })).toBe('web');
+        expect(resolveJourneyCurationSurface({ surface: 'desktop', layoutMode: 'split' })).toBe('desktop');
+        expect(resolveJourneyStageHostDevice('split')).toBe('desktop');
+        expect(resolveJourneyCurationSurface({ surface: 'native', layoutMode: 'story' })).toBe(JOURNEY_STORY_SURFACE);
     });
 });
 

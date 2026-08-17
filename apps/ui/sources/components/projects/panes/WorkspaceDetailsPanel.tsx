@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -12,6 +11,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
+import { PluginDetailsPaneOverlay } from '@/components/appShell/panes/details/surfaces/PluginDetailsPaneOverlay';
 import {
     BrowserSurfaceOpenButton,
     createBrowserLaunchpadDetailsTab,
@@ -25,6 +25,7 @@ import {
 } from '@/components/appShell/panes/details/surfaces';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { usePaneFocusMode } from '@/components/appShell/panes/focusMode/usePaneFocusMode';
+import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAllMachines, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
@@ -41,11 +42,12 @@ import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { openProjectTerminalDetailsTab } from '@/components/projects/detail/openProjectTerminalDetailsTab';
-import { PluginSurfacePlacementStack } from '@/components/plugins/surfaces';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
+import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { createWorkspaceDetailsSurfaceRenderers } from './details/surfaces/workspaceDetailsSurfaceRegistry';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
     iconButtonStyle: Readonly<Record<string, unknown>>;
@@ -70,7 +72,6 @@ export type WorkspaceDetailsPanelProps = Readonly<{
     pluginUiProjection?: PluginUiProjectionModel | null;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     localServiceLauncherState?: LocalServiceLauncherState | null;
-    pluginSurfacePlacementScope?: 'workspace' | 'project';
     platform?: LocalServicePreviewPlatform;
     nowMs?: () => number;
     renderHeaderActionsPrefix?: (params: WorkspaceDetailsPanelHeaderActionRenderParams) => React.ReactNode;
@@ -88,6 +89,22 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
     const displayPath = props.displayPathOverride ?? props.workspaceRef.rootPath;
     const paneFocusMode = usePaneFocusMode(props.scopeId);
     const allMachines = useAllMachines();
+    // The Project Details adapter owns the exact current scope facts for its
+    // generic details surfaces. An optional explicit projection remains a
+    // test/embedding override, while interaction/currentness comes from the
+    // canonical scoped projection owner rather than a guessed `true` bit.
+    const scopedPluginProjection = useScopedPluginUiProjection({
+        machineId: props.workspaceRef.machineId,
+        serverId: props.workspaceRef.serverId,
+    });
+    const pluginUiProjection = props.pluginUiProjection !== undefined
+        ? props.pluginUiProjection
+        : scopedPluginProjection.pluginUiProjection;
+    const pluginBrowserProjection = props.pluginBrowserProjection !== undefined
+        ? props.pluginBrowserProjection
+        : scopedPluginProjection.pluginBrowserProjection;
+    const pluginInteractionEnabled = scopedPluginProjection.phase === 'current'
+        && scopedPluginProjection.interactionEnabled === true;
 
     const workspaceScope = React.useMemo((): WorkspaceScopeBase => ({
         serverId: props.workspaceRef.serverId,
@@ -129,16 +146,17 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         platform: props.platform,
         launcherState: localServiceLauncherState,
         localServicePreviewState,
-        pluginBrowserProjection: props.pluginBrowserProjection,
+        pluginBrowserProjection,
         nowMs: props.nowMs,
     }).feed;
-    const pluginSurfacePlacementScope = props.pluginSurfacePlacementScope ?? 'workspace';
-    const pluginSurfacePlacement = `${pluginSurfacePlacementScope}.details`;
-    const pluginMainSurfacePlacement = `${pluginSurfacePlacementScope}.main`;
     // Resolve through the canonical preview-platform owner so the desktop host resolves to `desktop`
     // (finding #13 / Phase 5.5) instead of collapsing to `web`, and so this panel cannot drift from
     // the session-details panel's resolution.
     const pluginSurfacePlatform = resolveLocalServicePreviewPlatform(props.platform);
+    const pluginSurfaceFormFactor = React.useMemo(
+        () => resolvePluginUiRuntimeFormFactor({ deviceType }),
+        [deviceType],
+    );
 
     const displayName = React.useMemo(() => resolveWorkspaceRefDisplayName(props.workspaceRef), [props.workspaceRef]);
 
@@ -180,26 +198,6 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                 <Item title={t('projects.detail.fields.path')} detail={displayPath} mode="info" copy={displayPath} />
             </ItemGroup>
             {props.renderEmptyStateSupplementaryContent ? props.renderEmptyStateSupplementaryContent() : null}
-            <PluginSurfacePlacementStack
-                placement={pluginMainSurfacePlacement}
-                pluginUiProjection={props.pluginUiProjection}
-                localServicePreviewState={localServicePreviewState}
-                machineId={props.workspaceRef.machineId}
-                serverId={props.workspaceRef.serverId}
-                platform={pluginSurfacePlatform}
-                targetKind={pluginSurfacePlacementScope}
-                testID={`${pluginSurfacePlacementScope}-main-plugin-surface-placements`}
-            />
-            <PluginSurfacePlacementStack
-                placement={pluginSurfacePlacement}
-                pluginUiProjection={props.pluginUiProjection}
-                localServicePreviewState={localServicePreviewState}
-                machineId={props.workspaceRef.machineId}
-                serverId={props.workspaceRef.serverId}
-                platform={pluginSurfacePlatform}
-                targetKind={pluginSurfacePlacementScope}
-                testID={`${pluginSurfacePlacementScope}-details-plugin-surface-placements`}
-            />
             <View style={{ alignItems: 'center', paddingHorizontal: 24, paddingTop: 6 }}>
                 <Text style={{ color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center', maxWidth: 680 }}>
                     {t('projects.details.emptyBody')}
@@ -212,9 +210,6 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         localServiceLauncherState,
         localServicePreviewState,
         machineName,
-        pluginMainSurfacePlacement,
-        pluginSurfacePlacement,
-        pluginSurfacePlacementScope,
         pluginSurfacePlatform,
         props,
         theme.colors.text.secondary,
@@ -247,12 +242,14 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
 
     const detailsSurfaceCallbacks = React.useMemo(() => createDetailsSurfacePaneCallbacks({
         openTab: pane.openDetailsTab,
+        openOverlay: pane.openDetailsOverlay,
         closeTab: pane.closeDetailsTab,
         pinTab: pane.pinDetailsTab,
         unpinTab: pane.unpinDetailsTab,
         replaceTab: pane.replaceDetailsTab,
     }), [
         pane.closeDetailsTab,
+        pane.openDetailsOverlay,
         pane.openDetailsTab,
         pane.pinDetailsTab,
         pane.replaceDetailsTab,
@@ -277,10 +274,13 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         launchpadRows: browserLaunchpad.rows,
         launchpadRefreshStatus: browserLaunchpad.refreshStatus,
         launchpadRefreshError: browserLaunchpad.refreshError,
-        pluginUiProjection: props.pluginUiProjection,
-        pluginBrowserProjection: props.pluginBrowserProjection,
+        pluginUiProjection,
+        pluginUiProjectionPhase: scopedPluginProjection.phase,
+        pluginUiInteractionEnabled: pluginInteractionEnabled,
+        pluginBrowserProjection,
         pluginBrowserActionSessionId: props.sessionIdForAugmentation ?? null,
         platform: pluginSurfacePlatform,
+        formFactor: pluginSurfaceFormFactor,
         productModels: props.browserProductModels ?? undefined,
     }), [
         browserLaunchpad,
@@ -290,14 +290,17 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         pane.openDetailsTab,
         pane.pinDetailsTab,
         props.browserProductModels,
-        props.pluginUiProjection,
-        props.pluginBrowserProjection,
+        pluginInteractionEnabled,
+        scopedPluginProjection.phase,
+        pluginUiProjection,
+        pluginBrowserProjection,
         props.scopeId,
         props.sessionIdForAugmentation,
         props.workspaceRef.id,
         props.workspaceRef.machineId,
         props.workspaceRef.rootPath,
         props.workspaceRef.serverId,
+        pluginSurfaceFormFactor,
         pluginSurfacePlatform,
         renderWorkspaceInfo,
         workspaceCacheKey,
@@ -318,6 +321,37 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         detailsSurfaceCallbacks,
         detailsSurfaceRenderers,
         detailsSurfaceScope,
+    ]);
+
+    const renderOverlay = React.useCallback((overlay: NonNullable<typeof pane.scopeState>['details']['overlay']) => {
+        if (!overlay) return null;
+        return (
+            <PluginDetailsPaneOverlay
+                targetKind="project"
+                projection={pluginUiProjection}
+                overlay={overlay}
+                callbacks={detailsSurfaceCallbacks}
+                mount={{
+                    projectId: props.workspaceRef.id,
+                    machineId: props.workspaceRef.machineId,
+                    serverId: props.workspaceRef.serverId,
+                    platform: pluginSurfacePlatform,
+                    formFactor: pluginSurfaceFormFactor,
+                    projectionPhase: scopedPluginProjection.phase,
+                    projectionInteractionEnabled: pluginInteractionEnabled,
+                }}
+            />
+        );
+    }, [
+        pluginSurfacePlatform,
+        pluginSurfaceFormFactor,
+        scopedPluginProjection.phase,
+        detailsSurfaceCallbacks,
+        pluginInteractionEnabled,
+        pluginUiProjection,
+        props.workspaceRef.id,
+        props.workspaceRef.machineId,
+        props.workspaceRef.serverId,
     ]);
 
     const renderHeaderActions = React.useCallback(() => {
@@ -349,7 +383,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         accessibilityRole="button"
                         accessibilityLabel={t('newSession.title')}
                     >
-                        <Ionicons name="chatbox-ellipses-outline" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="chat-dots" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
                 {props.showTerminalHeaderAction !== false && deviceType !== 'phone' ? (
@@ -365,7 +399,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         accessibilityRole="button"
                         accessibilityLabel={t('settings.terminal')}
                     >
-                        <Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="terminal" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
                 {props.showFocusModeToggle !== false && Platform.OS === 'web' ? (
@@ -380,9 +414,9 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                                 : t('session.detailsPanel.enterFocusModeA11y')
                         }
                     >
-                        <Ionicons
-                            name={paneFocusMode.active ? 'contract-outline' : 'expand-outline'}
-                            size={18}
+                        <Icon
+                            name={paneFocusMode.active ? 'arrows-in' : 'arrows-out'}
+                            size={16}
                             color={theme.colors.text.secondary}
                         />
                     </Pressable>
@@ -394,7 +428,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         accessibilityRole="button"
                         accessibilityLabel={t('common.close')}
                     >
-                        <Octicons name="chevron-right" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
             </>
@@ -430,6 +464,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             }}
             forceEmptyState={props.forceOverviewMode}
             renderTabContent={renderTabContent}
+            renderOverlay={renderOverlay}
             renderHeaderActions={renderHeaderActions}
             renderEmptyState={renderEmptyState}
         />

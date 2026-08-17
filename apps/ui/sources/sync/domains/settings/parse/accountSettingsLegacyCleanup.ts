@@ -1,49 +1,19 @@
-export const DEPRECATED_SESSION_ONLY_SETTINGS_KEYS = new Set<string>([
-    'toolViewDetailLevelDefaultActivityFeed',
-    'toolViewExpandedDetailLevelDefaultActivityFeed',
-    'toolViewCardDensity',
-]);
+import {
+    RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS,
+    RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS,
+} from '@happier-dev/protocol';
 
-export const MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS = new Set<string>([
-    'pinnedSessionKeysV1',
-    'workspaceLabelsV1',
-    'collapsedGroupKeysV1',
-    'sessionTagsV1',
-    'sessionListGroupOrderV1',
-    'sessionWorkspaceOrderV1',
-    'sessionFoldersV1',
-]);
+/**
+ * Protocol owns persisted Account-root retirement. UI consumes only the two
+ * subsets it must keep out of device-local session organization persistence.
+ */
+export const DEPRECATED_SESSION_ONLY_SETTINGS_KEYS = new Set<string>(
+    RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS,
+);
 
-export const DROPPED_ACCOUNT_SETTINGS_KEYS = new Set<string>([
-    ...DEPRECATED_SESSION_ONLY_SETTINGS_KEYS,
-    ...MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS,
-    'defaultPermissionModeClaude',
-    'defaultPermissionModeCodex',
-    'defaultPermissionModeGemini',
-    'experimentalAgents',
-    'expCodexResume',
-    'expCodexAcp',
-    'codexResumeInstallSpec',
-    'expVoiceAuthFlow',
-    'codexAcpInstallSpec',
-    'expUsageReporting',
-    'expFileViewer',
-    'expScmOperations',
-    'expShowThinkingMessages',
-    'expSessionType',
-    'expAutomations',
-    'expZen',
-    'expInboxFriends',
-    'experimentalFeatureToggles',
-    'sessionMruOrderV1',
-    'transcriptMessageTimestampsEnabled',
-]);
-
-export function isDroppedLegacyServerSelectionKey(key: string): boolean {
-    if (key.startsWith('multiServer')) return true;
-    if (!key.startsWith('activeServerTarget')) return false;
-    return key.endsWith('Kind') || key.endsWith('Id');
-}
+export const MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS = new Set<string>(
+    RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS,
+);
 
 export function stripDeprecatedSessionOnlyKeys<TSettings extends Record<string, unknown>>(settings: TSettings): TSettings {
     const next = { ...settings };

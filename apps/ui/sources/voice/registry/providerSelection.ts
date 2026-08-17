@@ -1,5 +1,9 @@
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol';
+import {
+  VoiceProviderSettingsJsonValueV1Schema,
+  type VoiceProviderSettingsJsonValueV1,
+  type VoiceReadinessRole,
+} from '@happier-dev/protocol';
 
 import {
   isVoiceProviderSettingsProjectionCurrent,
@@ -38,6 +42,52 @@ function isVoiceProviderSettingsJsonObject(
   value: VoiceProviderSettingsJsonValueV1 | null | undefined,
 ): value is Readonly<{ [key: string]: VoiceProviderSettingsJsonValueV1 }> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Selection writes create a declaration-validated envelope only when one is
+ * absent. Existing envelopes stay opaque here so invalid and future versions
+ * retain their migration/readiness owner rather than being silently repaired.
+ */
+function seedVoiceProviderSettingsDefault(
+  settings: VoiceSettings,
+  entry: VoiceProviderRegistryEntry,
+): VoiceSettings | null {
+  if (settings.providers[entry.providerId]) return settings;
+  const owner = entry.providerSettings;
+  if (!owner) return settings;
+  let config: VoiceProviderSettingsJsonValueV1 | null = null;
+  try {
+    config = owner.parseConfig(owner.defaultConfig);
+  } catch {
+    return null;
+  }
+  if (!isVoiceProviderSettingsJsonObject(config)) return null;
+  return {
+    ...settings,
+    providers: {
+      ...settings.providers,
+      [entry.providerId]: {
+        schemaVersion: owner.schemaVersion,
+        config,
+      },
+    },
+  };
+}
+
+/**
+ * Selects an eligible speech provider while creating its declaration-owned
+ * default settings envelope if it has never been persisted.
+ */
+export function selectVoiceSpeechProvider(
+  settings: VoiceSettings,
+  registry: VoiceProviderRegistry,
+  providerId: string,
+  role: VoiceReadinessRole,
+): VoiceSettings | null {
+  const entry = registry.get(providerId);
+  if (!entry || entry.kind !== 'voice.speech-engine.v1' || !entry.roles.includes(role)) return null;
+  return seedVoiceProviderSettingsDefault(settings, entry);
 }
 
 export function projectVoiceProviderSelectionRows(
@@ -141,7 +191,9 @@ export function selectVoiceProviderOption(
   if (!entry || entry.kind !== 'voice.conversation-provider.v1' || !entry.projectSettings) return null;
   const option = entry.selectionOptions?.find((candidate) => candidate.id === optionId);
   if (!option) return null;
-  const previousEnvelope = settings.providers[providerId] ?? null;
+  const seededSettings = seedVoiceProviderSettingsDefault(settings, entry);
+  if (!seededSettings) return null;
+  const previousEnvelope = seededSettings.providers[providerId] ?? null;
   let schemaVersion = previousEnvelope?.schemaVersion ?? entry.providerSettings?.schemaVersion ?? 1;
   let previousConfig: Readonly<{ [key: string]: VoiceProviderSettingsJsonValueV1 }>;
   if (entry.providerSettings) {
@@ -165,21 +217,23 @@ export function selectVoiceProviderOption(
       ? previousEnvelope.config
       : {};
   }
+  const nextConfig = VoiceProviderSettingsJsonValueV1Schema.safeParse({
+    ...previousConfig,
+    ...(option.configPatch ?? {}),
+  });
+  if (!nextConfig.success || !isVoiceProviderSettingsJsonObject(nextConfig.data)) return null;
   const nextEnvelope = {
     schemaVersion,
-    config: {
-      ...previousConfig,
-      ...(option.configPatch ?? {}),
-    },
+    config: nextConfig.data,
   };
   const projection = projectVoiceProviderSettings(entry, nextEnvelope);
   if (!isVoiceProviderSettingsProjectionCurrent(projection)
     || projection.modeId !== option.modeId) return null;
   return {
-    ...settings,
+    ...seededSettings,
     providerId,
     providers: {
-      ...settings.providers,
+      ...seededSettings.providers,
       [providerId]: nextEnvelope,
     },
   };

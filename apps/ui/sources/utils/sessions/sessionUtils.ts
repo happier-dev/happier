@@ -9,7 +9,6 @@ import {
     isFreshTimestamp,
     readSessionRuntimePresentationFreshnessExpirations,
     SESSION_OPTIMISTIC_PENDING_THINKING_MS,
-    SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/runtimePresentation';
 import {
@@ -53,6 +52,12 @@ export { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS };
 export type PendingPermissionRequest = SessionPendingRequest;
 
 type SessionStatusSource = Session | SessionListRenderableSession;
+type SessionDisplayNameSource = Readonly<{
+    id: string;
+    metadata: unknown;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: unknown;
+}>;
 type SessionStatusColors = Readonly<{
     connected: string;
     connecting: string;
@@ -76,7 +81,7 @@ type UseSessionStatusOptions = Readonly<{
 }>;
 
 function readPrivateDisplayMachineTarget(
-    session: SessionStatusSource,
+    session: SessionDisplayNameSource,
     ownerMetadata: ReturnType<typeof readSessionOwnerMetadataView>,
 ): { machineId: string; basePath: string } | null {
     if (session.metadataLayoutVersion === 1) {
@@ -243,11 +248,7 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         ? ownerMetadata?.terminal?.controlServiceabilityV1
         : (session.metadata as SessionListRenderableSession['metadata'])?.terminalControlServiceabilityV1;
     const optimisticThinkingAt = session.optimisticThinkingAt ?? resolvedOptions.optimisticPendingUserMessageAt ?? null;
-    const isResuming = isFreshTimestamp(
-        session.resumingAt ?? null,
-        nowMs,
-        SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
-    );
+    const isResuming = (session.resumingAt ?? null) !== null;
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: session.active,
         activeAt: session.activeAt,
@@ -303,17 +304,6 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
         };
     }
 
-    if (!isOnline) {
-        return {
-            state: 'disconnected',
-            isConnected: false,
-            statusText: t('status.lastSeen', { time: formatLastSeen(session.activeAt, false) }),
-            shouldShowStatus: true,
-            statusColor: statusColors.disconnected,
-            statusDotColor: statusColors.disconnected,
-        };
-    }
-
     if (isResuming) {
         return {
             state: 'resuming',
@@ -323,6 +313,17 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
             statusColor: statusColors.connecting,
             statusDotColor: statusColors.connecting,
             isPulsing: true,
+        };
+    }
+
+    if (!isOnline) {
+        return {
+            state: 'disconnected',
+            isConnected: false,
+            statusText: t('status.lastSeen', { time: formatLastSeen(session.activeAt, false) }),
+            shouldShowStatus: true,
+            statusColor: statusColors.disconnected,
+            statusDotColor: statusColors.disconnected,
         };
     }
 
@@ -457,7 +458,7 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
  * Extracts a display name from a session's metadata path.
  * Returns the last segment of the path, or 'unknown' if no path is available.
  */
-export function getSessionName(session: SessionStatusSource): string {
+export function getSessionName(session: SessionDisplayNameSource): string {
     const summaryText = readSessionDisplayTitleField(session).value;
     const ownerMetadata = readSessionOwnerMetadataView(session);
     if (summaryText) {

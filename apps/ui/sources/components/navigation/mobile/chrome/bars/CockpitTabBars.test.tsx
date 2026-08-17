@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { renderScreen } from '@/dev/testkit';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
@@ -20,6 +21,10 @@ const scmState = vi.hoisted(() => ({
 const badgeSettingsState = vi.hoisted(() => ({
     gitBadgeMode: 'changedFiles' as 'changedFiles' | 'diffLines' | 'off',
     openTabs: true,
+}));
+const cockpitPinsState = vi.hoisted(() => ({
+    value: [] as string[],
+    set: vi.fn(),
 }));
 
 installNavigationCommonModuleMocks({
@@ -73,8 +78,22 @@ installNavigationCommonModuleMocks({
             if (key === 'tabBarSize') return 'regular';
             return undefined;
         },
+        useLocalSettingMutable: (key: string) => key === 'sessionCockpitPinnedSurfaceIds'
+            ? [cockpitPinsState.value, cockpitPinsState.set]
+            : [null, vi.fn()],
     }),
 });
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: Record<string, any>) => React.createElement(
+        'DropdownMenu',
+        props,
+        typeof props.trigger === 'function'
+            ? props.trigger({ open: props.open, toggle: () => props.onOpenChange(!props.open) })
+            : props.trigger,
+        ...(props.items ?? []).map((item: Record<string, any>) => item.rightElement),
+    ),
+}));
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -91,6 +110,8 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
+    useLayoutMaxWidth: () => 960,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
 }));
 
 describe('cockpit tab bars', () => {
@@ -103,7 +124,42 @@ describe('cockpit tab bars', () => {
         scmState.status = null;
         badgeSettingsState.gitBadgeMode = 'changedFiles';
         badgeSettingsState.openTabs = true;
+        cockpitPinsState.value = [];
+        cockpitPinsState.set.mockClear();
     });
+
+    function createMobilePluginPlacement() {
+        const binding = normalizePluginUiDestinationBindingV1({
+            pluginId: 'acme.review',
+            destinationId: 'review-panel',
+            rendererId: 'review-renderer',
+            container: 'rightSidebarTab',
+            target: { kind: 'session', sessionIdPath: '/session/id' },
+        });
+        if (!binding) throw new Error('fixture must use an admitted mobile Session binding');
+        return {
+            id: 'surfacePlacement:acme.review:review-panel',
+            pluginId: 'acme.review',
+            contributionKind: 'surfacePlacement' as const,
+            descriptorId: 'review-panel',
+            binding,
+            target: binding.target,
+            renderer: { kind: 'host' as const, rendererId: 'review-renderer' },
+            display: { developerFallback: 'Review' },
+            availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
+            headerActions: [],
+        };
+    }
+
+    function flattenStyle(style: unknown): Record<string, unknown> {
+        if (Array.isArray(style)) {
+            return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+        }
+        if (style && typeof style === 'object') {
+            return style as Record<string, unknown>;
+        }
+        return {};
+    }
 
     it('uses the session agent name and icon for the chat tab', async () => {
         sessionMetadataState.metadata = { flavor: 'codex' };
@@ -300,18 +356,20 @@ describe('cockpit tab bars', () => {
         expect(browserTab?.props.accessibilityRole).toBe('tab');
         expect(browserTab?.props.accessibilityLabel).toBe('en:browserSurface.title');
         expect(browserTab?.props.accessibilityState).toEqual({ selected: true });
-        expect(servicesTab?.props.accessibilityRole).toBe('tab');
-        expect(servicesTab?.props.accessibilityLabel).toBe('en:localServices.inventory.title');
-        expect(servicesTab?.props.accessibilityState).toEqual({ selected: false });
+        expect(servicesTab).toBeNull();
+        const menu = screen.tree.findByType('DropdownMenu' as never);
+        expect(menu.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'services', title: 'en:localServices.inventory.title' }),
+        ]));
 
         await act(async () => {
-            servicesTab?.props.onPress();
+            menu.props.onSelect('services');
         });
 
         expect(pressed).toEqual(['services']);
     });
 
-    it('keeps Browser and Services visible alongside existing session cockpit tabs', async () => {
+    it('keeps the bounded inline set and exposes remaining built-ins through More', async () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
 
         const screen = await renderScreen(
@@ -327,11 +385,118 @@ describe('cockpit tab bars', () => {
         expect(screen.findByTestId('session-cockpit-tab-chat')).toBeTruthy();
         expect(screen.findByTestId('session-cockpit-tab-browse')).toBeTruthy();
         expect(screen.findByTestId('session-cockpit-tab-git')).toBeTruthy();
-        expect(screen.findByTestId('session-cockpit-tab-navigation')).toBeTruthy();
         expect(screen.findByTestId('session-cockpit-tab-tabs')).toBeTruthy();
-        expect(screen.findByTestId('session-cockpit-tab-browser')).toBeTruthy();
-        expect(screen.findByTestId('session-cockpit-tab-services')).toBeTruthy();
-        expect(screen.findByTestId('session-cockpit-tab-terminal')).toBeTruthy();
+        expect(screen.findByTestId('session-cockpit-tab-navigation')).toBeNull();
+        expect(screen.findByTestId('session-cockpit-tab-browser')).toBeNull();
+        expect(screen.findByTestId('session-cockpit-tab-services')).toBeNull();
+        expect(screen.findByTestId('session-cockpit-tab-terminal')).toBeNull();
+        expect(screen.tree.findByType('DropdownMenu' as never).props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'navigation' }),
+            expect.objectContaining({ id: 'browser' }),
+            expect.objectContaining({ id: 'services' }),
+            expect.objectContaining({ id: 'terminal' }),
+        ]));
+    });
+
+    it('discovers admitted plugin tabs in More and applies the host-owned persisted pin order', async () => {
+        const placement = createMobilePluginPlacement();
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const renderBar = () => (
+            <SessionCockpitTabBar
+                sessionId="sess_1"
+                activeSurface="chat"
+                terminalTabAvailable={false}
+                openDetailsTabCount={0}
+                pluginPlacements={[placement]}
+                projectionGeneration={4}
+                onSurfacePress={() => {}}
+            />
+        );
+        const screen = await renderScreen(renderBar());
+
+        const menu = screen.tree.findByType('DropdownMenu' as never);
+        expect(menu.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'plugin:acme.review:review-panel', title: 'Review' }),
+        ]));
+        expect(screen.findByTestId('session-cockpit-tab-plugin:acme.review:review-panel')).toBeNull();
+
+        cockpitPinsState.value = ['plugin:acme.review:review-panel'];
+        await screen.update(renderBar());
+
+        expect(screen.findByTestId('session-cockpit-tab-plugin:acme.review:review-panel')).toBeTruthy();
+    });
+
+    it('renders plugin pinning as a focusable Android-minimum effective target with explicit toggle state', async () => {
+        const { Platform } = await import('react-native');
+        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
+        const originalPlatform = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+
+        try {
+            const placement = createMobilePluginPlacement();
+            const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+            const onSurfacePress = vi.fn();
+            const renderBar = () => (
+                <SessionCockpitTabBar
+                    sessionId="sess_1"
+                    activeSurface="chat"
+                    terminalTabAvailable={false}
+                    openDetailsTabCount={0}
+                    pluginPlacements={[placement]}
+                    projectionGeneration={4}
+                    onSurfacePress={onSurfacePress}
+                />
+            );
+            const screen = await renderScreen(renderBar());
+            const pinTestID = 'session-cockpit-pin:plugin:acme.review:review-panel';
+            const pin = screen.findByTestId(pinTestID);
+            const minimumTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+
+            expect(minimumTargetSize).toBe(48);
+            expect(pin?.props).toEqual(expect.objectContaining({
+                accessibilityRole: 'checkbox',
+                accessibilityLabel: 'en:projects.actions.pin',
+                accessibilityState: expect.objectContaining({ checked: false }),
+                // The shared IconButton owns the minimum target with a real press
+                // frame; RNW cannot turn Pressable hitSlop into a physical target.
+                hitSlop: 0,
+            }));
+            const restingStyle = typeof pin?.props.style === 'function'
+                ? pin.props.style({ pressed: false })
+                : pin?.props.style;
+            expect(flattenStyle(restingStyle)).toEqual(expect.objectContaining({
+                width: 28,
+                height: minimumTargetSize,
+                marginHorizontal: 0,
+                marginVertical: -(minimumTargetSize - 28) / 2,
+            }));
+            expect(flattenStyle(screen.findByTestId(`${pinTestID}-surface`)?.props.style)).toEqual(
+                expect.objectContaining({ width: 28, height: 28 }),
+            );
+
+            const stopPropagation = vi.fn();
+            await act(async () => {
+                pin?.props.onPress?.({ stopPropagation });
+            });
+            expect(stopPropagation).toHaveBeenCalledTimes(1);
+            expect(cockpitPinsState.set).toHaveBeenCalledWith(['plugin:acme.review:review-panel']);
+            expect(onSurfacePress).not.toHaveBeenCalled();
+
+            await act(async () => {
+                pin?.props.onFocus?.();
+            });
+            const focusedPinSurface = screen.findByTestId(`${pinTestID}-surface`);
+            const focusedStyle = focusedPinSurface?.props.style;
+            expect(flattenStyle(focusedStyle)).toEqual(expect.objectContaining({ borderWidth: 1 }));
+
+            cockpitPinsState.value = ['plugin:acme.review:review-panel'];
+            await screen.update(renderBar());
+            const pinnedControl = screen.findByTestId(pinTestID);
+            expect(pinnedControl?.props.accessibilityLabel).toBe('en:projects.actions.unpin');
+            expect(pinnedControl?.props.accessibilityState?.checked).toBe(true);
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
     });
 
     it('offers the transcript navigation surface as a session cockpit tab', async () => {
@@ -341,7 +506,7 @@ describe('cockpit tab bars', () => {
         const screen = await renderScreen(
             <SessionCockpitTabBar
                 sessionId="sess_1"
-                activeSurface="chat"
+                activeSurface="navigation"
                 terminalTabAvailable={false}
                 openDetailsTabCount={0}
                 onSurfacePress={(surface) => pressed.push(surface)}
@@ -351,7 +516,7 @@ describe('cockpit tab bars', () => {
         const navigationTab = screen.findByTestId('session-cockpit-tab-navigation');
         expect(navigationTab?.props.accessibilityRole).toBe('tab');
         expect(navigationTab?.props.accessibilityLabel).toBe('en:session.transcriptNavigation.title');
-        expect(navigationTab?.props.accessibilityState).toEqual({ selected: false });
+        expect(navigationTab?.props.accessibilityState).toEqual({ selected: true });
 
         await act(async () => {
             navigationTab?.props.onPress();

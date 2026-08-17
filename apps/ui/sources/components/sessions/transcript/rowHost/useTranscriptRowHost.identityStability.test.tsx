@@ -74,6 +74,7 @@ function createRendererProps(overrides?: Partial<Record<string, unknown>>): Tran
         onToggleMessagePin: vi.fn(),
         onEditPendingMessage: vi.fn(),
         onDismissExternalSessionOperation: vi.fn(),
+        onDismissPluginTranscriptActivity: vi.fn(),
         onExternalSessionOperationActionResult: vi.fn(),
         externalSessionOperationOwnerTarget: null,
         forkCommon: { forkNoticesByMessageId: {} },

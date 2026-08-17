@@ -8,12 +8,13 @@ import {
 import {
     isServerIssuedIdentityId,
     migrateAccountSettingsServerIdentityKeys,
-    pickChangedServerIdentitySessionPresentationSettings,
 } from '@/sync/domains/settings/serverIdentityKeyMigration';
 import {
     accountSettingsScopeKeySuffix,
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { hydrateAccountSettingsFromLocalPersistence } from '@/sync/domains/settings/accountSettingsNormalization';
+import { assertNoUnsealedSettingsSecretValues } from '@/sync/encryption/secretSettings';
 
 import { loadPendingSettings, parsePendingSettings } from './persistence';
 import { getPersistenceStorage } from './persistenceStorage';
@@ -175,25 +176,29 @@ function saveAccountSettingsEnvelope(
     settings: Settings,
     version: number | null,
 ): void {
-    const sanitizedSettings = stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>) as Settings;
+    assertNoUnsealedSettingsSecretValues(settings);
+    const sanitizedSettings =
+        stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>) as Settings;
     getPersistenceStorage().set(accountSettingsKey(scope), JSON.stringify({ settings: sanitizedSettings, version }));
 }
 
 export function loadAccountSettings(scope: AccountSettingsScope): { settings: unknown; version: number | null } {
     const raw = getPersistenceStorage().getString(accountSettingsKey(scope));
     if (!raw) return { settings: {}, version: null };
+    let parsed: { settings?: unknown; version?: unknown };
     try {
-        const parsed = JSON.parse(raw) as { settings?: unknown; version?: unknown };
-        const parsedSettings = isPlainRecord(parsed.settings)
-            ? stripMigratedSessionOrganizationSettings(parsed.settings)
-            : parsed.settings;
-        return {
-            settings: parsedSettings,
-            version: typeof parsed.version === 'number' ? parsed.version : null,
-        };
+        parsed = JSON.parse(raw) as { settings?: unknown; version?: unknown };
     } catch {
         return { settings: {}, version: null };
     }
+    const hydratedSettings = hydrateAccountSettingsFromLocalPersistence(parsed.settings);
+    const parsedSettings = isPlainRecord(hydratedSettings)
+        ? stripMigratedSessionOrganizationSettings(hydratedSettings)
+        : hydratedSettings;
+    return {
+        settings: parsedSettings,
+        version: typeof parsed.version === 'number' ? parsed.version : null,
+    };
 }
 
 export function saveAccountSettings(scope: AccountSettingsScope, settings: Settings, version: number): void {
@@ -349,26 +354,6 @@ export function prepareAccountSettingsScopeForActivation(
             if (currentSettingsMigration.changed) {
                 const migratedSettings = currentSettingsMigration.settings as Settings;
                 saveAccountSettingsEnvelope(scope, migratedSettings, current.version);
-                const changedSettings = pickChangedServerIdentitySessionPresentationSettings(
-                    currentSettingsMigration.settings,
-                    currentSettingsMigration.changedKeys,
-                );
-                const serverBackedChangedSettings = stripMigratedSessionOrganizationSettings(
-                    stripLocalOnlyAccountSettings(changedSettings) as Record<string, unknown>,
-                );
-                const currentPending = loadPendingAccountSettings(scope);
-                const changedSettingsNotAlreadyPending: Record<string, unknown> = {};
-                const currentPendingRecord = currentPending as Record<string, unknown>;
-                for (const [key, value] of Object.entries(serverBackedChangedSettings as Record<string, unknown>)) {
-                    if (Object.prototype.hasOwnProperty.call(currentPendingRecord, key)) continue;
-                    changedSettingsNotAlreadyPending[key] = value;
-                }
-                if (Object.keys(changedSettingsNotAlreadyPending).length > 0) {
-                    savePendingAccountSettings(
-                        scope,
-                        mergeSettingsForScopeMigration(changedSettingsNotAlreadyPending as Partial<Settings>, currentPending),
-                    );
-                }
             }
         }
     }
@@ -377,16 +362,23 @@ export function prepareAccountSettingsScopeForActivation(
 export function loadPendingAccountSettings(scope: AccountSettingsScope): Partial<Settings> {
     const raw = getPersistenceStorage().getString(pendingAccountSettingsKey(scope));
     if (!raw) return {};
+    let parsed: unknown;
     try {
-        return stripMigratedSessionOrganizationSettings(parsePendingSettings(JSON.parse(raw)) as Record<string, unknown>) as Partial<Settings>;
+        parsed = JSON.parse(raw);
     } catch {
         return {};
     }
+    const hydrated = hydrateAccountSettingsFromLocalPersistence(parsed);
+    return stripMigratedSessionOrganizationSettings(
+        parsePendingSettings(hydrated) as Record<string, unknown>,
+    ) as Partial<Settings>;
 }
 
 export function savePendingAccountSettings(scope: AccountSettingsScope, settings: Partial<Settings>): void {
     const key = pendingAccountSettingsKey(scope);
-    const sanitizedSettings = stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>) as Partial<Settings>;
+    assertNoUnsealedSettingsSecretValues(settings);
+    const sanitizedSettings =
+        stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>) as Partial<Settings>;
     if (Object.keys(sanitizedSettings).length === 0) {
         getPersistenceStorage().delete(key);
         return;

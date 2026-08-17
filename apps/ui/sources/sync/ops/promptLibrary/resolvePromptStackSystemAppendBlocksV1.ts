@@ -1,9 +1,12 @@
-import { resolvePromptStackSystemAppendBlocksV1 as resolvePromptStackSystemAppendBlocksProtocolV1, type PromptStacksV1 } from '@happier-dev/protocol';
+import {
+  PromptStacksV1Schema,
+  resolvePromptStackSystemAppendBlocksV1 as resolvePromptStackSystemAppendBlocksProtocolV1,
+} from '@happier-dev/protocol';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{
   surface: 'coding' | 'voice';
-  promptStacksV1: PromptStacksV1 | null | undefined;
+  promptStacksV1: unknown;
   profileId: string | null | undefined;
   artifactsById: Record<string, DecryptedArtifact | undefined>;
   fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
@@ -25,7 +28,7 @@ export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{
 
   return await resolvePromptStackSystemAppendBlocksProtocolV1({
     surface: args.surface,
-    promptStacksV1: args.promptStacksV1,
+    promptStacksV1: PromptStacksV1Schema.parse(args.promptStacksV1),
     profileId: args.profileId,
     readArtifactBody,
   });

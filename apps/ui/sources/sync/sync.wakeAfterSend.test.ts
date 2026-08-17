@@ -55,6 +55,8 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 
 vi.mock('@/voice/registry/generatedBundledVoiceEntries', () => ({
     BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES: Object.freeze([]),
+    BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS: Object.freeze([]),
+    BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS: Object.freeze([]),
 }));
 
 const agentCatalogMocks = vi.hoisted(() => {
@@ -136,6 +138,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { getActiveServerAccountScope } from './domains/scope/activeServerAccountScope';
 import { readPersistedSessionViewport } from './domains/state/sessionViewportPersistence';
 import { currentPendingEnqueueAck } from './engine/pending/pendingQueueV2.testHelpers';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
 const initialStorageState = storage.getState();
 
@@ -213,16 +216,9 @@ describe('sync.sendMessage wake-after-send', () => {
                 features: FeaturesResponseSchema.parse({
                     features: {},
                     capabilities: {
-                        compatibility: {
-                            v: 1,
-                            sessionSync: {
-                                v: 1,
-                                enforcement: 'observe',
-                                minimumSessionSyncProtocolVersion: 2,
-                                currentSessionSyncProtocolVersion: 2,
-                                declarationTransport: 'headers-v1',
-                            },
-                            pendingInput: { currentPendingInputProtocolVersion: 1 },
+                        session: {
+                            runtimeActivity: { protocolVersion: 2 },
+                            pendingInput: { protocolVersion: 1 },
                         },
                     },
                 }),
@@ -525,6 +521,49 @@ describe('sync.sendMessage wake-after-send', () => {
         expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects an unsupported Voice submit to a resolver-confirmed remote target before persistence or active transport', async () => {
+        const sessionId = 's_remote_voice_old_pending';
+        const remoteServerId = 'remote-voice-old-pending';
+        const remoteSession: Session = {
+            ...createPlainSession({ sessionId }),
+            serverId: remoteServerId,
+            active: true,
+            pendingVersion: 2,
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'test-host',
+                flavor: 'codex',
+                version: '0.0.1',
+                codexSessionId: 'codex-1',
+            },
+        };
+        storage.getState().applySessions([remoteSession]);
+
+        const { sync } = await import('./sync');
+        expect(resolvePreferredServerIdForSessionId(sessionId)).toBe(remoteServerId);
+        expect(sync.isSessionTargetRemoteToActiveServer(sessionId)).toBe(true);
+
+        const directSend = vi.spyOn(sync, 'sendMessage').mockRejectedValue(
+            new Error('active direct transport must not run'),
+        );
+        const pendingPost = vi.spyOn(apiSocket, 'request').mockRejectedValue(
+            new Error('Pending POST must not run'),
+        );
+
+        await expect(sync.submitMessage(sessionId, 'do not misroute', undefined, undefined, {
+            callerSurface: 'voice_turn',
+            forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
+        })).rejects.toMatchObject({
+            code: 'session_input_target_update_required',
+        });
+
+        expect(directSend).not.toHaveBeenCalled();
+        expect(pendingPost).not.toHaveBeenCalled();
+        expect(storage.getState().sessionPending[sessionId]).toBeUndefined();
+    });
+
     it('routes force-immediate submitMessage through durable enqueue with send-now action ownership', async () => {
         const sessionId = 's_force_immediate_submit';
         storage.getState().applySettings({
@@ -551,6 +590,7 @@ describe('sync.sendMessage wake-after-send', () => {
         await expect(sync.submitMessage(sessionId, 'durable now', undefined, undefined, {
             callerSurface: 'sync_submit_message',
             forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
         })).resolves.toBeUndefined();
 
         expect(pendingPost).toHaveBeenCalledTimes(1);
@@ -563,6 +603,23 @@ describe('sync.sendMessage wake-after-send', () => {
                 body: expect.stringContaining('"requestedAction":{"v":1,"kind":"send_now"}'),
             }),
         );
+        const pendingRequest = JSON.parse(String(pendingPost.mock.calls[0]?.[1]?.body ?? 'null')) as {
+            content?: { t?: unknown; v?: { meta?: unknown } };
+        };
+        expect(pendingRequest.content).toMatchObject({
+            t: 'plain',
+            v: {
+                meta: {
+                    happierProvenanceV1: { v: 1, kind: 'voice' },
+                    happierInputRequestV1: {
+                        v: 1,
+                        producer: 'voiceInput',
+                        caller: { kind: 'host' },
+                        permission: {},
+                    },
+                },
+            },
+        });
         expect(sessionRpc).not.toHaveBeenCalled();
         expect(directSend).not.toHaveBeenCalled();
     });

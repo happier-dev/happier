@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +10,7 @@ import {
 } from '@/components/settings/navigation/settingsRouteRegistry';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Floating controls for the settings modal (tablet/desktop), positioned absolutely over the
@@ -47,8 +47,8 @@ export const SettingsModalFloatingControls = React.memo(function SettingsModalFl
                 onPress={handleBack}
                 style={styles.backButton}
             >
-                <Ionicons
-                    name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+                <Icon
+                    name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                     size={24}
                     color={theme.colors.chrome.header.foreground}
                 />

@@ -2,9 +2,15 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { View } from 'react-native';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+    type PluginUiSurfacePlacementProjection,
+} from '@/sync/domains/plugins/ui/projection';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,6 +38,7 @@ installSessionDetailsPanelCommonModuleMocks({
                 if (key === 'embeddedTerminalDockLocation') return embeddedTerminalDockLocation;
                 return null;
             },
+            useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
         });
     },
     text: async () => {
@@ -107,66 +114,75 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: readonly unknown[]) => machineProjectionDescribeMock(...args),
+    // This pane test does not exercise settings I/O; preserve the daemon
+    // boundary while satisfying the current scoped-settings runtime import.
+    machinePluginSettingsGet: vi.fn(),
+    machinePluginSettingsSet: vi.fn(),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
+
+const SCOPED_PLUGIN_ID = 'acme.scoped';
+const GLOBAL_PLUGIN_ID = 'acme.global';
 
 function createRightSidebarProjection(params: Readonly<{
     pluginId: string;
-    tabId: string;
     descriptorId: string;
-    targetKind?: string;
 }>): PluginUiProjectionModel {
+    const binding = normalizePluginUiDestinationBindingV1({
+        pluginId: params.pluginId,
+        destinationId: params.descriptorId,
+        rendererId: `${params.descriptorId}-web`,
+        container: 'rightSidebarTab',
+        target: { kind: 'session' },
+    });
+    if (!binding) {
+        throw new Error('test fixture must use an admitted V2 session right-sidebar binding');
+    }
     const placement = {
-        id: `pluginUi:${params.pluginId}:surfacePlacement:${params.descriptorId}`,
+        id: `surfacePlacement:${params.pluginId}:${params.descriptorId}`,
         pluginId: params.pluginId,
         contributionKind: 'surfacePlacement' as const,
         descriptorId: params.descriptorId,
-        placement: 'session.rightSidebarTab',
-        target: { kind: params.targetKind ?? 'session' },
-        renderer: { kind: 'host', rendererId: 'session.testPanel' },
+        binding,
+        target: binding.target,
+        renderer: { kind: 'hostedWeb', contributionId: `${params.descriptorId}-web` },
         display: { developerFallback: params.descriptorId },
         availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
-        order: 70,
-        rightSidebar: {
-            tabId: params.tabId,
-            scope: 'session',
-            order: 70,
-            mobile: { enabled: true, surface: 'pluginTab' },
-            disabledPolicy: 'hide',
-        },
-    };
+        headerActions: [],
+    } satisfies PluginUiSurfacePlacementProjection;
     return Object.freeze({
+        ...EMPTY_PLUGIN_UI_PROJECTION,
         generation: 4,
-        translationsByPluginId: Object.freeze({}),
-        structuredMessagesByKind: Object.freeze({}),
-        sessionHeaderActionsById: Object.freeze({}),
-        hostedWebById: Object.freeze({}),
-        reactNativeBundlesById: Object.freeze({}),
         surfacePlacementsById: Object.freeze({ [placement.id]: placement }),
-        surfacePlacementsByPlacement: Object.freeze({ 'session.rightSidebarTab': Object.freeze([placement]) }),
-        uiArtifactsById: Object.freeze({}),
-        digestsByPluginId: Object.freeze({}),
-        voiceProvidersById: Object.freeze({}),
-        unknownEntriesById: Object.freeze({}),
     });
 }
 
 function createDaemonProjection(params: Readonly<{
     pluginId: string;
-    tabId: string;
     descriptorId: string;
-    targetKind?: string;
 }>) {
     const model = createRightSidebarProjection(params);
-    return {
+    return PluginProjectionV2Schema.parse({
         v: 2,
         generation: model.generation,
+        installedPackagesById: {},
+        agentsById: {},
+        backendsById: {},
+        actionsById: {},
+        toolsById: {},
+        commandsById: {},
+        resourcesById: {},
+        settingsById: {},
         familiesById: {
             pluginUi: {
                 family: 'pluginUi',
                 entriesById: model.surfacePlacementsById,
             },
         },
-    };
+        diagnostics: [],
+    });
 }
 
 describe('SessionRightPanel (terminal tab)', () => {
@@ -178,8 +194,7 @@ describe('SessionRightPanel (terminal tab)', () => {
         setRightTabSpy.mockClear();
         machineProjectionDescribeMock.mockReset();
         machineProjectionDescribeMock.mockResolvedValue({ supported: true, projection: createDaemonProjection({
-            pluginId: 'scoped',
-            tabId: 'scoped',
+            pluginId: SCOPED_PLUGIN_ID,
             descriptorId: 'scoped-session-tab',
         }) });
         vi.clearAllMocks();
@@ -233,7 +248,7 @@ describe('SessionRightPanel (terminal tab)', () => {
     });
 
     it('renders session plugin tabs from the scoped session machine instead of the app-shell machine', async () => {
-        scopeState = { right: { isOpen: true, activeTabId: 'plugin:scoped:scoped', tabState: {} } };
+        scopeState = { right: { isOpen: true, activeTabId: `plugin:${SCOPED_PLUGIN_ID}:scoped-session-tab`, tabState: {} } };
         const {
             AppShellPluginUiProjectionValueProvider,
         } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
@@ -243,11 +258,11 @@ describe('SessionRightPanel (terminal tab)', () => {
             <AppShellPluginUiProjectionValueProvider
                 value={{
                     pluginUiProjection: createRightSidebarProjection({
-                        pluginId: 'global',
-                        tabId: 'global',
+                        pluginId: GLOBAL_PLUGIN_ID,
                         descriptorId: 'global-session-tab',
                     }),
                     pluginBrowserProjection: null,
+                    phase: 'current',
                     interactionEnabled: true,
                     machineId: 'machine-global',
                     serverId: 'server-global',
@@ -263,8 +278,8 @@ describe('SessionRightPanel (terminal tab)', () => {
             'machine-session',
             expect.objectContaining({ serverId: 'server-session' }),
         );
-        expect(screen.findByTestId('session-rightpanel-tab:plugin:global:global')).toBeNull();
-        expect(screen.findByTestId('session-rightpanel-tab:plugin:scoped:scoped')).toBeTruthy();
+        expect(screen.findByTestId(`session-rightpanel-tab:plugin:${GLOBAL_PLUGIN_ID}:global-session-tab`)).toBeNull();
+        expect(screen.findByTestId(`session-rightpanel-tab:plugin:${SCOPED_PLUGIN_ID}:scoped-session-tab`)).toBeTruthy();
         const host = screen.findByType('PluginSurfacePlacementHostStub' as never);
         expect(host.props.machineId).toBe('machine-session');
         expect(host.props.serverId).toBe('server-session');

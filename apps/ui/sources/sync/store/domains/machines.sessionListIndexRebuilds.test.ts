@@ -85,6 +85,7 @@ function mockMachineDomainBoundaries(profiles: readonly ServerProfileMockProfile
     }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({
         resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
+        peekMachineDisplayWarmCacheEntries: vi.fn(() => null),
         saveMachineDisplayWarmCacheEntries: saveMachineDisplayWarmCacheEntriesSpy,
     }));
 }
@@ -408,6 +409,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         }));
         vi.doMock('../../domains/state/warmCachePersistence', () => ({
             resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
+            peekMachineDisplayWarmCacheEntries: vi.fn(() => null),
             saveMachineDisplayWarmCacheEntries: vi.fn(),
         }));
 

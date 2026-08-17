@@ -13,9 +13,11 @@ describe('useServerRetentionPolicy', () => {
     it('returns server retention capabilities for the requested server', async () => {
         const { buildServerFeaturesResponse } = await import('./serverFeaturesTestUtils');
         const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { resetServerRetentionPolicyClientForTests } = await import('@/sync/api/capabilities/serverRetentionPolicyClient');
         const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
 
         resetServerFeaturesClientForTests();
+        resetServerRetentionPolicyClientForTests();
 
         const server = upsertServerProfile({ serverUrl: 'https://retention.example', name: 'Retention', source: 'manual' });
         const payload = buildServerFeaturesResponse();
@@ -57,10 +59,11 @@ describe('useServerRetentionPolicy', () => {
 
         expect(seen.at(-1)).toMatchObject({
             enabled: true,
-            sessions: {
-                mode: 'delete_inactive',
-                inactivityDays: 30,
-            },
+            completeness: 'legacy_partial',
+            domains: expect.arrayContaining([expect.objectContaining({
+                id: 'sessions',
+                policy: expect.objectContaining({ mode: 'delete_inactive', inactivityDays: 30 }),
+            })]),
         });
     });
 });

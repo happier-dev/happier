@@ -154,13 +154,6 @@ export class DaemonSpeechStreamSender {
     this.pump(ownerGeneration);
   }
 
-  async restart(): Promise<void> {
-    if (this.closed) {
-      throw createSenderError('daemon_speech_stream_closed');
-    }
-    await this.start();
-  }
-
   pushChunk(pcm16Bytes: Uint8Array): Promise<readonly DaemonVoiceInferenceSttStreamEvent[]> {
     if (this.closed) {
       return Promise.reject(createSenderError('daemon_speech_stream_closed'));

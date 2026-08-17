@@ -21,15 +21,16 @@ import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestratio
 
 import { applyCurrentSessionPresentationCommand } from './applyCurrentSessionPresentationCommand';
 import {
+    publishPresentationNotice,
+    readPresentationNotice,
+    retirePresentationNotice,
+    subscribePresentationNotices,
+} from './presentationNotices';
+import {
+    applyRegisteredSessionComposerPresentationTransaction,
     readSessionComposerPresentationTarget,
     subscribeSessionComposerPresentationTargets,
 } from './sessionComposerPresentationTargets';
-
-type PresentationNotice = Readonly<{
-    key: string;
-    message: string;
-    severity: 'info' | 'warning' | 'error';
-}>;
 
 const stylesheet = StyleSheet.create((theme) => ({
     noticeHost: {
@@ -59,7 +60,14 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const CurrentSessionPresentationRuntime = React.memo(function CurrentSessionPresentationRuntime() {
     const styles = stylesheet;
     const clientIdRef = React.useRef<string>(randomUUID());
-    const [notice, setNotice] = React.useState<PresentationNotice | null>(null);
+    // The notice host renders the app's ONE presentation notice owner, whose
+    // producers are the daemon command stream below and mounted plugin UI's
+    // `notify` host method (§3.4).
+    const notice = React.useSyncExternalStore(
+        subscribePresentationNotices,
+        readPresentationNotice,
+        readPresentationNotice,
+    );
 
     React.useEffect(() => {
         const clientId = clientIdRef.current;
@@ -82,7 +90,7 @@ export const CurrentSessionPresentationRuntime = React.memo(function CurrentSess
             const session = storage.getState().sessions[sessionId];
             if (!session || session.active === false || disposed) return;
             const composer = readSessionComposerPresentationTarget(sessionId);
-            const focused = getFocusedSessionId() === sessionId;
+            const focused = composer !== null && getFocusedSessionId() === sessionId;
             const draftRevision = composer?.revision ?? 0;
             const signature = `${focused ? 1 : 0}:${draftRevision}`;
 
@@ -109,26 +117,33 @@ export const CurrentSessionPresentationRuntime = React.memo(function CurrentSess
             if (!parsed.success || !hostNonce || !parsed.data.command) return;
             const commandKey = `${hostNonce}:${parsed.data.command.id}`;
             if (processedCommands.has(commandKey)) return;
-            const ack = applyCurrentSessionPresentationCommand({
+            const application = applyCurrentSessionPresentationCommand({
                 sessionId,
                 state: parsed.data,
                 hostNonce,
                 clientId,
                 focusedSessionId: getFocusedSessionId(),
-                notify: (event) => setNotice({
+                notify: (event) => publishPresentationNotice({
                     key: commandKey,
                     message: event.message,
                     severity: event.severity,
                 }),
-                composer: readSessionComposerPresentationTarget(sessionId),
+                composer: composer && {
+                    revision: composer.revision,
+                    apply: (transaction) => applyRegisteredSessionComposerPresentationTransaction({
+                        sessionId,
+                        transaction,
+                    }),
+                },
             });
-            if (!ack) return;
+            if (!application) return;
             processedCommands.add(commandKey);
             trimProcessed();
+            if (!application.ack) return;
             await sessionRpcWithPreferredSessionScope({
                 sessionId,
                 method: CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
-                payload: ack,
+                payload: application.ack,
                 timeoutMs: 5_000,
             });
         };
@@ -166,7 +181,7 @@ export const CurrentSessionPresentationRuntime = React.memo(function CurrentSess
 
     React.useEffect(() => {
         if (!notice) return;
-        const timeout = setTimeout(() => setNotice((current) => current?.key === notice.key ? null : current), 4_000);
+        const timeout = setTimeout(() => retirePresentationNotice(notice.key), 4_000);
         return () => clearTimeout(timeout);
     }, [notice]);
 

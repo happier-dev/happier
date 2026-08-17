@@ -10,7 +10,12 @@ type Input = Readonly<{
     externalSessionOperationRunning?: boolean;
     externalSessionOperationBlocksNewOperation?: boolean;
     externalSessionLink: Readonly<{ machineId: string }> | null;
-    externalSessionRuntimePresentation: ExternalSessionRuntimePresentation | null;
+    externalSessionRuntimePresentation: Readonly<{
+        externalAgent: Pick<
+            ExternalSessionRuntimePresentation['externalAgent'],
+            'state' | 'labelKey'
+        >;
+    }> | null;
     externalSessionIdentity: Pick<
         ExternalSessionIdentityPresentation,
         'agentLabel' | 'machineLabel'
@@ -30,7 +35,6 @@ type Input = Readonly<{
     externalSessionTakeover: Readonly<{
         takeoverInFlight: 'direct' | 'persisted' | null;
         takeoverPreflightInFlight: boolean;
-        requestTakeover: (kind: 'direct' | 'persisted') => void | Promise<void | boolean>;
         requestTakeoverPreflight: () => void | Promise<void | boolean>;
     }>;
     externalSessionMaterialize?: Readonly<{

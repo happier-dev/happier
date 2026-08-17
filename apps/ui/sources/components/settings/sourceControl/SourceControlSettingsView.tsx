@@ -1,6 +1,5 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
@@ -15,8 +14,9 @@ import { useApplySettings } from '@/sync/store/settingsWriters';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { createScmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
 import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
-import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
@@ -37,9 +37,10 @@ import {
     shouldConfirmRemoteOperation,
 } from '@/scm/settings/remoteConfirmationPolicy';
 import { TextInput } from '@/components/ui/text/Text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 
-type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+type IoniconName = IconName;
 
 const COMMIT_STRATEGY_OPTIONS: ReadonlyArray<{
     id: ScmCommitStrategy;
@@ -51,13 +52,13 @@ const COMMIT_STRATEGY_OPTIONS: ReadonlyArray<{
         id: 'atomic',
         titleKey: 'settingsSourceControl.commitStrategy.options.atomic.title',
         subtitleKey: 'settingsSourceControl.commitStrategy.options.atomic.subtitle',
-        iconName: 'shield-checkmark-outline',
+        iconName: 'shield-check',
     },
     {
         id: 'git_staging',
         titleKey: 'settingsSourceControl.commitStrategy.options.gitStaging.title',
         subtitleKey: 'settingsSourceControl.commitStrategy.options.gitStaging.subtitle',
-        iconName: 'git-compare-outline',
+        iconName: 'git-diff',
     },
 ];
 
@@ -71,13 +72,13 @@ const LEGACY_GIT_REPO_BACKEND_OPTIONS: ReadonlyArray<{
         id: 'git',
         titleKey: 'settingsSourceControl.gitRoutingPreference.options.git.title',
         subtitleKey: 'settingsSourceControl.gitRoutingPreference.options.git.subtitle',
-        iconName: 'logo-github',
+        iconName: 'github-logo',
     },
     {
         id: 'sapling',
         titleKey: 'settingsSourceControl.gitRoutingPreference.options.sapling.title',
         subtitleKey: 'settingsSourceControl.gitRoutingPreference.options.sapling.subtitle',
-        iconName: 'git-branch-outline',
+        iconName: 'git-branch',
     },
 ];
 
@@ -91,19 +92,19 @@ const PUSH_REJECT_OPTIONS: ReadonlyArray<{
         id: 'prompt_fetch',
         titleKey: 'settingsSourceControl.pushRejectionRecovery.options.promptFetch.title',
         subtitleKey: 'settingsSourceControl.pushRejectionRecovery.options.promptFetch.subtitle',
-        iconName: 'help-buoy-outline',
+        iconName: 'lifebuoy',
     },
     {
         id: 'auto_fetch',
         titleKey: 'settingsSourceControl.pushRejectionRecovery.options.autoFetch.title',
         subtitleKey: 'settingsSourceControl.pushRejectionRecovery.options.autoFetch.subtitle',
-        iconName: 'sync-outline',
+        iconName: 'arrows-clockwise',
     },
     {
         id: 'manual',
         titleKey: 'settingsSourceControl.pushRejectionRecovery.options.manual.title',
         subtitleKey: 'settingsSourceControl.pushRejectionRecovery.options.manual.subtitle',
-        iconName: 'hand-left-outline',
+        iconName: 'hand',
     },
 ];
 
@@ -112,9 +113,9 @@ const DIFF_MODE_OPTIONS: ReadonlyArray<{
     titleKey: TranslationKey;
     iconName: IoniconName;
 }> = [
-    { id: 'pending', titleKey: 'settingsSourceControl.diffMode.pending', iconName: 'time-outline' },
-    { id: 'both', titleKey: 'settingsSourceControl.diffMode.combined', iconName: 'git-merge-outline' },
-    { id: 'included', titleKey: 'settingsSourceControl.diffMode.included', iconName: 'checkmark-circle-outline' },
+    { id: 'pending', titleKey: 'settingsSourceControl.diffMode.pending', iconName: 'clock' },
+    { id: 'both', titleKey: 'settingsSourceControl.diffMode.combined', iconName: 'git-merge' },
+    { id: 'included', titleKey: 'settingsSourceControl.diffMode.included', iconName: 'check-circle' },
 ];
 
 const FILES_SYNTAX_HIGHLIGHTING_OPTIONS: ReadonlyArray<{
@@ -127,19 +128,19 @@ const FILES_SYNTAX_HIGHLIGHTING_OPTIONS: ReadonlyArray<{
         id: 'off',
         titleKey: 'settingsSourceControl.filesDisplay.syntaxHighlighting.options.off.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.syntaxHighlighting.options.off.subtitle',
-        iconName: 'text-outline',
+        iconName: 'text-aa',
     },
     {
         id: 'simple',
         titleKey: 'settingsSourceControl.filesDisplay.syntaxHighlighting.options.simple.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.syntaxHighlighting.options.simple.subtitle',
-        iconName: 'color-palette-outline',
+        iconName: 'palette',
     },
     {
         id: 'advanced',
         titleKey: 'settingsSourceControl.filesDisplay.syntaxHighlighting.options.advanced.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.syntaxHighlighting.options.advanced.subtitle',
-        iconName: 'sparkles-outline',
+        iconName: 'sparkle',
     },
 ];
 
@@ -153,13 +154,13 @@ const FILES_DIFF_RENDERER_OPTIONS: ReadonlyArray<{
         id: 'pierre',
         titleKey: 'settingsSourceControl.filesDisplay.diffRenderer.options.pierre.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.diffRenderer.options.pierre.subtitle',
-        iconName: 'sparkles-outline',
+        iconName: 'sparkle',
     },
     {
         id: 'happier',
         titleKey: 'settingsSourceControl.filesDisplay.diffRenderer.options.happier.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.diffRenderer.options.happier.subtitle',
-        iconName: 'code-outline',
+        iconName: 'code',
     },
 ];
 
@@ -173,13 +174,13 @@ const FILES_DIFF_PRESENTATION_OPTIONS: ReadonlyArray<{
         id: 'unified',
         titleKey: 'settingsSourceControl.filesDisplay.diffPresentation.options.unified.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.diffPresentation.options.unified.subtitle',
-        iconName: 'swap-vertical-outline',
+        iconName: 'arrows-down-up',
     },
     {
         id: 'split',
         titleKey: 'settingsSourceControl.filesDisplay.diffPresentation.options.split.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.diffPresentation.options.split.subtitle',
-        iconName: 'grid-outline',
+        iconName: 'grid-four',
     },
 ];
 
@@ -193,13 +194,13 @@ const FILES_CHANGED_FILES_DENSITY_OPTIONS: ReadonlyArray<{
         id: 'comfortable',
         titleKey: 'settingsSourceControl.filesDisplay.changedFilesDensity.options.comfortable.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.changedFilesDensity.options.comfortable.subtitle',
-        iconName: 'list-outline',
+        iconName: 'list',
     },
     {
         id: 'compact',
         titleKey: 'settingsSourceControl.filesDisplay.changedFilesDensity.options.compact.title',
         subtitleKey: 'settingsSourceControl.filesDisplay.changedFilesDensity.options.compact.subtitle',
-        iconName: 'reorder-three-outline',
+        iconName: 'list',
     },
 ];
 
@@ -213,24 +214,26 @@ const MARKDOWN_EDIT_MODE_OPTIONS: ReadonlyArray<{
         id: 'rich',
         titleKey: 'settingsSourceControl.markdownEditMode.options.rich.title',
         subtitleKey: 'settingsSourceControl.markdownEditMode.options.rich.subtitle',
-        iconName: 'document-text-outline',
+        iconName: 'file-text',
     },
     {
         id: 'raw',
         titleKey: 'settingsSourceControl.markdownEditMode.options.raw.title',
         subtitleKey: 'settingsSourceControl.markdownEditMode.options.raw.subtitle',
-        iconName: 'code-outline',
+        iconName: 'code',
     },
 ];
 
 export const SourceControlSettingsView = React.memo(function SourceControlSettingsView() {
     const { theme } = useUnistyles();
     const { push } = useRouter();
-    const primaryMachineId = usePrimaryMachineFromActiveSelection();
-    const activeServer = useActiveServerSnapshot();
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.sourceControl,
+    );
+    const executionTarget = administrationTargetSelection.resolveExecutionTarget();
     const contributionCatalog = useDaemonScmContributionCatalog({
-        machineId: primaryMachineId,
-        serverId: activeServer.serverId,
+        machineId: executionTarget?.machine.id ?? null,
+        serverId: executionTarget?.serverId ?? null,
     });
     const [scmCommitStrategy, setScmCommitStrategy] = useSettingMutable('scmCommitStrategy');
     const [scmGitRepoPreferredBackend] = useSettingMutable('scmGitRepoPreferredBackend');
@@ -298,11 +301,15 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     }, [applySettings]);
 
     const renderIcon = React.useCallback((iconName: IoniconName) => (
-        <Ionicons name={iconName} size={29} color={theme.colors.text.secondary} />
+        <Icon name={iconName} size={29} color={theme.colors.text.secondary} />
     ), [theme.colors.text.secondary]);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            <MachineAdministrationTargetSelector
+                selection={administrationTargetSelection}
+                testIDPrefix="settings.sourceControl.administration.target"
+            />
             <ItemGroup
                 title={t('settingsSourceControl.commitStrategy.title')}
                 footer={t('settingsSourceControl.commitStrategy.footer')}
@@ -313,7 +320,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={t(option.titleKey)}
                         subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
-                        rightElement={scmCommitStrategy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        rightElement={scmCommitStrategy === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setScmCommitStrategy(option.id)}
                         showChevron={false}
                     />
@@ -336,7 +343,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                                     legacyPreference: option.id,
                                     qualifiedPreference: null,
                                 })
-                                    ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} />
+                                    ? <Icon name="check" size={20} color={theme.colors.accent.blue} />
                                     : null
                             }
                             onPress={() => setScmGitRepoPreferredBackend(option.id)}
@@ -348,10 +355,10 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                             key={backend.id}
                             title={backend.title}
                             subtitle={describeProjectedMetadata(backend.description)}
-                            icon={renderIcon('git-branch-outline')}
+                            icon={renderIcon('git-branch')}
                             rightElement={
                                 effectiveScmGitRepoPreferredBackendId === backend.id
-                                    ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} />
+                                    ? <Icon name="check" size={20} color={theme.colors.accent.blue} />
                                     : null
                             }
                             onPress={contributionCatalogIsStale
@@ -370,7 +377,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                             key={provider.providerId}
                             title={provider.title}
                             subtitle={describeProjectedMetadata(provider.description)}
-                            icon={renderIcon(provider.authService ? 'key-outline' : 'cloud-outline')}
+                            icon={renderIcon(provider.authService ? 'key' : 'cloud')}
                             onPress={!contributionCatalogIsStale && provider.serviceId ? () => push({
                                 pathname: '/(app)/settings/connected-services/[serviceId]',
                                 params: { serviceId: provider.serviceId },
@@ -389,7 +396,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsSourceControl.remoteConfirmation.confirmBeforePulling.title')}
                     subtitle={t('settingsSourceControl.remoteConfirmation.confirmBeforePulling.subtitle')}
-                    icon={renderIcon('arrow-down-circle-outline')}
+                    icon={renderIcon('arrow-circle-down')}
                     rightElement={(
                         <Switch
                             compact
@@ -403,7 +410,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsSourceControl.remoteConfirmation.confirmBeforePushing.title')}
                     subtitle={t('settingsSourceControl.remoteConfirmation.confirmBeforePushing.subtitle')}
-                    icon={renderIcon('arrow-up-circle-outline')}
+                    icon={renderIcon('arrow-circle-up')}
                     rightElement={(
                         <Switch
                             compact
@@ -426,7 +433,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={t(option.titleKey)}
                         subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
-                        rightElement={scmPushRejectPolicy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        rightElement={scmPushRejectPolicy === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setScmPushRejectPolicy(option.id)}
                         showChevron={false}
                     />
@@ -440,15 +447,15 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsSourceControl.commitMessageGenerator.title')}
                     subtitle={effectiveCommitMessageGeneratorEnabled ? t('common.enabled') : t('common.disabled')}
-                    icon={renderIcon('sparkles-outline')}
-                    rightElement={effectiveCommitMessageGeneratorEnabled ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                    icon={renderIcon('sparkle')}
+                    rightElement={effectiveCommitMessageGeneratorEnabled ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                     onPress={() => setScmCommitMessageGeneratorEnabled(!effectiveCommitMessageGeneratorEnabled)}
                     showChevron={false}
                 />
                 <Item
                     title={t('settingsSourceControl.commitMessageGenerator.backendItemTitle', { backendId: effectiveCommitMessageGeneratorBackendId })}
                     subtitle={t('settingsSourceControl.commitMessageGenerator.backendItemSubtitle')}
-                    icon={renderIcon('server-outline')}
+                    icon={renderIcon('hard-drives')}
                     onPress={async () => {
                         const next = await Modal.prompt(t('settingsSourceControl.commitMessageGenerator.backendPromptTitle'), t('settingsSourceControl.commitMessageGenerator.backendPromptMessage'), {
                             defaultValue: effectiveCommitMessageGeneratorBackendId,
@@ -491,8 +498,8 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsSourceControl.commitAttribution.includeCoAuthoredBy.title')}
                     subtitle={effectiveIncludeCoAuthoredBy ? t('common.enabled') : t('common.disabled')}
-                    icon={renderIcon('people-outline')}
-                    rightElement={effectiveIncludeCoAuthoredBy ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                    icon={renderIcon('users')}
+                    rightElement={effectiveIncludeCoAuthoredBy ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                     onPress={() => setScmIncludeCoAuthoredBy(!effectiveIncludeCoAuthoredBy)}
                     showChevron={false}
                 />
@@ -510,7 +517,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                                 title={t(option.titleKey)}
                                 subtitle={t(option.subtitleKey)}
                                 icon={renderIcon(option.iconName)}
-                                rightElement={effectiveFilesDiffRendererMode === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                                rightElement={effectiveFilesDiffRendererMode === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                                 onPress={() => setFilesDiffRendererMode(option.id)}
                                 showChevron={false}
                             />
@@ -523,7 +530,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                                         title={t(option.titleKey)}
                                         subtitle={t(option.subtitleKey)}
                                         icon={renderIcon(option.iconName)}
-                                        rightElement={effectiveFilesDiffPresentationStyle === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                                        rightElement={effectiveFilesDiffPresentationStyle === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                                         onPress={() => setFilesDiffPresentationStyle(option.id)}
                                         showChevron={false}
                                     />
@@ -538,7 +545,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={t(option.titleKey)}
                         subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveFilesDiffSyntaxHighlightingMode === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        rightElement={effectiveFilesDiffSyntaxHighlightingMode === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setFilesDiffSyntaxHighlightingMode(option.id)}
                         showChevron={false}
                     />
@@ -549,7 +556,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         title={t(option.titleKey)}
                         subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveFilesChangedFilesRowDensity === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        rightElement={effectiveFilesChangedFilesRowDensity === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setFilesChangedFilesRowDensity(option.id)}
                         showChevron={false}
                     />
@@ -557,7 +564,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsAppearance.showLineNumbersInDiffs')}
                     subtitle={t('settingsAppearance.showLineNumbersInDiffsDescription')}
-                    icon={renderIcon('list-outline')}
+                    icon={renderIcon('list')}
                     rightElement={<Switch value={showLineNumbers === true} onValueChange={setShowLineNumbers} />}
                     showChevron={false}
                     onPress={() => setShowLineNumbers(showLineNumbers !== true)}
@@ -565,7 +572,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsAppearance.showLineNumbersInToolViews')}
                     subtitle={t('settingsAppearance.showLineNumbersInToolViewsDescription')}
-                    icon={renderIcon('code-working-outline')}
+                    icon={renderIcon('code')}
                     rightElement={<Switch value={showLineNumbersInToolViews === true} onValueChange={setShowLineNumbersInToolViews} />}
                     showChevron={false}
                     onPress={() => setShowLineNumbersInToolViews(showLineNumbersInToolViews !== true)}
@@ -573,7 +580,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsAppearance.wrapLinesInDiffs')}
                     subtitle={t('settingsAppearance.wrapLinesInDiffsDescription')}
-                    icon={renderIcon('return-down-forward-outline')}
+                    icon={renderIcon('arrow-elbow-down-right')}
                     rightElement={<Switch value={wrapLinesInDiffs === true} onValueChange={setWrapLinesInDiffs} />}
                     showChevron={false}
                     onPress={() => setWrapLinesInDiffs(wrapLinesInDiffs !== true)}
@@ -598,7 +605,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                                     icon={renderIcon(option.iconName)}
                                     rightElement={
                                         selectedDiffMode === option.id
-                                            ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} />
+                                            ? <Icon name="check" size={20} color={theme.colors.accent.blue} />
                                             : null
                                     }
                                     onPress={contributionCatalogIsStale ? undefined : () => {
@@ -628,7 +635,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <Item
                     title={t('settingsSourceControl.editorAutoSave')}
                     subtitle={t('settingsSourceControl.editorAutoSaveDescription')}
-                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="floppy-disk" size={29} color={theme.colors.accent.blue} />}
                     rightElement={
                         <Switch
                             value={filesEditorAutoSave === true}
@@ -649,7 +656,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                             title={t(option.titleKey)}
                             subtitle={t(option.subtitleKey)}
                             icon={renderIcon(option.iconName)}
-                            rightElement={effectiveMarkdownDefaultEditMode === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                            rightElement={effectiveMarkdownDefaultEditMode === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                             onPress={() => setMarkdownDefaultEditMode(option.id)}
                             showChevron={false}
                         />

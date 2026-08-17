@@ -143,8 +143,8 @@ describe('Popover web portal interaction readiness', () => {
             if (this === anchor) return rect(100, 100, 180, 40);
             return rect(100, 140, 180, 120);
         };
-        globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => setTimeout(() => callback(0), 0)) as typeof requestAnimationFrame;
-        globalThis.cancelAnimationFrame = ((handle: number) => clearTimeout(handle)) as typeof cancelAnimationFrame;
+        globalThis.requestAnimationFrame = (callback) => window.setTimeout(() => callback(0), 0);
+        globalThis.cancelAnimationFrame = (handle) => window.clearTimeout(handle);
 
         try {
             anchor.focus();
@@ -185,6 +185,148 @@ describe('Popover web portal interaction readiness', () => {
         }
     });
 
+    it('focuses the selected interactive descendant before the first option when requested on open', async () => {
+        const { Popover } = await import('./Popover');
+        const portalTarget = document.createElement('div');
+        const anchor = document.createElement('button');
+        const container = document.createElement('div');
+        anchor.textContent = 'Open';
+        document.body.append(portalTarget, anchor, container);
+        const root = createRoot(container);
+        const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+        const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+        const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+
+        HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+            if (this === anchor) return rect(100, 100, 180, 40);
+            return rect(100, 140, 180, 120);
+        };
+        globalThis.requestAnimationFrame = (callback) => window.setTimeout(() => callback(0), 0);
+        globalThis.cancelAnimationFrame = (handle) => window.clearTimeout(handle);
+
+        try {
+            anchor.focus();
+            await act(async () => {
+                root.render(
+                    <ModalPortalTargetProvider target={portalTarget}>
+                        <Popover
+                            open
+                            anchorRef={{ current: anchor }}
+                            autoFocusOnOpen
+                            placement="bottom"
+                            backdrop={false}
+                            portal={{ web: true, native: true }}
+                        >
+                            {() => (
+                                <>
+                                    <button type="button" data-testid="popover-first-option">First</button>
+                                    <button type="button" aria-selected="true" data-testid="popover-selected-option">Selected</button>
+                                </>
+                            )}
+                        </Popover>
+                    </ModalPortalTargetProvider>,
+                );
+            });
+            await act(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            });
+
+            expect(document.activeElement).toBe(portalTarget.querySelector('[data-testid="popover-selected-option"]'));
+        } finally {
+            await act(async () => root.unmount());
+            HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+            globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+            globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+            portalTarget.remove();
+            anchor.remove();
+            container.remove();
+        }
+    });
+
+    it('returns Escape focus to the connected activation trigger when the measurable anchor wrapper cannot receive focus', async () => {
+        const { Popover } = await import('./Popover');
+        const portalTarget = document.createElement('div');
+        const container = document.createElement('div');
+        document.body.append(portalTarget, container);
+        const root = createRoot(container);
+        const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+        const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+        const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+
+        function DropdownLikeHarness() {
+            const [open, setOpen] = React.useState(false);
+            const anchorRef = React.useRef<HTMLDivElement>(null);
+            return (
+                <ModalPortalTargetProvider target={portalTarget}>
+                    <div ref={anchorRef}>
+                        <button
+                            type="button"
+                            data-testid="dropdown-trigger"
+                            onClick={() => setOpen(true)}
+                        >
+                            More
+                        </button>
+                        {open ? (
+                            <Popover
+                                open={open}
+                                anchorRef={anchorRef}
+                                autoFocusOnOpen
+                                placement="bottom"
+                                backdrop={false}
+                                portal={{ web: true, native: true }}
+                                onRequestClose={() => setOpen(false)}
+                            >
+                                {() => <button type="button" data-testid="dropdown-menu-item">Remove</button>}
+                            </Popover>
+                        ) : null}
+                    </div>
+                </ModalPortalTargetProvider>
+            );
+        }
+
+        HTMLElement.prototype.getBoundingClientRect = () => rect(100, 100, 180, 40);
+        globalThis.requestAnimationFrame = (callback) => window.setTimeout(() => callback(0), 0);
+        globalThis.cancelAnimationFrame = (handle) => window.clearTimeout(handle);
+
+        try {
+            await act(async () => {
+                root.render(<DropdownLikeHarness />);
+            });
+
+            const trigger = container.querySelector<HTMLButtonElement>('[data-testid="dropdown-trigger"]');
+            expect(trigger).not.toBeNull();
+            // Browsers focus a pointer-activated button before its click handler
+            // opens the popover; jsdom needs that browser fact made explicit.
+            trigger!.focus();
+            expect(document.activeElement).toBe(trigger);
+
+            await act(async () => {
+                trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            });
+
+            const menuItem = portalTarget.querySelector<HTMLButtonElement>('[data-testid="dropdown-menu-item"]');
+            expect(menuItem).not.toBeNull();
+            expect(document.activeElement).toBe(menuItem);
+            expect(trigger!.isConnected).toBe(true);
+
+            await act(async () => {
+                menuItem!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+                await Promise.resolve();
+            });
+
+            expect(trigger!.isConnected).toBe(true);
+            expect(document.activeElement).toBe(trigger);
+        } finally {
+            await act(async () => root.unmount());
+            HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+            globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+            globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+            portalTarget.remove();
+            container.remove();
+        }
+    });
+
     it('retries transient zero-sized content before enabling opacity and pointer input', async () => {
         const { Popover } = await import('./Popover');
         const portalTarget = document.createElement('div');
@@ -209,8 +351,8 @@ describe('Popover web portal interaction readiness', () => {
             }
             return rect(0, 0, 1280, 720);
         };
-        globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => setTimeout(() => callback(0), 0)) as typeof requestAnimationFrame;
-        globalThis.cancelAnimationFrame = ((handle: number) => clearTimeout(handle)) as typeof cancelAnimationFrame;
+        globalThis.requestAnimationFrame = (callback) => window.setTimeout(() => callback(0), 0);
+        globalThis.cancelAnimationFrame = (handle) => window.clearTimeout(handle);
         globalThis.ResizeObserver = class ResizeObserver {
             observe() {}
             unobserve() {}

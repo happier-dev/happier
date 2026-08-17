@@ -4,7 +4,6 @@ import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedLi
 import { Text } from '@/components/ui/text/Text';
 import { useArtifacts } from '@/sync/domains/state/storage';
 import { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -14,6 +13,7 @@ import { sync } from '@/sync/sync';
 import { FAB } from '@/components/ui/buttons/FAB';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 // Date formatting
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -96,9 +96,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     artifactDate: {
         fontSize: 13,
-        color: theme.colors.text.secondary,
-    },
-    artifactChevron: {
         color: theme.colors.text.secondary,
     },
     fab: {
@@ -201,7 +198,11 @@ export default function ArtifactsScreen() {
                         ]}
                         numberOfLines={1}
                     >
-                        {item.title || 'Untitled'}
+                        {item.isDecrypted === false
+                            ? item.availability.reason === 'encryption_material_unavailable'
+                                ? t('settingsAccount.restoreRequiredTitle')
+                                : t('common.error')
+                            : item.title || t('artifacts.untitled')}
                     </Text>
                     <View style={styles.artifactMeta}>
                         <Text style={styles.artifactDate}>
@@ -209,10 +210,9 @@ export default function ArtifactsScreen() {
                         </Text>
                     </View>
                 </View>
-                <Ionicons 
-                    name="chevron-forward" 
-                    size={18} 
-                    style={styles.artifactChevron}
+                <Icon
+                    name="caret-right"
+                    size={16}
                     color={theme.colors.text.secondary}
                 />
             </Pressable>
@@ -235,9 +235,9 @@ export default function ArtifactsScreen() {
 
         return (
             <View style={styles.emptyContainer}>
-                <Ionicons 
-                    name="document-text-outline" 
-                    size={64} 
+                <Icon
+                    name="file-text"
+                    size={64}
                     style={styles.emptyIcon}
                     color={theme.colors.text.secondary}
                 />

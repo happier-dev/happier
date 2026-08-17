@@ -16,7 +16,6 @@ vi.mock('@/voice/local/speakDeviceText', () => ({
 vi.mock('@/voice/credentials/bundledSpeechClient', () => ({
     bundledSpeechDaemonClient: { transcribe: vi.fn(), synthesize: vi.fn() },
 }));
-vi.mock('@/voice/output/TtsController', () => ({ speakOpenAiCompatText: vi.fn() }));
 vi.mock('@/voice/output/KokoroTtsController', () => ({ speakKokoroText: vi.fn() }));
 
 import { createDefaultLocalVoiceTtsProviderControllers } from './localVoiceTtsProviderControllers';

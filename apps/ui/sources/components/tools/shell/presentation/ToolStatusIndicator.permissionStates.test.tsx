@@ -51,8 +51,8 @@ describe('ToolStatusIndicator (permission states)', () => {
                     } as any}
                 />)).tree;
 
-        const icons = tree!.findAllByType('Ionicons' as any);
-        expect(icons.some((n) => n.props.name === 'lock-closed-outline')).toBe(true);
+        const icons = tree!.findAllByType('Icon' as any);
+        expect(icons.some((n) => n.props.name === 'lock')).toBe(true);
     });
 
     it('renders remove icon when permission is denied', async () => {
@@ -73,8 +73,8 @@ describe('ToolStatusIndicator (permission states)', () => {
                     } as any}
                 />)).tree;
 
-        const icons = tree!.findAllByType('Ionicons' as any);
-        expect(icons.some((n) => n.props.name === 'remove-circle-outline')).toBe(true);
+        const icons = tree!.findAllByType('Icon' as any);
+        expect(icons.some((n) => n.props.name === 'minus-circle')).toBe(true);
     });
 
     it('uses the neutral loading color while running', async () => {

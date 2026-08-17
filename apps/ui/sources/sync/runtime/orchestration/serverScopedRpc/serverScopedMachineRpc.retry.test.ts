@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
+import { resetScopedMachineTransportCacheForTests } from './serverScopedRpcPool';
 
 const machineRpcSpy = vi.hoisted(() => vi.fn());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
@@ -61,7 +61,7 @@ describe('machineRpcWithServerScope (retry)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-    resetScopedMachineDataKeyCacheForTests();
+        resetScopedMachineTransportCacheForTests();
   });
 
   it('retries once when the scoped rpc method is not available', async () => {

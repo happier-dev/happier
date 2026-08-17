@@ -5,6 +5,7 @@ import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { PopoverScrollSourceProvider } from '@/components/ui/popover';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
 
 const BASE_CONTENT_PADDING_BOTTOM = Platform.select({ ios: 34, default: 16 }) ?? 16;
 
@@ -14,6 +15,8 @@ export interface ItemListProps extends ScrollViewProps {
     containerStyle?: StyleProp<ViewStyle>;
     insetGrouped?: boolean;
     onWheel?: (event: unknown) => void;
+    /** Use the shared native keyboard owner for forms with focusable fields. */
+    keyboardAware?: boolean;
 }
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -57,6 +60,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         containerStyle,
         insetGrouped = true,
         onWheel,
+        keyboardAware = false,
         ...scrollViewProps
     } = props;
 
@@ -81,32 +85,37 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         setForwardedRef(ref, node);
     }, [ref]);
 
+    const scrollProps = {
+        ref: setRefs,
+        style: [
+            styles.container,
+            { backgroundColor },
+            style,
+        ],
+        contentContainerStyle: [
+            styles.contentContainer,
+            containerStyle,
+            bottomChromeHeight > 0 ? { paddingBottom: BASE_CONTENT_PADDING_BOTTOM + bottomChromeHeight } : null,
+        ],
+        showsVerticalScrollIndicator: scrollViewProps.showsVerticalScrollIndicator !== undefined
+            ? scrollViewProps.showsVerticalScrollIndicator
+            : true,
+        contentInsetAdjustmentBehavior: (isIOS && !isWeb) ? 'automatic' as const : undefined,
+        onScroll: installWebModalWheelFix ? wheelScrollHandlers.onScroll : onScroll,
+        ...restScrollViewProps,
+        ...(installWebModalWheelFix
+            ? ({ onWheel: wheelScrollHandlers.onWheel } as any)
+            : (rawOnWheel ? ({ onWheel: rawOnWheel } as any) : {})),
+    };
+    const scrollContent = keyboardAware ? (
+        <KeyboardAwareScrollView {...scrollProps}>{children}</KeyboardAwareScrollView>
+    ) : (
+        <ScrollView {...scrollProps}>{children}</ScrollView>
+    );
+
     return (
         <PopoverScrollSourceProvider scrollSourceRef={internalRef}>
-            <ScrollView
-                ref={setRefs}
-                style={[
-                    styles.container,
-                    { backgroundColor },
-                    style
-                ]}
-                contentContainerStyle={[
-                    styles.contentContainer,
-                    containerStyle,
-                    bottomChromeHeight > 0 ? { paddingBottom: BASE_CONTENT_PADDING_BOTTOM + bottomChromeHeight } : null,
-                ]}
-                showsVerticalScrollIndicator={scrollViewProps.showsVerticalScrollIndicator !== undefined
-                    ? scrollViewProps.showsVerticalScrollIndicator
-                    : true}
-                contentInsetAdjustmentBehavior={(isIOS && !isWeb) ? 'automatic' : undefined}
-                onScroll={installWebModalWheelFix ? wheelScrollHandlers.onScroll : onScroll}
-                {...restScrollViewProps}
-                {...(installWebModalWheelFix
-                    ? ({ onWheel: wheelScrollHandlers.onWheel } as any)
-                    : (rawOnWheel ? ({ onWheel: rawOnWheel } as any) : {}))}
-            >
-                {children}
-            </ScrollView>
+            {scrollContent}
         </PopoverScrollSourceProvider>
     );
 }));

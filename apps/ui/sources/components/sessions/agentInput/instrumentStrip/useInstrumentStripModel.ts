@@ -6,6 +6,7 @@ import {
     type ScmStatusSummary,
 } from '@/components/sessions/sourceControl/status/statusSummary';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import { useSessionProjectScmSnapshot, useSessionUsage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { nowServerMs } from '@/sync/runtime/time';
@@ -58,9 +59,19 @@ type SessionUsageLike = Readonly<{
 export function useInstrumentStripModel(params: Readonly<{
     sessionId: string | null | undefined;
     agentId: AgentId | null | undefined;
+    agentTargetKey?: string | null;
     metadata: Metadata | null | undefined;
+    sessionActive?: boolean;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
 }>): InstrumentStripModel {
-    const { sessionId, agentId, metadata } = params;
+    const {
+        sessionId,
+        agentId,
+        agentTargetKey,
+        metadata,
+        sessionActive,
+        currentRunnerProcessIdentity,
+    } = params;
     const usage = useSessionUsage(sessionId ?? '') as SessionUsageLike;
     const scmSnapshot = useSessionProjectScmSnapshot(sessionId ?? null);
 
@@ -78,7 +89,10 @@ export function useInstrumentStripModel(params: Readonly<{
         if (!agentId) return null;
         return resolveContextWindowTokens({
             agentId,
+            agentTargetKey,
             metadata: metadata ?? null,
+            sessionActive,
+            currentRunnerProcessIdentity,
             usageData: {
                 contextSnapshot: snapshot ?? undefined,
                 contextSize: usageContextSize,
@@ -87,7 +101,16 @@ export function useInstrumentStripModel(params: Readonly<{
                     : {}),
             },
         });
-    }, [agentId, metadata, snapshot, usageContextSize, usageContextWindowTokens]);
+    }, [
+        agentId,
+        agentTargetKey,
+        metadata,
+        currentRunnerProcessIdentity,
+        sessionActive,
+        snapshot,
+        usageContextSize,
+        usageContextWindowTokens,
+    ]);
 
     const context = React.useMemo<InstrumentStripContextModel | null>(() => {
         // Nothing to show when neither a snapshot nor a resolvable window exists

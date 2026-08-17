@@ -24,6 +24,7 @@ vi.mock('@/sync/store/hooks', () => ({
 
 vi.mock('./uiFontScale', () => ({
   scaleTextStyle: (style: any) => style,
+  scaleUnistylesTextStyleEntry: (entry: any) => entry,
 }));
 
 describe('Text (selectability scope)', () => {
@@ -57,6 +58,16 @@ describe('Text (selectability scope)', () => {
     );
     const rnText = screen.findByType('RNText' as any);
     expect(rnText.props.selectable).toBe(false);
+  });
+
+  it('honors an explicit native font-scaling override', async () => {
+    const { Text } = await import('./Text');
+    const { Text: NativeText } = await import('react-native');
+
+    const screen = await renderScreen(<Text allowFontScaling={false}>toolbar label</Text>);
+    const rnText = screen.findByType(NativeText);
+
+    expect(rnText.props.allowFontScaling).toBe(false);
   });
 
   it('clamps focused input font size to 16px on iOS web to prevent Safari zoom-on-focus', async () => {

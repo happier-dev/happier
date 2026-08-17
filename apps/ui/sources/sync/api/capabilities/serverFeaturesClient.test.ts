@@ -503,6 +503,104 @@ describe('serverFeaturesClient', () => {
         expect(featuresFetchMock.mock.calls.length).toBe(2);
     });
 
+    it('retries a post-response stale server generation without caching a network error', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        featuresFetchMock
+            .mockImplementationOnce(() => {
+                activeServerSnapshot = {
+                    serverId: 'server-b',
+                    serverUrl: 'https://other.example.test',
+                    generation: 2,
+                };
+                return Promise.resolve(createResponse(200, payload));
+            })
+            .mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        const first = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        expect(first.status).toBe('ready');
+
+        const calls = featuresFetchMock.mock.calls;
+        expect(calls.length).toBe(2);
+        expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
+        expect(String(calls[1]?.[0] ?? '')).toContain('https://other.example.test');
+
+        const second = await getServerFeaturesSnapshot({ timeoutMs: 50 });
+        expect(second.status).toBe('ready');
+        expect(featuresFetchMock.mock.calls.length).toBe(2);
+    });
+
+    it('retries a generation-only stale response within the active server cache scope', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+
+        featuresFetchMock
+            .mockImplementationOnce(() => {
+                activeServerSnapshot = {
+                    ...activeServerSnapshot,
+                    generation: activeServerSnapshot.generation + 1,
+                };
+                return Promise.resolve(createResponse(200, payload));
+            })
+            .mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        try {
+            const first = await Promise.race([
+                getServerFeaturesSnapshot({ timeoutMs: 50 }),
+                new Promise<never>((_resolve, reject) => {
+                    timeoutHandle = setTimeout(
+                        () => reject(new Error('timed out waiting for a same-scope generation retry')),
+                        250,
+                    );
+                }),
+            ]);
+            expect(first.status).toBe('ready');
+        } finally {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
+
+        const calls = featuresFetchMock.mock.calls;
+        expect(calls.length).toBe(2);
+        expect(String(calls[0]?.[0] ?? '')).toContain('https://active.example.test');
+        expect(String(calls[1]?.[0] ?? '')).toContain('https://active.example.test');
+    });
+
     it('recovers from a server-switch abort race by retrying automatically', async () => {
         const payload = {
             features: {

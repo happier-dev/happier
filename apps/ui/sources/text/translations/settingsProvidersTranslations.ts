@@ -49,6 +49,57 @@ const es = {
     models: { builtIn: 'Integrado', experimental: 'Experimental', experimentalConfirmTitle: '¿Usar un modelo experimental?', experimentalConfirmBody: ({ provider, model }: { provider: string; model: string }) => `${model} de ${provider} aún no se ha verificado por completo con este agente. Si no funciona como esperas, puede que tengas que reiniciar o elegir otro modelo.`, experimentalConfirmAction: 'Usar modelo', stale: 'Puede no estar disponible', hidden: 'Oculto', manage: 'Gestionar modelos', empty: 'Este proveedor aún no tiene modelos disponibles.', add: 'Añadir modelos', addPlaceholder: 'Introduce un ID de modelo por línea', resetVisibility: 'Restablecer visibilidad', showHidden: 'Mostrar modelos ocultos', hideHidden: 'Ocultar modelos ocultos', remove: 'Eliminar modelo', removeConfirmation: '¿Eliminar este modelo añadido manualmente?', enable: 'Mostrar modelo', disable: 'Ocultar modelo', load: 'Cargar modelo', retry: 'Intentar de nuevo', connectionUnavailable: 'Este proveedor no está disponible en la máquina seleccionada.' },
 };
 
+const fr = {
+    title: 'Providers', entrySubtitle: 'Connecter des sources de modèles cloud et locales', detailTitle: 'Connexion au provider',
+    configuredTitle: 'Tes providers', configuredFooter: 'Les modèles des providers activés apparaissent dans les sélecteurs de modèle des agents compatibles.',
+    availableTitle: 'Disponible', availableFooter: 'Ajoute un provider une fois, puis utilise ses modèles avec tous les agents compatibles.',
+    customTitle: 'Provider personnalisé', customFooter: 'Connecte une gateway d’entreprise ou un autre endpoint de modèles compatible.',
+    addCustom: 'Ajouter un provider personnalisé', addCustomDescription: 'Utilise un endpoint compatible OpenAI ou Anthropic',
+    emptyTitle: 'Aucun provider connecté pour l’instant', emptyDescription: 'Choisis un provider disponible ci-dessous ou ajoute ton propre endpoint.',
+    unavailable: 'Les providers ne sont pas disponibles', unavailableDescription: 'Ce serveur n’a pas activé les connexions aux providers.',
+    noMachine: 'Aucune machine disponible', noMachineDescription: 'Connecte une machine pour configurer et tester les providers.',
+    problemTitle: 'Le provider demande ton attention', searchPlaceholder: 'Rechercher des providers',
+    status: { available: 'Connecté', notChecked: 'Non vérifié', needsAttention: 'Nécessite ton attention', unreachable: 'Injoignable', disabled: 'Désactivé', sourceUnavailable: 'Plugin indisponible' },
+    kind: { frontier: 'Provider de modèles', aggregator: 'Catalogue de modèles', cloud: 'Provider cloud', local: 'S’exécute sur cette machine' },
+    detail: {
+        pickSecretTitle: 'Choisir une clé API', notFoundTitle: 'Provider introuvable', notFoundDescription: 'Cette connexion de provider n’existe plus.',
+        deletedDescription: 'Ce provider a été supprimé. Choisis un autre modèle avant de reprendre les sessions qui l’utilisaient.', sourceAvailable: 'Plugin de provider disponible',
+        connectionTitle: 'Connexion', connectionFooter: 'Contrôle où ce provider peut être utilisé et vérifie son statut actuel.',
+        accountAccess: 'Utiliser sur toutes les machines', accountAccessDescription: 'Disponible partout où ce provider pointe vers un endpoint public',
+        testConnection: 'Tester la connexion', testDescription: 'Vérifier l’endpoint et actualiser son catalogue de modèles', testSucceeded: 'Connexion réussie',
+        testNotSupported: 'Ce provider ne prend pas en charge de test de connexion automatique', machinesTitle: 'Machines', machinesFooter: 'Les endpoints locaux et privés doivent être activés séparément sur chaque machine.',
+        currentMachine: 'Machine actuelle', selectMachineToManage: 'Sélectionne cette machine pour vérifier et modifier son accès', targetMachine: 'Machine cible',
+        machineOnline: 'En ligne', machineOffline: 'Hors ligne', apiKeyTitle: 'Clé API', apiKeyFooter: 'Les clés restent dans les secrets enregistrés et ne sont jamais affichées ici.',
+        accountApiKey: 'Clé API par défaut', machineApiKey: 'Clé API sur cette machine', apiKeyConfigured: 'Configurés', apiKeyMissing: 'Ajoute une clé pour connecter',
+        apiKeySelected: 'Clé enregistrée sélectionnée', useAccountApiKey: 'Utilise la clé par défaut si aucune clé de machine n’est définie', modelsTitle: 'Modèles', manageModels: 'Gérer les modèles',
+        modelsUnknown: 'Les modèles apparaissent après la connexion', modelCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'modèle' : 'modèles'}`,
+        actionsTitle: 'Actions', duplicateTitle: 'Ajouter une autre connexion', duplicateDescription: 'Créer une connexion nommée séparément vers le même provider',
+        deleteTitle: 'Supprimer le provider', deleteDescription: 'Les sessions existantes conservent leur historique, mais ne peuvent pas reprendre avec ce provider.',
+        advancedTitle: 'Avancé', endpointDefault: 'Endpoint par défaut', endpointMachine: 'Endpoint sur cette machine', endpointMachineDescription: 'Ne surcharger la valeur par défaut que là où cette machine exécute le provider',
+        endpointPrompt: 'Saisis l’URL de base complète du provider.', resetEndpoint: 'Réinitialiser l’endpoint', resetMachineEndpoint: 'Utiliser l’endpoint par défaut sur cette machine', resetDefaultEndpoint: 'Utiliser l’endpoint fourni par le plugin du provider',
+    },
+    authoring: {
+        providerTitle: 'Provider', builtInDescription: 'Choisis un secret enregistré, puis connecte ce provider.', compatibilityTitle: 'Compatibilité', compatibilityFooter: 'Choisis le style d’API documenté par ton provider.', protocolTitle: 'Compatibilité API',
+        protocol: { 'openai-responses': { title: 'Compatible OpenAI Responses', description: 'Pour les gateways qui implémentent l’API Responses' }, 'openai-chat': { title: 'Compatible OpenAI Chat', description: 'Pour les gateways qui implémentent Chat Completions' }, anthropic: { title: 'Compatible Anthropic', description: 'Pour les gateways qui implémentent l’API Messages' } },
+        detailsTitle: 'Détails du provider', name: 'Nom', namePlaceholder: 'Gateway d’entreprise', baseUrl: 'URL de base', baseUrlPlaceholder: 'https://gateway.example.com/v1', modelsPath: 'Chemin des modèles',
+        credentialsTitle: 'Identifiants', credentialsFooter: 'Sélectionne un secret enregistré. Ne colle jamais de clé API dans l’URL ou les en-têtes.', requiresApiKey: 'Nécessite une clé API',
+        requiresApiKeyYes: 'Utiliser un secret enregistré pour les requêtes', requiresApiKeyNo: 'Connecter sans identifiants', apiKey: 'Clé API', apiKeyDescription: 'Choisir ou créer un secret enregistré',
+        credentialStyleTitle: 'Format de clé API', credentialHeader: 'Nom du header', credentialStyle: { bearer: 'Token bearer Authorization', xApiKey: 'En-tête x-api-key', apiKey: 'En-tête api-key', customHeader: 'En-tête personnalisé (valeur brute)' },
+        catalogTitle: 'Catalogue de modèles', catalogFooter: 'Récupère les modèles automatiquement quand l’endpoint le permet, ou ajoute-les manuellement plus tard.', fetchModels: 'Récupérer les modèles automatiquement',
+        fetchModelsYes: 'Utiliser l’endpoint de liste de modèles du provider', fetchModelsNo: 'Ajouter les ids de modèle manuellement', verifyTitle: 'Connecter', verifyFooter: 'Teste d’abord si possible, puis enregistre le provider.', save: 'Enregistrer le provider', connect: 'Connecter le provider',
+    },
+    errors: {
+        secretMissingTitle: 'Clé API nécessaire', secretMissingDescription: 'Choisis un secret enregistré avant d’activer ce provider.', notEnabledOnMachineTitle: 'Non activé sur cette machine',
+        notEnabledOnMachineDescription: 'Active ce provider pour la machine où la session s’exécutera.', disabledTitle: 'Le provider est désactivé', disabledDescription: 'Active ce provider avant d’utiliser ses modèles.',
+        unreachableTitle: 'Le provider est injoignable', unreachableDescription: 'Vérifie que le service tourne et que l’endpoint est correct, puis réessaie.',
+        notFoundTitle: 'Provider introuvable', notFoundDescription: 'Ce provider a été supprimé. Choisis un autre provider ou modèle.', sourceUnavailableTitle: 'Plugin de provider indisponible', sourceUnavailableDescription: 'Réactive ou réinstalle le plugin qui fournit cette connexion.',
+        featureDisabledTitle: 'Les providers sont indisponibles', featureDisabledDescription: 'Ce serveur n’a pas activé les connexions aux providers.', unauthorizedTitle: 'Clé API rejetée',
+        unauthorizedDescription: 'Remplace le secret enregistré par une clé valide, puis teste à nouveau la connexion.', rateLimitedTitle: 'Le provider est en limite de débit', rateLimitedDescription: 'Attends un instant, puis réessaie la connexion.',
+        genericTitle: 'Le provider demande ton attention', genericDescription: 'Vérifie les réglages du provider et réessaie.',
+    },
+    models: { builtIn: 'Intégré', experimental: 'Expérimental', experimentalConfirmTitle: 'Utiliser un modèle expérimental ?', experimentalConfirmBody: ({ provider, model }: { provider: string; model: string }) => `${model} de ${provider} changé de `, experimentalConfirmAction: 'Utiliser le modèle', stale: 'Peut être indisponible', hidden: 'Masqué', manage: 'Gérer les modèles', empty: 'Aucun modèle n’est encore disponible pour ce provider.', add: 'Ajouter des modèles', addPlaceholder: 'Saisis un id de modèle par ligne', resetVisibility: 'Réinitialiser la visibilité', showHidden: 'Afficher les modèles masqués', hideHidden: 'Masquer les modèles masqués', remove: 'Supprimer le modèle', removeConfirmation: 'Supprimer ce modèle ajouté manuellement ?', enable: 'Afficher le modèle', disable: 'Masquer le modèle', load: 'Charger le modèle', retry: 'Réessayer', connectionUnavailable: 'Ce provider est indisponible sur la machine sélectionnée.' },
+};
+
 const ca = {
     title: 'Proveïdors', entrySubtitle: 'Connecta fonts de models locals i al núvol', detailTitle: 'Connexió del proveïdor',
     configuredTitle: 'Els teus proveïdors', configuredFooter: 'Els models dels proveïdors habilitats apareixen als selectors de models dels agents compatibles.',
@@ -142,6 +193,7 @@ const ja = {
 
 const localTranslations = {
     es: { title: 'En esta máquina', footer: 'Servidores de modelos locales encontrados en esta máquina. Los modelos se ejecutan de forma privada en tu equipo.', detected: 'Detectado', possible: 'Posible servicio', detectedAtPort: ({ port }: { port: string }) => `Detectado · Puerto ${port}`, possibleAtPort: ({ provider, port }: { provider: string; port: string }) => `Posible servicio de ${provider} · Puerto ${port}`, addConnectionTitle: 'Añadir otra conexión local', addConnectionDescription: 'Ponle un nombre para distinguirla de tus otros endpoints locales.', defaultConnectionName: ({ provider }: { provider: string }) => `${provider} local` },
+    fr: { title: 'Sur cette machine', footer: 'Serveurs de modèles locaux détectés sur cette machine. Les modèles s’exécutent en privé sur ton matériel.', detected: 'Détectés', possible: 'Service possible', detectedAtPort: ({ port }: { port: string }) => `Détecté · Port ${port}`, possibleAtPort: ({ provider, port }: { provider: string; port: string }) => `Service ${provider} possible · Port ${port}`, addConnectionTitle: 'Ajouter une autre connexion locale', addConnectionDescription: 'Nomme cette connexion pour la distinguer de tes autres endpoints locaux.', defaultConnectionName: ({ provider }: { provider: string }) => `${provider} local` },
     ca: { title: 'En aquesta màquina', footer: 'Servidors de models locals trobats en aquesta màquina. Els models s’executen de manera privada al teu equip.', detected: 'Detectat', possible: 'Possible servei', detectedAtPort: ({ port }: { port: string }) => `Detectat · Port ${port}`, possibleAtPort: ({ provider, port }: { provider: string; port: string }) => `Possible servei de ${provider} · Port ${port}`, addConnectionTitle: 'Afegeix una altra connexió local', addConnectionDescription: 'Posa-li un nom per distingir-la dels altres endpoints locals.', defaultConnectionName: ({ provider }: { provider: string }) => `${provider} local` },
     it: { title: 'Su questa macchina', footer: 'Server di modelli locali trovati su questa macchina. I modelli vengono eseguiti privatamente sul tuo hardware.', detected: 'Rilevato', possible: 'Possibile servizio', detectedAtPort: ({ port }: { port: string }) => `Rilevato · Porta ${port}`, possibleAtPort: ({ provider, port }: { provider: string; port: string }) => `Possibile servizio ${provider} · Porta ${port}`, addConnectionTitle: 'Aggiungi un’altra connessione locale', addConnectionDescription: 'Assegna un nome per distinguerla dagli altri endpoint locali.', defaultConnectionName: ({ provider }: { provider: string }) => `${provider} locale` },
     pt: { title: 'Nesta máquina', footer: 'Servidores de modelos locais encontrados nesta máquina. Os modelos são executados de forma privada no seu equipamento.', detected: 'Detetado', possible: 'Possível serviço', detectedAtPort: ({ port }: { port: string }) => `Detetado · Porta ${port}`, possibleAtPort: ({ provider, port }: { provider: string; port: string }) => `Possível serviço ${provider} · Porta ${port}`, addConnectionTitle: 'Adicionar outra ligação local', addConnectionDescription: 'Dê um nome para a distinguir dos outros endpoints locais.', defaultConnectionName: ({ provider }: { provider: string }) => `${provider} local` },
@@ -161,13 +213,29 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: 'Editar valores de sesiones gestionadas',
         editManagedDefaultsDescription: 'Cambia la cuenta conectada o el grupo para sesiones futuras. Las sesiones existentes conservan su selección.',
         purposeTargetTitle: 'Destino de cuenta conectada',
-        purposeTargetDescription: 'Introduce account:<id> o group:<id>. Usa un ID lógico, no un miembro activo ni un perfil.',
+        purposeTargetDescription: 'Elige una cuenta conectada o un grupo disponible para este propósito.',
         invalidPurposeTargetTitle: 'Destino de cuenta no válido',
-        invalidPurposeTargetDescription: 'Introduce account:<id> o group:<id>. No se aceptan valores de miembro activo, perfil ni generación.',
+        invalidPurposeTargetDescription: 'Elige una cuenta conectada o un grupo disponible antes de guardar.',
         useExternal: 'Usar un servicio externo',
         useExternalDescription: 'Deja de gestionar este proveedor para sesiones futuras y usa su configuración de endpoint externo.',
         useExternalConfirmTitle: '¿Usar un servicio externo?',
         useExternalConfirmDescription: 'Se eliminan los valores gestionados. Las sesiones existentes conservan sus selecciones.',
+    },
+    fr: {
+        configureManaged: 'Lancer les sessions avec un service local géré',
+        configureManagedDescription: 'Choisis le compte connecté ou le groupe utilisé par les futures sessions. Happier démarre le service quand une session en a besoin.',
+        subscriptionPolicyTitle: 'Le routage par abonnement est expérimental',
+        subscriptionPolicyDescription: 'La politique ou l’application des règles en amont peut changer et faire cesser de fonctionner le routage adossé à un abonnement. Happier expose le rejet et n’utilise pas silencieusement un autre identifiant.',
+        editManagedDefaults: 'Modifier les valeurs par défaut des sessions gérées',
+        editManagedDefaultsDescription: 'Change le compte connecté ou le groupe pour les futures sessions. Les sessions existantes conservent leur sélection enregistrée.',
+        purposeTargetTitle: 'Cible de compte connecté',
+        purposeTargetDescription: 'Choisis un compte connecté ou un groupe disponible pour cet usage.',
+        invalidPurposeTargetTitle: 'Cible de compte connecté invalide',
+        invalidPurposeTargetDescription: 'Choisis un compte connecté ou un groupe disponible avant d’enregistrer.',
+        useExternal: 'Utiliser un service externe',
+        useExternalDescription: 'Empêche Happier de gérer ce provider pour les futures sessions et utilise sa configuration d’endpoint externe.',
+        useExternalConfirmTitle: 'Utiliser un service externe ?',
+        useExternalConfirmDescription: 'Les valeurs par défaut de compte connecté géré sont supprimées. Les sessions existantes conservent leurs sélections enregistrées.',
     },
     ca: {
         configureManaged: 'Executa sessions amb un servei local gestionat',
@@ -177,9 +245,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: 'Edita els valors de sessions gestionades',
         editManagedDefaultsDescription: 'Canvia el compte connectat o el grup per a sessions futures. Les sessions existents conserven la selecció.',
         purposeTargetTitle: 'Destí del compte connectat',
-        purposeTargetDescription: 'Introdueix account:<id> o group:<id>. Usa un ID lògic, no un membre actiu ni un perfil.',
+        purposeTargetDescription: 'Tria un compte connectat o un grup disponible per a aquest propòsit.',
         invalidPurposeTargetTitle: 'Destí de compte no vàlid',
-        invalidPurposeTargetDescription: 'Introdueix account:<id> o group:<id>. No s’accepten membres actius, perfils ni generacions.',
+        invalidPurposeTargetDescription: 'Tria un compte connectat o un grup disponible abans de desar.',
         useExternal: 'Usa un servei extern',
         useExternalDescription: 'Deixa de gestionar aquest proveïdor per a sessions futures i usa la configuració de l’endpoint extern.',
         useExternalConfirmTitle: 'Vols usar un servei extern?',
@@ -193,9 +261,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: 'Modifica valori delle sessioni gestite',
         editManagedDefaultsDescription: 'Cambia l’account connesso o il gruppo per le sessioni future. Le sessioni esistenti conservano la selezione.',
         purposeTargetTitle: 'Destinazione account connesso',
-        purposeTargetDescription: 'Inserisci account:<id> o group:<id>. Usa un ID logico, non un membro attivo o un profilo.',
+        purposeTargetDescription: 'Scegli un account connesso o un gruppo disponibile per questo scopo.',
         invalidPurposeTargetTitle: 'Destinazione account non valida',
-        invalidPurposeTargetDescription: 'Inserisci account:<id> o group:<id>. Membri attivi, profili e generazioni non sono accettati.',
+        invalidPurposeTargetDescription: 'Scegli un account connesso o un gruppo disponibile prima di salvare.',
         useExternal: 'Usa un servizio esterno',
         useExternalDescription: 'Interrompi la gestione del provider per le sessioni future e usa la configurazione endpoint esterna.',
         useExternalConfirmTitle: 'Usare un servizio esterno?',
@@ -209,9 +277,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: 'Editar valores de sessões geridas',
         editManagedDefaultsDescription: 'Altere a conta ligada ou o grupo para sessões futuras. As sessões existentes mantêm a seleção.',
         purposeTargetTitle: 'Destino da conta ligada',
-        purposeTargetDescription: 'Introduza account:<id> ou group:<id>. Use um ID lógico, não um membro ativo nem um perfil.',
+        purposeTargetDescription: 'Escolha uma conta ligada ou um grupo disponível para esta finalidade.',
         invalidPurposeTargetTitle: 'Destino de conta inválido',
-        invalidPurposeTargetDescription: 'Introduza account:<id> ou group:<id>. Não são aceites membros ativos, perfis nem gerações.',
+        invalidPurposeTargetDescription: 'Escolha uma conta ligada ou um grupo disponível antes de guardar.',
         useExternal: 'Usar um serviço externo',
         useExternalDescription: 'Deixe de gerir este fornecedor para sessões futuras e use a configuração do endpoint externo.',
         useExternalConfirmTitle: 'Usar um serviço externo?',
@@ -225,9 +293,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: 'Edytuj ustawienia sesji zarządzanych',
         editManagedDefaultsDescription: 'Zmień połączone konto lub grupę dla przyszłych sesji. Istniejące sesje zachowają wybór.',
         purposeTargetTitle: 'Cel połączonego konta',
-        purposeTargetDescription: 'Wpisz account:<id> lub group:<id>. Użyj logicznego ID, nie aktywnego członka ani profilu.',
+        purposeTargetDescription: 'Wybierz dostępne połączone konto lub grupę dla tego celu.',
         invalidPurposeTargetTitle: 'Nieprawidłowy cel konta',
-        invalidPurposeTargetDescription: 'Wpisz account:<id> lub group:<id>. Aktywni członkowie, profile i generacje nie są akceptowane.',
+        invalidPurposeTargetDescription: 'Wybierz dostępne połączone konto lub grupę przed zapisaniem.',
         useExternal: 'Użyj usługi zewnętrznej',
         useExternalDescription: 'Wyłącz zarządzanie dostawcą dla przyszłych sesji i użyj konfiguracji zewnętrznego punktu końcowego.',
         useExternalConfirmTitle: 'Użyć usługi zewnętrznej?',
@@ -241,9 +309,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: 'Изменить параметры управляемых сеансов',
         editManagedDefaultsDescription: 'Измените подключённую учётную запись или группу для будущих сеансов. Существующие сеансы сохранят выбор.',
         purposeTargetTitle: 'Цель подключённой учётной записи',
-        purposeTargetDescription: 'Введите account:<id> или group:<id>. Используйте логический ID, а не активного участника или профиль.',
+        purposeTargetDescription: 'Выберите доступную подключённую учётную запись или группу для этой цели.',
         invalidPurposeTargetTitle: 'Недопустимая цель учётной записи',
-        invalidPurposeTargetDescription: 'Введите account:<id> или group:<id>. Активные участники, профили и поколения не принимаются.',
+        invalidPurposeTargetDescription: 'Выберите доступную подключённую учётную запись или группу перед сохранением.',
         useExternal: 'Использовать внешнюю службу',
         useExternalDescription: 'Отключите управление провайдером для будущих сеансов и используйте внешний адрес.',
         useExternalConfirmTitle: 'Использовать внешнюю службу?',
@@ -257,9 +325,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: '编辑托管会话默认值',
         editManagedDefaultsDescription: '更改未来会话使用的已连接账户或群组。现有会话保留已保存的选择。',
         purposeTargetTitle: '已连接账户目标',
-        purposeTargetDescription: '输入 account:<id> 或 group:<id>。请使用逻辑 ID，而不是活动成员或配置文件。',
+        purposeTargetDescription: '请选择此用途可用的已连接账户或群组。',
         invalidPurposeTargetTitle: '已连接账户目标无效',
-        invalidPurposeTargetDescription: '输入 account:<id> 或 group:<id>。不接受活动成员、配置文件或代次值。',
+        invalidPurposeTargetDescription: '请在保存前选择可用的已连接账户或群组。',
         useExternal: '使用外部服务',
         useExternalDescription: '停止为未来会话托管此供应商，并使用其外部端点配置。',
         useExternalConfirmTitle: '使用外部服务？',
@@ -273,9 +341,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: '編輯受管理工作階段預設值',
         editManagedDefaultsDescription: '變更未來工作階段使用的已連接帳戶或群組。現有工作階段會保留選擇。',
         purposeTargetTitle: '已連接帳戶目標',
-        purposeTargetDescription: '輸入 account:<id> 或 group:<id>。請使用邏輯 ID，而非使用中成員或設定檔。',
+        purposeTargetDescription: '請為此用途選擇可用的已連線帳戶或群組。',
         invalidPurposeTargetTitle: '已連接帳戶目標無效',
-        invalidPurposeTargetDescription: '輸入 account:<id> 或 group:<id>。不接受使用中成員、設定檔或代次值。',
+        invalidPurposeTargetDescription: '請在儲存前選擇可用的已連線帳戶或群組。',
         useExternal: '使用外部服務',
         useExternalDescription: '停止為未來工作階段管理此供應商，並使用其外部端點設定。',
         useExternalConfirmTitle: '使用外部服務？',
@@ -289,9 +357,9 @@ const providerManagedDeploymentTranslations = {
         editManagedDefaults: '管理対象セッションの既定値を編集',
         editManagedDefaultsDescription: '今後のセッションで使うアカウントまたはグループを変更します。既存のセッションは選択を保持します。',
         purposeTargetTitle: '接続済みアカウントの対象',
-        purposeTargetDescription: 'account:<id> または group:<id> を入力します。アクティブメンバーやプロファイルではなく論理 ID を使用してください。',
+        purposeTargetDescription: 'この用途に使用できる接続済みアカウントまたはグループを選択してください。',
         invalidPurposeTargetTitle: 'アカウントの対象が無効です',
-        invalidPurposeTargetDescription: 'account:<id> または group:<id> を入力してください。メンバー、プロファイル、世代の値は使えません。',
+        invalidPurposeTargetDescription: '保存する前に、使用できる接続済みアカウントまたはグループを選択してください。',
         useExternal: '外部サービスを使用',
         useExternalDescription: '今後のセッションでこのプロバイダーを管理せず、外部エンドポイント設定を使用します。',
         useExternalConfirmTitle: '外部サービスを使用しますか？',
@@ -300,7 +368,8 @@ const providerManagedDeploymentTranslations = {
 } as const;
 
 const copyNameTranslations = {
-    es: ({ name }: { name: string }) => `Copia de ${name}`, ca: ({ name }: { name: string }) => `Còpia de ${name}`,
+    es: ({ name }: { name: string }) => `Copia de ${name}`,
+    fr: ({ name }: { name: string }) => `${name} copie`, ca: ({ name }: { name: string }) => `Còpia de ${name}`,
     it: ({ name }: { name: string }) => `Copia di ${name}`, pt: ({ name }: { name: string }) => `Cópia de ${name}`,
     pl: ({ name }: { name: string }) => `Kopia ${name}`, ru: ({ name }: { name: string }) => `Копия ${name}`,
     zhHans: ({ name }: { name: string }) => `${name} 副本`, zhHant: ({ name }: { name: string }) => `${name} 副本`,
@@ -312,6 +381,11 @@ const providerSharedFieldTranslations = {
         local: { installedNotRunning: 'Instalado, pero no está en ejecución', appRunningServerOff: 'La aplicación está abierta, pero su servidor local está desactivado', startManaged: ({ provider }: { provider: string }) => `Iniciar ${provider}`, startedByHappier: 'Iniciado por Happier', runningOutsideHappier: 'Ejecutándose fuera de Happier' },
         apiKeyOptionalDescription: 'Opcional: elige un Secreto guardado si este proveedor requiere uno',
         models: { addDescription: 'Añade ID de modelo que este proveedor no enumera automáticamente', addHelp: 'Introduce un ID de modelo exacto por línea. Se omiten los modelos existentes.', addFieldLabel: 'ID de modelo', invalidModelIds: ({ ids }: { ids: string }) => `Estos ID de modelo no son válidos: ${ids}`, noNewModels: 'No hay nuevos ID de modelo que añadir.', providerManagedTitle: 'Este proveedor gestiona los modelos', providerManagedDescription: 'Actualiza el catálogo del proveedor para renovar esta lista. No se admiten ID de modelo manuales.', showAll: 'Mostrar todos los modelos', hideAll: 'Ocultar todos los modelos', hideAllConfirmation: '¿Ocultar todos los modelos de esta lista? Puedes volver a mostrarlos en cualquier momento.', showOnly: 'Mostrar solo este modelo', showOnlyConfirmation: '¿Ocultar todos los demás modelos de esta lista? Puedes restaurarlos en cualquier momento.' },
+    },
+    fr: {
+        local: { installedNotRunning: 'Installé, mais pas démarré', appRunningServerOff: 'L’app est ouverte, mais son serveur local est éteint', startManaged: ({ provider }: { provider: string }) => `Démarrer ${provider}`, startedByHappier: 'Démarré par Happier', runningOutsideHappier: 'S’exécute en dehors de Happier' },
+        apiKeyOptionalDescription: 'Optionnel — choisis un secret enregistré si ce provider en requiert un',
+        models: { addDescription: 'Ajoute les ids de modèle que ce provider ne liste pas automatiquement', addHelp: 'Saisis un id de modèle exact par ligne. Les modèles existants sont ignorés.', addFieldLabel: 'Ids de modèle', invalidModelIds: ({ ids }: { ids: string }) => `Ces ids de modèle sont invalides : ${ids}`, noNewModels: 'Aucun nouvel id de modèle à ajouter.', providerManagedTitle: 'Les modèles sont gérés par ce provider', providerManagedDescription: 'Actualise le catalogue du provider pour mettre à jour cette liste. Les ids de modèle manuels ne sont pas pris en charge.', showAll: 'Afficher tous les modèles', hideAll: 'Masquer tous les modèles', hideAllConfirmation: 'Masquer tous les modèles de cette liste ? Tu peux les réafficher à tout moment.', showOnly: 'Afficher uniquement ce modèle', showOnlyConfirmation: 'Masquer tous les autres modèles de cette liste ? Tu peux les restaurer à tout moment.' },
     },
     ca: {
         local: { installedNotRunning: 'Instal·lat, però no s’està executant', appRunningServerOff: 'L’aplicació és oberta, però el servidor local està desactivat', startManaged: ({ provider }: { provider: string }) => `Inicia ${provider}`, startedByHappier: 'Iniciat per Happier', runningOutsideHappier: 'S’executa fora de Happier' },
@@ -357,6 +431,7 @@ const providerSharedFieldTranslations = {
 
 const providerFirstSessionValidationTranslations = {
     es: 'Happier validará la conexión de forma segura al iniciar la primera sesión que la use.',
+    fr: 'Happier validera la connexion en toute sécurité au démarrage de la première session qui l’utilise.',
     ca: 'Happier validarà la connexió de manera segura quan iniciïs la primera sessió que la faci servir.',
     it: 'Happier verificherà la connessione in modo sicuro all’avvio della prima sessione che la usa.',
     pt: 'O Happier validará a ligação em segurança ao iniciar a primeira sessão que a utilize.',
@@ -369,6 +444,7 @@ const providerFirstSessionValidationTranslations = {
 
 const providerMigrationTranslations = {
     es: { reviewTitle: 'Revisar migración del proveedor', reviewFooter: 'Comprueba el endpoint, el formato de API, la credencial y los modelos antes de aplicar cambios.', legacyProfileDescription: 'Este perfil conserva el enrutamiento antiguo hasta que confirmes la revisión.', credentialTitle: 'Credencial', credentialFooter: 'Solo se mueve la referencia al Secreto guardado; su valor nunca se muestra ni se copia.', noCredential: 'Sin clave API', credentialMoveDescription: 'Mover esta credencial a la nueva conexión', noCredentialDescription: 'Crear la conexión sin credenciales', actionsTitle: 'Migración', preview: 'Revisar cambios', previewDescription: 'Validar esta configuración sin cambiar ajustes', confirm: 'Crear conexión del proveedor', confirmDescription: 'Aplicar los cambios de forma atómica y conservar las preferencias de inicio', reviewAction: 'Revisar migración del proveedor', reviewActionDescription: 'Mover el endpoint y los modelos antiguos a una conexión', retainedTitle: 'Configuración antigua conservada', retainedDescription: 'Esta configuración seguirá disponible hasta que pueda migrarse sin perder comportamiento.' },
+    fr: { reviewTitle: 'Vérifier la migration du provider', reviewFooter: 'Vérifie l’endpoint, le format d’API, la liaison d’identifiant et les ids de modèle avant que Happier ne modifie ce profil.', legacyProfileDescription: 'Ce profil contient un routage de provider hérité. Il continue de fonctionner jusqu’à ce que tu confirmes cette vérification.', credentialTitle: 'Liaison d’identifiant', credentialFooter: 'Happier ne déplace que la référence au secret enregistré sélectionné. La valeur du secret n’est jamais affichée ni copiée.', noCredential: 'Aucune clé API', credentialMoveDescription: 'Déplacer la liaison de ce profil vers la nouvelle connexion de provider', noCredentialDescription: 'Créer la connexion de provider sans liaison d’identifiant', actionsTitle: 'Migration', preview: 'Vérifier les changements', previewDescription: 'Valider ce mapping exact sans modifier les réglages', confirm: 'Créer la connexion de provider', confirmDescription: 'Appliquer le mapping vérifié de façon atomique et conserver les préférences de lancement restantes', reviewAction: 'Vérifier la migration du provider', reviewActionDescription: 'Déplacer les réglages hérités d’endpoint et de modèle dans une connexion de provider', retainedTitle: 'Configuration de provider héritée conservée', retainedDescription: 'Cette configuration reste disponible jusqu’à ce que son contrat de provider complet puisse être migré sans perte de comportement.' },
     ca: { reviewTitle: 'Revisa la migració del proveïdor', reviewFooter: 'Comprova l’endpoint, el format de l’API, la credencial i els models abans d’aplicar canvis.', legacyProfileDescription: 'Aquest perfil conserva l’encaminament antic fins que confirmis la revisió.', credentialTitle: 'Credencial', credentialFooter: 'Només es mou la referència al Secret desat; el valor no es mostra ni es copia.', noCredential: 'Sense clau API', credentialMoveDescription: 'Mou aquesta credencial a la connexió nova', noCredentialDescription: 'Crea la connexió sense credencials', actionsTitle: 'Migració', preview: 'Revisa els canvis', previewDescription: 'Valida aquesta configuració sense canviar els ajustos', confirm: 'Crea la connexió del proveïdor', confirmDescription: 'Aplica els canvis atòmicament i conserva les preferències d’inici', reviewAction: 'Revisa la migració del proveïdor', reviewActionDescription: 'Mou l’endpoint i els models antics a una connexió', retainedTitle: 'Configuració antiga conservada', retainedDescription: 'Aquesta configuració continuarà disponible fins que es pugui migrar sense perdre comportament.' },
     it: { reviewTitle: 'Rivedi migrazione provider', reviewFooter: 'Controlla endpoint, formato API, credenziale e modelli prima di applicare le modifiche.', legacyProfileDescription: 'Questo profilo mantiene il routing precedente finché non confermi la revisione.', credentialTitle: 'Credenziale', credentialFooter: 'Viene spostato solo il riferimento al Segreto salvato; il valore non viene mostrato o copiato.', noCredential: 'Nessuna chiave API', credentialMoveDescription: 'Sposta questa credenziale nella nuova connessione', noCredentialDescription: 'Crea la connessione senza credenziali', actionsTitle: 'Migrazione', preview: 'Rivedi modifiche', previewDescription: 'Convalida la configurazione senza modificare le impostazioni', confirm: 'Crea connessione provider', confirmDescription: 'Applica le modifiche in modo atomico e conserva le preferenze di avvio', reviewAction: 'Rivedi migrazione provider', reviewActionDescription: 'Sposta endpoint e modelli precedenti in una connessione', retainedTitle: 'Configurazione precedente mantenuta', retainedDescription: 'Rimane disponibile finché non potrà essere migrata senza perdere funzionalità.' },
     pt: { reviewTitle: 'Rever migração do fornecedor', reviewFooter: 'Confirme o endpoint, formato da API, credencial e modelos antes de aplicar alterações.', legacyProfileDescription: 'Este perfil mantém o encaminhamento antigo até confirmar a revisão.', credentialTitle: 'Credencial', credentialFooter: 'Apenas a referência ao Segredo guardado é movida; o valor nunca é apresentado nem copiado.', noCredential: 'Sem chave API', credentialMoveDescription: 'Mover esta credencial para a nova ligação', noCredentialDescription: 'Criar a ligação sem credenciais', actionsTitle: 'Migração', preview: 'Rever alterações', previewDescription: 'Validar esta configuração sem alterar definições', confirm: 'Criar ligação do fornecedor', confirmDescription: 'Aplicar as alterações atomicamente e manter as preferências de início', reviewAction: 'Rever migração do fornecedor', reviewActionDescription: 'Mover o endpoint e modelos antigos para uma ligação', retainedTitle: 'Configuração antiga mantida', retainedDescription: 'Continuará disponível até poder ser migrada sem perder comportamento.' },
@@ -381,6 +457,7 @@ const providerMigrationTranslations = {
 
 const providerMigrationPreviewTranslations = {
     es: { willMoveTitle: 'Se moverá al proveedor', willMoveFooter: 'Solo se mueven estos nombres de enrutamiento y credenciales. Los valores secretos nunca se muestran.', willKeepTitle: 'Permanecerá en el perfil de inicio', willKeepFooter: 'Estos ajustes exclusivos del inicio permanecen en el perfil después de la migración.', permissionDefaults: 'Permisos predeterminados', persistenceDefaults: 'Almacenamiento de sesión predeterminado' },
+    fr: { willMoveTitle: 'Sera déplacé vers le provider', willMoveFooter: 'Seuls ces noms de routage et d’identifiant sont déplacés. Les valeurs de secret ne sont jamais affichées.', willKeepTitle: 'Restera dans le profil de lancement', willKeepFooter: 'Ces réglages propres au lancement restent avec le profil après la migration.', permissionDefaults: 'Permissions par défaut', persistenceDefaults: 'Stockage de session par défaut' },
     ca: { willMoveTitle: 'Es mourà al proveïdor', willMoveFooter: 'Només es mouen aquests noms d’encaminament i credencials. Els valors secrets no es mostren mai.', willKeepTitle: 'Es mantindrà al perfil d’inici', willKeepFooter: 'Aquests ajustos exclusius de l’inici es mantenen al perfil després de la migració.', permissionDefaults: 'Permisos predeterminats', persistenceDefaults: 'Emmagatzematge de sessió predeterminat' },
     it: { willMoveTitle: 'Verrà spostato nel provider', willMoveFooter: 'Vengono spostati solo questi nomi di routing e credenziali. I valori segreti non vengono mai mostrati.', willKeepTitle: 'Rimarrà nel profilo di avvio', willKeepFooter: 'Queste impostazioni riservate all’avvio rimangono nel profilo dopo la migrazione.', permissionDefaults: 'Autorizzazioni predefinite', persistenceDefaults: 'Archiviazione sessione predefinita' },
     pt: { willMoveTitle: 'Será movido para o fornecedor', willMoveFooter: 'Apenas estes nomes de encaminhamento e credenciais são movidos. Os valores secretos nunca são apresentados.', willKeepTitle: 'Permanecerá no perfil de início', willKeepFooter: 'Estas definições exclusivas do início permanecem no perfil após a migração.', permissionDefaults: 'Permissões predefinidas', persistenceDefaults: 'Armazenamento de sessão predefinido' },
@@ -393,6 +470,7 @@ const providerMigrationPreviewTranslations = {
 
 const providerMigrationConflictTranslations = {
     es: { conflictReviewTitle: 'Resolver conflicto de migración', conflictReviewFooter: 'Elige si quieres conservar la conexión existente o guardar este perfil como una conexión independiente. No se muestran valores secretos.', conflictCredential: 'La credencial guardada es diferente', conflictModels: 'Los ajustes de modelos son diferentes', conflictEditedConnection: 'La conexión existente se modificó', keepExisting: 'Conservar conexión existente', keepExistingDescription: 'Mantén sus credenciales y modelos actuales y completa la migración sin sustituirlos.', modelOutcomeTitle: 'Elige qué modelo conservar', modelOutcomeFooter: 'Revisa el modelo exacto antes de completar la migración. Nada cambia hasta que elijas.', useExistingModel: 'Usar el modelo actual de la conexión', useExistingModelDescription: 'Conserva el modelo ya seleccionado para esta conexión del proveedor.', preserveLegacyModel: 'Usar el modelo del perfil', preserveLegacyModelDescription: 'Mueve la selección exacta de este perfil a la conexión existente.', discardLegacyModel: 'Eliminar la selección de modelo del perfil', discardLegacyModelDescription: 'Completa la migración sin la selección de modelo ni el favorito de este perfil.', createNamed: 'Crear conexión independiente', createNamedDescription: 'Conserva los ajustes del proveedor de este perfil en una conexión nueva.', separateConnectionName: 'Nombre de la conexión', conflictReviewAction: 'Resolver conflicto del proveedor', conflictReviewActionDescription: 'Elige cómo conservar las credenciales o modelos en conflicto' },
+    fr: { conflictReviewTitle: 'Résoudre le conflit de migration du provider', conflictReviewFooter: 'Choisis de conserver la connexion existante ou de préserver ce profil comme connexion nommée séparée. Aucune valeur de secret n’est affichée.', conflictCredential: 'L’identifiant enregistré diffère', conflictModels: 'Les réglages de modèle diffèrent', conflictEditedConnection: 'La connexion existante a été modifiée', keepExisting: 'Conserver la connexion existante', keepExistingDescription: 'Conserve ses identifiants et modèles actuels, puis termine cette migration de profil sans les remplacer.', modelOutcomeTitle: 'Choisis quel modèle conserver', modelOutcomeFooter: 'Vérifie le modèle exact avant de terminer la migration. Rien n’est modifié tant que tu n’as pas choisi.', useExistingModel: 'Utiliser le modèle actuel de la connexion', useExistingModelDescription: 'Conserve le modèle déjà sélectionné pour cette connexion de provider.', preserveLegacyModel: 'Utiliser le modèle du profil', preserveLegacyModelDescription: 'Déplace le choix de modèle exact de ce profil vers la connexion de provider existante.', discardLegacyModel: 'Supprimer le choix de modèle du profil', discardLegacyModelDescription: 'Termine la migration sans la sélection de modèle ni l’intention de favori de ce profil.', createNamed: 'Créer une connexion séparée', createNamedDescription: 'Préserve les réglages de provider de ce profil dans une nouvelle connexion nommée.', separateConnectionName: 'Nom de la connexion', conflictReviewAction: 'Résoudre le conflit de provider', conflictReviewActionDescription: 'Choisis comment préserver les identifiants ou modèles en conflit' },
     ca: { conflictReviewTitle: 'Resol el conflicte de migració', conflictReviewFooter: 'Tria si vols conservar la connexió existent o desar aquest perfil com una connexió independent. No es mostren valors secrets.', conflictCredential: 'La credencial desada és diferent', conflictModels: 'Els ajustos dels models són diferents', conflictEditedConnection: 'La connexió existent s’ha modificat', keepExisting: 'Conserva la connexió existent', keepExistingDescription: 'Mantén les credencials i els models actuals i completa la migració sense substituir-los.', modelOutcomeTitle: 'Tria quin model vols conservar', modelOutcomeFooter: 'Revisa el model exacte abans de completar la migració. No canvia res fins que triïs.', useExistingModel: 'Usa el model actual de la connexió', useExistingModelDescription: 'Conserva el model ja seleccionat per a aquesta connexió del proveïdor.', preserveLegacyModel: 'Usa el model del perfil', preserveLegacyModelDescription: 'Mou la selecció exacta d’aquest perfil a la connexió existent.', discardLegacyModel: 'Elimina la selecció de model del perfil', discardLegacyModelDescription: 'Completa la migració sense la selecció de model ni el favorit d’aquest perfil.', createNamed: 'Crea una connexió independent', createNamedDescription: 'Conserva els ajustos del proveïdor d’aquest perfil en una connexió nova.', separateConnectionName: 'Nom de la connexió', conflictReviewAction: 'Resol el conflicte del proveïdor', conflictReviewActionDescription: 'Tria com conservar les credencials o els models en conflicte' },
     it: { conflictReviewTitle: 'Risolvi conflitto di migrazione', conflictReviewFooter: 'Scegli se mantenere la connessione esistente o salvare questo profilo come connessione separata. I valori segreti non vengono mostrati.', conflictCredential: 'La credenziale salvata è diversa', conflictModels: 'Le impostazioni dei modelli sono diverse', conflictEditedConnection: 'La connessione esistente è stata modificata', keepExisting: 'Mantieni connessione esistente', keepExistingDescription: 'Mantieni credenziali e modelli attuali e completa la migrazione senza sostituirli.', modelOutcomeTitle: 'Scegli quale modello mantenere', modelOutcomeFooter: 'Controlla il modello esatto prima di completare la migrazione. Nulla cambia finché non scegli.', useExistingModel: 'Usa il modello attuale della connessione', useExistingModelDescription: 'Mantieni il modello già selezionato per questa connessione provider.', preserveLegacyModel: 'Usa il modello del profilo', preserveLegacyModelDescription: 'Sposta la scelta esatta del profilo nella connessione esistente.', discardLegacyModel: 'Rimuovi la scelta del modello del profilo', discardLegacyModelDescription: 'Completa la migrazione senza la selezione o il preferito del modello di questo profilo.', createNamed: 'Crea connessione separata', createNamedDescription: 'Conserva le impostazioni provider di questo profilo in una nuova connessione.', separateConnectionName: 'Nome connessione', conflictReviewAction: 'Risolvi conflitto provider', conflictReviewActionDescription: 'Scegli come conservare credenziali o modelli in conflitto' },
     pt: { conflictReviewTitle: 'Resolver conflito de migração', conflictReviewFooter: 'Escolha entre manter a ligação existente ou guardar este perfil como uma ligação separada. Os valores secretos não são apresentados.', conflictCredential: 'A credencial guardada é diferente', conflictModels: 'As definições dos modelos são diferentes', conflictEditedConnection: 'A ligação existente foi alterada', keepExisting: 'Manter ligação existente', keepExistingDescription: 'Mantenha as credenciais e modelos atuais e conclua a migração sem os substituir.', modelOutcomeTitle: 'Escolha o modelo a manter', modelOutcomeFooter: 'Confirme o modelo exato antes de concluir a migração. Nada muda até escolher.', useExistingModel: 'Usar o modelo atual da ligação', useExistingModelDescription: 'Mantenha o modelo já selecionado para esta ligação do fornecedor.', preserveLegacyModel: 'Usar o modelo do perfil', preserveLegacyModelDescription: 'Mova a escolha exata deste perfil para a ligação existente.', discardLegacyModel: 'Remover a escolha de modelo do perfil', discardLegacyModelDescription: 'Conclua a migração sem a seleção de modelo nem o favorito deste perfil.', createNamed: 'Criar ligação separada', createNamedDescription: 'Preserve as definições do fornecedor deste perfil numa nova ligação.', separateConnectionName: 'Nome da ligação', conflictReviewAction: 'Resolver conflito do fornecedor', conflictReviewActionDescription: 'Escolha como preservar credenciais ou modelos em conflito' },
@@ -405,6 +483,7 @@ const providerMigrationConflictTranslations = {
 
 const providerCredentialSelectionRequiredTranslations = {
     es: 'Elige qué credencial guardada debe usar esta conexión del proveedor',
+    fr: 'Choisis quel identifiant enregistré cette connexion de provider doit utiliser',
     ca: 'Tria quina credencial desada ha d’utilitzar aquesta connexió del proveïdor',
     it: 'Scegli quale credenziale salvata deve usare questa connessione provider',
     pt: 'Escolha a credencial guardada que esta ligação do fornecedor deve utilizar',
@@ -417,6 +496,7 @@ const providerCredentialSelectionRequiredTranslations = {
 
 const providerLinkTranslations = {
     es: { providerWebsite: 'Sitio web del proveedor', getApiKey: 'Obtener clave API', failedToOpen: 'Happier no ha podido abrir este enlace.' },
+    fr: { providerWebsite: 'Site du provider', getApiKey: 'Obtenir une clé API', failedToOpen: 'Happier n’a pas pu ouvrir ce lien.' },
     ca: { providerWebsite: 'Lloc web del proveïdor', getApiKey: 'Obtén una clau API', failedToOpen: 'Happier no ha pogut obrir aquest enllaç.' },
     it: { providerWebsite: 'Sito web del provider', getApiKey: 'Ottieni chiave API', failedToOpen: 'Happier non è riuscito ad aprire questo link.' },
     pt: { providerWebsite: 'Site do fornecedor', getApiKey: 'Obter chave de API', failedToOpen: 'O Happier não conseguiu abrir esta ligação.' },
@@ -429,6 +509,7 @@ const providerLinkTranslations = {
 
 const providerCredentialFormatSelectionRequiredTranslations = {
     es: 'Elige cómo se envía esta credencial',
+    fr: 'Choisis comment cet identifiant est envoyé',
     ca: 'Tria com s’envia aquesta credencial',
     it: 'Scegli come inviare questa credenziale',
     pt: 'Escolha como esta credencial é enviada',
@@ -441,6 +522,7 @@ const providerCredentialFormatSelectionRequiredTranslations = {
 
 const providerReservedEnvironmentValidationUnavailableTranslations = {
     es: 'Conecta este editor de perfiles a una máquina disponible antes de cambiar variables de entorno.',
+    fr: 'Connecte cet éditeur de profil à une machine disponible avant de modifier les variables d’environnement.',
     ca: 'Connecta aquest editor de perfils a una màquina disponible abans de canviar variables d’entorn.',
     it: 'Collega questo editor di profili a una macchina disponibile prima di modificare le variabili di ambiente.',
     pt: 'Ligue este editor de perfis a uma máquina disponível antes de alterar variáveis de ambiente.',
@@ -453,6 +535,7 @@ const providerReservedEnvironmentValidationUnavailableTranslations = {
 
 const providerAdvancedAuthoringTranslations = {
     es: { advancedSetup: 'Configuración avanzada', advancedSetupEnabled: 'Configura varios estilos de API, cabeceras y comprobaciones seguras de modelos', advancedSetupDisabled: 'Usa un endpoint compatible habitual', endpointEnabled: 'Usar este estilo de API', endpointEnabledDescription: 'Ofrece este endpoint a los agentes compatibles', endpointDisabledDescription: 'Este estilo de API no se usará', publicHeaders: 'Cabeceras públicas de solicitud', publicHeadersPlaceholder: 'X-Tenant: ingeniería', optionalProbePath: 'Ruta de lista de modelos (opcional)', probeParserTitle: 'Formato de respuesta', probeParser: { openaiModels: 'Lista de modelos compatible con OpenAI', ollamaTags: 'Etiquetas de Ollama', lmStudioNative: 'Lista de modelos nativa de LM Studio' } },
+    fr: { advancedSetup: 'Configuration avancée', advancedSetupEnabled: 'Configure plusieurs styles d’API, en-têtes et sondes sûres de liste de modèles', advancedSetupDisabled: 'Utiliser un endpoint compatible courant', endpointEnabled: 'Utiliser ce style d’API', endpointEnabledDescription: 'Exposer cet endpoint aux agents compatibles', endpointDisabledDescription: 'Ce style d’API ne sera pas utilisé', publicHeaders: 'En-têtes non secrets', publicHeadersPlaceholder: 'X-Tenant: engineering', optionalProbePath: 'Chemins de liste de modèles (optionnel, un par ligne)', probeParserTitle: 'Format de réponse', probeParser: { openaiModels: 'Liste de modèles compatible OpenAI', ollamaTags: 'Tags Ollama', lmStudioNative: 'Liste de modèles native LM Studio' } },
     ca: { advancedSetup: 'Configuració avançada', advancedSetupEnabled: 'Configura diversos estils d’API, capçaleres i comprovacions segures de models', advancedSetupDisabled: 'Utilitza un endpoint compatible habitual', endpointEnabled: 'Utilitza aquest estil d’API', endpointEnabledDescription: 'Ofereix aquest endpoint als agents compatibles', endpointDisabledDescription: 'Aquest estil d’API no s’utilitzarà', publicHeaders: 'Capçaleres públiques de sol·licitud', publicHeadersPlaceholder: 'X-Tenant: enginyeria', optionalProbePath: 'Camí de llista de models (opcional)', probeParserTitle: 'Format de resposta', probeParser: { openaiModels: 'Llista de models compatible amb OpenAI', ollamaTags: 'Etiquetes d’Ollama', lmStudioNative: 'Llista de models nativa de LM Studio' } },
     it: { advancedSetup: 'Configurazione avanzata', advancedSetupEnabled: 'Configura più stili API, intestazioni e verifiche sicure dei modelli', advancedSetupDisabled: 'Usa un comune endpoint compatibile', endpointEnabled: 'Usa questo stile API', endpointEnabledDescription: 'Rendi disponibile questo endpoint agli agenti compatibili', endpointDisabledDescription: 'Questo stile API non verrà usato', publicHeaders: 'Intestazioni pubbliche della richiesta', publicHeadersPlaceholder: 'X-Tenant: engineering', optionalProbePath: 'Percorso elenco modelli (facoltativo)', probeParserTitle: 'Formato risposta', probeParser: { openaiModels: 'Elenco modelli compatibile OpenAI', ollamaTags: 'Tag Ollama', lmStudioNative: 'Elenco modelli nativo LM Studio' } },
     pt: { advancedSetup: 'Configuração avançada', advancedSetupEnabled: 'Configure vários estilos de API, cabeçalhos e verificações seguras de modelos', advancedSetupDisabled: 'Use um endpoint compatível comum', endpointEnabled: 'Usar este estilo de API', endpointEnabledDescription: 'Disponibilizar este endpoint aos agentes compatíveis', endpointDisabledDescription: 'Este estilo de API não será usado', publicHeaders: 'Cabeçalhos públicos do pedido', publicHeadersPlaceholder: 'X-Tenant: engenharia', optionalProbePath: 'Caminho da lista de modelos (opcional)', probeParserTitle: 'Formato da resposta', probeParser: { openaiModels: 'Lista de modelos compatível com OpenAI', ollamaTags: 'Etiquetas do Ollama', lmStudioNative: 'Lista de modelos nativa do LM Studio' } },
@@ -464,20 +547,23 @@ const providerAdvancedAuthoringTranslations = {
 } as const;
 
 const providerCustomBearerHeaderTranslations = {
-    es: 'Cabecera personalizada (token Bearer)', ca: 'Capçalera personalitzada (testimoni Bearer)',
+    es: 'Cabecera personalizada (token Bearer)',
+    fr: 'En-tête personnalisé (token Bearer)', ca: 'Capçalera personalitzada (testimoni Bearer)',
     it: 'Intestazione personalizzata (token Bearer)', pt: 'Cabeçalho personalizado (token Bearer)',
     pl: 'Niestandardowy nagłówek (token Bearer)', ru: 'Пользовательский заголовок (Bearer-токен)',
     zhHans: '自定义标头（Bearer 令牌）', zhHant: '自訂標頭（Bearer 權杖）', ja: 'カスタムヘッダー（Bearer トークン）',
 } as const;
 
 const providerNonSecretHeaderTranslations = {
-    es: 'Cabeceras no secretas', ca: 'Capçaleres no secretes', it: 'Intestazioni non segrete',
+    es: 'Cabeceras no secretas',
+    fr: 'En-têtes non secrets', ca: 'Capçaleres no secretes', it: 'Intestazioni non segrete',
     pt: 'Cabeçalhos não secretos', pl: 'Nagłówki bez poufnych danych', ru: 'Несекретные заголовки',
     zhHans: '非机密请求标头', zhHant: '非機密要求標頭', ja: 'シークレットではないヘッダー',
 } as const;
 
 const providerProbePathsTranslations = {
-    es: 'Rutas de lista de modelos (opcionales, una por línea)', ca: 'Camins de llista de models (opcionals, un per línia)',
+    es: 'Rutas de lista de modelos (opcionales, una por línea)',
+    fr: 'Chemins de liste de modèles (optionnel, un par ligne)', ca: 'Camins de llista de models (opcionals, un per línia)',
     it: 'Percorsi elenco modelli (facoltativi, uno per riga)', pt: 'Caminhos da lista de modelos (opcionais, um por linha)',
     pl: 'Ścieżki listy modeli (opcjonalne, po jednej w wierszu)', ru: 'Пути к списку моделей (необязательно, по одному в строке)',
     zhHans: '模型列表路径（可选，每行一个）', zhHant: '模型清單路徑（選用，每行一個）', ja: 'モデル一覧のパス（任意、1 行に 1 つ）',
@@ -485,6 +571,7 @@ const providerProbePathsTranslations = {
 
 const providerLocalAuthoringTranslations = {
     es: { enableAfterSaving: 'Activar este proveedor', enableOnCurrentMachine: 'Activar solo en esta máquina después de guardar', enableAccountWide: 'Activar después de guardar', localAddressTitle: 'Dirección local', localAddressDescription: ({ machine, endpoint }: { machine: string; endpoint: string }) => `Actívalo por separado en cada máquina. ${machine} usará ${endpoint}.` },
+    fr: { enableAfterSaving: 'Activer ce provider', enableOnCurrentMachine: 'Activer uniquement sur cette machine après l’enregistrement', enableAccountWide: 'Activer après l’enregistrement', localAddressTitle: 'Adresse locale', localAddressDescription: ({ machine, endpoint }: { machine: string; endpoint: string }) => `Active-le séparément sur chaque machine. ${machine} utilisera ${endpoint}.` },
     ca: { enableAfterSaving: 'Activa aquest proveïdor', enableOnCurrentMachine: 'Activa només en aquesta màquina després de desar', enableAccountWide: 'Activa després de desar', localAddressTitle: 'Adreça local', localAddressDescription: ({ machine, endpoint }: { machine: string; endpoint: string }) => `Activa-la per separat a cada màquina. ${machine} utilitzarà ${endpoint}.` },
     it: { enableAfterSaving: 'Abilita questo provider', enableOnCurrentMachine: 'Abilita solo su questa macchina dopo il salvataggio', enableAccountWide: 'Abilita dopo il salvataggio', localAddressTitle: 'Indirizzo locale', localAddressDescription: ({ machine, endpoint }: { machine: string; endpoint: string }) => `Abilita separatamente su ogni macchina. ${machine} userà ${endpoint}.` },
     pt: { enableAfterSaving: 'Ativar este fornecedor', enableOnCurrentMachine: 'Ativar apenas nesta máquina depois de guardar', enableAccountWide: 'Ativar depois de guardar', localAddressTitle: 'Endereço local', localAddressDescription: ({ machine, endpoint }: { machine: string; endpoint: string }) => `Ative separadamente em cada máquina. ${machine} usará ${endpoint}.` },
@@ -497,6 +584,7 @@ const providerLocalAuthoringTranslations = {
 
 const providerAuthoringReviewTranslations = {
     es: { destinationReview: 'Destino de la conexión', destinationLoading: 'Resolviendo el destino exacto en el daemon…', destinationSelection: 'Elige un destino', destinationSelectionDescription: 'Revisa la dirección exacta antes de conectar.', destinationScope: 'Ámbito del destino', destinationMachine: 'Esta máquina', destinationAccount: 'Cuenta' },
+    fr: { destinationReview: 'Destination de la connexion', destinationLoading: 'Résolution de la destination exacte sur le daemon…', destinationSelection: 'Choisis une destination', destinationSelectionDescription: 'Vérifie l’adresse exacte avant de connecter.', destinationScope: 'Portée de la destination', destinationMachine: 'Cette machine', destinationAccount: 'Compte' },
     ca: { destinationReview: 'Destinació de la connexió', destinationLoading: 'S’està resolent la destinació exacta al daemon…', destinationSelection: 'Tria una destinació', destinationSelectionDescription: 'Revisa l’adreça exacta abans de connectar.', destinationScope: 'Àmbit de la destinació', destinationMachine: 'Aquesta màquina', destinationAccount: 'Compte' },
     it: { destinationReview: 'Destinazione della connessione', destinationLoading: 'Risoluzione della destinazione esatta nel daemon…', destinationSelection: 'Scegli una destinazione', destinationSelectionDescription: 'Controlla l’indirizzo esatto prima di connetterti.', destinationScope: 'Ambito della destinazione', destinationMachine: 'Questa macchina', destinationAccount: 'Account' },
     pt: { destinationReview: 'Destino da ligação', destinationLoading: 'A resolver o destino exato no daemon…', destinationSelection: 'Escolha um destino', destinationSelectionDescription: 'Reveja o endereço exato antes de ligar.', destinationScope: 'Âmbito do destino', destinationMachine: 'Esta máquina', destinationAccount: 'Conta' },
@@ -509,6 +597,7 @@ const providerAuthoringReviewTranslations = {
 
 const providerCompatibilityTranslations = {
     es: { title: 'Funciona con', footer: 'La compatibilidad la verifica cada integración de agente y puede variar según el modelo.', verified: 'Verificado', experimental: 'Experimental', incompatible: 'Incompatible', verifiedDescription: 'Probado con esta integración de agente', experimentalDescription: 'Puede funcionar, pero requiere revisión antes del primer uso', incompatibleDescription: 'Este agente no puede usar la conexión de forma segura' },
+    fr: { title: 'Compatible avec', footer: 'La compatibilité est vérifiée par chaque intégration d’agent et peut varier selon le modèle.', verified: 'Vérifié', experimental: 'Expérimental', incompatible: 'Incompatible', verifiedDescription: 'Testé avec cette intégration d’agent', experimentalDescription: 'Peut fonctionner, mais à vérifier avant la première utilisation', incompatibleDescription: 'Cet agent ne peut pas utiliser la connexion en toute sécurité' },
     ca: { title: 'Funciona amb', footer: 'Cada integració d’agent verifica la compatibilitat, que pot variar segons el model.', verified: 'Verificat', experimental: 'Experimental', incompatible: 'Incompatible', verifiedDescription: 'Provat amb aquesta integració d’agent', experimentalDescription: 'Pot funcionar, però cal revisar-ho abans del primer ús', incompatibleDescription: 'Aquest agent no pot utilitzar la connexió de manera segura' },
     it: { title: 'Compatibile con', footer: 'La compatibilità è verificata da ogni integrazione agente e può variare per modello.', verified: 'Verificato', experimental: 'Sperimentale', incompatible: 'Incompatibile', verifiedDescription: 'Testato con questa integrazione agente', experimentalDescription: 'Potrebbe funzionare, ma va verificato prima del primo utilizzo', incompatibleDescription: 'Questo agente non può usare la connessione in sicurezza' },
     pt: { title: 'Funciona com', footer: 'A compatibilidade é verificada por cada integração de agente e pode variar por modelo.', verified: 'Verificado', experimental: 'Experimental', incompatible: 'Incompatível', verifiedDescription: 'Testado com esta integração de agente', experimentalDescription: 'Pode funcionar, mas requer revisão antes da primeira utilização', incompatibleDescription: 'Este agente não pode usar a ligação em segurança' },
@@ -520,7 +609,8 @@ const providerCompatibilityTranslations = {
 } as const;
 
 const providerModelNotLoadedTranslations = {
-    es: 'No cargado · puede cargarse al usarlo por primera vez', ca: 'No carregat · es pot carregar en el primer ús',
+    es: 'No cargado · puede cargarse al usarlo por primera vez',
+    fr: 'Non chargé · peut se charger à la première utilisation', ca: 'No carregat · es pot carregar en el primer ús',
     it: 'Non caricato · potrebbe caricarsi al primo utilizzo', pt: 'Não carregado · pode carregar na primeira utilização',
     pl: 'Nie załadowano · może zostać załadowany przy pierwszym użyciu', ru: 'Не загружено · может загрузиться при первом использовании',
     zhHans: '未加载 · 首次使用时可能会加载', zhHant: '未載入 · 首次使用時可能會載入', ja: '未読み込み · 初回使用時に読み込まれる場合があります',
@@ -528,6 +618,7 @@ const providerModelNotLoadedTranslations = {
 
 const providerModelLoadCancellationTranslations = {
     es: { cancelLoad: 'Cancelar carga', loadCancelled: 'Se dejó de esperar al modelo', loadCancelledProviderMayContinue: 'El proveedor puede seguir cargándolo. Actualiza el catálogo más tarde para comprobar si terminó; Happier no repetirá la carga.' },
+    fr: { cancelLoad: 'Annuler le chargement', loadCancelled: 'Attente du modèle interrompue', loadCancelledProviderMayContinue: 'Le provider peut continuer à le charger. Actualise le catalogue plus tard pour prendre en compte une fin tardive ; Happier ne rejouera pas le chargement.' },
     ca: { cancelLoad: 'Cancel·la la càrrega', loadCancelled: 'S’ha deixat d’esperar el model', loadCancelledProviderMayContinue: 'El proveïdor pot continuar carregant-lo. Actualitza el catàleg més tard per comprovar si ha acabat; Happier no repetirà la càrrega.' },
     it: { cancelLoad: 'Annulla caricamento', loadCancelled: 'Attesa del modello interrotta', loadCancelledProviderMayContinue: 'Il provider potrebbe continuare a caricarlo. Aggiorna il catalogo più tardi per verificare un eventuale completamento; Happier non ripeterà il caricamento.' },
     pt: { cancelLoad: 'Cancelar carregamento', loadCancelled: 'A espera pelo modelo foi interrompida', loadCancelledProviderMayContinue: 'O fornecedor pode continuar a carregá-lo. Atualize o catálogo mais tarde para verificar uma conclusão tardia; o Happier não repetirá o carregamento.' },
@@ -539,13 +630,15 @@ const providerModelLoadCancellationTranslations = {
 } as const;
 
 const providerPartialStatusTranslations = {
-    es: 'Disponible parcialmente', ca: 'Disponible parcialment', it: 'Parzialmente disponibile',
+    es: 'Disponible parcialmente',
+    fr: 'Partiellement disponible', ca: 'Disponible parcialment', it: 'Parzialmente disponibile',
     pt: 'Parcialmente disponível', pl: 'Częściowo dostępny', ru: 'Частично доступно',
     zhHans: '部分可用', zhHant: '部分可用', ja: '一部利用可能',
 } as const;
 
 const providerConnectedServiceSuppressedTranslations = {
     es: 'El inicio de sesión nativo del agente no se usa con este proveedor. Tu selección guardada no cambia.',
+    fr: 'La connexion native au service connecté de l’agent n’est pas utilisée avec ce provider. Ta sélection enregistrée est inchangée.',
     ca: 'L’inici de sessió natiu de l’agent no s’utilitza amb aquest proveïdor. La selecció desada no canvia.',
     it: 'L’accesso nativo dell’agente non viene usato con questo provider. La selezione salvata non cambia.',
     pt: 'O início de sessão nativo do agente não é usado com este fornecedor. A seleção guardada não é alterada.',
@@ -558,6 +651,7 @@ const providerConnectedServiceSuppressedTranslations = {
 
 const providerMachineCleanupPendingTranslations = {
     es: 'La máquina se eliminó, pero no se pudo guardar la limpieza de acceso a proveedores. Comprueba la conexión y vuelve a eliminar la máquina para reintentarlo.',
+    fr: 'La machine a été supprimée, mais ses réglages d’accès au provider n’ont pas pu être enregistrés. Vérifie ta connexion et supprime à nouveau la machine pour réessayer le nettoyage.',
     ca: 'La màquina s’ha eliminat, però no s’ha pogut desar la neteja de l’accés als proveïdors. Comprova la connexió i torna a eliminar la màquina per reintentar-ho.',
     it: 'La macchina è stata rimossa, ma non è stato possibile salvare la pulizia dell’accesso ai provider. Controlla la connessione e rimuovi di nuovo la macchina per riprovare.',
     pt: 'A máquina foi removida, mas não foi possível guardar a limpeza do acesso aos fornecedores. Verifique a ligação e remova novamente a máquina para tentar outra vez.',
@@ -570,6 +664,7 @@ const providerMachineCleanupPendingTranslations = {
 
 const providerConnectionChangedTranslations = {
     es: { title: 'La conexión del proveedor cambió', description: 'Vuelve a cargar la configuración actual del proveedor e inténtalo de nuevo.' },
+    fr: { title: 'La connexion au provider a changé', description: 'Recharge les réglages actuels du provider, puis réessaie.' },
     ca: { title: 'La connexió del proveïdor ha canviat', description: 'Torna a carregar la configuració actual del proveïdor i prova-ho de nou.' },
     it: { title: 'La connessione del provider è cambiata', description: 'Ricarica le impostazioni attuali del provider e riprova.' },
     pt: { title: 'A ligação do fornecedor mudou', description: 'Volte a carregar as definições atuais do fornecedor e tente novamente.' },
@@ -582,6 +677,7 @@ const providerConnectionChangedTranslations = {
 
 const providerModelSectionTranslations = {
     es: { available: 'Disponibles', manual: 'Manual' },
+    fr: { available: 'Disponible', manual: 'Manuel' },
     ca: { available: 'Disponibles', manual: 'Manual' },
     it: { available: 'Disponibili', manual: 'Manuale' },
     pt: { available: 'Disponíveis', manual: 'Manual' },
@@ -637,6 +733,51 @@ const providerCompletenessTranslations = {
             reviewCurrentState: 'Revisar ajustes actuales',
         },
         hiddenForAllAgents: 'Oculto para todos los agentes · Gestiona en los ajustes de Proveedores',
+    },
+    fr: {
+        searchEmptyTitle: 'Aucun provider ne correspond à cette recherche',
+        searchEmptyDescription: 'Essaie un autre nom de provider ou de connexion.',
+        compatibilityReasons: {
+            noCompatibleProtocol: 'Aucun protocole d’API pris en charge ne recoupe celui de cet agent.',
+            noAuthUnsupported: 'Cet agent nécessite un transport par clé API pour ce provider.',
+            credentialTransportUnavailable: 'Le transport de clé API configuré n’est pas pris en charge par cet agent.',
+            optionalCredentialNoAuthUnsupported: 'Cet agent ne peut pas utiliser le provider sans la clé API optionnelle.',
+            capabilityUnsupported: 'Une capacité requise du provider n’est pas prise en charge.',
+            capabilityUnknown: 'Une capacité requise du provider n’a pas été vérifiée.',
+            modelEvidenceRequired: 'Choisis un modèle pour vérifier ses capacités requises.',
+            modelCapabilityUnsupported: 'Le modèle ne prend pas en charge une capacité requise.',
+            modelCapabilityUnknown: 'Une capacité requise du modèle n’a pas été vérifiée.',
+            overrideIncompatible: 'La vérification du provider marque cette intégration comme incompatible.',
+            overrideExperimental: 'La vérification du provider marque cette intégration comme expérimentale.',
+            evidenceMissing: 'Aucune preuve de compatibilité n’a encore été enregistrée.',
+            agentUnsupported: 'Cet agent ne prend pas en charge les providers de modèles externes.',
+            adapterInvalid: 'L’adaptateur de provider de l’agent n’a pas pu être validé.',
+            unknown: 'Une condition de compatibilité plus récente demande une vérification.',
+        },
+        unsavedDescription: 'Abandonner ce brouillon de provider ? Les secrets enregistrés sont des objets partagés du compte et resteront disponibles.',
+        recoveryActions: {
+            reviewFeatures: 'Vérifier la disponibilité des providers',
+            chooseConnection: 'Choisir un provider',
+            restorePlugin: 'Vérifier le plugin',
+            enableConnection: 'Activer le provider',
+            reviewAccountGrant: 'Vérifier l’accès au compte',
+            enableOnMachine: 'Activer sur la machine',
+            reviewMachineGrant: 'Vérifier l’accès machine',
+            reviewCompatibility: 'Vérifier la compatibilité',
+            addSecret: 'Ajouter une clé API',
+            reviewCredentialTransport: 'Vérifier la prise en charge des identifiants',
+            reviewConnection: 'Vérifier la connexion',
+            retry: 'Réessayer',
+            replaceSecret: 'Remplacer la clé API',
+            chooseModel: 'Choisir un modèle',
+            loadModel: 'Charger le modèle',
+            reviewAndRestart: 'Vérifier et redémarrer',
+            restartProbe: 'Retester',
+            reduceProviderSettings: 'Gérer les réglages du provider',
+            reviewProfileMigration: 'Vérifier la migration du profil',
+            reviewCurrentState: 'Vérifier les réglages actuels',
+        },
+        hiddenForAllAgents: 'Masqué pour tous les agents · Gérer dans les réglages du provider',
     },
     ca: {
         searchEmptyTitle: 'Cap proveïdor coincideix amb aquesta cerca',
@@ -1008,6 +1149,13 @@ const providerAvailabilityTranslations = {
         availabilityContextUnsupported: 'Los proveedores no son compatibles en este contexto', availabilityContextUnsupportedDescription: 'La configuración o selección actual del servidor no admite conexiones de proveedores.',
         availabilityPolicyDisabled: 'Los proveedores están desactivados por una política', availabilityPolicyDisabledDescription: 'Una política local o de compilación ha desactivado las conexiones de proveedores.',
     },
+    fr: {
+        availabilityChecking: 'Vérification de la disponibilité des providers', availabilityCheckingDescription: 'Happier vérifie si ce serveur prend en charge les connexions aux providers.',
+        availabilityProblem: 'Impossible de vérifier la disponibilité des providers', availabilityProblemDescription: 'Happier réessaiera automatiquement. Vérifie la connexion au serveur si cela persiste.',
+        availabilityUnsupported: 'Les providers nécessitent une mise à jour du serveur', availabilityUnsupportedDescription: 'Cette version du serveur ne prend pas en charge les connexions aux providers.',
+        availabilityContextUnsupported: 'Les providers ne sont pas pris en charge dans ce contexte', availabilityContextUnsupportedDescription: 'La configuration ou la sélection actuelle du serveur ne peut pas prendre en charge les connexions aux providers.',
+        availabilityPolicyDisabled: 'Les providers sont désactivés par la politique', availabilityPolicyDisabledDescription: 'Une politique locale ou de build a désactivé les connexions aux providers.',
+    },
     ca: {
         availabilityChecking: 'S’està comprovant la disponibilitat dels proveïdors', availabilityCheckingDescription: 'Happier està confirmant si aquest servidor admet connexions de proveïdors.',
         availabilityProblem: 'No s’ha pogut comprovar la disponibilitat dels proveïdors', availabilityProblemDescription: 'Happier ho tornarà a provar automàticament. Comprova la connexió del servidor si el problema continua.',
@@ -1174,6 +1322,7 @@ function withProviderSharedFields<T extends {
 
 export const settingsProvidersTranslations = {
     es: withProviderSharedFields(es, 'es'),
+    fr: withProviderSharedFields(fr, 'fr'),
     ca: withProviderSharedFields(ca, 'ca'),
     it: withProviderSharedFields(it, 'it'),
     pt: withProviderSharedFields(pt, 'pt'),

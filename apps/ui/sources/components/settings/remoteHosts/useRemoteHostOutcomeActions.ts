@@ -10,7 +10,7 @@ import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSs
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
-import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
+import type { RemoteHost, RemoteHostsV1Raw } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import {
     resolveRemoteHostEffectiveSshConfig,
@@ -66,6 +66,7 @@ function readBootstrapCompletion(resultData: unknown): Readonly<{
 export function useRemoteHostOutcomeActions(options: Readonly<{
     runner: SystemTaskRunner;
     remoteHosts: readonly RemoteHost[];
+    remoteHostsRaw: RemoteHostsV1Raw;
     secretMaterialAllowed: boolean;
     onSshTunnelEnsured?: () => void;
 }>) {
@@ -305,7 +306,7 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
             persistRemoteHostAfterRemoteSshCompletion({
                 managementEnabled: true,
                 secretMaterialEnabled: options.secretMaterialAllowed,
-                remoteHostsV1: options.remoteHosts,
+                remoteHostsRaw: options.remoteHostsRaw,
                 selectedSavedRemoteHostId: activeTaskHostId,
                 runContext: {
                     selectedSavedRemoteHostId: activeTaskHostId,

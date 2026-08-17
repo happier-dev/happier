@@ -127,7 +127,7 @@ export function BrowserAddressField(props: Readonly<{
             />
             <IconButton
                 testID={props.testID ? `${props.testID}-copy` : undefined}
-                iconName="copy-outline"
+                iconName="copy"
                 accessibilityLabel={t('browserShell.address.copy')}
                 tooltip={t('browserShell.address.copy')}
                 size={34}

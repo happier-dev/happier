@@ -5,11 +5,11 @@ import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { ControlRow, TactilePressable } from '../ConceptControls';
-import { TranscriptStream } from '../TranscriptStream';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
-import { controlsForState } from '../voiceLabModel';
-import { light, useVoiceLabTokens } from '../voiceLabTokens';
+import { ControlRow, TactilePressable } from '@/components/voice/controls/VoiceControls';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
+import { controlsForState, VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
+import { light, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 /**
@@ -22,8 +22,8 @@ const TypeRule = React.memo(function TypeRule(props: Readonly<{
     width: number;
     active: boolean;
 }>) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
 
     const fill = useAnimatedStyle(() => {
         'worklet';
@@ -67,7 +67,7 @@ const TypeRule = React.memo(function TypeRule(props: Readonly<{
  * Judge the others against this one, not against the current card.
  */
 export function SlateConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     const { state } = props;
     const dormant = state.id === 'ready' || state.id === 'unavailable';
     const controls = controlsForState(state.id, props.provider, props.surface === 'session');
@@ -138,7 +138,7 @@ export function SlateConcept(props: VoiceConceptProps) {
                         borderTopColor: tokens.rule,
                     }}
                 >
-                    <TranscriptStream />
+                    <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} />
                 </View>
             ) : null}
 

@@ -27,7 +27,6 @@ const state: any = {
             providers: {
                 local_conversation: { schemaVersion: 1, config: {
                     agent: {
-                        backend: 'daemon',
                         agentSource: 'session',
                         chatModelSource: 'custom',
                         chatModelId: 'default',
@@ -182,16 +181,6 @@ describe('initializeVoiceAgentHandle', () => {
                 commit: vi.fn(),
                 stop: vi.fn(),
             }),
-            getOpenAiCompatVoiceAgentClient: () => ({
-                start: vi.fn(),
-                sendTurn: vi.fn(),
-                welcome: vi.fn(),
-                startTurnStream: vi.fn(),
-                readTurnStream: vi.fn(),
-                cancelTurnStream: vi.fn(),
-                commit: vi.fn(),
-                stop: vi.fn(),
-            }),
             enqueuePendingContextUpdate: vi.fn(),
         });
 
@@ -207,5 +196,63 @@ describe('initializeVoiceAgentHandle', () => {
                 commitModelId: getAgentCore('codex').model.defaultMode,
             }),
         );
+    });
+
+    it('routes migrated OpenAI-compatible Chat through the daemon with exact Provider selections', async () => {
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        const originalAgent = state.settings.voice.providers.local_conversation.config.agent;
+        state.settings.voice.providers.local_conversation.config.agent = {
+            ...originalAgent,
+            agentSource: 'agent',
+            agentId: 'opencode',
+            providerChat: {
+                status: 'configured',
+                chat: {
+                    agentTargetKey: 'backend:opencode',
+                    providerConnectionId: 'voice-openai-compatible-chat',
+                    modelId: 'chat-model',
+                },
+                commit: {
+                    agentTargetKey: 'backend:opencode',
+                    providerConnectionId: 'voice-openai-compatible-chat',
+                    modelId: 'commit-model',
+                },
+                configuration: { temperature: 0.73 },
+            },
+        };
+
+        try {
+            const handle = await initializeVoiceAgentHandle({
+                sessionId: 's1',
+                getDaemonVoiceAgentClient: () => ({
+                    start,
+                    sendTurn: vi.fn(),
+                    welcome: vi.fn(),
+                    startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(),
+                    cancelTurnStream: vi.fn(),
+                    commit: vi.fn(),
+                    stop: vi.fn(),
+                }),
+                enqueuePendingContextUpdate: vi.fn(),
+            });
+
+            expect(handle.backend).toBe('daemon');
+            expect(start).toHaveBeenCalledWith(expect.objectContaining({
+                agentSource: 'agent',
+                agentId: 'opencode',
+                chatModelId: 'chat-model',
+                commitModelId: 'commit-model',
+                chatModelSelection: expect.objectContaining({ providerConnectionId: 'voice-openai-compatible-chat' }),
+                commitModelSelection: expect.objectContaining({ providerConnectionId: 'voice-openai-compatible-chat' }),
+                sessionConfigOptionOverrides: {
+                    v: 1,
+                    updatedAt: 0,
+                    overrides: { temperature: { updatedAt: 0, value: 0.73 } },
+                },
+            }));
+        } finally {
+            state.settings.voice.providers.local_conversation.config.agent = originalAgent;
+        }
     });
 });

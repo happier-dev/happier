@@ -97,6 +97,7 @@ export function installSessionRouteCommonModuleMocks(
         const activeOptions = sessionRouteModuleState.options;
         const safeAreaInsets = activeOptions.safeAreaInsets ?? {};
         return {
+            initialWindowMetrics: null,
             useSafeAreaInsets: () => ({
                 top: safeAreaInsets.top ?? 0,
                 bottom: safeAreaInsets.bottom ?? 0,

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
@@ -13,6 +12,8 @@ import { t } from '@/text';
 import { buildExecutionRunDeliveryRootStep } from './createExecutionRunDeliveryActionChip';
 import type { ExecutionRunDeliveryMode } from './useSessionRecipientState';
 import { resolveExecutionRunDeliveryLabel } from './executionRunDeliveryOptions';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 
 export type ExecutionRunDeliveryChipProps = Readonly<{
     recipient: ParticipantRecipientV1 | null;
@@ -47,7 +48,7 @@ export const ExecutionRunDeliveryChip = React.memo(function ExecutionRunDelivery
                     accessibilityLabel={t('runs.delivery.title')}
                 >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="options-outline" size={16} color={props.ctx.iconColor} />
+                        <Icon name="sliders-horizontal" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
                         {props.ctx.showLabel ? (
                             <Text numberOfLines={1} style={props.ctx.textStyle}>
                                 {t('runs.delivery.cardDelivery', { label: selectedLabel })}

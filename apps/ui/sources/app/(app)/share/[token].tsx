@@ -1,7 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -39,6 +38,7 @@ import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionCont
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useHeaderHeight } from '@/utils/platform/responsive';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const SHARE_SCREEN_OPTIONS = { headerShown: false } as const;
 
@@ -386,7 +386,7 @@ export default memo(function PublicShareViewerScreen() {
     if (error) {
         return (
             <View style={[styles.center, { backgroundColor: theme.colors.background.canvas }]}>
-                <Ionicons name="alert-circle-outline" size={64} color={theme.colors.state.danger.foreground} />
+                <Icon name="warning-circle" size={64} color={theme.colors.state.danger.foreground} />
                 <ItemList>
                     <ItemGroup>
                         <Item
@@ -409,7 +409,7 @@ export default memo(function PublicShareViewerScreen() {
                 <ItemGroup title={t('session.sharing.consentRequired')}>
                     <Item
                         title={t('session.sharing.sharedBy', { name: ownerName })}
-                        icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="person" size={29} color={theme.colors.accent.blue} />}
                         showChevron={false}
                     />
                     <Item
@@ -420,12 +420,12 @@ export default memo(function PublicShareViewerScreen() {
                 <ItemGroup>
                     <Item
                         title={t('session.sharing.acceptAndView')}
-                        icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
+                        icon={<Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => load(true)}
                     />
                     <Item
                         title={t('common.cancel')}
-                        icon={<Ionicons name="close-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                        icon={<Icon name="x-circle" size={29} color={theme.colors.state.danger.foreground} />}
                         onPress={() => router.back()}
                     />
                 </ItemGroup>

@@ -1,18 +1,18 @@
 import {
-  computePromptBundleDigestV1,
+  installPromptRegistryItemInLibrary,
   type PromptAssetMutationResponseV1,
   type PromptAssetInstallModeV1,
   type PromptAssetScopeV1,
   type PromptExternalLinksV1,
   type PromptRegistryConfiguredSourceV1,
+  type PromptRegistryFetchedItemV1,
 } from '@happier-dev/protocol';
 
 import { randomUUID } from '@/platform/randomUUID';
 import { machinePromptRegistriesDownloadItem, machinePromptRegistriesInstall } from '@/sync/ops/machinePromptRegistries';
-
 import { defaultPromptAssetTargetInput } from '@/components/settings/prompts/assets/promptAssetExportDefaults';
+import { uiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 import { createPromptRegistrySkillArtifactFromFetchedItem } from './promptRegistrySkillImports';
-import { upsertPromptExternalLink } from './promptExternalLinks';
 
 export type PromptRegistryInstallResult = Readonly<
   | {
@@ -48,101 +48,60 @@ export async function installPromptRegistryItem(args: Readonly<{
   promptExternalLinks: PromptExternalLinksV1 | null | undefined;
   previewOnly?: boolean;
 }>): Promise<PromptRegistryInstallResult> {
-  const fetched = await machinePromptRegistriesDownloadItem(args.machineId, {
-    sourceId: args.sourceId,
-    itemId: args.itemId,
-    configuredSources: [...args.configuredSources],
-  }, args.serverId ? { serverId: args.serverId } : undefined);
-  if (!fetched.ok) {
-    return {
-      ok: false,
-      error: fetched.error,
-    };
-  }
-
-  if (!args.installTarget) {
-    const imported = await createPromptRegistrySkillArtifactFromFetchedItem(fetched.item);
-    if (!imported.ok) {
-      return imported;
-    }
-    return {
-      ok: true,
-      artifactId: imported.artifactId,
-      routeKind: 'bundle',
-      exported: false,
-    };
-  }
-
-  const targetName = String(args.installTarget.targetName ?? '').trim() || defaultPromptAssetTargetInput({
-    libraryKind: 'bundle',
-    title: fetched.item.title,
-  });
-  const committed = await machinePromptRegistriesInstall(args.machineId, {
-    sourceId: args.sourceId,
-    itemId: args.itemId,
-    configuredSources: [...args.configuredSources],
-    installTarget: {
-      assetTypeId: args.installTarget.assetTypeId,
-      scope: args.installTarget.scope,
-      ...(args.installTarget.scope === 'project'
-        ? { directory: args.installTarget.directory ?? undefined }
-        : {}),
-      targetName,
-      installMode: args.installTarget.installMode,
+  let fetchedTitle = '';
+  let fetchedItem: PromptRegistryFetchedItemV1 | null = null;
+  const { installTarget, ...requestBase } = args;
+  return await installPromptRegistryItemInLibrary({
+    store: {
+      ...uiPromptLibraryArtifactStore,
+      create: async () => {
+        if (!fetchedItem) throw new Error('prompt_registry_item_not_fetched');
+        const imported = await createPromptRegistrySkillArtifactFromFetchedItem(fetchedItem);
+        if (!imported.ok) throw new Error(imported.error);
+        return imported.artifactId;
+      },
     },
-    previewOnly: args.previewOnly,
-  }, args.serverId ? { serverId: args.serverId } : undefined);
-
-  if (!committed.ok || !committed.externalRef) {
-    return {
-      ok: false,
-      error: committed.ok ? 'promptLibrary.saveError' : committed.error,
-      ...(committed.ok
-        ? {}
-        : {
-            errorCode: committed.errorCode,
-            currentDigest: Object.prototype.hasOwnProperty.call(committed, 'currentDigest')
-              ? (committed.currentDigest ?? null)
-              : null,
+    fetchItem: async ({ machineId, serverId, sourceId, itemId, configuredSources }) => {
+      const fetched = await machinePromptRegistriesDownloadItem(machineId, {
+        sourceId,
+        itemId,
+        configuredSources: [...configuredSources],
+      }, serverId ? { serverId } : undefined);
+      if (fetched.ok) {
+        fetchedTitle = fetched.item.title;
+        fetchedItem = fetched.item;
+        return fetched;
+      }
+      return { ok: false, errorCode: 'invalid_request', error: fetched.error };
+    },
+    install: async ({ machineId, serverId, request }) => await machinePromptRegistriesInstall(
+      machineId,
+      {
+        ...request,
+        installTarget: {
+          ...request.installTarget,
+          targetName: request.installTarget.targetName.trim() || defaultPromptAssetTargetInput({
+            libraryKind: 'bundle',
+            title: fetchedTitle,
           }),
-    };
-  }
-
-  if (args.previewOnly === true) {
-    return {
-      ok: true,
-      routeKind: 'bundle',
-      exported: false,
-      response: committed,
-    };
-  }
-
-  const imported = await createPromptRegistrySkillArtifactFromFetchedItem(fetched.item);
-  if (!imported.ok) {
-    return imported;
-  }
-
-  return {
-    ok: true,
-    artifactId: imported.artifactId,
-    routeKind: 'bundle',
-    exported: true,
-    response: committed,
-    nextPromptExternalLinks: upsertPromptExternalLink(args.promptExternalLinks, {
-      id: randomUUID(),
-      artifactId: imported.artifactId,
-      assetTypeId: args.installTarget.assetTypeId,
-      scope: args.installTarget.scope,
-      machineId: args.machineId,
-      workspacePath: args.installTarget.scope === 'project'
-        ? (args.installTarget.directory ?? null)
-        : null,
-      externalRef: committed.externalRef,
-      syncMode: 'manual',
-      baseDigest: committed.digest ?? null,
-      lastLibraryDigest: computePromptBundleDigestV1(fetched.item.bundleBody),
-      lastExternalDigest: committed.digest ?? null,
-      lastSyncAtMs: Date.now(),
-    }),
-  };
+        },
+      },
+      serverId ? { serverId } : undefined,
+    ),
+    request: {
+      ...requestBase,
+      ...(installTarget
+        ? {
+            installTarget: {
+              assetTypeId: installTarget.assetTypeId,
+              scope: installTarget.scope,
+              ...(installTarget.directory ? { directory: installTarget.directory } : {}),
+              ...(installTarget.installMode ? { installMode: installTarget.installMode } : {}),
+              targetName: installTarget.targetName?.trim() ?? '',
+            },
+          }
+        : {}),
+    },
+    randomId: randomUUID,
+  });
 }

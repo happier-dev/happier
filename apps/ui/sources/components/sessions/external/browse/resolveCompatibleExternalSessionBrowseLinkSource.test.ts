@@ -4,7 +4,7 @@ import type { ExternalSessionsSource } from '@happier-dev/protocol';
 import { resolveCompatibleExternalSessionBrowseLinkSource } from './resolveCompatibleExternalSessionBrowseLinkSource';
 
 describe('resolveCompatibleExternalSessionBrowseLinkSource', () => {
-    it('preserves the selected codex connected-service source when the candidate source points at a different service profile', () => {
+    it('preserves the selected source when no plugin compatibility resolver is declared', () => {
         const selectedSource: ExternalSessionsSource = {
             kind: 'codexHome',
             home: 'connectedService',
@@ -15,8 +15,8 @@ describe('resolveCompatibleExternalSessionBrowseLinkSource', () => {
             kind: 'codexHome',
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
-            connectedServiceProfileId: 'personal',
-            homePath: '/tmp/personal-home',
+            connectedServiceProfileId: 'work',
+            homePath: '/tmp/work-home',
         };
 
         expect(resolveCompatibleExternalSessionBrowseLinkSource({
@@ -25,7 +25,7 @@ describe('resolveCompatibleExternalSessionBrowseLinkSource', () => {
         })).toEqual(selectedSource);
     });
 
-    it('allows the candidate codex source to add a compatible homePath to the selected source', () => {
+    it('uses the candidate only when the plugin compatibility resolver accepts it', () => {
         const selectedSource: ExternalSessionsSource = {
             kind: 'codexHome',
             home: 'user',
@@ -36,13 +36,16 @@ describe('resolveCompatibleExternalSessionBrowseLinkSource', () => {
             homePath: '/tmp/custom-home',
         };
 
+        const resolveCompatibleLinkSource = () => candidateSource;
+
         expect(resolveCompatibleExternalSessionBrowseLinkSource({
             selectedSource,
             candidateSource,
+            resolveCompatibleLinkSource,
         })).toEqual(candidateSource);
     });
 
-    it('treats a codex connected-service group as identity across active-member rotation', () => {
+    it('preserves the selected source when the plugin compatibility resolver rejects the candidate', () => {
         const selectedSource: ExternalSessionsSource = {
             kind: 'codexHome',
             home: 'connectedService',
@@ -50,27 +53,18 @@ describe('resolveCompatibleExternalSessionBrowseLinkSource', () => {
             connectedServiceProfileId: 'member-a',
             connectedServiceGroupId: 'primary-pool',
         };
-        const rotatedCandidate: ExternalSessionsSource = {
+        const candidateSource: ExternalSessionsSource = {
             kind: 'codexHome',
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
             connectedServiceProfileId: 'member-b',
-            connectedServiceGroupId: 'primary-pool',
-            homePath: '/tmp/member-b',
-        };
-        const otherGroupCandidate: ExternalSessionsSource = {
-            ...rotatedCandidate,
-            connectedServiceProfileId: 'member-a',
             connectedServiceGroupId: 'other-pool',
         };
 
         expect(resolveCompatibleExternalSessionBrowseLinkSource({
             selectedSource,
-            candidateSource: rotatedCandidate,
-        })).toEqual(rotatedCandidate);
-        expect(resolveCompatibleExternalSessionBrowseLinkSource({
-            selectedSource,
-            candidateSource: otherGroupCandidate,
+            candidateSource,
+            resolveCompatibleLinkSource: () => null,
         })).toEqual(selectedSource);
     });
 

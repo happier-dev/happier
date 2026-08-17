@@ -1,4 +1,8 @@
-import type { PendingRequestedActionV1 } from '@happier-dev/protocol';
+import {
+  hasAdmittedComposerAttachmentSelectionV1,
+  readHappierStructuredInputV1FromMeta,
+  type PendingRequestedActionV1,
+} from '@happier-dev/protocol';
 
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storage';
@@ -55,16 +59,20 @@ async function defaultGetScopedSessionEncryption(params: Readonly<{
 }>): Promise<ScopedSessionEncryptionLike> {
   if (params.context.scope !== 'scoped') throw new Error('Expected scoped context');
   const context = params.context as Extract<ResolvedServerSessionRpcContext, { scope: 'scoped' }>;
+  const encryption = context.encryption;
+  if (!encryption) {
+    throw new Error(`Session encryption is unavailable for ${params.sessionId}`);
+  }
   const sessionDataKey = await resolveScopedSessionDataKey({
     serverId: context.targetServerId,
     serverUrl: context.targetServerUrl,
     token: context.token,
     sessionId: params.sessionId,
     timeoutMs: context.timeoutMs,
-    decryptEncryptionKey: (value) => context.encryption.decryptEncryptionKey(value),
+    decryptEncryptionKey: (value) => encryption.decryptEncryptionKey(value),
   });
-  await context.encryption.initializeSessions(new Map([[params.sessionId, sessionDataKey]]));
-  const sessionEncryption = context.encryption.getSessionEncryption(params.sessionId);
+  await encryption.initializeSessions(new Map([[params.sessionId, sessionDataKey]]));
+  const sessionEncryption = encryption.getSessionEncryption(params.sessionId);
   if (!sessionEncryption) throw new Error(`Session encryption not found for ${params.sessionId}`);
   return sessionEncryption as unknown as ScopedSessionEncryptionLike;
 }
@@ -88,6 +96,10 @@ function resolveServerScopedPendingRequestedAction(params: Readonly<{
   };
 }
 
+function hasAdmittedComposerAttachmentSelection(metaOverrides: Record<string, unknown> | null | undefined): boolean {
+  return hasAdmittedComposerAttachmentSelectionV1(readHappierStructuredInputV1FromMeta(metaOverrides));
+}
+
 export function createServerScopedSessionSendMessage(deps?: Partial<ServerScopedSessionSendMessageDeps>): Readonly<{
   sendSessionMessageWithServerScope: (args: Readonly<{
     sessionId: string;
@@ -99,6 +111,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
     profileId?: string | null;
     messageLocalId?: string | null;
     providerDeliveryIntent?: 'immediate' | 'first_turn' | null;
+    requestedAction?: PendingRequestedActionV1;
   }>) => Promise<ServerScopedSessionSendMessageResult>;
 }> {
   const d: ServerScopedSessionSendMessageDeps = {
@@ -119,7 +132,12 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
       const message = String(args.message ?? '');
       const profileId = normalizeServerScopeId(args.profileId);
       const localId = normalizeServerScopeId(args.messageLocalId) || randomUUID();
-      if (!sessionId || !message.trim()) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      if (
+        !sessionId
+        || (!message.trim() && !hasAdmittedComposerAttachmentSelection(args.metaOverrides))
+      ) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      }
 
       const context = await d.resolveContext({
         serverId: args.serverId,
@@ -139,7 +157,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
               serverId: normalizeServerScopeId(session.serverId) || undefined,
             }))
           : null;
-        requestedAction = resolveServerScopedPendingRequestedAction({
+        requestedAction = args.requestedAction ?? resolveServerScopedPendingRequestedAction({
           providerDeliveryIntent: args.providerDeliveryIntent,
           serverWireMode,
         });
@@ -156,7 +174,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
         const serverWireMode = resolvePendingInputServerWireMode(
           await getServerFeaturesSnapshot({ serverId: outboxScope.serverId }),
         );
-        requestedAction = resolveServerScopedPendingRequestedAction({
+        requestedAction = args.requestedAction ?? resolveServerScopedPendingRequestedAction({
           providerDeliveryIntent: args.providerDeliveryIntent,
           serverWireMode,
         });

@@ -20,7 +20,7 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     const toolbarActionsStart = React.useMemo(() => (
         <IconButton
             testID="workspace-embedded-terminal-new-tab"
-            iconName="add-outline"
+            iconName="plus"
             accessibilityLabel={t('terminalEmbedded.openNewTabA11y')}
             tooltip={t('terminalEmbedded.openNewTabA11y')}
             variant="plain"

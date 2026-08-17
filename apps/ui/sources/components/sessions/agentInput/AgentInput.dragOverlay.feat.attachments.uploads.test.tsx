@@ -262,7 +262,7 @@ async function renderAgentInput(props: Readonly<{ onAttachmentsAdded: (files: re
             placeholder: 'placeholder',
             onChangeText: () => { },
             onSend: () => { },
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             onAttachmentsAdded: props.onAttachmentsAdded,
             hasSendableAttachments: false,

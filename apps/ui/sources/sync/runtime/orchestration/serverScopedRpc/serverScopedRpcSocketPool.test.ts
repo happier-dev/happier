@@ -102,6 +102,12 @@ describe('serverScopedRpcSocketPool', () => {
             expect.objectContaining({
                 path: '/v1/updates/',
                 withCredentials: false,
+                auth: expect.objectContaining({
+                    accountStoredContentCompatibility: {
+                        v: 1,
+                        protocolVersion: 1,
+                    },
+                }),
             }),
         );
 

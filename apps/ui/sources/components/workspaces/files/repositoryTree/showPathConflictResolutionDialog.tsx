@@ -147,17 +147,36 @@ export async function showPathConflictResolutionDialog(params: Readonly<{
     allowSkip: boolean;
     primaryStrategy?: Exclude<PathConflictResolutionStrategy, 'cancel'> | null;
     testIdPrefix?: string;
+    signal?: AbortSignal | null;
 }>): Promise<PathConflictResolutionStrategy> {
+    if (params.signal?.aborted) return 'cancel';
+
     const deferred = createDeferredOnce<PathConflictResolutionStrategy>();
-    Modal.show({
+    let modalId: string | null = null;
+    let settled = false;
+
+    const settle = (strategy: PathConflictResolutionStrategy) => {
+        if (settled) return;
+        settled = true;
+        params.signal?.removeEventListener('abort', onAbort);
+        deferred.resolve(strategy);
+    };
+    const onAbort = () => {
+        if (settled) return;
+        if (modalId) Modal.hide(modalId);
+        settle('cancel');
+    };
+
+    params.signal?.addEventListener('abort', onAbort, { once: true });
+    modalId = Modal.show({
         component: PathConflictResolutionDialog,
         props: {
             allowSkip: params.allowSkip,
             primaryStrategy: params.primaryStrategy ?? null,
             testIdPrefix: params.testIdPrefix ?? 'path-conflicts',
-            onResolve: deferred.resolve,
+            onResolve: settle,
         },
-        onRequestClose: () => deferred.resolve('cancel'),
+        onRequestClose: () => settle('cancel'),
         chrome: {
             kind: 'card',
             title: params.title,
@@ -168,5 +187,6 @@ export async function showPathConflictResolutionDialog(params: Readonly<{
         },
         closeOnBackdrop: true,
     });
+    if (params.signal?.aborted) onAbort();
     return await deferred.promise;
 }

@@ -1,21 +1,49 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from 'expo-router';
 
-import { useAuth } from '@/auth/context/AuthContext';
+import {
+    useAuth,
+    type AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
 import { authGetToken } from '@/auth/flows/getToken';
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { decodeBase64 } from '@/encryption/base64';
 import { Modal } from '@/modal';
-import { activateStackRuntimeServer } from '@/sync/domains/server/stackRuntimeServer';
+import {
+    activateStackRuntimeServer,
+    readStackRuntimeServerUrl,
+} from '@/sync/domains/server/stackRuntimeServer';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { trackAccountRestored } from '@/track';
+import { Icon } from '@/components/ui/icons/Icon';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
+import {
+    guardAccountEncryptionFirstKeyCredentialMutation,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+
+async function guardStackAuthIngress(
+): Promise<AuthCredentialLifecycleResult> {
+    const current =
+        await guardAccountEncryptionFirstKeyCredentialMutation();
+    if (current.kind !== 'allowed') return current;
+    const stackServerUrl = readStackRuntimeServerUrl();
+    if (!stackServerUrl) return { kind: 'completed' };
+    const target =
+        await guardAccountEncryptionFirstKeyCredentialMutation({
+            serverUrl: stackServerUrl,
+        });
+    return target.kind === 'allowed'
+        ? { kind: 'completed' }
+        : target;
+}
 
 export type SecretKeyLoginFormProps = Readonly<{
     embedded?: boolean;
@@ -93,6 +121,15 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
         }
 
         try {
+            let mayActivateStack = false;
+            await presentFirstKeyCredentialLifecycle({
+                run: guardStackAuthIngress,
+                onCompleted: () => {
+                    mayActivateStack = true;
+                },
+            });
+            if (!mayActivateStack) return;
+
             const normalizedKey = normalizeSecretKey(trimmedKey);
             const secretBytes = decodeBase64(normalizedKey, 'base64url');
             if (secretBytes.length !== 32) {
@@ -106,9 +143,14 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
                 throw new Error('Failed to authenticate with provided key');
             }
 
-            await auth.login(token, normalizedKey);
-            trackAccountRestored();
-            handleSuccess();
+            await presentFirstKeyCredentialLifecycle({
+                run: async () =>
+                    await auth.login(token, normalizedKey),
+                onCompleted: () => {
+                    trackAccountRestored();
+                    handleSuccess();
+                },
+            });
         } catch {
             Modal.alert(t('common.error'), t('connect.invalidSecretKey'));
         }
@@ -123,6 +165,7 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
             <View style={styles.textInputWrapper}>
                 <TextInput
                     testID="restore-manual-secret-input"
+                    accessibilityLabel={t('connect.secretKeyInputLabel')}
                     style={styles.textInput}
                     placeholder={t('connect.secretKeyPlaceholder')}
                     placeholderTextColor={theme.colors.input.placeholder}
@@ -142,8 +185,8 @@ export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: 
                     style={styles.revealButton}
                     hitSlop={10}
                 >
-                    <Ionicons
-                        name={revealed ? 'eye-off-outline' : 'eye-outline'}
+                    <Icon
+                        name={revealed ? 'eye-slash' : 'eye'}
                         size={20}
                         color={theme.colors.text.secondary}
                     />

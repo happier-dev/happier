@@ -1,9 +1,10 @@
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 import type { ServerSelectionTarget } from './serverSelectionTypes';
 
-export function getServerSelectionTargetIconName(target: ServerSelectionTarget): 'server-outline' | 'albums-outline' {
-    return target.kind === 'group' ? 'albums-outline' : 'server-outline';
+export function getServerSelectionTargetIconName(target: ServerSelectionTarget): IconName {
+    return target.kind === 'group' ? 'stack' : 'hard-drives';
 }
 
 export function getServerSelectionTargetSubtitle(target: ServerSelectionTarget): string {

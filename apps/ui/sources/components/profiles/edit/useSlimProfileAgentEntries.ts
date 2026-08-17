@@ -6,13 +6,13 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { useSettings } from '@/sync/domains/state/storage';
 
-export function useSlimProfileAgentEntries(machineId: string | null) {
+export function useSlimProfileAgentEntries(machineId: string | null, serverId?: string | null) {
     const enabledAgentIds = useEnabledAgentIds();
     const settings = useSettings();
-    const serverId = getActiveServerId();
+    const resolvedServerId = serverId ?? getActiveServerId();
     const projection = useDaemonMergedProjectionInputs({
         machineId,
-        serverId,
+        serverId: resolvedServerId,
         enabled: Boolean(machineId),
         staleMs: 60_000,
     });
@@ -31,5 +31,5 @@ export function useSlimProfileAgentEntries(machineId: string | null) {
         settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
     ]);
-    return { entries, projection, serverId };
+    return { entries, projection, serverId: resolvedServerId };
 }

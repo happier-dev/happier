@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ModelVisibilityRefV1, ProviderErrorV1 } from '@happier-dev/protocol';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -75,20 +76,22 @@ export function ProviderConnectionModelsView(props: ProviderConnectionModelsView
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             {props.canRefreshCatalog ? <IconButton
                 testID="provider-model-catalog-refresh"
-                iconName="refresh-outline"
+                iconName="arrow-clockwise"
                 accessibilityLabel={t('common.refresh')}
                 tooltip={t('common.refresh')}
-                size={44}
+                minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                interactiveTargetGapPx={4}
                 variant="plain"
                 disabled={props.refreshingCatalog}
                 onPress={props.onRefreshCatalog}
             /> : null}
             <IconButton
                 testID="provider-model-show-hidden"
-                iconName={props.showHidden ? 'eye-off-outline' : 'eye-outline'}
+                iconName={props.showHidden ? 'eye-slash' : 'eye'}
                 accessibilityLabel={props.showHidden ? t('settingsProviders.models.hideHidden') : t('settingsProviders.models.showHidden')}
                 tooltip={props.showHidden ? t('settingsProviders.models.hideHidden') : t('settingsProviders.models.showHidden')}
-                size={44}
+                minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                interactiveTargetGapPx={4}
                 variant="plain"
                 onPress={props.onToggleShowHidden}
             />

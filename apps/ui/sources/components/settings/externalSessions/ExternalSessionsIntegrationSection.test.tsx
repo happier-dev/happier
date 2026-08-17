@@ -53,6 +53,10 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: Record<string, unknown>) => React.createElement('Switch', props),
 }));
 
+vi.mock('@/components/ui/lists/virtualized', () => ({
+    VirtualizedList: (props: Record<string, unknown>) => React.createElement('VirtualizedList', props),
+}));
+
 const thirdPartyAgent = {
     pluginId: 'acme.external-sessions',
     localId: 'reviewer',
@@ -646,7 +650,7 @@ describe('ExternalSessionsIntegrationSection', () => {
         );
 
         const status = screen.findRow('settings-external-sessions-inventory-status');
-        expect(status?.props.subtitle).toContain('installation_record_read_failed');
+        expect(status?.props.subtitle).not.toContain('installation_record_read_failed');
         expect(screen.findRow(
             'settings-external-sessions-action-stale-disable',
         )).toBeTruthy();
@@ -656,6 +660,44 @@ describe('ExternalSessionsIntegrationSection', () => {
 
         await screen.pressByTestIdAsync('settings-external-sessions-inventory-status');
         expect(retryInventory).toHaveBeenCalledOnce();
+    });
+
+    it('keeps action rows mounted but disabled while Check again refreshes inventory', async () => {
+        const {
+            ExternalSessionsIntegrationSection,
+        } = await import('./ExternalSessionsIntegrationSection');
+        const operations = {
+            reviewAndInstall: vi.fn(async () => {}),
+            disable: vi.fn(async () => {}),
+            enable: vi.fn(async () => {}),
+            uninstall: vi.fn(async () => {}),
+            checkAgain: vi.fn(async () => {}),
+        };
+        const render = (status: 'partial' | 'loading') => (
+            <ExternalSessionsIntegrationSection
+                integrations={[integration('stale', 'installed_enabled')]}
+                machineId="machine-1"
+                agent={null}
+                operations={operations}
+                inventoryState={{
+                    status,
+                    diagnosticCodes: status === 'partial'
+                        ? ['installation_record_read_failed']
+                        : [],
+                }}
+                onRetryInventory={async () => {}}
+            />
+        );
+        const screen = await renderSettingsView(render('partial'));
+        const actionTestID = 'settings-external-sessions-action-stale-disable';
+        expect(screen.findRow(actionTestID)?.props.disabled).toBe(false);
+
+        await screen.update(render('loading'));
+
+        expect(screen.findRow(actionTestID)).toBeTruthy();
+        expect(screen.findRow(actionTestID)?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync(actionTestID);
+        expect(operations.disable).not.toHaveBeenCalled();
     });
 });
 
@@ -684,5 +726,32 @@ describe('ExternalSessionsAgentSettingsSection', () => {
         expect(screen.findRow('settings-external-sessions-integration-selected')).toBeTruthy();
         expect(onBrowse).toHaveBeenCalledTimes(1);
         expect(onManageAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps Agent-detail continuation behind an explicit accessible user action', async () => {
+        const {
+            ExternalSessionsAgentSettingsSection,
+        } = await import('./ExternalSessionsAgentSettingsSection');
+        const onLoadMoreInventory = vi.fn(async () => {});
+        const screen = await renderSettingsView(
+            <ExternalSessionsAgentSettingsSection
+                machineId="machine-1"
+                agent={thirdPartyAgent}
+                agentTitle="Acme Reviewer"
+                integrations={[integration('selected', 'installed_enabled')]}
+                autoLinkSources={[]}
+                hasMoreInventory
+                loadingMoreInventory={false}
+                onLoadMoreInventory={onLoadMoreInventory}
+                onBrowse={null}
+                onManageAll={() => {}}
+            />,
+        );
+
+        const continuation = screen.findRow('settings-external-sessions-inventory-continuation');
+        expect(continuation?.props.mode).toBe('interactive');
+        expect(continuation?.props.title).toBe('externalSessions.browseLoadMore');
+        await screen.pressByTestIdAsync('settings-external-sessions-inventory-continuation');
+        expect(onLoadMoreInventory).toHaveBeenCalledOnce();
     });
 });

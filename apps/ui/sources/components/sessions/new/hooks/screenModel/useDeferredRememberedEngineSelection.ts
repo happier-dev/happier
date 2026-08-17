@@ -11,6 +11,11 @@ import {
     upsertRememberedEngineSelection,
     type RememberedEngineSelectionsByScopeV1,
 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    areAccountSettingsScopesEqual,
+    type AccountSettingsScope,
+} from '@/sync/domains/settings/scope/accountSettingsScope';
 
 export const REMEMBERED_ENGINE_SELECTION_WRITE_DELAY_MS = 3000;
 
@@ -24,6 +29,9 @@ type DeferredRememberedEngineSelectionParams = Readonly<{
     enabled: boolean;
     selectionsByScope: RememberedEngineSelectionsByScopeV1 | null | undefined;
     serverId: string | null | undefined;
+    /** Exact Account scope and incumbent lifetime generation for this editor. */
+    accountSettingsScope: AccountSettingsScope | null;
+    accountLifetime: ActiveServerAccountScopeLifetime | null;
     commit: (nextSelectionsByScope: RememberedEngineSelectionsByScopeV1) => void;
     delayMs?: number;
 }>;
@@ -36,6 +44,25 @@ type DeferredRememberedEngineSelectionRequest = Readonly<{
 type DeferredRememberedEngineSelectionSnapshot =
     & DeferredRememberedEngineSelectionParams
     & DeferredRememberedEngineSelectionRequest;
+
+function isAccountScopeLifetimeCurrent(
+    params: Pick<DeferredRememberedEngineSelectionParams, 'accountLifetime' | 'accountSettingsScope'>,
+): boolean {
+    return params.accountLifetime !== null
+        && params.accountSettingsScope !== null
+        && areAccountSettingsScopesEqual(params.accountLifetime.scope, params.accountSettingsScope)
+        && params.accountLifetime.isCurrent();
+}
+
+function isSnapshotCurrent(
+    snapshot: DeferredRememberedEngineSelectionSnapshot,
+    current: DeferredRememberedEngineSelectionParams,
+): boolean {
+    return snapshot.accountLifetime === current.accountLifetime
+        && areAccountSettingsScopesEqual(snapshot.accountSettingsScope, current.accountSettingsScope)
+        && isAccountScopeLifetimeCurrent(snapshot)
+        && isAccountScopeLifetimeCurrent(current);
+}
 
 function shouldCommitRememberedEngineSelection(params: DeferredRememberedEngineSelectionSnapshot): boolean {
     if (!params.enabled) return false;
@@ -68,58 +95,70 @@ export function useDeferredRememberedEngineSelection(
 ): (backendTarget: BackendTargetRefV2, selection: RememberedEngineSelectionInput) => void {
     const latestParamsRef = React.useRef(params);
     latestParamsRef.current = params;
-    const latestRequestRef = React.useRef<DeferredRememberedEngineSelectionRequest | null>(null);
+    const pendingSnapshotRef = React.useRef<DeferredRememberedEngineSelectionSnapshot | null>(null);
     const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const clearPendingCommit = React.useCallback(() => {
-        if (!timerRef.current) return;
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+        pendingSnapshotRef.current = null;
     }, []);
 
     const flushPendingCommit = React.useCallback(() => {
-        clearPendingCommit();
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+        const snapshot = pendingSnapshotRef.current;
+        pendingSnapshotRef.current = null;
+        if (!snapshot) return;
         const latest = latestParamsRef.current;
-        const request = latestRequestRef.current;
-        if (!request) return;
-
-        const snapshot = {
-            ...latest,
-            ...request,
-        };
+        if (!isSnapshotCurrent(snapshot, latest)) return;
         if (!shouldCommitRememberedEngineSelection(snapshot)) return;
 
-        latest.commit(upsertRememberedEngineSelection({
-            selectionsByScope: latest.selectionsByScope,
-            serverId: latest.serverId,
-            backendTarget: request.backendTarget,
-            selection: request.selection,
+        snapshot.commit(upsertRememberedEngineSelection({
+            selectionsByScope: snapshot.selectionsByScope,
+            serverId: snapshot.serverId,
+            backendTarget: snapshot.backendTarget,
+            selection: snapshot.selection,
             updatedAt: Date.now(),
         }));
-    }, [clearPendingCommit]);
+    }, []);
 
     const rememberEngineSelection = React.useCallback((
         backendTarget: BackendTargetRefV2,
         selection: RememberedEngineSelectionInput,
     ) => {
-        latestRequestRef.current = { backendTarget, selection };
         const latest = latestParamsRef.current;
         const snapshot = {
             ...latest,
             backendTarget,
             selection,
         };
-        if (!shouldCommitRememberedEngineSelection(snapshot)) {
+        if (!isAccountScopeLifetimeCurrent(snapshot)
+            || !shouldCommitRememberedEngineSelection(snapshot)) {
             clearPendingCommit();
             return;
         }
 
         clearPendingCommit();
+        pendingSnapshotRef.current = snapshot;
         timerRef.current = setTimeout(
             flushPendingCommit,
             latest.delayMs ?? REMEMBERED_ENGINE_SELECTION_WRITE_DELAY_MS,
         );
     }, [clearPendingCommit, flushPendingCommit]);
+
+    React.useEffect(() => {
+        const pending = pendingSnapshotRef.current;
+        if (pending && !isSnapshotCurrent(pending, params)) {
+            clearPendingCommit();
+        }
+        const retirement = params.accountLifetime?.onRetire(clearPendingCommit);
+        return () => retirement?.dispose();
+    }, [clearPendingCommit, params.accountLifetime, params.accountSettingsScope]);
 
     React.useEffect(() => {
         return () => {

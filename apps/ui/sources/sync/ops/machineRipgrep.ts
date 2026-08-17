@@ -34,7 +34,11 @@ export async function machineRipgrep(
     machineId: string,
     args: readonly string[],
     cwd?: string,
-    options?: Readonly<{ serverId?: string | null; timeoutMs?: number }>,
+    options?: Readonly<{
+        serverId?: string | null;
+        timeoutMs?: number;
+        signal?: AbortSignal;
+    }>,
 ): Promise<MachineRipgrepResponse> {
     try {
         const payload: MachineRipgrepRequest = {
@@ -48,10 +52,16 @@ export async function machineRipgrep(
             payload,
             serverId: options?.serverId ?? null,
             timeoutMs: options?.timeoutMs,
+            ...(options?.signal ? { signal: options.signal } : {}),
         });
 
         return normalizeMachineRipgrepResponse(response);
     } catch (error) {
+        // An aborted composer query must reach the owned RPC effect rather than
+        // being reclassified as a ripgrep failure (which would start fallback IO).
+        if (options?.signal?.aborted) {
+            throw error;
+        }
         return {
             success: false,
             error: error instanceof Error ? error.message : String(error),

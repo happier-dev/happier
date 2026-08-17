@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from './machineDisplayRenderable';
-import { buildMachineDisplayRenderableFromMachine, getMachineDisplaySubtitle } from './machineDisplayRenderable';
+import {
+    areMachineDisplayRenderablesEqual,
+    buildMachineDisplayRenderableFromMachine,
+    getMachineDisplaySubtitle,
+} from './machineDisplayRenderable';
 
 function makeMachineDisplay(partial: Partial<MachineDisplayRenderable> & Pick<MachineDisplayRenderable, 'id'>): MachineDisplayRenderable {
     const updatedAt = partial.updatedAt ?? 0;
@@ -13,12 +17,26 @@ function makeMachineDisplay(partial: Partial<MachineDisplayRenderable> & Pick<Ma
         active: partial.active ?? false,
         activeAt,
         revokedAt: partial.revokedAt ?? null,
+        ...(partial.availability ? { availability: partial.availability } : {}),
         metadataVersion: partial.metadataVersion ?? 0,
         metadata: partial.metadata ?? null,
     };
 }
 
 describe('machine display renderables', () => {
+    it('treats a changed locked availability as a changed display snapshot', () => {
+        const available = makeMachineDisplay({
+            id: 'machine-a',
+            availability: { kind: 'available' },
+        });
+        const locked = makeMachineDisplay({
+            id: 'machine-a',
+            availability: { kind: 'locked', reason: 'decryption_failed' },
+        });
+
+        expect(areMachineDisplayRenderablesEqual(available, locked)).toBe(false);
+    });
+
     it('uses display fields without resolving a machine by host identity', () => {
         const machine = makeMachineDisplay({
             id: 'machine-a',

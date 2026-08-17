@@ -3,6 +3,7 @@ import { Animated, Platform, type StyleProp, type ViewStyle } from 'react-native
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { resolveOverlayPointerEvents } from '../resolveOverlayPointerEvents';
 
 export type OverlayMotionKind = 'popover' | 'modal';
 export type OverlayMotionDirection = 'top' | 'bottom' | 'left' | 'right' | 'center';
@@ -192,11 +193,15 @@ export function OverlayMotionFrame(props: Readonly<{
         preset,
         disableTransformOnWeb: props.disableTransformOnWeb,
     });
+    const pointerEvents = resolveOverlayPointerEvents(
+        props.pointerEvents ?? (props.visible ? 'auto' : 'none'),
+    );
 
     return (
         <Animated.View
-            pointerEvents={props.pointerEvents ?? (props.visible ? 'auto' : 'none')}
-            style={[props.style, motion.style]}
+            pointerEvents={pointerEvents.nativePointerEvents}
+            // The final style retains the old prop's precedence over caller/motion styles.
+            style={[props.style, motion.style, pointerEvents.webStyle]}
         >
             {props.children}
         </Animated.View>

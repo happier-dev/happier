@@ -32,6 +32,7 @@ describe('emitPluginSettingChangedEvent', () => {
                     items: { type: 'string', enum: ['user', 'project', 'local'] },
                 },
                 title: 'Setting sources',
+                secretCustody: null,
                 redaction: 'none',
                 clearWhenEmpty: 'persist',
                 defaultValue: ['user'],
@@ -69,6 +70,7 @@ describe('emitPluginSettingChangedEvent', () => {
                 valueType: 'string',
                 valueSchema: { type: 'string' },
                 title: 'Secret',
+                secretCustody: 'daemon',
                 redaction: 'secret',
                 clearWhenEmpty: 'omit',
                 analytics: {
@@ -88,6 +90,7 @@ describe('emitPluginSettingChangedEvent', () => {
                 valueType: 'boolean',
                 valueSchema: { type: 'boolean' },
                 title: 'Untracked',
+                secretCustody: null,
                 redaction: 'none',
                 clearWhenEmpty: 'persist',
                 analytics: {

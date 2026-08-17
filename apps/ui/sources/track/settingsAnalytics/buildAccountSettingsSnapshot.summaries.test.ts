@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
 
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 
 import { buildAccountSettingsSnapshot } from './buildAccountSettingsSnapshot';
 import { buildAnalyticsProfile, buildEncryptedSecretValue, buildSecretValue } from './settingsAnalytics.testkit';
@@ -17,30 +17,12 @@ describe('buildAccountSettingsSnapshot', () => {
             favoriteDirectories: ['/a', '/b', '/c'],
             favoriteMachines: ['m1'],
             favoriteProfiles: ['default', 'custom:work'],
-            pinnedSessionKeysV1: ['srv1:s1', 'srv2:s2'],
-            workspaceLabelsV1: { wl_one: 'Alpha', wl_two: 'Beta' },
-            collapsedGroupKeysV1: { g1: true, g2: true, g3: false },
-            sessionTagsV1: {
-                'srv1:s1': ['bug', 'urgent'],
-                'srv2:s2': ['followup'],
-            },
-            sessionListGroupOrderV1: {
-                groupA: ['srv1:s1', 'srv1:s2'],
-                groupB: ['srv2:s1'],
-            },
         });
 
         expect(snapshot.properties.acct_setting__recentMachinePaths).toBe(2);
         expect(snapshot.properties.acct_setting__favoriteDirectories).toBe(3);
         expect(snapshot.properties.acct_setting__favoriteMachines).toBe(1);
         expect(snapshot.properties.acct_setting__favoriteProfiles).toBe(2);
-        expect(snapshot.properties.acct_setting__pinnedSessionKeysV1).toBeUndefined();
-        expect(snapshot.properties.acct_setting__workspaceLabelsV1).toBeUndefined();
-        expect(snapshot.properties.acct_setting__collapsedGroupKeysV1).toBeUndefined();
-        expect(snapshot.properties.acct_setting__sessionTagsV1__taggedSessionCount).toBeUndefined();
-        expect(snapshot.properties.acct_setting__sessionTagsV1__totalTagsCount).toBeUndefined();
-        expect(snapshot.properties.acct_setting__sessionListGroupOrderV1__groupOverrideCount).toBeUndefined();
-        expect(snapshot.properties.acct_setting__sessionListGroupOrderV1__totalOrderedKeyCount).toBeUndefined();
     });
 
     it('tracks dismissed cli warnings through canonical analytics serializers', () => {
@@ -96,31 +78,6 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__connectedServicesQuotaPinnedMeterIdsByKey__totalPinnedMeterCount).toBe(3);
         expect(snapshot.properties.acct_setting__connectedServicesQuotaSummaryStrategyByKey__primaryCount).toBe(2);
         expect(snapshot.properties.acct_setting__connectedServicesQuotaSummaryStrategyByKey__minRemainingCount).toBe(1);
-    });
-
-    it('tracks server selection group summaries through canonical analytics serializers', () => {
-        const snapshot = buildAccountSettingsSnapshot({
-            ...settingsDefaults,
-            serverSelectionGroups: [
-                {
-                    id: 'grp-dev',
-                    name: 'Dev',
-                    serverIds: ['srv-a', 'srv-b'],
-                    presentation: 'grouped',
-                },
-                {
-                    id: 'grp-ops',
-                    name: 'Ops',
-                    serverIds: ['srv-c'],
-                    presentation: 'flat-with-badge',
-                },
-            ],
-        });
-
-        expect(snapshot.properties.acct_setting__serverSelectionGroups__groupCount).toBe(2);
-        expect(snapshot.properties.acct_setting__serverSelectionGroups__totalServerRefCount).toBe(3);
-        expect(snapshot.properties.acct_setting__serverSelectionGroups__groupedCount).toBe(1);
-        expect(snapshot.properties.acct_setting__serverSelectionGroups__flatWithBadgeCount).toBe(1);
     });
 
     it('tracks actions settings summaries through canonical analytics serializers', () => {
@@ -351,7 +308,7 @@ describe('buildAccountSettingsSnapshot', () => {
     });
 
     it('tracks profile, secret, and mcp summaries through canonical analytics serializers', () => {
-        const snapshot = buildAccountSettingsSnapshot({
+        const snapshot = buildAccountSettingsSnapshot(settingsParse({
             ...settingsDefaults,
             profiles: [
                 buildAnalyticsProfile({
@@ -468,7 +425,7 @@ describe('buildAccountSettingsSnapshot', () => {
                     },
                 ],
             },
-        });
+        }));
 
         expect(snapshot.properties.acct_setting__profiles__totalCount).toBe(2);
         expect(snapshot.properties.acct_setting__profiles__customEnvVarProfileCount).toBe(1);
@@ -477,7 +434,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__lastUsedProfile).toBe('custom');
         expect(snapshot.properties.acct_setting__secrets).toBe(2);
         expect(snapshot.properties.acct_setting__secretBindingsByProfileId__boundProfileCount).toBe(2);
-        expect(snapshot.properties.acct_setting__secretBindingsByProfileId__totalBindingCount).toBe(3);
+        expect(snapshot.properties.acct_setting__secretBindingsByProfileId__totalBindingCount).toBe(2);
         expect(snapshot.properties.acct_setting__mcpServersSettingsV1__strictMode).toBe(true);
         expect(snapshot.properties.acct_setting__mcpServersSettingsV1__serverCount).toBe(2);
         expect(snapshot.properties.acct_setting__mcpServersSettingsV1__stdioCount).toBe(1);

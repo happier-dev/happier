@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type PluginUiDiagnostic = Readonly<{
     code: string;
@@ -41,7 +41,7 @@ export function PluginDiagnosticsSection(props: Readonly<{
                             {diagnostic.message}
                         </Text>
                     )}
-                    icon={<Ionicons name="bug-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="bug" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />

@@ -287,4 +287,59 @@ describe('createSessionProviderBehaviorFromDescriptor', () => {
             text: '{"type":"shutdown_approved"}',
         })).toBe(true);
     });
+
+    it('keeps legacy unavailable Agent Team tool calls usable by generic provider behavior', () => {
+        const { behavior, diagnostics } = createSessionProviderBehaviorFromDescriptor({
+            kind: 'plugin.ui.v1',
+            pluginId: 'claude',
+            agentId: 'claude',
+            version: 1,
+            display: {},
+            session: {
+                providerBehavior: {
+                    kind: 'session.providerBehavior.v1',
+                    agentTeam: {
+                        kind: 'session.agentTeamBehavior.v1',
+                        snapshotKey: 'claudeTeam',
+                        providerLabel: 'Claude',
+                        flavorAliases: ['claude'],
+                        tools: {
+                            teamCreate: ['AgentTeamCreate'],
+                            teamDelete: ['AgentTeamDelete'],
+                            teamSendMessage: ['AgentTeamSendMessage'],
+                            subagentSpawn: ['Task'],
+                        },
+                    },
+                },
+            },
+            message: {},
+            components: { slots: [] },
+        });
+        const messages = [{
+            kind: 'tool-call',
+            id: 'legacy-task',
+            localId: null,
+            createdAt: 1,
+            children: [],
+            tool: {
+                id: 'legacy-tool',
+                name: 'Task',
+                state: 'unavailable',
+                input: { team_name: 'legacy', name: 'alpha' },
+                createdAt: 1,
+                startedAt: null,
+                completedAt: null,
+                description: null,
+            },
+        }] satisfies readonly Message[];
+
+        expect(diagnostics).toEqual([]);
+        expect(behavior.participants?.deriveSidechainIds?.({ flavor: 'claude', messages })).toEqual(['legacy-tool']);
+        expect(behavior.subagents?.deriveSubagents?.({ flavor: 'claude', messages })).toEqual([
+            expect.objectContaining({
+                id: 'agent_team_member:legacy:alpha@legacy',
+                transcript: expect.objectContaining({ sidechainId: 'legacy-tool' }),
+            }),
+        ]);
+    });
 });

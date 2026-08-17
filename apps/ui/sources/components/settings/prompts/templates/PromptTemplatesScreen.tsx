@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import type { PromptInvocationsV1 } from '@happier-dev/protocol';
 
@@ -12,6 +11,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -80,7 +80,7 @@ export const PromptTemplatesScreen = React.memo(() => {
                 testID={`promptTemplates.entry.${entry.id}`}
                 title={entry.title}
                 subtitle={subtitle}
-                icon={<Ionicons name="flash-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="lightning" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => router.push(`/settings/prompts/templates/${entry.id}`)}
                 rightElement={(
                   <ItemRowActions
@@ -90,13 +90,13 @@ export const PromptTemplatesScreen = React.memo(() => {
                       {
                         id: 'edit',
                         title: t('common.edit'),
-                        icon: 'pencil-outline',
+                        icon: 'pencil',
                         onPress: () => router.push(`/settings/prompts/templates/${entry.id}`),
                       },
                       {
                         id: 'delete',
                         title: t('common.delete'),
-                        icon: 'trash-outline',
+                        icon: 'trash',
                         destructive: true,
                         onPress: () => removeEntry(entry.id),
                       },
@@ -110,7 +110,7 @@ export const PromptTemplatesScreen = React.memo(() => {
               testID="promptTemplates.empty"
               title={t('promptLibrary.templatesEmptyTitle')}
               subtitle={t('promptLibrary.templatesEmptySubtitle')}
-              icon={<Ionicons name="flash-outline" size={29} color={theme.colors.text.secondary} />}
+              icon={<Icon name="lightning" size={29} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           )}
@@ -121,7 +121,7 @@ export const PromptTemplatesScreen = React.memo(() => {
             testID="promptTemplates.add"
             title={t('promptLibrary.newTemplate')}
             subtitle={t('promptLibrary.newTemplateSubtitle')}
-            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.accent.blue} />}
+            icon={<Icon name="plus-circle" size={29} color={theme.colors.accent.blue} />}
             onPress={() => router.push('/settings/prompts/templates/new')}
           />
         </ItemGroup>

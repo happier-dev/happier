@@ -66,6 +66,18 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
+    useScopedPluginUiProjection: () => ({
+        pluginUiProjection: null,
+        pluginBrowserProjection: null,
+        phase: 'unavailable',
+        interactionEnabled: false,
+        machineId: 'machine-1',
+        serverId: 'server-1',
+        platform: 'web',
+    }),
+}));
+
 vi.mock('@/components/workspaces/files/details/WorkspaceFileDetailsView', () => ({
     WorkspaceFileDetailsView: () => React.createElement('WorkspaceFileDetailsView'),
 }));

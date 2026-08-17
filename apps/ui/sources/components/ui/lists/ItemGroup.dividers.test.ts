@@ -40,6 +40,18 @@ function collectShowDividers(node: React.ReactNode): Array<boolean | undefined> 
     return values;
 }
 
+function collectRowPositions(node: React.ReactNode): Array<{ isFirst: boolean; isLast: boolean }> {
+    const values: Array<{ isFirst: boolean; isLast: boolean }> = [];
+    React.Children.forEach(node, (child) => {
+        if (!React.isValidElement(child) || child.type !== ItemGroupRowPositionProvider) return;
+        const provider = child as React.ReactElement<{
+            value: { isFirst: boolean; isLast: boolean };
+        }>;
+        values.push(provider.props.value);
+    });
+    return values;
+}
+
 describe('withItemGroupDividers', () => {
     it('drops primitive children that would become invalid View text nodes', () => {
         expect(withItemGroupDividers(null)).toBe(null);
@@ -100,5 +112,21 @@ describe('withItemGroupDividers', () => {
 
         const processed = withItemGroupDividers(children);
         expect(collectShowDividers(processed)).toEqual([true, false]);
+    });
+
+    it('continues dividers and row positions across virtualized group segments', () => {
+        const firstSegment = withItemGroupDividers(
+            React.createElement(TestItem, { id: 'a' }),
+            { first: true, last: false },
+        );
+        const lastSegment = withItemGroupDividers(
+            React.createElement(TestItem, { id: 'b' }),
+            { first: false, last: true },
+        );
+
+        expect(collectShowDividers(firstSegment)).toEqual([true]);
+        expect(collectShowDividers(lastSegment)).toEqual([false]);
+        expect(collectRowPositions(firstSegment)).toEqual([{ isFirst: true, isLast: false }]);
+        expect(collectRowPositions(lastSegment)).toEqual([{ isFirst: false, isLast: true }]);
     });
 });

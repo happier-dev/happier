@@ -29,23 +29,23 @@ const FRAME_MS = 20;
 
 function mapCaptureError(error: WebPcmCaptureError): string {
   switch (error) {
-    case 'web_pcm_capture_backpressure':
+    case 'pcm_capture_backpressure':
       return 'daemon_streaming_stt_pcm_backpressure';
-    case 'web_pcm_capture_chunk_failed':
+    case 'pcm_capture_chunk_failed':
       return 'daemon_streaming_stt_pcm_chunk_failed';
-    case 'web_pcm_capture_device_lost':
+    case 'pcm_capture_device_lost':
       return 'daemon_streaming_stt_web_mic_device_lost';
-    case 'web_pcm_capture_invalid_chunk':
+    case 'pcm_capture_invalid_chunk':
       return 'daemon_streaming_stt_pcm_invalid_chunk';
-    case 'web_pcm_capture_media_source_failed':
+    case 'pcm_capture_media_source_failed':
       return 'daemon_streaming_stt_web_mic_media_source_failed';
-    case 'web_pcm_capture_mic_acquisition_failed':
+    case 'pcm_capture_mic_acquisition_failed':
       return 'daemon_streaming_stt_web_mic_acquisition_failed';
-    case 'web_pcm_capture_mic_state_unavailable':
+    case 'pcm_capture_mic_state_unavailable':
       return 'daemon_streaming_stt_web_mic_state_unavailable';
-    case 'web_pcm_capture_resume_failed':
+    case 'pcm_capture_resume_failed':
       return 'daemon_streaming_stt_pcm_capture_resume_failed';
-    case 'web_pcm_capture_unavailable':
+    case 'pcm_capture_unavailable':
       return 'daemon_streaming_stt_pcm_capture_unavailable';
   }
 }

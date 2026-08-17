@@ -35,6 +35,7 @@ export const REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS = O
     ['lib/module/web/parseMarkdown.js', "['number', 'number', 'number', 'number']"],
     ['lib/module/web/parseMarkdown.js', 'texMathBackslashDelimiters'],
     ['lib/module/web/parseMarkdown.js', 'stringToUTF8(markdown'],
+    ['lib/module/web/parseMarkdown.js', 'parseCache.delete(cacheKey)', 4],
     ['src/web/parseMarkdown.ts', 'lengthBytesUTF8(markdown)'],
     ['src/web/parseMarkdown.ts', "import createMd4cModule from './wasm/md4c.js'"],
     ['src/web/parseMarkdown.ts', 'parserPromise = null'],
@@ -54,6 +55,7 @@ export const REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS = O
 
 export const REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_FORBIDDEN_MARKERS = Object.freeze([
     ['lib/module/web/parseMarkdown.js', "import('./wasm/md4c"],
+    ['lib/module/web/parseMarkdown.js', 'parseCache.clear()'],
     ['src/web/parseMarkdown.ts', "import('./wasm/md4c"],
     ['src/web/EnrichedMarkdownText.tsx', '<pre'],
     ['src/web/wasm/md4c.js', 'import.meta'],
@@ -98,9 +100,9 @@ export function verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir 
         if (contents !== null) contentsByFile.set(relativePath, contents);
     }
 
-    const missingMarkers = REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS.filter(([relativePath, marker]) => {
+    const missingMarkers = REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS.filter(([relativePath, marker, minOccurrences = 1]) => {
         const contents = contentsByFile.get(relativePath);
-        return contents === undefined || !contents.includes(marker);
+        return contents === undefined || contents.split(marker).length - 1 < minOccurrences;
     });
     const forbiddenMarkers = REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_FORBIDDEN_MARKERS.filter(([relativePath, marker]) => {
         const contents = contentsByFile.get(relativePath);
@@ -129,7 +131,10 @@ export function verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir 
 export function formatReactNativeEnrichedMarkdownWebStreamingPatchFailure(result) {
     const lines = ['react-native-enriched-markdown web streaming patch is not installed correctly:'];
     for (const relativePath of result.missingFiles) lines.push(`  - missing ${relativePath}`);
-    for (const [relativePath, marker] of result.missingMarkers) lines.push(`  - ${relativePath} is missing ${JSON.stringify(marker)}`);
+    for (const [relativePath, marker, minOccurrences = 1] of result.missingMarkers) {
+        const occurrenceRequirement = minOccurrences > 1 ? ` at least ${minOccurrences} times` : '';
+        lines.push(`  - ${relativePath} is missing ${JSON.stringify(marker)}${occurrenceRequirement}`);
+    }
     for (const [relativePath, marker] of result.forbiddenMarkers) lines.push(`  - ${relativePath} still contains forbidden ${JSON.stringify(marker)}`);
     for (const relativePath of result.binaryFiles) lines.push(`  - ${relativePath} contains a NUL byte instead of the vendored JavaScript module`);
     lines.push('Run the canonical UI dependency preparation: yarn --cwd apps/ui postinstall:real');

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
@@ -8,10 +7,11 @@ import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -26,7 +26,9 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     getPendingMessageVisualState,
     isPendingMessageProviderDeliveryInFlight,
+    resolvePendingMessageHeightBearingChrome,
 } from './pendingMessageVisualState';
+import { shouldClipPendingQueueContent } from './pendingQueueContentClipping';
 import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
 import { usePendingInputInterruptAndRunAction } from './usePendingInputInterruptAndRunAction';
 import {
@@ -36,14 +38,48 @@ import {
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolvePendingInputServerWireMode } from '@/sync/engine/pending/pendingInputServerWireContract';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
     const raw = (message.displayText ?? message.text) ?? '';
     return String(raw);
 }
 
+async function copyPendingMessageText(message: PendingMessage | DiscardedPendingMessage): Promise<boolean> {
+    const text = getPendingText(message).trim();
+    if (!text) return false;
+    try {
+        const copied = await setClipboardStringSafe(text);
+        if (!copied) {
+            Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+            return false;
+        }
+        return true;
+    } catch {
+        Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+        return false;
+    }
+}
+
 function getPendingMaterializingKey(message: Pick<PendingMessage, 'id' | 'localId'>): string {
     return typeof message.localId === 'string' && message.localId.length > 0 ? message.localId : message.id;
+}
+
+type PendingMessageMenuPressAnchor = Extract<PopoverAnchor, { kind: 'rect' }>;
+
+function resolvePendingMessageMenuPressAnchor(event: unknown): PendingMessageMenuPressAnchor | null {
+    if (!event || typeof event !== 'object') return null;
+    const nativeEvent = (event as { nativeEvent?: unknown }).nativeEvent;
+    if (!nativeEvent || typeof nativeEvent !== 'object') return null;
+    const { pageX, pageY } = nativeEvent as { pageX?: unknown; pageY?: unknown };
+    if (typeof pageX !== 'number' || !Number.isFinite(pageX)) return null;
+    if (typeof pageY !== 'number' || !Number.isFinite(pageY)) return null;
+    return {
+        kind: 'rect',
+        rect: { left: pageX, top: pageY, height: 1 },
+    };
 }
 
 function isAcceptedLocalPendingProjection(message: PendingMessage): boolean {
@@ -138,6 +174,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const capabilities = session?.agentState?.capabilities;
     const pendingCount = props.pendingMessages.length;
     const discardedCount = props.discardedMessages.length;
+    const clipsQueueContent = shouldClipPendingQueueContent({ pendingCount, discardedCount });
     const hasProviderDeliveryInFlight = props.pendingMessages.some(isPendingMessageProviderDeliveryInFlight);
     // A terminal-composer-draft capability is meaningful only while a runtime (TUI) is live;
     // after a stop the sticky capability must not present a ghost draft for the next send.
@@ -189,6 +226,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             ? Math.max(1, Math.trunc(collapsedLinesSetting))
             : settingsDefaults.transcriptPendingMessageCollapsedLines;
 
+    // M1 (2026-08-10): no longer a drag-layout input — the queued rows are in normal flow and the
+    // drag geometry uses their MEASURED heights. This repo keeps the setting because it has a
+    // second, unrelated consumer below: the floor under the block's own viewport height when a web
+    // content measurement underflows (`estimatedPendingContentHeightPx`).
     const reorderRowHeightSetting = useSetting('transcriptPendingQueueReorderRowHeightPx');
     const reorderEstimatedRowHeightPx =
         typeof reorderRowHeightSetting === 'number' && Number.isFinite(reorderRowHeightSetting)
@@ -230,6 +271,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const [expandedMessageIds, setExpandedMessageIds] = React.useState<Record<string, true>>({});
     const [isPendingQueueExpanded, setIsPendingQueueExpanded] = React.useState(false);
     const [openMenuKey, setOpenMenuKey] = React.useState<string | null>(null);
+    const [menuPressAnchor, setMenuPressAnchor] = React.useState<Readonly<{
+        menuKey: string;
+        anchor: PendingMessageMenuPressAnchor;
+    }> | null>(null);
     const [scrollContentHeightPx, setScrollContentHeightPx] = React.useState<number | null>(null);
     const isWeb = Platform.OS === 'web';
     const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null);
@@ -248,14 +293,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             setIsPendingQueueExpanded(false);
         }
     }, [props.pendingMessages.length]);
-
-    const pendingIndexById = React.useMemo(() => {
-        const map: Record<string, number> = {};
-        props.pendingMessages.forEach((m, i) => {
-            map[m.id] = i;
-        });
-        return map;
-    }, [props.pendingMessages]);
 
     const toggleMessageExpanded = React.useCallback((id: string) => {
         setExpandedMessageIds((prev) => {
@@ -547,18 +584,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }) => {
         const { message, index, renderDragHandle } = args;
         const text = getPendingText(message).trim();
-        const isCollapsible = collapseThresholdChars > 0 && text.length >= collapseThresholdChars;
+        const isCollapsible = clipsQueueContent && collapseThresholdChars > 0 && text.length >= collapseThresholdChars;
 	        const isExpanded = expandedMessageIds[message.id] === true || !isCollapsible;
 
 	        const menuKey = `active:${message.id}`;
 	        const menuOpen = openMenuKey === menuKey;
+	        const menuAnchor = menuPressAnchor?.menuKey === menuKey ? menuPressAnchor.anchor : undefined;
 	        const hasDecryptFailure = message.pendingDecryptFailure?.kind === 'decrypt_failed';
-	        const hoveredIndex =
-	            hoveredMessageId && pendingIndexById[hoveredMessageId] !== undefined
-	                ? pendingIndexById[hoveredMessageId]!
-	                : null;
-        const hideChipBecauseNextHovered =
-            isWeb && hoveredIndex !== null && hoveredIndex + 1 === index && hoveredMessageId !== message.id;
         const visualState = getPendingMessageVisualState(message, {
             materializingLocalIds,
             hasEarlierRow: props.pendingMessages.slice(0, index).some((candidate) =>
@@ -573,6 +605,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const deliveryActionBusy = materializingLocalIds.has(getPendingMaterializingKey(message));
         const hasEffectPossibleDelivery = visualState.deliveryMutationPolicy === 'effect_possible';
         const isUncertainDelivery = hasEffectPossibleDelivery && visualState.kind === 'blocked';
+        const isServerDeliveryInProgress = isPendingMessageProviderDeliveryInFlight(message)
+            && visualState.kind === 'delivering';
         const usesDeliveryResolutionActions =
             !hasEffectPossibleDelivery
             && (visualState.kind === 'blocked' || visualState.kind === 'delivering');
@@ -583,6 +617,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             && !hasDurableOutboxOperation
             && !isAcceptedLocalPendingProjection(message);
         const deliveryBlockedPresentation = visualState.deliveryBlockedPresentation ?? null;
+        // F-P2: the ONE in-flow notice this row paints. Selected from the visual-state owner's own
+        // descriptor rather than inline, because `transcriptRowShellSignature` keys the row's Legend
+        // size version on exactly this answer — a notice the key cannot see is a stale reservation,
+        // and a key move with no notice is a discarded measurement.
+        const heightBearingChrome = resolvePendingMessageHeightBearingChrome(visualState);
         const providerDeliveryLabelKey = session && visualState.kind === 'delivering'
             ? resolvePendingDeliveryLabelKeyForSession({
                 session,
@@ -639,42 +678,52 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
 	        const menuItems = (() => {
 	            const items: DropdownMenuItem[] = [];
+                if (text) {
+                    items.push({
+                        id: 'copy',
+                        testID: `pendingMessages.menu.copy:${message.id}`,
+                        title: t('common.copy'),
+                        icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
+                    });
+                }
                 if (transientAction?.id === 'interrupt_and_run') {
                     items.push({
                         id: 'interruptAndRun',
                         testID: `pendingMessages.interruptAndRun:${message.id}`,
                         title: t('session.pendingMessages.actions.interruptAndRunNow'),
-                        icon: <Ionicons name="stop-circle-outline" size={16} color={theme.colors.text.secondary} />,
+                        icon: <Icon name="stop-circle" size={16} color={theme.colors.text.secondary} />,
                         disabled: deliveryActionBusy || pendingInputInterruptAndRun.busy,
                     });
                 }
 	            if (isCancellationState) {
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (visualState.kind === 'send_failed') {
-	                items.push({ id: 'retrySend', title: t('session.pendingMessages.actions.retryDelivery'), icon: <Ionicons name="refresh-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'retrySend', title: t('session.pendingMessages.actions.retryDelivery'), icon: <Icon name="arrow-clockwise" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (hasDurableOutboxOperation) {
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	            } else if (isServerDeliveryInProgress) {
+	                items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (isUncertainDelivery) {
-	                items.push({ id: 'continueWaiting', testID: `pendingMessages.continueWaiting:${message.id}`, title: t('session.pendingMessages.actions.continueWaiting'), icon: <Ionicons name="time-outline" size={16} color={theme.colors.text.secondary} /> });
-	                items.push({ id: 'markDeliveryHandled', testID: `pendingMessages.markDeliveryHandled:${message.id}`, title: t('session.pendingMessages.actions.markHandled'), icon: <Ionicons name="checkmark-done-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                items.push({ id: 'dismissDelivery', testID: `pendingMessages.dismissDelivery:${message.id}`, title: t('session.pendingMessages.actions.dismiss'), icon: <Ionicons name="archive-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Ionicons name="paper-plane-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'continueWaiting', testID: `pendingMessages.continueWaiting:${message.id}`, title: t('session.pendingMessages.actions.continueWaiting'), icon: <Icon name="clock" size={16} color={theme.colors.text.secondary} /> });
+	                items.push({ id: 'markDeliveryHandled', testID: `pendingMessages.markDeliveryHandled:${message.id}`, title: t('session.pendingMessages.actions.markHandled'), icon: <Icon name="checks" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'dismissDelivery', testID: `pendingMessages.dismissDelivery:${message.id}`, title: t('session.pendingMessages.actions.dismiss'), icon: <Icon name="archive" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (usesDeliveryResolutionActions) {
-	                items.push({ id: 'markDeliveryHandled', title: t('session.pendingMessages.actions.markHandled'), icon: <Ionicons name="checkmark-done-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                items.push({ id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'markDeliveryHandled', title: t('session.pendingMessages.actions.markHandled'), icon: <Icon name="checks" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
                 } else if (canUsePendingQueueActions) {
-		                items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Ionicons name="pencil-outline" size={16} color={theme.colors.text.secondary} /> });
-		                items.push({ id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} /> });
+		                items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
+		                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> });
                 }
 	            if (canSteerNow && canUseDirectDeliveryActions) {
-	                items.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Ionicons name="navigate-outline" size={16} color={theme.colors.text.secondary} /> });
+	                items.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> });
 	            }
 	            if (canUseDirectDeliveryActions) {
 	                items.push({
 	                    id: 'sendNow',
 	                    title: sendNowActionLabel,
-	                    icon: <Ionicons name="paper-plane-outline" size={16} color={theme.colors.text.secondary} />,
+	                    icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />,
 	                });
 	            }
 	            return items;
@@ -684,10 +733,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             <DropdownMenu
                 key={message.id}
                 open={menuOpen}
-                onOpenChange={(next) => setOpenMenuKey(next ? menuKey : null)}
+                onOpenChange={(next) => {
+                    setOpenMenuKey(next ? menuKey : null);
+                    if (!next) {
+                        setMenuPressAnchor((current) => current?.menuKey === menuKey ? null : current);
+                    }
+                }}
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
+                    if (itemId === 'copy') await copyPendingMessageText(message);
                     if (itemId === 'edit') await handleEdit(message);
                     if (itemId === 'remove') {
                         if (usesDeliveryResolutionActions) {
@@ -706,9 +761,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     if (itemId === 'steerNow') await handleSteerNow(message);
                     if (itemId === 'sendNow') await handleSendNow(message);
                 }}
-                placement="top"
+                popoverAnchor={menuAnchor}
+                placement="auto-vertical"
                 gap={6}
-                trigger={({ toggle }) => (
+                matchTriggerWidth={menuAnchor ? false : undefined}
+                trigger={({ openMenu, closeMenu }) => (
                     <View
                         testID={`pendingMessages.row:${message.id}`}
                         style={[
@@ -724,10 +781,18 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             : null)}
                     >
                         <Pressable
-                            onPress={toggle}
+                            onPress={(event) => {
+                                if (menuOpen) {
+                                    closeMenu();
+                                    return;
+                                }
+                                const anchor = resolvePendingMessageMenuPressAnchor(event);
+                                setMenuPressAnchor(anchor ? { menuKey, anchor } : null);
+                                openMenu();
+                            }}
                             testID={`pendingMessages.message:${message.id}`}
                             accessibilityRole="button"
-                            accessibilityLabel={t('session.pendingMessages.title')}
+                            accessibilityLabel={text || t('session.pendingMessages.title')}
                             style={({ pressed }) => ([
                                 styles.userMessageBubble,
                                 { backgroundColor: theme.colors.message.user.background, opacity: pressed ? 0.82 : 0.9 },
@@ -749,6 +814,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         e?.stopPropagation?.();
                                         toggleMessageExpanded(message.id);
                                     }}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ expanded: isExpanded }}
                                     hitSlop={10}
                                     testID={`pendingMessages.viewMore:${message.id}`}
                                     style={({ pressed }) => ({
@@ -772,7 +839,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             style={[
                                 styles.pendingAffordanceChip,
                                 { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default },
-                                hideChipBecauseNextHovered ? { opacity: 0 } : null,
                                 isWeb ? { pointerEvents: 'none' as const } : null,
                             ]}
                         >
@@ -783,7 +849,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     color={theme.colors.text.secondary}
                                 />
                             ) : (
-                                <Ionicons name={visualState.iconName} size={8} color={theme.colors.text.secondary} />
+                                <Icon name={visualState.iconName} size={8} color={theme.colors.text.secondary} />
                             )}
                             <Text
                                 testID={`pendingMessages.pendingAffordanceLabel:${message.id}`}
@@ -793,7 +859,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             </Text>
                         </View>
 
-                        {blockedDeliveryLabel ? (
+                        {heightBearingChrome === 'blocked-notice' && blockedDeliveryLabel ? (
 	                            <View
 	                                testID={`pendingMessages.blockedDeliveryNotice:${message.id}`}
                                 style={[
@@ -804,7 +870,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     },
                                 ]}
                             >
-                                <Ionicons name="alert-circle-outline" size={12} color={theme.colors.text.secondary} />
+                                <Icon name="warning-circle" size={14} color={theme.colors.text.secondary} />
 	                                <Text
 	                                    testID={deliveryBlockedPresentation?.isUnknown ? `pendingMessages.unknownDeliveryStatus:${message.id}` : `pendingMessages.blockedDeliveryReason:${message.id}`}
 	                                    style={[styles.blockedDeliveryNoticeText, { color: theme.colors.text.secondary }]}
@@ -817,12 +883,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         {isWeb ? (
                             <View
                                 testID={`pendingMessages.actionsOverlay:${message.id}`}
-                                style={[
-                                    styles.messageActionContainer,
-                                    !(hoveredMessageId === message.id || menuOpen) ? styles.messageActionContainerHidden : null,
-                                    { pointerEvents: hoveredMessageId === message.id || menuOpen ? 'auto' : 'none' },
-                                ]}
+                                pointerEvents="auto"
+                                style={styles.messageActionContainer}
                             >
+                                {text ? (
+                                    <PendingMessageCopyAction
+                                        testID={`pendingMessages.copy:${message.id}`}
+                                        message={message}
+                                    />
+                                ) : null}
                                 {props.pendingMessages.length > 1 && !hasEffectPossibleDelivery ? (
                                     renderDragHandle({
                                         children: (
@@ -838,7 +907,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <IconAction
                                         testID={`pendingMessages.retrySend:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.retryDelivery')}
-                                        icon="refresh-outline"
+                                        icon="arrow-clockwise"
                                         onPress={() => handleRetrySend(message)}
                                         disabled={deliveryActionBusy}
                                     />
@@ -847,7 +916,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <IconAction
                                         testID={`pendingMessages.markDeliveryHandled:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.markHandled')}
-                                        icon="checkmark-done-outline"
+                                        icon="checks"
                                         onPress={() => handleMarkDeliveryHandled(message)}
                                         disabled={deliveryActionBusy}
                                     />
@@ -856,8 +925,17 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <IconAction
                                         testID={`pendingMessages.markDeliveryHandled:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.markHandled')}
-                                        icon="checkmark-done-outline"
+                                        icon="checks"
                                         onPress={() => handleMarkDeliveryHandled(message)}
+                                        disabled={deliveryActionBusy}
+                                    />
+                                ) : null}
+                                {isServerDeliveryInProgress ? (
+                                    <IconAction
+                                        testID={`pendingMessages.sendAsNew:${message.id}`}
+                                        accessibilityLabel={t('session.pendingMessages.actions.sendAsNew')}
+                                        icon="paper-plane"
+                                        onPress={() => handleSendAsNew(message)}
                                         disabled={deliveryActionBusy}
                                     />
                                 ) : null}
@@ -865,7 +943,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <IconAction
                                         testID={`pendingMessages.dismissDelivery:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.dismiss')}
-                                        icon="archive-outline"
+                                        icon="archive"
                                         onPress={() => handleDismissDelivery(message)}
                                         disabled={deliveryActionBusy}
                                     />
@@ -874,7 +952,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <IconAction
                                         testID={`pendingMessages.sendAsNew:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.sendAsNew')}
-                                        icon="paper-plane-outline"
+                                        icon="paper-plane"
                                         onPress={() => handleSendAsNew(message)}
                                         disabled={deliveryActionBusy}
                                     />
@@ -883,7 +961,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <IconAction
                                         testID={`pendingMessages.remove:${message.id}`}
                                         accessibilityLabel={t('common.remove')}
-                                        icon="trash-outline"
+                                        icon="trash"
                                         onPress={() => handleRemoveDelivery(message)}
                                         tone="destructive"
                                         disabled={deliveryActionBusy}
@@ -893,7 +971,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <IconAction
                                         testID={`pendingMessages.remove:${message.id}`}
                                         accessibilityLabel={t('common.remove')}
-                                        icon="trash-outline"
+                                        icon="trash"
                                         onPress={() => handleRemove(message.id)}
                                         tone="destructive"
                                         disabled={deliveryActionBusy}
@@ -903,7 +981,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	                                    <IconAction
 	                                        testID={`pendingMessages.edit:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.edit')}
-                                        icon="pencil-outline"
+                                        icon="pencil"
                                         onPress={() => handleEdit(message)}
                                     />
                                 ) : null}
@@ -911,7 +989,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	                                    <IconAction
 	                                        testID={`pendingMessages.remove:${message.id}`}
                                         accessibilityLabel={t('common.remove')}
-                                        icon="trash-outline"
+                                        icon="trash"
                                         onPress={() => handleRemove(message.id)}
                                         tone="destructive"
                                     />
@@ -920,7 +998,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	                                    <IconAction
 	                                        testID={`pendingMessages.steerNow:${message.id}`}
 	                                        accessibilityLabel={t('session.pendingMessages.actions.steerNow')}
-	                                        icon="navigate-outline"
+	                                        icon="navigation-arrow"
 	                                        onPress={() => handleSteerNow(message)}
 	                                    />
 	                                ) : null}
@@ -928,7 +1006,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	                                    <IconAction
 	                                        testID={`pendingMessages.sendNow:${message.id}`}
 	                                        accessibilityLabel={sendNowActionLabel}
-	                                        icon="paper-plane-outline"
+	                                        icon="paper-plane"
 	                                        onPress={() => handleSendNow(message)}
 	                                    />
 	                                ) : null}
@@ -952,6 +1030,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         );
     }, [
         canSteerNow,
+        clipsQueueContent,
         hoveredMessageId,
         collapseThresholdChars,
         collapsedLines,
@@ -968,8 +1047,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         hasProviderDeliveryInFlight,
         isWeb,
         materializingLocalIds,
+        menuPressAnchor,
         openMenuKey,
-        pendingIndexById,
         pendingQueueDeliveryTiming,
         pendingQueueForegroundState,
         pendingQueueRuntimeActivity,
@@ -992,32 +1071,49 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const text = getPendingText(message).trim();
         const menuKey = `discarded:${message.id}`;
         const menuOpen = openMenuKey === menuKey;
+        const menuAnchor = menuPressAnchor?.menuKey === menuKey ? menuPressAnchor.anchor : undefined;
         const isArchivedUncertainty = message.discardedReason === 'dismissed_uncertain'
             || message.discardedReason === 'resent_as_new';
 
-        const menuItems: DropdownMenuItem[] = isArchivedUncertainty ? [] : [
-            { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Ionicons name="return-up-back-outline" size={16} color={theme.colors.text.secondary} /> },
-            { id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} /> },
-            ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Ionicons name="navigate-outline" size={16} color={theme.colors.text.secondary} /> } as const] : []),
-            { id: 'sendNow', title: sendNowActionLabel, icon: <Ionicons name="paper-plane-outline" size={16} color={theme.colors.text.secondary} /> },
+        const menuItems: DropdownMenuItem[] = [
+            ...(text ? [{
+                id: 'copy',
+                testID: `pendingMessages.discarded.menu.copy:${message.id}`,
+                title: t('common.copy'),
+                icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
+            } as const] : []),
+            ...(!isArchivedUncertainty ? [
+                { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Icon name="arrow-elbow-up-left" size={16} color={theme.colors.text.secondary} /> },
+                { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
+                ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> } as const] : []),
+                { id: 'sendNow', title: sendNowActionLabel, icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} /> },
+            ] : []),
         ];
 
         return (
             <DropdownMenu
                 key={`discarded-${message.id}`}
                 open={menuOpen}
-                onOpenChange={(next) => setOpenMenuKey(next ? menuKey : null)}
+                onOpenChange={(next) => {
+                    setOpenMenuKey(next ? menuKey : null);
+                    if (!next) {
+                        setMenuPressAnchor((current) => current?.menuKey === menuKey ? null : current);
+                    }
+                }}
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
+                    if (itemId === 'copy') await copyPendingMessageText(message);
                     if (itemId === 'requeue') await handleRequeueDiscarded(message.id);
                     if (itemId === 'remove') await handleRemoveDiscarded(message.id);
                     if (itemId === 'steerNow') await handleSteerDiscardedNow(message);
                     if (itemId === 'sendNow') await handleSendDiscardedNow(message);
                 }}
-                placement="top"
+                popoverAnchor={menuAnchor}
+                placement="auto-vertical"
                 gap={6}
-                trigger={({ toggle }) => (
+                matchTriggerWidth={menuAnchor ? false : undefined}
+                trigger={({ openMenu, closeMenu }) => (
                     <View
                         testID={`pendingMessages.discarded.row:${message.id}`}
                         style={[styles.userMessageWrapper, { opacity: 0.85 }]}
@@ -1030,10 +1126,18 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             : null)}
                     >
                         <Pressable
-                            onPress={toggle}
+                            onPress={(event) => {
+                                if (menuOpen) {
+                                    closeMenu();
+                                    return;
+                                }
+                                const anchor = resolvePendingMessageMenuPressAnchor(event);
+                                setMenuPressAnchor(anchor ? { menuKey, anchor } : null);
+                                openMenu();
+                            }}
                             testID={`pendingMessages.discarded.message:${message.id}`}
                             accessibilityRole="button"
-                            accessibilityLabel={t('session.pendingMessages.discarded.label')}
+                            accessibilityLabel={text || t('session.pendingMessages.discarded.label')}
                             style={({ pressed }) => ([
                                 styles.userMessageBubble,
                                 { backgroundColor: theme.colors.input.background, opacity: pressed ? 0.75 : 0.82 },
@@ -1047,42 +1151,49 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             </Text>
                         </Pressable>
 
-                        {isWeb && !isArchivedUncertainty ? (
+                        {isWeb && (!isArchivedUncertainty || Boolean(text)) ? (
                             <View
                                 testID={`pendingMessages.discarded.actionsOverlay:${message.id}`}
-                                style={[
-                                    styles.messageActionContainer,
-                                    !(hoveredMessageId === message.id || menuOpen) ? styles.messageActionContainerHidden : null,
-                                    { pointerEvents: hoveredMessageId === message.id || menuOpen ? 'auto' : 'none' },
-                                ]}
+                                pointerEvents="auto"
+                                style={styles.messageActionContainer}
                             >
-                                <IconAction
-                                    testID={`pendingMessages.discarded.requeue:${message.id}`}
-                                    accessibilityLabel={t('session.pendingMessages.actions.requeue')}
-                                    icon="return-up-back-outline"
-                                    onPress={() => handleRequeueDiscarded(message.id)}
-                                />
-                                <IconAction
-                                    testID={`pendingMessages.discarded.remove:${message.id}`}
-                                    accessibilityLabel={t('common.remove')}
-                                    icon="trash-outline"
-                                    onPress={() => handleRemoveDiscarded(message.id)}
-                                    tone="destructive"
-                                />
-                                {canSteerNow ? (
-                                    <IconAction
-                                        testID={`pendingMessages.discarded.steerNow:${message.id}`}
-                                        accessibilityLabel={t('session.pendingMessages.actions.steerNow')}
-                                        icon="navigate-outline"
-                                        onPress={() => handleSteerDiscardedNow(message)}
+                                {text ? (
+                                    <PendingMessageCopyAction
+                                        testID={`pendingMessages.discarded.copy:${message.id}`}
+                                        message={message}
                                     />
                                 ) : null}
-                                <IconAction
-                                    testID={`pendingMessages.discarded.sendNow:${message.id}`}
-                                    accessibilityLabel={sendNowActionLabel}
-                                    icon="paper-plane-outline"
-                                    onPress={() => handleSendDiscardedNow(message)}
-                                />
+                                {!isArchivedUncertainty ? (
+                                    <>
+                                        <IconAction
+                                            testID={`pendingMessages.discarded.requeue:${message.id}`}
+                                            accessibilityLabel={t('session.pendingMessages.actions.requeue')}
+                                            icon="arrow-elbow-up-left"
+                                            onPress={() => handleRequeueDiscarded(message.id)}
+                                        />
+                                        <IconAction
+                                            testID={`pendingMessages.discarded.remove:${message.id}`}
+                                            accessibilityLabel={t('common.remove')}
+                                            icon="trash"
+                                            onPress={() => handleRemoveDiscarded(message.id)}
+                                            tone="destructive"
+                                        />
+                                        {canSteerNow ? (
+                                            <IconAction
+                                                testID={`pendingMessages.discarded.steerNow:${message.id}`}
+                                                accessibilityLabel={t('session.pendingMessages.actions.steerNow')}
+                                                icon="navigation-arrow"
+                                                onPress={() => handleSteerDiscardedNow(message)}
+                                            />
+                                        ) : null}
+                                        <IconAction
+                                            testID={`pendingMessages.discarded.sendNow:${message.id}`}
+                                            accessibilityLabel={sendNowActionLabel}
+                                            icon="paper-plane"
+                                            onPress={() => handleSendDiscardedNow(message)}
+                                        />
+                                    </>
+                                ) : null}
                             </View>
                         ) : null}
                     </View>
@@ -1098,6 +1209,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         handleSendDiscardedNow,
         handleSteerDiscardedNow,
         isWeb,
+        menuPressAnchor,
         openMenuKey,
         sendNowActionLabel,
         theme.colors.input.background,
@@ -1115,6 +1227,18 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         edgeThreshold: 2,
     });
 
+    // Read at render time: the module-scope stylesheet below evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+    const messageContentStyle = React.useMemo(
+        () => [styles.messageContent, contentMaxWidthStyle],
+        [contentMaxWidthStyle],
+    );
+    const constrainedRowStyle = React.useMemo(
+        () => [styles.constrainedRow, contentMaxWidthStyle],
+        [contentMaxWidthStyle],
+    );
+
     if (pendingCount <= 0 && discardedCount <= 0) return null;
 
     const measuredScrollContentHeightPx =
@@ -1130,27 +1254,30 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         estimatedPendingContentHeightPx,
     );
     const canExpandPendingQueue =
-        pendingCount > 0
+        clipsQueueContent
+        && pendingCount > 0
         && effectiveScrollContentHeightPx > maxHeightPx;
     const isQueueExpanded = canExpandPendingQueue && isPendingQueueExpanded;
-    const maxHeight = isQueueExpanded ? expandedMaxHeightPx : maxHeightPx;
+    const maxHeight = clipsQueueContent
+        ? (isQueueExpanded ? expandedMaxHeightPx : maxHeightPx)
+        : undefined;
     const headerLabel =
         pendingCount > 0
             ? `${t('session.pendingMessages.title')} (${pendingCount})`
             : t('session.pendingMessages.discarded.title');
     const clampedViewportHeightPx =
-        effectiveScrollContentHeightPx > 0
+        maxHeight !== undefined && effectiveScrollContentHeightPx > 0
             ? Math.max(1, Math.min(effectiveScrollContentHeightPx, maxHeight))
             : undefined;
 
     return (
         <View testID="pendingMessages.block" style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
-            <View style={styles.messageContent}>
+            <View style={messageContentStyle}>
                 <View style={styles.userMessageContainer}>
-                    <View style={{ width: '100%', maxWidth: layout.maxWidth }}>
+                    <View style={constrainedRowStyle}>
                         <View style={styles.sectionHeader}>
                             <TranscriptSeparatorRow
-                                iconName="time-outline"
+                                iconName="clock"
                                 title={headerLabel}
                                 titleTestID="pendingMessages.headerLabel"
                                 chipTestID={canExpandPendingQueue ? 'pendingMessages.headerToggle' : undefined}
@@ -1158,9 +1285,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 accessibilityLabel={isQueueExpanded ? t('session.pendingMessages.actions.viewLess') : t('session.pendingMessages.actions.viewMore')}
                                 subtitle={discardedCount > 0 && pendingCount > 0 ? `${t('session.pendingMessages.discarded.label')} (${discardedCount})` : null}
                                 rightAccessory={canExpandPendingQueue ? (
-                                    <Ionicons
-                                        name={isQueueExpanded ? 'chevron-down' : 'chevron-up'}
-                                        size={13}
+                                    <Icon
+                                        name={isQueueExpanded ? 'caret-down' : 'caret-up'}
+                                        size={14}
                                         color={theme.colors.text.secondary}
                                     />
                                 ) : null}
@@ -1180,7 +1307,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     },
                                 ]}
                             >
-                                <Ionicons name="pause-circle-outline" size={13} color={theme.colors.text.secondary} />
+                                <Icon name="pause-circle" size={14} color={theme.colors.text.secondary} />
                                 <Text
                                     testID={steerBlockedByTerminalDraft ? 'pendingMessages.steerBlockedTerminalDraftNotice' : undefined}
                                     style={[styles.nonSteerableNoticeText, { color: theme.colors.text.secondary }]}
@@ -1216,7 +1343,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                                 color={theme.colors.text.secondary}
                                             />
                                         ) : (
-                                            <Ionicons name="close-circle-outline" size={12} color={theme.colors.state.danger.foreground} />
+                                            <Icon name="x-circle" size={14} color={theme.colors.state.danger.foreground} />
                                         )}
                                         <Text style={[styles.clearComposerButtonText, { color: theme.colors.state.danger.foreground }]}>
                                             {terminalComposerClear.busy
@@ -1252,7 +1379,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             >
                                 <PendingMessagesDragReorderList
                                     messages={props.pendingMessages}
-                                    estimatedRowHeightPx={reorderEstimatedRowHeightPx}
                                     longPressMs={200}
                                     scrollRef={scrollRef}
                                     viewportHeightPx={scrollViewportHeightPx}
@@ -1291,17 +1417,44 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     );
 }
 
+const PendingMessageCopyAction = React.memo(function PendingMessageCopyAction(props: {
+    message: PendingMessage | DiscardedPendingMessage;
+    testID: string;
+}) {
+    const { markCopied, isCopied } = useTemporaryCopyFeedback();
+    const copied = isCopied();
+    const handlePress = React.useCallback(async () => {
+        if (await copyPendingMessageText(props.message)) {
+            markCopied();
+        }
+    }, [markCopied, props.message]);
+
+    return (
+        <IconAction
+            testID={props.testID}
+            accessibilityLabel={t('common.copy')}
+            icon={copied ? 'check' : 'copy'}
+            onPress={handlePress}
+            tone={copied ? 'success' : 'default'}
+        />
+    );
+});
+
 function IconAction(props: {
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    icon: IconName;
     onPress: () => void;
     accessibilityLabel: string;
     testID?: string;
-    tone?: 'default' | 'destructive';
+    tone?: 'default' | 'destructive' | 'success';
     disabled?: boolean;
 }) {
     const { theme } = useUnistyles();
     const isDestructive = props.tone === 'destructive';
-    const tint = isDestructive ? theme.colors.state.danger.foreground : theme.colors.text.secondary;
+    const tint = isDestructive
+        ? theme.colors.state.danger.foreground
+        : props.tone === 'success'
+            ? theme.colors.state.success.foreground
+            : theme.colors.text.secondary;
     return (
         <Pressable
             testID={props.testID}
@@ -1326,7 +1479,7 @@ function IconAction(props: {
                     : null),
             })}
         >
-            <Ionicons name={props.icon} size={12} color={tint} />
+            <Icon name={props.icon} size={14} color={tint} />
         </Pressable>
     );
 }
@@ -1353,7 +1506,7 @@ function ReorderDragHandleAffordance(props: {
                 isWeb ? ({ pointerEvents: 'none' } as const) : null,
             ]}
         >
-            <Ionicons name="reorder-three-outline" size={12} color={theme.colors.text.secondary} />
+            <Icon name="list" size={14} color={theme.colors.text.secondary} />
         </View>
     );
 }
@@ -1367,7 +1520,9 @@ const styles = StyleSheet.create(() => ({
         flexDirection: 'column',
         flexGrow: 1,
         flexBasis: 0,
-        maxWidth: layout.maxWidth,
+    },
+    constrainedRow: {
+        width: '100%',
     },
     userMessageContainer: {
         maxWidth: '100%',
@@ -1386,7 +1541,7 @@ const styles = StyleSheet.create(() => ({
     },
     pendingAffordanceText: {
         fontSize: 8,
-        ...Typography.default('semiBold'),
+        ...Typography.default(),
     },
     pendingAffordanceChip: {
         position: 'absolute',
@@ -1395,8 +1550,6 @@ const styles = StyleSheet.create(() => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 3,
-        paddingHorizontal: 4,
-        paddingVertical: 1,
         borderRadius: 999,
         borderWidth: 0,
         zIndex: 20,
@@ -1476,17 +1629,11 @@ const styles = StyleSheet.create(() => ({
         marginBottom: 0,
     },
     messageActionContainer: {
-        position: 'absolute',
-        right: 0,
-        bottom: 8,
         flexDirection: 'row',
+        alignSelf: 'flex-end',
         justifyContent: 'flex-end',
-        zIndex: 40,
-        opacity: 1,
+        marginTop: 2,
         gap: 3,
-    },
-    messageActionContainerHidden: {
-        opacity: 0,
     },
     discardedTitle: {
         marginTop: 6,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, findNodeHandle, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
@@ -15,6 +15,8 @@ import {
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 import { WizardChoiceRow } from '@/components/onboarding/ui/WizardChoiceRow';
 import { Text } from '@/components/ui/text/Text';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { Typography } from '@/constants/Typography';
 import { installDemoFirewall, uninstallDemoFirewall } from '@/demoMode/guards/demoFirewall';
 import { clearDemoWorld, seedDemoWorld } from '@/demoMode/seed/seedDemoWorld';
 import { takeStoreSnapshot, type StoreSnapshot } from '@/demoMode/seed/storeSnapshot';
@@ -26,14 +28,19 @@ import { useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
 import { MOBILE_MAX_WIDTH_PX } from '../unauthShell/useUnauthShellLayout';
+import { RelayRetentionDisclosure } from '../unauthShell/RelayRetentionDisclosure';
 import { JourneyConfigSlot, type JourneyConfigControllerSurface } from './config/JourneyConfigSlot';
 import { SplitStageLayout, type SplitStageLayoutOrientation } from './desktop/SplitStageLayout';
 import { StoryScrollerLayout } from './mobile/StoryScrollerLayout';
 import { ShowcaseReel } from './reel/ShowcaseReel';
 import { DemoStage } from './stage/DemoStage';
-import { stageFrameById, stageFrames } from './stage/stageFrames';
+import type { StageDevice } from './stage/DeviceFrame';
+import { resolveStageFramesForHostDevice, stageFrameById } from './stage/stageFrames';
+import { preloadStageSurfaces, type StageSurfaceId } from './stage/stageSurfaces';
 import { stageVisualTokens } from './stage/stageVisualTokens';
+import { useDemoStageUnmountGate } from './stage/useDemoStageUnmountGate';
 import {
+    JOURNEY_STORY_SURFACE,
     type JourneyBeat,
     type JourneyBeatId,
     type JourneyConfigStepId,
@@ -54,6 +61,7 @@ export type OnboardingJourneyHostProps = Readonly<{
     wizardSurfaceProps: OnboardingWizardSurfaceProps;
     initialBeatId?: JourneyBeatId;
     initialAttentionChoice?: JourneyAttentionChoice;
+    retentionSummary?: string | null;
     reducedMotion?: boolean;
     onExit?: () => void;
     testID?: string;
@@ -102,6 +110,27 @@ export function resolveJourneyLayoutMode(params: Readonly<{
     if (params.surface === 'native') return 'story';
     if (params.windowWidth <= MOBILE_MAX_WIDTH_PX) return 'story';
     return 'split';
+}
+
+/**
+ * Beat curation consumes the presentation decision above instead of detecting a
+ * phone a second time. `journeyBeats[].surfaces` describes which CUT a beat plays
+ * in, and the story pager is the phone cut wherever it runs — so a narrow browser
+ * window resolves to `JOURNEY_STORY_SURFACE` and gets the curated script. Before
+ * this, curation was keyed by the running platform while presentation was keyed by
+ * width, and mobile web played the whole 19-beat wide cut, including the seven
+ * beats curation hides precisely because they read as cramped phone frames.
+ */
+export function resolveJourneyCurationSurface(params: Readonly<{
+    surface: JourneySurface;
+    layoutMode: JourneyLayoutMode;
+}>): JourneySurface {
+    return params.layoutMode === 'story' ? JOURNEY_STORY_SURFACE : params.surface;
+}
+
+/** The largest device canvas the resolved presentation can host a stage frame on. */
+export function resolveJourneyStageHostDevice(layoutMode: JourneyLayoutMode): StageDevice {
+    return layoutMode === 'story' ? 'phone' : 'desktop';
 }
 
 function resolveFallbackFrameId(beat: JourneyBeat): string {
@@ -168,7 +197,7 @@ function AttentionChoiceBody(props: Readonly<{
             <WizardChoiceRow
                 testID={`${props.testID}-promote_attention_and_working`}
                 selected={props.choice === 'promote_attention_and_working'}
-                icon="albums-outline"
+                icon="stack"
                 title={t('settingsSession.sessionList.attentionPromotionModeGlobalTitle')}
                 subtitle={t('settingsSession.sessionList.workingPlacementModeGlobalSubtitle')}
                 onPress={() => props.setChoice('promote_attention_and_working')}
@@ -176,7 +205,7 @@ function AttentionChoiceBody(props: Readonly<{
             <WizardChoiceRow
                 testID={`${props.testID}-keep_current`}
                 selected={props.choice === 'keep_current'}
-                icon="list-outline"
+                icon="list"
                 title={t('settingsSession.sessionList.attentionPromotionModeOffTitle')}
                 subtitle={t('settingsSession.sessionList.workingPlacementModeOffSubtitle')}
                 onPress={() => props.setChoice('keep_current')}
@@ -304,6 +333,39 @@ function shouldRenderLiveDemoStage(beat: JourneyBeat): boolean {
     return beat.act === 'dream' && beat.stageTreatment !== 'planet-hero';
 }
 
+/**
+ * How far ahead the journey warms stage surfaces. The stage MOUNTS the first
+ * entry and only imports the rest, so two keeps one module warm behind the
+ * mounted beat: the beat after the pre-mounted one is already imported by the
+ * time the user reaches it, and nothing further ahead is fetched speculatively.
+ */
+const JOURNEY_STAGE_WARM_LOOKAHEAD = 2;
+
+/**
+ * The stage frames the journey mounts AFTER `beat`, nearest first.
+ *
+ * Beat order lives here because the host is its only holder: the stage frame
+ * table's array order is not the script, so warming array neighbours warms
+ * surfaces the user never reaches. Beats that mount no live stage (the
+ * planet-hero openings, the whole setup act) are skipped rather than warmed.
+ */
+function resolveUpcomingStageFrameIds(
+    visibleBeats: readonly JourneyBeat[],
+    beat: JourneyBeat,
+): readonly string[] {
+    const beatIndex = visibleBeats.findIndex((visibleBeat) => visibleBeat.id === beat.id);
+    if (beatIndex < 0) return [];
+
+    const frameIds: string[] = [];
+    for (let index = beatIndex + 1; index < visibleBeats.length; index += 1) {
+        const upcomingBeat = visibleBeats[index];
+        if (!upcomingBeat || !shouldRenderLiveDemoStage(upcomingBeat)) continue;
+        frameIds.push(resolveFallbackFrameId(upcomingBeat));
+        if (frameIds.length >= JOURNEY_STAGE_WARM_LOOKAHEAD) break;
+    }
+    return frameIds;
+}
+
 function restoreExactSnapshot(snapshot: StoreSnapshot): void {
     storage.setState((current) => ({
         sessions: snapshot.sessions,
@@ -375,21 +437,26 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     const stylesForHost = hostStylesheet;
     useUnistyles();
     const testID = props.testID ?? 'onboarding-journey';
+    const isNativeSurface = props.surface === 'native';
+    const mainContentTargetId = `${testID}-main-content`;
+    const bypassMinimumTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+    const mainContentRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
+    const [isBypassFocused, setBypassFocused] = React.useState(false);
     const windowWidth = useWindowDimensions().width;
     const layoutMode = resolveJourneyLayoutMode({ surface: props.surface, windowWidth });
+    const curationSurface = resolveJourneyCurationSurface({ surface: props.surface, layoutMode });
+    const layoutStageFrames = resolveStageFramesForHostDevice(resolveJourneyStageHostDevice(layoutMode));
     const auth = useAuth();
     const pendingSetupIntent = usePendingSetupIntent();
     const applySettings = useApplySettings();
     const demoLifecycleRef = React.useRef<DemoLifecycleGeneration | null>(null);
     const demoTeardownStartedRef = React.useRef(false);
     const demoTornDownRef = React.useRef(false);
-    const demoStageUnmountPromiseRef = React.useRef<Promise<void> | null>(null);
-    const resolveDemoStageUnmountRef = React.useRef<(() => void) | null>(null);
     const actTwoBoundaryTeardownRef = React.useRef<Promise<void> | null>(null);
     const startsOnSetupBeatRef = React.useRef(isSetupBeatId(props.initialBeatId));
     const hingeHandledRef = React.useRef(false);
     const preAuthStepSyncRef = React.useRef<ConfigStepSyncState | null>(null);
-    const [demoSeeded, setDemoSeeded] = React.useState(false);
+    const { demoSeeded, setDemoSeeded, unmountDemoStage } = useDemoStageUnmountGate();
 
     const persistCompletionSettings = React.useCallback((completion: JourneyCompletion) => {
         if (completion.attentionChoice !== 'promote_attention_and_working') return;
@@ -464,27 +531,6 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
         await teardownDemoGeneration(generation);
     }, [teardownDemoGeneration]);
 
-    const unmountDemoStage = React.useCallback((): Promise<void> => {
-        if (!demoSeeded) return Promise.resolve();
-        const existingUnmount = demoStageUnmountPromiseRef.current;
-        if (existingUnmount) return existingUnmount;
-
-        let resolveUnmount!: () => void;
-        const unmountPromise = new Promise<void>((resolve) => {
-            resolveUnmount = resolve;
-        });
-        demoStageUnmountPromiseRef.current = unmountPromise;
-        resolveDemoStageUnmountRef.current = () => {
-            if (demoStageUnmountPromiseRef.current === unmountPromise) {
-                demoStageUnmountPromiseRef.current = null;
-                resolveDemoStageUnmountRef.current = null;
-            }
-            resolveUnmount();
-        };
-        setDemoSeeded(false);
-        return unmountPromise;
-    }, [demoSeeded]);
-
     const settleJourneyExit = React.useCallback((completion?: JourneyCompletion) => {
         void (async () => {
             try {
@@ -507,7 +553,7 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     }, [settleJourneyExit]);
 
     const progress = useJourneyProgress({
-        surface: props.surface,
+        surface: curationSurface,
         initialBeatId: props.initialBeatId,
         initialAttentionChoice: props.initialAttentionChoice,
         onComplete: handleComplete,
@@ -551,6 +597,21 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
         advance: advanceJourney,
         skipToSetup: skipToSetupJourney,
     }), [advanceJourney, progress, skipToSetupJourney]);
+
+    const focusJourneyContent = React.useCallback(() => {
+        const mainContent = mainContentRef.current;
+        if (!mainContent) return;
+
+        if (isNativeSurface) {
+            const reactTag = findNodeHandle(mainContent);
+            if (reactTag != null) {
+                AccessibilityInfo.setAccessibilityFocus(reactTag);
+            }
+            return;
+        }
+
+        mainContent.focus();
+    }, [isNativeSurface]);
 
     React.useEffect(() => {
         beginOnboardingJourneySession();
@@ -627,15 +688,6 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     }, [teardownDemoGeneration]);
 
     React.useEffect(() => {
-        if (demoSeeded) return;
-        resolveDemoStageUnmountRef.current?.();
-    }, [demoSeeded]);
-
-    React.useEffect(() => () => {
-        resolveDemoStageUnmountRef.current?.();
-    }, []);
-
-    React.useEffect(() => {
         if (progress.currentBeat.act !== 'setup') return;
         if (demoTornDownRef.current || actTwoBoundaryTeardownRef.current) return;
         const teardownPromise = ensureActTwoDemoTeardown();
@@ -686,14 +738,39 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
         props.preAuthController.stepId,
     ]);
 
-    const activeFrameId = resolveFallbackFrameId(progress.currentBeat);
-    const stage = demoSeeded && shouldRenderLiveDemoStage(progress.currentBeat) ? (
-        <DemoStage
-            frames={stageFrames}
-            activeFrameId={activeFrameId}
-            reducedMotion={props.reducedMotion}
-        />
-    ) : null;
+    const currentBeatMountsStage = demoSeeded && shouldRenderLiveDemoStage(progress.currentBeat);
+    const upcomingStageFrameIds = React.useMemo(
+        () => resolveUpcomingStageFrameIds(progress.visibleBeats, progress.currentBeat),
+        [progress.currentBeat, progress.visibleBeats],
+    );
+
+    React.useEffect(() => {
+        // A beat that mounts no stage (the planet-hero openings, and every beat
+        // still waiting on demo seeding) has no stage to run the warm policy, so
+        // the journey used to sit idle on slide 1 and then pay a cold chunk fetch
+        // on the first real stage beat. The host warms from the same beat-ordered
+        // list it hands the stage; where a stage IS mounted, that stage owns the
+        // mount-vs-import policy over it and this would only re-request a cached
+        // import.
+        if (currentBeatMountsStage || upcomingStageFrameIds.length === 0) return;
+        const surfaceIds = upcomingStageFrameIds
+            .map((frameId) => stageFrameById.get(frameId)?.surface)
+            .filter((surfaceId): surfaceId is StageSurfaceId => surfaceId !== undefined);
+        if (surfaceIds.length === 0) return;
+        void preloadStageSurfaces(surfaceIds).catch(() => undefined);
+    }, [currentBeatMountsStage, upcomingStageFrameIds]);
+
+    const renderDemoStage = (beat: JourneyBeat): React.ReactElement | null => (
+        demoSeeded && shouldRenderLiveDemoStage(beat) ? (
+            <DemoStage
+                frames={layoutStageFrames}
+                activeFrameId={resolveFallbackFrameId(beat)}
+                upcomingFrameIds={resolveUpcomingStageFrameIds(progress.visibleBeats, beat)}
+                reducedMotion={props.reducedMotion}
+            />
+        ) : null
+    );
+    const stage = renderDemoStage(progress.currentBeat);
 
     let controller = buildDefaultController({
         progress: journeyProgress,
@@ -709,36 +786,75 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     // The journey owns Back on config beats so narration and embedded wizard body move together.
     if (progress.currentBeat.configStepId && PRE_AUTH_CONFIG_STEPS.has(progress.currentBeat.configStepId)) {
         controller = adaptPreAuthController(props.preAuthController, journeyBack);
+        if (progress.currentBeat.configStepId === 'auth' && props.retentionSummary) {
+            controller = {
+                ...controller,
+                footerHint: (
+                    <View style={stylesForHost.preAuthFooter}>
+                        <RelayRetentionDisclosure
+                            summary={props.retentionSummary}
+                            testID={`${testID}-retention-disclosure`}
+                        />
+                        {controller.footerHint}
+                    </View>
+                ),
+            };
+        }
     }
 
     const renderJourney = (activeController: JourneyConfigControllerSurface): React.ReactElement => (
         <View testID={testID} style={stylesForHost.root}>
-            {layoutMode === 'story' ? (
-                <StoryScrollerLayout
-                    progress={journeyProgress}
-                    controller={activeController}
-                    renderStage={(beat) => (
-                        demoSeeded && shouldRenderLiveDemoStage(beat) ? (
-                            <DemoStage
-                                frames={stageFrames}
-                                activeFrameId={resolveFallbackFrameId(beat)}
-                                reducedMotion={props.reducedMotion}
-                            />
-                        ) : null
-                    )}
-                    reducedMotion={props.reducedMotion}
-                    testID={`${testID}-mobile`}
-                />
-            ) : (
-                <SplitStageLayout
-                    progress={journeyProgress}
-                    controller={activeController}
-                    stage={stage}
-                    orientation={ONBOARDING_JOURNEY_SPLIT_ORIENTATION}
-                    reducedMotion={props.reducedMotion}
-                    testID={`${testID}-desktop`}
-                />
-            )}
+            <View testID={`${testID}-navigation-landmark`} role="navigation" style={stylesForHost.bypassNavigation}>
+                <Pressable
+                    testID={`${testID}-skip-to-content`}
+                    accessibilityRole={isNativeSurface ? 'button' : 'link'}
+                    accessibilityLabel={t('onboardingJourney.accessibility.skipToContent')}
+                    role={isNativeSurface ? 'button' : 'link'}
+                    // @ts-expect-error React Native's types omit RNW's anchor forwarding.
+                    href={isNativeSurface ? undefined : `#${mainContentTargetId}`}
+                    onFocus={() => setBypassFocused(true)}
+                    onBlur={() => setBypassFocused(false)}
+                    onPress={focusJourneyContent}
+                    style={[
+                        stylesForHost.bypassControl,
+                        { minHeight: bypassMinimumTargetSize },
+                        isNativeSurface || isBypassFocused ? stylesForHost.bypassControlVisible : null,
+                    ]}
+                >
+                    <Text style={stylesForHost.bypassControlLabel}>
+                        {t('onboardingJourney.accessibility.skipToContent')}
+                    </Text>
+                </Pressable>
+            </View>
+            <View
+                ref={mainContentRef}
+                testID={`${testID}-main-content`}
+                nativeID={mainContentTargetId}
+                role="main"
+                collapsable={isNativeSurface ? false : undefined}
+                focusable={!isNativeSurface}
+                tabIndex={isNativeSurface ? undefined : -1}
+                style={stylesForHost.mainContent}
+            >
+                {layoutMode === 'story' ? (
+                    <StoryScrollerLayout
+                        progress={journeyProgress}
+                        controller={activeController}
+                        renderStage={renderDemoStage}
+                        reducedMotion={props.reducedMotion}
+                        testID={`${testID}-mobile`}
+                    />
+                ) : (
+                    <SplitStageLayout
+                        progress={journeyProgress}
+                        controller={activeController}
+                        stage={stage}
+                        orientation={ONBOARDING_JOURNEY_SPLIT_ORIENTATION}
+                        reducedMotion={props.reducedMotion}
+                        testID={`${testID}-desktop`}
+                    />
+                )}
+            </View>
         </View>
     );
 
@@ -768,9 +884,47 @@ const styles = StyleSheet.create(() => ({
     },
 }));
 
-const hostStylesheet = StyleSheet.create(() => ({
+const hostStylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
+    },
+    bypassNavigation: {
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        zIndex: 100,
+    },
+    bypassControl: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderWidth: 1,
+        borderRadius: 999,
+        borderCurve: 'continuous',
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
+        opacity: 0,
+        transform: [{ translateY: -16 }],
+    },
+    bypassControlVisible: {
+        borderColor: theme.colors.text.primary,
+        opacity: 1,
+        transform: [{ translateY: 0 }],
+    },
+    bypassControlLabel: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    mainContent: {
+        flex: 1,
+        minHeight: 0,
+    },
+    preAuthFooter: {
+        width: '100%',
+        gap: 10,
     },
 }));

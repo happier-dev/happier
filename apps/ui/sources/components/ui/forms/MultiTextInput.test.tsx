@@ -71,6 +71,20 @@ describe('MultiTextInput', () => {
         expect(input.props.testID).toBe('composer-input');
     });
 
+    it('forwards combobox role and expanded state to the native TextInput owner', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const tree = (await renderScreen(<MultiTextInput
+            value="/help"
+            onChangeText={() => {}}
+            accessibilityRole="combobox"
+            accessibilityState={{ expanded: true }}
+        />)).tree;
+
+        const input = tree.findByType('TextInput' as any);
+        expect(input.props.accessibilityRole).toBe('combobox');
+        expect(input.props.accessibilityState).toEqual({ expanded: true });
+    });
+
     it('uses the caller textStyle font size as the scaled native input base', async () => {
         localSettingState.uiFontScale = 1.25;
 

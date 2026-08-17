@@ -1,33 +1,47 @@
+import {
+    MENTION_KIND_V1,
+    admitMentionRefsV1ForText,
+    buildMentionRefForKindV1,
+    readComposerReferenceMentionV1,
+    resolveSkillCatalogItemIdentityV1,
+    resolveSkillCatalogOriginV1,
+    sanitizeMentionRefsV1,
+    type ComposerAttachmentDraftV1,
+    type MentionRefV1,
+} from '@happier-dev/protocol';
+
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 
-export type ComposerVendorPluginMention = Readonly<{
-    kind: 'vendorPlugin';
-    tokenText: string;
-    start: number;
-    end: number;
-    vendorPluginRef: string;
-    label?: string;
-    backendId?: string;
-    agentId?: string;
-}>;
+/**
+ * The composer mention shape is declared once, by the schema that persists it
+ * (`sync/domains/input/draftValues/sessionDraftValueTypes.ts`), and re-exported here for
+ * the composer's consumers (SB-4, D-19). It used to be declared a second time in this
+ * module as hand-written TS; the two drifted, and the strict persisted arm silently
+ * stripped the skill provider context this file's envelope writer reads.
+ *
+ * `kind` is an OPEN string (D-12), so a draft written by a newer build survives being
+ * loaded, reconciled and re-saved by an older one instead of being discarded or
+ * reinterpreted (INV-4). The range reconciler below is generic over
+ * `tokenText`/`start`/`end`, so an unknown mention shifts and disappears with its token
+ * exactly like a known one.
+ */
+import type {
+    ComposerSkillMention,
+    ComposerReferenceMention,
+    ComposerStructuredInputMention,
+    ComposerStructuredInputMentionPayload,
+    ComposerUnknownMention,
+    ComposerVendorPluginMention,
+} from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 
-export type ComposerSkillMention = Readonly<{
-    kind: 'skill';
-    tokenText: string;
-    start: number;
-    end: number;
-    name: string;
-    path?: string;
-    displayName?: string;
-    description?: string;
-    origin?: string;
-    projectionKind?: string;
-    projectionRef?: string;
-    backendId?: string;
-    agentId?: string;
-}>;
-
-export type ComposerStructuredInputMention = ComposerVendorPluginMention | ComposerSkillMention;
+export type {
+    ComposerSkillMention,
+    ComposerReferenceMention,
+    ComposerStructuredInputMention,
+    ComposerStructuredInputMentionPayload,
+    ComposerUnknownMention,
+    ComposerVendorPluginMention,
+};
 
 export type StructuredInputImageInput = Readonly<{
     type: 'localImage' | 'image';
@@ -44,38 +58,33 @@ export type StructuredInputImageInput = Readonly<{
 
 type StructuredInputEnvelope = Readonly<{
     v: 1;
-    vendorPluginMentions?: ReadonlyArray<Omit<ComposerVendorPluginMention, 'kind' | 'tokenText' | 'start' | 'end'>>;
-    skillMentions?: ReadonlyArray<Omit<ComposerSkillMention, 'kind' | 'tokenText' | 'start' | 'end'>>;
+    mentions?: ReadonlyArray<MentionRefV1>;
+    vendorPluginMentions?: ReadonlyArray<Omit<ComposerVendorPluginMention, 'kind' | 'tokenText'>>;
+    skillMentions?: ReadonlyArray<Omit<ComposerSkillMention, 'kind' | 'tokenText'>>;
     imageInputs?: ReadonlyArray<StructuredInputImageInput>;
+    composerAttachments?: ReadonlyArray<ComposerAttachmentDraftV1>;
 }>;
 
-const LEGACY_VENDOR_SKILL_BACKENDS = {
-    codex_native: 'codex',
-    opencode_native: 'opencode',
-    claude_native: 'claude',
-    pi_native: 'pi',
-} as const;
-
-const LEGACY_HAPPIER_SKILL_ORIGINS = new Set(['happier_projected', 'text_fallback_only']);
-
-function readLegacyVendorSkillBackend(origin: string): string | null {
-    return Object.prototype.hasOwnProperty.call(LEGACY_VENDOR_SKILL_BACKENDS, origin)
-        ? LEGACY_VENDOR_SKILL_BACKENDS[origin as keyof typeof LEGACY_VENDOR_SKILL_BACKENDS]
-        : null;
-}
-
+/**
+ * `id` is deliberately not projected into the legacy per-kind arrays: they
+ * retain provider context for supported older readers, while the additive
+ * Protocol `mentions[]` field carries catalog identity for current readers.
+ */
 function canonicalizeSkillMentionForWrite(
     mention: ComposerSkillMention,
-): Omit<ComposerSkillMention, 'kind' | 'tokenText' | 'start' | 'end'> {
-    const legacyVendorBackendId = mention.origin ? readLegacyVendorSkillBackend(mention.origin) : null;
-    const legacyHappierProjectionRef = mention.origin && LEGACY_HAPPIER_SKILL_ORIGINS.has(mention.origin)
-        ? mention.origin
-        : null;
-    const origin = mention.origin === 'vendor' || legacyVendorBackendId || mention.backendId || mention.agentId
+): Omit<ComposerSkillMention, 'kind' | 'tokenText' | 'id'> {
+    // One owner for the legacy origin table: the skill catalog schema
+    // (`packages/protocol/src/runtime/catalog/skills.ts`), which is also the
+    // producer of the canonical `(origin, backendId, projectionRef)` triple the
+    // composer's catalog reader normalizes into.
+    const legacy = resolveSkillCatalogOriginV1(mention.origin);
+    const origin = legacy.origin === 'vendor' || mention.backendId || mention.agentId
         ? 'vendor'
-        : mention.origin === 'happier' || legacyHappierProjectionRef || mention.projectionRef || mention.projectionKind
+        : legacy.origin === 'happier' || mention.projectionRef || mention.projectionKind
             ? 'happier'
             : undefined;
+    const projectionRef = mention.projectionRef ?? legacy.projectionRef;
+    const backendId = mention.backendId ?? legacy.backendId;
     return {
         name: mention.name,
         ...(mention.path ? { path: mention.path } : {}),
@@ -83,247 +92,235 @@ function canonicalizeSkillMentionForWrite(
         ...(mention.description ? { description: mention.description } : {}),
         ...(origin ? { origin } : {}),
         ...(mention.projectionKind ? { projectionKind: mention.projectionKind } : {}),
-        ...(mention.projectionRef ?? legacyHappierProjectionRef ? { projectionRef: mention.projectionRef ?? legacyHappierProjectionRef ?? undefined } : {}),
-        ...(mention.backendId ?? legacyVendorBackendId ? { backendId: mention.backendId ?? legacyVendorBackendId ?? undefined } : {}),
+        ...(projectionRef ? { projectionRef } : {}),
+        ...(backendId ? { backendId } : {}),
         ...(mention.agentId ? { agentId: mention.agentId } : {}),
     };
 }
 
-function findChangedSpan(previousText: string, nextText: string): Readonly<{
-    previousStart: number;
-    previousEnd: number;
-    nextEnd: number;
-    delta: number;
-}> {
-    let prefix = 0;
-    const maxPrefix = Math.min(previousText.length, nextText.length);
-    while (prefix < maxPrefix && previousText.charCodeAt(prefix) === nextText.charCodeAt(prefix)) {
-        prefix += 1;
-    }
+function isComposerVendorPluginMention(
+    mention: ComposerStructuredInputMention,
+): mention is ComposerVendorPluginMention {
+    return mention.kind === 'vendorPlugin' && 'vendorPluginRef' in mention;
+}
 
-    let suffix = 0;
-    const previousRemaining = previousText.length - prefix;
-    const nextRemaining = nextText.length - prefix;
-    while (
-        suffix < previousRemaining
-        && suffix < nextRemaining
-        && previousText.charCodeAt(previousText.length - 1 - suffix) === nextText.charCodeAt(nextText.length - 1 - suffix)
-    ) {
-        suffix += 1;
-    }
+function isComposerSkillMention(
+    mention: ComposerStructuredInputMention,
+): mention is ComposerSkillMention {
+    return mention.kind === 'skill' && 'name' in mention;
+}
 
-    const previousEnd = previousText.length - suffix;
-    const nextEnd = nextText.length - suffix;
+function isComposerUnknownMention(
+    mention: ComposerStructuredInputMention,
+): mention is ComposerUnknownMention {
+    return !isComposerVendorPluginMention(mention) && !isComposerSkillMention(mention);
+}
+
+/**
+ * A provider companion crosses this boundary only when the Protocol reader
+ * recognizes the exact persisted reference. This keeps arbitrary unknown
+ * draft fields inert while preserving the one public provider identity that
+ * the send-time owner must resolve.
+ */
+function isComposerReferenceMention(
+    mention: ComposerUnknownMention,
+): mention is ComposerReferenceMention {
+    return readComposerReferenceMentionV1({
+        kind: mention.kind,
+        ...(mention.ref ? { ref: mention.ref } : {}),
+        ...(mention.label ? { label: mention.label } : {}),
+        token: mention.tokenText,
+        ...(mention.composerReference
+            ? { composerReference: mention.composerReference }
+            : {}),
+    }) !== null;
+}
+
+/**
+ * A legacy vendor/skill mention without a derivable canonical identity must keep the whole
+ * message on legacy arrays. D-4 gives `mentions[]` precedence, so dual-writing that one
+ * mention alongside referenceable siblings would otherwise make it silently disappear.
+ * Unknown kinds without a reference are inert instead: they have no legacy projection to
+ * preserve and must not be coerced into one.
+ */
+type MentionRefWrite =
+    | Readonly<{ status: 'reference'; reference: MentionRefV1 }>
+    | Readonly<{ status: 'inert' }>
+    | Readonly<{ status: 'unreferenceable' }>;
+
+/**
+ * The UI has one small adapter from its positional draft binding to the
+ * Protocol-owned reference wire. Known built-ins derive identity through the
+ * same Protocol catalog owner the send-time resolver uses; unknown kinds carry
+ * only their opaque Protocol identity and are never interpreted locally.
+ */
+function resolveMentionRefWrite(mention: ComposerStructuredInputMention): MentionRefWrite {
+    const token = { token: mention.tokenText };
+    if (isComposerVendorPluginMention(mention)) {
+        return {
+            status: 'reference',
+            reference: {
+                kind: MENTION_KIND_V1.vendorPlugin,
+                ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, mention.vendorPluginRef),
+                ...token,
+                ...(mention.label ? { label: mention.label } : {}),
+            },
+        };
+    }
+    if (isComposerSkillMention(mention)) {
+        const identity = resolveSkillCatalogItemIdentityV1(mention);
+        if (!identity) return { status: 'unreferenceable' };
+        return {
+            status: 'reference',
+            reference: {
+                kind: MENTION_KIND_V1.skill,
+                ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, identity.id),
+                ...token,
+                label: mention.displayName ?? mention.name,
+            },
+        };
+    }
+    if (!isComposerUnknownMention(mention) || !mention.ref) return { status: 'inert' };
     return {
-        previousStart: prefix,
-        previousEnd,
-        nextEnd,
-        delta: nextText.length - previousText.length,
+        status: 'reference',
+        reference: {
+            kind: mention.kind,
+            ref: mention.ref,
+            ...token,
+            ...(mention.label ? { label: mention.label } : {}),
+            ...(isComposerReferenceMention(mention)
+                ? { composerReference: mention.composerReference }
+                : {}),
+        },
     };
 }
 
-function clampSelection(
-    selection: Readonly<{ start: number; end: number }>,
-    textLength: number,
-): Readonly<{ start: number; end: number }> {
-    const start = Number.isFinite(selection.start)
-        ? Math.min(Math.max(0, Math.trunc(selection.start)), textLength)
-        : textLength;
-    const end = Number.isFinite(selection.end)
-        ? Math.min(Math.max(start, Math.trunc(selection.end)), textLength)
-        : start;
-    return { start, end };
+/** The reference identity (D-26): what `sanitizeMentionRefsV1` already deduplicates on. */
+function mentionRefIdentityKey(reference: MentionRefV1): string {
+    return `${reference.kind}\u0000${reference.ref}`;
 }
 
-function resolveSelectionChangedSpan(args: Readonly<{
-    previousText: string;
-    nextText: string;
-    previousSelection: Readonly<{ start: number; end: number }>;
-}>): Readonly<{
-    previousStart: number;
-    previousEnd: number;
-    nextEnd: number;
-    delta: number;
-}> | null {
-    const previousSelection = clampSelection(args.previousSelection, args.previousText.length);
-    const selectedLength = previousSelection.end - previousSelection.start;
-    const insertedLength = args.nextText.length - (args.previousText.length - selectedLength);
-    if (insertedLength < 0) return null;
-
-    const nextEnd = previousSelection.start + insertedLength;
-    if (nextEnd > args.nextText.length) return null;
-
-    if (
-        previousSelection.start > 0
-        && args.previousText.charCodeAt(previousSelection.start - 1)
-            !== args.nextText.charCodeAt(previousSelection.start - 1)
-    ) {
-        return null;
-    }
-
-    if (
-        previousSelection.end < args.previousText.length
-        && nextEnd < args.nextText.length
-        && args.previousText.charCodeAt(previousSelection.end) !== args.nextText.charCodeAt(nextEnd)
-    ) {
-        return null;
-    }
-
-    return {
-        previousStart: previousSelection.start,
-        previousEnd: previousSelection.end,
-        nextEnd,
-        delta: args.nextText.length - args.previousText.length,
-    };
+/**
+ * Whether the composer still carries this mention: its token is somewhere in the text.
+ *
+ * This is the whole reconciliation rule, and it is deliberately positionless. A mention used
+ * to hold `[start, end)` into the composer text, maintained across every edit by a changed-span
+ * diff; the offsets were then re-checked at the request boundary against the text actually
+ * submitted — which is a TRANSFORM of the composer text (`messageToSend.trim()`, an attachments
+ * block, a review-comments wrapper). The offsets were correct for the text they were measured
+ * against and wrong for the one that shipped, so the reference was silently dropped and the
+ * agent received a bare `@…`. Nothing read a position: `sessionReferenceBlock` and
+ * `messageStructuredReferences` both key on `{kind, ref}`.
+ */
+export function structuredInputMentionSurvivesText(
+    text: string,
+    mention: ComposerStructuredInputMention,
+): boolean {
+    return text.includes(mention.tokenText);
 }
 
-function tokenSurvives(text: string, mention: ComposerStructuredInputMention): boolean {
-    return text.slice(mention.start, mention.end) === mention.tokenText;
-}
-
-function reconcileStructuredInputMentionsWithChangedSpan(args: Readonly<{
-    nextText: string;
-    mentions: readonly ComposerStructuredInputMention[];
-    change: Readonly<{
-        previousStart: number;
-        previousEnd: number;
-        nextEnd: number;
-        delta: number;
-    }>;
-}>): ComposerStructuredInputMention[] {
-    const nextMentions: ComposerStructuredInputMention[] = [];
-
-    for (const mention of args.mentions) {
-        const changeBeforeMention = args.change.previousEnd <= mention.start;
-        const changeAfterMention = args.change.previousStart >= mention.end;
-        if (changeBeforeMention) {
-            const shifted = {
-                ...mention,
-                start: mention.start + args.change.delta,
-                end: mention.end + args.change.delta,
-            };
-            if (tokenSurvives(args.nextText, shifted)) {
-                nextMentions.push(shifted);
-            }
-            continue;
-        }
-
-        if (changeAfterMention && tokenSurvives(args.nextText, mention)) {
-            nextMentions.push(mention);
-        }
-    }
-
-    return nextMentions;
-}
-
+/**
+ * The one reconciler. It runs on live edits and on programmatic text swaps alike, because
+ * "does the text still contain this token" needs neither the previous text nor the selection
+ * the edit replaced.
+ */
 export function reconcileStructuredInputMentionsWithText(args: Readonly<{
-    previousText: string;
-    nextText: string;
+    text: string;
     mentions: readonly ComposerStructuredInputMention[];
 }>): ComposerStructuredInputMention[] {
     if (args.mentions.length === 0) return [];
-    if (args.previousText === args.nextText) {
-        return args.mentions.filter((mention) => tokenSurvives(args.nextText, mention));
-    }
-
-    const change = findChangedSpan(args.previousText, args.nextText);
-    return reconcileStructuredInputMentionsWithChangedSpan({
-        nextText: args.nextText,
-        mentions: args.mentions,
-        change,
-    });
-}
-
-export function reconcileStructuredInputMentionsWithTextChange(args: Readonly<{
-    previousText: string;
-    nextText: string;
-    previousSelection: Readonly<{ start: number; end: number }>;
-    mentions: readonly ComposerStructuredInputMention[];
-}>): ComposerStructuredInputMention[] {
-    if (args.mentions.length === 0) return [];
-    if (args.previousText === args.nextText) {
-        return args.mentions.filter((mention) => tokenSurvives(args.nextText, mention));
-    }
-
-    const change = resolveSelectionChangedSpan({
-        previousText: args.previousText,
-        nextText: args.nextText,
-        previousSelection: args.previousSelection,
-    }) ?? findChangedSpan(args.previousText, args.nextText);
-
-    return reconcileStructuredInputMentionsWithChangedSpan({
-        nextText: args.nextText,
-        mentions: args.mentions,
-        change,
-    });
+    return args.mentions.filter((mention) => structuredInputMentionSurvivesText(args.text, mention));
 }
 
 export function createStructuredInputMentionFromSuggestion(args: Readonly<{
     suggestion: AutocompleteSuggestion;
-    start: number;
 }>): ComposerStructuredInputMention | null {
     const structuredInput = args.suggestion.structuredInput;
     if (!structuredInput) return null;
 
-    const tokenText = args.suggestion.text;
-    const base = {
-        tokenText,
-        start: args.start,
-        end: args.start + tokenText.length,
-    };
-
-    if (structuredInput.kind === 'vendorPlugin') {
-        return {
-            ...base,
-            kind: 'vendorPlugin',
-            vendorPluginRef: structuredInput.vendorPluginRef,
-            ...(structuredInput.label ? { label: structuredInput.label } : {}),
-            ...(structuredInput.backendId ? { backendId: structuredInput.backendId } : {}),
-            ...(structuredInput.agentId ? { agentId: structuredInput.agentId } : {}),
-        };
-    }
-
-    return {
-        ...base,
-        kind: 'skill',
-        name: structuredInput.name,
-        ...(structuredInput.path ? { path: structuredInput.path } : {}),
-        ...(structuredInput.displayName ? { displayName: structuredInput.displayName } : {}),
-        ...(structuredInput.description ? { description: structuredInput.description } : {}),
-        ...(structuredInput.origin ? { origin: structuredInput.origin } : {}),
-        ...(structuredInput.projectionKind ? { projectionKind: structuredInput.projectionKind } : {}),
-        ...(structuredInput.projectionRef ? { projectionRef: structuredInput.projectionRef } : {}),
-        ...(structuredInput.backendId ? { backendId: structuredInput.backendId } : {}),
-        ...(structuredInput.agentId ? { agentId: structuredInput.agentId } : {}),
-    };
+    // The payload is carried through unchanged. It used to be rebuilt field by field with a
+    // `kind: 'skill'` fallthrough for anything that was not `vendorPlugin`, which meant a
+    // reference of an unknown kind was silently reinterpreted as a skill (INV-4).
+    return { ...structuredInput, tokenText: args.suggestion.text };
 }
 
 function buildEnvelope(args: Readonly<{
     mentions?: readonly ComposerStructuredInputMention[];
+    text?: string;
     attachments?: readonly StructuredInputImageInput[];
+    composerAttachments?: readonly ComposerAttachmentDraftV1[];
 }>): StructuredInputEnvelope | null {
-    const vendorPluginMentions = (args.mentions ?? [])
-        .filter((mention): mention is ComposerVendorPluginMention => mention.kind === 'vendorPlugin')
-        .map(({ vendorPluginRef, label, backendId, agentId }) => ({
-            vendorPluginRef,
-            ...(label ? { label } : {}),
-            ...(backendId ? { backendId } : {}),
-            ...(agentId ? { agentId } : {}),
-        }));
-    const skillMentions = (args.mentions ?? [])
-        .filter((mention): mention is ComposerSkillMention => mention.kind === 'skill')
-        .map(canonicalizeSkillMentionForWrite);
+    const composerMentions = args.mentions ?? [];
+    const writes = composerMentions.map(resolveMentionRefWrite);
+    const canWriteReferences = !writes.some((write) => write.status === 'unreferenceable');
+    const mentionByIdentity = new Map<string, ComposerStructuredInputMention>();
+    const candidateReferences: MentionRefV1[] = [];
+    if (canWriteReferences) {
+        for (let index = 0; index < writes.length; index += 1) {
+            const write = writes[index]!;
+            if (write.status !== 'reference') continue;
+            candidateReferences.push(write.reference);
+            const key = mentionRefIdentityKey(write.reference);
+            if (!mentionByIdentity.has(key)) {
+                mentionByIdentity.set(key, composerMentions[index]!);
+            }
+        }
+    }
+    const sanitizedReferences = sanitizeMentionRefsV1(candidateReferences);
+    const references = typeof args.text === 'string'
+        ? admitMentionRefsV1ForText(args.text, sanitizedReferences)
+        : sanitizedReferences;
+    const vendorPluginMentions: Array<Omit<ComposerVendorPluginMention, 'kind' | 'tokenText'>> = [];
+    const skillMentions: Array<Omit<ComposerSkillMention, 'kind' | 'tokenText'>> = [];
+    if (canWriteReferences) {
+        for (const reference of references) {
+            const mention = mentionByIdentity.get(mentionRefIdentityKey(reference));
+            if (!mention) continue;
+            if (isComposerVendorPluginMention(mention)) {
+                vendorPluginMentions.push({
+                    vendorPluginRef: mention.vendorPluginRef,
+                    ...(mention.label ? { label: mention.label } : {}),
+                    ...(mention.backendId ? { backendId: mention.backendId } : {}),
+                    ...(mention.agentId ? { agentId: mention.agentId } : {}),
+                });
+            } else if (isComposerSkillMention(mention)) {
+                skillMentions.push(canonicalizeSkillMentionForWrite(mention));
+            }
+        }
+    } else {
+        for (const mention of composerMentions) {
+            if (isComposerVendorPluginMention(mention)) {
+                vendorPluginMentions.push({
+                    vendorPluginRef: mention.vendorPluginRef,
+                    ...(mention.label ? { label: mention.label } : {}),
+                    ...(mention.backendId ? { backendId: mention.backendId } : {}),
+                    ...(mention.agentId ? { agentId: mention.agentId } : {}),
+                });
+            } else if (isComposerSkillMention(mention)) {
+                skillMentions.push(canonicalizeSkillMentionForWrite(mention));
+            }
+        }
+    }
     const imageInputs = [...(args.attachments ?? [])];
+    const composerAttachments = [...(args.composerAttachments ?? [])];
 
-    if (vendorPluginMentions.length === 0 && skillMentions.length === 0 && imageInputs.length === 0) {
+    if (
+        references.length === 0
+        && vendorPluginMentions.length === 0
+        && skillMentions.length === 0
+        && imageInputs.length === 0
+        && composerAttachments.length === 0
+    ) {
         return null;
     }
 
     return {
         v: 1,
+        ...(references.length > 0 ? { mentions: references } : {}),
         ...(vendorPluginMentions.length > 0 ? { vendorPluginMentions } : {}),
         ...(skillMentions.length > 0 ? { skillMentions } : {}),
         ...(imageInputs.length > 0 ? { imageInputs } : {}),
+        ...(composerAttachments.length > 0 ? { composerAttachments } : {}),
     };
 }
 
@@ -331,14 +328,17 @@ export function buildStructuredInputMetaOverrides(args: Readonly<{
     mentions?: readonly ComposerStructuredInputMention[];
     text?: string;
     attachments?: readonly StructuredInputImageInput[];
+    composerAttachments?: readonly ComposerAttachmentDraftV1[];
 }>): Record<string, unknown> {
     const text = args.text;
     const survivingMentions = typeof text === 'string'
-        ? (args.mentions ?? []).filter((mention) => tokenSurvives(text, mention))
+        ? (args.mentions ?? []).filter((mention) => structuredInputMentionSurvivesText(text, mention))
         : (args.mentions ?? []);
     const envelope = buildEnvelope({
         mentions: survivingMentions,
+        ...(typeof text === 'string' ? { text } : {}),
         ...(args.attachments ? { attachments: args.attachments } : {}),
+        ...(args.composerAttachments ? { composerAttachments: args.composerAttachments } : {}),
     });
     return envelope ? { happierStructuredInputV1: envelope } : {};
 }
@@ -369,19 +369,23 @@ export function mergeMessageMetaOverrides(
     };
     const leftEnvelope = readStructuredEnvelope(left);
     const rightEnvelope = readStructuredEnvelope(right);
+    const mentions = mergeArrays(leftEnvelope.mentions, rightEnvelope.mentions);
     const vendorPluginMentions = mergeArrays(leftEnvelope.vendorPluginMentions, rightEnvelope.vendorPluginMentions);
     const skillMentions = mergeArrays(leftEnvelope.skillMentions, rightEnvelope.skillMentions);
+    const composerAttachments = mergeArrays(leftEnvelope.composerAttachments, rightEnvelope.composerAttachments);
     const imageInputs = mergeArrays(
         [...(Array.isArray(leftEnvelope.imageInputs) ? leftEnvelope.imageInputs : []), ...(Array.isArray(leftEnvelope.attachments) ? leftEnvelope.attachments : [])],
         [...(Array.isArray(rightEnvelope.imageInputs) ? rightEnvelope.imageInputs : []), ...(Array.isArray(rightEnvelope.attachments) ? rightEnvelope.attachments : [])],
     );
 
-    if (vendorPluginMentions || skillMentions || imageInputs) {
+    if (mentions || vendorPluginMentions || skillMentions || imageInputs || composerAttachments) {
         merged.happierStructuredInputV1 = {
             v: 1,
+            ...(mentions ? { mentions } : {}),
             ...(vendorPluginMentions ? { vendorPluginMentions } : {}),
             ...(skillMentions ? { skillMentions } : {}),
             ...(imageInputs ? { imageInputs } : {}),
+            ...(composerAttachments ? { composerAttachments } : {}),
         };
     }
 

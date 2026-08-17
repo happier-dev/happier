@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { View, ViewStyle, StyleProp } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export interface BadgeGridItem {
     id: string;
@@ -19,10 +19,10 @@ export interface BadgeGridProps {
     style?: StyleProp<ViewStyle>;
 }
 
-const STATUS_ICON: Record<BadgeGridItem['status'], React.ComponentProps<typeof SafeIonicons>['name']> = {
-    positive: 'checkmark-circle',
-    negative: 'close-circle',
-    neutral: 'ellipse',
+const STATUS_ICON: Record<BadgeGridItem['status'], IconName> = {
+    positive: 'check-circle',
+    negative: 'x-circle',
+    neutral: 'circle',
     warning: 'warning',
 };
 
@@ -50,7 +50,7 @@ export const BadgeGrid = React.memo<BadgeGridProps>(({ items, columns = 3, testI
                             accessibilityElementsHidden
                             importantForAccessibility="no"
                         >
-                            <SafeIonicons
+                            <Icon
                                 name={STATUS_ICON[item.status]}
                                 size={16}
                                 color={statusColors[item.status]}

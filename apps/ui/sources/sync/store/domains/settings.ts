@@ -16,6 +16,7 @@ import {
     type AccountSettingsScope,
 } from '../../domains/settings/scope/accountSettingsScope';
 import { areAccountSettingsJsonValuesEqual } from '../../domains/settings/accountSettingsStructuralEquality';
+import { reconcileSettingsReferences } from '../../domains/settings/reconcileSettingsReferences';
 import {
     loadAccountPurchases,
     prepareAccountProfileScopeForActivation,
@@ -133,10 +134,16 @@ function rebuildSessionListIndexesForSettingsChange(
 
 function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainDependencies>(
     state: S,
-    nextSettings: Settings,
+    incomingSettings: Settings,
     nextVersion: number | null,
     nextScope: AccountSettingsScope | null,
 ): S {
+    // Single seam for every settings writer. A server echo re-parses the whole settings document,
+    // so every object/array-valued key arrives as a fresh reference even when nothing changed;
+    // `useSettings`/`useSetting` subscribe shallowly and would re-render app-wide on that echo.
+    // Content always wins — a key is reused only when structurally deep-equal to the previous one.
+    const nextSettings = reconcileSettingsReferences(state.settings, incomingSettings);
+
     safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
 
     const shouldRebuildSessionListIndex = resolveSessionListIndexSettingsImpact(

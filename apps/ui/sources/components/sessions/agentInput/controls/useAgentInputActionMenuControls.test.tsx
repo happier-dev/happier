@@ -54,7 +54,7 @@ describe('useAgentInputActionMenuControls', () => {
                 tint: '#fff',
                 agentId: 'codex' as never,
                 profileLabel: null,
-                profileIcon: 'person-outline',
+                profileIcon: 'user-circle',
                 currentPath: '/repo/current',
                 openCollapsedOptionsPopover: () => {},
                 sessionModeLabel: null,

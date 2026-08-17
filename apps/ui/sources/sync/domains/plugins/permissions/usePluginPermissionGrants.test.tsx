@@ -40,6 +40,7 @@ function pendingRequest(
         createdAt: 1,
         updatedAt: 1,
         ...overrides,
+        subject: overrides.subject ?? { kind: 'general' },
     };
 }
 
@@ -59,6 +60,7 @@ function grant(overrides: Partial<PluginPermissionGrant> = {}): PluginPermission
         createdAt: 2,
         updatedAt: 2,
         ...overrides,
+        subject: overrides.subject ?? { kind: 'general' },
     };
 }
 

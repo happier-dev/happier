@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 import type {
     ActionSettingsToolExposureControlValue,
@@ -37,9 +37,9 @@ function buildExposureItems(params: Readonly<{
     iconColor: string;
 }>): readonly DropdownMenuItem[] {
     const styles = stylesheet;
-    const icon = (name: React.ComponentProps<typeof Ionicons>['name']) => (
+    const icon = (name: IconName) => (
         <View style={styles.optionIcon}>
-            <Ionicons name={name} size={21} color={params.iconColor} />
+            <Icon name={name} size={20} color={params.iconColor} />
         </View>
     );
 
@@ -49,21 +49,21 @@ function buildExposureItems(params: Readonly<{
             testID: `${params.testIDPrefix}:default`,
             title: t(getDefaultExposureTitleKey(params.defaultMode)),
             subtitle: t('settingsActions.toolExposure.options.default.subtitle'),
-            icon: icon('refresh-outline'),
+            icon: icon('arrow-clockwise'),
         },
         {
             id: 'discoverable_only',
             testID: `${params.testIDPrefix}:discoverable_only`,
             title: t('settingsActions.toolExposure.options.discoverableOnly.title'),
             subtitle: t('settingsActions.toolExposure.options.discoverableOnly.subtitle'),
-            icon: icon('search-outline'),
+            icon: icon('magnifying-glass'),
         },
         {
             id: 'direct',
             testID: `${params.testIDPrefix}:direct`,
             title: t('settingsActions.toolExposure.options.direct.title'),
             subtitle: t('settingsActions.toolExposure.options.direct.subtitle'),
-            icon: icon('flash-outline'),
+            icon: icon('lightning'),
         },
     ] satisfies readonly DropdownMenuItem[];
 }
@@ -113,7 +113,7 @@ export const ActionSettingsToolExposureControl = React.memo(function ActionSetti
                 onSelect={(itemId) => props.onChange(itemId as ActionSettingsToolExposureControlValue)}
                 itemTrigger={{
                     title: props.surfaceTitle,
-                    icon: <Ionicons name="construct-outline" size={29} color={theme.colors.text.secondary} />,
+                    icon: <Icon name="wrench" size={29} color={theme.colors.text.secondary} />,
                     subtitle: disabled
                         ? t('settingsActions.toolExposure.disabledSubtitle')
                         : t('settingsActions.toolExposure.subtitle'),

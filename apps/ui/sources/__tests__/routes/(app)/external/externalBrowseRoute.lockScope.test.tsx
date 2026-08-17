@@ -51,7 +51,6 @@ const projection = {
                 sources: [{
                     sourceKind: 'acmeHistory',
                     schema: {
-                        passthrough: true,
                         fields: [
                             { name: 'kind', kind: 'literal', value: 'acmeHistory' },
                             { name: 'scope', kind: 'literal', value: 'default' },
@@ -174,6 +173,7 @@ describe('ExternalSessionsBrowseRoute locked Agent scope', () => {
 
         const state = screen.findByTestId('external-sessions-browse-route-loading');
         expect(state?.props.kind).toBe('loading');
+        expect(state?.props.accessibilitySemantics).toBe('status');
         expect(state?.props.secondaryAction?.label).toBe('Close');
         state?.props.secondaryAction?.onPress();
         expect(routerBackSpy).toHaveBeenCalledOnce();
@@ -191,6 +191,7 @@ describe('ExternalSessionsBrowseRoute locked Agent scope', () => {
 
         const state = screen.findByTestId('external-sessions-browse-route-unavailable');
         expect(state?.props.kind).toBe('unavailable');
+        expect(state?.props.accessibilitySemantics).toBe('alert');
         expect(state?.props.action?.label).toBe('Close');
         state?.props.action?.onPress();
         expect(routerBackSpy).toHaveBeenCalledOnce();

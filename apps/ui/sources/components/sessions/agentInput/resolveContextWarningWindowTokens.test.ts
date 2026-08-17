@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { MetadataSchema } from '@/sync/domains/state/storageTypes';
+import { createProviderBindingSecurityFingerprintV1 } from '@happier-dev/protocol';
 
 import { resolveContextWarningWindowTokens, resolveContextWindowTokens } from './resolveContextWarningWindowTokens';
 
@@ -46,7 +47,7 @@ describe('resolveContextWarningWindowTokens', () => {
                     },
                 ],
             },
-        } as any);
+        });
 
         expect(resolveContextWarningWindowTokens({
             agentId: 'codex',
@@ -74,11 +75,12 @@ describe('resolveContextWarningWindowTokens', () => {
                     },
                 ],
             },
-        } as any);
+        });
 
         expect(resolveContextWarningWindowTokens({
             agentId: 'codex',
             metadata,
+            sessionActive: false,
         } as any)).toBe(245100);
     });
 
@@ -86,6 +88,7 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWarningWindowTokens({
             agentId: 'claude',
             metadata: null,
+            sessionActive: false,
         } as any)).toBe(190000);
     });
 
@@ -111,8 +114,34 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWarningWindowTokens({
             agentId: 'claude',
             metadata,
+            sessionActive: false,
         } as any)).toBe(950000);
     });
+
+    it.each(['claude-sonnet-5', 'claude-mythos-5'])(
+        'uses the exact always-on 1M window for a proposed native %s session',
+        (modelId) => {
+            const metadata = MetadataSchema.parse({
+                path: '/tmp/project',
+                host: 'localhost',
+                modelSelectionIntentV1: {
+                    v: 1,
+                    updatedAt: 2,
+                    selection: {
+                        agentTargetKey: 'backend:claude',
+                        providerConnectionId: null,
+                        modelId,
+                    },
+                },
+            });
+
+            expect(resolveContextWarningWindowTokens({
+                agentId: 'claude',
+                metadata,
+                sessionActive: false,
+            })).toBe(950_000);
+        },
+    );
 
     it('prefers reported Claude session model context window over the static Opus catalog fallback', () => {
         const metadata = MetadataSchema.parse({
@@ -141,6 +170,7 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWarningWindowTokens({
             agentId: 'claude',
             metadata,
+            sessionActive: false,
         } as any)).toBe(190000);
     });
 
@@ -180,7 +210,225 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWarningWindowTokens({
             agentId: 'claude',
             metadata,
+            sessionActive: false,
         } as any)).toBe(950000);
+    });
+
+    it('keeps the active runtime context window while a different native model awaits restart', () => {
+        const currentRunnerProcessIdentity = {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        };
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'claude-opus-4-7',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-6',
+                activeSelectionV1: {
+                    v: 1,
+                    selection: {
+                        agentTargetKey: 'backend:claude',
+                        providerConnectionId: null,
+                        modelId: 'claude-sonnet-4-6',
+                    },
+                    source: 'runtime_readback',
+                    runner: currentRunnerProcessIdentity,
+                },
+                availableModels: [
+                    {
+                        id: 'claude-sonnet-4-6',
+                        name: 'Sonnet 4.6',
+                        contextWindowTokens: 200_000,
+                    },
+                    {
+                        id: 'claude-opus-4-7',
+                        name: 'Opus 4.7',
+                        contextWindowTokens: 1_000_000,
+                    },
+                ],
+            },
+        });
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            metadata,
+            sessionActive: true,
+            currentRunnerProcessIdentity,
+        })).toBe(190_000);
+    });
+
+    it('uses exact active context truth for a configured backend target', () => {
+        const agentTargetKey = 'backend:claude:configured:claude';
+        const currentRunnerProcessIdentity = {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        };
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey,
+                    providerConnectionId: null,
+                    modelId: 'claude-opus-4-7',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-6',
+                activeSelectionV1: {
+                    v: 1,
+                    selection: {
+                        agentTargetKey,
+                        providerConnectionId: null,
+                        modelId: 'claude-sonnet-4-6',
+                    },
+                    source: 'runtime_readback',
+                    runner: currentRunnerProcessIdentity,
+                },
+                availableModels: [{
+                    id: 'claude-sonnet-4-6',
+                    name: 'Sonnet 4.6',
+                    contextWindowTokens: 200_000,
+                }],
+            },
+        });
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            agentTargetKey,
+            metadata,
+            sessionActive: true,
+            currentRunnerProcessIdentity,
+        })).toBe(190_000);
+    });
+
+    it('does not promote a fallback current-model catalog entry into active context truth', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'proposed-custom-model',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-opus-4-7',
+                availableModels: [
+                    {
+                        id: 'claude-opus-4-7',
+                        name: 'Fallback Opus 4.7',
+                        contextWindowTokens: 1_000_000,
+                    },
+                    {
+                        id: 'proposed-custom-model',
+                        name: 'Proposed custom model',
+                        contextWindowTokens: 400_000,
+                    },
+                ],
+            },
+        });
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            metadata,
+            sessionActive: true,
+        })).toBeNull();
+    });
+
+    it('uses proposed intent for the explicit next-launch disposition', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'claude-opus-4-7',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-6',
+                availableModels: [
+                    {
+                        id: 'claude-sonnet-4-6',
+                        name: 'Sonnet 4.6',
+                        contextWindowTokens: 200_000,
+                    },
+                    {
+                        id: 'claude-opus-4-7',
+                        name: 'Opus 4.7',
+                        contextWindowTokens: 1_000_000,
+                    },
+                ],
+            },
+        });
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            metadata,
+            sessionActive: false,
+        })).toBe(950_000);
+    });
+
+    it('does not infer next-launch intent when the session disposition is unknown', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'claude-opus-4-7',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-6',
+                availableModels: [{
+                    id: 'claude-opus-4-7',
+                    name: 'Proposed Opus 4.7',
+                    contextWindowTokens: 1_000_000,
+                }],
+            },
+        });
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            metadata,
+        })).toBeNull();
     });
 
     it('returns null when the provider metadata does not expose a valid context window', () => {
@@ -204,6 +452,7 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWarningWindowTokens({
             agentId: 'opencode',
             metadata,
+            sessionActive: false,
         } as any)).toBeNull();
     });
 
@@ -252,7 +501,170 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWindowTokens({
             agentId: 'claude',
             metadata,
+            sessionActive: false,
         } as any)).toBe(128_000);
+    });
+
+    it('uses a V2-proven active Provider descriptor and fails closed when the witness mismatches', () => {
+        const currentRunnerProcessIdentity = {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        };
+        const bindingSecurityFingerprint = createProviderBindingSecurityFingerprintV1({
+            agentTargetKey: 'backend:claude',
+            connectionId: 'pc_provider',
+            modelId: 'provider-active',
+            modelCapabilities: {},
+            endpointTemplateId: 'responses',
+            endpointUrl: 'https://provider.example/v1',
+            protocol: 'openai-responses',
+            publicHeaders: { 'x-provider': 'openrouter' },
+            materialization: 'engineConfig',
+            adapterBindingKey: 'openrouter',
+            credentialDestination: {
+                kind: 'httpHeader',
+                name: 'authorization',
+                format: 'bearer',
+            },
+            compatibilityFingerprint: 'compatibility-v1',
+            adapterVersion: 1,
+        });
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            providerBindingV1: {
+                v: 1,
+                connectionId: 'pc_provider',
+                contributionKey: 'plugin.openrouter/openrouter',
+                connectionRevision: 3,
+                protocol: 'openai-responses',
+                materialization: 'engineConfig',
+                adapterBindingKey: 'openrouter',
+                compatibilityFingerprint: 'compatibility-v1',
+                bindingSecurityFingerprint,
+                displaySnapshot: {
+                    providerName: 'OpenRouter',
+                    connectionName: 'Work',
+                    connectionRole: 'named',
+                    connectionDisplayNameMode: 'custom',
+                },
+                model: {
+                    id: 'provider-active',
+                    name: 'Provider Active',
+                    contextWindowTokens: 400_000,
+                },
+                runtimeBindingBasis: {
+                    v: 1,
+                    deployment: { kind: 'external' },
+                    agentTargetKey: 'backend:claude',
+                    connectionId: 'pc_provider',
+                    contributionKey: 'plugin.openrouter/openrouter',
+                    endpoint: {
+                        endpointTemplateId: 'responses',
+                        normalizedUrl: 'https://provider.example/v1',
+                        protocol: 'openai-responses',
+                        publicHeaders: { 'x-provider': 'openrouter' },
+                    },
+                    runtimeCredentialTransport: {
+                        id: 'runtime-bearer',
+                        protocols: ['openai-responses'],
+                        uses: ['runtime'],
+                        destination: {
+                            kind: 'httpHeader',
+                            name: 'authorization',
+                            format: 'bearer',
+                        },
+                    },
+                    prepared: {
+                        v: 1,
+                        materialization: 'engineConfig',
+                        adapterBindingKey: 'openrouter',
+                    },
+                    adapterVersion: 1,
+                    credentialAuthorization: {
+                        connectionSecurityFingerprint: 'connection-security-v1',
+                        grantFingerprint: 'grant-v1',
+                        selectedSecretBindingId: 'binding-v1',
+                        selectedSecretRecordFingerprint: 'record-v1',
+                    },
+                    agentSupport: {
+                        acceptsProtocols: ['openai-responses'],
+                        required: { streaming: true },
+                        credentialSupport: {
+                            supportsNoAuth: false,
+                            apiKeyTransports: [{
+                                protocol: 'openai-responses',
+                                destination: {
+                                    kind: 'httpHeader',
+                                    names: ['authorization'],
+                                    formats: ['bearer'],
+                                },
+                            }],
+                        },
+                        authIsolation: {
+                            suppressConnectedServiceIds: [],
+                            ownedEnvKeys: ['OPENAI_API_KEY'],
+                        },
+                        materialization: 'engineConfig',
+                        applyPolicy: 'live',
+                        supportsFreeformModelIds: true,
+                    },
+                },
+            },
+            modelSelectionIntentV1: {
+                v: 1,
+                updatedAt: 2,
+                selection: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: 'pc_provider',
+                    modelId: 'provider-proposed',
+                },
+            },
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'provider-active',
+                activeSelectionV1: {
+                    v: 1,
+                    selection: {
+                        agentTargetKey: 'backend:claude',
+                        providerConnectionId: 'pc_provider',
+                        modelId: 'provider-active',
+                    },
+                    source: 'runtime_readback',
+                    runner: currentRunnerProcessIdentity,
+                },
+                availableModels: [
+                    {
+                        id: 'provider-active',
+                        name: 'Provider Active',
+                        contextWindowTokens: 400_000,
+                    },
+                    {
+                        id: 'provider-proposed',
+                        name: 'Provider Proposed',
+                        contextWindowTokens: 1_000_000,
+                    },
+                ],
+            },
+        });
+
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
+            metadata,
+            sessionActive: true,
+            currentRunnerProcessIdentity,
+        })).toBe(400_000);
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
+            metadata,
+            sessionActive: true,
+            currentRunnerProcessIdentity: {
+                pid: 123,
+                processStartTimeMs: 1_001,
+            },
+        })).toBeNull();
     });
 
     it('keeps Provider-bound context unknown instead of applying Claude defaults', () => {
@@ -299,6 +711,7 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWindowTokens({
             agentId: 'claude',
             metadata,
+            sessionActive: false,
         } as any)).toBeNull();
     });
 });
@@ -308,6 +721,7 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
         expect(resolveContextWindowTokens({
             agentId: 'claude',
             metadata: null,
+            sessionActive: false,
             usageData: { contextSize: 733_000 },
         } as any)).toBe(1_000_000);
     });
@@ -316,6 +730,7 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
         expect(resolveContextWindowTokens({
             agentId: 'claude',
             metadata: null,
+            sessionActive: false,
             usageData: { contextSize: 150_000 },
         } as any)).toBe(200_000);
     });
@@ -342,6 +757,7 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
         expect(resolveContextWindowTokens({
             agentId: 'claude',
             metadata,
+            sessionActive: false,
             usageData: { contextSize: 733_000 },
         } as any)).toBe(1_000_000);
     });
@@ -350,6 +766,7 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
         expect(resolveContextWindowTokens({
             agentId: 'claude',
             metadata: null,
+            sessionActive: false,
             usageData: { contextSize: 1_200_000 },
         } as any)).toBe(1_200_000);
     });
@@ -358,6 +775,7 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
         expect(resolveContextWindowTokens({
             agentId: 'codex',
             metadata: null,
+            sessionActive: false,
             usageData: { contextSize: 733_000 },
         } as any)).toBe(372_000);
     });

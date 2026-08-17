@@ -5,7 +5,6 @@ import { Text } from '@/components/ui/text/Text';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
-import { Typography } from "@/constants/Typography";
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -35,15 +34,11 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { isTauriDesktop } from '@/utils/platform/tauri';
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { SettingsBelowFoldSections } from '@/components/settings/SettingsBelowFoldSections';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { useScannedAuthUrlProcessor } from '@/hooks/auth/useScannedAuthUrlProcessor';
-import { AppPluginSurfacePlacementStack } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-
-const Ionicons = SafeIonicons;
+import { Icon } from '@/components/ui/icons/Icon';
 
 const DEFER_BELOW_FOLD_SETTINGS_SECTIONS_DELAY_MS = 0;
 const DEFER_BELOW_FOLD_SETTINGS_STAGE_DELAY_MS = 16;
@@ -59,20 +54,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const voiceEntitlement = useEntitlement('voice');
     const isPro = __DEV__ || voiceEntitlement;
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
-    const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
-    const memorySearchEnabled = useFeatureEnabled('memory.search');
-    const voiceEnabled = useFeatureEnabled('voice');
-    const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
-    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
-    const showFilesAndSourceControlGroup = sourceControlEnabled || attachmentsUploadsEnabled;
-    const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
-    const petsCompanionEnabled = useFeatureEnabled('pets.companion');
-    const mcpServersEnabled = useFeatureEnabled('mcp.servers');
-    const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
     const [showRateUs, setShowRateUs] = React.useState(false);
-    const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.discoverable !== false;
@@ -89,9 +72,11 @@ export const SettingsView = React.memo(function SettingsView() {
             });
         });
     }, [router]);
+    const navigateCatalogRoute = React.useCallback((route: string) => {
+        pushRoute(route as Parameters<typeof router.push>[0]);
+    }, [pushRoute]);
 
     const showHiddenSettingsButtons = devModeEnabled;
-    const showDesktopSettings = isTauriDesktop();
     const [belowFoldSettingsStage, setBelowFoldSettingsStage] = React.useState(0);
 
     const { connectTerminal, isLoading } = useConnectTerminal();
@@ -207,87 +192,6 @@ export const SettingsView = React.memo(function SettingsView() {
         resetTimeout: 2000,
     });
 
-    const profileAndAccountSection = React.useMemo(() => (
-        <ItemGroup title={t('settings.profileAndAccount')}>
-            <Item
-                title={t('settings.account')}
-                subtitle={t('settings.accountSubtitle')}
-                icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />}
-                onPress={() => router.push(SETTINGS_ROUTES.account)}
-            />
-            {useProfiles ? (
-                <Item
-                    title={t('settings.secrets')}
-                    subtitle={t('settings.secretsSubtitle')}
-                    icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.purple} />}
-                    onPress={() => router.push(SETTINGS_ROUTES.secrets)}
-                />
-            ) : null}
-            {usageReportingEnabled ? (
-                <Item
-                    title={t('settings.usage')}
-                    subtitle={t('settings.usageSubtitle')}
-                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push(SETTINGS_ROUTES.usage)}
-                />
-            ) : null}
-            <Item
-                title={t('settings.machines')}
-                icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.orange} />}
-                onPress={() => pushRoute(SETTINGS_ROUTES.machines)}
-            />
-            {showDesktopSettings && remoteHostsManagementEnabled ? (
-                <Item
-                    title={t('settings.remoteHostsTitle')}
-                    icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => pushRoute(SETTINGS_ROUTES.remoteHosts)}
-                />
-            ) : null}
-        </ItemGroup>
-    ), [
-        pushRoute,
-        remoteHostsManagementEnabled,
-        router,
-        showDesktopSettings,
-        theme.colors.accent.blue,
-        theme.colors.accent.orange,
-        theme.colors.accent.purple,
-        usageReportingEnabled,
-        useProfiles,
-    ]);
-
-    const generalSection = React.useMemo(() => (
-        <ItemGroup title={t('settings.general')}>
-            <Item
-                title={t('settings.appearance')}
-                subtitle={t('settings.appearanceSubtitle')}
-                icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.indigo} />}
-                onPress={() => pushRoute(SETTINGS_ROUTES.appearance)}
-            />
-            {petsCompanionEnabled ? (
-                <Item
-                    testID="settings-pets-row"
-                    title={t('settings.pets')}
-                    subtitle={t('settings.petsSubtitle')}
-                    icon={<Ionicons name="paw-outline" size={29} color={theme.colors.accent.green} />}
-                    onPress={() => pushRoute(SETTINGS_ROUTES.pets)}
-                />
-            ) : null}
-            <Item
-                title={t('settings.featuresTitle')}
-                subtitle={t('settings.featuresSubtitle')}
-                icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
-                onPress={() => pushRoute(SETTINGS_ROUTES.features)}
-            />
-        </ItemGroup>
-    ), [
-        petsCompanionEnabled,
-        pushRoute,
-        theme.colors.accent.green,
-        theme.colors.accent.indigo,
-        theme.colors.accent.orange,
-    ]);
-
     return (
         <ItemList style={{ paddingTop: 0 }}>
             {/* App Info Header */}
@@ -335,11 +239,6 @@ export const SettingsView = React.memo(function SettingsView() {
                 />
             ) : null}
 
-            <AppPluginSurfacePlacementStack
-                placement="app.settingsPage"
-                testID="settings-plugin-surface-placement-stack"
-            />
-
             {/* Add your phone (desktop/web only) */}
             {(isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb)) &&
             auth.isAuthenticated ? (
@@ -348,7 +247,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         testID="settings-add-your-phone-shortcut"
                         title={t('settings.addYourPhone')}
                         subtitle={t('settings.addYourPhoneSubtitle')}
-                        icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="device-mobile" size={29} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/settings/add-phone')}
                     />
                 </ItemGroup>
@@ -360,7 +259,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         testID="settings-connect-terminal-scan"
                         title={t('settings.scanQrCodeToAuthenticate')}
-                        icon={<Ionicons name="qr-code-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="qr-code" size={29} color={theme.colors.accent.blue} />}
                         onPress={connectTerminal}
                         loading={isLoading}
                         showChevron={false}
@@ -368,7 +267,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         testID="settings-connect-terminal-enter-url"
                         title={t('connect.enterUrlManually')}
-                        icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="link" size={29} color={theme.colors.accent.blue} />}
                         onPress={async () => {
                             const url = await Modal.prompt(
                                 t('modals.authenticateTerminal'),
@@ -393,7 +292,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         title={t('settings.supportUs')}
                         subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
-                        icon={<Ionicons name="heart" size={29} color={theme.colors.state.danger.foreground} />}
+                        icon={<Icon name="heart" size={29} color={theme.colors.state.danger.foreground} />}
                         showChevron={false}
                         onPress={handleSupportUs}
                     />
@@ -405,44 +304,27 @@ export const SettingsView = React.memo(function SettingsView() {
                 <Item
                     title={t('navigation.friends')}
                     subtitle={t('friends.manageFriends')}
-                    icon={<Ionicons name="people-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="users" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => router.push('/friends')}
                 />
             </ItemGroup> */}
 
-            {/* Profile & Account */}
-            {profileAndAccountSection}
-
-            {/* General */}
-            {generalSection}
-
-            {belowFoldSettingsStage > 0 ? (
-                <SettingsBelowFoldSections
-                    appVersion={appVersion}
-                    attachmentsUploadsEnabled={attachmentsUploadsEnabled}
-                    automationsNeedLocalEnablement={automationsNeedLocalEnablement}
-                    devModeEnabled={devModeEnabled}
-                    executionRunsEnabled={executionRunsEnabled}
-                    externalSessionsEnabled={externalSessionsEnabled}
-                    handleGitHub={handleGitHub}
-                    handleReportIssue={handleReportIssue}
-                    handleVersionClick={handleVersionClick}
-                    mcpServersEnabled={mcpServersEnabled}
-                    memorySearchEnabled={memorySearchEnabled}
-                    promptsLibraryEnabled={promptsLibraryEnabled}
-                    router={router}
-                    showAutomations={showAutomations}
-                    showChangelog={showChangelog}
-                    showFilesAndSourceControlGroup={showFilesAndSourceControlGroup}
-                    showRateUs={showRateUs}
-                    sourceControlEnabled={sourceControlEnabled}
-                    stage={belowFoldSettingsStage}
-                    terminalUseTmux={terminalUseTmux}
-                    theme={theme}
-                    useProfiles={useProfiles}
-                    voiceEnabled={voiceEnabled}
-                />
-            ) : null}
+            <SettingsBelowFoldSections
+                appVersion={appVersion}
+                automationsNeedLocalEnablement={automationsNeedLocalEnablement}
+                devModeEnabled={devModeEnabled}
+                handleGitHub={handleGitHub}
+                handleReportIssue={handleReportIssue}
+                handleVersionClick={handleVersionClick}
+                onNavigate={navigateCatalogRoute}
+                router={router}
+                showAutomations={showAutomations}
+                showChangelog={showChangelog}
+                showRateUs={showRateUs}
+                stage={belowFoldSettingsStage}
+                terminalUseTmux={terminalUseTmux}
+                theme={theme}
+            />
 
         </ItemList>
     );

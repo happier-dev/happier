@@ -4,6 +4,7 @@ import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/se
 import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
+import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 import type { CreateSessionFromWorkspaceScopeOptions } from './resolveSessionListHeaderActionHandlers';
 
@@ -40,21 +41,28 @@ export function useSessionListNavigationActions() {
             scopeHint: WorkspaceScopeHint,
             options?: CreateSessionFromWorkspaceScopeOptions,
         ) {
+            const seedSessionId = normalizeString(options?.seedSessionId);
             const seedSession = rememberLastProjectSessionSelections
-                ? resolveSeedSession(options?.seedSessionId)
+                ? resolveSeedSession(seedSessionId)
                 : null;
+            const seedMachineTarget = seedSessionId
+                ? readMachineControlTargetForSession(seedSessionId)
+                : null;
+            const directory = seedMachineTarget?.machineId === scopeHint.machineId
+                ? seedMachineTarget.basePath
+                : scopeHint.rootPath;
             if (seedSession) {
                 const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
                     session: seedSession,
                     machineId: scopeHint.machineId,
-                    directoryOverride: scopeHint.rootPath,
+                    directoryOverride: directory,
                 }));
                 router.push({
                     pathname: '/new',
                     params: {
                         dataId,
                         machineId: scopeHint.machineId,
-                        directory: scopeHint.rootPath,
+                        directory,
                         ...(scopeHint.serverId ? { spawnServerId: scopeHint.serverId } : {}),
                     },
                 } as any);
@@ -64,7 +72,7 @@ export function useSessionListNavigationActions() {
                 pathname: '/new',
                 params: {
                     machineId: scopeHint.machineId,
-                    directory: scopeHint.rootPath,
+                    directory,
                     ...(scopeHint.serverId ? { spawnServerId: scopeHint.serverId } : {}),
                 },
             } as any);

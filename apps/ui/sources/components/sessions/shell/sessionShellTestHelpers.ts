@@ -149,6 +149,7 @@ export function installSessionShellCommonModuleMocks(
                     update('');
                     return true;
                 }),
+                readLatestDraftValue: () => state.currentValue,
                 setDraftValue: vi.fn((nextValueOrUpdater: string | ((currentValue: string) => string)) => {
                     update(typeof nextValueOrUpdater === 'function'
                         ? nextValueOrUpdater(state.currentValue)

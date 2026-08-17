@@ -2,14 +2,20 @@ import type { ReactNode } from 'react';
 
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { resolveSessionModelSelectionDisposition } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { tLoose } from '@/text';
 import {
+    isSupportedRuntimeDescriptorProviderId,
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
     readMetadataAliasValue,
+    resolveAgentConfiguredRuntimeKind,
+    resolvePersistedProviderSessionBackendMode,
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
+import { mergeSpawnConfigOptionAliases } from '@happier-dev/protocol';
 
 import type {
     AgentSessionComposerNonSteerablePayloadContext,
@@ -144,8 +150,6 @@ export type PluginUiBehaviorDescriptor = Readonly<{
             modeValues?: readonly string[];
             activeModeValues?: readonly string[];
             activeWhenNoPersistedMode?: boolean;
-            aliases?: Readonly<Record<string, string>>;
-            modeCandidates?: readonly ModeCandidatePathDescriptor[];
             persistedGoalSnapshot?: Readonly<{
                 path?: readonly string[];
                 itemKind?: string;
@@ -189,9 +193,6 @@ export type PluginUiBehaviorDescriptor = Readonly<{
             providerId?: string;
             outputKey?: string;
             values?: readonly string[];
-            aliases?: Readonly<Record<string, string>>;
-            settingsCandidates?: readonly ModeCandidatePathDescriptor[];
-            metadataCandidates?: readonly ModeCandidatePathDescriptor[];
         }>;
         environmentVariables?: unknown;
     }>;
@@ -221,22 +222,10 @@ type AgentExperimentSwitchDescriptor = Readonly<{
     when?: DescriptorCondition;
 }>;
 
-type ModeCandidatePathDescriptor = Readonly<{
-    path?: readonly string[];
-    valueWhenTrue?: string;
-    required?: Readonly<{
-        path?: readonly string[];
-        equals?: string;
-    }>;
-}>;
-
 type SessionExtrasDescriptor = Readonly<{
     providerId: string;
     outputKey: string;
     values: readonly string[];
-    aliases?: Readonly<Record<string, string>>;
-    settingsCandidates: readonly ModeCandidatePathDescriptor[];
-    metadataCandidates: readonly ModeCandidatePathDescriptor[];
 }>;
 
 type EditableGoalsDescriptor = Readonly<{
@@ -248,8 +237,6 @@ type EditableGoalsDescriptor = Readonly<{
     modeValues: readonly string[];
     activeModeValues: readonly string[];
     activeWhenNoPersistedMode: boolean;
-    aliases?: Readonly<Record<string, string>>;
-    modeCandidates: readonly ModeCandidatePathDescriptor[];
     persistedGoalSnapshot?: Readonly<{
         path: readonly string[];
         itemKind: string;
@@ -351,21 +338,6 @@ function evaluateDescriptorCondition(
     return false;
 }
 
-function readModeCandidatePath(value: unknown): ModeCandidatePathDescriptor | null {
-    if (!isRecord(value)) return null;
-    const path = readStringArray(value.path);
-    const valueWhenTrue = readString(value.valueWhenTrue);
-    const required = isRecord(value.required) ? value.required : null;
-    const requiredPath = readStringArray(required?.path);
-    const requiredEquals = readString(required?.equals);
-    if (path.length === 0) return null;
-    return {
-        path,
-        ...(valueWhenTrue ? { valueWhenTrue } : {}),
-        ...(requiredPath.length > 0 && requiredEquals ? { required: { path: requiredPath, equals: requiredEquals } } : {}),
-    };
-}
-
 function readSessionExtrasDescriptor(
     value: unknown,
     diagnostics: UiProjectionDiagnostic[],
@@ -374,31 +346,11 @@ function readSessionExtrasDescriptor(
     const providerId = readString(value.providerId);
     const outputKey = readString(value.outputKey);
     const values = readStringArray(value.values);
-    const aliases = isRecord(value.aliases) ? Object.fromEntries(
-        Object.entries(value.aliases).flatMap(([key, aliasValue]) => {
-            const normalizedKey = readString(key);
-            const normalizedValue = readString(aliasValue);
-            return normalizedKey && normalizedValue ? [[normalizedKey, normalizedValue] as const] : [];
-        }),
-    ) : undefined;
-    const settingsCandidates = Array.isArray(value.settingsCandidates)
-        ? value.settingsCandidates.flatMap((entry) => {
-            const candidate = readModeCandidatePath(entry);
-            return candidate ? [candidate] : [];
-        })
-        : [];
-    const metadataCandidates = Array.isArray(value.metadataCandidates)
-        ? value.metadataCandidates.flatMap((entry) => {
-            const candidate = readModeCandidatePath(entry);
-            return candidate ? [candidate] : [];
-        })
-        : [];
-
-    if (!providerId || !outputKey || values.length === 0 || settingsCandidates.length === 0) {
+    if (!providerId || !outputKey || values.length === 0) {
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_MALFORMED_DESCRIPTOR',
             'payload.sessionExtras',
-            'Session extras descriptors require provider id, output key, allowed values, and settings candidates.',
+            'Session extras descriptors require provider id, output key, and allowed values.',
         ));
         return null;
     }
@@ -407,9 +359,6 @@ function readSessionExtrasDescriptor(
         providerId,
         outputKey,
         values,
-        aliases,
-        settingsCandidates,
-        metadataCandidates,
     };
 }
 
@@ -422,43 +371,12 @@ function readValueAtPath(root: unknown, path: readonly string[]): unknown {
     return current;
 }
 
-function pathRequirementMatches(root: unknown, candidate: ModeCandidatePathDescriptor): boolean {
-    const required = candidate.required;
-    if (!required) return true;
-    return readString(readValueAtPath(root, required.path ?? [])) === required.equals;
-}
-
 function normalizeSessionExtraMode(
     descriptor: SessionExtrasDescriptor,
     value: unknown,
 ): string | null {
-    const normalized = normalizeDescriptorValue(value, descriptor.aliases);
+    const normalized = normalizeDescriptorValue(value, undefined);
     return normalized && descriptor.values.includes(normalized) ? normalized : null;
-}
-
-function readModeCandidate(
-    root: unknown,
-    candidate: ModeCandidatePathDescriptor,
-    descriptor: SessionExtrasDescriptor,
-): string | null {
-    if (!pathRequirementMatches(root, candidate)) return null;
-    const rawValue = readValueAtPath(root, candidate.path ?? []);
-    if (candidate.valueWhenTrue && rawValue === true) {
-        return normalizeSessionExtraMode(descriptor, candidate.valueWhenTrue);
-    }
-    return normalizeSessionExtraMode(descriptor, rawValue);
-}
-
-function resolveSessionExtraModeFromCandidates(
-    root: unknown,
-    candidates: readonly ModeCandidatePathDescriptor[],
-    descriptor: SessionExtrasDescriptor,
-): string | null {
-    for (const candidate of candidates) {
-        const value = readModeCandidate(root, candidate, descriptor);
-        if (value) return value;
-    }
-    return null;
 }
 
 function createSessionExtrasPayloadBehavior(
@@ -467,19 +385,37 @@ function createSessionExtrasPayloadBehavior(
     const buildExtras = (mode: string | null): Record<string, unknown> => (
         mode ? { [descriptor.outputKey]: mode } : {}
     );
-    const resolveSettingsMode = (settings: Readonly<Record<string, unknown>>) => resolveSessionExtraModeFromCandidates(
-        settings,
-        descriptor.settingsCandidates,
-        descriptor,
+    const resolveSettingsMode = (settings: Readonly<Record<string, unknown>>) => (
+        isSupportedRuntimeDescriptorProviderId(descriptor.providerId)
+            ? normalizeSessionExtraMode(descriptor, resolveAgentConfiguredRuntimeKind({
+                agentId: descriptor.providerId,
+                accountSettings: settings as Record<string, unknown>,
+            }))
+            : null
     );
     const resolveSessionMode = (session: { metadata?: Record<string, unknown> | null } | null | undefined) => (
-        resolveSessionExtraModeFromCandidates(readOwnerMetadataFromSessionLike(session), descriptor.metadataCandidates, descriptor)
+        isSupportedRuntimeDescriptorProviderId(descriptor.providerId)
+            ? normalizeSessionExtraMode(descriptor, resolvePersistedProviderSessionBackendMode({
+                agentId: descriptor.providerId,
+                metadata: readOwnerMetadataFromSessionLike(session),
+            }))
+            : null
     );
 
     return {
-        buildSpawnSessionExtras: ({ agentId, settings }) => (
-            agentId === descriptor.providerId ? buildExtras(resolveSettingsMode(settings)) : {}
-        ),
+        buildSpawnSessionExtras: ({ agentId, settings, sessionConfigOptionOverrides, updatedAt }) => {
+            if (agentId !== descriptor.providerId) return {};
+            const mode = resolveSettingsMode(settings);
+            if (!mode) return {};
+            return {
+                ...buildExtras(mode),
+                sessionConfigOptionOverrides: mergeSpawnConfigOptionAliases({
+                    sessionConfigOptionOverrides: sessionConfigOptionOverrides ?? undefined,
+                    configOptions: { [descriptor.outputKey]: mode },
+                    updatedAt,
+                }),
+            };
+        },
         buildResumeSessionExtras: ({ agentId, settings, session }) => (
             agentId === descriptor.providerId
                 ? buildExtras(resolveSessionMode(session) ?? resolveSettingsMode(settings))
@@ -501,19 +437,6 @@ function readEditableGoalsDescriptor(
     const providerId = readString(value.providerId);
     const modeValues = readStringArray(value.modeValues);
     const activeModeValues = readStringArray(value.activeModeValues);
-    const aliases = isRecord(value.aliases) ? Object.fromEntries(
-        Object.entries(value.aliases).flatMap(([key, aliasValue]) => {
-            const normalizedKey = readString(key);
-            const normalizedValue = readString(aliasValue);
-            return normalizedKey && normalizedValue ? [[normalizedKey, normalizedValue] as const] : [];
-        }),
-    ) : undefined;
-    const modeCandidates = Array.isArray(value.modeCandidates)
-        ? value.modeCandidates.flatMap((entry) => {
-            const candidate = readModeCandidatePath(entry);
-            return candidate ? [candidate] : [];
-        })
-        : [];
     const persistedGoalSnapshot = isRecord(value.persistedGoalSnapshot)
         ? {
             path: readStringArray(value.persistedGoalSnapshot.path),
@@ -551,17 +474,15 @@ function readEditableGoalsDescriptor(
             modeValues,
             activeModeValues,
             activeWhenNoPersistedMode: value.activeWhenNoPersistedMode === true,
-            aliases,
-            modeCandidates,
             persistedGoalSnapshot: validPersistedGoalSnapshot,
         };
     }
 
-    if (!providerId || modeValues.length === 0 || activeModeValues.length === 0 || modeCandidates.length === 0) {
+    if (!providerId || modeValues.length === 0 || activeModeValues.length === 0) {
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_MALFORMED_DESCRIPTOR',
             'workState.editableGoals',
-            'Editable-goals descriptors require provider id, mode values, active mode values, and mode candidates.',
+            'Editable-goals descriptors require provider id, mode values, and active mode values.',
         ));
         return null;
     }
@@ -571,8 +492,6 @@ function readEditableGoalsDescriptor(
         modeValues,
         activeModeValues,
         activeWhenNoPersistedMode: value.activeWhenNoPersistedMode === true,
-        aliases,
-        modeCandidates,
         ...(validPersistedGoalSnapshot ? { persistedGoalSnapshot: validPersistedGoalSnapshot } : {}),
     };
 }
@@ -641,15 +560,6 @@ function createWorkStateBehavior(
 ): AgentUiBehavior['workState'] | undefined {
     const editableGoals = readEditableGoalsDescriptor(descriptor.workState?.editableGoals, diagnostics);
     if (!editableGoals) return undefined;
-    const modeReaderDescriptor: SessionExtrasDescriptor = {
-        providerId: editableGoals.providerId,
-        outputKey: 'mode',
-        values: editableGoals.modeValues,
-        aliases: editableGoals.aliases,
-        settingsCandidates: editableGoals.modeCandidates,
-        metadataCandidates: editableGoals.modeCandidates,
-    };
-
     const supportsEditableGoals = (ctx: { agentId: string; session: EditableGoalsSession }): boolean => {
         if (ctx.agentId !== editableGoals.providerId) return false;
         const session = ctx.session;
@@ -661,11 +571,12 @@ function createWorkStateBehavior(
             if (session.active === true) return readLiveGoalActionCapabilityProfile(session) !== null;
             return hasEditableGoalCapability(metadata, editableGoals);
         }
-        const mode = resolveSessionExtraModeFromCandidates(
-            metadata,
-            editableGoals.modeCandidates,
-            modeReaderDescriptor,
-        );
+        const mode = isSupportedRuntimeDescriptorProviderId(editableGoals.providerId)
+            ? resolvePersistedProviderSessionBackendMode({
+                agentId: editableGoals.providerId,
+                metadata,
+            })
+            : null;
         if (mode) return editableGoals.activeModeValues.includes(mode);
         if (editableGoals.activeWhenNoPersistedMode && session.active === true) return true;
         return hasPersistedGoalWorkState(metadata, editableGoals);
@@ -738,16 +649,6 @@ function readObjectUpdatedAt(value: unknown): number | null {
     return isRecord(value) ? readFiniteNumber(value.updatedAt) : null;
 }
 
-function readMaxUpdatedAt(values: readonly unknown[]): number | null {
-    let max: number | null = null;
-    for (const value of values) {
-        const updatedAt = readObjectUpdatedAt(value);
-        if (updatedAt == null) continue;
-        max = max == null ? updatedAt : Math.max(max, updatedAt);
-    }
-    return max;
-}
-
 function hasOwnField(value: unknown, key: string): boolean {
     return isRecord(value) && Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -805,37 +706,25 @@ function readSessionField(
     return (session as unknown as Record<string, unknown>)[key];
 }
 
-function isNonDefaultValue(value: unknown): boolean {
-    const normalized = readString(value);
-    return Boolean(normalized && normalized !== 'default');
-}
-
 function hasFreshModelOverride(ctx: AgentSessionComposerNonSteerablePayloadContext): boolean {
     const metadata = readOwnerMetadataFromSessionLike(ctx.session) ?? {};
-    const modelSourceUpdatedAt = readMaxUpdatedAt([
-        metadata.sessionModelsV1,
-        metadata.acpSessionModelsV1,
-    ]);
-    const canonicalModelIntent = isRecord(metadata.modelSelectionIntentV1) ? metadata.modelSelectionIntentV1 : null;
-    if (
-        canonicalModelIntent
-        && canonicalModelIntent.selection !== null
-        && isOverrideNewerThanSource(canonicalModelIntent, canonicalModelIntent, { updatedAt: modelSourceUpdatedAt })
-    ) {
-        return true;
-    }
-    const metadataModelOverride = isRecord(metadata.modelOverrideV1) ? metadata.modelOverrideV1 : null;
-    if (
-        metadataModelOverride
-        && isNonDefaultValue(metadataModelOverride.modelId)
-        && isOverrideNewerThanSource(metadataModelOverride, metadataModelOverride, { updatedAt: modelSourceUpdatedAt })
-    ) {
-        return true;
+    const disposition = resolveSessionModelSelectionDisposition({
+        agentId: ctx.agentId,
+        agentTargetKey: ctx.agentTargetKey,
+        metadata: metadata as Metadata,
+        sessionActive: ctx.session.active === true,
+        currentRunnerProcessIdentity: ctx.currentRunnerProcessIdentity,
+    });
+    if (disposition.proposedIntent !== null) {
+        return disposition.selectionTransitionPending;
     }
 
-    if (!isNonDefaultValue(readSessionField(ctx.session, 'modelMode'))) return false;
-    const localUpdatedAt = readFiniteNumber(readSessionField(ctx.session, 'modelModeUpdatedAt'));
-    return localUpdatedAt != null && (modelSourceUpdatedAt == null || localUpdatedAt > modelSourceUpdatedAt);
+    const localModelId = readString(readSessionField(ctx.session, 'modelMode'));
+    if (!localModelId || localModelId === 'default') return false;
+    const activeSelection = disposition.activeSelection;
+    return activeSelection !== null
+        && (activeSelection.providerConnectionId !== null
+            || activeSelection.modelId !== localModelId);
 }
 
 function createSessionComposerBehavior(

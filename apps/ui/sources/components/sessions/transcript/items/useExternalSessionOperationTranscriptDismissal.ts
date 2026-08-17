@@ -1,19 +1,18 @@
 import * as React from 'react';
 
-import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol';
+import type {
+    ExternalSessionOperationSharedPresentationV1,
+} from '@happier-dev/protocol';
 
 import type { ExternalSessionOperationActionRef } from '@/components/sessions/external/progress/ExternalImportProgressCard';
+import {
+    isExternalSessionOperationDismissibleStatus,
+} from '@/components/sessions/external/progress/externalSessionOperationProgressPresentation';
 import type { ExternalSessionOperationTranscriptDismissal } from '@/components/sessions/transcript/items/externalSessionOperationTranscriptItem';
-
-function isDismissibleStatus(
-    status: ExternalSessionOperationProgressV1['status'],
-): boolean {
-    return status === 'completed' || status === 'cancelled' || status === 'discarded';
-}
 
 export function useExternalSessionOperationTranscriptDismissal(params: Readonly<{
     sessionId: string;
-    progress: ExternalSessionOperationProgressV1 | null;
+    presentation: ExternalSessionOperationSharedPresentationV1 | null;
 }>): Readonly<{
     dismissal: ExternalSessionOperationTranscriptDismissal | null;
     onDismiss: (actionRef: ExternalSessionOperationActionRef) => void;
@@ -31,10 +30,12 @@ export function useExternalSessionOperationTranscriptDismissal(params: Readonly<
         actionRef: ExternalSessionOperationActionRef,
     ) => {
         if (
-            params.progress === null
-            || !isDismissibleStatus(params.progress.status)
-            || params.progress.operationId !== actionRef.operationId
-            || params.progress.revision !== actionRef.revision
+            params.presentation === null
+            || !isExternalSessionOperationDismissibleStatus(
+                params.presentation.status,
+            )
+            || params.presentation.operationId !== actionRef.operationId
+            || params.presentation.revision !== actionRef.revision
         ) {
             return;
         }
@@ -43,7 +44,7 @@ export function useExternalSessionOperationTranscriptDismissal(params: Readonly<
             operationId: actionRef.operationId,
             revision: actionRef.revision,
         });
-    }, [params.progress, params.sessionId]);
+    }, [params.presentation, params.sessionId]);
 
     return React.useMemo(() => ({
         dismissal,

@@ -1,4 +1,4 @@
-import type { AgentInputControlDescriptor } from './agentInputControlTypes';
+import type { AgentInputControlDescriptor, AgentInputHostControlId } from './agentInputControlTypes';
 
 export const AGENT_INPUT_CONTROL_REGISTRY = [
     { id: 'engine', line: 'primary' },
@@ -29,6 +29,6 @@ export const AGENT_INPUT_CONTROL_REGISTRY = [
     { id: 'resume', line: 'secondary' },
 ] as const satisfies ReadonlyArray<AgentInputControlDescriptor>;
 
-export function findAgentInputControlDescriptor(id: AgentInputControlDescriptor['id']): AgentInputControlDescriptor | null {
+export function findAgentInputControlDescriptor(id: AgentInputHostControlId): AgentInputControlDescriptor | null {
     return AGENT_INPUT_CONTROL_REGISTRY.find((control) => control.id === id) ?? null;
 }

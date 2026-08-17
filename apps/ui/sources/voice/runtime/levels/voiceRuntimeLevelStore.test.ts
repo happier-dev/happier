@@ -69,6 +69,28 @@ describe('createVoiceRuntimeLevelStore', () => {
     expect(outputListener).not.toHaveBeenCalled();
   });
 
+  it('publishes source lifecycle changes without waking lifecycle listeners for frame-rate samples', () => {
+    const store = createVoiceRuntimeLevelStore();
+    const sourceActivityListener = vi.fn();
+    store.subscribeSourceActivity(sourceActivityListener);
+
+    const input = store.open({ channel: 'input', sourceId: 'capture-a' });
+    for (let index = 0; index < 300; index += 1) {
+      input.write((index % 10) / 10);
+    }
+    input.close();
+
+    expect(sourceActivityListener).toHaveBeenCalledTimes(2);
+    expect(sourceActivityListener).toHaveBeenNthCalledWith(1, {
+      inputSourceActive: true,
+      outputSourceActive: false,
+    });
+    expect(sourceActivityListener).toHaveBeenLastCalledWith({
+      inputSourceActive: false,
+      outputSourceActive: false,
+    });
+  });
+
   it('keeps an active but silent source distinct from an unavailable meter', () => {
     const store = createVoiceRuntimeLevelStore();
     const output = store.open({ channel: 'output', sourceId: 'playback-a' });

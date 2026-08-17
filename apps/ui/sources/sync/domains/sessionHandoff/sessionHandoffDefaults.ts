@@ -1,37 +1,17 @@
-import type { SessionHandoffWorkspaceTransfer } from '@happier-dev/protocol';
-import { z } from 'zod';
+import {
+    DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
+    SessionHandoffDefaultsV1Schema,
+    type SessionHandoffDefaultsV1,
+    type SessionHandoffDirectTargetMode,
+    type SessionHandoffWorkspaceTransfer,
+} from '@happier-dev/protocol';
 
-export type SessionHandoffDirectTargetMode = 'keep_direct' | 'convert_to_persisted';
-
-export type SessionHandoffDefaultsV1 = Readonly<{
-    v: 1;
-    workspaceTransferEnabled: boolean;
-    workspaceTransferStrategy: SessionHandoffWorkspaceTransfer['strategy'];
-    conflictPolicy: SessionHandoffWorkspaceTransfer['conflictPolicy'];
-    includeIgnoredMode: SessionHandoffWorkspaceTransfer['includeIgnoredMode'];
-    ignoredIncludeGlobs: readonly string[];
-    directTargetMode: SessionHandoffDirectTargetMode;
-}>;
-
-export const SessionHandoffDefaultsV1Schema = z.object({
-    v: z.literal(1).default(1),
-    workspaceTransferEnabled: z.boolean().default(false),
-    workspaceTransferStrategy: z.enum(['transfer_snapshot', 'sync_changes']).default('transfer_snapshot'),
-    conflictPolicy: z.enum(['create_sibling_copy', 'replace_existing']).default('create_sibling_copy'),
-    includeIgnoredMode: z.enum(['exclude', 'include_selected']).default('exclude'),
-    ignoredIncludeGlobs: z.array(z.string()).default([]),
-    directTargetMode: z.enum(['keep_direct', 'convert_to_persisted']).default('keep_direct'),
-});
-
-export const DEFAULT_SESSION_HANDOFF_DEFAULTS_V1: SessionHandoffDefaultsV1 = Object.freeze({
-    v: 1,
-    workspaceTransferEnabled: false,
-    workspaceTransferStrategy: 'transfer_snapshot',
-    conflictPolicy: 'create_sibling_copy',
-    includeIgnoredMode: 'exclude',
-    ignoredIncludeGlobs: [],
-    directTargetMode: 'keep_direct',
-});
+export {
+    DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
+    SessionHandoffDefaultsV1Schema,
+    type SessionHandoffDefaultsV1,
+    type SessionHandoffDirectTargetMode,
+};
 
 export const SESSION_HANDOFF_CONFLICT_POLICY_OPTIONS = [
     {
@@ -102,7 +82,8 @@ export const SESSION_HANDOFF_WORKSPACE_TRANSFER_STRATEGY_OPTIONS = [
 }>[];
 
 export function normalizeSessionHandoffDefaults(raw: unknown): SessionHandoffDefaultsV1 {
-    const candidate = raw as Partial<SessionHandoffDefaultsV1> | null | undefined;
+    const parsed = SessionHandoffDefaultsV1Schema.safeParse(raw);
+    const candidate = parsed.success ? parsed.data : DEFAULT_SESSION_HANDOFF_DEFAULTS_V1;
     const workspaceTransferStrategy =
         candidate?.workspaceTransferStrategy === 'sync_changes' ? 'sync_changes' : 'transfer_snapshot';
     return {

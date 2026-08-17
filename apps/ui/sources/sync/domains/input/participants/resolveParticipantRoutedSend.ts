@@ -27,21 +27,22 @@ export type ParticipantRoutedSend =
         delivery: 'prompt' | 'steer_if_supported' | 'interrupt';
     }>;
 
+export function participantRecipientsMatch(a: ParticipantRecipientV1, b: ParticipantRecipientV1): boolean {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === 'execution_run') {
+        return a.runId === (b as Extract<ParticipantRecipientV1, { kind: 'execution_run' }>).runId;
+    }
+    if (a.kind === 'agent_team_broadcast') {
+        return a.teamId === (b as Extract<ParticipantRecipientV1, { kind: 'agent_team_broadcast' }>).teamId;
+    }
+    return a.memberId === (b as Extract<ParticipantRecipientV1, { kind: 'agent_team_member' }>).memberId;
+}
+
 export function isParticipantRecipientAvailable(params: Readonly<{
     targets: readonly SessionParticipantTarget[];
     recipient: ParticipantRecipientV1;
 }>): boolean {
-    return params.targets.some((target) => {
-        const current = target.recipient;
-        if (current.kind !== params.recipient.kind) return false;
-        if (current.kind === 'execution_run') {
-            return current.runId === params.recipient.runId;
-        }
-        if (current.kind === 'agent_team_broadcast') {
-            return current.teamId === params.recipient.teamId;
-        }
-        return current.memberId === params.recipient.memberId;
-    });
+    return params.targets.some((target) => participantRecipientsMatch(target.recipient, params.recipient));
 }
 
 export function resolveParticipantRoutingDescriptor(params: Readonly<{

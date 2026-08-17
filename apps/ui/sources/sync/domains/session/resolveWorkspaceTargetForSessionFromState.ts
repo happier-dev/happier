@@ -13,6 +13,7 @@ import { normalizeWorkspaceRootPath, tryBuildWorkspaceCacheKey } from '@/sync/do
 
 export type WorkspaceTargetForSession = WorkspaceScopeBase & Readonly<{
     workspaceCacheKey: string;
+    agentRootPath?: string;
 }>;
 
 export type WorkspaceTargetForSessionState = SessionMachineTargetState & SessionServerLookupStateLike;
@@ -56,5 +57,6 @@ export function resolveWorkspaceTargetForSessionFromState(
         machineId,
         rootPath,
         serverId,
+        ...(machineTarget.agentBasePath ? { agentRootPath: machineTarget.agentBasePath } : {}),
     };
 }

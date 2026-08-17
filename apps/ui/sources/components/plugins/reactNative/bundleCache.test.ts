@@ -5,12 +5,16 @@ import {
     computePluginUiArtifactSha256DigestV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { encodeBase64 } from '@/encryption/base64';
+import { derivePluginUiPersistentArtifactKey } from '@/sync/domains/plugins/ui/artifactByteCache';
 
 import {
+    createPluginReactNativeArtifactLeaseCacheSink,
+    createPluginReactNativeArtifactLeasePersistentScope,
     createPluginReactNativeBundleCache,
     derivePluginReactNativeBundleCacheKey,
-    preloadReactNativeInstalledArtifactBytes,
+    derivePluginReactNativePersistentArtifactKey,
+    type PluginReactNativePersistentArtifactRecord,
+    type PluginReactNativePersistentArtifactStore,
     type PluginReactNativeBundleCacheIdentity,
 } from './bundleCache';
 
@@ -30,8 +34,548 @@ const identity = {
     projectionGeneration: 12,
 } as const;
 
+const persistentIdentity = {
+    accountScope: { serverId: 'server-a', accountId: 'account-a' },
+    releaseVersion: '1.2.3',
+    pluginId: identity.pluginId,
+    contributionId: identity.contributionId,
+    tier: 'reactNative',
+    platform: identity.platform,
+    artifactDigest: identity.artifactDigest,
+} as const;
+
+function createMemoryPersistentArtifactStore() {
+    const records = new Map<string, PluginReactNativePersistentArtifactRecord>();
+    const reads: string[] = [];
+    const writes: string[] = [];
+    const removals: string[] = [];
+    const store: PluginReactNativePersistentArtifactStore = {
+        read: async (requestedIdentity) => {
+            const key = derivePluginReactNativePersistentArtifactKey(requestedIdentity);
+            reads.push(key);
+            return records.get(key) ?? null;
+        },
+        write: async (record) => {
+            const key = derivePluginReactNativePersistentArtifactKey(record.persistentIdentity);
+            writes.push(key);
+            records.set(key, record);
+        },
+        remove: async (requestedIdentity) => {
+            const key = derivePluginUiPersistentArtifactKey(requestedIdentity);
+            removals.push(key);
+            records.delete(key);
+        },
+        removeAccount: async (scope) => {
+            for (const [key, record] of records.entries()) {
+                if (
+                    record.persistentIdentity.accountScope.serverId === scope.serverId
+                    && record.persistentIdentity.accountScope.accountId === scope.accountId
+                ) {
+                    records.delete(key);
+                    removals.push(key);
+                }
+            }
+        },
+    };
+    return { store, records, reads, writes, removals };
+}
+
 describe('React Native bundle cache', () => {
-    it('stores installed plain-JS artifact bytes by full runtime identity and evicts removed plugin bytes', () => {
+    it('does not expose a second Artifact byte-fetch path from the cache owner', async () => {
+        const cacheModule = await import('./bundleCache');
+
+        expect(cacheModule).not.toHaveProperty('preloadReactNativeInstalledArtifactBytes');
+    });
+
+    it('selects the Tauri Artifact store and registrar ahead of CacheStorage on desktop', async () => {
+        const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+        const originalTauriInternals = Object.getOwnPropertyDescriptor(globalThis, '__TAURI_INTERNALS__');
+        const createBrowserStore = vi.fn(() => ({
+            read: async () => null,
+            write: async () => undefined,
+            remove: async () => undefined,
+            removeAccount: async () => undefined,
+        }));
+        const createTauriStore = vi.fn(() => ({
+            read: async () => null,
+            write: async () => undefined,
+            remove: async () => undefined,
+            removeAccount: async () => undefined,
+            describeNativeResource: async () => null,
+        }));
+        const createTauriRegistrar = vi.fn(() => ({
+            register: async () => ({ kind: 'registered' as const }),
+            unregister: () => true,
+        }));
+
+        try {
+            Object.defineProperty(globalThis, 'caches', {
+                configurable: true,
+                value: {},
+            });
+            Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
+                configurable: true,
+                value: { invoke: () => undefined },
+            });
+            vi.resetModules();
+            vi.doMock('@/sync/domains/plugins/ui/artifactByteCache.browser', () => ({
+                createBrowserPluginUiPersistentArtifactStore: createBrowserStore,
+            }));
+            vi.doMock('@/sync/domains/plugins/ui/artifactByteCache.tauri', () => ({
+                createTauriPluginUiPersistentArtifactStore: createTauriStore,
+            }));
+            vi.doMock('@/sync/domains/plugins/availability/nativeArtifactResourceRegistrar.tauri', () => ({
+                createTauriPluginNativeArtifactResourceRegistrar: createTauriRegistrar,
+            }));
+
+            const cacheModule = await import('./bundleCache');
+
+            expect(createTauriStore).toHaveBeenCalledOnce();
+            expect(createTauriRegistrar).toHaveBeenCalledOnce();
+            expect(createBrowserStore).not.toHaveBeenCalled();
+            expect(cacheModule.getInstalledPluginNativeArtifactResources()).not.toBeNull();
+        } finally {
+            vi.doUnmock('@/sync/domains/plugins/ui/artifactByteCache.browser');
+            vi.doUnmock('@/sync/domains/plugins/ui/artifactByteCache.tauri');
+            vi.doUnmock('@/sync/domains/plugins/availability/nativeArtifactResourceRegistrar.tauri');
+            vi.resetModules();
+            if (originalCaches) {
+                Object.defineProperty(globalThis, 'caches', originalCaches);
+            } else {
+                delete (globalThis as { caches?: unknown }).caches;
+            }
+            if (originalTauriInternals) {
+                Object.defineProperty(globalThis, '__TAURI_INTERNALS__', originalTauriInternals);
+            } else {
+                delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+            }
+        }
+    });
+
+    it('adapts only the current Account lifetime into the canonical Artifact lease cache interfaces', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const cache = createPluginReactNativeBundleCache({ persistentStore: persistent.store });
+        const bytes = new TextEncoder().encode('// canonical lease bytes');
+        const fileDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([
+            { relativePath: 'native/index.js', bytes },
+        ]);
+        const runtimeIdentity = { ...identity, artifactDigest };
+        const stableIdentity = { ...persistentIdentity, artifactDigest };
+        let current = true;
+        let retire: (() => void) | null = null;
+        const lifetime = {
+            scope: stableIdentity.accountScope,
+            isCurrent: () => current,
+            onRetire: (cancel: () => void) => {
+                retire = cancel;
+                return { dispose: () => undefined };
+            },
+        };
+        const cacheSink = createPluginReactNativeArtifactLeaseCacheSink({ cache, lifetime });
+        const persistentScope = createPluginReactNativeArtifactLeasePersistentScope({ cache, lifetime });
+
+        expect(cacheSink.writeVerifiedArtifact({
+            identity: runtimeIdentity,
+            accountScope: stableIdentity.accountScope,
+            bytes,
+            entryRelativePath: 'native/index.js',
+            files: [{
+                relativePath: 'native/index.js',
+                digest: fileDigest,
+                byteSize: bytes.byteLength,
+                bytes,
+            }],
+        })).toEqual({
+            ok: true,
+            cacheKey: derivePluginReactNativeBundleCacheKey(runtimeIdentity),
+        });
+        await persistentScope.store.write({
+            persistentIdentity: stableIdentity,
+            bytes,
+            entryRelativePath: 'native/index.js',
+            files: [{
+                relativePath: 'native/index.js',
+                digest: fileDigest,
+                byteSize: bytes.byteLength,
+                bytes,
+            }],
+        });
+        expect(await persistentScope.store.read(stableIdentity)).toMatchObject({ bytes });
+        expect(persistentScope.isCurrent()).toBe(true);
+
+        current = false;
+        const retireNow = retire as (() => void) | null;
+        retireNow?.();
+
+        expect(persistentScope.isCurrent()).toBe(false);
+        expect(cacheSink.writeVerifiedArtifact({
+            identity: runtimeIdentity,
+            accountScope: stableIdentity.accountScope,
+            bytes,
+            entryRelativePath: 'native/index.js',
+            files: [{
+                relativePath: 'native/index.js',
+                digest: fileDigest,
+                byteSize: bytes.byteLength,
+                bytes,
+            }],
+        })).toMatchObject({ ok: false, code: 'artifact_cache_write_invalidated' });
+        await expect(persistentScope.store.read(stableIdentity)).resolves.toBeNull();
+        persistentScope.release();
+    });
+
+    it('keeps exact persistent removal available after its Artifact source operation releases', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const cache = createPluginReactNativeBundleCache({ persistentStore: persistent.store });
+        const lifetime = {
+            scope: persistentIdentity.accountScope,
+            isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }),
+        };
+        const persistentScope = createPluginReactNativeArtifactLeasePersistentScope({ cache, lifetime });
+        persistent.records.set(derivePluginReactNativePersistentArtifactKey(persistentIdentity), {
+            persistentIdentity,
+            bytes: new Uint8Array([1]),
+        });
+
+        persistentScope.release();
+        await persistentScope.store.remove(persistentIdentity);
+
+        expect(persistent.removals).toEqual([
+            derivePluginReactNativePersistentArtifactKey(persistentIdentity),
+        ]);
+        expect(persistent.records.has(derivePluginReactNativePersistentArtifactKey(persistentIdentity))).toBe(false);
+    });
+
+    it('retains verified persistent Artifact bytes through an A-to-B-to-A Account lifetime transition', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const bytes = new TextEncoder().encode('// retained Account cache bytes');
+        const retainedIdentity = {
+            ...persistentIdentity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+        };
+        const runtimeIdentity = {
+            ...identity,
+            artifactDigest: retainedIdentity.artifactDigest,
+        };
+        const accountB = {
+            ...retainedIdentity,
+            accountScope: { serverId: 'server-a', accountId: 'account-b' },
+        };
+        const retainedKey = derivePluginReactNativePersistentArtifactKey(retainedIdentity);
+        const evictedIdentityBatches: PluginReactNativeBundleCacheIdentity[][] = [];
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: persistent.store,
+            diskGc: {
+                evictForIdentities: async (identities) => {
+                    evictedIdentityBatches.push([...identities]);
+                },
+            },
+        });
+
+        await expect(cache.writePersistentArtifact({
+            persistentIdentity: retainedIdentity,
+            bytes,
+        })).resolves.toBe(true);
+        expect(cache.putInstalledArtifact({
+            identity: runtimeIdentity,
+            accountScope: retainedIdentity.accountScope,
+            bytes,
+            format: 'plainJs',
+        }).ok).toBe(true);
+
+        await cache.retireAccount(retainedIdentity.accountScope);
+        await Promise.resolve();
+
+        expect(cache.isAccountCurrent(retainedIdentity.accountScope)).toBe(false);
+        expect(cache.readInstalledArtifact(runtimeIdentity)).toBeNull();
+        expect(evictedIdentityBatches).toEqual([[runtimeIdentity]]);
+        expect(persistent.records.has(retainedKey)).toBe(true);
+        expect(persistent.removals).toEqual([]);
+
+        cache.bindAccountLifetime({
+            scope: accountB.accountScope,
+            isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }),
+        });
+        cache.bindAccountLifetime({
+            scope: retainedIdentity.accountScope,
+            isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }),
+        });
+
+        expect(cache.isAccountCurrent(retainedIdentity.accountScope)).toBe(true);
+        await expect(cache.readPersistentArtifact(retainedIdentity)).resolves.toMatchObject({
+            persistentIdentity: retainedIdentity,
+            bytes,
+        });
+    });
+
+    it('does not delete verified persistent bytes when an old Account write settles after retirement', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const bytes = new TextEncoder().encode('// delayed stale Account write');
+        const delayedIdentity = {
+            ...persistentIdentity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+        };
+        const delayedPersistentKey = derivePluginReactNativePersistentArtifactKey(delayedIdentity);
+        let beginWrite!: () => void;
+        const writeBegan = new Promise<void>((resolve) => {
+            beginWrite = resolve;
+        });
+        let allowWrite!: () => void;
+        const writeGate = new Promise<void>((resolve) => {
+            allowWrite = resolve;
+        });
+        const removeAccount = vi.fn(persistent.store.removeAccount);
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                removeAccount,
+                write: async (record) => {
+                    beginWrite();
+                    await writeGate;
+                    await persistent.store.write(record);
+                },
+            },
+        });
+
+        const staleWrite = cache.writePersistentArtifact({
+            persistentIdentity: delayedIdentity,
+            bytes,
+        });
+        await writeBegan;
+
+        await cache.retireAccount(delayedIdentity.accountScope);
+        cache.bindAccountLifetime({
+            scope: delayedIdentity.accountScope,
+            isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }),
+        });
+
+        allowWrite();
+
+        await expect(staleWrite).resolves.toBe(false);
+        await Promise.resolve();
+        expect(removeAccount).not.toHaveBeenCalled();
+        expect(persistent.records.has(delayedPersistentKey)).toBe(true);
+        await expect(cache.readPersistentArtifact(delayedIdentity)).resolves.toMatchObject({
+            persistentIdentity: delayedIdentity,
+            bytes,
+        });
+    });
+
+    it('writes re-admitted exact bytes after a stale projection deletion has drained', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const bytes = new TextEncoder().encode('// re-admitted exact Artifact bytes');
+        const reAdmittedIdentity = {
+            ...persistentIdentity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+        };
+        const key = derivePluginReactNativePersistentArtifactKey(reAdmittedIdentity);
+        persistent.records.set(key, {
+            persistentIdentity: reAdmittedIdentity,
+            bytes,
+        });
+        let beginRemoval!: () => void;
+        const removalBegan = new Promise<void>((resolve) => {
+            beginRemoval = resolve;
+        });
+        let allowRemoval!: () => void;
+        const removalGate = new Promise<void>((resolve) => {
+            allowRemoval = resolve;
+        });
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                remove: async (identity) => {
+                    beginRemoval();
+                    await removalGate;
+                    await persistent.store.remove(identity);
+                },
+            },
+        });
+        let replacementCurrent = true;
+
+        const staleRemoval = cache.removePersistentArtifact(
+            reAdmittedIdentity,
+            () => replacementCurrent,
+        );
+        await removalBegan;
+
+        // A is current again while B's old physical deletion is still in the
+        // storage adapter. The cache must serialize the new write after that
+        // exact deletion rather than let the stale remove erase A's record.
+        replacementCurrent = false;
+        const reAdmittedWrite = cache.writePersistentArtifact({
+            persistentIdentity: reAdmittedIdentity,
+            bytes,
+        });
+
+        allowRemoval();
+        await staleRemoval;
+        await expect(reAdmittedWrite).resolves.toBe(true);
+        await expect(cache.readPersistentArtifact(reAdmittedIdentity)).resolves.toMatchObject({
+            persistentIdentity: reAdmittedIdentity,
+            bytes,
+        });
+    });
+
+    it('does not re-adopt an exact persistent Artifact through a cache read while its stale deletion drains', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const bytes = new TextEncoder().encode('// delayed persistent re-adoption read');
+        const reAdmittedIdentity = {
+            ...persistentIdentity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+        };
+        const key = derivePluginReactNativePersistentArtifactKey(reAdmittedIdentity);
+        persistent.records.set(key, {
+            persistentIdentity: reAdmittedIdentity,
+            bytes,
+        });
+        let beginRemoval!: () => void;
+        const removalBegan = new Promise<void>((resolve) => {
+            beginRemoval = resolve;
+        });
+        let allowRemoval!: () => void;
+        const removalGate = new Promise<void>((resolve) => {
+            allowRemoval = resolve;
+        });
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                remove: async (identity) => {
+                    beginRemoval();
+                    await removalGate;
+                    await persistent.store.remove(identity);
+                },
+            },
+        });
+
+        const staleRemoval = cache.removePersistentArtifact(reAdmittedIdentity);
+        await removalBegan;
+
+        // Read re-adoption shares the same exact-key ordering as writes. It
+        // must not return bytes that the already-revoked removal will erase.
+        const reAdmittedRead = cache.readPersistentArtifact(reAdmittedIdentity);
+        expect(persistent.reads).toEqual([]);
+
+        allowRemoval();
+        await staleRemoval;
+        await expect(reAdmittedRead).resolves.toBeNull();
+        expect(persistent.reads).toEqual([
+            derivePluginReactNativePersistentArtifactKey(reAdmittedIdentity),
+        ]);
+    });
+
+    it('writes a valid exact Artifact only after its corrupt predecessor deletion has drained', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const validBytes = new TextEncoder().encode('// valid exact Artifact after corrupt cache entry');
+        const identity = {
+            ...persistentIdentity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(validBytes),
+        };
+        const key = derivePluginReactNativePersistentArtifactKey(identity);
+        persistent.records.set(key, {
+            persistentIdentity: identity,
+            // Same identity but invalid content makes the cache reader start
+            // its corrupt-entry exact deletion.
+            bytes: new TextEncoder().encode('// corrupt cached Artifact bytes'),
+        });
+        let beginCorruptRemoval!: () => void;
+        const corruptRemovalBegan = new Promise<void>((resolve) => {
+            beginCorruptRemoval = resolve;
+        });
+        let allowCorruptRemoval!: () => void;
+        const corruptRemovalGate = new Promise<void>((resolve) => {
+            allowCorruptRemoval = resolve;
+        });
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                remove: async (requestedIdentity) => {
+                    beginCorruptRemoval();
+                    await corruptRemovalGate;
+                    await persistent.store.remove(requestedIdentity);
+                },
+            },
+        });
+
+        const corruptRead = cache.readPersistentArtifact(identity);
+        await corruptRemovalBegan;
+
+        // A later valid A must join the cache owner's pending exact deletion,
+        // not write bytes that the earlier corrupt-delete will erase.
+        const validWrite = cache.writePersistentArtifact({
+            persistentIdentity: identity,
+            bytes: validBytes,
+        });
+        allowCorruptRemoval();
+
+        await expect(corruptRead).resolves.toBeNull();
+        await expect(validWrite).resolves.toBe(true);
+        await expect(cache.readPersistentArtifact(identity)).resolves.toMatchObject({
+            persistentIdentity: identity,
+            bytes: validBytes,
+        });
+    });
+
+    it('quarantines persistent cache reuse before cleanup after an exact Artifact deletion fails', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const diagnostics: string[] = [];
+        const bytes = new TextEncoder().encode('// exact deletion failure');
+        const failedIdentity = {
+            ...persistentIdentity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+        };
+        const failedKey = derivePluginReactNativePersistentArtifactKey(failedIdentity);
+        persistent.records.set(failedKey, {
+            persistentIdentity: failedIdentity,
+            bytes,
+        });
+        let cleanupAttempts = 0;
+        let beginCleanup!: () => void;
+        const cleanupBegan = new Promise<void>((resolve) => {
+            beginCleanup = resolve;
+        });
+        let allowCleanup!: () => void;
+        const cleanupGate = new Promise<void>((resolve) => {
+            allowCleanup = resolve;
+        });
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                remove: async () => {
+                    throw new Error('exact persistent deletion failed');
+                },
+                removeAccount: async (scope) => {
+                    cleanupAttempts += 1;
+                    beginCleanup();
+                    await cleanupGate;
+                    await persistent.store.removeAccount(scope);
+                },
+            },
+            onPersistentCacheDiagnostic: (code) => diagnostics.push(code),
+        });
+
+        const removal = cache.removePersistentArtifact(failedIdentity);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(cleanupAttempts).toBe(1);
+        await cleanupBegan;
+        const rawReadsBeforeQuarantinedRead = persistent.reads.length;
+        await expect(cache.readPersistentArtifact(failedIdentity)).resolves.toBeNull();
+        expect(persistent.reads).toHaveLength(rawReadsBeforeQuarantinedRead);
+        expect(diagnostics).toEqual(['plugin_ui_artifact_cache_delete_failed']);
+
+        allowCleanup();
+        await removal;
+        expect(persistent.records.has(failedKey)).toBe(false);
+    });
+
+    it('stores installed plain-JS artifact bytes by full runtime identity and evicts only identities absent from current sources', () => {
         const cache = createPluginReactNativeBundleCache();
         const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
 
@@ -42,34 +586,91 @@ describe('React Native bundle cache', () => {
         })).toEqual({ ok: true, cacheKey: derivePluginReactNativeBundleCacheKey(identity) });
         expect(cache.readInstalledArtifact(identity)?.bytes).toEqual(bytes);
 
-        cache.evictForPluginDisable('acme.preview');
-        expect(cache.readInstalledArtifact(identity)).toBeNull();
-
-        cache.putInstalledArtifact({ identity, bytes, format: 'plainJs' });
-        cache.evictForPluginUninstall('acme.preview');
+        cache.reconcileActiveProjectionIdentities([]);
         expect(cache.readInstalledArtifact(identity)).toBeNull();
     });
 
-    it('evicts cached executable bytes that belong to a replaced projection generation', () => {
+    it('keeps concurrently owned artifact generations and retires one only after its final source withdraws', () => {
         const cache = createPluginReactNativeBundleCache();
         const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
         const currentIdentity = { ...identity, projectionGeneration: 13 };
         cache.putInstalledArtifact({ identity, bytes, format: 'plainJs' });
         cache.putInstalledArtifact({ identity: currentIdentity, bytes, format: 'plainJs' });
 
-        expect(cache.readInstalledArtifact(identity)).toBeNull();
+        cache.reconcileActiveProjectionIdentities([identity, currentIdentity]);
+
+        expect(cache.readInstalledArtifact(identity)).not.toBeNull();
         expect(cache.readInstalledArtifact(currentIdentity)).not.toBeNull();
 
-        cache.evictForProjectionGenerationReplacement(13);
+        cache.reconcileActiveProjectionIdentities([currentIdentity]);
 
         expect(cache.readInstalledArtifact(identity)).toBeNull();
         expect(cache.readInstalledArtifact(currentIdentity)).not.toBeNull();
-
-        cache.evictForProjectionGenerationReplacement(null);
-        expect(cache.readInstalledArtifact(currentIdentity)).toBeNull();
     });
 
-    it('deletes replaced same-contribution executable bytes from disk-level cache', async () => {
+    it('keeps a current identity write fence valid when a sibling source retires', () => {
+        const cache = createPluginReactNativeBundleCache();
+        const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
+        const siblingIdentity = { ...identity, contributionId: 'native-preview-sibling' };
+
+        cache.reconcileActiveProjectionIdentities([identity, siblingIdentity]);
+        const writeFence = cache.captureWriteFence(identity);
+
+        cache.reconcileActiveProjectionIdentities([identity]);
+
+        expect(cache.putInstalledArtifact({
+            identity,
+            bytes,
+            format: 'plainJs',
+        }, writeFence)).toEqual({
+            ok: true,
+            cacheKey: derivePluginReactNativeBundleCacheKey(identity),
+        });
+        expect(cache.readInstalledArtifact(identity)?.bytes).toEqual(bytes);
+    });
+
+    it('rejects an identity write fence after that identity retires', () => {
+        const cache = createPluginReactNativeBundleCache();
+        const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
+        const siblingIdentity = { ...identity, contributionId: 'native-preview-sibling' };
+
+        cache.reconcileActiveProjectionIdentities([identity, siblingIdentity]);
+        const writeFence = cache.captureWriteFence(identity);
+
+        cache.reconcileActiveProjectionIdentities([siblingIdentity]);
+
+        expect(cache.putInstalledArtifact({
+            identity,
+            bytes,
+            format: 'plainJs',
+        }, writeFence)).toMatchObject({
+            ok: false,
+            code: 'artifact_cache_write_invalidated',
+        });
+        expect(cache.readInstalledArtifact(identity)).toBeNull();
+    });
+
+    it('rejects an identity write fence after every current source retires', () => {
+        const cache = createPluginReactNativeBundleCache();
+        const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
+
+        cache.reconcileActiveProjectionIdentities([identity]);
+        const writeFence = cache.captureWriteFence(identity);
+
+        cache.reconcileActiveProjectionIdentities([]);
+
+        expect(cache.putInstalledArtifact({
+            identity,
+            bytes,
+            format: 'plainJs',
+        }, writeFence)).toMatchObject({
+            ok: false,
+            code: 'artifact_cache_write_invalidated',
+        });
+        expect(cache.readInstalledArtifact(identity)).toBeNull();
+    });
+
+    it('keeps unchanged same-contribution executable bytes materialized without physical GC across compatibility replacement', async () => {
         const evictedIdentityBatches: PluginReactNativeBundleCacheIdentity[][] = [];
         const cache = createPluginReactNativeBundleCache({
             diskGc: {
@@ -83,14 +684,41 @@ describe('React Native bundle cache', () => {
 
         cache.putInstalledArtifact({ identity, bytes, format: 'plainJs' });
         cache.putInstalledArtifact({ identity: currentIdentity, bytes, format: 'plainJs' });
+        cache.reconcileActiveProjectionIdentities([currentIdentity]);
         await Promise.resolve();
 
-        expect(evictedIdentityBatches).toEqual([[identity]]);
+        expect(evictedIdentityBatches).toEqual([]);
         expect(cache.readInstalledArtifact(identity)).toBeNull();
         expect(cache.readInstalledArtifact(currentIdentity)).not.toBeNull();
     });
 
-    it('drives disk-level GC for identities evicted on uninstall and disable', async () => {
+    it('deletes superseded same-contribution executable bytes when the Artifact digest changes', async () => {
+        const evictedIdentityBatches: PluginReactNativeBundleCacheIdentity[][] = [];
+        const cache = createPluginReactNativeBundleCache({
+            diskGc: {
+                evictForIdentities: async (identities) => {
+                    evictedIdentityBatches.push([...identities]);
+                },
+            },
+        });
+        const replacementIdentity = {
+            ...identity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(new Uint8Array([12])),
+            projectionGeneration: 13,
+        };
+        const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
+
+        cache.putInstalledArtifact({ identity, bytes, format: 'plainJs' });
+        cache.putInstalledArtifact({ identity: replacementIdentity, bytes, format: 'plainJs' });
+        cache.reconcileActiveProjectionIdentities([replacementIdentity]);
+        await Promise.resolve();
+
+        expect(evictedIdentityBatches).toEqual([[identity]]);
+        expect(cache.readInstalledArtifact(identity)).toBeNull();
+        expect(cache.readInstalledArtifact(replacementIdentity)).not.toBeNull();
+    });
+
+    it('drives disk-level GC for identities no active source still owns', async () => {
         const evictedIdentityBatches: PluginReactNativeBundleCacheIdentity[][] = [];
         const cache = createPluginReactNativeBundleCache({
             diskGc: {
@@ -102,17 +730,43 @@ describe('React Native bundle cache', () => {
         const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
 
         cache.putInstalledArtifact({ identity, bytes, format: 'plainJs' });
-        cache.evictForPluginUninstall('acme.preview');
-        cache.putInstalledArtifact({ identity, bytes, format: 'plainJs' });
-        cache.evictForPluginDisable('acme.preview');
-        // A no-op eviction (nothing matches) must not invoke the disk GC.
-        cache.evictForPluginDisable('missing.plugin');
+        cache.reconcileActiveProjectionIdentities([]);
+        // Repeating an unchanged source snapshot must not invoke disk GC.
+        cache.reconcileActiveProjectionIdentities([]);
         await Promise.resolve();
 
-        expect(evictedIdentityBatches).toHaveLength(2);
+        expect(evictedIdentityBatches).toHaveLength(1);
         for (const batch of evictedIdentityBatches) {
             expect(batch).toEqual([identity]);
         }
+    });
+
+    it('reports failed physical executable cleanup without restoring cache reachability', async () => {
+        const diagnostics: string[] = [];
+        const cache = createPluginReactNativeBundleCache({
+            diskGc: {
+                evictForIdentities: async () => {
+                    throw new Error('filesystem unavailable');
+                },
+            },
+            onPersistentCacheDiagnostic: (code) => diagnostics.push(code),
+        });
+        const bytes = new TextEncoder().encode('// cleanup diagnostic');
+        const runtimeIdentity = {
+            ...identity,
+            artifactDigest: computePluginUiArtifactSha256DigestV1(bytes),
+        };
+
+        expect(cache.putInstalledArtifact({
+            identity: runtimeIdentity,
+            bytes,
+            format: 'plainJs',
+        }).ok).toBe(true);
+        cache.reconcileActiveProjectionIdentities([]);
+        await Promise.resolve();
+
+        expect(cache.readInstalledArtifact(runtimeIdentity)).toBeNull();
+        expect(diagnostics).toContain('plugin_ui_artifact_executable_delete_failed');
     });
 
     it('returns cloned verified bytes so cache readers cannot mutate stored executable bytes', () => {
@@ -148,418 +802,4 @@ describe('React Native bundle cache', () => {
         });
     });
 
-    it('preloads daemon-fetched artifact bytes only after digest verification', async () => {
-        const cache = createPluginReactNativeBundleCache();
-        const bytes = new Uint8Array([47, 47, 32, 98, 117, 110, 100, 108, 101]);
-        const digest = computePluginUiArtifactSha256DigestV1(bytes);
-        const identityWithRealDigest = {
-            ...identity,
-            artifactDigest: digest,
-        };
-        const fetchArtifactBytes = vi.fn(async () => ({
-            ok: true as const,
-            cacheIdentity: identityWithRealDigest,
-            artifact: {
-                pluginId: 'acme.preview',
-                contributionId: 'native-preview',
-                artifactKind: 'reactNativeBundle' as const,
-                digest,
-                format: 'plainJs' as const,
-                byteSize: bytes.byteLength,
-            },
-            bytesBase64: encodeBase64(bytes),
-        }));
-
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: identityWithRealDigest,
-            fetchArtifactBytes,
-        })).resolves.toEqual({
-            ok: true,
-            cacheKey: derivePluginReactNativeBundleCacheKey(identityWithRealDigest),
-        });
-        expect(cache.readInstalledArtifact(identityWithRealDigest)?.bytes).toEqual(bytes);
-
-        cache.evictForPluginUninstall('acme.preview');
-        fetchArtifactBytes.mockResolvedValueOnce({
-            ok: true,
-            cacheIdentity: identityWithRealDigest,
-            artifact: {
-                pluginId: 'acme.preview',
-                contributionId: 'native-preview',
-                artifactKind: 'reactNativeBundle',
-                digest,
-                format: 'plainJs',
-                byteSize: bytes.byteLength,
-            },
-            bytesBase64: encodeBase64(new Uint8Array([1, 2, 3])),
-        });
-
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: identityWithRealDigest,
-            fetchArtifactBytes,
-        })).resolves.toEqual({
-            ok: false,
-            code: 'digest_mismatch',
-            diagnostics: ['digest_mismatch'],
-        });
-        expect(cache.readInstalledArtifact(identityWithRealDigest)).toBeNull();
-    });
-
-    it('rejects an in-flight fetch after projection generation replacement and admits a neighboring fresh fetch', async () => {
-        const cache = createPluginReactNativeBundleCache();
-        const bytes = new TextEncoder().encode('// generation-bound bundle');
-        const digest = computePluginUiArtifactSha256DigestV1(bytes);
-        const fetchedIdentity = {
-            ...identity,
-            artifactDigest: digest,
-        };
-        const response = {
-            ok: true as const,
-            cacheIdentity: fetchedIdentity,
-            artifact: {
-                pluginId: fetchedIdentity.pluginId,
-                contributionId: fetchedIdentity.contributionId,
-                artifactKind: 'reactNativeBundle' as const,
-                digest,
-                format: 'plainJs' as const,
-                byteSize: bytes.byteLength,
-            },
-            bytesBase64: encodeBase64(bytes),
-        };
-        let resolveFetch!: (value: typeof response) => void;
-        const fetchPending = new Promise<typeof response>((resolve) => {
-            resolveFetch = resolve;
-        });
-
-        const stalePreload = preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: fetchedIdentity,
-            fetchArtifactBytes: async () => await fetchPending,
-        });
-        cache.evictForProjectionGenerationReplacement(fetchedIdentity.projectionGeneration + 1);
-        resolveFetch(response);
-
-        await expect(stalePreload).resolves.toEqual({
-            ok: false,
-            code: 'artifact_cache_write_invalidated',
-            diagnostics: ['react_native_artifact_cache_write_invalidated'],
-        });
-        expect(cache.readInstalledArtifact(fetchedIdentity)).toBeNull();
-
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: fetchedIdentity,
-            fetchArtifactBytes: async () => response,
-        })).resolves.toEqual({
-            ok: true,
-            cacheKey: derivePluginReactNativeBundleCacheKey(fetchedIdentity),
-        });
-        expect(cache.readInstalledArtifact(fetchedIdentity)?.bytes).toEqual(bytes);
-    });
-
-    it('rejects an in-flight fetch when uninstall invalidates an otherwise empty plugin cache', async () => {
-        const cache = createPluginReactNativeBundleCache();
-        const bytes = new TextEncoder().encode('// uninstalled bundle');
-        const digest = computePluginUiArtifactSha256DigestV1(bytes);
-        const fetchedIdentity = {
-            ...identity,
-            artifactDigest: digest,
-        };
-        const response = {
-            ok: true as const,
-            cacheIdentity: fetchedIdentity,
-            artifact: {
-                pluginId: fetchedIdentity.pluginId,
-                contributionId: fetchedIdentity.contributionId,
-                artifactKind: 'reactNativeBundle' as const,
-                digest,
-                format: 'plainJs' as const,
-                byteSize: bytes.byteLength,
-            },
-            bytesBase64: encodeBase64(bytes),
-        };
-        let resolveFetch!: (value: typeof response) => void;
-        const fetchPending = new Promise<typeof response>((resolve) => {
-            resolveFetch = resolve;
-        });
-        const neighboringBytes = new TextEncoder().encode('// neighboring current bundle');
-        const neighboringDigest = computePluginUiArtifactSha256DigestV1(neighboringBytes);
-        const neighboringIdentity = {
-            ...fetchedIdentity,
-            pluginId: 'neighbor.preview',
-            artifactDigest: neighboringDigest,
-        };
-        const neighboringResponse = {
-            ...response,
-            cacheIdentity: neighboringIdentity,
-            artifact: {
-                ...response.artifact,
-                pluginId: neighboringIdentity.pluginId,
-                digest: neighboringDigest,
-                byteSize: neighboringBytes.byteLength,
-            },
-            bytesBase64: encodeBase64(neighboringBytes),
-        };
-        let resolveNeighboringFetch!: (value: typeof neighboringResponse) => void;
-        const neighboringFetchPending = new Promise<typeof neighboringResponse>((resolve) => {
-            resolveNeighboringFetch = resolve;
-        });
-
-        const preload = preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: fetchedIdentity,
-            fetchArtifactBytes: async () => await fetchPending,
-        });
-        const neighboringPreload = preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: neighboringIdentity,
-            fetchArtifactBytes: async () => await neighboringFetchPending,
-        });
-        cache.evictForPluginUninstall(fetchedIdentity.pluginId);
-        resolveFetch(response);
-        resolveNeighboringFetch(neighboringResponse);
-
-        await expect(preload).resolves.toEqual({
-            ok: false,
-            code: 'artifact_cache_write_invalidated',
-            diagnostics: ['react_native_artifact_cache_write_invalidated'],
-        });
-        expect(cache.readInstalledArtifact(fetchedIdentity)).toBeNull();
-        await expect(neighboringPreload).resolves.toEqual({
-            ok: true,
-            cacheKey: derivePluginReactNativeBundleCacheKey(neighboringIdentity),
-        });
-        expect(cache.readInstalledArtifact(neighboringIdentity)?.bytes).toEqual(neighboringBytes);
-    });
-
-    it('preloads sibling chunk files from the daemon byte response with per-file integrity', async () => {
-        const cache = createPluginReactNativeBundleCache();
-        const entryBytes = new Uint8Array([47, 47, 32, 101, 110, 116, 114, 121]);
-        const chunkBytes = new Uint8Array([47, 47, 32, 99, 104, 117, 110, 107]);
-        const entryDigest = computePluginUiArtifactSha256DigestV1(entryBytes);
-        const chunkDigest = computePluginUiArtifactSha256DigestV1(chunkBytes);
-        const identityWithRealDigest = {
-            ...identity,
-            artifactDigest: entryDigest,
-        };
-
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: identityWithRealDigest,
-            fetchArtifactBytes: vi.fn(async () => ({
-                ok: true as const,
-                cacheIdentity: identityWithRealDigest,
-                artifact: {
-                    pluginId: 'acme.preview',
-                    contributionId: 'native-preview',
-                    artifactKind: 'reactNativeBundle' as const,
-                    digest: entryDigest,
-                    format: 'plainJs' as const,
-                    byteSize: entryBytes.byteLength,
-                },
-                bytesBase64: encodeBase64(entryBytes),
-                files: [
-                    {
-                        relativePath: 'react-native/native-preview/ios.bundle.js',
-                        digest: entryDigest,
-                        byteSize: entryBytes.byteLength,
-                        bytesBase64: encodeBase64(entryBytes),
-                    },
-                    {
-                        relativePath: 'react-native/native-preview/src_ui_renderSurface_tsx.chunk.bundle',
-                        digest: chunkDigest,
-                        byteSize: chunkBytes.byteLength,
-                        bytesBase64: encodeBase64(chunkBytes),
-                    },
-                ],
-            })),
-        })).resolves.toEqual({
-            ok: true,
-            cacheKey: derivePluginReactNativeBundleCacheKey(identityWithRealDigest),
-        });
-
-        expect(cache.readInstalledArtifact(identityWithRealDigest)?.files).toEqual([
-            {
-                relativePath: 'react-native/native-preview/ios.bundle.js',
-                digest: entryDigest,
-                byteSize: entryBytes.byteLength,
-                bytes: entryBytes,
-            },
-            {
-                relativePath: 'react-native/native-preview/src_ui_renderSurface_tsx.chunk.bundle',
-                digest: chunkDigest,
-                byteSize: chunkBytes.byteLength,
-                bytes: chunkBytes,
-            },
-        ]);
-    });
-
-    it('verifies a generated native Re.Pack graph as a complete file set and rejects stale identity or tampered bytes', async () => {
-        const cache = createPluginReactNativeBundleCache();
-        const entryPath = 'react-native/native-preview/index.js';
-        const chunkPath = 'react-native/native-preview/chunk.js';
-        const entryBytes = new TextEncoder().encode('export { renderSurface } from "./chunk.js";');
-        const chunkBytes = new TextEncoder().encode('export function renderSurface() { return null; }');
-        const graphDigest = computePluginUiArtifactFileSetSha256DigestV1([
-            { relativePath: entryPath, bytes: entryBytes },
-            { relativePath: chunkPath, bytes: chunkBytes },
-        ]);
-        const generatedIdentity: PluginReactNativeBundleCacheIdentity = {
-            ...identity,
-            artifactDigest: graphDigest,
-        };
-        const artifactGraph = {
-            contributionId: 'native-preview-artifact',
-            tier: 'reactNative' as const,
-            platform: 'ios' as const,
-            entry: entryPath,
-            files: [
-                {
-                    relativePath: chunkPath,
-                    digest: computePluginUiArtifactSha256DigestV1(chunkBytes),
-                    byteSize: chunkBytes.byteLength,
-                },
-                {
-                    relativePath: entryPath,
-                    digest: computePluginUiArtifactSha256DigestV1(entryBytes),
-                    byteSize: entryBytes.byteLength,
-                },
-            ],
-            digest: graphDigest,
-            builtWith: { bundler: 'repack' as const, version: '5.0.0' },
-            repack: {
-                containerName: 'acme_preview_native',
-                modulePath: './renderSurface',
-                exportName: 'renderSurface',
-            },
-            hostUiApiVersion: '1.0.0',
-            compat: { react: '19.0.0', reactNative: '0.83.4' },
-        };
-        const fetchArtifactBytes = vi.fn(async () => ({
-            ok: true as const,
-            cacheIdentity: generatedIdentity,
-            artifact: {
-                pluginId: generatedIdentity.pluginId,
-                contributionId: generatedIdentity.contributionId,
-                artifactKind: 'reactNativeBundle' as const,
-                digest: graphDigest,
-                format: 'plainJs' as const,
-                byteSize: entryBytes.byteLength,
-            },
-            bytesBase64: encodeBase64(entryBytes),
-            files: [
-                {
-                    relativePath: chunkPath,
-                    digest: computePluginUiArtifactSha256DigestV1(chunkBytes),
-                    byteSize: chunkBytes.byteLength,
-                    bytesBase64: encodeBase64(chunkBytes),
-                },
-                {
-                    relativePath: entryPath,
-                    digest: computePluginUiArtifactSha256DigestV1(entryBytes),
-                    byteSize: entryBytes.byteLength,
-                    bytesBase64: encodeBase64(entryBytes),
-                },
-            ],
-        }));
-
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: generatedIdentity,
-            artifactGraph,
-            fetchArtifactBytes,
-        })).resolves.toEqual({
-            ok: true,
-            cacheKey: derivePluginReactNativeBundleCacheKey(generatedIdentity),
-        });
-        expect(cache.readInstalledArtifact(generatedIdentity)).toMatchObject({
-            bytes: entryBytes,
-            entryRelativePath: entryPath,
-        });
-
-        cache.evictForPluginDisable(generatedIdentity.pluginId);
-        fetchArtifactBytes.mockResolvedValueOnce({
-            ...(await fetchArtifactBytes()),
-            cacheIdentity: {
-                ...generatedIdentity,
-                projectionGeneration: generatedIdentity.projectionGeneration + 1,
-            },
-        });
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: generatedIdentity,
-            artifactGraph,
-            fetchArtifactBytes,
-        })).resolves.toEqual({
-            ok: false,
-            code: 'artifact_identity_mismatch',
-            diagnostics: ['react_native_cache_identity_mismatch'],
-        });
-
-        fetchArtifactBytes.mockResolvedValueOnce(await fetchArtifactBytes());
-        const { repack: _missingRepackIdentity, ...nativeGraphWithoutRepackIdentity } = artifactGraph;
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: generatedIdentity,
-            artifactGraph: nativeGraphWithoutRepackIdentity,
-            fetchArtifactBytes,
-        })).resolves.toEqual({
-            ok: false,
-            code: 'artifact_identity_mismatch',
-            diagnostics: ['react_native_artifact_graph_identity_mismatch'],
-        });
-
-        fetchArtifactBytes.mockResolvedValueOnce({
-            ...(await fetchArtifactBytes()),
-            files: [
-                {
-                    relativePath: entryPath,
-                    digest: computePluginUiArtifactSha256DigestV1(entryBytes),
-                    byteSize: entryBytes.byteLength,
-                    bytesBase64: encodeBase64(entryBytes),
-                },
-            ],
-        });
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: generatedIdentity,
-            artifactGraph,
-            fetchArtifactBytes,
-        })).resolves.toEqual({
-            ok: false,
-            code: 'invalid_response',
-            diagnostics: ['react_native_artifact_graph_file_set_mismatch'],
-        });
-
-        const tamperedChunk = new TextEncoder().encode('export function renderSurface() { return "tampered"; }');
-        fetchArtifactBytes.mockResolvedValueOnce({
-            ...(await fetchArtifactBytes()),
-            files: [
-                {
-                    relativePath: chunkPath,
-                    digest: computePluginUiArtifactSha256DigestV1(tamperedChunk),
-                    byteSize: tamperedChunk.byteLength,
-                    bytesBase64: encodeBase64(tamperedChunk),
-                },
-                {
-                    relativePath: entryPath,
-                    digest: computePluginUiArtifactSha256DigestV1(entryBytes),
-                    byteSize: entryBytes.byteLength,
-                    bytesBase64: encodeBase64(entryBytes),
-                },
-            ],
-        });
-        await expect(preloadReactNativeInstalledArtifactBytes({
-            cache,
-            identity: generatedIdentity,
-            artifactGraph,
-            fetchArtifactBytes,
-        })).resolves.toEqual({
-            ok: false,
-            code: 'digest_mismatch',
-            diagnostics: ['react_native_artifact_file_manifest_mismatch'],
-        });
-    });
 });

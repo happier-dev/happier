@@ -30,7 +30,7 @@ describe('ProviderErrorItems', () => {
             'settingsProviders.errors.secretMissingTitle',
             'settingsProviders.errors.actions.addSecret',
         ]);
-        expect(screen.findAllByType('Item')[0]?.props.icon.props.name).toBe('warning-outline');
+        expect(screen.findAllByType('Item')[0]?.props.icon.props.name).toBe('warning');
         await React.act(async () => { await screen.findAllByType('Item')[1]?.props.onPress?.(); });
         expect(push).toHaveBeenCalledWith('/(app)/settings/providers/pc_a');
     });

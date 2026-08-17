@@ -3,7 +3,7 @@ import * as React from 'react';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { Modal } from '@/modal';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useCurrentSecretBindingsByProfileIdMutable } from '@/sync/domains/state/storage';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { type SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { t } from '@/text';
@@ -19,7 +19,7 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
 }>) {
     const { profile, profileName, environmentVariables } = params;
     const [secrets, setSecrets] = useSavedSecretsMutable();
-    const [bindingsByProfileId, setBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
+    const [bindingsByProfileId, setBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const [sourceRequirementsByName, setSourceRequirementsByName] = React.useState<Record<string, RequirementState>>(() => {
         const requirements: Record<string, RequirementState> = {};
         for (const requirement of profile.envVarRequirements ?? []) {

@@ -1,4 +1,7 @@
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import {
+    isTokenOnlyAuthCredentials,
+    TokenStorage,
+} from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import {
     areServerProfileIdentifiersEquivalent,
@@ -53,7 +56,9 @@ export async function resolveServerScopedContext(params: Readonly<{
         throw new Error(`No authentication credentials for target server "${resolvedTargetServerId}"`);
     }
 
-    const encryption = await createEncryptionFromAuthCredentials(credentials) as ScopedRpcEncryptionContext;
+    const encryption = isTokenOnlyAuthCredentials(credentials)
+        ? null
+        : await createEncryptionFromAuthCredentials(credentials) as ScopedRpcEncryptionContext;
 
     return {
         scope: 'scoped',

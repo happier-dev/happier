@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -7,6 +6,7 @@ import { ActionListSection, type ActionListItem } from '@/components/ui/lists/Ac
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { t } from '@/text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 /**
  * Goal lifecycle actions (Pause/Resume, Complete, Clear) folded into a single `⋯` overflow menu so
@@ -23,7 +23,7 @@ export type SessionGoalMenuAction = Readonly<{
     id: string;
     testID: string;
     label: string;
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    icon: IconName;
     destructive?: boolean;
     onPress: () => void;
 }>;
@@ -43,9 +43,9 @@ export function SessionGoalActionsMenu(props: Readonly<{
         testID: action.testID,
         label: action.label,
         icon: (
-            <Ionicons
+            <Icon
                 name={action.icon}
-                size={18}
+                size={16}
                 color={action.destructive ? theme.colors.state.danger.foreground : theme.colors.button.secondary.tint}
             />
         ),
@@ -67,7 +67,7 @@ export function SessionGoalActionsMenu(props: Readonly<{
                 onPress={() => setOpen((current) => !current)}
                 style={styles.trigger}
             >
-                <Ionicons name="ellipsis-horizontal" size={20} color={theme.colors.text.secondary} />
+                <Icon name="dots-three" size={20} color={theme.colors.text.secondary} />
             </Pressable>
             <Popover
                 open={open}

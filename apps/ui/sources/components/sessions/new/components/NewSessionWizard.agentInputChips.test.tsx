@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
@@ -233,12 +234,12 @@ function buildProps() {
             setFavoriteDirectories: () => {},
         },
         footer: {
-            sessionPrompt: '',
+            promptStore: createNewSessionPromptStore(''),
             setSessionPrompt: () => {},
             handleCreateSession: () => {},
             canCreate: true,
             isCreating: false,
-            emptyAutocompletePrefixes: [],
+            emptyAutocompleteKinds: [],
             emptyAutocompleteSuggestions: async () => [],
             agentInputExtraActionChips: [],
         } as any,

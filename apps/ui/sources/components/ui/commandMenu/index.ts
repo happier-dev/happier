@@ -9,6 +9,10 @@ export { CommandMenuRow } from './CommandMenuRow';
 export { CommandMenuSurface } from './CommandMenuSurface';
 export { filterCommandMenuItemsBySubstring } from './filterCommandMenuItemsBySubstring';
 export { useCommandMenuKeyboard } from './useCommandMenuKeyboard';
+export {
+    COMMAND_MENU_ROOT_STEP_ID,
+    resolveCommandMenuComboboxAccessibility,
+} from './commandMenuAccessibility';
 
 export type {
     CommandMenuAnchor,

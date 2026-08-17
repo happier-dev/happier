@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Linking, Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -9,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useUpdates } from '@/hooks/inbox/useUpdates';
 import { useNativeUpdate } from '@/hooks/ui/useNativeUpdate';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function toErrorMessage(error: unknown): string | null {
     if (error instanceof Error) {
@@ -91,7 +91,7 @@ export const OtaUpdateStatusSection = React.memo(function OtaUpdateStatusSection
                     title={t('updateBanner.nativeUpdateAvailable')}
                     subtitle={Platform.OS === 'ios' ? t('updateBanner.tapToUpdateAppStore') : t('updateBanner.tapToUpdatePlayStore')}
                     onPress={openStoreUpdate}
-                    icon={<Ionicons name="download-outline" size={24} color={theme.colors.state.success.foreground} />}
+                    icon={<Icon name="download" size={24} color={theme.colors.state.success.foreground} />}
                 />
             ) : null}
             {otaRuntimeSupported ? (
@@ -104,13 +104,13 @@ export const OtaUpdateStatusSection = React.memo(function OtaUpdateStatusSection
                         loading={isUpdatePending ? isRestarting : (isChecking || isDownloading)}
                         disabled={isUpdatePending ? isRestarting : (isChecking || isDownloading)}
                         showChevron={false}
-                        icon={<Ionicons name={isUpdatePending ? 'refresh-circle-outline' : 'refresh-outline'} size={24} color={theme.colors.accent.indigo} />}
+                        icon={<Icon name={isUpdatePending ? 'arrows-clockwise' : 'arrow-clockwise'} size={24} color={theme.colors.accent.indigo} />}
                     />
                     <Item
                         title={t('updateBanner.lastCheckedTitle')}
                         detail={formatLastChecked(lastCheckForUpdateTimeSinceRestart)}
                         mode="info"
-                        icon={<Ionicons name="time-outline" size={24} color={theme.colors.accent.orange} />}
+                        icon={<Icon name="clock" size={24} color={theme.colors.accent.orange} />}
                     />
                 </>
             ) : null}

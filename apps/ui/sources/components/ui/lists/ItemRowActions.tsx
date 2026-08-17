@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Pressable, useWindowDimensions, type GestureResponderEvent, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { type ItemAction } from '@/components/ui/lists/itemActions';
 import { Popover, type PopoverPlacement, type PopoverPortalOptions } from '@/components/ui/popover';
@@ -11,6 +10,7 @@ import { t } from '@/text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export interface ItemRowActionsProps {
     title: string;
@@ -48,6 +48,15 @@ export interface ItemRowActionsProps {
     overflowPlacement?: PopoverPlacement;
     overflowPortal?: Partial<PopoverPortalOptions>;
     iconSize?: number;
+    /**
+     * Opt-in override for the visible size of each action control.
+     *
+     * The default gives every control the platform's minimum interactive target as a visible box,
+     * which is right for a list row but too loose for a dense chrome cluster that owns its own
+     * rhythm. Overriding it only shrinks the *drawn* box: the press frame below grows back toward
+     * the platform minimum as far as the row's own gap allows.
+     */
+    actionControlSizePx?: number;
     gap?: number;
     onActionPressIn?: () => void;
     /**
@@ -114,7 +123,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
             const color = action.color ?? (action.destructive ? theme.colors.state.danger.foreground : theme.colors.button.secondary.tint);
             const iconNode =
                 typeof action.icon === 'string'
-                    ? <Ionicons name={action.icon} size={18} color={color} />
+                    ? <Icon name={action.icon} size={16} color={color} />
                     : action.icon;
             const onPress = action.onPress;
             return {
@@ -132,13 +141,54 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     const iconSize = props.iconSize ?? 20;
     const minimumActionTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const actionControlSize = Math.max(
-        Platform.OS === 'web' || Platform.OS === 'android'
+        props.actionControlSizePx
+        ?? (Platform.OS === 'web' || Platform.OS === 'android'
             ? minimumActionTargetSize
-            : DEFAULT_ACTION_CONTROL_SIZE,
+            : DEFAULT_ACTION_CONTROL_SIZE),
         iconSize,
     );
-    const actionHitSlop = Math.max(0, (minimumActionTargetSize - actionControlSize) / 2);
     const gap = props.gap ?? 16;
+
+    /**
+     * The press frame, when the drawn control is smaller than the platform target.
+     *
+     * **Not `hitSlop`.** react-native-web 0.21 implements `hitSlop` only in its legacy
+     * `Touchable` export — `Pressable` and `View` never read it — and the desktop app *is*
+     * the web bundle, which the tablet drawer path also reaches by touch. A slop-declared
+     * target there is a target that does not exist. So the frame is real box model: a larger
+     * width/height plus an equal negative margin, which grows the pointer box on every
+     * platform while the row still measures the drawn size.
+     *
+     * Two different budgets, because the two axes have different neighbours:
+     *
+     *  - **Vertical is free.** An icon row has nothing above or below it inside the row, so
+     *    the frame takes the whole platform floor (44 on web/iOS, 48dp on Android).
+     *  - **Horizontal is bounded by the gap.** Each control may reach at most half the row's
+     *    gap on each side, so two adjacent targets meet exactly and never overlap — which
+     *    DESIGN.md's accessibility rule forbids outright.
+     *
+     * CEILING: the desktop sidebar draws 32px controls at `gap: 4`, so its target is 36×44,
+     * not 44×44. Four non-overlapping 44px targets need 176px and that cluster is deliberately
+     * 140px wide; the requirement that actually governs a dense pointer layout is WCAG 2.2 AA
+     * SC 2.5.8 (24×24 CSS px), which 36×44 clears with room. Raising the cluster's width budget
+     * to 176px is the exact and only condition that would let the horizontal cap reach 44.
+     */
+    const targetDeficitPerSide = Math.max(0, (minimumActionTargetSize - actionControlSize) / 2);
+    const targetExpandY = targetDeficitPerSide;
+    const targetExpandX = Math.min(targetDeficitPerSide, gap / 2);
+    const actionControlFrame = React.useMemo(() => {
+        const width = actionControlSize + (targetExpandX * 2);
+        const height = actionControlSize + (targetExpandY * 2);
+        return {
+            width,
+            height,
+            marginHorizontal: -targetExpandX,
+            marginVertical: -targetExpandY,
+            // The frame carries the focus ring, so it stays a capsule around the narrow axis
+            // rather than a rounded rectangle.
+            borderRadius: Math.min(width, height) / 2,
+        };
+    }, [actionControlSize, targetExpandX, targetExpandY]);
     const overflowPlacement = props.overflowPlacement ?? 'left';
     const overflowPortal = React.useMemo<PopoverPortalOptions>(() => ({
         web: true,
@@ -152,8 +202,8 @@ export function ItemRowActions(props: ItemRowActionsProps) {
             return props.renderOverflowAnchorOverlay();
         }
         return normalizeNodeForView(
-            <Ionicons
-                name="ellipsis-horizontal"
+            <Icon
+                name="dots-three"
                 size={iconSize + 2}
                 color={theme.colors.button.secondary.tint}
             />,
@@ -165,7 +215,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
         const iconNode =
             typeof action.icon === 'string'
                 ? (
-                    <Ionicons
+                    <Icon
                         name={action.icon}
                         size={iconSize}
                         color={color}
@@ -178,7 +228,6 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 key={action.id}
                 testID={action.inlineTestID}
                 disabled={action.disabled || !action.onPress}
-                hitSlop={actionHitSlop}
                 onPressIn={() => props.onActionPressIn?.()}
                 onPress={(e: GestureResponderEvent) => {
                     e?.stopPropagation?.();
@@ -188,11 +237,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                     const webState = interactionState as typeof interactionState & { focused?: boolean };
                     return [
                         styles.actionControl,
-                        {
-                            width: actionControlSize,
-                            height: actionControlSize,
-                            borderRadius: actionControlSize / 2,
-                        },
+                        actionControlFrame,
                         webState.focused === true ? styles.actionControlFocused : null,
                     ];
                 }}
@@ -204,7 +249,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 )}
             </Pressable>
         );
-    }, [actionControlSize, actionHitSlop, iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
+    }, [actionControlFrame, iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
         const accessibilityLabel = t('common.moreActions');
@@ -225,16 +270,11 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                         : (
                             <Pressable
                                 testID={props.overflowTriggerTestID}
-                                hitSlop={actionHitSlop}
                                 style={(interactionState) => {
                                     const webState = interactionState as typeof interactionState & { focused?: boolean };
                                     return [
                                         styles.actionControl,
-                                        {
-                                            width: actionControlSize,
-                                            height: actionControlSize,
-                                            borderRadius: actionControlSize / 2,
-                                        },
+                                        actionControlFrame,
                                         showOverflow ? { opacity: 0 } : null,
                                         webState.focused === true ? styles.actionControlFocused : null,
                                     ];
@@ -252,8 +292,8 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                                 title={accessibilityLabel}
                             >
                                 {normalizeNodeForView(
-                                    <Ionicons
-                                        name="ellipsis-horizontal"
+                                    <Icon
+                                        name="dots-three"
                                         size={iconSize + 2}
                                         color={theme.colors.button.secondary.tint}
                                     />,
@@ -299,7 +339,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 ) : null}
             </View>
         );
-    }, [actionControlSize, actionHitSlop, blurTintOnWeb, overflowActionItems, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow]);
+    }, [actionControlFrame, blurTintOnWeb, iconSize, overflowActionItems, overflowAnchorOverlay, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.button.secondary.tint]);
 
     return (
         <View style={[styles.container, { gap }]}>

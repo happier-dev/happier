@@ -81,8 +81,6 @@ describe('resolveVoiceConnectRecoveryTarget', () => {
                     pluginId: 'happier.agent.codex',
                     localId: 'openai-codex',
                     accountId: 'account-work',
-                    serverId: 'server-selected',
-                    machineId: 'machine-selected',
                 },
             },
         });
@@ -116,8 +114,6 @@ describe('resolveVoiceConnectRecoveryTarget', () => {
                     pluginId: 'happier.agent.codex',
                     localId: 'openai-codex',
                     groupId: 'team-work',
-                    serverId: 'server-selected',
-                    machineId: 'machine-selected',
                 },
             },
         });
@@ -181,8 +177,6 @@ describe('resolveVoiceConnectRecoveryTarget', () => {
                     pluginId: 'happier.agent.codex',
                     localId: 'openai-codex',
                     groupId: 'team-session',
-                    serverId: 'server-selected',
-                    machineId: 'machine-selected',
                 },
             },
         });

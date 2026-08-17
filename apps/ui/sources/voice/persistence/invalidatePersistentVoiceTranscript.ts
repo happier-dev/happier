@@ -5,6 +5,7 @@ import {
     voiceSettingsParse,
     writeLocalConversationVoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 
 export function invalidatePersistentVoiceTranscript(): number | null {
     const state: any = storage.getState();
@@ -18,7 +19,7 @@ export function invalidatePersistentVoiceTranscript(): number | null {
     const currentEpoch = Number.isFinite(currentEpochRaw) && currentEpochRaw >= 0 ? Math.floor(currentEpochRaw) : 0;
     const nextEpoch = currentEpoch + 1;
 
-    state.applySettingsLocal({
+    state.applySettingsLocal(normalizeVoiceSettingsLocalDelta({
         voice: writeLocalConversationVoiceSettings(voice, {
             ...localConversation,
             agent: {
@@ -29,7 +30,7 @@ export function invalidatePersistentVoiceTranscript(): number | null {
                 },
             },
         }),
-    });
+    }, state.settings));
 
     return nextEpoch;
 }

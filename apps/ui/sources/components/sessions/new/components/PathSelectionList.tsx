@@ -21,7 +21,6 @@
  */
 
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable, View, type GestureResponderEvent } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -46,6 +45,7 @@ import { listMachineFileBrowserDirectoryEntries } from '@/sync/domains/input/mac
 import { t } from '@/text';
 
 import { PathFavoriteToggleButton } from './PathFavoriteToggleButton';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     createPathSelectionInputBehavior,
     resolvePathSelectionEmptyInputPath,
@@ -164,7 +164,7 @@ function PathDrillDownButton(props: Readonly<{
                 borderRadius: 14,
             }}
         >
-            <Ionicons name="chevron-forward" size={16} color={theme.colors.text.tertiary} />
+            <Icon name="caret-right" size={16} color={theme.colors.text.tertiary} />
         </Pressable>
     );
 }

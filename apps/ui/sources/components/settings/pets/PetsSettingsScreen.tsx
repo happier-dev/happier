@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import {
     DaemonPetDiscoverResponseV1Schema,
@@ -26,10 +25,16 @@ import {
     BUILT_IN_PET_IDS,
     resolveBuiltInPetPackage,
 } from '@/components/pets/builtIns/builtInPetRegistry';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
-import { storage, useAllMachines, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { storage, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import {
+    useMachineAdministrationTargetSelection,
+    type FreshMachineAdministrationExecutionTargetV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
 import { normalizePetCompanionSizeScale } from '@/sync/domains/pets/companionSizeScale';
 import { normalizeLocalPetSourceMetadata } from '@/sync/domains/pets/normalizeLocalPetSources';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -51,6 +56,7 @@ import {
     upsertByKey,
 } from './petsSettingsScreen/helpers';
 import { usePetSourceActionRows } from './petsSettingsScreen/usePetSourceActionRows';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     consumePendingCodexPetRefresh,
     subscribeCodexPetRefresh,
@@ -62,12 +68,38 @@ import type {
     PetImportCandidate,
 } from './petsSettingsScreen/types';
 
+function machineAdministrationExecutionTargetKey(
+    target: FreshMachineAdministrationExecutionTargetV1,
+): string {
+    return [
+        target.target.serverIdentityId,
+        target.target.machineId,
+        target.serverId,
+    ].join('\u0000');
+}
+
 export function PetsSettingsScreen() {
     const { theme } = useUnistyles();
     const settings = useSettings();
     const localSettings = useLocalSettings();
-    const machines = useAllMachines();
-    const activeServerSnapshot = useActiveServerSnapshot();
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.pets,
+    );
+    const executionTarget = administrationTargetSelection.resolveExecutionTarget();
+    const executionTargetKey = executionTarget
+        ? machineAdministrationExecutionTargetKey(executionTarget)
+        : null;
+    const targetMachineId = executionTarget?.machine.id ?? '';
+    const targetServerId = executionTarget?.serverId ?? '';
+    const isExecutionTargetCurrent = React.useCallback((
+        target: FreshMachineAdministrationExecutionTargetV1,
+    ) => {
+        const current = administrationTargetSelection.resolveExecutionTarget();
+        return current !== null
+            && current.serverId === target.serverId
+            && current.machine.id === target.machine.id
+            && machineAdministrationTargetsEqual(current.target, target.target);
+    }, [administrationTargetSelection.resolveExecutionTarget]);
     const accountPetsById = storage((state) => state.accountPetsById);
     const localPetSourcesBySourceKey = storage((state) => state.localPetSourcesBySourceKey);
     const applySettings = useApplySettings();
@@ -78,17 +110,26 @@ export function PetsSettingsScreen() {
     const [desktopOverlayOverrideOpen, setDesktopOverlayOverrideOpen] = React.useState(false);
     const [desktopOverlayVisibilityModeOpen, setDesktopOverlayVisibilityModeOpen] = React.useState(false);
     const [codexDetectionState, setCodexDetectionState] = React.useState<CodexDetectionState>('idle');
+    const [codexDetectionTargetKey, setCodexDetectionTargetKey] = React.useState<string | null>(null);
     const [discoveredPets, setDiscoveredPets] = React.useState<DiscoveredPetPackageV1[]>([]);
+    const [discoveredPetsTargetKey, setDiscoveredPetsTargetKey] = React.useState<string | null>(null);
     const [importedLocalPets, setImportedLocalPets] = React.useState<ImportedLocalPetPackageV1[]>([]);
+    const [importedLocalPetsTargetKey, setImportedLocalPetsTargetKey] = React.useState<string | null>(null);
     const [importedAccountPets, setImportedAccountPets] = React.useState<AccountPetLibraryEntryV1[]>([]);
     const [localImportDiagnostic, setLocalImportDiagnostic] = React.useState<LocalPetImportDiagnostic | null>(null);
+    const [localImportDiagnosticTargetKey, setLocalImportDiagnosticTargetKey] = React.useState<string | null>(null);
     const removingLocalPetSourceKeysRef = React.useRef(new Set<string>());
     const forgottenLocalPetSourceKeysRef = React.useRef(new Set<string>());
     const showDesktopOverlaySettings = isTauriDesktop();
     const companionSizeScale = normalizePetCompanionSizeScale(localSettings.petsCompanionSizeScale);
-
-    const targetMachineId = machines.find((machine) => machine.active)?.id ?? machines[0]?.id ?? '';
-    const targetServerId = String(activeServerSnapshot.serverId ?? '').trim();
+    const scopedDiscoveredPets = discoveredPetsTargetKey === executionTargetKey ? discoveredPets : [];
+    const scopedImportedLocalPets = importedLocalPetsTargetKey === executionTargetKey ? importedLocalPets : [];
+    const scopedCodexDetectionState = codexDetectionTargetKey === executionTargetKey
+        ? codexDetectionState
+        : 'idle';
+    const scopedLocalImportDiagnostic = localImportDiagnosticTargetKey === executionTargetKey
+        ? localImportDiagnostic
+        : null;
 
     const overrideItems: DropdownMenuItem[] = [
         { id: 'inherit', title: t('settingsPets.overrideInherit') },
@@ -114,22 +155,22 @@ export function PetsSettingsScreen() {
         if (!daemonTarget) {
             return Array.from(rows.values());
         }
-        for (const pet of discoveredPets) {
+        for (const pet of scopedDiscoveredPets) {
             if (isManagedLocalPet(pet)) {
                 rows.set(pet.sourceKey, managedPetToLocalPetRow(pet, daemonTarget));
             }
         }
-        for (const pet of importedLocalPets) {
+        for (const pet of scopedImportedLocalPets) {
             if (isManagedLocalPet(pet)) {
                 rows.set(pet.sourceKey, managedPetToLocalPetRow(pet, daemonTarget));
             }
         }
         return Array.from(rows.values());
-    }, [discoveredPets, importedLocalPets, localPetSourcesBySourceKey, targetMachineId, targetServerId]);
+    }, [localPetSourcesBySourceKey, scopedDiscoveredPets, scopedImportedLocalPets, targetMachineId, targetServerId]);
 
     const detectedPetRows = React.useMemo(
-        () => discoveredPets.filter(isDetectedPet),
-        [discoveredPets],
+        () => scopedDiscoveredPets.filter(isDetectedPet),
+        [scopedDiscoveredPets],
     );
     const builtInPetRows = React.useMemo(
         () => BUILT_IN_PET_IDS.map((petId) => resolveBuiltInPetPackage(petId)),
@@ -144,11 +185,15 @@ export function PetsSettingsScreen() {
     }, [accountPetsById, importedAccountPets]);
 
     const discoverPets = React.useCallback(async () => {
-        if (codexDetectionState === 'loading') return;
-        if (!targetMachineId || !targetServerId) {
+        const target = administrationTargetSelection.resolveExecutionTarget();
+        if (!target) {
+            setCodexDetectionTargetKey(null);
             setCodexDetectionState('noTarget');
             return;
         }
+        const targetKey = machineAdministrationExecutionTargetKey(target);
+        if (codexDetectionState === 'loading' && codexDetectionTargetKey === targetKey) return;
+        setCodexDetectionTargetKey(targetKey);
         setCodexDetectionState('loading');
         try {
             const payload: DaemonPetDiscoverRequestV1 = {
@@ -158,13 +203,16 @@ export function PetsSettingsScreen() {
                 includeManagedLocal: true,
             };
             const raw = await machineRpcWithServerScope<unknown, DaemonPetDiscoverRequestV1>({
-                machineId: targetMachineId,
-                serverId: targetServerId,
+                machineId: target.machine.id,
+                serverId: target.serverId,
                 method: PET_DAEMON_RPC_METHODS.DISCOVER_PACKAGES,
                 payload,
             });
+            if (!isExecutionTargetCurrent(target)) return;
             if (isRpcMethodNotAvailableError(raw)) {
                 setDiscoveredPets([]);
+                setDiscoveredPetsTargetKey(targetKey);
+                setCodexDetectionTargetKey(targetKey);
                 setCodexDetectionState('daemonMismatch');
                 return;
             }
@@ -175,20 +223,27 @@ export function PetsSettingsScreen() {
                     || !forgottenLocalPetSourceKeysRef.current.has(pet.sourceKey)
                 ));
                 setDiscoveredPets(visiblePets);
+                setDiscoveredPetsTargetKey(targetKey);
                 storage.getState().upsertLocalPetSources(normalizeLocalPetSourceMetadata(visiblePets, {
-                    serverId: targetServerId,
-                    machineId: targetMachineId,
+                    serverId: target.serverId,
+                    machineId: target.machine.id,
                 }));
+                setCodexDetectionTargetKey(targetKey);
                 setCodexDetectionState(visiblePets.some(isDetectedPet) ? 'success' : 'empty');
             } else {
                 setDiscoveredPets([]);
+                setDiscoveredPetsTargetKey(targetKey);
+                setCodexDetectionTargetKey(targetKey);
                 setCodexDetectionState('error');
             }
         } catch (error) {
+            if (!isExecutionTargetCurrent(target)) return;
             setDiscoveredPets([]);
+            setDiscoveredPetsTargetKey(targetKey);
+            setCodexDetectionTargetKey(targetKey);
             setCodexDetectionState(isRpcMethodNotAvailableError(error) ? 'daemonMismatch' : 'error');
         }
-    }, [codexDetectionState, targetMachineId, targetServerId]);
+    }, [administrationTargetSelection.resolveExecutionTarget, codexDetectionState, codexDetectionTargetKey, isExecutionTargetCurrent]);
 
     React.useEffect(() => {
         const refreshIfRequested = () => {
@@ -200,19 +255,24 @@ export function PetsSettingsScreen() {
     }, [discoverPets]);
 
     const importLocalPet = React.useCallback(async (candidate: PetImportCandidate) => {
-        if (!targetMachineId || !targetServerId) return;
+        const target = administrationTargetSelection.resolveExecutionTarget();
+        if (!target) return;
+        const targetKey = machineAdministrationExecutionTargetKey(target);
         const payload = buildImportPayload(candidate);
         if (!payload) return;
+        setLocalImportDiagnosticTargetKey(targetKey);
         setLocalImportDiagnostic(null);
         try {
             const raw = await machineRpcWithServerScope<unknown, DaemonPetImportLocalPackageRequestV1>({
-                machineId: targetMachineId,
-                serverId: targetServerId,
+                machineId: target.machine.id,
+                serverId: target.serverId,
                 method: PET_DAEMON_RPC_METHODS.IMPORT_LOCAL_PACKAGE,
                 payload,
             });
+            if (!isExecutionTargetCurrent(target)) return;
             const parsed = DaemonPetImportLocalPackageResponseV1Schema.parse(raw);
             if ('ok' in parsed && parsed.ok === false) {
+                setLocalImportDiagnosticTargetKey(targetKey);
                 setLocalImportDiagnostic({
                     code: typeof parsed.errorCode === 'string' ? parsed.errorCode : 'daemon_import_failed',
                 });
@@ -226,9 +286,10 @@ export function PetsSettingsScreen() {
             const importedPet = importedPetResult.data;
             forgottenLocalPetSourceKeysRef.current.delete(importedPet.sourceKey);
             setImportedLocalPets((pets) => upsertByKey(pets, importedPet, (pet) => pet.sourceKey));
+            setImportedLocalPetsTargetKey(targetKey);
             storage.getState().upsertLocalPetSources(normalizeLocalPetSourceMetadata([importedPet], {
-                serverId: targetServerId,
-                machineId: targetMachineId,
+                serverId: target.serverId,
+                machineId: target.machine.id,
             }));
             applyLocalSettings({
                 petsSelectedPetOverride: {
@@ -237,13 +298,16 @@ export function PetsSettingsScreen() {
                 },
             });
         } catch {
+            if (!isExecutionTargetCurrent(target)) return;
+            setLocalImportDiagnosticTargetKey(targetKey);
             setLocalImportDiagnostic({ code: 'daemon_import_failed' });
-            setImportedLocalPets((pets) => pets);
         }
-    }, [applyLocalSettings, targetMachineId, targetServerId]);
+    }, [administrationTargetSelection.resolveExecutionTarget, applyLocalSettings, isExecutionTargetCurrent]);
 
     const importAccountPet = React.useCallback(async (candidate: PetImportCandidate) => {
-        if (!syncEnabled || !targetMachineId || !targetServerId) return;
+        if (!syncEnabled) return;
+        const target = administrationTargetSelection.resolveExecutionTarget();
+        if (!target) return;
         const importPayload = buildImportPayload(candidate);
         if (!importPayload) return;
         try {
@@ -252,11 +316,12 @@ export function PetsSettingsScreen() {
                 petsSyncEnabled: true,
             };
             const raw = await machineRpcWithServerScope<unknown, DaemonPetImportAccountPackageRequestV1>({
-                machineId: targetMachineId,
-                serverId: targetServerId,
+                machineId: target.machine.id,
+                serverId: target.serverId,
                 method: PET_DAEMON_RPC_METHODS.IMPORT_ACCOUNT_PACKAGE,
                 payload,
             });
+            if (!isExecutionTargetCurrent(target)) return;
             const parsed = DaemonPetImportResponseV1Schema.parse(raw);
             if (!parsed.ok || parsed.target !== 'account' || !parsed.account.ok) return;
             const pet = parsed.account.pet;
@@ -269,24 +334,24 @@ export function PetsSettingsScreen() {
                 applyLocalSettings({ petsSelectedPetOverride: { kind: 'inherit' } });
             }
         } catch {
-            setImportedAccountPets((pets) => pets);
+            if (!isExecutionTargetCurrent(target)) return;
         }
-    }, [applyLocalSettings, applySettings, localSettings.petsSelectedPetOverride.kind, syncEnabled, targetMachineId, targetServerId]);
+    }, [administrationTargetSelection.resolveExecutionTarget, applyLocalSettings, applySettings, isExecutionTargetCurrent, localSettings.petsSelectedPetOverride.kind, syncEnabled]);
 
     const removeLocalPet = React.useCallback(async (pet: LocalDevicePetRow) => {
         if (removingLocalPetSourceKeysRef.current.has(pet.sourceKey)) return;
         removingLocalPetSourceKeysRef.current.add(pet.sourceKey);
         try {
-            if (targetMachineId && targetServerId) {
-                const payload: DaemonPetForgetLocalPackageRequestV1 = { sourceKey: pet.sourceKey };
-                const raw = await machineRpcWithServerScope<unknown, DaemonPetForgetLocalPackageRequestV1>({
-                    machineId: targetMachineId,
-                    serverId: targetServerId,
-                    method: PET_DAEMON_RPC_METHODS.FORGET_LOCAL_PACKAGE,
-                    payload,
-                });
-                DaemonPetForgetLocalPackageResponseV1Schema.safeParse(raw);
-            }
+            // The persisted local-source record owns cleanup routing. Administration
+            // selection only authorizes new discovery/import work, never relocation.
+            const payload: DaemonPetForgetLocalPackageRequestV1 = { sourceKey: pet.sourceKey };
+            const raw = await machineRpcWithServerScope<unknown, DaemonPetForgetLocalPackageRequestV1>({
+                machineId: pet.previewAsset.target.machineId,
+                serverId: pet.previewAsset.target.serverId,
+                method: PET_DAEMON_RPC_METHODS.FORGET_LOCAL_PACKAGE,
+                payload,
+            });
+            DaemonPetForgetLocalPackageResponseV1Schema.safeParse(raw);
         } catch {
             // Removal from the device list is local user intent; daemon cleanup is best effort.
         } finally {
@@ -303,7 +368,7 @@ export function PetsSettingsScreen() {
         ) {
             applyLocalSettings({ petsSelectedPetOverride: { kind: 'inherit' } });
         }
-    }, [applyLocalSettings, localSettings.petsSelectedPetOverride, targetMachineId, targetServerId]);
+    }, [applyLocalSettings, localSettings.petsSelectedPetOverride]);
 
     const handleSelectBuiltInPet = React.useCallback((petId: string) => {
         applySettings({ petsSelectedPetRef: { kind: 'builtIn', petId } });
@@ -362,7 +427,7 @@ export function PetsSettingsScreen() {
                     <Item
                         title={t('settingsPets.disabledTitle')}
                         subtitle={t('settingsPets.disabledSubtitle')}
-                        icon={<Ionicons name="paw-outline" size={25} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="paw-print" size={24} color={theme.colors.text.secondary} />}
                         mode="info"
                     />
                 </ItemGroup>
@@ -372,6 +437,10 @@ export function PetsSettingsScreen() {
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            <MachineAdministrationTargetSelector
+                selection={administrationTargetSelection}
+                testIDPrefix="pets-settings-target"
+            />
             <PetsAccountSettingsSection
                 companionSizeScale={companionSizeScale}
                 deviceOverrideOpen={deviceOverrideOpen}
@@ -386,14 +455,14 @@ export function PetsSettingsScreen() {
 
             <PetsLocalLibrarySection
                 builtInPetRows={builtInPetRows}
-                codexDetectionState={codexDetectionState}
+                codexDetectionState={scopedCodexDetectionState}
                 companionSizeScale={companionSizeScale}
                 detectedPetRowsCount={detectedPetRows.length}
                 detectedPetTileRows={detectedPetTileRows}
                 localPetRows={localSelectorRows}
                 onDiscoverPets={discoverPets}
                 onSelectBuiltInPet={handleSelectBuiltInPet}
-                importDiagnostic={localImportDiagnostic}
+                importDiagnostic={scopedLocalImportDiagnostic}
                 selectedBuiltInPetId={selectedBuiltInPetId}
             />
 

@@ -1,5 +1,4 @@
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet } from 'react-native-unistyles';
 
 export const sessionListStyles = StyleSheet.create((theme) => ({
@@ -10,9 +9,11 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         alignItems: 'stretch',
         backgroundColor: theme.colors.background.canvas,
     },
+    // `maxWidth` is composed at render time from `useLayoutMaxWidthStyle()`: this
+    // factory evaluates once, so baking the content-width preference in here would
+    // freeze it until the app reloads.
     contentContainer: {
         flex: 1,
-        maxWidth: layout.maxWidth,
     },
     headerSection: {
         backgroundColor: theme.colors.background.canvas,

@@ -111,18 +111,11 @@ describe('DaemonSpeechStreamCarrier', () => {
     expect('payloadBytes' in frame).toBe(false);
   });
 
-  it('marks the transitional machine-RPC sender path as compatibility-only, not D17 complete', () => {
+  it('describes the actual JSON/base64 compatibility transport without stale delivery milestones', () => {
     expect(describeDaemonSpeechStreamRpcCompatibilityTransport()).toEqual({
       kind: 'machine_rpc_json_base64_compatibility',
       carrierFrameEncoding: PEER_TCP_TUNNEL_JSON_BASE64_ENCODING_V1,
       payloadShape: 'json_base64_envelope',
-      d17Complete: false,
-      remainingConsumerContracts: [
-        'UI tunnel client must append binary_frame_v2 payload bytes to the selected direct or relay tunnel stream.',
-        'CLI/server daemon STT stream consumer must accept carrier byte frames instead of daemon.voiceInference.stt.stream.chunk pcm16Base64 payloads.',
-        'Relay fallback enforcement must call the shared voice relay caps decision before high-bandwidth audio uses server relay capacity.',
-      ],
-      replacementRequiredBy: ['L13B0.T7', 'L13B1.T1b'],
     });
   });
 });

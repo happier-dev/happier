@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function SourceControlSessionInactiveState(props: {
     machineReachable: boolean;
@@ -27,7 +27,7 @@ export function SourceControlSessionInactiveState(props: {
                 gap: 14,
             }}
         >
-            <Octicons name="alert" size={42} color={theme.colors.text.secondary} />
+            <Icon name="warning" size={42} color={theme.colors.text.secondary} />
 
             <Text
                 style={{

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -8,6 +7,8 @@ import { Text } from '@/components/ui/text/Text';
 import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
 import { t } from '@/text';
 import { resolveCodeMonoFontFamily } from '../codeTypography';
+import { Icon } from '@/components/ui/icons/Icon';
+import { useHappierCodeBlockBehavior } from '@happier-dev/plugin-ui/presentation';
 
 export type CodeBlockViewFrameProps = Readonly<{
     code: string;
@@ -37,34 +38,17 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
     const { theme } = useUnistyles();
     const isWeb = Platform.OS === 'web';
     const [isHovered, setIsHovered] = React.useState(false);
-    const [copied, setCopied] = React.useState(false);
-    const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const onCopy = React.useCallback(async () => {
-        try {
-            await Clipboard.setStringAsync(code);
-            setCopied(true);
-            if (resetTimer.current) {
-                clearTimeout(resetTimer.current);
-            }
-            resetTimer.current = setTimeout(() => {
-                setCopied(false);
-            }, 1200);
-        } catch {
-            // Silent failure: no modal/toast here by design (matches message copy UX).
-        }
-    }, [code]);
-
-    React.useEffect(() => {
-        return () => {
-            if (resetTimer.current) {
-                clearTimeout(resetTimer.current);
-            }
-        };
-    }, []);
-
-    const shouldRenderHeaderRow = showHeaderRow && (Boolean(language) || Boolean(headerLeft) || Boolean(headerRight));
-    const shouldOverlayCopyButton = showCopyButton && !shouldRenderHeaderRow;
+    const writeClipboard = React.useCallback(() => Clipboard.setStringAsync(code), [code]);
+    const behavior = useHappierCodeBlockBehavior({
+        language,
+        showHeaderRow,
+        showCopyButton,
+        hasHeaderLeft: Boolean(headerLeft),
+        hasHeaderRight: Boolean(headerRight),
+        onCopy: writeClipboard,
+    });
+    const shouldRenderHeaderRow = behavior.shouldRenderHeaderRow;
+    const shouldOverlayCopyButton = behavior.shouldOverlayCopyButton;
     const contentPaddingStyle = shouldOverlayCopyButton
         ? [styles.codePadding]
         : (shouldRenderHeaderRow ? styles.codePaddingWithHeader : styles.codePadding);
@@ -77,16 +61,16 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                 shouldOverlayCopyButton ? { backgroundColor: theme.colors.surface.elevated, borderColor: theme.colors.border.default } : null,
                 (isWeb && isHovered) ? styles.copyButtonHovered : null,
             ]}
-            onPress={onCopy}
+            onPress={behavior.copy}
             onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
             accessibilityRole="button"
             accessibilityLabel={t('common.copy')}
         >
-            <Ionicons
-                name={copied ? 'checkmark-outline' : 'copy-outline'}
-                size={12}
-                color={copied ? (theme.colors.state.success.foreground ?? theme.colors.text.secondary) : theme.colors.text.secondary}
+            <Icon
+                name={behavior.copied ? 'check' : 'copy'}
+                size={14}
+                color={behavior.copied ? (theme.colors.state.success.foreground ?? theme.colors.text.secondary) : theme.colors.text.secondary}
             />
         </Pressable>
     ) : null;
@@ -96,9 +80,9 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
             <View style={styles.headerLeft}>
                 {headerLeft ? (
                     headerLeft
-                ) : language ? (
+                ) : behavior.language ? (
                     <Text selectable={selectable} style={[styles.headerText, { color: theme.colors.text.secondary }]}>
-                        {language}
+                        {behavior.language}
                     </Text>
                 ) : (
                     <View />

@@ -11,6 +11,7 @@ import type {
 import type { AgentToolsDelivery } from '@happier-dev/agents';
 
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import type { IconName } from '@/components/ui/icons/Icon';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { inferMcpServerAuthModeV1 } from '@happier-dev/protocol';
@@ -138,10 +139,10 @@ export function resolveTransportLabel(transport: McpServerCatalogEntryTransportV
     }
 }
 
-export function resolveTransportIconName(transport: McpServerCatalogEntryTransportV1) {
-    if (transport === 'stdio') return 'terminal-outline' as const;
-    if (transport === 'sse') return 'radio-outline' as const;
-    return 'cloud-outline' as const;
+export function resolveTransportIconName(transport: McpServerCatalogEntryTransportV1): IconName {
+    if (transport === 'stdio') return 'terminal';
+    if (transport === 'sse') return 'radio';
+    return 'cloud';
 }
 
 export function resolveAgentToolsDeliveryLabel(delivery: AgentToolsDelivery): string {

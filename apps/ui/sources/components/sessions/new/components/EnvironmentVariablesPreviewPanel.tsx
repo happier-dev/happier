@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, ScrollView, Pressable, Platform, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -12,6 +11,7 @@ import { t } from '@/text';
 import { formatEnvVarTemplate, parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
 import { Text } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export interface EnvironmentVariablesPreviewPanelProps {
     environmentVariables: Record<string, string>;
@@ -173,7 +173,7 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                 >
-                    {normalizeNodeForView(<Ionicons name="close" size={20} color={theme.colors.text.secondary} />)}
+                    {normalizeNodeForView(<Icon name="x" size={20} color={theme.colors.text.secondary} />)}
                 </Pressable>
             </View>
 
@@ -294,9 +294,9 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                                 if (secret) return undefined;
                                 if (!isMachineBased) return undefined;
                                 if (!hasMachineContext || detailKind === 'checking') {
-                                    return <Ionicons name="time-outline" size={18} color={theme.colors.text.secondary} />;
+                                    return <Icon name="clock" size={16} color={theme.colors.text.secondary} />;
                                 }
-                                return <Ionicons name="desktop-outline" size={18} color={detailColor} />;
+                                return <Icon name="desktop" size={16} color={detailColor} />;
                             })();
 
                             const canCopy = (() => {

@@ -49,7 +49,7 @@ function buildHostedRelayRow(
             titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayTitle',
             subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayAvailableSubtitle',
             detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.available',
-            icon: 'cloud-done-outline',
+            icon: 'cloud-check',
         };
     }
     if (hasReason(mode.reasons, 'hosted_relay_not_allowed')) {
@@ -58,7 +58,7 @@ function buildHostedRelayRow(
             titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayTitle',
             subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayDisabledSubtitle',
             detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.unavailable',
-            icon: 'cloud-offline-outline',
+            icon: 'cloud-slash',
         };
     }
     if (hasReason(mode.reasons, 'hosted_relay_provider_blocked')) {
@@ -67,7 +67,7 @@ function buildHostedRelayRow(
             titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayTitle',
             subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayBlockedSubtitle',
             detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.blocked',
-            icon: 'cloud-offline-outline',
+            icon: 'cloud-slash',
         };
     }
     return {
@@ -75,7 +75,7 @@ function buildHostedRelayRow(
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayTitle',
         subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.hostedRelayUnavailableSubtitle',
         detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.unavailable',
-        icon: 'cloud-offline-outline',
+        icon: 'cloud-slash',
     };
 }
 
@@ -90,7 +90,7 @@ function buildDirectApnsRow(
             titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.directApnsTitle',
             subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.directApnsConfiguredSubtitle',
             detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.available',
-            icon: 'key-outline',
+            icon: 'key',
             diagnosticKeys,
         };
     }
@@ -100,7 +100,7 @@ function buildDirectApnsRow(
             titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.directApnsTitle',
             subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.directApnsMissingCredentialsSubtitle',
             detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.missingCredentials',
-            icon: 'key-outline',
+            icon: 'key',
             diagnosticKeys,
         };
     }
@@ -109,7 +109,7 @@ function buildDirectApnsRow(
         titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.directApnsTitle',
         subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.directApnsUnavailableSubtitle',
         detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.unavailable',
-        icon: 'key-outline',
+        icon: 'key',
         diagnosticKeys,
     };
 }
@@ -127,7 +127,7 @@ function buildBackgroundWakeRow(
         detailKey: mode.available
             ? 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.bestEffort'
             : 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.unavailable',
-        icon: mode.available ? 'phone-portrait-outline' : 'phone-portrait-outline',
+        icon: 'device-mobile',
     };
 }
 
@@ -165,7 +165,7 @@ export function buildLiveActivityRemoteUpdateDiagnosticsRows(
             titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.effectiveModeTitle',
             subtitleKey: EFFECTIVE_MODE_SUBTITLE_KEYS[modeResolution.mode],
             detailKey: MODE_RESOLUTION_DETAIL_KEYS[modeResolution.reason],
-            icon: 'swap-horizontal-outline',
+            icon: 'arrows-left-right',
         },
         buildHostedRelayRow(params.diagnostics),
         buildDirectApnsRow(params.diagnostics),
@@ -175,7 +175,7 @@ export function buildLiveActivityRemoteUpdateDiagnosticsRows(
             titleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.localOnlyTitle',
             subtitleKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.localOnlyRuntimeSubtitle',
             detailKey: 'settingsNotifications.activitySurfaces.liveActivities.remoteUpdates.details.runtimeOnly',
-            icon: 'phone-portrait-outline',
+            icon: 'device-mobile',
         },
     ];
 }

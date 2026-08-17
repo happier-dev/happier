@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 
 import { useComposerKeyboardLayout } from './ComposerKeyboardContext';
 import type { ComposerKeyboardLayout } from './ComposerKeyboardContext';
 
 function normalizeInsetHeight(height: number): number {
+    'worklet';
     return typeof height === 'number' && Number.isFinite(height)
         ? Math.max(0, height)
         : 0;
@@ -31,11 +33,9 @@ export function ComposerKeyboardScrollInset(props: Readonly<{
     testID?: string;
 }>): React.ReactElement | null {
     const layout = useComposerKeyboardLayout();
-    const [height, setHeight] = React.useState(() => resolveCurrentInsetHeight(layout));
     const lastReportedHeightRef = React.useRef<number | null>(null);
-    const applyHeight = React.useCallback((nextHeight: number) => {
+    const reportHeight = React.useCallback((nextHeight: number) => {
         const normalizedHeight = normalizeInsetHeight(nextHeight);
-        setHeight((current) => (current === normalizedHeight ? current : normalizedHeight));
         if (lastReportedHeightRef.current !== normalizedHeight) {
             lastReportedHeightRef.current = normalizedHeight;
             props.onHeightChange?.(normalizedHeight);
@@ -44,27 +44,43 @@ export function ComposerKeyboardScrollInset(props: Readonly<{
 
     React.useEffect(() => {
         if (!layout) {
-            applyHeight(0);
+            reportHeight(0);
             return undefined;
         }
-        applyHeight(resolveCurrentInsetHeight(layout));
-        if (layout.subscribeListBottomInset) {
-            return layout.subscribeListBottomInset((nextHeight) => {
-                applyHeight(nextHeight);
-            });
+        const subscribeListBottomInset = layout.subscribeListBottomInset;
+        if (!subscribeListBottomInset) {
+            reportHeight(resolveCurrentInsetHeight(layout));
+            return undefined;
         }
-        return undefined;
-    }, [applyHeight, layout]);
+
+        let replayedNotifiedInset = false;
+        const unsubscribe = subscribeListBottomInset((nextHeight) => {
+            replayedNotifiedInset = true;
+            reportHeight(nextHeight);
+        });
+        if (!replayedNotifiedInset) {
+            reportHeight(resolveCurrentInsetHeight(layout));
+        }
+        return unsubscribe;
+    }, [layout, reportHeight]);
+
+    // `listBottomInset` is the layout owner's continuously updated shared value. Native keyboard
+    // frame worklets and the web layout owner both write it, so the spacer keeps moving even when
+    // the JS notification subscriber is busy. Do not re-derive this value here: that would create
+    // a second geometry owner and could drift from interactive-dismiss and safe-area rules.
+    const animatedInsetStyle = useAnimatedStyle(() => ({
+        height: normalizeInsetHeight(layout ? layout.listBottomInset.value : 0),
+    }), [layout]);
 
     if (!layout) {
         return null;
     }
 
     return (
-        <View
+        <Animated.View
             pointerEvents="none"
             testID={props.testID}
-            style={[props.style, { height }]}
+            style={[props.style, animatedInsetStyle]}
         />
     );
 }

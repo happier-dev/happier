@@ -49,10 +49,6 @@ vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
   },
 }));
 
-vi.mock('@/voice/agent/openaiCompatVoiceAgentClient', () => ({
-  OpenAiCompatVoiceAgentClient: class {},
-}));
-
 vi.mock('@/voice/context/buildVoiceInitialContext', () => ({
   buildVoiceInitialContext: () => '',
 }));
@@ -827,6 +823,50 @@ describe('VoiceAgentSessionController (persistence)', () => {
         existingRunId: null,
         resumeWhenInactive: true,
         resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_prev' }),
+      }),
+    );
+  });
+
+  it('forwards the remote-dev dual Voice resume handle only after canonical Provider-field normalization', async () => {
+    state.settings.voice.providers.local_conversation.config.agent.resumabilityMode = 'provider_resume';
+    state.sessions.sys_voice.metadata.voiceAgentRunV1 = {
+      v: 1,
+      runId: 'run_predecessor',
+      backendId: 'claude',
+      resumeHandle: {
+        kind: 'voice_agent_sessions.v1',
+        backendId: 'claude',
+        chatVendorSessionId: 'chat-predecessor',
+        commitVendorSessionId: 'commit-predecessor',
+      },
+      updatedAtMs: 1,
+      transcriptContractVersion: 2,
+    };
+
+    start.mockRejectedValueOnce(Object.assign(new Error('Not found'), { rpcErrorCode: 'execution_run_not_found' }));
+    start.mockResolvedValueOnce({ voiceAgentId: 'run_fresh' });
+
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceAgentSessionController();
+    await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
+
+    expect(start).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        sessionId: 'sys_voice',
+        existingRunId: null,
+        resumeWhenInactive: true,
+        resumeHandle: {
+          kind: 'voice_agent_sessions.v1',
+          backendId: 'claude',
+          backendTarget: {
+            kind: 'backend',
+            backendId: 'claude',
+            sourceKind: 'built_in',
+          },
+          chatProviderSessionId: 'chat-predecessor',
+          commitProviderSessionId: 'commit-predecessor',
+        },
       }),
     );
   });

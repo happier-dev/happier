@@ -17,6 +17,7 @@ import {
   type VoiceHistoryConsumerDeps,
   type VoiceHistoryProviderSource,
 } from './voiceHistoryConsumer';
+import { AccountStoredContentClientUpgradeRequiredError } from '@/sync/api/capabilities/accountStoredContentCompatibility';
 
 const legendListMock = createCapturingLegendListMock({ renderItems: true });
 const modalMock = createModalModuleMock({ confirmResult: true });
@@ -89,6 +90,7 @@ function createDeps(
     deleteSession: vi.fn(async () => ({ success: true })),
     canDeleteSession: () => true,
     retireLocalSession: vi.fn(),
+    runCarrierOperation: async (operation) => await operation(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
     ...overrides,
   };
@@ -137,10 +139,12 @@ describe('VoiceHistoryScreen', () => {
       }));
       return { loaded: 1, hasMore: false, status: 'no_more' as const };
     });
-    const consumer = createVoiceHistoryConsumer(createDeps(messages, {
+    const baseConsumer = createVoiceHistoryConsumer(createDeps(messages, {
       discoverHistorySession: async () => await discovery.promise,
       loadOlderMessages,
     }));
+    const read = vi.fn(baseConsumer.read);
+    const consumer = Object.freeze({ ...baseConsumer, read });
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
     const screen = await renderScreen(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
@@ -176,9 +180,11 @@ describe('VoiceHistoryScreen', () => {
     await act(async () => {
       screen.changeTextByTestId('voice-history-search', '');
     });
+    read.mockClear();
     await screen.pressByTestIdAsync('voice-history-load-older');
 
     expect(loadOlderMessages).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
     const pagedText = screen.getTextContent();
     expect(pagedText.indexOf('The oldest response')).toBeLessThan(
       pagedText.indexOf('A question about releases'),
@@ -342,6 +348,10 @@ describe('VoiceHistoryScreen', () => {
     );
     expect(retireLocalSession).toHaveBeenCalledWith('voice-history-session');
     expect(screen.findByTestId('voice-history-empty')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-action-message')?.props.children)
+      .toBe('Voice History was cleared.');
+    expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
+      .toBe('Voice History was cleared.');
     expect(screen.findByTestId('voice-history-export')).toBeNull();
     expect(screen.findByTestId('voice-history-clear')).toBeNull();
   });
@@ -369,6 +379,8 @@ describe('VoiceHistoryScreen', () => {
     await screen.pressByTestIdAsync('voice-history-clear');
 
     expect(screen.findByTestId('voice-history-action-message')?.props.children)
+      .toBe('End Voice before clearing Voice History.');
+    expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
       .toBe('End Voice before clearing Voice History.');
     expect(screen.getTextContent()).not.toContain('Voice History could not be cleared.');
     expect(deleteSession).not.toHaveBeenCalled();
@@ -408,5 +420,23 @@ describe('VoiceHistoryScreen', () => {
     );
     await flushAsyncState();
     expect(supersededScreen.findByTestId('voice-history-superseded')).not.toBeNull();
+  });
+
+  it('projects the non-retryable stored-content compatibility failure without exposing its error details', async () => {
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const upgradeConsumer = createVoiceHistoryConsumer(createDeps([], {
+      discoverHistorySession: async () => {
+        throw new AccountStoredContentClientUpgradeRequiredError('server-too-old');
+      },
+    }));
+
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={upgradeConsumer} saveExportArtifact={vi.fn()} />,
+    );
+    await flushAsyncState();
+
+    expect(screen.findByTestId('voice-history-upgrade-required')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-upgrade-required-retry')).toBeNull();
+    expect(screen.findByTestId('voice-history-error')).toBeNull();
   });
 });

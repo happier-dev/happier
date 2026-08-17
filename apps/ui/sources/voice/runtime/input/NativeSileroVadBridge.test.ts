@@ -96,4 +96,41 @@ describe('resolveNativeSileroVadBridge frame-fed VAD', () => {
         })).rejects.toThrow('capture_failed');
         expect(cancelVadDetector).toHaveBeenCalledTimes(1);
     });
+
+    it('tears down the detector when shared capture reports a terminal error', async () => {
+        type CaptureErrorHandler = (error: unknown) => void;
+
+        let onCaptureError: CaptureErrorHandler | null = null;
+        const releaseCapture = vi.fn(async () => {});
+        const cancelVadDetector = vi.fn(async () => {});
+        const frameSource = {
+            acquire: vi.fn(async (request: Readonly<{
+                onError?: CaptureErrorHandler;
+            }>) => {
+                onCaptureError = request.onError ?? null;
+                return { release: releaseCapture };
+            }),
+        };
+        const bridge = await resolveNativeSileroVadBridge({
+            createVadDetector: vi.fn(async () => {}),
+            pushVadAudioFrame: vi.fn(async () => ({ speechStarted: false, speechEnded: false })),
+            cancelVadDetector,
+        }, { frameSource });
+
+        const session = await bridge!.startSession({
+            minSpeechMs: 120,
+            redemptionMs: 400,
+            sessionId: 'session-terminal',
+            onSpeechEnd: vi.fn(),
+        });
+
+        expect(onCaptureError).toEqual(expect.any(Function));
+        onCaptureError!(new Error('native_pcm_capture_dead_object'));
+
+        await vi.waitFor(() => expect(releaseCapture).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(cancelVadDetector).toHaveBeenCalledTimes(1));
+        await session.stop();
+        expect(releaseCapture).toHaveBeenCalledTimes(1);
+        expect(cancelVadDetector).toHaveBeenCalledTimes(1);
+    });
 });

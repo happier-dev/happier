@@ -17,17 +17,10 @@ export async function stopVoiceQaMediaSession(params: Readonly<{
     if (settled.status === 'error' || (settled.status === 'disconnected' && failureReason)) {
       throw new Error(`voice_qa_media_stop_failed:${failureReason ?? 'unknown'}`);
     }
-    if (
-      settled.sessionId === params.sessionId
-      && settled.status === 'connected'
-      && settled.mode === 'listening'
-    ) {
-      throw new Error('voice_qa_media_stop_unsettled');
-    }
     // Finishing the local turn drains STT and commits its transcript, but the
-    // connected Voice session intentionally keeps its mic lease for a possible
-    // next turn. Media QA is terminal after Stop, so release that owner through
-    // the canonical session manager once turn finalization has settled.
+    // hands-free owner may already have rearmed capture by the time that
+    // operation settles. Media QA is terminal after Stop, so release whichever
+    // current local capture owns the session through the canonical manager.
     await params.stopSession(params.sessionId);
     return;
   }

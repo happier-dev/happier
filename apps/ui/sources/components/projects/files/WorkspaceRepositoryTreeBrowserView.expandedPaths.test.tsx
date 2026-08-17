@@ -122,10 +122,7 @@ describe('WorkspaceRepositoryTreeBrowserView (expanded paths)', () => {
 
         await renderScreen(
             <WorkspaceRepositoryTreeBrowserView
-                workspaceCacheKey="s1:m1:/repo"
-                serverId="s1"
-                machineId="m1"
-                rootPath="/repo"
+                scope={{ serverId: 's1', machineId: 'm1', rootPath: '/repo' }}
                 onOpenFile={() => {}}
                 showSearchBar={false}
             />,
@@ -139,10 +136,7 @@ describe('WorkspaceRepositoryTreeBrowserView (expanded paths)', () => {
 
         const screen = await renderScreen(
             <WorkspaceRepositoryTreeBrowserView
-                workspaceCacheKey="s1:m1:/repo"
-                serverId="s1"
-                machineId="m1"
-                rootPath="/repo"
+                scope={{ serverId: 's1', machineId: 'm1', rootPath: '/repo' }}
                 onOpenFile={() => {}}
                 showSearchBar={false}
             />,
@@ -163,10 +157,7 @@ describe('WorkspaceRepositoryTreeBrowserView (expanded paths)', () => {
 
         await renderScreen(
             <WorkspaceRepositoryTreeBrowserView
-                workspaceCacheKey="s1:m1:/repo"
-                serverId="s1"
-                machineId="m1"
-                rootPath="/repo"
+                scope={{ serverId: 's1', machineId: 'm1', rootPath: '/repo' }}
                 onOpenFile={() => {}}
                 showSearchBar={false}
             />,

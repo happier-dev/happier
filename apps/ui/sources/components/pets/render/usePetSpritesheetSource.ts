@@ -11,7 +11,9 @@ import {
 import { resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
 import { encodeBase64 } from '@/encryption/base64';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import type { LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
+import { resolveAccountPetReadAdmission } from '@/sync/domains/pets/resolveAccountPetReadAdmission';
 import { serverFetch } from '@/sync/http/client';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
@@ -39,10 +41,19 @@ function readContentType(headers: Headers): PetAssetMediaTypeV1 | null {
 }
 
 async function readAccountPetSpritesheetSource(accountPetId: string): Promise<ImageProps['source'] | null> {
+    const credentials = await TokenStorage.getCredentials();
+    if (!credentials) return null;
+    const admission = await resolveAccountPetReadAdmission(credentials);
+    if (admission.status === 'unavailable') return null;
+
     const response = await serverFetch(
         `/v1/account/pets/${accountPetId}/spritesheet`,
-        undefined,
-        { retry: 'none' },
+        {
+            headers: {
+                Authorization: `Bearer ${credentials.token}`,
+            },
+        },
+        { includeAuth: false, retry: 'none' },
     );
     if (!response.ok) return null;
 

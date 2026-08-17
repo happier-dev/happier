@@ -11,8 +11,13 @@ type SessionViewModeOptionLike = Readonly<{
     id?: unknown;
 }>;
 
+/**
+ * `agentId` is the canonical publishing-Agent discriminator for `sessionModesV1`. The legacy
+ * `provider` alias exists only on the predecessor wire projection; the read path normalizes it
+ * back to `agentId` and the strict envelope rejects it, so it never reaches this resolver.
+ */
 type SessionViewModeStateLike = Readonly<{
-    provider?: string | null;
+    agentId?: string | null;
     availableModes?: ReadonlyArray<SessionViewModeOptionLike> | null;
 }> | null | undefined;
 
@@ -38,7 +43,7 @@ export function resolveSessionViewModeOptionIds(
 ): readonly string[] {
     const cacheKey = JSON.stringify([
         agentId,
-        sessionModeState?.provider ?? null,
+        sessionModeState?.agentId ?? null,
         Array.isArray(sessionModeState?.availableModes)
             ? sessionModeState.availableModes.map((mode) => (typeof mode?.id === 'string' ? mode.id.trim() : ''))
             : null,
@@ -52,7 +57,7 @@ export function resolveSessionViewModeOptionIds(
         return cached;
     }
 
-    if (sessionModeState?.provider === agentId && Array.isArray(sessionModeState.availableModes)) {
+    if (sessionModeState?.agentId === agentId && Array.isArray(sessionModeState.availableModes)) {
         const normalized = normalizeSessionViewModeOptionIds(sessionModeState.availableModes);
         SESSION_VIEW_MODE_OPTION_IDS_CACHE.set(cacheKey, normalized);
         return normalized;

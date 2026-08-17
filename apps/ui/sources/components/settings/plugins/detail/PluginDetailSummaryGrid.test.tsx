@@ -81,7 +81,6 @@ describe('PluginDetailSummaryGrid', () => {
                     sourceKind: 'path',
                     sourceLabel: null,
                     trustPolicy: 'local_trusted',
-                    manifestDigest: null,
                 })}
             />,
         );
@@ -105,7 +104,6 @@ describe('PluginDetailSummaryGrid', () => {
                     sourceKind: 'custom_repo',
                     sourceLabel: null,
                     trustPolicy: 'vendor_attested',
-                    manifestDigest: null,
                 })}
             />,
         );
@@ -122,7 +120,6 @@ describe('PluginDetailSummaryGrid', () => {
                 sourceKind: 'path',
                 sourceLabel: null,
                 trustPolicy: 'local_trusted',
-                manifestDigest: null,
             }),
             generation: 27,
             generationLabel: 'internal-generation-27',

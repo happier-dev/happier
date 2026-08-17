@@ -9,7 +9,6 @@ import {
     type ConnectedServiceQuotaGaugeLabelFormatter,
     computeConnectedServiceQuotaGaugeViewModel,
     deriveConnectedServiceQuotaSnapshotFromRuntimeIssue,
-    resolveConnectedServiceQuotaGaugeSource,
     selectConnectedServiceSessionProviderUsageSnapshot,
     summarizeConnectedServiceQuotaRecoveryCredits,
 } from './connectedServiceQuotaGauge';
@@ -468,79 +467,6 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         });
         expect(viewModel?.effectiveMeter.meterId).toBe('weekly');
         expect(viewModel?.badgeLabel).toBe('7% left');
-    });
-
-    it('hides unsupported native and non-app-server sessions without reliable evidence', () => {
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'codex',
-            sourceKind: 'unsupported',
-            reason: 'codex_non_app_server',
-            snapshot: null,
-        })).toBeNull();
-
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'claude',
-            sourceKind: 'native_auth',
-            snapshot: null,
-        })).toBeNull();
-    });
-
-    it('accepts connected groups, single profiles, native auth snapshots, and Codex native app-server snapshots', () => {
-        const quotaSnapshot = snapshot([
-            meter({ meterId: 'weekly', label: 'Weekly', used: 82, limit: 100 }),
-        ]);
-
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'codex',
-            sourceKind: 'connected_service_group',
-            snapshot: quotaSnapshot,
-        })?.snapshot).toBe(quotaSnapshot);
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'claude',
-            sourceKind: 'connected_service_profile',
-            snapshot: quotaSnapshot,
-        })?.snapshot).toBe(quotaSnapshot);
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'codex',
-            sourceKind: 'codex_app_server_native',
-            snapshot: quotaSnapshot,
-        })?.snapshot).toBe(quotaSnapshot);
-        const nativeAuthSource = resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'claude',
-            sourceKind: 'native_auth',
-            snapshot: quotaSnapshot,
-        });
-        expect(nativeAuthSource?.snapshot).toBe(quotaSnapshot);
-        expect(nativeAuthSource?.checkNowSupported).toBe(false);
-    });
-
-    it('allows Claude native only after runtime quota evidence exists', () => {
-        const quotaSnapshot = snapshot([
-            meter({ meterId: 'five_hour', label: '5 hour', used: 60, limit: 100 }),
-        ]);
-
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'claude',
-            sourceKind: 'native_runtime_evidence',
-            snapshot: quotaSnapshot,
-        })?.snapshot).toBe(quotaSnapshot);
-    });
-
-    it('marks Gemini check-now support only for connected-service sources', () => {
-        const quotaSnapshot = snapshot([
-            meter({ meterId: 'daily', label: 'Daily', used: 40, limit: 100 }),
-        ]);
-
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'gemini',
-            sourceKind: 'connected_service_profile',
-            snapshot: quotaSnapshot,
-        })?.checkNowSupported).toBe(true);
-        expect(resolveConnectedServiceQuotaGaugeSource({
-            providerId: 'gemini',
-            sourceKind: 'native_runtime_evidence',
-            snapshot: quotaSnapshot,
-        })?.checkNowSupported).toBe(false);
     });
 
     it('derives a provisional native provider usage projection from runtime quota evidence without a connected-service ref', () => {

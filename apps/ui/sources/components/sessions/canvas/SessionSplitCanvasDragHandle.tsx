@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import type { PressableProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +6,7 @@ import { t } from '@/text';
 import { SplitCanvasDragSourceView } from '@/components/appShell/splitCanvas/components/SplitCanvasDragSourceView';
 import { encodeSessionSplitCanvasDragData } from './sessionSplitCanvasDragData';
 import { emitSessionSplitCanvasDragState } from './sessionSplitCanvasDragState';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type SessionSplitCanvasDragHandleProps = Readonly<{
     sessionId: string;
@@ -52,7 +52,7 @@ export function SessionSplitCanvasDragHandle(props: SessionSplitCanvasDragHandle
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
         >
-            <Ionicons name="reorder-three-outline" size={16} color={theme.colors.accent.blue} />
+            <Icon name="list" size={16} color={theme.colors.accent.blue} />
         </SplitCanvasDragSourceView>
     );
 }

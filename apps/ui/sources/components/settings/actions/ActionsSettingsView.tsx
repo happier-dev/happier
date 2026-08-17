@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -30,6 +29,7 @@ import {
     resolveActionSettingsEntryStatusSummary,
 } from './resolveActionSettingsEntryStatusSummary';
 import { useActionSettingsNarrowLayout } from './useActionSettingsNarrowLayout';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     actionRightAccessory: {
@@ -100,7 +100,7 @@ function ActionSettingsRowAccessory(props: Readonly<{
                 accessibilityRole="image"
                 accessibilityLabel={t('settingsActions.configureActionAccessibilityLabel')}
             >
-                <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+                <Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />
             </View>
         </View>
     );
@@ -191,8 +191,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                     </Text>
                 ) : null}
                 icon={(
-                    <Ionicons
-                        name={actionEnabled ? 'flash-outline' : 'flash-off-outline'}
+                    <Icon
+                        name={actionEnabled ? 'lightning' : 'minus-circle'}
                         size={29}
                         color={actionEnabled ? theme.colors.state.success.foreground : theme.colors.state.danger.foreground}
                     />

@@ -17,6 +17,7 @@ const qualifiedAnthropicAccount: QualifiedConnectedAccountProfileV4 = {
     },
     status: 'connected',
     authenticationModeId: 'api-key',
+    revisionSemantics: 'revisioned',
     credentialRevision: 'revision-1',
     configurationReady: true,
     configurationRevision: null,

@@ -157,6 +157,42 @@ describe('RecipientChip', () => {
         ]);
     });
 
+    it('presents a routed team member as selected and names its destination', async () => {
+        capturedSelectionListPopoverProps = null;
+        const { RecipientChip } = await import('./RecipientChip');
+        const ctx = {
+            chipStyle: () => ({ padding: 4 }),
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+            popoverAnchorRef: null,
+        } as any;
+        const target = {
+            key: 'agent_team_member:repo-inspectors:readme-inspector@snoopy-splashing-patterson',
+            displayLabel: 'README inspector',
+            recipient: {
+                kind: 'agent_team_member' as const,
+                teamId: 'repo-inspectors',
+                memberId: 'readme-inspector@snoopy-splashing-patterson',
+            },
+        };
+
+        const screen = await renderScreen(<RecipientChip
+            ctx={ctx}
+            targets={[target]}
+            recipient={{
+                kind: 'agent_team_member',
+                teamId: 'snoopy-splashing-patterson',
+                memberId: 'readme-inspector@snoopy-splashing-patterson',
+            }}
+            onRecipientChange={() => {}}
+        />);
+
+        expect(capturedSelectionListPopoverProps?.selectedOptionId).toBe(target.key);
+        expect(screen.findByTestId('agent-input-recipient-chip')?.props.accessibilityLabel)
+            .toBe('session.participants.cardTo:README inspector');
+    });
+
     /**
      * FR4-W1-CHIP: the wrapper `AgentInputSelectionListPopover` is the SINGLE
      * close-after-select owner. The inline chip's wrapper-level `onSelect`

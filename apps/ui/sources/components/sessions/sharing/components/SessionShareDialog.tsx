@@ -1,7 +1,6 @@
 import React, { memo, useCallback, useState } from 'react';
 import { View, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -9,6 +8,7 @@ import { t } from '@/text';
 import { SessionShare, ShareAccessLevel } from '@/sync/domains/social/sharingTypes';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import type { CustomModalInjectedProps } from '@/modal';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 /**
@@ -89,7 +89,7 @@ export const SessionShareDialog = memo(function SessionShareDialog({
                     <ItemGroup>
                         <Item
                             title={t('session.sharing.shareWith')}
-                            icon={<Ionicons name="person-add-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="user-plus" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => {
                                 onClose();
                                 onAddShare();
@@ -97,7 +97,7 @@ export const SessionShareDialog = memo(function SessionShareDialog({
                         />
                         <Item
                             title={t('session.sharing.publicLink')}
-                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="link" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => {
                                 onClose();
                                 onManagePublicLink();
@@ -183,7 +183,7 @@ export const SessionShareDialog = memo(function SessionShareDialog({
                     ) : (
                         <Item
                             title={t('session.sharing.noShares')}
-                            icon={<Ionicons name="people-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="users" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                             showDivider={false}
                         />

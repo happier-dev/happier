@@ -304,7 +304,7 @@ export function BrowserRecordingControls(props: BrowserRecordingControlsProps): 
                     />
                     <IconButton
                         testID={`${testID}-cancel`}
-                        iconName="close-outline"
+                        iconName="x"
                         accessibilityLabel={t('browserRecording.actions.cancel')}
                         tooltip={t('browserRecording.actions.cancel')}
                         size={34}
@@ -326,7 +326,7 @@ export function BrowserRecordingControls(props: BrowserRecordingControlsProps): 
                     </View>
                     <IconButton
                         testID={`${testID}-start`}
-                        iconName="ellipse"
+                        iconName="circle"
                         accessibilityLabel={t('browserRecording.actions.start')}
                         tooltip={t('browserRecording.actions.start')}
                         disabledReason={unavailable?.message ?? undefined}

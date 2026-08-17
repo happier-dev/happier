@@ -74,13 +74,16 @@ export function useLocalNeuralModelPackState(params: {
       setModelStatus('ready');
       await refreshInstallState();
     } catch (error) {
-      if (prepareAbortRef.current?.signal?.aborted) return;
+      if (prepareAbortRef.current?.signal?.aborted) {
+        setModelStatus(installed ? 'ready' : 'idle');
+        return;
+      }
       setModelStatus('error');
       await Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
     } finally {
       prepareAbortRef.current = null;
     }
-  }, [modelStatus, params.networkTimeoutMs, params.packId, refreshInstallState]);
+  }, [installed, modelStatus, params.networkTimeoutMs, params.packId, refreshInstallState]);
 
   const cancelPrepare = React.useCallback(() => {
     const controller = prepareAbortRef.current;
@@ -177,7 +180,10 @@ export function useLocalNeuralModelPackState(params: {
           t('settingsVoice.local.kokoro.alerts.updatedBody'),
         );
       } catch (error) {
-        if (abortController.signal.aborted) return;
+        if (abortController.signal.aborted) {
+          setModelStatus(installed ? 'ready' : 'idle');
+          return;
+        }
         await Modal.alert(
           t('settingsVoice.local.kokoro.alerts.updateFailedTitle'),
           t('settingsVoice.local.kokoro.alerts.updateFailedBody', { message: String((error as any)?.message ?? error) }),
@@ -188,7 +194,7 @@ export function useLocalNeuralModelPackState(params: {
         setDownloadProgress(null);
       }
     })(), { tag: 'useLocalNeuralModelPackState.checkForUpdates' });
-  }, [modelStatus, params.manifestUrl, params.networkTimeoutMs, params.packId, refreshInstallState]);
+  }, [installed, modelStatus, params.manifestUrl, params.networkTimeoutMs, params.packId, refreshInstallState]);
 
   const downloadDetail = React.useMemo(() => {
     if (modelStatus !== 'downloading') return null;

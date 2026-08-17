@@ -1,3 +1,4 @@
+import { CLIENT_UPGRADE_REQUIRED_ERROR_CODE } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -6,12 +7,16 @@ import type {
 } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import {
+  AccountStoredContentClientUpgradeRequiredError,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
 
 import {
   createDefaultVoiceHistoryConsumerFromRuntime,
   resolveVoiceHistoryProviderLabel,
   type DefaultVoiceHistoryRuntime,
 } from './defaultVoiceHistoryConsumer';
+import { VoiceHistoryOperationSupersededError } from './voiceHistoryConsumer';
 
 describe('resolveVoiceHistoryProviderTitleKey', () => {
   it('uses exact provider contribution identity and descriptor-owned copy', () => {
@@ -21,7 +26,7 @@ describe('resolveVoiceHistoryProviderTitleKey', () => {
         {
           kind: 'voice.conversation-provider.v1',
           pluginId: 'happier.voice.openai',
-          providerId: 'realtime_openai',
+          providerId: 'happier.voice.openai/realtime-openai',
           declaration: {
             id: 'realtime-openai',
             title: 'OpenAI Realtime Voice',
@@ -72,6 +77,162 @@ describe('resolveVoiceHistoryProviderTitleKey', () => {
 });
 
 describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
+  it('exposes only safe canonical initial-load stage facts while preserving existing typed and code-compatible failures', async () => {
+    const scope = { serverId: 'server-1', accountId: 'account-a' } as const;
+    const authority = { scope } as unknown as ServerAccountSessionRequestAuthority;
+    const registry = {
+      list: () => [],
+      get: () => null,
+    } as unknown as VoiceProviderRegistry;
+    const createRuntime = (
+      overrides: Partial<DefaultVoiceHistoryRuntime> = {},
+    ): DefaultVoiceHistoryRuntime => ({
+      readActiveScope: () => scope,
+      captureAuthority: async () => authority,
+      prepareSessionLookup: async () => undefined,
+      lookupByTags: async () => [{ id: 'voice-history' }],
+      hydrateSession: async (sessionId) => ({ kind: 'available', sessionId }),
+      readHydratedSession: (sessionId) => ({
+        id: sessionId,
+        active: false,
+        metadata: {
+          systemSessionV1: {
+            v: 1,
+            key: 'voice_transcript_history',
+            hidden: true,
+          },
+        },
+      }) as unknown as Session,
+      refreshSessionMessages: async () => undefined,
+      loadOlderMessages: async () => ({
+        loaded: 0,
+        hasMore: false,
+        status: 'no_more',
+      }),
+      readMessages: () => [],
+      deleteSession: async () => ({ success: true }),
+      canDeleteSession: () => true,
+      retireLocalSession: () => undefined,
+      ...overrides,
+    });
+    const stageCases: ReadonlyArray<Readonly<{
+      stage: 'capture_scope' | 'compatibility' | 'lookup' | 'hydrate' | 'refresh';
+      runtime: DefaultVoiceHistoryRuntime;
+      status?: number;
+    }>> = [
+      {
+        stage: 'capture_scope',
+        runtime: createRuntime({
+          captureAuthority: async () => {
+            throw new Error('captured account details');
+          },
+        }),
+      },
+      {
+        stage: 'compatibility',
+        runtime: createRuntime({
+          prepareSessionLookup: async () => {
+            throw new Error('compatibility response body');
+          },
+        }),
+      },
+      {
+        stage: 'lookup',
+        runtime: createRuntime({
+          lookupByTags: async () => {
+            throw Object.assign(new Error('lookup response body'), { status: 503 });
+          },
+        }),
+        status: 503,
+      },
+      {
+        stage: 'hydrate',
+        runtime: createRuntime({
+          hydrateSession: async () => {
+            throw new Error('hydration response body');
+          },
+        }),
+      },
+      {
+        stage: 'refresh',
+        runtime: createRuntime({
+          refreshSessionMessages: async () => {
+            throw new Error('refresh response body');
+          },
+        }),
+      },
+    ];
+
+    for (const testCase of stageCases) {
+      const consumer = createDefaultVoiceHistoryConsumerFromRuntime(testCase.runtime, registry);
+      await expect(consumer.open()).rejects.toMatchObject({
+        code: 'voice_history_load_failed',
+        stage: testCase.stage,
+        ...(testCase.status === undefined ? {} : { status: testCase.status }),
+        message: 'Voice History failed to load',
+      });
+    }
+
+    const outOfRangeStatusConsumer = createDefaultVoiceHistoryConsumerFromRuntime(
+      createRuntime({
+        lookupByTags: async () => {
+          throw Object.assign(new Error('lookup response body'), { status: 700 });
+        },
+      }),
+      registry,
+    );
+    await expect(outOfRangeStatusConsumer.open()).rejects.toMatchObject({
+      code: 'voice_history_load_failed',
+      stage: 'lookup',
+      message: 'Voice History failed to load',
+    });
+    await expect(outOfRangeStatusConsumer.open()).rejects.not.toHaveProperty('status');
+
+    const superseded = new VoiceHistoryOperationSupersededError();
+    await expect(createDefaultVoiceHistoryConsumerFromRuntime(
+      createRuntime({
+        lookupByTags: async () => {
+          throw superseded;
+        },
+      }),
+      registry,
+    ).open()).rejects.toBe(superseded);
+
+    const upgradeRequired = new AccountStoredContentClientUpgradeRequiredError('server-too-old');
+    await expect(createDefaultVoiceHistoryConsumerFromRuntime(
+      createRuntime({
+        prepareSessionLookup: async () => {
+          throw upgradeRequired;
+        },
+      }),
+      registry,
+    ).open()).rejects.toBe(upgradeRequired);
+
+    const codeCompatibleSuperseded = {
+      code: 'voice_history_operation_superseded',
+    } as const;
+    await expect(createDefaultVoiceHistoryConsumerFromRuntime(
+      createRuntime({
+        lookupByTags: async () => {
+          throw codeCompatibleSuperseded;
+        },
+      }),
+      registry,
+    ).open()).rejects.toBe(codeCompatibleSuperseded);
+
+    const codeCompatibleUpgradeRequired = {
+      code: CLIENT_UPGRADE_REQUIRED_ERROR_CODE,
+    } as const;
+    await expect(createDefaultVoiceHistoryConsumerFromRuntime(
+      createRuntime({
+        prepareSessionLookup: async () => {
+          throw codeCompatibleUpgradeRequired;
+        },
+      }),
+      registry,
+    ).open()).rejects.toBe(codeCompatibleUpgradeRequired);
+  });
+
   it('performs no lookup when account authority capture fails during a same-server switch', async () => {
     const scopeA = { serverId: 'server-1', accountId: 'account-a' } as const;
     const scopeB = { serverId: 'server-1', accountId: 'account-b' } as const;
@@ -90,6 +251,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
         }
         throw new Error('unreachable');
       },
+      prepareSessionLookup: async () => undefined,
       lookupByTags,
       hydrateSession: async () => ({ kind: 'missing' }),
       readHydratedSession: () => null,
@@ -114,7 +276,11 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     activeScope = scopeB;
     releaseCapture();
 
-    await expect(open).rejects.toThrow('authenticated account does not match captured scope');
+    await expect(open).rejects.toMatchObject({
+      code: 'voice_history_load_failed',
+      stage: 'capture_scope',
+      message: 'Voice History failed to load',
+    });
     expect(lookupByTags).not.toHaveBeenCalled();
   });
 
@@ -141,6 +307,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     const runtime: DefaultVoiceHistoryRuntime = {
       readActiveScope: () => scopeA,
       captureAuthority: async () => authorityA,
+      prepareSessionLookup: async () => undefined,
       lookupByTags: async (_tags, authority) => {
         calls.push({ operation: 'lookup', authority });
         return [{ id: 'voice-history' }];
@@ -221,6 +388,7 @@ describe('createDefaultVoiceHistoryConsumerFromRuntime', () => {
     const runtime: DefaultVoiceHistoryRuntime = {
       readActiveScope: () => activeScope,
       captureAuthority: async () => authorityA,
+      prepareSessionLookup: async () => undefined,
       lookupByTags: async (_tags, authority) => {
         seenAuthorities.push(authority);
         return await lookup;

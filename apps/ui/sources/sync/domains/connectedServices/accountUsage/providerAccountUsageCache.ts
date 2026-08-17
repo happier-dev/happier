@@ -29,6 +29,20 @@ export function subscribeProviderAccountUsageCache(listener: () => void): () => 
     };
 }
 
+/**
+ * Commits usage entries for the credential scope that is currently active, and
+ * drops every superseded scope.
+ *
+ * The only writer (`useProviderAccountUsageSnapshots`) refuses to commit under
+ * a scope that is no longer active, so a write identifies the live scope. Once
+ * a re-login, server switch, or generation bump supersedes a scope, its keys
+ * can never be read again — the sibling quota stores release such entries at
+ * their retain boundary, and keeping them here instead leaked one whole scope
+ * of snapshots per switch for the lifetime of the session.
+ *
+ * Entries already cached under the active scope are preserved: the updater
+ * receives them so a refresh never blanks last-known-good usage.
+ */
 export function updateProviderAccountUsageCacheEntries(
     credentialScope: string,
     updater: (
@@ -39,10 +53,7 @@ export function updateProviderAccountUsageCacheEntries(
     const currentEntries = providerAccountUsageCacheState.entriesByCredentialScope[credentialScope] ?? {};
     const nextEntries = updater(currentEntries);
     providerAccountUsageCacheState = {
-        entriesByCredentialScope: {
-            ...providerAccountUsageCacheState.entriesByCredentialScope,
-            [credentialScope]: nextEntries,
-        },
+        entriesByCredentialScope: { [credentialScope]: nextEntries },
     };
     for (const listener of providerAccountUsageCacheListeners) listener();
 }

@@ -1,125 +1,167 @@
-import * as accountSettingsParse from './parse/accountSettingsParse';
-import { isSettingsSyncDebugEnabled } from './debugSettings';
-import { pruneSecretBindings } from './secretBindings';
+import {
+    ACCOUNT_SETTING_ARTIFACTS,
+    ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
+    accountSettingsParse as parseProtocolAccountSettings,
+    type AccountSettings,
+    type AccountSettingsDefaults,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
-import { ACCOUNT_SETTING_ARTIFACTS } from './registry/account/accountSettingArtifacts';
+
 import {
     stripDeprecatedSessionOnlyKeys,
-    stripMigratedSessionOrganizationSettings,
 } from './parse/accountSettingsLegacyCleanup';
-import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
-import { projectVoiceSettingsIntoRuntimeSettings } from './voiceSettingsPersistence';
+import { applyAccountSettingsCompatibilityMigrations } from './parse/accountSettingsCompatibilityMigrations';
+import {
+    LOCAL_ACCOUNT_SETTING_ARTIFACTS,
+    parseLocalAccountSettings,
+    type LocalAccountSettings,
+} from './registry/local/localAccountSettingDefinitions';
+import { pruneSecretBindings } from './secretBindings';
+import {
+    isCurrentWriterPredecessorVoiceProjection,
+    projectVoiceSettingsIntoRuntimeSettings,
+    type ProtocolAccountSettingsRuntimeProjection,
+} from './voiceSettingsPersistence';
+import {
+    attachCurrentSessionAuthoringSelectionsRuntimeProjection,
+    type CurrentSessionAuthoringSelectionsRuntimeProjection,
+} from './sessionAuthoringSelectionPersistence';
+import { migrateLegacyVoiceOpenAiChatProvider } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
 
 // NOTE: We intentionally do NOT support legacy provider config objects (e.g. `openaiConfig`).
 // Profiles must use `environmentVariables` + `envVarRequirements` only.
 
-//
-// Settings Schema
-//
+/** Current schema version for the server-synced Account Settings document. */
+export const SUPPORTED_SCHEMA_VERSION = ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION;
 
-// Current schema version for backward compatibility
-// NOTE: This schemaVersion is for the Happy app's settings blob (synced via the server).
-// happy-cli maintains its own local settings schemaVersion separately.
-export const SUPPORTED_SCHEMA_VERSION = 7;
-
-const SettingsSchemaMetadata = z.object({
-    // Schema version for compatibility detection
-    schemaVersion: z.number().default(SUPPORTED_SCHEMA_VERSION).describe('Settings schema version for compatibility checks'),
+/**
+ * UI facade metadata only. Its Account fields are direct references to the Protocol catalog;
+ * device-local fields are owned by the separate local catalog below.
+ */
+export const SettingsSchema = z.object({
+    ...ACCOUNT_SETTING_ARTIFACTS.shape,
+    ...LOCAL_ACCOUNT_SETTING_ARTIFACTS.shape,
 });
 
-const SettingsSchemaBase = SettingsSchemaMetadata.extend(ACCOUNT_SETTING_ARTIFACTS.shape);
+/**
+ * Protocol owns the persisted shape, including bounded compatibility roots.
+ * UI consumers receive the typed Voice projection materialized by the owner
+ * above rather than interpreting those retained roots themselves.
+ */
+type RuntimeAccountSettings = Omit<
+    ProtocolAccountSettingsRuntimeProjection,
+    'favoriteModelSelectionsV1' | 'lastEngineSelectionsByScopeV1'
+> & CurrentSessionAuthoringSelectionsRuntimeProjection;
 
-export const SettingsSchema = SettingsSchemaBase;
+export type KnownSettings = RuntimeAccountSettings & LocalAccountSettings;
+export type Settings = KnownSettings;
 
-//
-// NOTE: Settings must be a flat object with no to minimal nesting, one field == one setting,
-// you can name them with a prefix if you want to group them, but don't nest them.
-// You can nest if value is a single value (like image with url and width and height)
-// Settings are always merged with defaults and field by field.
-// 
-// This structure must be forward and backward compatible. Meaning that some versions of the app
-// could be missing some fields or have a new fields. Everything must be preserved and client must 
-// only touch the fields it knows about.
-//
+/**
+ * Runtime projections may be readable through Settings without being valid
+ * Account Settings mutations. The current binding map is derived from the
+ * retained Protocol carrier, so only its dedicated writer may update it.
+ */
+export type WritableSettingsKey = Exclude<
+    keyof Settings,
+    | 'currentSecretBindingsByProfileId'
+    | 'currentFavoriteModelSelectionsV1'
+    | 'currentRememberedEngineSelectionsByScopeV1'
+>;
 
-type SettingsMetadata = Readonly<{
-    schemaVersion: number;
-}>;
+/** Public generic Account Settings write shape. */
+export type SettingsWriteDelta = Partial<Pick<Settings, WritableSettingsKey>>;
 
-type LegacySessionOrganizationSettings = Partial<{
-    pinnedSessionKeysV1: string[];
-    workspaceLabelsV1: Record<string, string>;
-    collapsedGroupKeysV1: Record<string, boolean>;
-    sessionTagsV1: Record<string, string[]>;
-    sessionListGroupOrderV1: Record<string, string[]>;
-    sessionWorkspaceOrderV1: Record<string, string[]>;
-    sessionFoldersV1: SessionFoldersV1;
-}>;
+/**
+ * Internal Account Settings write shape. The retained secret-binding carrier
+ * is intentionally absent from the public Settings facade, but its dedicated
+ * adapter must pass the canonical Protocol root through the common writer.
+ */
+export type AccountSettingsWriteDelta = SettingsWriteDelta & Partial<Pick<
+    AccountSettingsDefaults,
+    | 'secretBindingsByProfileId'
+    | 'favoriteModelSelectionsV1'
+    | 'lastEngineSelectionsByScopeV1'
+>>;
 
-export type KnownSettings = SettingsMetadata & typeof ACCOUNT_SETTING_ARTIFACTS.defaults;
-export type Settings = KnownSettings & LegacySessionOrganizationSettings;
 export { ACCOUNT_SETTING_ARTIFACTS };
 
-//
-// Defaults
-//
+const protocolAndLocalSettingsDefaults: AccountSettings & LocalAccountSettings = {
+    ...parseProtocolAccountSettings({}),
+    ...LOCAL_ACCOUNT_SETTING_ARTIFACTS.defaults,
+};
 
-export const settingsDefaults: Settings = stripMigratedSessionOrganizationSettings({
-    schemaVersion: SUPPORTED_SCHEMA_VERSION,
-    ...ACCOUNT_SETTING_ARTIFACTS.defaults,
-});
+export const settingsDefaults: Settings = projectRuntimeAccountSettings(
+    projectVoiceSettingsIntoRuntimeSettings({
+        parsed: protocolAndLocalSettingsDefaults,
+        raw: {},
+    }),
+) as Settings;
 Object.freeze(settingsDefaults);
 
-//
-// Resolving
-//
-
-export function settingsParse(settings: unknown): Settings {
-    const parsed = accountSettingsParse.parseAccountSettings({
-        settings,
-        schema: SettingsSchema,
-        defaults: settingsDefaults as Record<string, unknown>,
-        supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
-        pruneResult: (nextSettings) => pruneSecretBindings(
-            stripMigratedSessionOrganizationSettings(nextSettings as Record<string, unknown>) as Settings,
-        ) as Record<string, unknown>,
-        debugEnabled: isSettingsSyncDebugEnabled(),
-        isDev: typeof __DEV__ !== 'undefined' && __DEV__,
-    }) as Settings;
-    const raw = settings && typeof settings === 'object' && !Array.isArray(settings)
-        ? settings as Record<string, unknown>
-        : {};
-    return projectVoiceSettingsIntoRuntimeSettings({
-        parsed,
-        raw,
-    });
+/**
+ * Apply the remaining Settings-owned runtime projections after Protocol and
+ * Voice have preserved their persisted raw carriers for writeback.
+ */
+export function projectRuntimeAccountSettings<T extends object>(settings: T): T & CurrentSessionAuthoringSelectionsRuntimeProjection {
+    return attachCurrentSessionAuthoringSelectionsRuntimeProjection(settings);
 }
 
-//
-// Applying changes
-// NOTE: May be something more sophisticated here around defaults and merging, but for now this is fine.
-//
+function asSettingsRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+}
 
-export function applySettings(settings: Settings, delta: Partial<Settings>): Settings {
-    // Original behavior: start with settings, apply delta, fill in missing with defaults
-    const result = { ...settings, ...delta };
-
-    // Hard cutover: remove deprecated session-only settings keys even if they exist in the input.
-    const cleanedResult = stripMigratedSessionOrganizationSettings(
-        stripDeprecatedSessionOnlyKeys(result as Record<string, unknown>),
-    );
-
-    // Fill in any missing fields with defaults
-    const defaultsRecord = settingsDefaults as Record<string, unknown>;
-    for (const [key, value] of Object.entries(defaultsRecord)) {
-        if (!Object.prototype.hasOwnProperty.call(cleanedResult, key)) {
-            cleanedResult[key] = value;
-        }
-    }
-
-    const pruned = pruneSecretBindings(cleanedResult as Settings);
-    return projectVoiceSettingsIntoRuntimeSettings({
-        parsed: pruned,
-        raw: pruned,
+/**
+ * Protocol parses every server-synced key and preserves forward-compatible unknown keys. UI
+ * migrations only translate predecessor shapes before a final Protocol parse; device-local
+ * fields are projected separately and are never part of the Protocol persistence contract.
+ */
+export function settingsParse(settings: unknown): Settings {
+    const raw = asSettingsRecord(settings);
+    const inputSchemaVersion = typeof raw.schemaVersion === 'number'
+        ? raw.schemaVersion
+        : SUPPORTED_SCHEMA_VERSION;
+    const initial = parseProtocolAccountSettings(raw);
+    const migrated = applyAccountSettingsCompatibilityMigrations({
+        input: raw,
+        settings: { ...initial },
+        inputSchemaVersion,
+        supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
     });
+    const canonical = parseProtocolAccountSettings(migrated);
+    const merged = {
+        ...canonical,
+        ...parseLocalAccountSettings(raw),
+    };
+    const pruned = pruneSecretBindings(merged);
+    const projected = projectVoiceSettingsIntoRuntimeSettings({
+        parsed: pruned,
+        raw,
+    });
+
+    // The Provider-owned legacy Chat migration needs the canonical Local
+    // Conversation envelope created by the sole Voice projection owner. It
+    // therefore runs after that projection, then re-enters the ordinary
+    // Protocol/Voice parse path so its provider connection and typed state
+    // are persisted through the same canonical reader as every other value.
+    const migrationInput = { ...projected } as Record<string, unknown>;
+    if (!isCurrentWriterPredecessorVoiceProjection(raw.voice)) {
+        migrateLegacyVoiceOpenAiChatProvider(raw, migrationInput);
+    }
+    const migratedCanonical = parseProtocolAccountSettings(migrationInput);
+    const migratedMerged = {
+        ...migratedCanonical,
+        ...parseLocalAccountSettings(raw),
+    };
+    const migratedPruned = pruneSecretBindings(migratedMerged);
+    return projectRuntimeAccountSettings(projectVoiceSettingsIntoRuntimeSettings({
+        parsed: migratedPruned,
+        raw,
+    })) as Settings;
+}
+
+/** Apply a delta through the same Protocol-owned parse/migration path as loaded settings. */
+export function applySettings(settings: Settings, delta: AccountSettingsWriteDelta): Settings {
+    return settingsParse(stripDeprecatedSessionOnlyKeys({ ...settings, ...delta }));
 }

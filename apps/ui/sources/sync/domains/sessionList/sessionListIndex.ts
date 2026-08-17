@@ -26,6 +26,17 @@ export type SessionListIndexItem =
         folderId?: string;
         folderDepth?: number;
         workspace?: SessionFolderWorkspaceRefV1;
+        displayState?: Readonly<
+            | { status: 'available'; value: string }
+            | {
+                status: 'locked';
+                reason:
+                    | 'account_key_unavailable'
+                    | 'content_unreadable'
+                    | 'invalid_stored_display'
+                    | 'storage_mode_mismatch';
+            }
+        >;
     }>
     | Readonly<{
         type: 'session';
@@ -139,6 +150,8 @@ export function areSessionListIndexItemsEqual(
         && (previous.seedSessionId ?? null) === (next.seedSessionId ?? null)
         && previous.serverId === next.serverId
         && previous.serverName === next.serverName
+        && JSON.stringify(previous.displayState ?? null)
+            === JSON.stringify(next.displayState ?? null)
         && previous.subtitle === next.subtitle
         && (previous.folderId ?? null) === (next.folderId ?? null)
         && (previous.folderDepth ?? null) === (next.folderDepth ?? null)

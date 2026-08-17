@@ -9,6 +9,37 @@ import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoice
 
 type BindingsByConversationSessionId = Record<string, VoiceSessionBinding>;
 
+/**
+ * Memory-only ownership for a direct-media runtime binding. It is deliberately
+ * a private symbol rather than a timestamp or persisted field: a later
+ * generation can reuse every visible binding field (including `updatedAt`) and
+ * still must not be unbound by the retiring attempt.
+ */
+const runtimeAttemptBindingOwner = Symbol('voiceRuntimeAttemptBindingOwner');
+type RuntimeAttemptOwnedBinding = VoiceSessionBinding & Readonly<{
+    [runtimeAttemptBindingOwner]?: object;
+}>;
+
+function readRuntimeAttemptBindingOwner(binding: VoiceSessionBinding): object | null {
+    return (binding as RuntimeAttemptOwnedBinding)[runtimeAttemptBindingOwner] ?? null;
+}
+
+function withRuntimeAttemptBindingOwner(
+    binding: VoiceSessionBinding,
+    owner: object,
+): VoiceSessionBinding {
+    const owned = { ...binding } as RuntimeAttemptOwnedBinding;
+    // Enumerable symbols survive the store's object-copy normalization while
+    // remaining absent from JSON and metadata serialization.
+    Object.defineProperty(owned, runtimeAttemptBindingOwner, {
+        configurable: false,
+        enumerable: true,
+        value: owner,
+        writable: false,
+    });
+    return owned;
+}
+
 type VoiceSessionBindingStoreState = Readonly<{
     bindingsByConversationSessionId: BindingsByConversationSessionId;
     runtimeBindingsByConversationSessionId: BindingsByConversationSessionId;
@@ -36,7 +67,7 @@ function normalizeBinding(binding: VoiceSessionBinding): VoiceSessionBinding | n
         : null;
     if (!adapterId || !controlSessionId || !conversationSessionId || !transcriptMode) return null;
 
-    return {
+    const normalized: VoiceSessionBinding = {
         adapterId,
         controlSessionId,
         conversationSessionId,
@@ -45,6 +76,8 @@ function normalizeBinding(binding: VoiceSessionBinding): VoiceSessionBinding | n
         targetSessionId: normalizeId(binding.targetSessionId),
         updatedAt: Number.isFinite(binding.updatedAt) ? Number(binding.updatedAt) : 0,
     };
+    const owner = readRuntimeAttemptBindingOwner(binding);
+    return owner ? withRuntimeAttemptBindingOwner(normalized, owner) : normalized;
 }
 
 function upsertBindingRecord(
@@ -208,6 +241,59 @@ export function createVoiceSessionBindingStore() {
 }
 
 export const voiceSessionBindingStore = createVoiceSessionBindingStore();
+
+/** Creates a fresh opaque owner for one runtime-attempt binding lifetime. */
+export function createVoiceRuntimeAttemptBindingOwner(): object {
+    return Object.freeze({});
+}
+
+/**
+ * Bind through the canonical store while retaining an in-memory exact-owner
+ * marker. Callers receive no authority over any binding they did not create.
+ */
+export function bindVoiceRuntimeAttemptBinding(input: Readonly<{
+    binding: VoiceSessionBinding;
+    owner: object;
+    store?: typeof voiceSessionBindingStore;
+}>): void {
+    const store = input.store ?? voiceSessionBindingStore;
+    store.getState().bind(withRuntimeAttemptBindingOwner(input.binding, input.owner));
+}
+
+/**
+ * Remove a runtime-attempt binding only when the exact owner still occupies
+ * the carrier. Same ids, same fields, and same timestamps are not ownership.
+ */
+export function unbindVoiceRuntimeAttemptBindingIfOwned(input: Readonly<{
+    conversationSessionId: string;
+    owner: object;
+    store?: typeof voiceSessionBindingStore;
+}>): boolean {
+    const store = input.store ?? voiceSessionBindingStore;
+    const conversationSessionId = normalizeId(input.conversationSessionId);
+    if (!conversationSessionId) return false;
+
+    let removed = false;
+    store.setState((state) => {
+        const current = state.runtimeBindingsByConversationSessionId[conversationSessionId] ?? null;
+        if (!current || readRuntimeAttemptBindingOwner(current) !== input.owner) return state;
+
+        const runtimeBindingsByConversationSessionId = {
+            ...state.runtimeBindingsByConversationSessionId,
+        };
+        delete runtimeBindingsByConversationSessionId[conversationSessionId];
+        removed = true;
+        return {
+            ...state,
+            runtimeBindingsByConversationSessionId,
+            bindingsByConversationSessionId: buildMergedBindings(
+                runtimeBindingsByConversationSessionId,
+                state.persistedBindingsByConversationSessionId,
+            ),
+        };
+    });
+    return removed;
+}
 
 export function syncPersistedVoiceConversationBindings(params?: Readonly<{
     state?: SessionServerLookupStateLike;

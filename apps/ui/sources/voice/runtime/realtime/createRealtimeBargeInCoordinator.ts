@@ -77,6 +77,10 @@ export function createRealtimeBargeInCoordinator(deps: Deps) {
     outputStopped: boolean;
     interruptSettled: boolean;
     continuationStarted: boolean;
+    playedMs: number | null;
+    assistantOutputItemId: string | null;
+    assistantEntryId: string | null;
+    exactInterruptionReported: boolean;
   };
   let confirmedTurn: ConfirmedTurn | null = null;
 
@@ -93,7 +97,12 @@ export function createRealtimeBargeInCoordinator(deps: Deps) {
   const maybeContinueConfirmedTurn = async (expected: ConfirmedTurn): Promise<void> => {
     if (confirmedTurn !== expected || !expected.interruptSettled) return;
     if (!deps.continueAfterConfirmedSpeech) {
-      confirmedTurn = null;
+      if (
+        expected.assistantOutputItemId === null
+        || expected.assistantEntryId !== null
+      ) {
+        confirmedTurn = null;
+      }
       return;
     }
     if (!expected.speechStopped || !expected.outputStopped || expected.continuationStarted) return;
@@ -103,7 +112,45 @@ export function createRealtimeBargeInCoordinator(deps: Deps) {
     } catch (error) {
       deps.onInterruptError?.(error);
     } finally {
-      if (confirmedTurn === expected) confirmedTurn = null;
+      if (
+        confirmedTurn === expected
+        && (
+          expected.assistantOutputItemId === null
+          || expected.assistantEntryId !== null
+        )
+      ) {
+        confirmedTurn = null;
+      }
+    }
+  };
+
+  const reportLateExactInterruption = (expected: ConfirmedTurn): void => {
+    if (
+      confirmedTurn !== expected
+      || expected.exactInterruptionReported
+      || expected.playedMs === null
+      || expected.assistantEntryId === null
+    ) {
+      return;
+    }
+    expected.exactInterruptionReported = true;
+    deps.onConfirmedInterruption?.({
+      controlSessionId: expected.controlSessionId,
+      playedMs: expected.playedMs,
+      assistantEntryId: expected.assistantEntryId,
+    });
+    if (
+      expected.interruptSettled
+      && (
+        !deps.continueAfterConfirmedSpeech
+        || (
+          expected.continuationStarted
+          && expected.speechStopped
+          && expected.outputStopped
+        )
+      )
+    ) {
+      confirmedTurn = null;
     }
   };
 
@@ -116,6 +163,10 @@ export function createRealtimeBargeInCoordinator(deps: Deps) {
       outputStopped: !shouldInterrupt,
       interruptSettled: false,
       continuationStarted: false,
+      playedMs: expected.playedMs,
+      assistantOutputItemId: expected.assistantOutputItemId,
+      assistantEntryId: expected.assistantEntryId,
+      exactInterruptionReported: expected.assistantEntryId !== null,
     };
     confirmedTurn = confirmed;
     clearCandidate('confirmed');
@@ -232,23 +283,46 @@ export function createRealtimeBargeInCoordinator(deps: Deps) {
         return;
       }
       const confirmed = confirmedTurn;
-      if (!confirmed || confirmed.speechStopped) return;
-      confirmed.speechStopped = true;
-      void maybeContinueConfirmedTurn(confirmed);
+      if (confirmed) {
+        if (confirmed.speechStopped) return;
+        confirmed.speechStopped = true;
+        void maybeContinueConfirmedTurn(confirmed);
+        return;
+      }
+      // A provider that hands response creation to the client answers no turn
+      // on its own. Nothing was interrupted here, so the two-stage gate never
+      // runs and this plain committed turn still needs its response created.
+      // While output is active the gate owns that decision instead, so the
+      // same turn is never answered twice.
+      if (candidate || outputStartedAtMs !== null || !deps.continueAfterConfirmedSpeech) return;
+      void deps.continueAfterConfirmedSpeech().catch((error) => deps.onInterruptError?.(error));
     },
     async onTranscript(event: TranscriptEvent): Promise<void> {
       if (
         event.role === 'assistant'
         && event.type === 'voice.transcript.final'
-        && activeAssistantOutputItemId !== null
-        && event.itemId === activeAssistantOutputItemId
       ) {
-        activeAssistantEntryId =
+        const assistantEntryId =
           typeof event.assistantEntryId === 'string' && event.assistantEntryId.trim()
             ? event.assistantEntryId.trim()
             : null;
-        if (candidate?.assistantOutputItemId === activeAssistantOutputItemId) {
-          candidate.assistantEntryId = activeAssistantEntryId;
+        if (
+          activeAssistantOutputItemId !== null
+          && event.itemId === activeAssistantOutputItemId
+        ) {
+          activeAssistantEntryId = assistantEntryId;
+          if (candidate?.assistantOutputItemId === activeAssistantOutputItemId) {
+            candidate.assistantEntryId = activeAssistantEntryId;
+          }
+        }
+        const confirmed = confirmedTurn;
+        if (
+          confirmed
+          && confirmed.assistantOutputItemId !== null
+          && event.itemId === confirmed.assistantOutputItemId
+        ) {
+          confirmed.assistantEntryId = assistantEntryId;
+          reportLateExactInterruption(confirmed);
         }
         return;
       }

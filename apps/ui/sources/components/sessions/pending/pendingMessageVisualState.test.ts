@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 
-import { getPendingMessageVisualState } from './pendingMessageVisualState';
+import {
+    getPendingMessageVisualState,
+    resolvePendingMessageHeightBearingChrome,
+    type PendingMessageVisualStateKind,
+} from './pendingMessageVisualState';
 
 function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage {
     return {
@@ -27,7 +31,7 @@ describe('getPendingMessageVisualState', () => {
         }))).toEqual({
             kind: 'queued',
             showSpinner: false,
-            iconName: 'time-outline',
+            iconName: 'clock',
             queuedRequestedAction: 'enqueue',
         });
     });
@@ -125,7 +129,7 @@ describe('getPendingMessageVisualState', () => {
         }))).toEqual({
             kind: 'saving',
             showSpinner: true,
-            iconName: 'cloud-upload-outline',
+            iconName: 'cloud-arrow-up',
         });
     });
 
@@ -170,7 +174,7 @@ describe('getPendingMessageVisualState', () => {
         })).toEqual({
             kind: 'materializing',
             showSpinner: true,
-            iconName: 'navigate-outline',
+            iconName: 'navigation-arrow',
         });
     });
 
@@ -180,7 +184,7 @@ describe('getPendingMessageVisualState', () => {
         }))).toEqual({
             kind: 'delivering',
             showSpinner: true,
-            iconName: 'navigate-outline',
+            iconName: 'navigation-arrow',
             deliveryMutationPolicy: 'effect_possible',
         });
     });
@@ -191,7 +195,7 @@ describe('getPendingMessageVisualState', () => {
         }))).toEqual({
             kind: 'delivering',
             showSpinner: false,
-            iconName: 'navigate-outline',
+            iconName: 'navigation-arrow',
             deliveryMutationPolicy: 'effect_possible',
         });
     });
@@ -203,7 +207,7 @@ describe('getPendingMessageVisualState', () => {
         }))).toEqual({
             kind: 'blocked',
             showSpinner: false,
-            iconName: 'alert-circle-outline',
+            iconName: 'warning-circle',
             deliveryBlockedPresentation: {
                 labelKey: 'session.pendingMessages.deliveryBlockedReasons.providerUnavailableBeforeAcceptance',
                 isUnknown: false,
@@ -257,7 +261,7 @@ describe('getPendingMessageVisualState', () => {
         }))).toEqual({
             kind: 'blocked',
             showSpinner: false,
-            iconName: 'alert-circle-outline',
+            iconName: 'warning-circle',
             deliveryBlockedPresentation: {
                 labelKey: 'session.pendingMessages.deliveryBlockedReasons.unknown',
                 isUnknown: true,
@@ -272,5 +276,65 @@ describe('getPendingMessageVisualState', () => {
         expect(source).not.toContain('getPendingDeliveryBlockedReasonPresentation');
         expect(source).not.toMatch(/message\.pendingDeliveryStatus(?:Raw)?/);
         expect(source).not.toMatch(/pendingDeliveryStatus\s*===/);
+    });
+});
+
+/**
+ * F-P2 (2026-08-10): the transcript MEASUREMENT layer needs to know which delivery states can change
+ * the row's HEIGHT, and only this owner knows. `PendingMessagesTranscriptBlock` selects its in-flow
+ * notice from this descriptor, so the descriptor is the single decision-maker rather than a third
+ * restatement of the mapping. In THIS repository every state except `blocked` paints only the
+ * absolutely-positioned status chip — including the `queuedReason` copy — so only `blocked` bears
+ * height.
+ */
+describe('resolvePendingMessageHeightBearingChrome', () => {
+    const EXPECTED_BY_KIND = {
+        saving: 'none',
+        send_unconfirmed: 'none',
+        send_failed: 'none',
+        cancelling: 'none',
+        cancel_failed: 'none',
+        queued: 'none',
+        delivering: 'none',
+        materializing: 'none',
+        blocked: 'blocked-notice',
+    } as const satisfies Record<PendingMessageVisualStateKind, string>;
+
+    const REACHED_BY: Readonly<Record<PendingMessageVisualStateKind, () => PendingMessage>> = {
+        saving: () => pendingMessage({ source: 'local_outbound' }),
+        send_unconfirmed: () => pendingMessage({ source: 'local_outbound', sendState: 'unconfirmed' }),
+        send_failed: () => pendingMessage({ source: 'local_outbound', sendState: 'failed' }),
+        cancelling: () => pendingMessage({ source: 'local_outbound', pendingOutboxOperation: 'cancel' }),
+        cancel_failed: () => pendingMessage({ source: 'local_outbound', pendingOutboxOperation: 'cancel', sendState: 'failed' }),
+        queued: () => pendingMessage({ pendingDeliveryStatus: 'server_queued' }),
+        delivering: () => pendingMessage({ pendingDeliveryStatus: 'server_delivering' }),
+        materializing: () => pendingMessage({ pendingDeliveryStatus: 'server_queued' }),
+        blocked: () => pendingMessage({
+            pendingDeliveryStatus: 'blocked',
+            pendingDeliveryBlockedReason: 'terminal_composer_draft',
+        }),
+    };
+
+    it('classifies every visual state a pending row can reach', () => {
+        for (const [kind, expected] of Object.entries(EXPECTED_BY_KIND)) {
+            const typedKind = kind as PendingMessageVisualStateKind;
+            const visualState = getPendingMessageVisualState(
+                REACHED_BY[typedKind](),
+                typedKind === 'materializing' ? { materializingLocalIds: new Set(['p1']) } : undefined,
+            );
+            expect(visualState.kind, `fixture for ${kind} drifted`).toBe(typedKind);
+            expect(resolvePendingMessageHeightBearingChrome(visualState), kind).toBe(expected);
+        }
+    });
+
+    it('reads the blocked notice off the presentation the block itself renders', () => {
+        // The block paints `blockedDeliveryNotice` iff `deliveryBlockedPresentation` exists, so a new
+        // kind that starts carrying one cannot silently drop out of the size version.
+        expect(resolvePendingMessageHeightBearingChrome({
+            kind: 'queued',
+            showSpinner: false,
+            iconName: 'clock',
+            deliveryBlockedPresentation: { labelKey: 'session.pendingMessages.deliveryBlockedReasons.unknown', isUnknown: true },
+        })).toBe('blocked-notice');
     });
 });

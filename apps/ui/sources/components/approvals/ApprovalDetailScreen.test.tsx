@@ -87,6 +87,7 @@ function createTargetActionApprovalArtifact() {
             policyFingerprint: 'a'.repeat(64),
             subjectFingerprint: 'b'.repeat(64),
             summary: 'Publish the release notes',
+            detail: 'This publishes the approved release notes to the configured remote.',
         }),
     };
 }
@@ -337,6 +338,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
+    useLayoutMaxWidth: () => 960,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
 }));
 
 describe('ApprovalDetailScreen', () => {
@@ -363,6 +366,7 @@ describe('ApprovalDetailScreen', () => {
 
         const text = screen.getTextContent();
         expect(text).toContain('Publish the release notes');
+        expect(text).toContain('This publishes the approved release notes to the configured remote.');
         expect(text).toContain('acme.publisher');
         expect(text).toContain('releases/publish');
         expect(text).toContain('approvals.generation');
@@ -586,6 +590,33 @@ describe('ApprovalDetailScreen', () => {
         const text = screen.getTextContent();
         expect(fetchArtifactWithBodySpy).toHaveBeenCalledWith('artifact-1');
         expect(text).toContain('approvals.loadError');
+        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
+    });
+
+    it('shows retained encrypted approvals as locked without refetching them as missing bodies', async () => {
+        currentArtifact = {
+            id: 'artifact-1',
+            title: null,
+            header: null,
+            body: undefined,
+            headerVersion: 3,
+            bodyVersion: 4,
+            seq: 5,
+            createdAt: 1,
+            updatedAt: 2,
+            isDecrypted: false,
+            storageMode: 'e2ee',
+            availability: {
+                kind: 'locked',
+                reason: 'encryption_material_unavailable',
+            },
+        };
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+
+        expect(fetchArtifactWithBodySpy).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('settingsAccount.secretKeyMissing');
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 

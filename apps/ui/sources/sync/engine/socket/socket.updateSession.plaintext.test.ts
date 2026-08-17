@@ -64,7 +64,7 @@ function buildBaseParams(overrides: Partial<HandleUpdateContainerBaseParams> = {
             getMachineEncryption: () => null,
             removeSessionEncryption: () => {},
         } as unknown as HandleUpdateContainerBaseParams['encryption'],
-        artifactDataKeys: new Map<string, Uint8Array>(),
+        artifactDataKeys: new Map(),
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: vi.fn(),
@@ -739,6 +739,35 @@ describe('socket update handling: plaintext update-session', () => {
 
         expect(applySessions).toHaveBeenCalledTimes(1);
         expect(storage.getState().sessions.s1).toBeUndefined();
+    });
+
+    it.each([
+        ['delete-session', { t: 'delete-session' as const, sid: 's1' }],
+        ['session-share-revoked', { t: 'session-share-revoked' as const, sessionId: 's1', shareId: 'share-1' }],
+    ])('resets shared transcript currentness for %s', async (_kind, body) => {
+        const sessionReceivedMessages = new Map<string, Map<string, number>>([
+            ['s1', new Map([['voice-history-carrier', 2_000]])],
+        ]);
+        const resetSessionTranscriptState = vi.fn((sessionId: string) => {
+            sessionReceivedMessages.delete(sessionId);
+        });
+        const params = {
+            ...buildBaseParams({ sessionReceivedMessages }),
+            resetSessionTranscriptState,
+        };
+
+        await handleUpdateContainer({
+            ...params,
+            updateData: {
+                id: `u_${body.t}`,
+                seq: 12,
+                createdAt: 102,
+                body,
+            },
+        });
+
+        expect(resetSessionTranscriptState).toHaveBeenCalledWith('s1');
+        expect(sessionReceivedMessages.get('s1')).toBeUndefined();
     });
 
     it('preserves runtime-local direct-session metadata for loaded plaintext sessions when an update omits externalSessionV1', async () => {

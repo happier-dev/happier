@@ -17,6 +17,11 @@ let mockedSettings: Record<string, any> = {
     bottomPaneHeightPx: 320,
     bottomPaneHeightBasisPx: 900,
 };
+const bottomPaneBuiltinAdapter = {
+    destinationIds: ['terminal'],
+    defaultDestinationId: 'terminal',
+    render: () => <div />,
+};
 
 installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: 1200, height: mockedWindowHeightPx }),
@@ -71,7 +76,7 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
-                bottomPane={<div />}
+                bottomPaneBuiltinAdapter={bottomPaneBuiltinAdapter}
             />,
         );
 
@@ -99,7 +104,7 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
-                bottomPane={<div />}
+                bottomPaneBuiltinAdapter={bottomPaneBuiltinAdapter}
             />,
         );
 
@@ -133,7 +138,7 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
-                bottomPane={<div />}
+                bottomPaneBuiltinAdapter={bottomPaneBuiltinAdapter}
             />,
         );
 

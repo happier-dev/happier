@@ -26,6 +26,7 @@ describe('useAttachmentDraftManager', () => {
         expect(second.addPickedAttachments).toBe(first.addPickedAttachments);
         expect(second.applyDraftPatch).toBe(first.applyDraftPatch);
         expect(second.getDraftsSnapshot).toBe(first.getDraftsSnapshot);
+        expect(second.getDraftRevisionSnapshot).toBe(first.getDraftRevisionSnapshot);
     });
 
     it('returns a new manager identity when drafts change', async () => {
@@ -47,5 +48,20 @@ describe('useAttachmentDraftManager', () => {
         expect(after).not.toBe(before);
         expect(after.drafts).toHaveLength(1);
         expect(after.hasSendableAttachments).toBe(true);
+    });
+
+    it('advances the draft revision for an explicit clear even when drafts are already empty', async () => {
+        const hook = await renderHook(() => useAttachmentDraftManager({
+            enabled: true,
+            maxFileBytes: 1024,
+        }));
+
+        const before = hook.getCurrent().getDraftRevisionSnapshot();
+        await act(async () => {
+            hook.getCurrent().clearDrafts();
+        });
+
+        expect(hook.getCurrent().drafts).toEqual([]);
+        expect(hook.getCurrent().getDraftRevisionSnapshot()).toBe(before + 1);
     });
 });

@@ -40,11 +40,29 @@ export function readExternalSessionBrowseCandidateKey(
     return candidate.candidateKey ?? candidate.remoteSessionId;
 }
 
+export function readExternalSessionBrowseCandidatePath(
+    details: ExternalSessionBrowseCandidate['details'],
+): string | null {
+    const cwd = typeof details?.cwd === 'string' ? details.cwd.trim() : '';
+    if (cwd) return cwd;
+    const path = typeof details?.path === 'string' ? details.path.trim() : '';
+    return path || null;
+}
+
 const CANDIDATES_PAGE_LIMIT = 50;
 const MAX_CANDIDATE_INDEX_PREPARATION_REQUESTS = 250;
 const MAX_EMPTY_FULL_SEARCH_PAGE_REQUESTS = 20;
 
 type CandidateApplyMode = 'replace' | 'append' | 'merge';
+type CandidateSearchMode = 'fast' | 'full';
+type CandidateContinuation = Readonly<{
+    cursor: string;
+    searchMode?: CandidateSearchMode;
+}>;
+
+function readCandidateContinuationKey(continuation: CandidateContinuation): string {
+    return JSON.stringify([continuation.searchMode ?? null, continuation.cursor]);
+}
 
 function hasCandidateTitle(candidate: ExternalSessionBrowseCandidate): boolean {
     return typeof candidate.title === 'string' && candidate.title.trim().length > 0;
@@ -93,14 +111,44 @@ function mergeExternalSessionBrowseCandidates(
     return Array.from(merged.values());
 }
 
+/**
+ * A candidate index that is still building re-serves the same sorted prefix on
+ * every progress round-trip, so equal rows keep their object identity and an
+ * unchanged listing keeps its array identity instead of rebuilding the list on
+ * each of the thousands of round-trips a cold index needs.
+ */
+function preserveExternalSessionBrowseCandidateIdentity(
+    current: readonly ExternalSessionBrowseCandidate[],
+    next: readonly ExternalSessionBrowseCandidate[],
+): readonly ExternalSessionBrowseCandidate[] {
+    if (current === next) return current;
+    const currentByKey = new Map(current.map((candidate) => [
+        readExternalSessionBrowseCandidateKey(candidate),
+        candidate,
+    ] as const));
+    let changed = current.length !== next.length;
+    const preserved = next.map((candidate, index) => {
+        const existing = currentByKey.get(readExternalSessionBrowseCandidateKey(candidate));
+        if (existing && (existing === candidate || JSON.stringify(existing) === JSON.stringify(candidate))) {
+            if (current[index] !== existing) changed = true;
+            return existing;
+        }
+        changed = true;
+        return candidate;
+    });
+    return changed ? preserved : current;
+}
+
 export function useExternalSessionBrowseCandidates(params: Readonly<{
     machineId: string | null;
     serverId?: string | null;
     providerId: ExternalSessionsAgentId | null;
     source: ExternalSessionsSource | null;
     searchTerm?: string;
+    enabled?: boolean;
 }>) {
     const { machineId, providerId, searchTerm, source, serverId } = params;
+    const enabled = params.enabled !== false;
     const normalizedSearchTerm = typeof searchTerm === 'string' ? searchTerm.trim() : '';
     const currentScopeKey = React.useMemo(() => JSON.stringify({
         machineId,
@@ -125,52 +173,131 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     const scopedSource = scopedSourceRef.current.source;
 
     const [candidates, setCandidates] = React.useState<readonly ExternalSessionBrowseCandidate[]>([]);
-    const [nextCursor, setNextCursor] = React.useState<string | null>(null);
+    const [nextPage, setNextPage] = React.useState<CandidateContinuation | null>(null);
     const [loading, setLoading] = React.useState(false);
     const [loadingMore, setLoadingMore] = React.useState(false);
     const [searchAugmenting, setSearchAugmenting] = React.useState(false);
     const [searchIncomplete, setSearchIncomplete] = React.useState(false);
+    const [annotationsIncomplete, setAnnotationsIncomplete] = React.useState(false);
     const [preparation, setPreparation] = React.useState<ExternalSessionBrowsePreparation | null>(null);
     const [autoLinkPolicyScope, setAutoLinkPolicyScope] =
         React.useState<ExternalSessionBrowseAutoLinkPolicyScope | null>(null);
     const [error, setError] = React.useState<string | null>(null);
+    const [cancelled, setCancelled] = React.useState(false);
     const [loadedScopeKey, setLoadedScopeKey] = React.useState<string | null>(null);
+    /**
+     * Whether the rows on screen were published by the request that owns the current
+     * scope, rather than retained from a superseded one while a new request
+     * re-establishes authority.
+     *
+     * This is a statement about the listing's provenance, never about how much of the
+     * candidate index is built: a still-building index publishes its digest-verified
+     * prefix through this same request, so rows it has already served are
+     * authoritative while `loading` stays true for every remaining progress
+     * round-trip.
+     */
+    const [candidatesAuthoritative, setCandidatesAuthoritative] = React.useState(false);
+    /**
+     * Whether the rows on screen come from a candidate-index build that stopped
+     * before it completed — a crawl that stopped advancing, or one that exhausted the
+     * bounded request budget. The rows stay live and actionable, but the listing is a
+     * prefix of the source rather than all of it, so the surface keeps saying so and
+     * offers the retry that restarts the build instead of declaring the list finished.
+     */
+    const [preparationStopped, setPreparationStopped] = React.useState(false);
 
     const loadGenerationRef = React.useRef(0);
     const loadedScopeKeyRef = React.useRef<string | null>(null);
     const activePageRequestKeysRef = React.useRef(new Set<string>());
     const activeScopeAbortControllerRef = React.useRef<AbortController | null>(null);
-    const seenPageCursorsRef = React.useRef<{
+    const seenPageContinuationsRef = React.useRef<{
         scopeKey: string;
-        cursors: Set<string>;
-    }>({ scopeKey: currentScopeKey, cursors: new Set<string>() });
+        continuations: Set<string>;
+    }>({ scopeKey: currentScopeKey, continuations: new Set<string>() });
 
-    const loadCandidates = React.useCallback(async (opts?: Readonly<{ cursor?: string | null; append?: boolean }>) => {
-        if (!machineId || !providerId || !scopedSource) return;
-
+    const loadCandidates = React.useCallback(async (opts?: Readonly<{
+        continuation?: CandidateContinuation;
+        append?: boolean;
+    }>) => {
         const append = opts?.append === true;
-        const requestedCursor = opts?.cursor ?? null;
+        const requestedContinuation = opts?.continuation ?? null;
+        const requestedCursor = requestedContinuation?.cursor ?? null;
+        const requestedSearchMode = requestedContinuation?.searchMode;
+        const hasValidScope = Boolean(machineId && providerId && scopedSource);
+        const preserveExistingCandidatesOnFailure = !append
+            && loadedScopeKeyRef.current === currentScopeKey;
+
+        if (!enabled) {
+            if (!append) {
+                loadGenerationRef.current += 1;
+                activeScopeAbortControllerRef.current?.abort();
+                activeScopeAbortControllerRef.current = null;
+                activePageRequestKeysRef.current.clear();
+                setCandidatesAuthoritative(false);
+                setLoading(false);
+                setLoadingMore(false);
+                setSearchAugmenting(false);
+                setPreparation(null);
+                setPreparationStopped(false);
+                setAutoLinkPolicyScope(null);
+                setError(null);
+                setCancelled(false);
+            }
+            return;
+        }
 
         let abortController: AbortController;
         if (!append) {
             activeScopeAbortControllerRef.current?.abort();
+            activeScopeAbortControllerRef.current = null;
+            activePageRequestKeysRef.current.clear();
+            loadGenerationRef.current += 1;
+            // Rows already on screen belong to the superseded request until this one
+            // publishes; a paging (`append`) request never revokes that authority.
+            setCandidatesAuthoritative(false);
+            if (!hasValidScope) {
+                loadedScopeKeyRef.current = currentScopeKey;
+                setLoadedScopeKey(currentScopeKey);
+                seenPageContinuationsRef.current = {
+                    scopeKey: currentScopeKey,
+                    continuations: new Set<string>(),
+                };
+                setCandidates([]);
+                setNextPage(null);
+                setLoading(false);
+                setLoadingMore(false);
+                setSearchAugmenting(false);
+                setSearchIncomplete(false);
+                setAnnotationsIncomplete(false);
+                setPreparation(null);
+                setPreparationStopped(false);
+                setAutoLinkPolicyScope(null);
+                setError(null);
+                setCancelled(false);
+                return;
+            }
             abortController = new AbortController();
             activeScopeAbortControllerRef.current = abortController;
-            loadGenerationRef.current += 1;
             if (loadedScopeKeyRef.current !== currentScopeKey) {
                 loadedScopeKeyRef.current = null;
                 setLoadedScopeKey(null);
                 setAutoLinkPolicyScope(null);
             }
-            seenPageCursorsRef.current = {
+            seenPageContinuationsRef.current = {
                 scopeKey: currentScopeKey,
-                cursors: new Set<string>(),
+                continuations: new Set<string>(),
             };
         } else {
+            if (!hasValidScope) return;
             abortController = activeScopeAbortControllerRef.current ?? new AbortController();
         }
+        if (!machineId || !providerId || !scopedSource) return;
         const currentGeneration = loadGenerationRef.current;
-        const pageRequestKey = `${currentGeneration}\u0000${currentScopeKey}\u0000${requestedCursor ?? '<root>'}`;
+        const pageRequestKey = JSON.stringify([
+            currentGeneration,
+            currentScopeKey,
+            requestedContinuation ? readCandidateContinuationKey(requestedContinuation) : null,
+        ]);
         if (activePageRequestKeysRef.current.has(pageRequestKey)) return;
         activePageRequestKeysRef.current.add(pageRequestKey);
 
@@ -182,13 +309,15 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             setSearchAugmenting(false);
             setSearchIncomplete(false);
             setPreparation(null);
+            setPreparationStopped(false);
             setError(null);
+            setCancelled(false);
         }
 
-        const shouldStartWithFastSearch = !append && !opts?.cursor && normalizedSearchTerm.length > 0;
+        const shouldStartWithFastSearch = !append && !requestedContinuation && normalizedSearchTerm.length > 0;
         let requestObservedPreparation = false;
         const requestCandidates = async (
-            searchMode?: 'fast' | 'full',
+            searchMode?: CandidateSearchMode,
             cursor: string | null = requestedCursor,
         ) => {
             const request = {
@@ -205,7 +334,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 signal: abortController.signal,
             });
         };
-        const applyResult = (result: Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>>, mode: CandidateApplyMode): boolean => {
+        const applyResult = (
+            result: Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>>,
+            mode: CandidateApplyMode,
+            searchMode?: CandidateSearchMode,
+        ): boolean => {
             if (!result.ok) {
                 loadedScopeKeyRef.current = currentScopeKey;
                 setLoadedScopeKey(currentScopeKey);
@@ -216,8 +349,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 if (!append) setAutoLinkPolicyScope(null);
                 setError(resolveExternalSessionBrowseRpcErrorMessage(result.errorCode, 'list'));
                 if (!append) {
-                    setCandidates([]);
-                    setNextCursor(null);
+                    if (!preserveExistingCandidatesOnFailure) {
+                        setCandidates([]);
+                        setAnnotationsIncomplete(false);
+                    }
+                    setNextPage(null);
                 }
                 return false;
             }
@@ -237,40 +373,72 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
 
             loadedScopeKeyRef.current = currentScopeKey;
             setLoadedScopeKey(currentScopeKey);
+            /**
+             * Published rows are what confer authority. A merge that carries none only
+             * keeps whatever is already on screen — an index rebuilding from a drifted
+             * source republishes exactly that — so it must not re-authorize rows this
+             * request never served.
+             */
+            if (mode !== 'merge' || nextItems.length > 0) setCandidatesAuthoritative(true);
             setPreparation(null);
             if (mode !== 'append') {
                 setAutoLinkPolicyScope(result.autoLinkPolicyScopeV1 ?? null);
             }
-            setCandidates((current) => {
-                if (mode === 'append') return mergeExternalSessionBrowseCandidates(current, nextItems);
-                if (mode === 'merge') return mergeExternalSessionBrowseCandidates(current, nextItems);
-                return mergeExternalSessionBrowseCandidates([], nextItems);
-            });
+            setCandidates((current) => preserveExternalSessionBrowseCandidateIdentity(
+                current,
+                mode === 'replace'
+                    ? mergeExternalSessionBrowseCandidates([], nextItems)
+                    : mergeExternalSessionBrowseCandidates(current, nextItems),
+            ));
             setSearchIncomplete(result.searchIncomplete === true);
+            setAnnotationsIncomplete((current) => mode === 'replace'
+                ? result.annotationsIncomplete === true
+                : current || result.annotationsIncomplete === true);
             if (mode === 'merge') {
-                setNextCursor((current) => result.nextCursor ?? (result.searchIncomplete ? current : null));
+                if (result.nextCursor) {
+                    const returnedContinuation = {
+                        cursor: result.nextCursor,
+                        ...(searchMode ? { searchMode } : {}),
+                    };
+                    const continuationKey = readCandidateContinuationKey(returnedContinuation);
+                    const seenContinuations = seenPageContinuationsRef.current.continuations;
+                    if (seenContinuations.has(continuationKey)) {
+                        setNextPage(null);
+                    } else {
+                        seenContinuations.add(continuationKey);
+                        setNextPage(returnedContinuation);
+                    }
+                } else if (!result.searchIncomplete) {
+                    setNextPage(null);
+                }
             } else {
                 const returnedCursor = result.nextCursor ?? null;
-                const cursorState = seenPageCursorsRef.current;
-                if (cursorState.scopeKey !== currentScopeKey) {
-                    seenPageCursorsRef.current = {
+                const continuationState = seenPageContinuationsRef.current;
+                if (continuationState.scopeKey !== currentScopeKey) {
+                    seenPageContinuationsRef.current = {
                         scopeKey: currentScopeKey,
-                        cursors: new Set<string>(),
+                        continuations: new Set<string>(),
                     };
                 }
-                const seenCursors = seenPageCursorsRef.current.cursors;
-                if (returnedCursor && seenCursors.has(returnedCursor)) {
-                    setNextCursor(null);
+                const returnedContinuation = returnedCursor
+                    ? { cursor: returnedCursor, ...(searchMode ? { searchMode } : {}) }
+                    : null;
+                const continuationKey = returnedContinuation
+                    ? readCandidateContinuationKey(returnedContinuation)
+                    : null;
+                const seenContinuations = seenPageContinuationsRef.current.continuations;
+                if (continuationKey && seenContinuations.has(continuationKey)) {
+                    setNextPage(null);
                 } else {
-                    if (returnedCursor) seenCursors.add(returnedCursor);
-                    setNextCursor(returnedCursor);
+                    if (continuationKey) seenContinuations.add(continuationKey);
+                    setNextPage(returnedContinuation);
                 }
             }
             setError(null);
             return true;
         };
         const requestCandidatePage = async (
-            searchMode?: 'fast' | 'full',
+            searchMode?: CandidateSearchMode,
             cursor: string | null = requestedCursor,
         ): Promise<Readonly<{
             result: Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>>;
@@ -279,6 +447,8 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             let prepared = false;
             let preparationRequestCount = 0;
             let lastPreparationScanned: number | null = null;
+            let lastServedPreparationResult:
+                Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>> | null = null;
             while (preparationRequestCount < MAX_CANDIDATE_INDEX_PREPARATION_REQUESTS) {
                 const result = await requestCandidates(searchMode, cursor);
                 if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
@@ -288,35 +458,71 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     return { result, prepared };
                 }
                 preparationRequestCount += 1;
-                if (
-                    lastPreparationScanned !== null
-                    && result.preparation.scanned <= lastPreparationScanned
-                ) {
-                    throw new Error(t('externalSessions.browseFailedToLoad'));
-                }
+                const previousScanned = lastPreparationScanned;
                 lastPreparationScanned = result.preparation.scanned;
+                /**
+                 * A preparing index only ever grows the digest-verified prefix it
+                 * serves, so a response that serves nothing after one already served
+                 * rows — or one whose scanned count went backwards — reports a source
+                 * generation that restarted, not more progress on the generation those
+                 * rows came from. They stay on screen so a rebuild never blanks the
+                 * listing, but they describe a superseded generation: they lose their
+                 * authority and stop counting as this crawl's served prefix, so no later
+                 * stop can present them as the current generation's finished result.
+                 */
+                const generationRestarted = lastServedPreparationResult !== null
+                    && (result.candidates.length === 0
+                        || (previousScanned !== null && result.preparation.scanned < previousScanned));
+                if (generationRestarted) {
+                    lastServedPreparationResult = null;
+                    setCandidatesAuthoritative(false);
+                }
+                if (result.candidates.length > 0) lastServedPreparationResult = result;
+                /**
+                 * A crawl that stopped advancing is only a failure while the index has
+                 * nothing to show. With served rows in hand it is a stop-polling
+                 * condition, so the listing keeps them — flagged as the incomplete
+                 * prefix they are — instead of being destroyed. A restart is progress on
+                 * a new generation, not a stall, so it keeps the crawl going.
+                 */
+                const crawlStalled = !generationRestarted
+                    && previousScanned !== null
+                    && result.preparation.scanned <= previousScanned;
+                if (crawlStalled) {
+                    if (!lastServedPreparationResult) {
+                        throw new Error(t('externalSessions.browseFailedToLoad'));
+                    }
+                    setPreparationStopped(true);
+                    return { result: lastServedPreparationResult, prepared };
+                }
 
                 prepared = true;
                 requestObservedPreparation = true;
-                loadedScopeKeyRef.current = currentScopeKey;
-                setLoadedScopeKey(currentScopeKey);
-                setCandidates([]);
-                setNextCursor(null);
-                setAutoLinkPolicyScope(null);
-                setError(null);
+                /**
+                 * A preparation response carries the digest-verified rows the index has
+                 * already built, so it publishes through the same candidate path a
+                 * completed page uses. An empty response merges instead of replacing so
+                 * an in-progress rebuild never blanks rows already on screen.
+                 */
+                applyResult(result, result.candidates.length > 0 ? 'replace' : 'merge', searchMode);
                 setPreparation(result.preparation);
                 setLoading(true);
                 setSearchAugmenting(false);
+            }
+            if (lastServedPreparationResult) {
+                setPreparationStopped(true);
+                return { result: lastServedPreparationResult, prepared };
             }
             throw new Error(t('externalSessions.browseFailedToLoad'));
         };
 
         try {
-            const pageResult = await requestCandidatePage(shouldStartWithFastSearch ? 'fast' : undefined);
+            const initialSearchMode = shouldStartWithFastSearch ? 'fast' : requestedSearchMode;
+            const pageResult = await requestCandidatePage(initialSearchMode);
             if (!pageResult) return;
             const { result } = pageResult;
 
-            const ok = applyResult(result, append ? 'append' : 'replace');
+            const ok = applyResult(result, append ? 'append' : 'replace', initialSearchMode);
             if (!ok || !shouldStartWithFastSearch || !result.ok || !result.searchIncomplete) {
                 return;
             }
@@ -346,17 +552,23 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     augmentedPageResult = continuationPage;
                     fullSearchPageRequests += 1;
                 }
+                const fullSearchIsComplete = augmentedPageResult.result.ok
+                    && !augmentedPageResult.result.searchIncomplete
+                    && !augmentedPageResult.result.preparation;
                 applyResult(
                     augmentedPageResult.result,
-                    augmentedPageResult.prepared ? 'replace' : 'merge',
+                    augmentedPageResult.prepared || fullSearchIsComplete ? 'replace' : 'merge',
+                    'full',
                 );
             } catch (augmentationError) {
                 if (abortController.signal.aborted || loadGenerationRef.current !== currentGeneration) {
                     return;
                 }
                 if (requestObservedPreparation) {
+                    setCandidatesAuthoritative(false);
                     setCandidates([]);
-                    setNextCursor(null);
+                    setAnnotationsIncomplete(false);
+                    setNextPage(null);
                     setPreparation(null);
                     setError(resolveExternalSessionBrowseThrownErrorMessage(augmentationError, 'list'));
                 }
@@ -371,8 +583,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             setPreparation(null);
             setError(resolveExternalSessionBrowseThrownErrorMessage(loadError, 'list'));
             if (!append) {
-                setCandidates([]);
-                setNextCursor(null);
+                if (!preserveExistingCandidatesOnFailure) {
+                    setCandidates([]);
+                    setAnnotationsIncomplete(false);
+                }
+                setNextPage(null);
             }
         } finally {
             activePageRequestKeysRef.current.delete(pageRequestKey);
@@ -385,7 +600,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 }
             }
         }
-    }, [currentScopeKey, machineId, normalizedSearchTerm, providerId, scopedSource, serverId]);
+    }, [currentScopeKey, enabled, machineId, normalizedSearchTerm, providerId, scopedSource, serverId]);
 
     React.useEffect(() => {
         void loadCandidates();
@@ -398,9 +613,9 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     }, []);
 
     const loadMore = React.useCallback(async () => {
-        if (!nextCursor || loadingMore) return;
-        await loadCandidates({ cursor: nextCursor, append: true });
-    }, [loadCandidates, loadingMore, nextCursor]);
+        if (!nextPage || loadingMore) return;
+        await loadCandidates({ continuation: nextPage, append: true });
+    }, [loadCandidates, loadingMore, nextPage]);
     const cancelPreparation = React.useCallback(() => {
         loadGenerationRef.current += 1;
         activeScopeAbortControllerRef.current?.abort();
@@ -408,32 +623,44 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         activePageRequestKeysRef.current.clear();
         loadedScopeKeyRef.current = currentScopeKey;
         setLoadedScopeKey(currentScopeKey);
+        setCandidatesAuthoritative(false);
         setCandidates([]);
-        setNextCursor(null);
+        setNextPage(null);
         setLoading(false);
         setLoadingMore(false);
         setSearchAugmenting(false);
         setSearchIncomplete(false);
+        setAnnotationsIncomplete(false);
         setPreparation(null);
+        setPreparationStopped(false);
         setAutoLinkPolicyScope(null);
         setError(t('externalSessions.browseIndexingCancelled'));
+        setCancelled(true);
     }, [currentScopeKey]);
     const reload = React.useCallback(async () => {
         await loadCandidates();
     }, [loadCandidates]);
 
     const scopeMatches = loadedScopeKey === currentScopeKey;
+    const paginationRequestKey = scopeMatches && nextPage !== null
+        ? `${currentScopeKey}\u0000${readCandidateContinuationKey(nextPage)}`
+        : null;
 
     return {
         candidates: scopeMatches ? candidates : [],
-        nextCursor: scopeMatches ? nextCursor : null,
-        loading,
+        candidatesAuthoritative: scopeMatches && candidatesAuthoritative,
+        nextCursor: scopeMatches ? nextPage?.cursor ?? null : null,
+        paginationRequestKey,
+        loading: loading || (enabled && !scopeMatches),
         loadingMore,
         searchAugmenting: scopeMatches ? searchAugmenting : false,
         searchIncomplete: scopeMatches ? searchIncomplete : false,
+        annotationsIncomplete: scopeMatches ? annotationsIncomplete : false,
         preparation: scopeMatches ? preparation : null,
+        preparationStopped: scopeMatches ? preparationStopped : false,
         autoLinkPolicyScope: scopeMatches ? autoLinkPolicyScope : null,
         error: scopeMatches ? error : null,
+        cancelled: scopeMatches ? cancelled : false,
         loadMore,
         cancelPreparation,
         reload,

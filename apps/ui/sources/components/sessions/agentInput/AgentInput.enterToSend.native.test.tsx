@@ -1,6 +1,12 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+
+import {
+    MENTION_KIND_V1,
+    buildMentionRefForKindV1,
+} from '@happier-dev/protocol';
+
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import { renderScreen } from '@/dev/testkit';
 import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from '@/components/ui/forms/largeTextInputPolicy';
@@ -9,10 +15,19 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const promptInvocationMock = vi.hoisted(() => ({
+    resolve: vi.fn(async (_args: unknown) => ({ handled: false as boolean })),
+}));
+
+vi.mock('@/sync/domains/input/slashCommands/promptInvocationSuggestion', () => ({
+    resolvePromptInvocationAutocompleteSelection: (args: unknown) => promptInvocationMock.resolve(args as never),
+}));
+
 const mocks = vi.hoisted(() => ({
     onChangeText: vi.fn(),
     onSend: vi.fn(),
     inputBlur: vi.fn(),
+    inputFocus: vi.fn(),
     suggestionMoveUp: vi.fn(),
     suggestionMoveDown: vi.fn(),
     activeSuggestions: [] as AutocompleteSuggestion[],
@@ -115,7 +130,8 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => ({
     useSessionServerId: () => null,
 }));
 
-vi.mock('@/components/ui/commandMenu', () => ({
+vi.mock('@/components/ui/commandMenu', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/ui/commandMenu')>(),
     CommandMenu: (props: CommandMenuMockProps) => {
         commandMenuState.lastProps = props;
         return props.open ? React.createElement('CommandMenu', props, null) : null;
@@ -158,7 +174,7 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
         React.useImperativeHandle(ref, () => ({
             blur: mocks.inputBlur,
-            focus: () => {},
+            focus: mocks.inputFocus,
             setNativeProps: () => {},
         }));
         return React.createElement('TextInput', props, null);
@@ -215,10 +231,6 @@ vi.mock('@/components/ui/feedback/Shaker', () => ({
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
-}));
-
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
 }));
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
@@ -321,7 +333,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 isSendDisabled={false}
                 disabled={false}
@@ -334,7 +346,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 isSendDisabled={false}
                 disabled={false}
@@ -347,7 +359,7 @@ describe('AgentInput (enter to send on native)', () => {
     });
 
     it('keeps slash autocomplete active when focusing a large native input with an active trigger', async () => {
-        mocks.activeSuggestions = [{ key: 'cmd-run', text: '/run', label: '/run' }];
+        mocks.activeSuggestions = [{ kind: 'slashCommand', key: 'cmd-run', text: '/run', label: '/run' }] as any;
         mocks.activeSuggestionIndex = 0;
         mocks.respectSuggestionQuery = true;
         const largePrompt = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)} /r`;
@@ -359,7 +371,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={['/']}
+                autocompleteKinds={['slashCommand']}
                 autocompleteSuggestions={async () => mocks.activeSuggestions}
                 isSendDisabled={false}
                 disabled={false}
@@ -380,8 +392,44 @@ describe('AgentInput (enter to send on native)', () => {
         }));
     });
 
+    it('reports real input focus changes and exposes the incumbent focus request without changing native input behavior', async () => {
+        const focusChanges = vi.fn();
+        const focusRequestCapture = { current: null as (() => void) | null };
+        mocks.inputFocus.mockClear();
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value="draft"
+                onChangeText={mocks.onChangeText}
+                onSend={mocks.onSend}
+                placeholder="p"
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+                onComposerFocusChange={focusChanges}
+                onComposerFocusRequestChange={(request) => {
+                    focusRequestCapture.current = request;
+                }}
+            />,
+        );
+
+        const input = findNativeTextInput(screen);
+        await act(async () => {
+            input.props.onFocus?.();
+            input.props.onBlur?.();
+        });
+
+        expect(focusChanges).toHaveBeenNthCalledWith(1, true);
+        expect(focusChanges).toHaveBeenNthCalledWith(2, false);
+        const focusRequest = focusRequestCapture.current;
+        expect(focusRequest).toEqual(expect.any(Function));
+        if (!focusRequest) throw new Error('expected composer focus request');
+        focusRequest();
+        expect(mocks.inputFocus).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps slash autocomplete active after a large native value is restored into an empty composer', async () => {
-        mocks.activeSuggestions = [{ key: 'cmd-run', text: '/run', label: '/run' }];
+        mocks.activeSuggestions = [{ kind: 'slashCommand', key: 'cmd-run', text: '/run', label: '/run' }] as any;
         mocks.activeSuggestionIndex = 0;
         mocks.respectSuggestionQuery = true;
         const largePrompt = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)} /r`;
@@ -393,7 +441,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={['/']}
+                autocompleteKinds={['slashCommand']}
                 autocompleteSuggestions={async () => mocks.activeSuggestions}
                 isSendDisabled={false}
                 disabled={false}
@@ -418,14 +466,28 @@ describe('AgentInput (enter to send on native)', () => {
         }));
     });
 
-    it('lets owners handle autocomplete suggestion selection before default insertion', async () => {
-        mocks.activeSuggestions = [{ key: 'cmd-qa', text: '/qa', label: '/qa' }];
+    it('lets the suggestion kind rewrite the whole input instead of inserting the token', async () => {
+        // D-20: a prompt-template slash command replaces the entire composer input, which a
+        // token string cannot express. The kind owns that rewrite; it is no longer a host prop.
+        mocks.activeSuggestions = [{
+            kind: 'slashCommand',
+            key: 'cmd-qa',
+            text: '/qa',
+            label: '/qa',
+            promptInvocation: {
+                invocationId: 'tmpl_1',
+                token: '/qa',
+                targetArtifactId: 'artifact_prompt_1',
+                behavior: 'insert',
+                allowArgs: false,
+            },
+        }] as any;
         mocks.activeSuggestionIndex = 0;
-        const onAutocompleteSuggestionSelect = vi.fn(async () => ({
+        promptInvocationMock.resolve.mockResolvedValueOnce({
             handled: true,
             text: 'Expanded QA prompt',
             cursorPosition: 'Expanded QA prompt'.length,
-        }));
+        } as never);
         const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
@@ -434,12 +496,11 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={['/']}
+                autocompleteKinds={['slashCommand']}
                 autocompleteSuggestions={async () => mocks.activeSuggestions as any}
                 isSendDisabled={false}
                 disabled={false}
                 showAbortButton={false}
-                onAutocompleteSuggestionSelect={onAutocompleteSuggestionSelect as any}
             />
         );
 
@@ -452,7 +513,7 @@ describe('AgentInput (enter to send on native)', () => {
             });
         });
 
-        expect(onAutocompleteSuggestionSelect).toHaveBeenCalledWith(expect.objectContaining({
+        expect(promptInvocationMock.resolve).toHaveBeenCalledWith(expect.objectContaining({
             suggestion: expect.objectContaining({ key: 'cmd-qa', text: '/qa' }),
             input: '/qa',
             selection: { start: 3, end: 3 },
@@ -461,10 +522,88 @@ describe('AgentInput (enter to send on native)', () => {
         expect(mocks.onSend).not.toHaveBeenCalled();
     });
 
-    it('falls back to default insertion when owner autocomplete selection declines handling', async () => {
-        mocks.activeSuggestions = [{ key: 'cmd-qa', text: '/qa', label: '/qa' }];
+    it('does not let a late slash-template resolution overwrite a draft after edit and revert', async () => {
+        // A selection can need asynchronous artifact resolution. Any edit retires
+        // that selection, even when the user later restores the same visible text.
+        let resolveSelection!: (result: {
+            handled: true;
+            text: string;
+            cursorPosition: number;
+        }) => void;
+        const pendingSelection = new Promise<{
+            handled: true;
+            text: string;
+            cursorPosition: number;
+        }>((resolve) => {
+            resolveSelection = resolve;
+        });
+
+        mocks.activeSuggestions = [{
+            kind: 'slashCommand',
+            key: 'cmd-qa',
+            text: '/qa',
+            label: '/qa',
+            promptInvocation: {
+                invocationId: 'tmpl_1',
+                token: '/qa',
+                targetArtifactId: 'artifact_prompt_1',
+                behavior: 'insert',
+                allowArgs: false,
+            },
+        }] as any;
         mocks.activeSuggestionIndex = 0;
-        const onAutocompleteSuggestionSelect = vi.fn(async () => ({ handled: false }));
+        promptInvocationMock.resolve.mockImplementationOnce(() => pendingSelection as never);
+
+        const { AgentInput } = await import('./AgentInput');
+        const render = (value: string) => (
+            <AgentInput
+                sessionId="session-1"
+                value={value}
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompleteKinds={['slashCommand']}
+                autocompleteSuggestions={async () => mocks.activeSuggestions as any}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />
+        );
+        const screen = await renderScreen(render('/qa'));
+        const input = findNativeTextInput(screen);
+
+        await act(async () => {
+            input.props.onKeyPress?.({
+                nativeEvent: { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false },
+                preventDefault: vi.fn(),
+            });
+        });
+        await act(async () => {
+            screen.tree.update(render('/qa — temporary edit'));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            screen.tree.update(render('/qa'));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            resolveSelection({
+                handled: true,
+                text: 'Expanded QA prompt',
+                cursorPosition: 'Expanded QA prompt'.length,
+            });
+            await Promise.resolve();
+        });
+
+        expect(mocks.onChangeText).not.toHaveBeenCalledWith('Expanded QA prompt');
+        expect(mocks.onSend).not.toHaveBeenCalled();
+    });
+
+    it('falls back to token insertion when the slash command has no prompt invocation', async () => {
+        // No `promptInvocation` means the kind declines before it ever reaches the resolver.
+        mocks.activeSuggestions = [{ kind: 'slashCommand', key: 'cmd-qa', text: '/qa', label: '/qa' }] as any;
+        mocks.activeSuggestionIndex = 0;
+        promptInvocationMock.resolve.mockClear();
         const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
@@ -473,12 +612,11 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={['/']}
-                autocompleteSuggestions={async () => mocks.activeSuggestions}
+                autocompleteKinds={['slashCommand']}
+                autocompleteSuggestions={async () => mocks.activeSuggestions as any}
                 isSendDisabled={false}
                 disabled={false}
                 showAbortButton={false}
-                onAutocompleteSuggestionSelect={onAutocompleteSuggestionSelect}
             />
         );
 
@@ -491,7 +629,7 @@ describe('AgentInput (enter to send on native)', () => {
             });
         });
 
-        expect(onAutocompleteSuggestionSelect).toHaveBeenCalledOnce();
+        expect(promptInvocationMock.resolve).not.toHaveBeenCalled();
         expect(mocks.onChangeText).toHaveBeenCalledWith('/qa');
         expect(mocks.onSend).not.toHaveBeenCalled();
     });
@@ -500,6 +638,7 @@ describe('AgentInput (enter to send on native)', () => {
         settingState.webEnterToSend = false;
         settingState.nativeEnterToSend = true;
         mocks.activeSuggestions = [{
+            kind: 'vendorPlugin',
             key: 'vendor-plugin-github',
             text: '@github',
             label: 'GitHub',
@@ -521,7 +660,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={['@']}
+                autocompleteKinds={['file', 'vendorPlugin']}
                 autocompleteSuggestions={async () => mocks.activeSuggestions}
                 isSendDisabled={false}
                 disabled={false}
@@ -547,6 +686,14 @@ describe('AgentInput (enter to send on native)', () => {
             structuredInputMetaOverrides: {
                 happierStructuredInputV1: {
                     v: 1,
+                    mentions: [{
+                        kind: MENTION_KIND_V1.vendorPlugin,
+                        ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, 'github'),
+                        token: '@github',
+                        start: 0,
+                        end: 7,
+                        label: 'GitHub',
+                    }],
                     vendorPluginMentions: [{
                         vendorPluginRef: 'github',
                         label: 'GitHub',
@@ -566,7 +713,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 isSendDisabled={false}
                 disabled={false}
@@ -596,7 +743,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 isSendDisabled={false}
                 disabled={false}
@@ -627,7 +774,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 isSendDisabled={false}
                 disabled={false}
@@ -656,7 +803,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 isSendDisabled={false}
                 disabled={false}
@@ -699,7 +846,7 @@ describe('AgentInput (enter to send on native)', () => {
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
                 onSend={mocks.onSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 isSendDisabled={false}
                 disabled={false}

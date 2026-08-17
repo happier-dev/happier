@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { useOptionalModal } from '@/modal';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
+import { useReportSessionCockpitComposerChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { ComposerKeyboardProvider } from './ComposerKeyboardContext';
 import type { ComposerKeyboardScaffoldProps } from './ComposerKeyboardScaffoldTypes';
 import { useComposerKeyboardLayout } from './useComposerKeyboardLayout.native';
@@ -26,9 +27,14 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
     const composerAnimatedStyle = useAnimatedStyle(() => ({
         transform: [{ translateY: -layout.bottomInset.value }],
     }), [layout]);
+    // The composer floats above the bottom chrome, so it is an obstacle for app-shell overlays that
+    // sit outside the session screen (the Voice orb). Publish it there; a modal-hosted composer is
+    // already covered by its modal and stays out of the shell's obstacle set.
+    const reportComposerChromeHeight = useReportSessionCockpitComposerChromeHeight(!isInsideModalBoundary);
     const handleComposerLayout = React.useCallback((event: LayoutChangeEvent) => {
         layout.setComposerMeasuredHeight(event.nativeEvent.layout.height);
-    }, [layout]);
+        reportComposerChromeHeight(event.nativeEvent.layout.height);
+    }, [layout, reportComposerChromeHeight]);
 
     const { style: contentPropsStyle, ...contentProps } = props.contentProps ?? {};
 

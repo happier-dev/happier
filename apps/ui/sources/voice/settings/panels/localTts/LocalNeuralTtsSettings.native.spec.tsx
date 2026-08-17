@@ -152,7 +152,7 @@ describe('LocalNeuralTtsSettings (native)', () => {
     expect(modalAlertSpy.mock.calls[0]?.[1]).toBe('settingsVoice.local.kokoro.alerts.runtimeUnsupported.body');
   });
 
-  it('retains the canonical Kokoro id but withholds its manifest URL while publication is unavailable', async () => {
+  it('passes the published canonical Kokoro manifest URL to model-pack state', async () => {
     const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
 
     await renderScreen(React.createElement(LocalNeuralTtsSettings, {
@@ -164,7 +164,7 @@ describe('LocalNeuralTtsSettings (native)', () => {
 
     expect(modelPackStateParamsSpy).toHaveBeenCalledWith(expect.objectContaining({
       packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-      manifestUrl: null,
+      manifestUrl: 'https://example.com/kokoro-82m-v1.0-onnx-q8-wasm.json',
     }));
   });
 

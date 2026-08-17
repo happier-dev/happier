@@ -76,6 +76,9 @@ vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
 
 vi.mock('@/sync/domains/settings/settings', () => ({
     applySettings: mocks.applySettingsFn,
+    // This engine test owns its Settings facade boundary; runtime-only
+    // projections are irrelevant to the encrypted CAS contract under test.
+    projectRuntimeAccountSettings: <T,>(settings: T): T => settings,
     settingsDefaults: { analyticsOptOut: false },
     settingsParse: mocks.settingsParse,
 }));
@@ -169,7 +172,6 @@ vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
     return {
         ...actual,
-        sealSecretsDeep: (value: unknown) => value,
         unsealSecretsDeep: (value: unknown) => value,
     };
 });
@@ -234,6 +236,291 @@ describe('syncSettings account settings ciphertext', () => {
         mocks.storageStoreState.setSessionTagAssignmentsOptimistic.mockReturnValue('optimistic-tag-assignment');
         mocks.storageStoreState.commitSessionOrganizationOptimistic.mockReset();
         mocks.storageStoreState.rollbackSessionOrganizationOptimistic.mockReset();
+    });
+
+    it('fails closed instead of persisting plaintext-account settings locally without device secret custody', async () => {
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    content: {
+                        t: 'plain',
+                        v: {
+                            analyticsOptOut: true,
+                            secrets: [{
+                                id: 'secret-1',
+                                name: 'Plain account secret',
+                                kind: 'apiKey',
+                                encryptedValue: {
+                                    _isSecretValue: true,
+                                    value: 'must-not-persist-locally',
+                                },
+                                createdAt: 1,
+                                updatedAt: 1,
+                            }],
+                        },
+                    },
+                    version: 4,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await expect(syncSettings({
+            credentials: { token: 'token-only' },
+            encryption: null,
+            settingsSecretsKey: null,
+            pendingSettings: {},
+            clearPendingSettings: vi.fn(),
+        })).rejects.toMatchObject({
+            code: 'local_secret_unavailable',
+            message: 'Local settings secret key is unavailable',
+        });
+
+        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
+        expect(mocks.storageState.replaceSettings).not.toHaveBeenCalled();
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
+        expect(mocks.serverFetch.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+    });
+
+    it('does not retry a CAS write when the conflict winner cannot be normalized for local persistence', async () => {
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    content: { t: 'plain', v: { analyticsOptOut: false } },
+                    version: 4,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    success: false,
+                    error: 'version-mismatch',
+                    currentVersion: 5,
+                    currentContent: {
+                        t: 'plain',
+                        v: {
+                            analyticsOptOut: false,
+                            secrets: [{
+                                id: 'secret-1',
+                                name: 'Concurrent plain secret',
+                                kind: 'apiKey',
+                                encryptedValue: {
+                                    _isSecretValue: true,
+                                    value: 'must-not-cross-the-local-boundary',
+                                },
+                                createdAt: 1,
+                                updatedAt: 1,
+                            }],
+                        },
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 6 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await expect(syncSettings({
+            credentials: { token: 'token-only' },
+            encryption: null,
+            settingsSecretsKey: null,
+            pendingSettings: { analyticsOptOut: true },
+            clearPendingSettings: vi.fn(),
+        })).rejects.toMatchObject({
+            code: 'local_secret_unavailable',
+            message: 'Local settings secret key is unavailable',
+        });
+
+        const postCalls = mocks.serverFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+        expect(postCalls).toHaveLength(1);
+        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
+        expect(mocks.storageState.replaceSettings).not.toHaveBeenCalled();
+    });
+
+    it('settles opposite one-shot mutations from the same version as one applied and one conflict without replay', async () => {
+        const firstMutation = vi.fn((raw: Readonly<Record<string, unknown>>) => ({
+            settings: {
+                ...raw,
+                voiceSettingsV1: { selectedSource: 'savedSecret' },
+            },
+            value: 'savedSecret',
+        }));
+        const secondMutation = vi.fn((raw: Readonly<Record<string, unknown>>) => ({
+            settings: {
+                ...raw,
+                voiceSettingsV1: { selectedSource: 'connectedAccount' },
+            },
+            value: 'connectedAccount',
+        }));
+        let serverVersion = 4;
+        let serverRaw: Record<string, unknown> = {
+            voiceSettingsV1: { selectedSource: 'none' },
+        };
+        mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption') {
+                return new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (path === '/v2/account/settings' && init?.method !== 'POST') {
+                return new Response(JSON.stringify({
+                    content: { t: 'plain', v: serverRaw },
+                    version: serverVersion,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (path === '/v2/account/settings' && init?.method === 'POST') {
+                const body = JSON.parse(String(init.body)) as {
+                    content: { t: 'plain'; v: Record<string, unknown> };
+                    expectedVersion: number;
+                };
+                if (body.expectedVersion !== serverVersion) {
+                    return new Response(JSON.stringify({
+                        success: false,
+                        error: 'version-mismatch',
+                        currentVersion: serverVersion,
+                        currentContent: { t: 'plain', v: serverRaw },
+                    }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                serverRaw = body.content.v;
+                serverVersion += 1;
+                return new Response(JSON.stringify({ success: true, version: serverVersion }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            throw new Error(`Unexpected settings request: ${path}`);
+        });
+
+        const common = {
+            credentials,
+            encryption: null,
+            pendingSettings: {},
+            clearPendingSettings: vi.fn(),
+        } as const;
+        const [first, second] = await Promise.all([
+            syncSettings({
+                ...common,
+                oneShotServerSettingsMutation: {
+                    expectedSettingsVersion: 4,
+                    mutate: firstMutation,
+                },
+            }),
+            syncSettings({
+                ...common,
+                oneShotServerSettingsMutation: {
+                    expectedSettingsVersion: 4,
+                    mutate: secondMutation,
+                },
+            }),
+        ]);
+
+        expect([first, second].map((result) => result?.status).sort()).toEqual([
+            'applied',
+            'conflict',
+        ]);
+        expect(firstMutation).toHaveBeenCalledOnce();
+        expect(secondMutation).toHaveBeenCalledOnce();
+        expect(mocks.serverFetch.mock.calls.filter((call) => call[1]?.method === 'POST')).toHaveLength(2);
+        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
+            expect.objectContaining({
+                voiceSettingsV1: expect.objectContaining({
+                    selectedSource: expect.stringMatching(/savedSecret|connectedAccount/u),
+                }),
+            }),
+            5,
+        );
+    });
+
+    it('reports a response-lost one-shot Account Settings write as outcomeUnknown after one safe readback without replaying', async () => {
+        let serverVersion = 4;
+        let serverRaw: Record<string, unknown> = { analyticsOptOut: false };
+        const mutate = vi.fn((raw: Readonly<Record<string, unknown>>) => ({
+            settings: { ...raw, pluginEndpoint: 'https://possibly-applied.example.test' },
+            value: 'secret-write',
+        }));
+        mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption') {
+                return new Response(JSON.stringify({ mode: 'plain', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (path === '/v2/account/settings' && init?.method !== 'POST') {
+                return new Response(JSON.stringify({
+                    content: { t: 'plain', v: serverRaw },
+                    version: serverVersion,
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (path === '/v2/account/settings' && init?.method === 'POST') {
+                const body = JSON.parse(String(init.body)) as {
+                    content: { t: 'plain'; v: Record<string, unknown> };
+                    expectedVersion: number;
+                };
+                expect(body.expectedVersion).toBe(4);
+                // The server committed, but the acknowledgement never reached
+                // the caller. A later GET is the sole safe reconciliation.
+                serverRaw = body.content.v;
+                serverVersion += 1;
+                throw new Error('response lost after commit');
+            }
+            throw new Error(`Unexpected settings request: ${path}`);
+        });
+
+        const result = await syncSettings({
+            credentials,
+            encryption: null,
+            pendingSettings: {},
+            clearPendingSettings: vi.fn(),
+            oneShotServerSettingsMutation: {
+                expectedSettingsVersion: 4,
+                mutate,
+            },
+        });
+
+        expect(result).toEqual({
+            status: 'outcomeUnknown',
+            lastKnownSettingsVersion: 5,
+            safeSnapshotVersion: 5,
+        });
+        expect(mutate).toHaveBeenCalledOnce();
+        expect(mocks.serverFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+        expect(mocks.serverFetch.mock.calls.filter(([path, init]) => (
+            path === '/v2/account/settings' && init?.method !== 'POST'
+        ))).toHaveLength(2);
+        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
+            expect.objectContaining({ pluginEndpoint: 'https://possibly-applied.example.test' }),
+            5,
+        );
     });
 
     it('recomputes a functional account-settings mutation after a CAS conflict', async () => {
@@ -331,9 +618,9 @@ describe('syncSettings account settings ciphertext', () => {
             maxFiles: 8,
         } as const;
         const canonicalVoice = {
-            providerId: 'realtime_codex',
+            providerId: 'happier.agent.codex/realtime-codex',
             providers: {
-                realtime_codex: {
+                'happier.agent.codex/realtime-codex': {
                     schemaVersion: 2,
                     config: {
                         globalConnectedServices: {
@@ -412,7 +699,7 @@ describe('syncSettings account settings ciphertext', () => {
         expect(committed[0]?.voiceDiagnosticsV1).toEqual(initialDiagnostics);
         expect(committed[1]?.voiceDiagnosticsV1).toEqual(concurrentDiagnostics);
         expect(committed[1]?.voiceSettingsV1).toMatchObject({
-            providerId: 'realtime_codex',
+            providerId: 'happier.agent.codex/realtime-codex',
             assistantLanguage: 'de',
             providers: canonicalVoice.providers,
         });

@@ -1,5 +1,8 @@
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import { WorkspaceFileDetailsView } from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
+import {
+    WorkspaceFileDetailsView,
+    type WorkspaceFileOpenableContentViewerHost,
+} from '@/components/workspaces/files/details/WorkspaceFileDetailsView';
 
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
@@ -15,6 +18,7 @@ export type SessionFileDetailsViewProps = Readonly<{
     deepLinkAnchor?: SessionFileDeepLinkAnchor | null;
     presentation?: 'screen' | 'panel';
     onStartEditingFile?: () => void;
+    openableContentViewer?: WorkspaceFileOpenableContentViewerHost;
 }>;
 
 export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
@@ -30,6 +34,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
             presentation={props.presentation}
             sessionIdForAugmentation={sessionId}
             onStartEditingFile={props.onStartEditingFile}
+            openableContentViewer={props.openableContentViewer}
         />
     );
 }

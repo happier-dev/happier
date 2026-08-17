@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable, View } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -11,6 +10,8 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 
 function buildTranscriptStorageOptions(): ReadonlyArray<AgentInputChipPickerOption> {
     return [
@@ -84,11 +85,10 @@ const TranscriptStorageChip = React.memo(function TranscriptStorageChip(props: T
                     accessibilityLabel={t('settingsSession.defaultStorage.title')}
                 >
                     {normalizeNodeForView(
-                        <Ionicons
-                            name={isDirect ? 'radio-outline' : 'save-outline'}
-                            size={16}
-                            color={props.ctx.iconColor}
-                        />,
+                        <Icon
+                            name={isDirect ? 'radio' : 'floppy-disk'}
+                            size={AGENT_INPUT_CHIP_ICON_SIZE_PX}
+                            color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />,
                     )}
                     {props.ctx.showLabel ? (
                         <Text numberOfLines={1} style={props.ctx.textStyle}>
@@ -139,9 +139,9 @@ export function createTranscriptStorageActionChip(params: Readonly<{
                 ? t('sessionsList.storageDirectTab')
                 : t('sessionsList.storagePersistedTab'),
             icon: (tint) => normalizeNodeForView(
-                <Ionicons
-                    name={isDirect ? 'radio-outline' : 'save-outline'}
-                    size={16}
+                <Icon
+                    name={isDirect ? 'radio' : 'floppy-disk'}
+                    size={AGENT_INPUT_MENU_ICON_SIZE_PX}
                     color={tint}
                 />,
             ),

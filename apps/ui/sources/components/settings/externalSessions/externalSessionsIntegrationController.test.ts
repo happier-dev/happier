@@ -166,6 +166,41 @@ describe('externalSessionsIntegrationController', () => {
         expect(refresh).not.toHaveBeenCalled();
     });
 
+    it('does not dispatch a mutation after its execution scope is no longer current', async () => {
+        const disable = vi.fn<ExternalSessionsHookManagementTransport['disable']>()
+            .mockResolvedValue({
+                ok: true,
+                status: {
+                    state: 'installed_disabled',
+                    installationId: 'installation-current',
+                },
+            });
+        const operations = createExternalSessionsIntegrationOperations({
+            transport: {
+                status: vi.fn(),
+                install: vi.fn(),
+                disable,
+                enable: vi.fn(),
+                uninstall: vi.fn(),
+            },
+            refresh: vi.fn(),
+            applyStatus: vi.fn(),
+            isCurrentScope: () => false,
+        });
+        const integration = {
+            key: 'installed',
+            machineId: 'machine-1',
+            agent,
+            agentTitle: 'Third-party assistant',
+            state: 'installed_enabled',
+            installationId: 'installation-current',
+        } as const;
+
+        await operations.disable(integration);
+
+        expect(disable).not.toHaveBeenCalled();
+    });
+
     it('allows a no-custody needs-attention row to request an install preview for any Agent diagnostic', async () => {
         const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
             .mockResolvedValue({
@@ -504,7 +539,7 @@ describe('externalSessionsIntegrationController', () => {
         expect(install).not.toHaveBeenCalled();
     });
 
-    it('performs one bounded inventory read and adapts live and durable-only rows', async () => {
+    it('performs one bounded inventory page read and adapts the obtainable rows', async () => {
         const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
             .mockResolvedValueOnce({
                 ok: true,
@@ -555,21 +590,13 @@ describe('externalSessionsIntegrationController', () => {
             },
         });
 
-        expect(status.mock.calls).toEqual([
-            [{
-                machineId: 'machine-1',
-                serverId: 'server-1',
-                intent: 'passive_inventory',
-                limit: 50,
-            }],
-            [{
-                machineId: 'machine-1',
-                serverId: 'server-1',
-                intent: 'passive_inventory',
-                cursor: 'page-2',
-                limit: 50,
-            }],
-        ]);
+        expect(status).toHaveBeenCalledOnce();
+        expect(status).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            intent: 'passive_inventory',
+            limit: 50,
+        });
         expect(integrations).toEqual([
             {
                 key: 'machine-1\u0000com.example.external-agent\u0000assistant\u0000installation:installation-1',
@@ -579,18 +606,275 @@ describe('externalSessionsIntegrationController', () => {
                 state: 'installed_enabled',
                 installationId: 'installation-1',
             },
-            {
-                key: 'machine-1\u0000com.example.removed-agent\u0000removed\u0000installation:installation-removed',
-                machineId: 'machine-1',
-                agent: {
-                    pluginId: 'com.example.removed-agent',
-                    localId: 'removed',
-                },
-                agentTitle: 'removed (com.example.removed-agent)',
-                state: 'unavailable',
-                installationId: 'installation-removed',
-            },
         ]);
+    });
+
+    it('publishes one bounded inventory page and requests the continuation only on demand', async () => {
+        const secondPage = createDeferred<Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>>();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{
+                    agent,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-1',
+                    },
+                }],
+                nextCursor: 'page-2',
+                diagnostics: [],
+            })
+            .mockImplementationOnce(async () => await secondPage.promise);
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                transport,
+            }),
+        );
+
+        expect(status).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().integrations).toEqual([
+            expect.objectContaining({ installationId: 'installation-1' }),
+        ]);
+        expect(hook.getCurrent().inventoryState.status).toBe('ready');
+        expect(hook.getCurrent().hasMoreInventory).toBe(true);
+        expect(hook.getCurrent().loadingMoreInventory).toBe(false);
+        expect(status).toHaveBeenCalledTimes(1);
+
+        let firstLoadMore!: Promise<void>;
+        let duplicateLoadMore!: Promise<void>;
+        act(() => {
+            firstLoadMore = hook.getCurrent().loadMoreInventory();
+            duplicateLoadMore = hook.getCurrent().loadMoreInventory();
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+        expect(status).toHaveBeenLastCalledWith({
+            machineId: 'machine-1',
+            serverId: undefined,
+            intent: 'passive_inventory',
+            cursor: 'page-2',
+            limit: 50,
+        });
+        expect(hook.getCurrent().loadingMoreInventory).toBe(true);
+
+        secondPage.resolve({
+            ok: true,
+            rows: [{
+                agent,
+                status: {
+                    state: 'installed_enabled',
+                    installationId: 'installation-2',
+                },
+            }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => {
+            await Promise.all([firstLoadMore, duplicateLoadMore]);
+        });
+
+        expect(hook.getCurrent().integrations).toEqual([
+            expect.objectContaining({ installationId: 'installation-1' }),
+            expect.objectContaining({ installationId: 'installation-2' }),
+        ]);
+        expect(hook.getCurrent().inventoryState.status).toBe('ready');
+        expect(hook.getCurrent().hasMoreInventory).toBe(false);
+        expect(hook.getCurrent().loadingMoreInventory).toBe(false);
+        expect(status).toHaveBeenCalledTimes(2);
+        await hook.unmount();
+    });
+
+    it('does not append an older continuation after an explicit root refresh becomes current', async () => {
+        const staleContinuation = createDeferred<Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>>();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{
+                    agent,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-old-root',
+                    },
+                }],
+                nextCursor: 'page-2',
+                diagnostics: [],
+            })
+            .mockImplementationOnce(async () => await staleContinuation.promise)
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{
+                    agent,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-current-root',
+                    },
+                }],
+                nextCursor: null,
+                diagnostics: [],
+            });
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                transport,
+            }),
+        );
+
+        let staleLoadMore!: Promise<void>;
+        act(() => {
+            staleLoadMore = hook.getCurrent().loadMoreInventory();
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+        await act(async () => {
+            await hook.getCurrent().retryInventory();
+        });
+        expect(hook.getCurrent().integrations).toEqual([
+            expect.objectContaining({ installationId: 'installation-current-root' }),
+        ]);
+
+        staleContinuation.resolve({
+            ok: true,
+            rows: [{
+                agent,
+                status: {
+                    state: 'installed_enabled',
+                    installationId: 'installation-stale-page',
+                },
+            }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => {
+            await staleLoadMore;
+        });
+
+        expect(hook.getCurrent().integrations).toEqual([
+            expect.objectContaining({ installationId: 'installation-current-root' }),
+        ]);
+        expect(hook.getCurrent().hasMoreInventory).toBe(false);
+        await hook.unmount();
+    });
+
+    it('does not apply an older root inventory after the Agent scope changes before the refresh effect', async () => {
+        const staleRoot = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const currentRoot = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const nextAgent = {
+            pluginId: 'com.example.next-agent',
+            localId: 'assistant',
+        } as const;
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockImplementationOnce(async () => await staleRoot.promise)
+            .mockImplementationOnce(async () => await currentRoot.promise);
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        type HookProps = Readonly<{
+            agent: ExternalSessionsKnownAgent;
+            projectionGeneration: number;
+        }>;
+        const initialProps: HookProps = {
+            agent: { agent, agentTitle: 'Previous assistant' },
+            projectionGeneration: 1,
+        };
+        const nextProps: HookProps = {
+            agent: { agent: nextAgent, agentTitle: 'Current assistant' },
+            projectionGeneration: 2,
+        };
+        const hook = await renderHook(
+            (props: HookProps) => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: props.projectionGeneration,
+                agent: props.agent,
+                transport,
+            }),
+            { initialProps },
+        );
+        expect(status).toHaveBeenCalledOnce();
+
+        type FiberHook = Readonly<{
+            memoizedState: { current: unknown };
+        }>;
+        const scopeSignatureRef = (
+            hook.tree.root as unknown as Readonly<{
+                _fiber: Readonly<{ memoizedState: FiberHook }>;
+            }>
+        )._fiber.memoizedState.memoizedState;
+        // Advance the render-owned scope ref without flushing its passive refresh effect.
+        scopeSignatureRef.current = 'scope-changed-during-render';
+        await act(async () => {
+            staleRoot.resolve({
+                ok: true,
+                rows: [{
+                    agent,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-stale-root',
+                    },
+                }],
+                nextCursor: null,
+                diagnostics: [],
+            });
+            await staleRoot.promise;
+            await Promise.resolve();
+        });
+        expect(status).toHaveBeenCalledOnce();
+        expect(hook.getCurrent().integrations).toBeNull();
+
+        const rerendering = hook.rerender(nextProps);
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+        await rerendering;
+        expect(hook.getCurrent().integrations).toBeNull();
+        expect(hook.getCurrent().inventoryState.status).toBe('loading');
+
+        currentRoot.resolve({
+            ok: true,
+            rows: [{
+                agent: nextAgent,
+                status: {
+                    state: 'installed_enabled',
+                    installationId: 'installation-current-root',
+                },
+            }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => {
+            await currentRoot.promise;
+            await flushHookEffects();
+        });
+
+        expect(hook.getCurrent().integrations).toEqual([
+            expect.objectContaining({
+                agent: nextAgent,
+                agentTitle: 'Current assistant',
+                installationId: 'installation-current-root',
+            }),
+        ]);
+        expect(hook.getCurrent().inventoryState.status).toBe('ready');
+        await hook.unmount();
     });
 
     it('fails closed instead of rendering a partial inventory when a page reports diagnostics', async () => {
@@ -623,27 +907,71 @@ describe('externalSessionsIntegrationController', () => {
         })).resolves.toBeNull();
     });
 
-    it('fails closed when inventory pagination repeats a cursor', async () => {
-        const page = {
-            ok: true as const,
-            rows: [],
-            nextCursor: 'repeated',
-            diagnostics: [],
-        };
+    it('keeps obtainable rows and diagnostics while stopping a repeated continuation cursor', async () => {
         const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
-            .mockResolvedValue(page);
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{
+                    agent,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-1',
+                    },
+                }],
+                nextCursor: 'repeated',
+                diagnostics: [],
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{
+                    agent,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-2',
+                    },
+                }],
+                nextCursor: 'repeated',
+                diagnostics: [{
+                    code: 'installation_record_read_failed',
+                    retryable: true,
+                }],
+            });
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
 
-        await expect(refreshExternalSessionsIntegrationStatuses({
-            machineId: 'machine-1',
-            transport: {
-                status,
-                install: vi.fn(),
-                disable: vi.fn(),
-                enable: vi.fn(),
-                uninstall: vi.fn(),
-            },
-        })).resolves.toBeNull();
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                transport,
+            }),
+        );
+        expect(status).toHaveBeenCalledOnce();
+        expect(hook.getCurrent().hasMoreInventory).toBe(true);
+
+        await act(async () => {
+            await hook.getCurrent().loadMoreInventory();
+        });
+
         expect(status).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().integrations).toEqual([
+            expect.objectContaining({ installationId: 'installation-1' }),
+            expect.objectContaining({ installationId: 'installation-2' }),
+        ]);
+        expect(hook.getCurrent().hasMoreInventory).toBe(false);
+        expect(hook.getCurrent().inventoryState).toEqual({
+            status: 'partial',
+            diagnosticCodes: [
+                'installation_record_read_failed',
+                'inventory_cursor_repeated',
+            ],
+        });
+        await hook.unmount();
     });
 
     it('continues bounded pagination after partial diagnostics and keeps obtainable rows actionable', async () => {
@@ -695,6 +1023,15 @@ describe('externalSessionsIntegrationController', () => {
                 transport,
             }),
         );
+
+        expect(status).toHaveBeenCalledOnce();
+        expect(hook.getCurrent().integrations?.map((integration) => (
+            'installationId' in integration ? integration.installationId : null
+        ))).toEqual(['installation-current']);
+
+        await act(async () => {
+            await hook.getCurrent().loadMoreInventory();
+        });
 
         expect(status).toHaveBeenCalledTimes(2);
         expect(hook.getCurrent().integrations?.map((integration) => (
@@ -807,6 +1144,91 @@ describe('externalSessionsIntegrationController', () => {
         });
         await hook.unmount();
     });
+
+    it.each([
+        { targetIndex: 0, action: 'enable' as const },
+        { targetIndex: 1, action: 'uninstall' as const },
+    ])(
+        'preserves row order and unchanged row identity when $action updates row $targetIndex',
+        async ({ targetIndex, action }) => {
+            const agents = ['first', 'middle', 'last'].map((localId) => ({
+                pluginId: `com.example.${localId}`,
+                localId,
+            }));
+            const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+                .mockResolvedValue({
+                    ok: true,
+                    rows: agents.map((rowAgent) => ({
+                        agent: rowAgent,
+                        status: {
+                            state: 'installed_disabled' as const,
+                            installationId: `installation-${rowAgent.localId}`,
+                        },
+                    })),
+                    nextCursor: null,
+                    diagnostics: [],
+                });
+            const enable = vi.fn<ExternalSessionsHookManagementTransport['enable']>()
+                .mockImplementation(async (input) => ({
+                    ok: true,
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: input.installationId,
+                    },
+                }));
+            const uninstall = vi.fn<ExternalSessionsHookManagementTransport['uninstall']>()
+                .mockResolvedValue({
+                    ok: true,
+                    status: { state: 'not_installed' },
+                });
+            const transport = {
+                status,
+                install: vi.fn(),
+                disable: vi.fn(),
+                enable,
+                uninstall,
+            } satisfies ExternalSessionsHookManagementTransport;
+            const hook = await renderHook(
+                () => useExternalSessionsIntegrationController({
+                    machineId: 'machine-1',
+                    projectionGeneration: 1,
+                    transport,
+                }),
+            );
+            const before = hook.getCurrent().integrations;
+            const target = before?.[targetIndex];
+            if (!before || !target) throw new Error('Expected integration rows');
+
+            await act(async () => {
+                if (action === 'enable') {
+                    await hook.getCurrent().operations?.enable(target);
+                } else {
+                    await hook.getCurrent().operations?.uninstall(target);
+                }
+            });
+
+            const after = hook.getCurrent().integrations;
+            expect(after?.map((integration) => integration.agent.localId)).toEqual([
+                'first',
+                'middle',
+                'last',
+            ]);
+            expect(after?.[targetIndex]?.state).toBe(
+                action === 'enable' ? 'installed_enabled' : 'not_installed',
+            );
+            if (action === 'enable') {
+                expect(after?.[targetIndex]).toEqual(expect.objectContaining({
+                    installationId: `installation-${target.agent.localId}`,
+                }));
+            }
+            before.forEach((integration, index) => {
+                if (index !== targetIndex) expect(after?.[index]).toBe(integration);
+            });
+            expect(action === 'enable' ? enable : uninstall).toHaveBeenCalledOnce();
+            expect(status).toHaveBeenCalledOnce();
+            await hook.unmount();
+        },
+    );
 
     it('renders the direct Enable result without a hidden status refresh', async () => {
         const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()

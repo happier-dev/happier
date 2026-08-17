@@ -1,16 +1,23 @@
 import { storage } from '@/sync/domains/state/storage';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@/sync/runtime/rpcErrors';
 
 import { createAbortRacer } from './voiceAgentAbort';
 import { resolveVoiceTurnStreamReadConfig } from './resolveVoiceTurnStreamReadConfig';
 import {
-    attachVoiceAgentActionEffectId,
-    type VoiceAgentHandle,
-    type VoiceAgentSendTurnOptions,
-    type VoiceAgentStartParams,
+  attachVoiceAgentActionEffectId,
+  type VoiceAgentHandle,
+  type VoiceAgentSendTurnOptions,
+  type VoiceAgentStartParams,
 } from './types';
+import { createVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { createLegacyVoiceOutputAdapter } from './legacyVoiceOutputAdapter';
 import { sanitizeVoiceOutputEventForDisplay } from './sanitizeVoiceOutputEventForDisplay';
+import {
+    createVoiceAgentOutputTurnV1,
+    ingestVoiceAgentOutputEventV1,
+    type VoiceAgentOutputEffectV1,
+} from '@happier-dev/protocol';
 
 export async function streamVoiceAgentTurn(params: Readonly<{
     sessionId: string;
@@ -43,6 +50,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
             ...(params.resume === true ? { resume: true } : {}),
             ...(params.options?.userTranscript ? { userTranscript: params.options.userTranscript } : {}),
         });
+        await abort.race(Promise.resolve(params.options?.onUserTranscriptAccepted?.()));
         await abort.race(Promise.resolve(params.onStreamStarted?.(started.streamId)));
         abort.throwIfAborted();
 
@@ -51,6 +59,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
         let mergedDeltaText = '';
         let doneAssistantText: string | null = null;
         let doneActions: NonNullable<Awaited<ReturnType<VoiceAgentHandle['client']['sendTurn']>>['actions']> = [];
+        let outputTurn = createVoiceAgentOutputTurnV1(started.streamId);
         const startedAtMs = Date.now();
 
         while (true) {
@@ -74,19 +83,32 @@ export async function streamVoiceAgentTurn(params: Readonly<{
             for (const [eventIndex, event] of read.events.entries()) {
                 const outputEvents = outputAdapter.ingest(sourceCursorStart + eventIndex, event);
                 for (const rawOutputEvent of outputEvents) {
+                    const ingested = ingestVoiceAgentOutputEventV1(outputTurn, rawOutputEvent);
+                    outputTurn = ingested.state;
+                    if (ingested.effects.length === 0) continue;
                     const outputEvent = sanitizeVoiceOutputEventForDisplay(rawOutputEvent);
-                    await abort.race(Promise.resolve(params.options?.onOutputEvent?.(outputEvent)));
-                    if (outputEvent.kind === 'speech_segment') {
-                        mergedDeltaText += outputEvent.text;
-                    } else if (outputEvent.kind === 'side_effect') {
-                        doneActions.push(attachVoiceAgentActionEffectId(outputEvent.action, outputEvent.effectId));
-                    } else if (outputEvent.kind === 'turn_final') {
-                        doneAssistantText = outputEvent.text;
-                    } else if (outputEvent.kind === 'turn_cancelled') {
-                        terminalCancellationObserved = true;
-                        throw Object.assign(new Error('stream_cancelled'), {
-                            rpcErrorCode: 'cancelled' as const,
-                        });
+                    const presentedEffects: readonly VoiceAgentOutputEffectV1[] = outputEvent.kind === 'display_status'
+                        ? ingested.effects.map((effect) => effect.kind === 'display_status'
+                            ? { ...effect, text: outputEvent.text }
+                            : effect)
+                        : ingested.effects;
+                    await abort.race(Promise.resolve(params.options?.onOutputEvent?.({
+                        event: outputEvent,
+                        effects: presentedEffects,
+                    })));
+                    for (const effect of presentedEffects) {
+                        if (effect.kind === 'speak') {
+                            mergedDeltaText += effect.text;
+                        } else if (effect.kind === 'execute_side_effect') {
+                            doneActions.push(attachVoiceAgentActionEffectId(effect.action, effect.effectId));
+                        } else if (effect.kind === 'persist_final') {
+                            doneAssistantText = effect.text;
+                        } else if (effect.kind === 'cancel_turn') {
+                            terminalCancellationObserved = true;
+                            throw Object.assign(new Error('stream_cancelled'), {
+                                rpcErrorCode: 'cancelled' as const,
+                            });
+                        }
                     }
                 }
                 if (event.t !== 'error') continue;
@@ -113,6 +135,17 @@ export async function streamVoiceAgentTurn(params: Readonly<{
 
         throw new Error('stream_timeout');
     } catch (error) {
+        if (!started) {
+            const carrier: RpcErrorCarrier = error && typeof error === 'object'
+                ? error as RpcErrorCarrier
+                : { message: typeof error === 'string' ? error : undefined };
+            if (isRpcMethodNotAvailableError(carrier) || isRpcMethodNotFoundError(carrier)) {
+                throw createVoiceTextTurnRejectedBeforeEffectError(
+                    error,
+                    'provider_unavailable_before_acceptance',
+                );
+            }
+        }
         if (started && !terminalCancellationObserved) {
             await params.handle.client
                 .cancelTurnStream({

@@ -1,66 +1,46 @@
+import {
+    cloneStyleEntryPreservingOwnProps,
+    scaleTextStyleMetrics,
+    type ScaledTextStyleMetrics,
+    type TextStyleEntryTransform,
+} from '@happier-dev/plugin-ui/presentation';
 import type { StyleProp, TextStyle } from 'react-native';
 
+/**
+ * Happier core's style-system adapter for UI text scaling.
+ *
+ * The portable mechanism — style-array traversal, own-property preserving
+ * cloning and numeric metric scaling — moved to the shared presentation owner
+ * (`@happier-dev/plugin-ui/presentation`), which Happier core and plugin
+ * surfaces both render (UI-T27).
+ *
+ * What stays here is the part that is genuinely ours: Unistyles runtime secrets.
+ * A Unistyles style entry hides its real values behind a `unistyles_*` key whose
+ * value exposes `uni__getStyles()`, resolved lazily at render. Those runtime
+ * objects are private product infrastructure (§3.10.8) and an external plugin
+ * author never produces one, so unwrapping them is an app concern that plugs
+ * back into the shared traversal through its entry-transform seam.
+ */
 const UNISTYLES_SECRET_KEY_PREFIX = 'unistyles_';
-
-function roundTo2(value: number): number {
-    return Math.round(value * 100) / 100;
-}
-
-function clonePreservingOwnProps<T extends object>(entry: T): T {
-    try {
-        const proto = Object.getPrototypeOf(entry);
-        const descriptors = Object.getOwnPropertyDescriptors(entry);
-        return Object.create(proto, descriptors);
-    } catch {
-        return { ...(entry as any) };
-    }
-}
-
-function scaleNumericTextMetrics(entry: any, uiFontScale: number): any {
-    const hasFontSize = typeof entry?.fontSize === 'number';
-    const hasLineHeight = typeof entry?.lineHeight === 'number';
-    const hasLetterSpacing = typeof entry?.letterSpacing === 'number';
-    if (!hasFontSize && !hasLineHeight && !hasLetterSpacing) return entry;
-
-    const next: any = clonePreservingOwnProps(entry as any);
-    try {
-        if (hasFontSize) next.fontSize = roundTo2(next.fontSize * uiFontScale);
-        if (hasLineHeight) next.lineHeight = roundTo2(next.lineHeight * uiFontScale);
-        if (hasLetterSpacing) next.letterSpacing = roundTo2(next.letterSpacing * uiFontScale);
-        return next;
-    } catch {
-        return entry;
-    }
-}
-
-function scaleResolvedTextStyle(entry: any, uiFontScale: number): any {
-    if (!entry) return entry;
-    if (Array.isArray(entry)) {
-        let changed = false;
-        const next = entry.map((nestedEntry) => {
-            const scaledNestedEntry = scaleResolvedTextStyle(nestedEntry, uiFontScale);
-            if (scaledNestedEntry !== nestedEntry) changed = true;
-            return scaledNestedEntry;
-        });
-        return changed ? next : entry;
-    }
-    if (typeof entry !== 'object') return entry;
-    const entryWithScaledSecrets = wrapUnistylesSecrets(entry, uiFontScale);
-    return scaleNumericTextMetrics(entryWithScaledSecrets, uiFontScale);
-}
 
 function wrapUnistylesSecret(secret: any, uiFontScale: number): any {
     if (!secret || typeof secret !== 'object' || typeof secret.uni__getStyles !== 'function') {
         return secret;
     }
 
-    const wrappedSecret: any = clonePreservingOwnProps(secret);
+    const wrappedSecret: any = cloneStyleEntryPreservingOwnProps(secret);
     const originalGetStyles = secret.uni__getStyles.bind(secret);
-    wrappedSecret.uni__getStyles = () => scaleResolvedTextStyle(originalGetStyles(), uiFontScale);
+    wrappedSecret.uni__getStyles = () => scaleTextStyle(originalGetStyles(), uiFontScale);
     return wrappedSecret;
 }
 
-function wrapUnistylesSecrets(entry: any, uiFontScale: number): any {
+/**
+ * Scale the metrics a Unistyles entry resolves lazily.
+ *
+ * Identity is preserved when nothing changes so the shared traversal can keep
+ * returning the caller's original style reference.
+ */
+export const scaleUnistylesTextStyleEntry: TextStyleEntryTransform = (entry, uiFontScale) => {
     const secretKeys = Object.keys(entry).filter((key) => key.startsWith(UNISTYLES_SECRET_KEY_PREFIX));
     if (secretKeys.length === 0) return entry;
 
@@ -68,10 +48,10 @@ function wrapUnistylesSecrets(entry: any, uiFontScale: number): any {
     let changed = false;
 
     for (const secretKey of secretKeys) {
-        const scaledSecret = wrapUnistylesSecret(entry[secretKey], uiFontScale);
-        if (scaledSecret === entry[secretKey]) continue;
+        const scaledSecret = wrapUnistylesSecret((entry as any)[secretKey], uiFontScale);
+        if (scaledSecret === (entry as any)[secretKey]) continue;
         if (!changed) {
-            nextEntry = clonePreservingOwnProps(entry);
+            nextEntry = cloneStyleEntryPreservingOwnProps(entry);
             changed = true;
         }
         try {
@@ -82,39 +62,11 @@ function wrapUnistylesSecrets(entry: any, uiFontScale: number): any {
     }
 
     return changed ? nextEntry : entry;
-}
+};
 
 export function scaleTextStyle<T extends StyleProp<TextStyle> | undefined | null>(
     style: T,
     uiFontScale: number
-): T {
-    if (style == null) return style;
-    if (typeof uiFontScale !== 'number' || !Number.isFinite(uiFontScale) || uiFontScale === 1) return style;
-
-    const scaleOne = (entry: any): any => {
-        if (!entry) return entry;
-        if (Array.isArray(entry)) {
-            return scaleResolvedTextStyle(entry, uiFontScale);
-        }
-        if (typeof entry === 'number') {
-            return entry;
-        }
-        if (typeof entry !== 'object') return entry;
-
-        const entryWithScaledSecrets = wrapUnistylesSecrets(entry, uiFontScale);
-        return scaleNumericTextMetrics(entryWithScaledSecrets, uiFontScale);
-    };
-
-    if (Array.isArray(style)) {
-        let changed = false;
-        const next = (style as any[]).map((entry) => {
-            const scaled = scaleOne(entry);
-            if (scaled !== entry) changed = true;
-            return scaled;
-        });
-        return (changed ? (next as any) : style) as any;
-    }
-
-    const scaled = scaleOne(style);
-    return (scaled === style ? style : scaled) as any;
+): ScaledTextStyleMetrics<T> {
+    return scaleTextStyleMetrics(style, uiFontScale, { transformEntry: scaleUnistylesTextStyleEntry });
 }

@@ -9,11 +9,18 @@ import {
     type VoiceTranscriptCanonicalEventV1,
 } from '@happier-dev/protocol';
 
-import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import {
+    readStoredSessionMessages,
+    type SessionMessagesStateLike,
+} from '@/sync/domains/messages/readStoredSessionMessages';
 import type { PersistSessionTranscriptMessageInput } from '@/sync/domains/messages/persistSessionTranscriptMessage';
 import { storage } from '@/sync/domains/state/storage';
 import type { NormalizedMessage, RawRecord } from '@/sync/typesRaw';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import {
+    readSafeVoiceRuntimeFailureCode,
+    recordVoiceRuntimeFailure,
+} from '@/voice/runtime/voiceRuntimeFailureCode';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import {
     VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX,
@@ -24,12 +31,15 @@ import { buildVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import {
     createCanonicalVoiceTranscriptProjector,
     deriveCanonicalVoiceTranscriptEntryId,
+    type CanonicalVoiceTranscriptAttempt,
+    type CanonicalVoiceTranscriptPersistenceAdmission,
     type CanonicalVoiceTranscriptItem,
+    isCanonicalVoiceTranscriptPersistenceEvent,
 } from './canonicalProjector';
 export { deriveCanonicalVoiceTranscriptEntryId } from './canonicalProjector';
 
 type VoiceTranscriptStateLike = Readonly<{
-    sessionMessages?: Record<string, Readonly<{ messages?: ReadonlyArray<unknown> }>>;
+    sessionMessages?: Record<string, SessionMessagesStateLike<unknown>>;
     applyMessagesLoaded?: (sessionId: string) => void;
     applyMessages?: (sessionId: string, messages: NormalizedMessage[]) => void;
 }>;
@@ -41,11 +51,17 @@ type VoiceTranscriptProjectorDeps = Readonly<{
     maxCanonicalConversations?: number;
 }>;
 
-type RealtimeConversationTurnSource =
+export type RealtimeConversationTurnSource =
     NonNullable<Extract<
         ConversationTurnOriginV1,
         { channel: 'realtime_conversation' }
     >['source']>;
+
+/** Opaque exact persistence-event custody owned by this canonical transcript projector. */
+declare const admittedCanonicalVoiceTranscriptPersistenceEvent: unique symbol;
+export type AdmittedCanonicalVoiceTranscriptPersistenceEvent = Readonly<{
+    readonly [admittedCanonicalVoiceTranscriptPersistenceEvent]: true;
+}>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     if (!value || typeof value !== 'object') return null;
@@ -102,7 +118,7 @@ function buildVoiceTurnMeta(turn: VoiceTranscriptTurn | null): NormalizedMessage
     };
 }
 
-function buildRealtimeConversationTurnMeta(
+export function buildRealtimeConversationTurnMeta(
     source?: RealtimeConversationTurnSource,
 ): NormalizedMessage['meta'] {
     return {
@@ -117,7 +133,7 @@ function buildRealtimeConversationTurnMeta(
     };
 }
 
-function buildRealtimeConversationRawRecord(params: Readonly<{
+export function buildRealtimeConversationRawRecord(params: Readonly<{
     id: string;
     role: 'user' | 'assistant';
     text: string;
@@ -249,7 +265,7 @@ function upsertProjectedMessage(
     turn: VoiceTranscriptTurn | null,
     replaceExisting: boolean,
 ): UpsertProjectedMessageResult {
-    const existingMessages = readStoredSessionMessages(state as any, conversationSessionId);
+    const existingMessages = readStoredSessionMessages(state, conversationSessionId);
     const existing = existingMessages.find((candidate: unknown) => {
         const candidateRecord = readRecord(candidate);
         return (
@@ -290,16 +306,27 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         : VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX;
     let localProjectionSequence = 0;
     let lastLocalProjectionCreatedAt = Number.NEGATIVE_INFINITY;
-    const pendingCanonicalPersistenceByRow = new Map<string, Promise<void>>();
+    // The server assigns transcript sequence in request-arrival order, so one
+    // attempt-local tail must order every final row, not only corrections that
+    // share a local id. Keeping only the tail also bounds projector bookkeeping
+    // while End Voice can still drain exactly the attempt it releases.
+    const pendingCanonicalPersistenceTailByAttempt = new Map<string, Promise<void>>();
 
-    const canonicalPersistenceRowKey = (input: Readonly<{
+    const canonicalPersistenceAttemptKey = (input: Readonly<{
         sessionId: string;
-        localId: string;
-    }>): string => `${input.sessionId.length}:${input.sessionId}${input.localId}`;
+        attemptIdentity: string;
+    }>): string => `${input.sessionId.length}:${input.sessionId}${input.attemptIdentity}`;
 
-    const persistCanonicalFinal = (input: PersistSessionTranscriptMessageInput): void => {
+    const persistCanonicalFinal = (
+        input: PersistSessionTranscriptMessageInput,
+        attemptIdentity: string,
+        source?: RealtimeConversationTurnSource | null,
+    ): void => {
         if (!deps.persistFinal) return;
-        const rowKey = canonicalPersistenceRowKey(input);
+        const attemptKey = canonicalPersistenceAttemptKey({
+            sessionId: input.sessionId,
+            attemptIdentity,
+        });
         const invoke = (): Promise<void> => {
             try {
                 return Promise.resolve(deps.persistFinal?.(input)).then(() => undefined);
@@ -307,24 +334,68 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 return Promise.reject(error);
             }
         };
-        const previous = pendingCanonicalPersistenceByRow.get(rowKey);
+        const previous = pendingCanonicalPersistenceTailByAttempt.get(attemptKey);
         const pending = previous
             ? previous.catch(() => undefined).then(invoke)
             : invoke();
-        pendingCanonicalPersistenceByRow.set(rowKey, pending);
+        pendingCanonicalPersistenceTailByAttempt.set(attemptKey, pending);
+        const retireSettledTail = (): void => {
+            if (pendingCanonicalPersistenceTailByAttempt.get(attemptKey) === pending) {
+                pendingCanonicalPersistenceTailByAttempt.delete(attemptKey);
+            }
+        };
         void pending.then(
-            () => {
-                if (pendingCanonicalPersistenceByRow.get(rowKey) === pending) {
-                    pendingCanonicalPersistenceByRow.delete(rowKey);
-                }
-            },
-            () => {
-                if (pendingCanonicalPersistenceByRow.get(rowKey) === pending) {
-                    pendingCanonicalPersistenceByRow.delete(rowKey);
-                }
-            },
+            retireSettledTail,
+            retireSettledTail,
         );
-        fireAndForget(pending, { tag: 'VoiceTranscriptProjector.persistFinal' });
+        fireAndForget(pending, {
+            tag: 'VoiceTranscriptProjector.persistFinal',
+            // A rejected write leaves no row anywhere: a canonical final is never
+            // projected optimistically, so the authoritative turn simply vanishes.
+            onError: (error) => nameCanonicalTranscriptDrop(
+                input.sessionId,
+                'transcript_persist_failed',
+                readSafeVoiceRuntimeFailureCode(error) ?? 'voice_transcript_persist_failed',
+                source,
+            ),
+        });
+    };
+
+    const settleCanonicalAttempt = async (input: Readonly<{
+        conversationSessionId: string;
+        attemptIdentity: string;
+    }>): Promise<void> => {
+        const attemptKey = canonicalPersistenceAttemptKey({
+            sessionId: input.conversationSessionId,
+            attemptIdentity: input.attemptIdentity,
+        });
+        for (;;) {
+            const admittedTail = pendingCanonicalPersistenceTailByAttempt.get(attemptKey);
+            if (!admittedTail) return;
+            // Loop so a same-attempt final admitted while the observed tail is
+            // settling is included without waiting on another attempt.
+            await Promise.allSettled([admittedTail]);
+            if (pendingCanonicalPersistenceTailByAttempt.get(attemptKey) === admittedTail) {
+                pendingCanonicalPersistenceTailByAttempt.delete(attemptKey);
+                return;
+            }
+        }
+    };
+
+    const settleAdmittedCanonicalPersistence = async (input: Readonly<{
+        conversationSessionId: string;
+        attemptIdentity: string;
+    }>): Promise<void> => {
+        const attemptKey = canonicalPersistenceAttemptKey({
+            sessionId: input.conversationSessionId,
+            attemptIdentity: input.attemptIdentity,
+        });
+        // Capture the tail synchronously after projection. Later finals must not
+        // indefinitely postpone an identity notification for the row whose
+        // persistence was already admitted.
+        const admittedTail = pendingCanonicalPersistenceTailByAttempt.get(attemptKey);
+        if (!admittedTail) return;
+        await Promise.allSettled([admittedTail]);
     };
 
     /**
@@ -359,11 +430,23 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             CanonicalVoiceTranscriptItem,
             'attemptIdentity' | 'itemId' | 'revision'
         > | null;
-        source?: RealtimeConversationTurnSource;
+        source?: RealtimeConversationTurnSource | null;
     }>): NormalizedMessage | null => {
         const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
         const text = normalizeText(params.text);
-        if (!conversationSessionId || !text) return null;
+        if (!conversationSessionId || !text) {
+            // An authoritative final with no text is the last silent way a turn
+            // can vanish: no row is written and no other owner observes it.
+            if (conversationSessionId && params.canonicalItem && params.role !== 'note') {
+                nameCanonicalTranscriptDrop(
+                    conversationSessionId,
+                    'transcript_final_text_empty',
+                    'voice_transcript_final_text_empty',
+                    params.source,
+                );
+            }
+            return null;
+        }
         const turn = params.turn ?? null;
         const createdAt = turn?.ts ?? Math.max(nowMs(), lastLocalProjectionCreatedAt + 1);
         if (!turn) lastLocalProjectionCreatedAt = createdAt;
@@ -392,7 +475,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 content: { type: 'text', text },
                 ...(
                     canonicalItem
-                        ? { meta: buildRealtimeConversationTurnMeta(params.source) }
+                        ? { meta: buildRealtimeConversationTurnMeta(params.source ?? undefined) }
                         : buildVoiceTurnMeta(turn)
                             ? { meta: buildVoiceTurnMeta(turn) }
                             : {}
@@ -407,7 +490,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 content: [{ type: 'text', text, uuid: id, parentUUID: null }],
                 ...(
                     canonicalItem
-                        ? { meta: buildRealtimeConversationTurnMeta(params.source) }
+                        ? { meta: buildRealtimeConversationTurnMeta(params.source ?? undefined) }
                         : params.role === 'note'
                         ? { meta: buildVoiceTranscriptNoteMeta() }
                         : buildVoiceTurnMeta(turn)
@@ -424,10 +507,10 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                     id,
                     role: params.role,
                     text,
-                    source: params.source,
+                    source: params.source ?? undefined,
                 }),
                 messageRole: params.role === 'user' ? 'user' : 'agent',
-            });
+            }, canonicalItem.attemptIdentity, params.source);
             return message;
         }
         const result = upsertProjectedMessage(
@@ -453,6 +536,81 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
     const canonicalSnapshots = new Map<string, readonly CanonicalVoiceTranscriptItem[]>();
     const canonicalListeners = new Map<string, Set<() => void>>();
     const canonicalSourceByConversation = new Map<string, RealtimeConversationTurnSource>();
+    const canonicalAttemptByConversation = new Map<string, CanonicalVoiceTranscriptAttempt>();
+    type AdmittedCanonicalPersistenceEvent = Readonly<{
+        canonicalAdmission: CanonicalVoiceTranscriptPersistenceAdmission;
+        conversationSessionId: string;
+        projector: ReturnType<typeof createCanonicalVoiceTranscriptProjector>;
+        sourceKey: string;
+    }>;
+    const admittedCanonicalPersistenceEvents = new WeakMap<
+        AdmittedCanonicalVoiceTranscriptPersistenceEvent,
+        AdmittedCanonicalPersistenceEvent
+    >();
+    // An admission stores its source against the exact durable row identity so
+    // the synchronous low-level persistence callback cannot accidentally read
+    // the newer generation's mutable conversation source.
+    const admittedCanonicalPersistenceEventSourceByKey = new Map<
+        string,
+        RealtimeConversationTurnSource | null
+    >();
+    const admittedCanonicalPersistenceEventSourceKey = (
+        conversationSessionId: string,
+        item: Pick<CanonicalVoiceTranscriptItem, 'attemptIdentity' | 'itemId' | 'role'>,
+    ): string => `${conversationSessionId.length}:${conversationSessionId}${deriveCanonicalVoiceTranscriptEntryId({
+        attemptIdentity: item.attemptIdentity,
+        itemId: item.itemId,
+        role: item.role,
+    })}`;
+    /**
+     * Guards already named for the current attempt of each conversation.
+     *
+     * A refused or unwritable authoritative final repeats for every later event
+     * of the same turn, so the record is bounded to one line per guard per
+     * attempt — the same discipline the provider runtime uses — and is cleared
+     * when the next attempt begins.
+     */
+    const namedCanonicalDropsByConversation = new Map<string, Set<string>>();
+
+    /**
+     * Name an authoritative transcript event this owner refused or failed to
+     * write. Nothing else observes these outcomes: a rejected projection and a
+     * failed write both leave the conversation running with no row and no
+     * distinction from a provider that never spoke.
+     */
+    const nameCanonicalTranscriptDrop = (
+        conversationSessionId: string,
+        kind: string,
+        reason: string,
+        sourceOverride?: RealtimeConversationTurnSource | null,
+    ): void => {
+        let named = namedCanonicalDropsByConversation.get(conversationSessionId);
+        if (!named) {
+            named = new Set();
+            namedCanonicalDropsByConversation.set(conversationSessionId, named);
+        }
+        if (named.has(kind)) return;
+        named.add(kind);
+        const source = sourceOverride === undefined
+            ? canonicalSourceByConversation.get(conversationSessionId)
+            : sourceOverride;
+        recordVoiceRuntimeFailure(
+            source ? `${source.pluginId}/${source.contributionId}` : 'voice.transcript',
+            'transcript_dropped',
+            kind,
+            reason,
+        );
+    };
+
+    const sourceForCanonicalItem = (
+        conversationSessionId: string,
+        item: CanonicalVoiceTranscriptItem,
+    ): RealtimeConversationTurnSource | null | undefined => {
+        const sourceKey = admittedCanonicalPersistenceEventSourceKey(conversationSessionId, item);
+        return admittedCanonicalPersistenceEventSourceByKey.has(sourceKey)
+            ? admittedCanonicalPersistenceEventSourceByKey.get(sourceKey) ?? null
+            : canonicalSourceByConversation.get(conversationSessionId);
+    };
 
     const publishCanonicalSnapshot = (conversationSessionId: string): void => {
         const projector = canonicalProjectors.get(conversationSessionId);
@@ -467,6 +625,8 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             canonicalProjectors.delete(conversationSessionId);
             canonicalSnapshots.delete(conversationSessionId);
             canonicalSourceByConversation.delete(conversationSessionId);
+            canonicalAttemptByConversation.delete(conversationSessionId);
+            namedCanonicalDropsByConversation.delete(conversationSessionId);
             return true;
         }
         return false;
@@ -485,8 +645,15 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                     text: item.text,
                     role: item.role,
                     canonicalItem: item,
-                    source: canonicalSourceByConversation.get(conversationSessionId),
+                    source: sourceForCanonicalItem(conversationSessionId, item),
                 });
+            },
+            onDiagnostic: (diagnostic) => {
+                nameCanonicalTranscriptDrop(
+                    conversationSessionId,
+                    `transcript_projection_${diagnostic.code}`,
+                    'voice_transcript_projection_rejected',
+                );
             },
         });
         canonicalProjectors.set(conversationSessionId, created);
@@ -515,29 +682,132 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 canonicalSourceByConversation.delete(params.conversationSessionId);
             }
             const result = getCanonicalProjector(params.conversationSessionId).project(params.event);
-            if (result.status === 'applied') publishCanonicalSnapshot(params.conversationSessionId);
+            if (result.status === 'applied') {
+                if (result.item) {
+                    canonicalAttemptByConversation.set(params.conversationSessionId, Object.freeze({
+                        epoch: result.item.epoch,
+                        attemptIdentity: result.item.attemptIdentity,
+                    }));
+                }
+                publishCanonicalSnapshot(params.conversationSessionId);
+            }
             return result;
         },
-        beginCanonicalAttempt: (conversationSessionId: string): number => {
-            const epoch = getCanonicalProjector(conversationSessionId).beginAttempt();
+        admitCanonicalPersistenceEvent: (params: Readonly<{
+            conversationSessionId: string;
+            event: VoiceTranscriptCanonicalEventV1;
+            source?: RealtimeConversationTurnSource;
+        }>): AdmittedCanonicalVoiceTranscriptPersistenceEvent | null => {
+            if (!isCanonicalVoiceTranscriptPersistenceEvent(params.event)) return null;
+            if (params.source) {
+                canonicalSourceByConversation.set(params.conversationSessionId, params.source);
+            } else {
+                canonicalSourceByConversation.delete(params.conversationSessionId);
+            }
+            const projector = getCanonicalProjector(params.conversationSessionId);
+            const canonicalAdmission = projector.admitPersistenceEvent(params.event);
+            if (!canonicalAdmission) return null;
+            const attempt = projector.currentAttempt();
+            if (!attempt || attempt.epoch !== params.event.epoch) {
+                projector.releaseAdmittedPersistenceEvent(canonicalAdmission);
+                return null;
+            }
+            const sourceKey = admittedCanonicalPersistenceEventSourceKey(
+                params.conversationSessionId,
+                {
+                    attemptIdentity: attempt.attemptIdentity,
+                    itemId: params.event.itemId,
+                    role: params.event.role,
+                },
+            );
+            const admission = Object.freeze({}) as AdmittedCanonicalVoiceTranscriptPersistenceEvent;
+            admittedCanonicalPersistenceEventSourceByKey.set(sourceKey, params.source ?? null);
+            admittedCanonicalPersistenceEvents.set(admission, Object.freeze({
+                canonicalAdmission,
+                conversationSessionId: params.conversationSessionId,
+                projector,
+                sourceKey,
+            }));
+            return admission;
+        },
+        commitAdmittedCanonicalPersistenceEvent: (
+            admission: AdmittedCanonicalVoiceTranscriptPersistenceEvent,
+        ): string | null => {
+            const admitted = admittedCanonicalPersistenceEvents.get(admission);
+            if (!admitted) return null;
+            try {
+                const committed = admitted.projector.commitAdmittedPersistenceEvent(
+                    admitted.canonicalAdmission,
+                );
+                if (!committed) return null;
+                if (
+                    committed.appliedToCurrentSnapshot
+                    && canonicalProjectors.get(admitted.conversationSessionId) === admitted.projector
+                ) {
+                    canonicalAttemptByConversation.set(admitted.conversationSessionId, Object.freeze({
+                        epoch: committed.item.epoch,
+                        attemptIdentity: committed.item.attemptIdentity,
+                    }));
+                    publishCanonicalSnapshot(admitted.conversationSessionId);
+                }
+                return deriveCanonicalVoiceTranscriptEntryId({
+                    attemptIdentity: committed.item.attemptIdentity,
+                    itemId: committed.item.itemId,
+                    role: committed.item.role,
+                });
+            } finally {
+                admittedCanonicalPersistenceEvents.delete(admission);
+                admittedCanonicalPersistenceEventSourceByKey.delete(admitted.sourceKey);
+            }
+        },
+        releaseAdmittedCanonicalPersistenceEvent: (
+            admission: AdmittedCanonicalVoiceTranscriptPersistenceEvent,
+        ): boolean => {
+            const admitted = admittedCanonicalPersistenceEvents.get(admission);
+            if (!admitted) return false;
+            admittedCanonicalPersistenceEvents.delete(admission);
+            admittedCanonicalPersistenceEventSourceByKey.delete(admitted.sourceKey);
+            return admitted.projector.releaseAdmittedPersistenceEvent(admitted.canonicalAdmission);
+        },
+        beginCanonicalAttempt: (conversationSessionId: string): CanonicalVoiceTranscriptAttempt => {
+            const attempt = getCanonicalProjector(conversationSessionId).beginAttempt();
+            namedCanonicalDropsByConversation.delete(conversationSessionId);
+            canonicalAttemptByConversation.set(conversationSessionId, attempt);
             publishCanonicalSnapshot(conversationSessionId);
-            return epoch;
+            return attempt;
         },
         resetCanonicalEpoch: (conversationSessionId: string, epoch: number): boolean => {
-            const reset = getCanonicalProjector(conversationSessionId).resetEpoch(epoch);
+            const projector = getCanonicalProjector(conversationSessionId);
+            const reset = projector.resetEpoch(epoch);
             if (reset) {
+                const attempt = projector.currentAttempt();
+                if (attempt) canonicalAttemptByConversation.set(conversationSessionId, attempt);
                 publishCanonicalSnapshot(conversationSessionId);
             }
             return reset;
         },
-        releaseCanonicalConversation: (conversationSessionId: string): void => {
+        releaseCanonicalConversation: async (
+            conversationSessionId: string,
+            attemptIdentity: string,
+        ): Promise<boolean> => {
+            await settleCanonicalAttempt({ conversationSessionId, attemptIdentity });
+            if (
+                canonicalAttemptByConversation.get(conversationSessionId)?.attemptIdentity
+                !== attemptIdentity
+            ) {
+                return false;
+            }
             const listeners = canonicalListeners.get(conversationSessionId);
             canonicalProjectors.delete(conversationSessionId);
             canonicalSnapshots.delete(conversationSessionId);
             canonicalListeners.delete(conversationSessionId);
             canonicalSourceByConversation.delete(conversationSessionId);
+            canonicalAttemptByConversation.delete(conversationSessionId);
+            namedCanonicalDropsByConversation.delete(conversationSessionId);
             for (const listener of listeners ?? []) listener();
+            return true;
         },
+        settleAdmittedCanonicalPersistence,
         canonicalSnapshot: (conversationSessionId: string): readonly CanonicalVoiceTranscriptItem[] => {
             const existing = canonicalProjectors.get(conversationSessionId);
             if (!existing) return EMPTY_CANONICAL_ITEMS;
@@ -569,7 +839,7 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
 }
 
 export const voiceTranscriptProjector = createVoiceTranscriptProjector({
-    getState: () => storage.getState() as VoiceTranscriptStateLike,
+    getState: () => storage.getState(),
     persistFinal: (input) => import('@/sync/sync')
         .then(({ sync }) => sync.persistSessionTranscriptMessage(input))
         .then(() => undefined),

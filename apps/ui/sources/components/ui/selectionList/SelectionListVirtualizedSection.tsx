@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -11,14 +10,17 @@ import {
     SELECTION_LIST_VIRTUALIZATION_THRESHOLD,
     SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX,
 } from './_constants';
-import { buildSelectionListOptionA11yProps } from './buildSelectionListOptionA11yProps';
-import { renderSelectionListAccessory } from './renderSelectionListAccessory';
-import { resolveSelectionListOptionDomId } from './resolveSelectionListOptionDomId';
+import { PlanOptionRow } from './SelectionListOptionRow';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
 import { selectionListTestId } from './_shared';
+import {
+    buildSelectionListSectionGroupA11yProps,
+    type SelectionListA11yPattern,
+} from './buildSelectionListOptionA11yProps';
 import type {
     SelectionListOption,
     SelectionListSection,
+    SelectionListStep,
     SelectionListVirtualizationMode,
 } from './_types';
 
@@ -51,7 +53,14 @@ export type SelectionListVirtualizedSectionProps = Readonly<{
      * focused row nor scrolls.
      */
     focusedOptionId?: string | null;
-    onSelectOption: (option: SelectionListOption) => void;
+    /**
+     * Canonical row-activation sinks, forwarded verbatim to `PlanOptionRow`.
+     * The row itself owns activation (`activateSelectionListRow`), so these are
+     * the SAME callbacks the non-virtualized path receives — wrapping them in a
+     * second activation helper here would commit twice.
+     */
+    onSelect: (id: string, option: SelectionListOption) => void;
+    onPushStep: (step: SelectionListStep) => void;
     optionPositionById?: ReadonlyMap<string, number>;
     optionSetSize?: number;
     /**
@@ -61,11 +70,28 @@ export type SelectionListVirtualizedSectionProps = Readonly<{
      */
     virtualization?: SelectionListVirtualizationMode;
     showsVerticalScrollIndicator?: boolean;
+    /** The body-owned popup pattern; only listbox sections become groups. */
+    a11yPattern?: SelectionListA11yPattern;
     /**
      * Override the threshold (test/escape hatch). Defaults to
      * `SELECTION_LIST_VIRTUALIZATION_THRESHOLD`.
      */
     threshold?: number;
+    /**
+     * `grid`-pattern row identity, from the body's shared row model. All three
+     * are absent in `listbox` mode (and in a bare harness), where this section
+     * emits no row indices and its header keeps the role-free markup.
+     *
+     * This path only ever runs at ONE column — a columned step with a
+     * virtualized section is routed to the flat renderer, which is the only one
+     * that understands columns — so `gridColumnCount` is here for the header's
+     * `aria-colspan` to stay honest rather than to lay anything out.
+     */
+    gridColumnCount?: number;
+    /** `aria-rowindex` of this section's header row, when it renders one. */
+    headerRowIndex?: number;
+    /** Grid rows preceding this section's first option row, header included. */
+    rowIndexOffset?: number;
 }>;
 
 function resolveVirtualizationMode(
@@ -118,82 +144,54 @@ export function SelectionListVirtualizedSection(
         'section',
         props.section.id,
     );
+    const sectionGroupA11y = props.a11yPattern === undefined
+        ? null
+        : buildSelectionListSectionGroupA11yProps({
+            pattern: props.a11yPattern,
+            title: props.section.title,
+        });
 
+    // One row renderer for the whole primitive: virtualized rows render the
+    // canonical `PlanOptionRow`, so custom `content`, both ellipsize modes,
+    // chevron retention, the selected row's `expandedContent`, ARIA identity
+    // and the scroll-into-view layout registration cannot drift between the
+    // mapped and virtualized paths. Activation stays single-source: the row
+    // calls `activateSelectionListRow` with the callbacks below.
+    // At one column the option wrapper IS the grid row, so it needs the
+    // popup-wide index — which counts this section's header row and every row
+    // above it, and therefore is not the option's position in the set.
+    const rowIndexOffset = props.rowIndexOffset;
     const renderRow = React.useCallback(
-        (option: SelectionListOption): React.ReactElement => {
-            const optionTestId = resolveSelectionListOptionDomId({
-                option,
-                rootTestID: props.rootTestID,
-                stepId: props.stepId,
-            });
-            const optionWrapperTestId = selectionListTestId(
-                props.rootTestID,
-                props.stepId,
-                'option-wrapper',
-                option.id,
-            );
-            const isSelected = props.selectedOptionId === option.id;
-            // F4 — focus parity: keep keyboard focus visual state separate
-            // from the row's selected accessibility state, matching the
-            // plain mapped path.
-            const isFocused = props.focusedOptionId != null
-                && props.focusedOptionId === option.id;
-            // F2 — single activation source: do NOT call `option.onSelect`
-            // here. The orchestrator's `onSelectOption` (which delegates to
-            // `activateSelectionListRow`) is the canonical entry point and is
-            // responsible for invoking `option.onSelect` exactly once. Calling
-            // it here as well produces a double-commit on virtualized rows
-            // (e.g. directories with > 50 entries in PathSelectionList).
-            const handlePress = () => {
-                if (option.disabled) return;
-                props.onSelectOption(option);
-            };
-            // R9 (blocker 4): mirror the plain (non-virtualized) path's ARIA
-            // semantics so the input header's `aria-activedescendant` resolves
-            // to the actionable element with role="option" + matching `id`.
-            // virtualized list recycles rows out of order, so option rows are keyed
-            // by id and apply per-render rather than via a memoised tree.
-            const optionAria = buildSelectionListOptionA11yProps({
-                optionTestId,
-                isSelected,
-                disabled: option.disabled === true,
-                positionInSet: props.optionPositionById?.get(option.id)
-                    ?? props.section.options.findIndex((candidate) => candidate.id === option.id) + 1,
-                setSize: props.optionSetSize ?? props.section.options.length,
-                accessibilityLabel: option.accessibilityLabel,
-            });
-            return (
-                <View
-                    key={option.id}
-                    testID={optionWrapperTestId}
-                >
-                    <Item
-                        testID={optionTestId}
-                        title={option.label}
-                        subtitle={option.subtitleContent ?? option.subtitle}
-                        icon={option.icon}
-                        rightElement={renderSelectionListAccessory(option.rightAccessory)}
-                        rightElementOutsidePressable={option.rightAccessoryOutsidePressable === true}
-                        onPress={handlePress}
-                        selected={isSelected}
-                        focused={isFocused}
-                        disabled={option.disabled === true}
-                        loading={option.loading === true}
-                        showChevron={Boolean(option.openStep)}
-                        accessibilityRole="button"
-                        accessibilityLabel={optionAria.accessibilityLabel}
-                        webRole="option"
-                        webId={optionAria.id}
-                        accessibilityPositionInSet={optionAria['aria-posinset']}
-                        accessibilitySetSize={optionAria['aria-setsize']}
-                    />
-                </View>
-            );
-        },
-        [props],
+        (option: SelectionListOption): React.ReactElement => (
+            <PlanOptionRow
+                key={option.id}
+                option={option}
+                rootTestID={props.rootTestID}
+                stepId={props.stepId}
+                isSelected={props.selectedOptionId === option.id}
+                // F4 — focus parity: keep keyboard focus visual state separate
+                // from the row's selected accessibility state, matching the
+                // plain mapped path.
+                isFocused={props.focusedOptionId != null && props.focusedOptionId === option.id}
+                onSelect={props.onSelect}
+                onPushStep={props.onPushStep}
+                positionInSet={props.optionPositionById?.get(option.id)
+                    ?? props.section.options.findIndex((candidate) => candidate.id === option.id) + 1}
+                setSize={props.optionSetSize ?? props.section.options.length}
+                {...(rowIndexOffset === undefined ? {} : {
+                    rowIndex: rowIndexOffset
+                        + props.section.options.findIndex((candidate) => candidate.id === option.id)
+                        + 1,
+                })}
+            />
+        ),
+        [props, rowIndexOffset],
     );
 
     const headerTestId = selectionListTestId(sectionTestId, 'header');
+    const headerGridRow = props.headerRowIndex === undefined
+        ? undefined
+        : { rowIndex: props.headerRowIndex, columnCount: props.gridColumnCount ?? 1 };
 
     // F4 — scroll-to-focused-row. Keyboard navigation updates
     // `focusedOptionId` at the orchestrator; when the focused row belongs to
@@ -214,11 +212,17 @@ export function SelectionListVirtualizedSection(
 
     if (useVirtualization) {
         return (
-            <View testID={sectionTestId} style={[styles.container, styles.virtualizedHost]}>
+            <View
+                testID={sectionTestId}
+                style={[styles.container, styles.virtualizedHost]}
+                {...(sectionGroupA11y ?? {})}
+                {...(sectionGroupA11y === null ? {} : { role: 'group' as const })}
+            >
                 <SelectionListSectionHeader
                     testID={headerTestId}
                     title={props.section.title}
                     count={props.section.count}
+                    {...(headerGridRow === undefined ? {} : { gridRow: headerGridRow })}
                 />
                 <VirtualizedList
                     ref={virtualizedListRef}
@@ -236,11 +240,17 @@ export function SelectionListVirtualizedSection(
     }
 
     return (
-        <View testID={sectionTestId} style={styles.container}>
+        <View
+            testID={sectionTestId}
+            style={styles.container}
+            {...(sectionGroupA11y ?? {})}
+            {...(sectionGroupA11y === null ? {} : { role: 'group' as const })}
+        >
             <SelectionListSectionHeader
                 testID={headerTestId}
                 title={props.section.title}
                 count={props.section.count}
+                    {...(headerGridRow === undefined ? {} : { gridRow: headerGridRow })}
             />
             {props.section.options.map((option) => renderRow(option))}
         </View>

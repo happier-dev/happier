@@ -9,7 +9,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
@@ -27,7 +27,6 @@ const styles = StyleSheet.create((theme) => ({
     content: {
         padding: 16,
         paddingBottom: 64,
-        maxWidth: layout.maxWidth,
         width: '100%',
         alignSelf: 'center',
     },
@@ -58,6 +57,10 @@ export const SkillBundleSupportingFileEditorScreen = React.memo(function SkillBu
     artifactId: string;
     path: string | null;
 }>) {
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+    const contentStyle = React.useMemo(() => [styles.content, contentMaxWidthStyle], [contentMaxWidthStyle]);
     const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
@@ -104,7 +107,7 @@ export const SkillBundleSupportingFileEditorScreen = React.memo(function SkillBu
 
     return (
         <View style={styles.container}>
-            <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
+            <ItemList containerStyle={contentStyle} keyboardShouldPersistTaps="handled">
                 <ItemGroup title={t('promptLibrary.general')}>
                     <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
                         <Text style={styles.fieldLabel}>{t('promptLibrary.supportingFilePathLabel')}</Text>

@@ -1,12 +1,23 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import type { AgentInputAttachment } from './agentInputContracts';
+import {
+    projectAgentInputAttachmentRowItems,
+    type AgentInputAttachment,
+} from './agentInputContracts';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((result, entry) => ({ ...result, ...flattenStyle(entry) }), {});
+    }
+    return typeof style === 'object' ? style as Record<string, unknown> : {};
+}
 
 const modalShowSpy = vi.fn((config: unknown) => {
     void config;
@@ -168,9 +179,9 @@ describe('AgentInput (image attachment thumbnails)', () => {
             placeholder: 'placeholder',
             onChangeText: () => { },
             onSend: () => { },
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
-            attachments,
+            attachmentRowItems: projectAgentInputAttachmentRowItems({ transferAttachments: attachments }),
             hasSendableAttachments: true,
         }));
     }
@@ -240,9 +251,9 @@ describe('AgentInput (image attachment thumbnails)', () => {
                     placeholder="placeholder"
                     onChangeText={() => { }}
                     onSend={() => { }}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
-                    attachments={attachments}
+                    attachmentRowItems={projectAgentInputAttachmentRowItems({ transferAttachments: attachments })}
                     hasSendableAttachments={true}
                 />
             </ModalPortalTargetProvider>,
@@ -289,19 +300,51 @@ describe('AgentInput (image attachment thumbnails)', () => {
         expect(screen.findByTestId('agent-input-attachment-image:a1')?.props.accessibilityRole).toBe('button');
     });
 
-    it('disables image remove while uploading', async () => {
+    it('keeps image removal available while uploading', async () => {
+        const onRemove = vi.fn();
         const attachments = [
             {
                 key: 'a1',
                 label: 'file.png',
                 status: 'uploading',
                 preview: { kind: 'image', uri: 'blob:test' },
+                onRemove,
+            },
+        ] satisfies readonly AgentInputAttachment[];
+
+        const screen = await renderAgentInput(attachments);
+
+        expect(screen.findByTestId('agent-input-attachment-remove:a1')?.props.disabled).not.toBe(true);
+        await screen.pressByTestIdAsync('agent-input-attachment-remove:a1');
+        expect(onRemove).toHaveBeenCalledTimes(1);
+    });
+
+    it('exposes removable attachments as labelled real target frames', async () => {
+        const attachments = [
+            {
+                key: 'image',
+                label: 'image.png',
+                status: 'pending',
+                preview: { kind: 'image', uri: 'blob:image' },
+                onRemove: () => { },
+            },
+            {
+                key: 'file',
+                label: 'notes.txt',
+                status: 'pending',
                 onRemove: () => { },
             },
         ] satisfies readonly AgentInputAttachment[];
 
         const screen = await renderAgentInput(attachments);
 
-        expect(screen.findByTestId('agent-input-attachment-remove:a1')?.props.disabled).toBe(true);
+        for (const key of ['image', 'file']) {
+            const remove = screen.findByTestId(`agent-input-attachment-remove:${key}`);
+            expect(remove?.props.accessibilityRole).toBe('button');
+            expect(remove?.props.accessibilityLabel).toBe('common.remove');
+            expect(remove?.props.hitSlop).toBeUndefined();
+            expect(flattenStyle(remove?.props.style)).toMatchObject({ minHeight: 44, minWidth: 44 });
+        }
     });
+
 });

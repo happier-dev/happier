@@ -18,6 +18,7 @@ import type { VoiceAgentClient, VoiceAgentHandle, VoiceAgentStartParams, VoiceAg
 import { resolveVoiceAgentBootstrapTimeoutMs } from './resolveVoiceAgentBootstrapTimeoutMs';
 import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
+import { requiresProviderSafeModelSelectionRpc } from '@/sync/ops/providerDaemonSessionCompatibility';
 
 type SafeParseSuccess<T> = { success: true; data: T };
 type SafeParseFailure = { success: false; error: unknown };
@@ -71,6 +72,11 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     const chatModelId = normalizeVoiceAgentModelId(params.chatModelId);
     const commitModelId = normalizeVoiceAgentModelId(params.commitModelId);
     const profileId = normalizeVoiceAgentProfileId(params.profileId);
+    const chatModelSelection = params.chatModelSelection;
+    const commitModelSelection = params.commitModelSelection;
+    const ensureOrStartMethod = requiresProviderSafeModelSelectionRpc(chatModelSelection, commitModelSelection)
+      ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1
+      : SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START;
     const startPayload = {
       intent: 'voice_agent',
       backendTarget: { kind: 'builtInAgent', agentId: backendId },
@@ -81,6 +87,18 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       ...(params.resumeHandle ? { resumeHandle: params.resumeHandle } : {}),
       ...(chatModelId ? { chatModelId } : {}),
       ...(commitModelId ? { commitModelId } : {}),
+      ...(chatModelSelection
+        ? {
+            modelId: chatModelSelection.modelId,
+            modelSelection: chatModelSelection,
+          }
+        : {}),
+      ...(commitModelSelection
+        ? { intentInput: { commitModelSelection } }
+        : {}),
+      ...(params.sessionConfigOptionOverrides
+        ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
+        : {}),
       ...(params.commitIsolation === true ? { commitIsolation: true } : {}),
       ...(profileId ? { profileId } : {}),
       idleTtlSeconds: params.idleTtlSeconds,
@@ -97,7 +115,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     const ensureOrStart = async () => {
       const res: any = await sessionRpcWithServerScope({
         sessionId: params.sessionId,
-        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+        method: ensureOrStartMethod,
         timeoutMs: this.resolveStartTimeoutMs({ bootstrapTimeoutMs: params.bootstrapTimeoutMs }),
         payload: {
           runId: typeof params.existingRunId === 'string' ? params.existingRunId : null,
@@ -129,6 +147,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       displayUserText?: string;
       signal?: AbortSignal;
       userTranscript?: ExecutionRunUserTranscriptDirective;
+      onUserTranscriptAccepted?: () => void | Promise<void>;
     }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
     // The non-streaming daemon turn shares the single canonical turn read-loop. We omit
@@ -147,10 +166,13 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       handle,
       userText: params.userText,
       displayUserText: typeof params.displayUserText === 'string' ? params.displayUserText : params.userText,
-      ...((params.signal || params.userTranscript) ? {
+      ...((params.signal || params.userTranscript || params.onUserTranscriptAccepted) ? {
         options: {
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.userTranscript ? { userTranscript: params.userTranscript } : {}),
+          ...(params.onUserTranscriptAccepted
+            ? { onUserTranscriptAccepted: params.onUserTranscriptAccepted }
+            : {}),
         },
       } : {}),
     });

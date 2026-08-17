@@ -43,6 +43,9 @@ installSessionRouteCommonModuleMocks({
                     if (key === 'sessionLastMobileSurfaceBySessionId') return lastMobileSurfaceBySessionId;
                     return null;
                 }) as any,
+                useSessionLastMobileSurface: ((sessionId: string | null) => (
+                    sessionId ? lastMobileSurfaceBySessionId[sessionId] ?? null : null
+                )) as any,
                 getStorage: (() => ({
                     getState: () => ({
                         localSettings: {

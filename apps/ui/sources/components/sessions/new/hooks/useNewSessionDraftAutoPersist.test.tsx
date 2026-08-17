@@ -1,4 +1,11 @@
 import * as React from 'react';
+
+function staticDraftText(length: number) {
+    return {
+        getLength: () => length,
+        subscribe: () => () => {},
+    } as const;
+}
 import { describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
@@ -85,7 +92,7 @@ describe('useNewSessionDraftAutoPersist', () => {
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
                     focused: false,
-                    draftTextLength: 10,
+                    draftText: staticDraftText(10),
                 }),
             );
 
@@ -108,7 +115,7 @@ describe('useNewSessionDraftAutoPersist', () => {
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
                     focused,
-                    draftTextLength: 10,
+                    draftText: staticDraftText(10),
                 }),
             );
 
@@ -137,7 +144,7 @@ describe('useNewSessionDraftAutoPersist', () => {
                 // A fresh callback identity every render (matches the real call site).
                 useNewSessionDraftAutoPersist({
                     persistDraftNow: () => persistDraftNow(),
-                    draftTextLength: 10,
+                    draftText: staticDraftText(10),
                 }),
             );
 
@@ -163,7 +170,7 @@ describe('useNewSessionDraftAutoPersist', () => {
             const hook = await renderHook(() =>
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
-                    draftTextLength: 4,
+                    draftText: staticDraftText(4),
                     draftChangeKey,
                 }),
             );
@@ -177,6 +184,52 @@ describe('useNewSessionDraftAutoPersist', () => {
 
             expect(persistDraftNow).toHaveBeenCalledTimes(2);
             await hook.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    // The composer text lives in a store, so typing no longer re-renders this hook's owner. A
+    // store notification is the ONLY signal that the draft changed: without the subscription the
+    // debounce never re-arms and typing silently stops being persisted.
+    it('re-arms persistence from a store notification, with no re-render of the owner', async () => {
+        const persistDraftNow = vi.fn();
+        const listeners = new Set<() => void>();
+        let text = 'a';
+        const draftText = {
+            getLength: () => text.length,
+            subscribe: (listener: () => void) => {
+                listeners.add(listener);
+                return () => {
+                    listeners.delete(listener);
+                };
+            },
+        } as const;
+
+        vi.useFakeTimers();
+        try {
+            const hook = await renderHook(() =>
+                useNewSessionDraftAutoPersist({
+                    persistDraftNow,
+                    draftText,
+                    draftChangeKey: 'stable',
+                }),
+            );
+
+            await vi.advanceTimersByTimeAsync(250);
+            expect(persistDraftNow).toHaveBeenCalledTimes(1);
+
+            // A keystroke: the text changes and subscribers are notified, but nothing re-renders
+            // and draftChangeKey is unchanged.
+            text = 'ab';
+            for (const listener of Array.from(listeners)) {
+                listener();
+            }
+            await vi.advanceTimersByTimeAsync(250);
+
+            expect(persistDraftNow).toHaveBeenCalledTimes(2);
+            await hook.unmount();
+            expect(listeners.size).toBe(0);
         } finally {
             vi.useRealTimers();
         }
@@ -204,7 +257,7 @@ describe('useNewSessionDraftAutoPersist', () => {
             const hook = await renderHook(() =>
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
-                    draftTextLength: largeDraftTextLength,
+                    draftText: staticDraftText(largeDraftTextLength),
                 }),
             );
 
@@ -249,7 +302,7 @@ describe('useNewSessionDraftAutoPersist', () => {
             const hook = await renderHook(() =>
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
-                    draftTextLength,
+                    draftText: staticDraftText(draftTextLength),
                     draftChangeKey,
                 }),
             );

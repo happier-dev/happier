@@ -69,6 +69,7 @@ describe('createAgentInputActionShortcutChip', () => {
             tint: '#000',
             dismiss,
             blurInput: () => {},
+            openCollapsedPopover: () => {},
         }));
         collapsedAction.onPress?.();
         rendered.props.onPress?.();

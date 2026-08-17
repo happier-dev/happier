@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -15,7 +14,8 @@ import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { isTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
 import { readSessionTerminalMode, setSessionTerminalMode } from '@/components/sessions/terminal/sessionTerminalMode';
-import { SESSION_HEADER_BOXY_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessionId: string; scopeId: string }>) => {
     const { theme } = useUnistyles();
@@ -96,7 +96,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
             accessibilityRole="button"
             accessibilityLabel={t('settings.terminal')}
         >
-            <Ionicons name="terminal-outline" size={SESSION_HEADER_BOXY_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
+            <Icon name="terminal" size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 });

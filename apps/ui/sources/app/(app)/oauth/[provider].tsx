@@ -3,7 +3,10 @@ import { Pressable, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { useAuth } from '@/auth/context/AuthContext';
+import {
+    useAuth,
+    type AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -18,14 +21,31 @@ import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { trackAccountCreated, trackAccountRestored } from '@/track';
 
 import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    guardAccountEncryptionFirstKeyCredentialMutation,
+    resumeAccountEncryptionFirstKeyExternalAuth,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
 
+const ACCOUNT_ENCRYPTION_FIRST_KEY_PURPOSE =
+    'account_encryption_first_key';
+
+async function guardOrdinaryAuthIngress(
+): Promise<AuthCredentialLifecycleResult> {
+    const result =
+        await guardAccountEncryptionFirstKeyCredentialMutation();
+    return result.kind === 'allowed'
+        ? { kind: 'completed' }
+        : result;
+}
 
 function paramString(params: Record<string, unknown>, key: string): string | null {
     const value = (params as any)[key];
@@ -191,6 +211,7 @@ export default function OAuthProviderReturn() {
     const resolvedProvisioning = paramString(params, 'provisioning');
     const resolvedProvisioningModes = paramString(params, 'provisioningModes');
     const resolvedAccountMode = paramString(params, 'accountMode');
+    const resolvedPurpose = paramString(params, 'purpose');
 
     const finalizeAuth = React.useCallback((params: { mode: 'plain' | 'e2ee' }) => {
         const ctx = pendingAuthContextRef.current;
@@ -214,14 +235,30 @@ export default function OAuthProviderReturn() {
                 if (params.mode === 'e2ee' && !secret) {
                     const seed = getRandomBytes(32);
                     secret = encodeBase64(seed, 'base64url');
-                    await TokenStorage.setPendingExternalAuth({
-                        provider: ctx.providerId,
-                        ...(ctx.proof ? { proof: ctx.proof } : {}),
-                        secret,
-                        ...(ctx.intent ? { intent: ctx.intent } : {}),
-                        ...(ctx.serverUrl ? { serverUrl: ctx.serverUrl } : {}),
-                        ...(ctx.returnTo ? { returnTo: ctx.returnTo } : {}),
-                    });
+                    const stored =
+                        await TokenStorage.setPendingExternalAuth({
+                            provider: ctx.providerId,
+                            ...(ctx.proof ? { proof: ctx.proof } : {}),
+                            secret,
+                            ...(ctx.intent ? { intent: ctx.intent } : {}),
+                            ...(ctx.serverUrl ? { serverUrl: ctx.serverUrl } : {}),
+                            ...(ctx.returnTo ? { returnTo: ctx.returnTo } : {}),
+                        });
+                    if (!stored) {
+                        const guard =
+                            await guardAccountEncryptionFirstKeyCredentialMutation();
+                        if (guard.kind !== 'allowed') {
+                            await presentFirstKeyCredentialLifecycle({
+                                run: guardOrdinaryAuthIngress,
+                            });
+                        } else {
+                            await Modal.alert(
+                                t('common.error'),
+                                t('errors.oauthInitializationFailed'),
+                            );
+                        }
+                        return;
+                    }
                     pendingAuthContextRef.current = { ...ctx, secret };
                 }
 
@@ -274,22 +311,29 @@ export default function OAuthProviderReturn() {
                 const json = await response.json().catch(() => ({}));
 
                 if (response.ok && json?.token) {
-                    await TokenStorage.clearPendingExternalAuth();
-                    pendingAuthContextRef.current = null;
-                    setUsernameHint(null);
-                    setProvisioningChoiceOpen(false);
-                    maybeActivateServerUrl(ctx.serverUrl);
-                    if (params.mode === 'plain') {
-                        const credentials = await buildDataKeyCredentialsForToken(json.token);
-                        await (auth as any).loginWithCredentials(credentials);
-                    } else {
-                        await auth.login(json.token, secret!);
-                    }
-                    trackSuccessfulOAuthAuth({
-                        secret,
-                        intent: ctx.intent,
+                    await presentFirstKeyCredentialLifecycle({
+                        run: async () =>
+                            params.mode === 'plain'
+                                ? await auth.loginWithCredentials({
+                                    token: String(json.token),
+                                })
+                                : await auth.login(
+                                    String(json.token),
+                                    secret!,
+                                ),
+                        onCompleted: async () => {
+                            await TokenStorage.clearPendingExternalAuth();
+                            pendingAuthContextRef.current = null;
+                            setUsernameHint(null);
+                            setProvisioningChoiceOpen(false);
+                            maybeActivateServerUrl(ctx.serverUrl);
+                            trackSuccessfulOAuthAuth({
+                                secret,
+                                intent: ctx.intent,
+                            });
+                            router.replace(ctx.returnTo);
+                        },
                     });
-                    router.replace(ctx.returnTo);
                     return;
                 }
 
@@ -441,13 +485,37 @@ export default function OAuthProviderReturn() {
         };
 
         fireAndForget((async () => {
+            const pendingAuthStateForFlow =
+                flow === 'auth'
+                    ? await TokenStorage
+                        .readPendingExternalAuthState()
+                    : null;
+            const hasStoredFirstKeyContinuation = Boolean(
+                pendingAuthStateForFlow?.value
+                    ?.accountEncryptionFirstKey,
+            );
+            const isFirstKeyReturn =
+                resolvedPurpose
+                    === ACCOUNT_ENCRYPTION_FIRST_KEY_PURPOSE
+                || hasStoredFirstKeyContinuation;
+
             if (!providerId) {
+                if (isFirstKeyReturn) {
+                    await TokenStorage.clearPendingExternalAuth();
+                    await Modal.alert(
+                        t('common.error'),
+                        t('errors.oauthInitializationFailed'),
+                    );
+                }
                 safeReplace('/');
                 return;
             }
 
             const provider = getAuthProvider(providerId);
             if (!provider) {
+                if (isFirstKeyReturn) {
+                    await TokenStorage.clearPendingExternalAuth();
+                }
                 await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
                 safeReplace('/');
                 return;
@@ -464,14 +532,77 @@ export default function OAuthProviderReturn() {
                 await Modal.alert(t('common.error'), message);
                 if (flow !== 'auth') {
                     await TokenStorage.clearPendingExternalConnect();
+                } else if (isFirstKeyReturn) {
+                    await TokenStorage.clearPendingExternalAuth();
                 }
-                safeReplace(flow === 'auth' ? '/' : '/settings/account');
+                safeReplace(
+                    flow === 'auth'
+                    && !isFirstKeyReturn
+                        ? '/'
+                        : '/settings/account',
+                );
                 return;
             }
 
             if (flow === 'auth') {
                 const pending = pendingFromParams;
-                const pendingAuthState = await TokenStorage.readPendingExternalAuthState();
+                if (
+                    resolvedPurpose
+                    === ACCOUNT_ENCRYPTION_FIRST_KEY_PURPOSE
+                ) {
+                    const currentCredentials =
+                        credentialsFromAuth
+                        ?? await TokenStorage.getCredentials()
+                            .catch(() => null);
+                    if (!currentCredentials) {
+                        await TokenStorage.clearPendingExternalAuth();
+                        await Modal.alert(
+                            t('common.error'),
+                            t('errors.oauthInitializationFailed'),
+                        );
+                        safeReplace('/settings/account');
+                        return;
+                    }
+                    try {
+                        safeSetBusy(true);
+                        const resumed =
+                            await resumeAccountEncryptionFirstKeyExternalAuth({
+                                provider: providerId,
+                                pending,
+                                currentCredentials,
+                                persistCredentials:
+                                    auth.loginWithCredentials,
+                            });
+                        safeReplace(resumed.returnTo);
+                    } catch (error) {
+                        await Modal.alert(
+                            t('common.error'),
+                            t('errors.oauthStateMismatch'),
+                        );
+                        if (
+                            !(error instanceof HappyError)
+                            || error.code
+                                !==
+                                'first-key-pending-custody-failed'
+                        ) {
+                            safeReplace('/settings/account');
+                        }
+                    } finally {
+                        safeSetBusy(false);
+                    }
+                    return;
+                }
+                if (hasStoredFirstKeyContinuation) {
+                    await TokenStorage.clearPendingExternalAuth();
+                    await Modal.alert(
+                        t('common.error'),
+                        t('errors.oauthStateMismatch'),
+                    );
+                    safeReplace('/settings/account');
+                    return;
+                }
+                const pendingAuthState =
+                    pendingAuthStateForFlow!;
                 const state = pendingAuthState.value;
                 const secret = typeof state?.secret === 'string' ? state.secret : null;
                 const proof = typeof state?.proof === 'string' ? state.proof : null;
@@ -690,7 +821,9 @@ export default function OAuthProviderReturn() {
         resolvedPending,
         resolvedLogin,
         resolvedReason,
+        resolvedPurpose,
         auth.login,
+        auth.loginWithCredentials,
         resolvedFlow === 'auth' ? '' : auth.credentials?.token ?? '',
     ]);
 

@@ -2,13 +2,13 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { listActionSpecs, type ActionExecutorContext } from '@happier-dev/protocol';
+import { listActionSpecs } from '@happier-dev/protocol';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { storage, useProfile, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -19,12 +19,13 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
-import { executeSessionForkAction } from '@/sync/domains/sessionFork/executeSessionForkAction';
+import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
 import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
 import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import {
   resolveSessionHandoffUiAvailability,
 } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
+import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -61,23 +62,30 @@ import {
 import {
   SESSION_ACTION_ARCHIVE_ID,
   SESSION_ACTION_RENAME_ID,
+  SESSION_ACTION_RESUME_ID,
   SESSION_ACTION_STOP_ID,
   resolveManualReadStateFromSessionActionId,
 } from '@/components/sessions/actions/sessionActionIds';
 import { buildSessionMetadataStabilitySignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
 import { HappyError } from '@/utils/errors/errors';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import { PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX } from './pluginHeaderActions';
+import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import {
-  createPluginSessionHeaderActionExecutor,
-  createPluginSessionHeaderActionDropdownItems,
+  PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX,
   dispatchPluginSessionHeaderAction,
+  type PluginSessionHeaderActionPresentation,
 } from './pluginHeaderActions';
 import type { StorageState } from '@/sync/store/types';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import {
+  SESSION_HEADER_ACTION_TAP_TARGET_PX,
+  SESSION_HEADER_ICON_SIZE_PX,
+} from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
+import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
+import { supportsExternalSessionBackgroundFollow } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
 
 function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeof resolveSessionHandoffUiAvailability>, fallbackSubtitle: string | undefined): string | undefined {
   if (handoffAvailability.available) {
@@ -111,8 +119,15 @@ type SessionHeaderActionMenuProps = Readonly<{
    */
   onSelectExtraItem?: (actionId: string) => boolean;
   pluginUiProjection?: PluginUiProjectionModel | null;
-  pluginUiLocale?: string | null;
-  onOpenPluginSurface?: (surfaceId: string) => void;
+  /** Exact Session-scope authority; never reconstruct it from header state. */
+  pluginUiScopedLaunchFacts?: PluginSurfaceScopedLaunchFacts | null;
+  /** Existing Account-scope lifetime predicate for the rendered header authority. */
+  pluginUiScopeIsCurrent?: (() => boolean) | null;
+  onOpenPluginSurface?: PluginSurfaceOpenHandler;
+  /** One normalized list from the Session header's responsive-policy owner. */
+  pluginHeaderActions?: readonly PluginSessionHeaderActionPresentation[];
+  /** The Session header's bounded direct/overflow policy, never plugin metadata. */
+  pluginHeaderActionPlacement?: 'direct' | 'overflow';
 }>;
 
 function readCurrentSessionForOpenMenu(sessionId: string, fallback: Session): Session {
@@ -218,8 +233,11 @@ function didSessionHeaderActionMenuPropsChange(
   if (prev.extraItems !== next.extraItems) return true;
   if (prev.onSelectExtraItem !== next.onSelectExtraItem) return true;
   if (prev.pluginUiProjection !== next.pluginUiProjection) return true;
-  if (prev.pluginUiLocale !== next.pluginUiLocale) return true;
+  if (prev.pluginUiScopedLaunchFacts !== next.pluginUiScopedLaunchFacts) return true;
+  if (prev.pluginUiScopeIsCurrent !== next.pluginUiScopeIsCurrent) return true;
   if (prev.onOpenPluginSurface !== next.onOpenPluginSurface) return true;
+  if (prev.pluginHeaderActions !== next.pluginHeaderActions) return true;
+  if (prev.pluginHeaderActionPlacement !== next.pluginHeaderActionPlacement) return true;
   if (prev.session.serverId !== next.session.serverId) return true;
   if (!areSessionActionMenuMetadataSemanticallyEqual(prev.session, next.session)) return true;
   if (prev.session.active !== next.session.active) return true;
@@ -239,6 +257,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const voice = useSetting('voice');
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
+  const executionRunsEnabled = useFeatureEnabled('execution.runs');
   const [open, setOpen] = React.useState(false);
   const session = React.useMemo(
     () => open ? readCurrentSessionForOpenMenu(props.sessionId, props.session) : props.session,
@@ -253,14 +272,24 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     buildSessionHeaderReadStateSignature(state, props.sessionId, sessionServerId ?? null),
   );
   const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
+  const reachableMachineId = useSessionReachableMachineTarget(props.sessionId)?.machineId ?? null;
+  const ownerMetadata = readSessionOwnerMetadataView(session);
+  const resumeAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata)
+    ?? resolveAgentIdFromFlavor(ownerMetadata?.flavor ?? null);
+  const { resumeCapabilityOptions } = useResumeCapabilityOptions({
+    agentId: resumeAgentId,
+    machineId: reachableMachineId,
+    serverId: sessionServerId,
+    settings,
+    enabled: session.active !== true,
+  });
   const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
     session,
     serverId: sessionServerId ?? null,
     currentUserId,
     isConnected: true,
-  }), [currentUserId, readStateSignature, session, sessionServerId]);
-  const reachableMachineId = useSessionReachableMachineTarget(props.sessionId)?.machineId ?? null;
-  const ownerMetadata = readSessionOwnerMetadataView(session);
+    resumeCapabilityOptions,
+  }), [currentUserId, readStateSignature, resumeCapabilityOptions, session, sessionServerId]);
   const sourceMachineId = React.useMemo(
     () => resolveSessionHandoffSourceMachineId({
       reachableMachineId,
@@ -294,14 +323,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     }),
     [router, sessionServerId],
   );
-  const pluginHeaderActionExecutor = React.useMemo(
-    () => createPluginSessionHeaderActionExecutor({
-      projection: props.pluginUiProjection,
-      machineId: sourceMachineId,
-      serverId: sessionServerId,
-    }),
-    [props.pluginUiProjection, sessionServerId, sourceMachineId],
-  );
   const teleportAvailability = React.useMemo(
     () => getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId }),
     [props.sessionId, voice],
@@ -309,15 +330,45 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const showTeleportAction = teleportAvailability.ok && hasGlobalVoiceAgentConversation;
   const externalSessionLink = readExternalSessionLink(ownerMetadata);
   const externalSessionFollowPolicy = readExternalSessionFollowPolicy(ownerMetadata);
-  const externalSessionAgentId = React.useMemo(
-    () => resolveAgentIdFromFlavor(externalSessionLink?.agentId ?? null)
-      ?? resolveAgentIdFromSessionMetadata(ownerMetadata),
-    [externalSessionLink?.agentId, ownerMetadata],
-  );
-  const supportsExternalSessionBackgroundFollow =
-    externalSessionAgentId != null
-      ? resolveAgentUiBehavior(externalSessionAgentId).externalSessions?.supportsBackgroundFollow === true
-      : false;
+  const daemonMergedProjection = useDaemonMergedProjectionInputs({
+    machineId: externalSessionLink?.machineId ?? null,
+    serverId: sessionServerId,
+    enabled: externalSessionLink !== null,
+  });
+  const supportsExternalSessionBackgroundFollowForLink = React.useMemo(() => {
+    if (!externalSessionLink || daemonMergedProjection.phase !== 'ready') {
+      return false;
+    }
+    return supportsExternalSessionBackgroundFollow({
+      providerId: externalSessionLink.agentId,
+      source: externalSessionLink.source,
+      projection: daemonMergedProjection.inputs?.pluginProjectionV2,
+    });
+  }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, externalSessionLink]);
+  const invokePluginHeaderAction = React.useCallback((menuActionId: string) => {
+    // Both responsive controls re-resolve the selected descriptor against the
+    // current projection through this one callback. The descriptor list never
+    // gains execution authority merely by being rendered directly.
+    fireAndForget((async () => {
+      const outcome = await dispatchPluginSessionHeaderAction({
+        projection: props.pluginUiProjection,
+        menuActionId,
+        scopedLaunchFacts: props.pluginUiScopedLaunchFacts,
+        scopeIsCurrent: props.pluginUiScopeIsCurrent,
+        sessionId: props.sessionId,
+        openSurface: props.onOpenPluginSurface,
+      });
+      if (outcome && !outcome.ok) {
+        Modal.alert(t('common.error'), t('pluginRuntime.unavailableGeneric'));
+      }
+    })(), { tag: 'SessionHeaderActionMenu.execute.pluginHeaderAction' });
+  }, [
+    props.onOpenPluginSurface,
+    props.pluginUiScopedLaunchFacts,
+    props.pluginUiScopeIsCurrent,
+    props.pluginUiProjection,
+    props.sessionId,
+  ]);
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       .filter((spec) => spec.surfaces.ui === true)
@@ -337,7 +388,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
 
     const out: DropdownMenuItem[] = [];
 
-    if (externalSessionLink && supportsExternalSessionBackgroundFollow) {
+    if (externalSessionLink && supportsExternalSessionBackgroundFollowForLink) {
       out.push({
         id: 'session.externalSession.backgroundFollow',
         title: t('session.actionMenu.backgroundFollow'),
@@ -349,11 +400,14 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       out.push(...props.extraItems);
     }
 
-    out.push(...createPluginSessionHeaderActionDropdownItems({
-      projection: props.pluginUiProjection,
-      iconColor: theme.colors.chrome.header.foreground,
-      locale: props.pluginUiLocale,
-    }));
+    if (props.pluginHeaderActionPlacement === 'overflow') {
+      out.push(...(props.pluginHeaderActions ?? []).map((action): DropdownMenuItem => ({
+        id: action.menuActionId,
+        title: action.title,
+        icon: <Icon name={action.iconName} size={16} color={theme.colors.chrome.header.foreground} />,
+        ...(action.enabled ? {} : { disabled: true }),
+      })));
+    }
 
     for (const actionId of listVisibleSessionActionIds({ target: sessionActionTarget, surface: 'sessionHeader' })) {
       const item = createSessionActionDropdownItem({
@@ -382,16 +436,55 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     handoffAvailability,
     externalSessionLink,
     externalSessionFollowPolicy,
-    supportsExternalSessionBackgroundFollow,
+    supportsExternalSessionBackgroundFollowForLink,
     sessionActionTarget,
-    props.pluginUiLocale,
-    props.pluginUiProjection,
+    props.pluginHeaderActionPlacement,
+    props.pluginHeaderActions,
     theme.colors.chrome.header.foreground,
   ]);
 
-  if (actions.length === 0) return null;
+  const directPluginHeaderActions = props.pluginHeaderActionPlacement === 'direct'
+    ? props.pluginHeaderActions ?? []
+    : [];
+  const headerInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+  const headerInteractiveHitSlop = headerInteractiveTargetSize > SESSION_HEADER_ACTION_TAP_TARGET_PX
+    ? undefined
+    : 15;
+
+  if (actions.length === 0 && directPluginHeaderActions.length === 0) return null;
 
   return (
+    <>
+      {directPluginHeaderActions.map((action) => (
+        <Pressable
+          key={action.menuActionId}
+          onPress={() => {
+            if (action.enabled) {
+              invokePluginHeaderAction(action.menuActionId);
+            }
+          }}
+          disabled={!action.enabled}
+          hitSlop={headerInteractiveHitSlop}
+          testID={`session-header-plugin-action-${action.menuActionId}`}
+          accessibilityRole="button"
+          accessibilityLabel={action.title}
+          accessibilityState={{ disabled: !action.enabled }}
+          style={({ pressed }) => ({
+            width: headerInteractiveTargetSize,
+            height: headerInteractiveTargetSize,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: !action.enabled ? 0.45 : pressed ? 0.7 : 1,
+          })}
+        >
+          <Icon
+            name={action.iconName}
+            size={SESSION_HEADER_ICON_SIZE_PX}
+            color={theme.colors.chrome.header.foreground}
+          />
+        </Pressable>
+      ))}
+      {actions.length > 0 ? (
     <DropdownMenu
       open={open}
       onOpenChange={setOpen}
@@ -400,26 +493,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         setOpen(false);
         if (props.onSelectExtraItem?.(actionId) === true) return;
         if (actionId.startsWith(PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX)) {
-          // The normalized header contribution already resolved its action
-          // reference against the current projected action catalog. Dispatch
-          // that qualified action through the single UI ActionExecutor.
-          const onOpenPluginSurface = props.onOpenPluginSurface;
-          fireAndForget(dispatchPluginSessionHeaderAction({
-            projection: props.pluginUiProjection,
-            menuActionId: actionId,
-            data: { session, sessionId: props.sessionId },
-            executor: pluginHeaderActionExecutor,
-            context: {
-              defaultSessionId: props.sessionId,
-              surface: 'ui',
-              placement: 'session_action_menu',
-            } satisfies ActionExecutorContext,
-            host: {
-              copy: (value) => { void setClipboardStringSafe(value); },
-              openExternal: (url) => { void openExternalUrl(url); },
-              ...(onOpenPluginSurface ? { openSurface: (surfaceId: string) => { onOpenPluginSurface(surfaceId); } } : {}),
-            },
-          }), { tag: 'SessionHeaderActionMenu.execute.pluginHeaderAction' });
+          invokePluginHeaderAction(actionId);
           return;
         }
         if (actionId === 'session.externalSession.backgroundFollow') {
@@ -503,6 +577,17 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               await executeSessionAction({
                 actionId: actionId as any,
                 target: sessionActionTarget,
+                ...(actionId === SESSION_ACTION_RESUME_ID
+                  ? {
+                      context: {
+                        operations: {
+                          resumeSession: async (sessionId: string) => {
+                            await emitSessionResumeRequest(sessionId);
+                          },
+                        },
+                      },
+                    }
+                  : {}),
               });
             } catch (error) {
               showSessionHeaderActionError(error);
@@ -511,16 +596,30 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           return;
         }
         if (actionId === 'session.fork') {
-          fireAndForget((async () => {
-            const res = await executeSessionForkAction({
-              execute: executor.execute as any,
+          // A launcher only. The header must not also run the old auto-strategy
+          // path behind the modal: the user chooses Native, Replay or Configure
+          // before any fork effect is issued.
+          deferOnWeb(() => {
+            openSessionForkStrategyFlow({
               sessionId: props.sessionId,
-              context: { defaultSessionId: props.sessionId, surface: 'ui', placement: 'session_action_menu' } as any,
+              forkSupportSource: session,
+              serverId: sessionServerId ?? null,
+              machineId: reachableMachineId ?? ownerMetadata?.machineId ?? null,
+              forkPoint: { type: 'latest' },
+              settings,
+              replayEnabled: sessionReplayEnabled,
+              executionRunsEnabled: executionRunsEnabled === true,
+              navigateToSession: (childSessionId, options) => {
+                router.push(buildScopedSessionRouteHref({
+                  sessionId: childSessionId,
+                  serverId: options?.serverId ?? sessionServerId,
+                }) as any);
+              },
+              navigateToNewSession: (route) => {
+                navigateWithBlurOnWeb(() => router.push(route as any));
+              },
             });
-            if (!res.ok) {
-              Modal.alert(t('common.error'), String(res.error ?? t('errors.failedToForkSession')));
-            }
-          })(), { tag: 'SessionHeaderActionMenu.execute.sessionFork' });
+          });
           return;
         }
         if (actionId === 'session.handoff') {
@@ -601,13 +700,13 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         return (
           <Pressable
             onPress={toggle}
-            hitSlop={15}
+            hitSlop={headerInteractiveHitSlop}
             testID="session-header-action-menu-trigger"
             accessibilityRole="button"
             accessibilityLabel={label}
             style={({ pressed }) => ({
-              width: 44,
-              height: 44,
+              width: headerInteractiveTargetSize,
+              height: headerInteractiveTargetSize,
               alignItems: 'center',
               justifyContent: 'center',
               opacity: pressed ? 0.7 : 1,
@@ -624,6 +723,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       matchTriggerWidth={false}
       maxWidthCap={320}
     />
+      ) : null}
+    </>
   );
 }
 

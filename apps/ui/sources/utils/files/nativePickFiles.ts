@@ -10,12 +10,17 @@ export type NativePickedFile =
         mimeType: string | null;
     }>;
 
-export async function nativePickFiles(params?: Readonly<{ multiple?: boolean }>): Promise<NativePickedFile[]> {
+export async function nativePickFiles(params?: Readonly<{
+    multiple?: boolean;
+    /** Optional caller-owned MIME filter; generic attachment callers retain the all-types default. */
+    type?: string | readonly string[];
+}>): Promise<NativePickedFile[]> {
     const multiple = params?.multiple !== false;
+    const type = params?.type ?? '*/*';
     const DocumentPicker: any = await import('expo-document-picker');
     const result = await DocumentPicker.getDocumentAsync({
         multiple,
-        type: '*/*',
+        type,
     });
     if (!result || result.canceled) return [];
 

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     SessionHandoffProgressCheckpointSchema,
@@ -19,6 +18,7 @@ import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
@@ -471,9 +471,9 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
                 {showSpinner ? (
                     <ActivitySpinner size="small" color={theme.colors.accent.blue} />
                 ) : (
-                    <Octicons
-                        name={isFailureState ? 'alert' : isAwaitingUserResume ? 'play' : 'check'}
-                        size={18}
+                    <Icon
+                        name={isFailureState ? 'warning' : isAwaitingUserResume ? 'play' : 'check'}
+                        size={16}
                         color={isFailureState ? theme.colors.state.danger.foreground : theme.colors.accent.blue}
                     />
                 )}

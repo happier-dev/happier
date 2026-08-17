@@ -55,8 +55,9 @@ async function maybePretranscodeWebBlobToWav(blob: Blob): Promise<File | null> {
         return null;
     }
 
-    const audioContext = new AudioContextCtor();
+    let audioContext: InstanceType<typeof AudioContextCtor> | null = null;
     try {
+        audioContext = new AudioContextCtor();
         const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
         const monoSamples = mixAudioBufferToMono(decoded);
         const wavBytes = encodeWavPcm16({
@@ -67,19 +68,25 @@ async function maybePretranscodeWebBlobToWav(blob: Blob): Promise<File | null> {
     } catch {
         return null;
     } finally {
-        await audioContext.close?.();
+        try {
+            await audioContext?.close?.();
+        } catch {
+            // Browser Web Audio is only an optional normalization optimization.
+            // Context startup/teardown failures must preserve daemon-side decode.
+        }
     }
 }
 
 export async function prepareDaemonVoiceInferenceSttSource(params: Readonly<{
     uri: string;
+    webBlob?: Blob | null;
 }>): Promise<Readonly<{
     source: LocalUploadSource;
     inputMimeType: string;
     normalization: DaemonVoiceInferenceNormalizationDecision;
 }>> {
     if (Platform.OS === 'web' && params.uri.startsWith('blob:')) {
-        const blob = await (await runtimeFetch(params.uri)).blob();
+        const blob = params.webBlob ?? await (await runtimeFetch(params.uri)).blob();
         const transcodedWav = await maybePretranscodeWebBlobToWav(blob);
         if (transcodedWav) {
             return {

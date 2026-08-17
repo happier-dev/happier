@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -14,8 +13,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { BadgeGrid, type BadgeGridItem } from '@/components/ui/layout/BadgeGrid';
-import { useAllMachines, useMachineListByServerId, useSettings } from '@/sync/domains/state/storage';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import { useSettings } from '@/sync/domains/state/storage';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import {
     getAgentCore,
@@ -48,12 +46,10 @@ import { AgentAuthenticationTerminalPane } from '@/components/settings/agents/au
 import { scheduleAgentAuthenticationRefreshes } from '@/components/settings/agents/authentication/scheduleAgentAuthenticationRefreshes';
 import { useAgentAuthenticationState } from '@/components/settings/agents/authentication/useAgentAuthenticationState';
 import { resolveEffectiveConfiguredRuntimeControlSurface } from '@/sync/domains/session/control/effectiveRuntimeControlSurface';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useProfile } from '@/sync/store/hooks';
-import { ContextBar } from '@/components/contextBar/ContextBar';
-import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import {
@@ -74,6 +70,8 @@ import {
     readBackendTargetSettingValue,
 } from '@/agents/backendCatalog/backendTargetEnablement';
 import { PluginDetailGenericSettingsSection } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
+import type { ScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
+import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import { ExternalSessionsAgentSettingsSection } from '@/components/settings/externalSessions/ExternalSessionsAgentSettingsSection';
 import type {
     ExternalSessionsQualifiedAgent,
@@ -82,8 +80,15 @@ import { useExternalSessionsIntegrationController } from '@/components/settings/
 import { useExternalSessionsAutoLinkSources } from '@/components/settings/externalSessions/useExternalSessionsAutoLinkSources';
 import { buildExternalSessionsAgentBrowseHref } from '@/components/sessions/external/browse/externalSessionBrowseNavigation';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
-
-const Ionicons = SafeIonicons;
+import { Icon } from '@/components/ui/icons/Icon';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import {
+    useMachineAdministrationTargetSelection,
+    type FreshMachineAdministrationExecutionTargetV1,
+    type MachineAdministrationTargetSelectionV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 function resolveExternalSessionsAgentBinding(
     projection: PluginProjectionV2 | null | undefined,
@@ -199,44 +204,21 @@ function resolveProjectionIconName(projection: ResolvedAgentCatalogEntry): strin
     return projection.iconAgentId ? getAgentCore(projection.iconAgentId).ui.agentPickerIconName : projection.iconName;
 }
 
-function resolveActiveServerMachineIds(params: Readonly<{
-    capabilityServerId: string | null;
-    machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-    machines: readonly Machine[];
-}>): string[] {
-    const capabilityServerId = params.capabilityServerId;
-    if (!capabilityServerId) return [];
-
-    const serverMachineEntries = params.machineListByServerId[capabilityServerId];
-    if (Array.isArray(serverMachineEntries) && serverMachineEntries.length > 0) {
-        return serverMachineEntries
-            .filter((entry) => entry.revokedAt == null)
-            .map((entry) => entry.id);
-    }
-
-    const machineIdsClaimedByOtherServers = new Set<string>();
-    for (const [serverId, entries] of Object.entries(params.machineListByServerId)) {
-        if (serverId === capabilityServerId || !Array.isArray(entries)) continue;
-        for (const entry of entries) {
-            if (entry?.revokedAt == null && typeof entry?.id === 'string' && entry.id.trim().length > 0) {
-                machineIdsClaimedByOtherServers.add(entry.id);
-            }
-        }
-    }
-
-    return params.machines
-        .filter((machine) => machine.revokedAt == null && !machineIdsClaimedByOtherServers.has(machine.id))
-        .map((machine) => machine.id);
-}
-
 type AgentSettingsCore = NonNullable<ReturnType<typeof getAgentCore>>;
 
-const AgentSettingsNotFound = React.memo(function AgentSettingsNotFound(props: Readonly<{ theme: ReturnType<typeof useUnistyles>['theme'] }>) {
+const AgentSettingsNotFound = React.memo(function AgentSettingsNotFound(props: Readonly<{
+    theme: ReturnType<typeof useUnistyles>['theme'];
+    targetSelection: MachineAdministrationTargetSelectionV1;
+}>) {
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            <MachineAdministrationTargetSelector
+                selection={props.targetSelection}
+                testIDPrefix="settings.agents.administration.target"
+            />
             <ItemGroup>
                 <View style={{ alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 }}>
-                    <Ionicons name="warning-outline" size={48} color={props.theme.colors.state.danger.foreground} style={{ marginBottom: 16 }} />
+                    <Icon name="warning" size={48} color={props.theme.colors.state.danger.foreground} style={{ marginBottom: 16 }} />
                     <Text style={{ ...Typography.default('semiBold'), fontSize: 16, color: props.theme.colors.state.danger.foreground, textAlign: 'center', marginBottom: 8 }}>
                         {t('settingsAgents.notFoundTitle')}
                     </Text>
@@ -277,13 +259,13 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                 <Item
                     title={title}
                     subtitle={subtitle}
-                    icon={<Ionicons name={iconName as any} size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name={iconName as any} size={29} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
                 <Item
                     title={t('settingsAgents.enabledTitle')}
                     subtitle={t('settingsAgents.enabledSubtitle')}
-                    icon={<Ionicons name="toggle-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="toggle-right" size={29} color={theme.colors.text.secondary} />}
                     rightElement={backendEnabled === null ? undefined : <Switch value={backendEnabled} onValueChange={setBackendEnabled} />}
                     showChevron={false}
                     onPress={() => {
@@ -296,7 +278,7 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                 <Item
                     title={props.projection.isBuiltIn ? t('settingsAgents.notAvailable') : props.projection.title}
                     subtitle={props.projection.isBuiltIn ? t('settingsAgents.notFoundSubtitle') : subtitle}
-                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             </ItemGroup>
@@ -311,11 +293,9 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     core: AgentSettingsCore | null;
     projection: ResolvedAgentCatalogEntry;
     authPlugin: ResolvedAgentCatalogEntry['authPlugin'];
-    capabilityServerId: string | null;
-    activeServerMachines: readonly Machine[];
+    targetSelection: MachineAdministrationTargetSelectionV1;
+    executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
     compatibilityTargetKeys: readonly string[];
-    selectedMachineId: string | null;
-    setSelectedMachineId: (machineId: string | null) => void;
     pluginSettingsProjection: PluginProjectionEntry | null;
     daemonOperationsAvailable: boolean;
     externalSessionsProjectionPhase: 'idle' | 'loading' | 'ready' | 'unsupported' | 'error';
@@ -334,11 +314,9 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         core,
         projection,
         authPlugin,
-        capabilityServerId,
-        activeServerMachines,
+        targetSelection,
+        executionTarget,
         compatibilityTargetKeys,
-        selectedMachineId,
-        setSelectedMachineId,
         pluginSettingsProjection,
         daemonOperationsAvailable,
         externalSessionsProjectionPhase,
@@ -348,6 +326,11 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         installIntent,
     } = props;
     const providerIconName = resolveProjectionIconName(projection);
+    const activeServer = useActiveServerSnapshot();
+    const accountServerIdentityId = React.useMemo(
+        () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
+        [activeServer.serverId],
+    );
     const profile = useProfile();
     const settings = useSettings();
     const paneScopeId = React.useMemo(
@@ -365,10 +348,6 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 
     const popoverBoundaryRef = React.useRef<any>(null);
     const [openMenu, setOpenMenu] = React.useState<null | string>(null);
-
-    const setSetting = React.useCallback((key: string, value: unknown) => {
-        applySettings({ [key]: value } as Partial<typeof settings>);
-    }, [applySettings]);
 
     const sessionModeDescriptor = runtimeAgentId ? getAgentSessionModeDescriptor(runtimeAgentId) : null;
     const agentCliRuntimeSpec = runtimeAgentId ? getAgentCliRuntimeSpec(runtimeAgentId) : null;
@@ -408,7 +387,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     const setDefaultAuthSettings = React.useCallback((next: ConnectedServicesDefaultAuthByAgentIdV1) => {
         applySettings({
             connectedServicesDefaultAuthByAgentIdV1: next,
-        } as Partial<typeof settings>);
+        });
     }, [applySettings]);
     const dismissPoolAdoptionSuggestion = React.useCallback((key: string) => {
         applySettings({
@@ -416,7 +395,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                 ...(settings.connectedServicesDefaultAuthPoolAdoptionDismissedByKey ?? {}),
                 [key]: true,
             },
-        } as Partial<typeof settings>);
+        });
     }, [applySettings, settings.connectedServicesDefaultAuthPoolAdoptionDismissedByKey]);
 
     const normalizedProviderStateSharingSettings = React.useMemo(
@@ -427,7 +406,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     const setProviderStateSharingSettings = React.useCallback((next: ConnectedServicesProviderStateSharingSettingsV1) => {
         applySettings({
             connectedServicesProviderStateSharingSettingsV1: next,
-        } as Partial<typeof settings>);
+        });
     }, [applySettings]);
 
     const supportsConnectedServicesDefaultAuth =
@@ -520,8 +499,31 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
             ? (core.cli.installBanner.installCommand ?? t('settingsAgents.installInfoSeeSetupGuide'))
             : t('settingsAgents.installInfoUseAgentCliInstaller');
 
-    type MachineRecord = (typeof activeServerMachines)[number];
-    const primaryMachine = activeServerMachines.find((machine) => machine.id === selectedMachineId) ?? null;
+    const primaryMachine = executionTarget?.machine ?? null;
+    const capabilityServerId = executionTarget?.serverId ?? null;
+    const capabilityServerIdentityId = executionTarget?.target.serverIdentityId ?? null;
+    const resolveCurrentExecutionTarget = React.useCallback(() => {
+        const expectedTarget = executionTarget?.target;
+        const resolvedTarget = targetSelection.resolveExecutionTarget();
+        if (
+            !expectedTarget
+            || !resolvedTarget
+            || !machineAdministrationTargetsEqual(expectedTarget, resolvedTarget.target)
+        ) {
+            return null;
+        }
+        return {
+            machineId: resolvedTarget.machine.id,
+            serverId: resolvedTarget.serverId,
+        };
+    }, [executionTarget?.target, targetSelection]);
+    const isDaemonSettingsTargetCurrent = React.useCallback((target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>) => {
+        const resolvedTarget = targetSelection.resolveExecutionTarget();
+        return resolvedTarget !== null
+            && resolvedTarget.machine.id === target.machineId
+            && resolvedTarget.serverId === target.serverId
+            && resolvedTarget.target.serverIdentityId === target.serverIdentityId;
+    }, [targetSelection]);
     const externalSessionsControllerAgent = React.useMemo(() => (
         externalSessionsAgent
             ? {
@@ -535,7 +537,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         serverId: capabilityServerId,
         projectionGeneration: `${externalSessionsRefreshKey ?? ''}:${primaryMachine?.daemonStateVersion ?? 0}`,
         agent: externalSessionsControllerAgent,
-        enabled: externalSessionsEnabled && externalSessionsAgent !== null,
+        enabled: externalSessionsEnabled && externalSessionsAgent !== null && primaryMachine !== null,
     });
     const externalSessionsInventoryState = React.useMemo(() => {
         if (
@@ -589,16 +591,8 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         () => (runtimeAgentId && isAgentAuthProbeSafeForBackgroundChecks(runtimeAgentId) ? [runtimeAgentId] : []),
         [runtimeAgentId],
     );
-    const machineItems = React.useMemo((): DropdownMenuItem[] => {
-        return activeServerMachines.map((machine: MachineRecord) => ({
-            id: machine.id,
-            title: machine.metadata?.displayName ?? machine.metadata?.host ?? machine.id,
-            subtitle: machine.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
-        }));
-    }, [activeServerMachines, theme.colors.text.secondary]);
     const cliAvailability = useCLIDetection(primaryMachine?.id ?? null, {
-        autoDetect: true,
+        autoDetect: primaryMachine !== null,
         agentIds: cliAgentId ? [cliAgentId] : [],
         includeLoginStatus: Boolean(cliAgentId),
         includeLoginStatusForAgentIds: automaticLoginStatusAgentIds,
@@ -680,14 +674,14 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         cancelPendingAuthRefreshesRef.current?.();
         cancelPendingAuthRefreshesRef.current = scheduleAgentAuthenticationRefreshes({
             refresh: () => {
-                if (!cliAgentId) return;
+                if (!cliAgentId || !resolveCurrentExecutionTarget()) return;
                 cliAvailability.refresh({
                     bypassCache: true,
                     includeLoginStatusForAgentIds: [cliAgentId],
                 });
             },
         });
-    }, [cliAgentId, cliAvailability]);
+    }, [cliAgentId, cliAvailability, resolveCurrentExecutionTarget]);
     const closeProviderAuthTerminal = React.useCallback(() => {
         pane.closeBottom();
         triggerProviderAuthRefreshes();
@@ -704,15 +698,9 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 
     const main = (
         <ItemList style={{ paddingTop: 0 }}>
-                <ContextBar
-                    mode="machine_only"
-                    machine={{
-                        title: t('settingsAgents.targetMachineTitle'),
-                        selectedId: primaryMachine?.id ?? null,
-                        subtitle: primaryMachine?.metadata?.displayName ?? primaryMachine?.metadata?.host ?? t('machine.detectedCliUnknown'),
-                        items: machineItems,
-                        onSelect: setSelectedMachineId,
-                    }}
+                <MachineAdministrationTargetSelector
+                    selection={targetSelection}
+                    testIDPrefix="settings.agents.administration.target"
                 />
                 {pluginSettingsProjection ? (
                     <PluginDetailGenericSettingsSection
@@ -720,27 +708,30 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         projection={pluginSettingsProjection}
                         machineId={primaryMachine?.id ?? null}
                         serverId={capabilityServerId}
+                        accountServerIdentityId={accountServerIdentityId}
+                        daemonServerIdentityId={capabilityServerIdentityId}
                         daemonOperationsAvailable={daemonOperationsAvailable}
+                        isDaemonTargetCurrent={isDaemonSettingsTargetCurrent}
                     />
                 ) : null}
                 <ItemGroup title={t('settingsAgents.configuration')} footer={core ? t(core.subtitleKey) : t('settingsAgents.footer')}>
                 <Item
                     title={projection.title}
                     subtitle={projection.subtitle ?? projection.agentId}
-                    icon={<Ionicons name={providerIconName as any} size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name={providerIconName as any} size={29} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
                 <Item
                     title={primaryMachineLabel ? `${primaryMachineLabel} · ${detectedCliStatus}` : detectedCliStatus}
                     subtitle={t(resolveAgentChannelLabelKey(projection.channel))}
-                    icon={<Ionicons name={statusIconName as any} size={29} color={statusIconColor} />}
+                    icon={<Icon name={statusIconName as any} size={29} color={statusIconColor} />}
                         mode="info"
                     />
                     {providerTargetKey ? (
                         <Item
                             title={t('settingsAgents.enabledTitle')}
                             subtitle={t('settingsAgents.enabledSubtitle')}
-                            icon={<Ionicons name="toggle-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="toggle-right" size={29} color={theme.colors.text.secondary} />}
                             rightElement={<Switch value={backendEnabled ?? undefined} onValueChange={setBackendEnabled} />}
                             showChevron={false}
                             onPress={() => {
@@ -771,7 +762,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         itemTrigger={{
                             title: t('settingsSession.permissions.defaultPermissionModeTitle'),
                             subtitle: getPermissionModeLabelForAgentType(runtimeAgentId, permissionMode),
-                            icon: <Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.state.success.foreground} />,
+                            icon: <Icon name="shield-check" size={29} color={theme.colors.state.success.foreground} />,
                         }}
                         items={getPermissionModeOptionsForAgentType(runtimeAgentId).map((opt) => ({
                             id: opt.value,
@@ -779,7 +770,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                             subtitle: opt.description,
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name={opt.icon as any} size={22} color={theme.colors.text.secondary} />
+                                    <Icon name={opt.icon as any} size={20} color={theme.colors.text.secondary} />
                                 </View>
                             ),
                         }))}
@@ -833,11 +824,16 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         state={agentAuthentication}
                         showActions={supportsDesktopControls}
                         onCheckNow={() => {
-                            if (!cliAgentId) return;
+                            if (!cliAgentId || !resolveCurrentExecutionTarget()) return;
                             cliAvailability.refresh({ bypassCache: true, includeLoginStatusForAgentIds: [cliAgentId] });
                         }}
                         onLaunchLogin={() => {
-                            if (!agentAuthentication.canLaunchLogin || !supportsDesktopControls || !cliAgentId) return;
+                            if (
+                                !agentAuthentication.canLaunchLogin
+                                || !supportsDesktopControls
+                                || !cliAgentId
+                                || !resolveCurrentExecutionTarget()
+                            ) return;
                             pane.openBottom({ tabId: AGENT_AUTH_TERMINAL_TAB_ID });
                         }}
                     />
@@ -847,7 +843,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         testID="settings-provider-target-machine"
                         title={t('settingsAgents.targetMachineTitle')}
                         subtitle={primaryMachineLabel ?? t('machine.detectedCliUnknown')}
-                        icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="desktop" size={29} color={theme.colors.text.secondary} />}
                         mode="info"
                     />
                     {core ? (
@@ -855,20 +851,21 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                             testID="settings-provider-detected-cli"
                             title={t('settingsAgents.detectedCliTitle')}
                             subtitle={`${core.cli.detectKey} • ${detectedCliStatus}`}
-                            icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="code" size={29} color={theme.colors.text.secondary} />}
                             mode="info"
                         />
                     ) : null}
                     <Item
                         title={t('settingsAgents.installSetupTitle')}
                         subtitle={installSetupSubtitle}
-                        icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
                         mode="info"
                     />
                     {core && providerCliCapabilityId ? (
                         <AgentCliInstallItem
                             machineId={primaryMachine?.id ?? null}
                             serverId={capabilityServerId}
+                            resolveExecutionTarget={resolveCurrentExecutionTarget}
                             capabilityId={providerCliCapabilityId}
                             providerTitle={projection.title}
                             installed={providerCliAvailable}
@@ -877,7 +874,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                             intent={installIntent}
                             onManagedUpdateConfirmed={() => setProviderCliSourcePreference('managed-first')}
                             onInstalled={() => {
-                                if (!cliAgentId) return;
+                                if (!cliAgentId || !resolveCurrentExecutionTarget()) return;
                                 cliAvailability.refresh({
                                     bypassCache: true,
                                     includeLoginStatusForAgentIds: [cliAgentId],
@@ -902,7 +899,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                                 title: t('settingsAgents.cliSourcePreference.title'),
                                 subtitle: t('settingsAgents.cliSourcePreference.subtitle'),
                                 showSelectedSubtitle: false,
-                                icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.text.secondary} />,
+                                icon: <Icon name="arrows-left-right" size={29} color={theme.colors.text.secondary} />,
                                 itemProps: {
                                     testID: 'settings-provider-cli-source-preference',
                                 },
@@ -914,7 +911,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                                     subtitle: t('settingsAgents.cliSourcePreference.options.systemFirst.subtitle'),
                                     icon: (
                                         <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                            <Ionicons name="desktop-outline" size={22} color={theme.colors.text.secondary} />
+                                            <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
                                         </View>
                                     ),
                                 },
@@ -924,7 +921,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                                     subtitle: t('settingsAgents.cliSourcePreference.options.managedFirst.subtitle'),
                                     icon: (
                                         <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                            <Ionicons name="download-outline" size={22} color={theme.colors.text.secondary} />
+                                            <Icon name="download" size={20} color={theme.colors.text.secondary} />
                                         </View>
                                     ),
                                 },
@@ -939,7 +936,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         <Item
                             title={t('settingsAgents.setupGuideUrlTitle')}
                             subtitle={core.cli.installBanner.guideUrl}
-                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
                             mode="info"
                             copy={core.cli.installBanner.guideUrl}
                         />
@@ -948,7 +945,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         <Item
                             title={t('settingsAgents.connectedServiceTitle')}
                             subtitle={t(core.uiConnectedService.labelKey)}
-                            icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="cloud" size={29} color={theme.colors.text.secondary} />}
                             mode="info"
                         />
                     ) : null}
@@ -968,6 +965,9 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                                 ? externalSessionsController.retryInventory
                                 : null
                         }
+                        hasMoreInventory={externalSessionsController.hasMoreInventory}
+                        loadingMoreInventory={externalSessionsController.loadingMoreInventory}
+                        onLoadMoreInventory={externalSessionsController.loadMoreInventory}
                         onBrowse={
                             primaryMachine
                             && externalSessionsAgent
@@ -1002,63 +1002,62 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         <ItemGroup title={t('settingsAgents.models')}>
                             <Item
                                 title={t('settingsProviders.models.manage')}
-                                icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
                                 onPress={() => router.push({
                                     pathname: '/(app)/settings/agents/[agentId]/models',
                                     params: {
                                         agentId,
                                         agentTargetKey: projection.backendTargetKey,
                                         runtimeAgentId: runtimeAgentId ?? '',
-                                        machineId: selectedMachineId ?? '',
                                     },
                                 } as never)}
                             />
                             <Item
                                 title={t('settingsAgents.modelSelectionTitle')}
                                 subtitle={core.model.supportsSelection ? t('settingsAgents.supported') : t('settingsAgents.notSupported')}
-                                icon={<Ionicons name="list-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="list" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                             <Item
                                 title={t('settingsAgents.freeformModelIdsTitle')}
                                 subtitle={core.model.supportsFreeform ? t('settingsAgents.allowed') : t('settingsAgents.notAllowed')}
-                                icon={<Ionicons name="create-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="pencil-simple" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                             <Item
                                 title={t('settingsAgents.defaultModelTitle')}
                                 subtitle={defaultModelLabel}
-                                icon={<Ionicons name="star-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="star" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                             <Item
                                 title={t('settingsAgents.catalogModelListTitle')}
                                 subtitle={catalogModelListText}
-                                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="stack" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                             <Item
                                 title={t('settingsAgents.dynamicModelProbeTitle')}
                                 subtitle={dynamicProbe}
-                                icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="pulse" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                             <Item
                                 title={t('settingsAgents.nonAcpApplyScopeTitle')}
                                 subtitle={nonAcpApplyScope}
-                                icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="arrow-right" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                             <Item
                                 title={t('settingsAgents.acpApplyBehaviorTitle')}
                                 subtitle={acpApplyBehavior}
-                                icon={<Ionicons name="sync-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="arrows-clockwise" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                             <Item
                                 title={t('settingsAgents.acpConfigOptionTitle')}
                                 subtitle={core.model.acpModelConfigOptionId ?? t('settingsAgents.notAvailable')}
-                                icon={<Ionicons name="settings-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
                                 mode="info"
                             />
                         </ItemGroup>
@@ -1066,28 +1065,41 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                 ) : null}
             </ItemList>
     );
+    const authTerminalBottomPaneAdapter = React.useMemo(() => ({
+        destinationIds: [AGENT_AUTH_TERMINAL_TAB_ID],
+        render: () => (
+            authTerminalOpen && agentAuthentication.loginLaunch && cliAgentId ? (
+                <AgentAuthenticationTerminalPane
+                    agentId={cliAgentId}
+                    machineId={agentAuthentication.machineId}
+                    machineHomeDir={agentAuthentication.machineHomeDir}
+                    loginLaunch={agentAuthentication.loginLaunch}
+                    onRequestClose={closeProviderAuthTerminal}
+                    onTerminalExit={handleProviderAuthTerminalExit}
+                />
+            ) : null
+        ),
+    }), [
+        agentAuthentication.loginLaunch,
+        agentAuthentication.machineHomeDir,
+        agentAuthentication.machineId,
+        authTerminalOpen,
+        cliAgentId,
+        closeProviderAuthTerminal,
+        handleProviderAuthTerminalExit,
+    ]);
 
     return (
         <View
             ref={popoverBoundaryRef}
             style={{ flex: 1, minHeight: 0 }}
+            {...pane.overlayFocusReturnCaptureProps}
         >
             {supportsDesktopControls ? (
                 <AppPaneScopeHost
                     scopeId={paneScopeId}
                     main={main}
-                    bottomPane={
-                        authTerminalOpen && agentAuthentication.loginLaunch && cliAgentId ? (
-                            <AgentAuthenticationTerminalPane
-                                agentId={cliAgentId}
-                                machineId={agentAuthentication.machineId}
-                                machineHomeDir={agentAuthentication.machineHomeDir}
-                                loginLaunch={agentAuthentication.loginLaunch}
-                                onRequestClose={closeProviderAuthTerminal}
-                                onTerminalExit={handleProviderAuthTerminalExit}
-                            />
-                        ) : null
-                    }
+                    bottomPaneBuiltinAdapter={authTerminalBottomPaneAdapter}
                 />
             ) : (
                 // Provider settings do not require the multi-pane host in the browser.
@@ -1101,16 +1113,8 @@ export default React.memo(function AgentSettingsScreen() {
     const { theme } = useUnistyles();
     const params = useLocalSearchParams();
     const settings = useSettings();
-    const machines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const activeServerSnapshot = useActiveServerSnapshot();
-    const activeServerId = React.useMemo(() => {
-        const value = activeServerSnapshot.serverId;
-        return typeof value === 'string' && value.trim().length > 0 ? value : null;
-    }, [activeServerSnapshot.serverId]);
-    const capabilityServerId = React.useMemo(
-        () => String(activeServerSnapshot.serverId ?? '').trim() || null,
-        [activeServerSnapshot.serverId],
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents,
     );
     const rawAgentId = params.agentId;
     const normalizedAgentId = typeof rawAgentId === 'string' ? rawAgentId.trim() : '';
@@ -1125,13 +1129,6 @@ export default React.memo(function AgentSettingsScreen() {
     }, [normalizedAgentId, routePluginId]);
     const hasQualifiedAgentRoute = routePluginId.length > 0;
 
-    const activeServerMachineIds = React.useMemo(() => {
-        return resolveActiveServerMachineIds({
-            capabilityServerId,
-            machineListByServerId,
-            machines,
-        });
-    }, [capabilityServerId, machineListByServerId, machines]);
     const recoveryInstallRequest = React.useMemo(() => {
         const machineId = typeof params.machineId === 'string' ? params.machineId.trim() : '';
         const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
@@ -1141,66 +1138,60 @@ export default React.memo(function AgentSettingsScreen() {
                 : params.installIntent === 'install'
                     ? 'install'
                     : null;
-        if (
-            !machineId
-            || !installIntent
-            || serverId !== capabilityServerId
-            || !activeServerMachineIds.includes(machineId)
-        ) {
+        if (!machineId || !serverId || !installIntent) {
             return null;
         }
         return { machineId, serverId, installIntent } as const;
     }, [
-        activeServerMachineIds,
-        capabilityServerId,
         params.installIntent,
         params.machineId,
         params.serverId,
     ]);
-    const activeServerMachines = React.useMemo(() => {
-        if (activeServerMachineIds.length === 0) return [] as typeof machines;
-        const machineMap = new Map(machines.map((machine) => [machine.id, machine] as const));
-        return activeServerMachineIds
-            .map((machineId: string) => machineMap.get(machineId) ?? null)
-            .filter((machine): machine is (typeof machines)[number] => machine !== null);
-    }, [activeServerMachineIds, machines]);
-    const defaultMachineId = activeServerMachines[0]?.id ?? null;
-    const {
-        machineId: selectedMachineId,
-        setMachineId: setSelectedMachineId,
-    } = useContextBarSelection({
-        selectionKey: `agentSettings.${normalizedAgentId}`,
-        defaultMachineId,
-    });
-    React.useEffect(() => {
-        if (selectedMachineId && activeServerMachineIds.includes(selectedMachineId)) {
-            return;
-        }
-        setSelectedMachineId(defaultMachineId);
-    }, [activeServerMachineIds, defaultMachineId, selectedMachineId, setSelectedMachineId]);
-    const recoveryInstallRequestKey = recoveryInstallRequest
-        ? `${recoveryInstallRequest.serverId}\u0000${recoveryInstallRequest.machineId}\u0000${recoveryInstallRequest.installIntent}`
+    const recoveryInstallTarget = React.useMemo(() => {
+        if (!recoveryInstallRequest) return null;
+        const candidate = administrationTargetSelection.candidates.find((entry) => (
+            entry.target.machineId === recoveryInstallRequest.machineId
+            && (
+                entry.target.serverIdentityId === recoveryInstallRequest.serverId
+                || areServerProfileIdentifiersEquivalent(
+                    entry.target.serverIdentityId,
+                    recoveryInstallRequest.serverId,
+                )
+            )
+        ));
+        return candidate
+            ? { target: candidate.target, installIntent: recoveryInstallRequest.installIntent }
+            : null;
+    }, [administrationTargetSelection.candidates, recoveryInstallRequest]);
+    const recoveryInstallRequestKey = recoveryInstallTarget
+        ? `${recoveryInstallTarget.target.serverIdentityId}\u0000${recoveryInstallTarget.target.machineId}\u0000${recoveryInstallTarget.installIntent}`
         : null;
     const appliedRecoveryInstallRequestRef = React.useRef<string | null>(null);
     React.useEffect(() => {
-        if (!recoveryInstallRequest || !recoveryInstallRequestKey) return;
+        if (!recoveryInstallTarget || !recoveryInstallRequestKey) return;
         if (appliedRecoveryInstallRequestRef.current === recoveryInstallRequestKey) return;
         appliedRecoveryInstallRequestRef.current = recoveryInstallRequestKey;
-        setSelectedMachineId(recoveryInstallRequest.machineId);
-    }, [recoveryInstallRequest, recoveryInstallRequestKey, setSelectedMachineId]);
-    const projectionMachineId =
-        recoveryInstallRequest
-        && appliedRecoveryInstallRequestRef.current !== recoveryInstallRequestKey
-            ? recoveryInstallRequest.machineId
-            : selectedMachineId ?? defaultMachineId;
+        administrationTargetSelection.selectTarget(recoveryInstallTarget.target);
+    }, [administrationTargetSelection, recoveryInstallRequestKey, recoveryInstallTarget]);
+    const executionTarget = React.useMemo(() => {
+        const selectedTarget = administrationTargetSelection.selectedTarget;
+        const resolvedTarget = administrationTargetSelection.resolveExecutionTarget();
+        return selectedTarget !== null
+            && resolvedTarget !== null
+            && machineAdministrationTargetsEqual(selectedTarget, resolvedTarget.target)
+            ? resolvedTarget
+            : null;
+    }, [administrationTargetSelection]);
     const installIntent =
-        recoveryInstallRequest?.machineId === projectionMachineId
-            ? recoveryInstallRequest.installIntent
+        recoveryInstallTarget
+        && executionTarget
+        && machineAdministrationTargetsEqual(recoveryInstallTarget.target, executionTarget.target)
+            ? recoveryInstallTarget.installIntent
             : undefined;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
-        machineId: projectionMachineId,
-        serverId: activeServerId,
-        enabled: Boolean(projectionMachineId && activeServerId),
+        machineId: executionTarget?.machine.id ?? null,
+        serverId: executionTarget?.serverId ?? null,
+        enabled: executionTarget !== null,
         retainInputsAcrossScopeChange: true,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
@@ -1212,7 +1203,7 @@ export default React.memo(function AgentSettingsScreen() {
         && isLegacyCompatAgentType(normalizedAgentId)
         && daemonMergedProjection.phase === 'loading'
         && !daemonMergedProjectionInputs
-        && Boolean(projectionMachineId && activeServerId);
+        && executionTarget !== null;
 
     if (waitingForLegacyCompatProjection) {
         return null;
@@ -1339,14 +1330,14 @@ export default React.memo(function AgentSettingsScreen() {
         routeQualifiedAgent,
     ]);
     const externalSessionsRefreshKey = externalSessionsBinding
-        ? `${externalSessionsBinding.generation}:${activeServerSnapshot.generation}`
+        ? `${externalSessionsBinding.generation}:${executionTarget?.serverId ?? ''}:${executionTarget?.machine.id ?? ''}`
         : null;
     if (!normalizedAgentId) {
-        return <AgentSettingsNotFound theme={theme} />;
+        return <AgentSettingsNotFound theme={theme} targetSelection={administrationTargetSelection} />;
     }
 
     if (!projection) {
-        return <AgentSettingsNotFound theme={theme} />;
+        return <AgentSettingsNotFound theme={theme} targetSelection={administrationTargetSelection} />;
     }
     if (!runtimeAgentId && !projection.authPlugin) {
         return <AgentSettingsFallbackScreenInner projection={projection} />;
@@ -1360,13 +1351,11 @@ export default React.memo(function AgentSettingsScreen() {
             core={runtimeAgentId ? getAgentCore(runtimeAgentId) : null}
             projection={projection}
             authPlugin={projection.authPlugin}
-            capabilityServerId={capabilityServerId}
-            activeServerMachines={activeServerMachines}
+            targetSelection={administrationTargetSelection}
+            executionTarget={executionTarget}
             compatibilityTargetKeys={compatibilityTargetKeys}
-            selectedMachineId={selectedMachineId}
-            setSelectedMachineId={setSelectedMachineId}
             pluginSettingsProjection={pluginSettingsProjection}
-            daemonOperationsAvailable={daemonMergedProjection.phase === 'ready'}
+            daemonOperationsAvailable={executionTarget !== null && daemonMergedProjection.phase === 'ready'}
             externalSessionsProjectionPhase={daemonMergedProjection.phase}
             externalSessionsAgent={externalSessionsBinding?.agent ?? null}
             externalSessionsBrowseAvailable={externalSessionsBinding?.browseAvailable === true}

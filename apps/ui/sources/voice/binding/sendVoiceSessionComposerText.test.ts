@@ -27,6 +27,7 @@ function createAcceptedPendingPort() {
             externalHandoffClaimed: true,
         } as const)),
         blockPendingDelivery: vi.fn(async () => {}),
+        markPendingDeliveryHandled: vi.fn(async () => {}),
     };
 }
 
@@ -36,7 +37,7 @@ describe('sendVoiceSessionComposerText', () => {
         getStorage().setState(initialStorageState, true);
     });
 
-    it('leaves externally claimed pending custody to the canonical echo settlement owner after acknowledged dispatch', async () => {
+    it('commits the exact external-handoff row through the canonical pending owner after provider acceptance', async () => {
         const events: string[] = [];
         const enqueuePendingMessage = vi.spyOn(sync, 'enqueuePendingMessage').mockImplementation(async (
             _conversationSessionId,
@@ -49,10 +50,19 @@ describe('sendVoiceSessionComposerText', () => {
             events.push(`enqueue:${localId}`);
             return { localId, accepted: true, externalHandoffClaimed: true } as const;
         });
-        const dispatch = vi.fn(async ({ localId }: Readonly<{ localId: string }>) => {
+        const dispatch = vi.fn(async ({ localId, onAccepted }: Readonly<{
+            localId: string;
+            onAccepted(): Promise<void>;
+        }>) => {
             events.push(`dispatch:${localId}`);
+            await onAccepted();
         });
-        const markPendingDeliveryHandled = vi.spyOn(sync, 'markPendingDeliveryHandled');
+        const markPendingDeliveryHandled = vi.spyOn(sync, 'markPendingDeliveryHandled').mockImplementation(async (
+            _conversationSessionId,
+            localId,
+        ) => {
+            events.push(`settle:${localId}`);
+        });
 
         await expect(submitDurableVoiceTextTurn({
             conversationSessionId: 'carrier-s1',
@@ -62,23 +72,80 @@ describe('sendVoiceSessionComposerText', () => {
         })).resolves.toEqual({
             ok: true,
             localId: 'voice-local-1',
-            disposition: 'handoff_acknowledged',
+            disposition: 'settled',
         });
 
-        expect(enqueuePendingMessage).toHaveBeenCalledWith('carrier-s1', 'hello', undefined, undefined, {
+        expect(enqueuePendingMessage).toHaveBeenCalledWith('carrier-s1', 'hello', undefined, {
+            happier: {
+                kind: 'conversation_turn.v1',
+                payload: { v: 1 },
+                conversationTurnOriginV1: {
+                    v: 1,
+                    channel: 'realtime_conversation',
+                    modality: 'voice',
+                },
+            },
+        }, {
             localId: 'voice-local-1',
             deliveryMode: 'external_handoff',
             requestedAction: { v: 1, kind: 'send_now' },
         });
-        expect(markPendingDeliveryHandled).not.toHaveBeenCalled();
+        expect(markPendingDeliveryHandled).toHaveBeenCalledExactlyOnceWith(
+            'carrier-s1',
+            'voice-local-1',
+        );
         expect(events).toEqual([
             'enqueue:voice-local-1',
             'dispatch:voice-local-1',
+            'settle:voice-local-1',
         ]);
     });
 
-    it('does not expose obsolete explicit settlement authority on the voice pending port', async () => {
-        const dispatch = vi.fn(async () => undefined);
+    it('lets the dispatcher settle the pending row at its exact provider-acceptance boundary', async () => {
+        const events: string[] = [];
+        const pendingPort = {
+            enqueuePendingMessage: vi.fn(async ({ localId }: Readonly<{ localId: string }>) => ({
+                localId,
+                accepted: true,
+                externalHandoffClaimed: true,
+            } as const)),
+            blockPendingDelivery: vi.fn(async () => {}),
+            markPendingDeliveryHandled: vi.fn(async () => {
+                events.push('settled');
+            }),
+        };
+
+        const result = await submitDurableVoiceTextTurn({
+            conversationSessionId: 'carrier-s1',
+            text: 'hello',
+            localId: 'voice-local-1',
+            pendingPort,
+            dispatch: async (input) => {
+                events.push('provider-accepted');
+                await (input as typeof input & Readonly<{ onAccepted(): Promise<void> }>).onAccepted();
+                events.push('provider-continuation');
+            },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            localId: 'voice-local-1',
+            disposition: 'settled',
+        });
+        expect(events).toEqual([
+            'provider-accepted',
+            'settled',
+            'provider-continuation',
+        ]);
+        expect(pendingPort.markPendingDeliveryHandled).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report a settled turn when the durable settlement write fails after dispatch resolves', async () => {
+        const blockPendingDelivery = vi.fn(async () => {});
+        const markPendingDeliveryHandled = vi.fn(async () => {
+            await Promise.resolve();
+            throw new Error('pending_settlement_failed');
+        });
 
         await expect(submitDurableVoiceTextTurn({
             conversationSessionId: 'carrier-s1',
@@ -90,16 +157,94 @@ describe('sendVoiceSessionComposerText', () => {
                     accepted: true,
                     externalHandoffClaimed: true,
                 } as const)),
-                blockPendingDelivery: vi.fn(async () => {}),
+                blockPendingDelivery,
+                markPendingDeliveryHandled,
+            },
+            // The provider acknowledges acceptance but does not await the durable
+            // settlement write, so its rejection lands after dispatch resolves.
+            dispatch: async ({ onAccepted }) => {
+                void onAccepted();
+            },
+        })).resolves.toEqual({
+            ok: true,
+            localId: 'voice-local-1',
+            disposition: 'ambiguous',
+            message: 'pending settlement failed: pending_settlement_failed',
+        });
+
+        expect(markPendingDeliveryHandled).toHaveBeenCalledTimes(1);
+        expect(blockPendingDelivery).not.toHaveBeenCalled();
+    });
+
+    it('keeps a turn settled when a post-acceptance dispatch failure races an in-flight settlement write', async () => {
+        const blockPendingDelivery = vi.fn(async () => {});
+        const markPendingDeliveryHandled = vi.fn(async () => {
+            await Promise.resolve();
+        });
+
+        await expect(submitDurableVoiceTextTurn({
+            conversationSessionId: 'carrier-s1',
+            text: 'hello',
+            localId: 'voice-local-1',
+            pendingPort: {
+                enqueuePendingMessage: vi.fn(async () => ({
+                    localId: 'voice-local-1',
+                    accepted: true,
+                    externalHandoffClaimed: true,
+                } as const)),
+                blockPendingDelivery,
+                markPendingDeliveryHandled,
+            },
+            // Acceptance is acknowledged, then the dispatcher fails (or is
+            // aborted) while the durable settlement write is still in flight.
+            dispatch: async ({ onAccepted }) => {
+                void onAccepted();
+                throw new Error('turn_aborted');
+            },
+        })).resolves.toEqual({
+            ok: true,
+            localId: 'voice-local-1',
+            disposition: 'settled',
+            message: 'turn_aborted',
+        });
+
+        expect(markPendingDeliveryHandled).toHaveBeenCalledTimes(1);
+        expect(blockPendingDelivery).not.toHaveBeenCalled();
+    });
+
+    it('does not infer provider acceptance from a dispatcher that returns without acknowledging it', async () => {
+        const dispatch = vi.fn(async () => undefined);
+        const blockPendingDelivery = vi.fn(async () => {});
+        const markPendingDeliveryHandled = vi.fn(async () => {});
+
+        await expect(submitDurableVoiceTextTurn({
+            conversationSessionId: 'carrier-s1',
+            text: 'hello',
+            localId: 'voice-local-1',
+            pendingPort: {
+                enqueuePendingMessage: vi.fn(async () => ({
+                    localId: 'voice-local-1',
+                    accepted: true,
+                    externalHandoffClaimed: true,
+                } as const)),
+                blockPendingDelivery,
+                markPendingDeliveryHandled,
             },
             dispatch,
         })).resolves.toEqual({
             ok: true,
             localId: 'voice-local-1',
-            disposition: 'handoff_acknowledged',
+            disposition: 'ambiguous',
+            message: 'voice_turn_acceptance_not_reported',
         });
 
         expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(markPendingDeliveryHandled).not.toHaveBeenCalled();
+        expect(blockPendingDelivery).toHaveBeenCalledExactlyOnceWith({
+            conversationSessionId: 'carrier-s1',
+            localId: 'voice-local-1',
+            reason: 'delivery_outcome_uncertain',
+        });
     });
 
     it('maps terminal rejection to a failure and never dispatches', async () => {
@@ -116,6 +261,7 @@ describe('sendVoiceSessionComposerText', () => {
                     terminal: true,
                 } as const)),
                 blockPendingDelivery: vi.fn(async () => {}),
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             dispatch,
         })).resolves.toEqual({
@@ -141,6 +287,7 @@ describe('sendVoiceSessionComposerText', () => {
                     settled: true,
                 } as const)),
                 blockPendingDelivery: vi.fn(async () => {}),
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             dispatch,
         })).resolves.toEqual({
@@ -152,7 +299,7 @@ describe('sendVoiceSessionComposerText', () => {
         expect(dispatch).not.toHaveBeenCalled();
     });
 
-    it('preserves an opaque caller-owned Pending local id byte-for-byte', async () => {
+    it('preserves a contract-valid opaque pending identity without using it as a provider event id', async () => {
         const enqueuePendingMessage = vi.fn(async ({ localId }: Readonly<{ localId: string }>) => ({
             localId,
             accepted: true,
@@ -167,22 +314,20 @@ describe('sendVoiceSessionComposerText', () => {
             pendingPort: {
                 enqueuePendingMessage,
                 blockPendingDelivery: vi.fn(async () => {}),
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             dispatch,
-        })).resolves.toMatchObject({ ok: true, localId: ' opaque-local-id ' });
+        })).resolves.toMatchObject({ ok: true, localId: expect.any(String) });
 
-        expect(enqueuePendingMessage).toHaveBeenCalledWith(expect.objectContaining({
-            localId: ' opaque-local-id ',
-        }));
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-            localId: ' opaque-local-id ',
-        }));
+        const enqueuedLocalId = enqueuePendingMessage.mock.calls[0]?.[0].localId;
+        expect(enqueuedLocalId).toBe(' opaque-local-id ');
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ localId: enqueuedLocalId }));
     });
 
     it('durably enqueues before exact adapter dispatch and reuses one local id', async () => {
         const store = createVoiceSessionBindingStore();
         store.getState().bind({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
             lifetime: 'runtime_attempt',
@@ -195,8 +340,12 @@ describe('sendVoiceSessionComposerText', () => {
             events.push(`enqueue:${localId}`);
             return { localId, accepted: true, externalHandoffClaimed: true } as const;
         });
-        const sendTextTurn = vi.fn(async ({ localId }: Readonly<{ localId: string }>) => {
+        const sendTextTurn = vi.fn(async ({
+            localId,
+            onAccepted,
+        }: Readonly<{ localId: string; onAccepted(): Promise<void> }>) => {
             events.push(`dispatch:${localId}`);
+            await onAccepted();
         });
         const params = {
             conversationSessionId: 'carrier-s1',
@@ -206,35 +355,50 @@ describe('sendVoiceSessionComposerText', () => {
             pendingPort: {
                 enqueuePendingMessage,
                 blockPendingDelivery: vi.fn(async () => {}),
+                markPendingDeliveryHandled: vi.fn(async () => {
+                    events.push('settle:voice-local-1');
+                }),
             },
             getAdapter: () => ({
-                id: 'realtime_elevenlabs',
+                id: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 engineKind: 'realtime' as const,
+                transcriptSource: {
+                    pluginId: 'happier.voice.elevenlabs',
+                    contributionId: 'realtime-elevenlabs',
+                },
                 start: vi.fn(), stop: vi.fn(), toggle: vi.fn(), interrupt: vi.fn(),
                 setMuted: vi.fn(), sendContextUpdate: vi.fn(), getSnapshot: vi.fn(), sendTextTurn,
-            }),
+            }) as any,
         };
 
         const result = await sendVoiceSessionComposerText(params);
 
-        expect(result).toEqual({ ok: true, localId: 'voice-local-1', disposition: 'handoff_acknowledged' });
+        expect(result).toEqual({ ok: true, localId: 'voice-local-1', disposition: 'settled' });
         expect(sendTextTurn).toHaveBeenCalledWith({
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
             text: 'hello',
             localId: 'voice-local-1',
             deliveryCommand: 'interrupt_and_send',
+            onAccepted: expect.any(Function),
         });
         expect(events).toEqual([
             'enqueue:voice-local-1',
             'dispatch:voice-local-1',
+            'settle:voice-local-1',
         ]);
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(expect.objectContaining({
+            source: {
+                pluginId: 'happier.voice.elevenlabs',
+                contributionId: 'realtime-elevenlabs',
+            },
+        }));
     });
 
     it('routes synthetic voice conversation sessions through adapter text turns', async () => {
         const store = createVoiceSessionBindingStore();
         store.getState().bind({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
             lifetime: 'runtime_attempt',
@@ -243,7 +407,9 @@ describe('sendVoiceSessionComposerText', () => {
             updatedAt: 123,
         });
 
-        const sendTextTurn = vi.fn(async () => {});
+        const sendTextTurn = vi.fn(async (input: Readonly<{ onAccepted(): Promise<void> }>) => {
+            await input.onAccepted();
+        });
 
         const result = await sendVoiceSessionComposerText({
             conversationSessionId: 'carrier-s1',
@@ -251,7 +417,7 @@ describe('sendVoiceSessionComposerText', () => {
             store,
             pendingPort: createAcceptedPendingPort(),
             getAdapter: () => ({
-                id: 'realtime_elevenlabs',
+                id: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 start: vi.fn(),
                 stop: vi.fn(),
                 toggle: vi.fn(),
@@ -262,13 +428,14 @@ describe('sendVoiceSessionComposerText', () => {
             }) as any,
         });
 
-        expect(result).toMatchObject({ ok: true, disposition: 'handoff_acknowledged' });
+        expect(result).toMatchObject({ ok: true, disposition: 'settled' });
         expect(sendTextTurn).toHaveBeenCalledWith({
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
             text: 'hello',
             localId: expect.any(String),
             deliveryCommand: 'interrupt_and_send',
+            onAccepted: expect.any(Function),
         });
     });
 
@@ -284,7 +451,9 @@ describe('sendVoiceSessionComposerText', () => {
             updatedAt: 123,
         });
 
-        const sendTextTurn = vi.fn(async () => {});
+        const sendTextTurn = vi.fn(async (input: Readonly<{ onAccepted(): Promise<void> }>) => {
+            await input.onAccepted();
+        });
         const result = await sendVoiceSessionComposerText({
             conversationSessionId: 'carrier-s1',
             text: 'hello',
@@ -302,20 +471,21 @@ describe('sendVoiceSessionComposerText', () => {
             }) as any,
         });
 
-        expect(result).toMatchObject({ ok: true, disposition: 'handoff_acknowledged' });
+        expect(result).toMatchObject({ ok: true, disposition: 'settled' });
         expect(sendTextTurn).toHaveBeenCalledWith({
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
             text: 'hello',
             localId: expect.any(String),
             deliveryCommand: 'interrupt_and_send',
+            onAccepted: expect.any(Function),
         });
     });
 
     it('keeps unconfirmed durable input pending and never dispatches it', async () => {
         const store = createVoiceSessionBindingStore();
         store.getState().bind({
-            adapterId: 'realtime_elevenlabs', controlSessionId: 'voice-global',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs', controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1', lifetime: 'runtime_attempt', transcriptMode: 'synthetic',
             targetSessionId: 's1', updatedAt: 123,
         });
@@ -325,9 +495,10 @@ describe('sendVoiceSessionComposerText', () => {
             pendingPort: {
                 enqueuePendingMessage: vi.fn(async () => ({ localId: 'voice-local-1', accepted: false } as const)),
                 blockPendingDelivery: vi.fn(async () => {}),
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             getAdapter: () => ({
-                id: 'realtime_elevenlabs', engineKind: 'realtime' as const,
+                id: 'happier.voice.elevenlabs/realtime-elevenlabs', engineKind: 'realtime' as const,
                 start: vi.fn(), stop: vi.fn(), toggle: vi.fn(), interrupt: vi.fn(),
                 setMuted: vi.fn(), sendContextUpdate: vi.fn(), getSnapshot: vi.fn(), sendTextTurn,
             }),
@@ -353,6 +524,7 @@ describe('sendVoiceSessionComposerText', () => {
             pendingPort: {
                 enqueuePendingMessage: vi.fn(async () => ({ localId: 'voice-local-1', accepted: true, cancelled: true } as const)),
                 blockPendingDelivery: vi.fn(async () => {}),
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             getAdapter: () => ({
                 id: 'local_conversation', engineKind: 'local' as const,
@@ -391,6 +563,7 @@ describe('sendVoiceSessionComposerText', () => {
             pendingPort: {
                 enqueuePendingMessage: vi.fn(async () => ({ localId: 'voice-local-1', accepted: true, externalHandoffClaimed: true } as const)),
                 blockPendingDelivery,
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             getAdapter: () => ({
                 id: 'local_conversation',
@@ -418,13 +591,8 @@ describe('sendVoiceSessionComposerText', () => {
         });
     });
 
-    it('blocks typed method-unavailable rejection as definitely provider-unavailable and returns failure', async () => {
-        vi.spyOn(sync, 'enqueuePendingMessage').mockResolvedValue({
-            localId: 'voice-local-1',
-            accepted: true,
-            externalHandoffClaimed: true,
-        });
-        const blockPendingDelivery = vi.spyOn(sync, 'blockPendingDelivery').mockResolvedValue();
+    it('keeps a typed method-unavailable pending settlement failure ambiguous after agent admission', async () => {
+        const blockPendingDelivery = vi.fn(async () => {});
         const methodUnavailable = new RpcError(
             'RPC method not available: execution.run.stream.start.v2',
             RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
@@ -434,20 +602,67 @@ describe('sendVoiceSessionComposerText', () => {
             conversationSessionId: 'carrier-s1',
             text: 'hello',
             localId: 'voice-local-1',
+            pendingPort: {
+                enqueuePendingMessage: vi.fn(async () => ({
+                    localId: 'voice-local-1',
+                    accepted: true,
+                    externalHandoffClaimed: true,
+                } as const)),
+                blockPendingDelivery,
+                markPendingDeliveryHandled: vi.fn(async () => {
+                    throw methodUnavailable;
+                }),
+            },
+            dispatch: vi.fn(async ({ onAccepted }) => {
+                await onAccepted();
+            }),
+        })).resolves.toEqual({
+            ok: true,
+            localId: 'voice-local-1',
+            disposition: 'ambiguous',
+            message: methodUnavailable.message,
+        });
+        expect(blockPendingDelivery).toHaveBeenCalledWith({
+            conversationSessionId: 'carrier-s1',
+            localId: 'voice-local-1',
+            reason: 'delivery_outcome_uncertain',
+        });
+    });
+
+    it('blocks a typed before-effect rejection as definitely provider-rejected and returns failure', async () => {
+        const blockPendingDelivery = vi.fn(async () => {});
+        const beforeEffectRejection = Object.assign(new Error('voice_transcript_carrier_changed'), {
+            code: 'VOICE_TEXT_TURN_REJECTED_BEFORE_EFFECT',
+            pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance' as const,
+        });
+
+        await expect(submitDurableVoiceTextTurn({
+            conversationSessionId: 'carrier-s1',
+            text: 'hello',
+            localId: 'voice-local-1',
+            pendingPort: {
+                enqueuePendingMessage: vi.fn(async () => ({
+                    localId: 'voice-local-1',
+                    accepted: true,
+                    externalHandoffClaimed: true,
+                } as const)),
+                blockPendingDelivery,
+                markPendingDeliveryHandled: vi.fn(async () => {}),
+            },
             dispatch: vi.fn(async () => {
-                throw methodUnavailable;
+                throw beforeEffectRejection;
             }),
         })).resolves.toEqual({
             ok: false,
             reason: 'terminal_rejected',
             localId: 'voice-local-1',
-            message: methodUnavailable.message,
+            message: 'voice_transcript_carrier_changed',
         });
-        expect(blockPendingDelivery).toHaveBeenCalledWith(
-            'carrier-s1',
-            'voice-local-1',
-            'provider_unavailable_before_acceptance',
-        );
+        expect(blockPendingDelivery).toHaveBeenCalledWith({
+            conversationSessionId: 'carrier-s1',
+            localId: 'voice-local-1',
+            reason: 'provider_rejected_before_acceptance',
+        });
     });
 
     it('keeps an untyped method-unavailable message ambiguous instead of inferring definite rejection', async () => {
@@ -464,6 +679,7 @@ describe('sendVoiceSessionComposerText', () => {
                     externalHandoffClaimed: true,
                 } as const)),
                 blockPendingDelivery,
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             dispatch: vi.fn(async () => {
                 throw new Error('RPC method not available');
@@ -482,10 +698,10 @@ describe('sendVoiceSessionComposerText', () => {
     });
 
     it('keeps a definite rejection failed when exact-row blocking also fails', async () => {
-        const methodUnavailable = new RpcError(
-            'RPC method not available: execution.run.stream.start.v2',
-            RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        );
+        const beforeEffectRejection = Object.assign(new Error('voice_transcript_carrier_changed'), {
+            code: 'VOICE_TEXT_TURN_REJECTED_BEFORE_EFFECT',
+            pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance' as const,
+        });
 
         await expect(submitDurableVoiceTextTurn({
             conversationSessionId: 'carrier-s1',
@@ -500,15 +716,16 @@ describe('sendVoiceSessionComposerText', () => {
                 blockPendingDelivery: vi.fn(async () => {
                     throw new Error('pending_block_failed');
                 }),
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             dispatch: vi.fn(async () => {
-                throw methodUnavailable;
+                throw beforeEffectRejection;
             }),
         })).resolves.toEqual({
             ok: false,
             reason: 'terminal_rejected',
             localId: 'voice-local-1',
-            message: 'RPC method not available: execution.run.stream.start.v2; pending settlement failed: pending_block_failed',
+            message: 'voice_transcript_carrier_changed; pending settlement failed: pending_block_failed',
         });
     });
 
@@ -523,6 +740,7 @@ describe('sendVoiceSessionComposerText', () => {
             pendingPort: {
                 enqueuePendingMessage: vi.fn(async () => ({ localId: 'voice-local-1', accepted: true } as const)),
                 blockPendingDelivery: vi.fn(async () => {}),
+                markPendingDeliveryHandled: vi.fn(async () => {}),
             },
             dispatch,
         })).resolves.toEqual({

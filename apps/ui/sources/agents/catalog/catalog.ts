@@ -14,7 +14,6 @@ import {
 } from '@/agents/registry/registryCore';
 
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
-import { applyProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol';
 type RegistryUiModule = typeof import('@/agents/registry/registryUi');
 type AgentIconTintTheme = Parameters<RegistryUiModule['getAgentIconTintColor']>[1];
@@ -68,19 +67,6 @@ export function resolveBundledAgentIdFromContributionIdentity(identity: unknown)
         }
     }
     return null;
-}
-
-export function writeAgentVendorResumeIdToMetadata<Metadata extends Record<string, unknown>>(
-    metadata: Metadata,
-    agentId: AgentId,
-    vendorResumeId: string,
-): Metadata {
-    const vendorResumeIdField = getAgentCore(agentId).resume.vendorResumeIdField;
-    if (!vendorResumeIdField) return metadata;
-    return applyProviderSessionIdSessionMetadata(metadata, {
-        metadataKey: vendorResumeIdField,
-        value: vendorResumeId,
-    });
 }
 
 export function getAgentUi(id: AgentId): AgentUiConfig {

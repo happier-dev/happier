@@ -1,70 +1,58 @@
 import { decodeAutomationTemplate, encodeAutomationTemplate } from './automationTemplateCodec';
 import type { AutomationTemplate } from './automationTypes';
+import {
+    AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND,
+    AUTOMATION_TEMPLATE_PLAIN_V1_KIND,
+    normalizeAutomationTemplateEnvelopeStoredRead,
+    type AutomationTemplateEnvelope,
+    type EncryptedAutomationTemplateEnvelope,
+    type PlainAutomationTemplateEnvelope,
+} from '@happier-dev/protocol';
 
-export const AUTOMATION_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_encrypted_v1';
-export const AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND = 'happier_automation_template_plain_v1';
+export const AUTOMATION_TEMPLATE_ENVELOPE_KIND =
+    AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND;
+export const AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND =
+    AUTOMATION_TEMPLATE_PLAIN_V1_KIND;
+export type {
+    AutomationTemplateEnvelope,
+    EncryptedAutomationTemplateEnvelope,
+    PlainAutomationTemplateEnvelope,
+};
 
-export type EncryptedAutomationTemplateEnvelope = Readonly<{
-    kind: typeof AUTOMATION_TEMPLATE_ENVELOPE_KIND;
-    payloadCiphertext: string;
-    existingSessionId?: string;
-}>;
+export type AutomationTemplatePayloadResolution =
+    | Readonly<{
+        kind: 'ready';
+        envelope: AutomationTemplateEnvelope;
+        payload: unknown;
+    }>
+    | Readonly<{
+        kind: 'locked';
+        reason: 'encryption_material_unavailable';
+    }>
+    | Readonly<{
+        kind: 'invalid';
+    }>;
 
-export type PlainAutomationTemplateEnvelope = Readonly<{
-    kind: typeof AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND;
-    payload: unknown;
-    existingSessionId?: string;
-}>;
-
-export type AutomationTemplateEnvelope =
-    | EncryptedAutomationTemplateEnvelope
-    | PlainAutomationTemplateEnvelope;
-
-function tryParseEnvelope(payload: string): AutomationTemplateEnvelope | null {
+function tryParseStoredEnvelope(payload: string) {
     if (typeof payload !== 'string') return null;
     const trimmed = payload.trim();
     if (!trimmed) return null;
     try {
         const parsed = JSON.parse(trimmed);
-        if (!parsed || typeof parsed !== 'object') return null;
-        const kind = (parsed as any).kind;
-        if (kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND) {
-            if (typeof (parsed as any).payloadCiphertext !== 'string') return null;
-            const existingSessionId = typeof (parsed as any).existingSessionId === 'string'
-                ? (parsed as any).existingSessionId
-                : undefined;
-            return {
-                kind: AUTOMATION_TEMPLATE_ENVELOPE_KIND,
-                payloadCiphertext: (parsed as any).payloadCiphertext,
-                ...(existingSessionId ? { existingSessionId } : {}),
-            };
-        }
-        if (kind === AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND) {
-            const existingSessionId = typeof (parsed as any).existingSessionId === 'string'
-                ? (parsed as any).existingSessionId
-                : undefined;
-            return {
-                kind: AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND,
-                payload: (parsed as any).payload,
-                ...(existingSessionId ? { existingSessionId } : {}),
-            };
-        }
-        return null;
+        return normalizeAutomationTemplateEnvelopeStoredRead(parsed);
     } catch {
         return null;
     }
 }
 
-function normalizeExistingSessionId(input: string | undefined): string | undefined {
+function tryParseEnvelope(payload: string): AutomationTemplateEnvelope | null {
+    return tryParseStoredEnvelope(payload)?.envelope ?? null;
+}
+
+function normalizeExistingSessionId(input: unknown): string | undefined {
     if (typeof input !== 'string') return undefined;
     const trimmed = input.trim();
     return trimmed.length > 0 ? trimmed : undefined;
-}
-
-export function tryReadAutomationTemplateEnvelopeExistingSessionId(templateCiphertext: string): string | null {
-    const envelope = tryParseEnvelope(templateCiphertext);
-    const id = normalizeExistingSessionId(envelope?.existingSessionId);
-    return id ?? null;
 }
 
 export function tryDecodeAutomationTemplateEnvelope(templateCiphertext: string): AutomationTemplateEnvelope | null {
@@ -77,6 +65,56 @@ export function tryReadAutomationTemplateEnvelopePayloadCiphertext(templateCiphe
     return typeof envelope.payloadCiphertext === 'string' && envelope.payloadCiphertext.trim().length > 0
         ? envelope.payloadCiphertext
         : null;
+}
+
+export async function resolveAutomationTemplatePayload(params: Readonly<{
+    templateCiphertext: string;
+    decryptRaw?: (payloadCiphertext: string) => Promise<unknown | null>;
+}>): Promise<AutomationTemplatePayloadResolution> {
+    const storedRead = tryParseStoredEnvelope(params.templateCiphertext);
+    if (!storedRead) return { kind: 'invalid' };
+    const envelope = storedRead.envelope;
+    if (envelope.kind === AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND) {
+        return {
+            kind: 'ready',
+            envelope,
+            payload: envelope.payload,
+        };
+    }
+    if (!params.decryptRaw) {
+        return {
+            kind: 'locked',
+            reason: 'encryption_material_unavailable',
+        };
+    }
+    try {
+        const payload = await params.decryptRaw(envelope.payloadCiphertext);
+        if (payload === null || payload === undefined) {
+            return {
+                kind: 'locked',
+                reason: 'encryption_material_unavailable',
+            };
+        }
+        if (
+            storedRead.legacyExistingSessionId
+            && (!payload || typeof payload !== 'object' || Array.isArray(payload)
+                || normalizeExistingSessionId(
+                    (payload as Record<string, unknown>).existingSessionId,
+                ) !== storedRead.legacyExistingSessionId)
+        ) {
+            return { kind: 'invalid' };
+        }
+        return {
+            kind: 'ready',
+            envelope,
+            payload,
+        };
+    } catch {
+        return {
+            kind: 'locked',
+            reason: 'encryption_material_unavailable',
+        };
+    }
 }
 
 export async function encodeAutomationTemplateForTransport(params: {
@@ -98,9 +136,6 @@ export async function encodeAutomationTemplateForTransport(params: {
         const envelope: PlainAutomationTemplateEnvelope = {
             kind: AUTOMATION_TEMPLATE_PLAINTEXT_ENVELOPE_KIND,
             payload: parsed,
-            ...(normalizeExistingSessionId(parsed.existingSessionId)
-                ? { existingSessionId: normalizeExistingSessionId(parsed.existingSessionId) }
-                : {}),
         };
         return JSON.stringify(envelope);
     }
@@ -113,9 +148,6 @@ export async function encodeAutomationTemplateForTransport(params: {
     const envelope: EncryptedAutomationTemplateEnvelope = {
         kind: AUTOMATION_TEMPLATE_ENVELOPE_KIND,
         payloadCiphertext,
-        ...(normalizeExistingSessionId(parsed.existingSessionId)
-            ? { existingSessionId: normalizeExistingSessionId(parsed.existingSessionId) }
-            : {}),
     };
     return JSON.stringify(envelope);
 }

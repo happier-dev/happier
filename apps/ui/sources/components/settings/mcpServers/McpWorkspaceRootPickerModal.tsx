@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { CustomModalInjectedProps } from '@/modal';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PathSelectionList } from '@/components/sessions/new/components/PathSelectionList';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import type { PathTargetPlatform } from '@/utils/path/browseSegments';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 import {
@@ -27,13 +27,13 @@ export type McpWorkspaceRootPickerModalProps = CustomModalInjectedProps & Readon
 const stylesheet = StyleSheet.create(() => ({
     contentWrapper: {
         width: '100%',
-        maxWidth: layout.maxWidth,
         alignSelf: 'center',
     },
 }));
 
 export function McpWorkspaceRootPickerModal(props: McpWorkspaceRootPickerModalProps) {
     const styles = stylesheet;
+    const maxWidthStyle = useLayoutMaxWidthStyle();
 
     const [path, setPath] = React.useState(props.selectedPath);
     const favoriteDirectoryKeys = React.useMemo(() => new Set(
@@ -53,7 +53,7 @@ export function McpWorkspaceRootPickerModal(props: McpWorkspaceRootPickerModalPr
 
     return (
         <ItemList style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
-            <View style={styles.contentWrapper}>
+            <View style={[styles.contentWrapper, maxWidthStyle]}>
                 <PathSelectionList
                     machineHomeDir={props.machineHomeDir}
                     initialValue={path}

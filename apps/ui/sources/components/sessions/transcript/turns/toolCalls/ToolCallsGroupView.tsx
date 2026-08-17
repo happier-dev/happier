@@ -21,10 +21,8 @@ import {
     type TranscriptToolRouteCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
 import { TRANSCRIPT_WEB_TOOL_CALL_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
-import {
-    renderGroupedToolCallRowContent,
-    resolveGroupedPreviewSidechainIds,
-} from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowContent';
+import { renderGroupedToolCallRowContent } from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowContent';
+import { resolveGroupedPreviewSidechainIds } from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowRenderDecision';
 import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import {
     ToolCallsGroupExpandMoreChrome,

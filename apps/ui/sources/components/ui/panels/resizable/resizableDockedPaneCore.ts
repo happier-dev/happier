@@ -27,6 +27,11 @@ export type ResizableDockedPaneCoreResult = Readonly<{
     canResize: boolean;
     panHandlers: unknown;
     webHandleProps: Readonly<Record<string, unknown>>;
+    accessibilityHandleProps: Readonly<{
+        accessibilityValue: Readonly<{ min: number; max: number; now: number }>;
+        accessibilityActions: ReadonlyArray<Readonly<{ name: 'increment' | 'decrement' }>>;
+        onAccessibilityAction: (event: unknown) => void;
+    }>;
 }>;
 
 function resolveAxisDelta(gesture: Readonly<{ dx?: number; dy?: number }>, axis: DockedPaneResizeAxis): number {
@@ -133,6 +138,25 @@ export function useResizableDockedPaneCore(input: ResizableDockedPaneCoreInput):
 
     const effectiveSizePx = dragSizePx ?? clampLatest(sizePx);
     effectiveSizeRef.current = effectiveSizePx;
+
+    const commitAccessibilityAdjustment = React.useCallback((adjustmentPx: number) => {
+        const next = resolveClampedSizeState(
+            effectiveSizeRef.current + adjustmentPx,
+            minSizePxRef.current,
+            maxSizePxRef.current,
+        );
+        onCommitSizePxRef.current(next.clampedSizePx, next);
+    }, []);
+
+    const handleAccessibilityAction = React.useCallback((event: unknown) => {
+        const actionName = (event as { nativeEvent?: { actionName?: unknown } } | null | undefined)
+            ?.nativeEvent?.actionName;
+        if (actionName === 'increment') {
+            commitAccessibilityAdjustment(8);
+        } else if (actionName === 'decrement') {
+            commitAccessibilityAdjustment(-8);
+        }
+    }, [commitAccessibilityAdjustment]);
 
     const panResponder = React.useMemo(() => {
         return PanResponder.create({
@@ -323,6 +347,18 @@ export function useResizableDockedPaneCore(input: ResizableDockedPaneCoreInput):
             onPointerDown: handleWebPointerDown,
             onMouseDown: handleWebPointerDown,
             onTouchStart: handleWebPointerDown,
+        },
+        accessibilityHandleProps: {
+            accessibilityValue: {
+                min: minSizePx,
+                max: maxSizePx,
+                now: effectiveSizePx,
+            },
+            accessibilityActions: [
+                { name: 'increment' },
+                { name: 'decrement' },
+            ],
+            onAccessibilityAction: handleAccessibilityAction,
         },
     };
 }

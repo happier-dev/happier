@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
+import { resetScopedMachineTransportCacheForTests } from './serverScopedRpcPool';
 
 const machineRpcSpy = vi.hoisted(() => vi.fn());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
@@ -91,7 +91,45 @@ describe('machineRpcWithServerScope signal (direct peer route)', () => {
         getActiveServerSnapshotSpy.mockReset();
         resolveDirectRouteSpy.mockReset();
         postDirectSpy.mockReset();
-        resetScopedMachineDataKeyCacheForTests();
+        resetScopedMachineTransportCacheForTests();
+    });
+
+    it('rejects promptly during peer-route discovery and does not dispatch after it later resolves', async () => {
+        let releaseRoute!: (route: ReturnType<typeof createSelectedRoute>) => void;
+        resolveDirectRouteSpy.mockImplementation(() => new Promise<ReturnType<typeof createSelectedRoute>>((resolve) => {
+            releaseRoute = resolve;
+        }));
+        const controller = new AbortController();
+
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const pending = machineRpcWithServerScope({
+            machineId: 'machine_1',
+            method: RPC_METHODS.DAEMON_MEMORY_STATUS,
+            payload: { includeWorkers: true },
+            signal: controller.signal,
+        });
+        await vi.waitFor(() => expect(resolveDirectRouteSpy).toHaveBeenCalledTimes(1));
+
+        controller.abort();
+
+        const settled = await Promise.race([
+            pending.then(
+                () => ({ status: 'resolved' as const }),
+                (error: unknown) => ({ status: 'rejected' as const, error }),
+            ),
+            new Promise<{ status: 'pending' }>((resolve) => setTimeout(() => resolve({ status: 'pending' }), 50)),
+        ]);
+        expect(settled).toMatchObject({
+            status: 'rejected',
+            error: { name: 'AbortError', code: 'MACHINE_RPC_ABORTED' },
+        });
+
+        releaseRoute(createSelectedRoute());
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(postDirectSpy).not.toHaveBeenCalled();
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+        expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
     });
 
     it('rejects with an abort error when the signal fires during an in-flight direct call', async () => {

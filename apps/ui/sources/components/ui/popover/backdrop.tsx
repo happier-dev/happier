@@ -3,6 +3,7 @@ import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import type { PopoverBackdropEffect, PopoverOutsidePointerEventsMode, PopoverPortalOptions, PopoverWindowRect } from './_types';
 
 export function PopoverBackdrop(props: Readonly<{
@@ -29,6 +30,12 @@ export function PopoverBackdrop(props: Readonly<{
     anchorRect: PopoverWindowRect | null;
     windowWidth: number;
     windowHeight: number;
+    /**
+     * Height of the coordinate space this layer lays out in (owned by `Popover.tsx`, the single
+     * owner). Equals `windowHeight` except on native overlay portals, where both this layer and
+     * `anchorRect` live inside the portal root, whose height differs from the window's.
+     */
+    portalSpaceHeight: number;
     webPortalOffsetX: number;
     webPortalOffsetY: number;
 }>) {
@@ -36,6 +43,10 @@ export function PopoverBackdrop(props: Readonly<{
         typeof props.backdrop === 'boolean'
             ? props.backdrop
             : ((props.backdrop as any)?.enabled ?? true);
+    const pressablePointerEvents = resolveOverlayPointerEvents(
+        props.backdropPointerEventsEnabled ? 'auto' : 'none',
+    );
+    const anchorOverlayPointerEvents = resolveOverlayPointerEvents('none');
 
     if (!backdropEnabled) return null;
 
@@ -63,7 +74,7 @@ export function PopoverBackdrop(props: Readonly<{
             {props.backdropBlocksOutsidePointerEvents ? (
                 <Pressable
                     onPress={props.onRequestClose}
-                    pointerEvents={props.backdropPointerEventsEnabled ? 'auto' : 'none'}
+                    pointerEvents={pressablePointerEvents.nativePointerEvents}
                     onMoveShouldSetResponderCapture={() => {
                         if (!props.closeOnBackdropPan || !props.onRequestClose) return false;
                         props.onRequestClose();
@@ -80,9 +91,11 @@ export function PopoverBackdrop(props: Readonly<{
                             portalOpacity: props.portalOpacity,
                             portalZ: props.shouldPortal ? props.portalZ : 999,
                             webPortalOffsetY: props.webPortalOffsetY,
-                            windowHeight: props.windowHeight,
+                            portalSpaceHeight: props.portalSpaceHeight,
                         }),
                         props.backdropStyle,
+                        // Preserve the responder prop's historical precedence over backdrop styles.
+                        pressablePointerEvents.webStyle,
                     ]}
                 />
             ) : null}
@@ -90,7 +103,7 @@ export function PopoverBackdrop(props: Readonly<{
             {props.shouldPortal && props.backdropEffect !== 'none' && props.backdropAnchorOverlay && props.anchorRect ? (
                 <View
                     testID="popover-anchor-overlay"
-                    pointerEvents="none"
+                    pointerEvents={anchorOverlayPointerEvents.nativePointerEvents}
                     style={[
                         {
                             position: props.shouldPortalWeb ? props.portalPositionOnWeb : 'absolute',
@@ -115,6 +128,7 @@ export function PopoverBackdrop(props: Readonly<{
                             opacity: props.portalOpacity,
                             zIndex: props.portalZ + 1,
                         } as const,
+                        anchorOverlayPointerEvents.webStyle,
                     ]}
                 >
                     {typeof props.backdropAnchorOverlay === 'function'
@@ -136,7 +150,7 @@ function createBackdropPressableFrameStyle(params: Readonly<{
     portalOpacity: number;
     portalZ: number;
     webPortalOffsetY: number;
-    windowHeight: number;
+    portalSpaceHeight: number;
 }>): ViewStyle {
     const baseFrame: ViewStyle = {
         position: params.fixedPositionOnWeb,
@@ -156,7 +170,9 @@ function createBackdropPressableFrameStyle(params: Readonly<{
         params.shouldPortalWeb && params.portalPositionOnWeb === 'absolute'
             ? params.anchorRect.y - params.webPortalOffsetY
             : params.anchorRect.y;
-    const bottom = Math.max(0, Math.floor(params.windowHeight - Math.max(0, anchorY)));
+    // `anchorY` and this frame are both expressed in the space `portalSpaceHeight` describes:
+    // window space on web / non-portaled native, portal-root space on a native overlay portal.
+    const bottom = Math.max(0, Math.floor(params.portalSpaceHeight - Math.max(0, anchorY)));
 
     return {
         ...baseFrame,
@@ -180,6 +196,7 @@ function PopoverBackdropEffectLayer(props: Readonly<{
     webPortalOffsetX: number;
     webPortalOffsetY: number;
 }>) {
+    const effectLayerPointerEvents = resolveOverlayPointerEvents('none');
     const position =
         Platform.OS === 'web' && props.shouldPortalWeb
             ? props.portalPositionOnWeb
@@ -265,8 +282,8 @@ function PopoverBackdropEffectLayer(props: Readonly<{
                                     testID="popover-backdrop-effect"
                                     intensity={Platform.OS === 'ios' ? 12 : 3}
                                     tint="default"
-                                    pointerEvents="none"
-                                    style={style}
+                                    pointerEvents={effectLayerPointerEvents.nativePointerEvents}
+                                    style={[style, effectLayerPointerEvents.webStyle]}
                                 />
                             ))}
                         </>
@@ -284,7 +301,7 @@ function PopoverBackdropEffectLayer(props: Readonly<{
                         // eslint-disable-next-line react/no-array-index-key
                         key={index}
                         testID="popover-backdrop-effect"
-                        pointerEvents="none"
+                        pointerEvents={effectLayerPointerEvents.nativePointerEvents}
                         style={[
                             style,
                             Platform.OS === 'web'
@@ -295,6 +312,7 @@ function PopoverBackdropEffectLayer(props: Readonly<{
                                 : createBackdropNativeStyle({
                                     backgroundColor: 'rgba(0,0,0,0.08)',
                                 }),
+                            effectLayerPointerEvents.webStyle,
                         ]}
                     />
                 ))}
@@ -309,10 +327,11 @@ function PopoverBackdropEffectLayer(props: Readonly<{
                     // eslint-disable-next-line react/no-array-index-key
                     key={index}
                     testID="popover-backdrop-effect"
-                    pointerEvents="none"
+                    pointerEvents={effectLayerPointerEvents.nativePointerEvents}
                     style={[
                         style,
                         { backgroundColor: 'rgba(0,0,0,0.08)' },
+                        effectLayerPointerEvents.webStyle,
                     ]}
                 />
             ))}

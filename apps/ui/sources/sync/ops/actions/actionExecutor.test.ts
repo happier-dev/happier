@@ -16,7 +16,6 @@ describe('createActionExecutor', () => {
             executionRunWait: async () => ({}),
             sessionOpen: async () => ({}),
             sessionSpawnNew: async () => ({}),
-            sessionSpawnPicker: async () => ({}),
             pathsListRecent: async () => ({ items: [] }),
             machinesList: async () => ({ items: [] }),
             serversList: async () => ({ items: [] }),

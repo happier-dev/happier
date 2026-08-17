@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View, type View as RNView } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -27,6 +26,10 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import {
+    resolveCanonicalModelOptionId,
+    resolveCanonicalNativeModelSelectionRef,
+} from '@/sync/domains/models/modelOptions';
+import {
     favoriteModelSelectionMatchesBackend,
     getFavoriteModelRef,
     isFavoriteModelRefSelectable,
@@ -35,11 +38,13 @@ import {
 } from '@/sync/domains/models/favoriteModelSelections';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type NewSessionModelOption = Readonly<{
     value: ModelMode;
     label: string;
     description: string;
+    extendedContextModelId?: string;
 }>;
 
 const EMPTY_HIDDEN_NATIVE_MODEL_KEYS: ReadonlySet<string> = new Set();
@@ -66,14 +71,16 @@ export type NewSessionModelSelectionContentProps = Readonly<{
 }>;
 
 function selectedModelRef(props: NewSessionModelSelectionContentProps): SessionModelPickerValue {
-    if (props.selectedModelSelection) return props.selectedModelSelection.ref;
+    if (props.selectedModelSelection) {
+        return resolveCanonicalNativeModelSelectionRef(props.modelOptions, props.selectedModelSelection.ref);
+    }
     const modelId = String(props.selectedModelId ?? '').trim();
     if (!modelId || modelId === 'default') return null;
     if (!props.selectedBackendEntry) return null;
     return {
         agentTargetKey: props.selectedBackendEntry.backendTargetKey,
         providerConnectionId: null,
-        modelId,
+        modelId: resolveCanonicalModelOptionId(props.modelOptions, modelId),
     };
 }
 
@@ -153,12 +160,13 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
     ]);
 
     const commitSelection = React.useCallback((ref: SessionModelPickerValue) => {
+        const canonicalRef = resolveCanonicalNativeModelSelectionRef(props.modelOptions, ref);
         if (props.onSelectSelection) {
-            props.onSelectSelection(ref);
+            props.onSelectSelection(canonicalRef);
             return;
         }
-        props.onSelectModel((ref?.modelId ?? 'default') as ModelMode);
-    }, [props.onSelectModel, props.onSelectSelection]);
+        props.onSelectModel((canonicalRef?.modelId ?? 'default') as ModelMode);
+    }, [props.modelOptions, props.onSelectModel, props.onSelectSelection]);
     const toggleFavorite = React.useCallback((ref: NonNullable<SessionModelPickerValue>) => {
         if (!props.selectedBackendEntry || !props.onFavoriteModelSelectionsChange) return;
         const providerGroup = ref.providerConnectionId
@@ -245,7 +253,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
                     detail={selectedPresentation.detail}
                     accessibilityLabel={selectedPresentation.accessibilityLabel}
                     leftElement={normalizeNodeForView(
-                        <Ionicons name="sparkles-outline" size={24} color={theme.colors.text.secondary} />,
+                        <Icon name="sparkle" size={24} color={theme.colors.text.secondary} />,
                     )}
                     showChevron
                     onPress={() => setPopoverOpen(true)}

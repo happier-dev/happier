@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { readSessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
+
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
+import { AgentTransitionDividerRow } from '@/components/sessions/transcript/agentTransition/AgentTransitionDividerRow';
 import { Text } from '@/components/ui/text/Text';
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import {
@@ -18,9 +20,12 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 import type { TranscriptEventEmphasis } from './transcriptEventEmphasis';
 
 import { buildConnectedServiceAccountSwitchMessage } from './connectedServiceAccountSwitchMessage';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const EVENT_ICON_SIZE = 18;
-const EVENT_SPINNER_SIZE = 20;
+// Derived, not chosen: the spinner replaces the glyph in the same slot, so it must paint the same
+// amount of ink. It was 20 against an 18pt glyph, i.e. larger than the checkmark it settles into.
+const EVENT_SPINNER_SIZE = iconMatchedSpinnerSize(EVENT_ICON_SIZE);
 const EVENT_ICON_CONTAINER_SIZE = 20;
 
 function readEventRecord(event: AgentEvent): Record<string, unknown> {
@@ -69,7 +74,7 @@ function TerminalComposerClearEventAction(props: Readonly<{
                     color={theme.colors.text.secondary}
                 />
             ) : (
-                <Ionicons name="close-circle-outline" size={12} color={theme.colors.state.danger.foreground} />
+                <Icon name="x-circle" size={14} color={theme.colors.state.danger.foreground} />
             )}
             <Text style={[styles.actionText, { color: theme.colors.state.danger.foreground }]}>
                 {terminalComposerClear.busy
@@ -277,7 +282,7 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     const settings = useSettings();
     const deemphasized = props.emphasis === 'deemphasized';
     const eventColor = deemphasized ? theme.colors.text.tertiary : theme.colors.text.secondary;
-    let iconName: React.ComponentProps<typeof Ionicons>['name'] = 'information-circle-outline';
+    let iconName: IconName = 'info';
     let text = t('message.unknownEvent');
     let detailText: string | undefined;
     let testID: string | undefined;
@@ -285,26 +290,37 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     const terminalComposerClearSessionId = typeof props.sessionId === 'string' ? props.sessionId.trim() : '';
     const showTerminalComposerClearAction = terminalComposerDraftBlocked && terminalComposerClearSessionId.length > 0;
 
+    // The Agent-transition divider rides the generic `type:'message'` arm so old
+    // readers still render its prose. This reader understands the sidecar, and a
+    // change of Agent is a boundary in the conversation, not an informational
+    // aside — so it leaves the generic arm entirely rather than restyling it.
+    // Recognition goes through the protocol's single divider reader; the shape
+    // check is not repeated here.
+    const agentTransitionDivider = readSessionAgentTransitionDividerV1(props.event);
+    if (agentTransitionDivider) {
+        return <AgentTransitionDividerRow divider={agentTransitionDivider} />;
+    }
+
     if (terminalComposerDraftBlocked && readEventRecord(props.event).type === 'terminal-composer-draft-blocked') {
         testID = 'transcript-event-terminal-composer-draft-blocked';
-        iconName = 'pause-circle-outline';
+        iconName = 'pause-circle';
         text = readTerminalComposerDraftBlockedMessage(props.event)
             ?? t('session.pendingMessages.steerBlockedTerminalDraftNotice');
     } else if (props.event.type === 'switch') {
-        iconName = 'swap-horizontal-outline';
+        iconName = 'arrows-left-right';
         text = t('message.switchedToMode', { mode: props.event.mode });
     } else if (props.event.type === 'message') {
-        iconName = 'information-circle-outline';
+        iconName = 'info';
         text = props.event.message;
     } else if (props.event.type === 'runtime-config-outcome') {
         testID = `transcript-event-runtime-config-outcome-${props.event.status}`;
         const pendingTiming = isPendingRuntimeConfigOutcomeTiming(props.event.timing);
         if (props.event.status === 'applied') {
-            iconName = pendingTiming ? 'time-outline' : 'checkmark-circle-outline';
+            iconName = pendingTiming ? 'clock' : 'check-circle';
         } else if (props.event.status === 'requires_restart' || props.event.status === 'requires_interactive_control') {
-            iconName = 'time-outline';
+            iconName = 'clock';
         } else {
-            iconName = 'warning-outline';
+            iconName = 'warning';
         }
         text = formatRuntimeConfigOutcomeChangesText(props.event) ?? props.event.message;
         const detailParts = [
@@ -316,74 +332,74 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
         const isPaused = props.event.phase === 'completed' && props.event.continuation === 'paused';
         testID = `transcript-event-context-compaction-${isPaused ? 'paused' : props.event.phase}`;
         if (props.event.phase === 'started' || props.event.phase === 'progress') {
-            iconName = 'hourglass-outline';
+            iconName = 'hourglass';
             text = t('message.contextCompactionStarted');
         } else if (props.event.phase === 'failed') {
-            iconName = 'warning-outline';
+            iconName = 'warning';
             text = t('message.contextCompactionFailed');
         } else if (props.event.phase === 'cancelled') {
-            iconName = 'close-circle-outline';
+            iconName = 'x-circle';
             text = t('message.contextCompactionCancelled');
         } else if (isPaused) {
-            iconName = 'pause-circle-outline';
+            iconName = 'pause-circle';
             text = t('message.contextCompactionPaused');
         } else {
-            iconName = 'checkmark-circle-outline';
+            iconName = 'check-circle';
             text = t('message.contextCompactionCompleted');
         }
     } else if (props.event.type === 'limit-reached') {
-        iconName = 'warning-outline';
+        iconName = 'warning';
         text = t('message.usageLimitUntil', { time: formatLimitReachedTime(props.event.endsAt) });
     } else if (props.event.type === 'connected-service-account-switch') {
         testID = 'transcript-event-connected-service-account-switch';
-        iconName = 'swap-horizontal-outline';
+        iconName = 'arrows-left-right';
         text = buildConnectedServiceAccountSwitchMessage({
             event: props.event,
             labelsByKey: settings.connectedServicesProfileLabelByKey,
         });
     } else if (props.event.type === 'agent-quota-wait') {
         testID = 'transcript-event-agent-quota-wait';
-        iconName = 'time-outline';
+        iconName = 'clock';
         text = t('message.agentQuotaWait', { time: formatQuotaResetTime(props.event.resetAtMs) });
     } else if (props.event.type === 'agent-quota-recovered') {
         testID = 'transcript-event-agent-quota-recovered';
-        iconName = 'checkmark-circle-outline';
+        iconName = 'check-circle';
         text = t('message.agentQuotaRecovered');
     } else if (props.event.type === 'connected-service-account-switch-attempt') {
         testID = 'transcript-event-connected-service-account-switch-attempt';
         const outcome = resolveConnectedServiceSwitchAttemptOutcome(props.event);
         if (outcome === 'failed' || outcome === 'terminal') {
-            iconName = 'warning-outline';
+            iconName = 'warning';
             text = formatConnectedServiceSwitchAttemptFailureText(props.event);
         } else if (outcome === 'scheduled_retry') {
-            iconName = 'time-outline';
+            iconName = 'clock';
             const diagnosticPresentation = resolveConnectedServiceUxDiagnosticPresentation(props.event.diagnostic);
             text = diagnosticPresentation
                 ? t(diagnosticPresentation.statusKey)
                 : t('connectedServices.diagnostics.status.recovery_retry_scheduled');
         } else if (isObservedOnlyConnectedServiceSwitchAttempt(props.event, outcome)) {
-            iconName = 'information-circle-outline';
+            iconName = 'info';
             text = formatConnectedServiceSwitchAttemptSuccessText(props.event);
         } else {
-            iconName = 'checkmark-circle-outline';
+            iconName = 'check-circle';
             text = formatConnectedServiceSwitchAttemptSuccessText(props.event);
         }
     } else if (props.event.type === 'connected-service-runtime-auth-recovery') {
         testID = 'transcript-event-connected-service-runtime-auth-recovery';
         if (props.event.status === 'retry_scheduled') {
-            iconName = 'time-outline';
+            iconName = 'clock';
         } else if (props.event.status === 'dead_lettered') {
-            iconName = 'warning-outline';
+            iconName = 'warning';
         } else if (props.event.status === 'cancelled') {
-            iconName = 'close-circle-outline';
+            iconName = 'x-circle';
         } else {
-            iconName = 'checkmark-circle-outline';
+            iconName = 'check-circle';
         }
         text = formatRuntimeAuthRecoveryText(props.event);
     } else if (props.event.type === 'connected-service-account-switch-deferral') {
         // O1: switch-deferral — policy
         testID = 'transcript-event-connected-service-account-switch-deferral';
-        iconName = 'time-outline';
+        iconName = 'clock';
         text = props.event.policy === 'defer_until_idle'
             ? t('message.connectedServiceSwitchDeferredIdle')
             : t('message.connectedServiceSwitchDeferred');
@@ -392,21 +408,21 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
         testID = 'transcript-event-connected-service-account-switch-deferral-completed';
         const cancellationReasons = new Set(['aborted_after_timeout', 'switch_cancelled', 'session_terminated', 'daemon_shutdown']);
         if (cancellationReasons.has(props.event.reason)) {
-            iconName = 'close-circle-outline';
+            iconName = 'x-circle';
             text = t('message.connectedServiceSwitchDeferralCancelled');
         } else {
-            iconName = 'checkmark-circle-outline';
+            iconName = 'check-circle';
             text = t('message.connectedServiceSwitchDeferralCompleted');
         }
     } else if (props.event.type === 'connected-service-account-switch-deferral-superseded') {
         // O1: deferral-superseded — a newer switch replaced this one
         testID = 'transcript-event-connected-service-account-switch-deferral-superseded';
-        iconName = 'swap-horizontal-outline';
+        iconName = 'arrows-left-right';
         text = t('message.connectedServiceSwitchDeferralSuperseded');
     } else if (props.event.type === 'agent-state-sharing-degraded') {
         // O1: state-sharing degraded — partial materialization warning
         testID = 'transcript-event-agent-state-sharing-degraded';
-        iconName = 'warning-outline';
+        iconName = 'warning';
         text = t('message.agentStateSharingDegraded');
     }
 
@@ -414,7 +430,7 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
         <>
             <View style={styles.row}>
                 <View style={styles.iconContainer}>
-                    <Ionicons name={iconName} size={EVENT_ICON_SIZE} color={eventColor} />
+                    <Icon name={iconName} size={EVENT_ICON_SIZE} color={eventColor} />
                 </View>
                 <View style={styles.textColumn} testID={testID ? `${testID}-body` : undefined}>
                     <Text selectable style={[styles.text, deemphasized ? styles.deemphasizedText : null]}>

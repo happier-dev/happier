@@ -467,6 +467,109 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         expect(thinkingAtReads).toBe(readsAfterFirstSelection);
     });
 
+    it('does no derivation at all on a store commit that moved none of its sources', () => {
+        // The commit storm: many store notifications carrying no badge-relevant movement (the
+        // delta revision does not even advance). The previous shape rebuilt the whole signature -
+        // an O(sessions) pass over every hot record - on each one, only to conclude nothing changed.
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(10_000));
+        const selector = createSelector();
+        let thinkingAtReads = 0;
+        const renderable = createRenderable({
+            id: 'session1',
+            hasUnreadMessages: true,
+            metadata: { path: '/repo', host: 'local' },
+        });
+        Object.defineProperty(renderable, 'thinkingAt', {
+            configurable: true,
+            enumerable: true,
+            get: () => {
+                thinkingAtReads += 1;
+                return 0;
+            },
+        });
+        const sessions = {};
+        const sessionMessages = {};
+        const sessionListRenderables = { session1: renderable };
+        const sessionListIndexByServerId = {
+            server1: [{ type: 'session' as const, sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+        };
+        const concurrentSessionListCacheByServerId = {};
+        const sessionListRenderableDelta = {
+            revision: 7,
+            changedSessionIds: ['session1'],
+            removedSessionIds: [],
+            rebuiltSessionListIndex: true,
+        };
+        const sourceSlices = {
+            concurrentSessionListCacheByServerId,
+            sessionListIndexByServerId,
+            sessionListRenderableDelta,
+            sessionListRenderables,
+            sessionMessages,
+            sessions,
+        };
+
+        const first = selector(createStorageState(sourceSlices));
+        const readsAfterFirstSelection = thinkingAtReads;
+
+        // A later commit: same slice identities, same delta revision, later wall clock.
+        vi.setSystemTime(new Date(10_050));
+        const second = selector(createStorageState(sourceSlices));
+
+        expect(second).toBe(first);
+        expect(thinkingAtReads).toBe(readsAfterFirstSelection);
+    });
+
+    it('still re-derives when a source this selector reads moves, including the list index', () => {
+        // The guard against porting a narrower source set than this repository's derivation reads:
+        // the badge here also consumes `sessionListIndexByServerId` and
+        // `concurrentSessionListCacheByServerId`, so movement in either must invalidate.
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(10_000));
+        const selector = createSelector();
+        const sessions = {};
+        const sessionMessages = {};
+        const sessionListRenderables = {
+            session1: createRenderable({
+                id: 'session1',
+                hasUnreadMessages: true,
+                metadata: { path: '/repo', host: 'local' },
+            }),
+        };
+        const sessionListRenderableDelta = {
+            revision: 7,
+            changedSessionIds: ['session1'],
+            removedSessionIds: [],
+            rebuiltSessionListIndex: true,
+        };
+
+        const first = selector(createStorageState({
+            concurrentSessionListCacheByServerId: {},
+            sessionListIndexByServerId: {},
+            sessionListRenderableDelta,
+            sessionListRenderables,
+            sessionMessages,
+            sessions,
+        }));
+        expect(first.localBadgeState).toEqual({ count: 0, showNonNumericDot: false });
+
+        const second = selector(createStorageState({
+            concurrentSessionListCacheByServerId: {},
+            // Only this slice moved: the session becomes reachable through the list index.
+            sessionListIndexByServerId: {
+                server1: [{ type: 'session', sessionId: 'session1', serverId: 'server1', serverName: undefined }],
+            },
+            sessionListRenderableDelta,
+            sessionListRenderables,
+            sessionMessages,
+            sessions,
+        }));
+
+        expect(second).not.toBe(first);
+        expect(second.localBadgeState).toEqual({ count: 1, showNonNumericDot: false });
+    });
+
     it('counts transcript-only pending permissions from the selector state', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(1_000));

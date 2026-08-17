@@ -1,17 +1,15 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
-import {
-    Ionicons,
-    Octicons,
-} from '@expo/vector-icons';
 
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
+import type { AgentId } from '@/agents/registry/registryCore';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { knownTools } from '@/components/tools/catalog';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
 import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     getAgentCore,
 } from '@/agents/catalog/catalog';
@@ -38,6 +36,14 @@ export function buildToolHeaderModel(input: {
     iconSize: number;
     iconColorPrimary: string;
     iconColorSecondary: string;
+    /**
+     * The Agent that produced this row, when the transcript has divider
+     * evidence for it. A Session that switched Agent keeps every earlier row on
+     * screen, and each Agent has its own unknown-tool policy, so the history
+     * must not be re-judged by whoever is running now. `null`/absent keeps the
+     * live-metadata answer.
+     */
+    historicalAgentId?: AgentId | null;
 }): ToolHeaderModel {
     const toolForRendering = normalizeToolCallForRendering(input.tool);
     const headerText = resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: input.metadata });
@@ -54,7 +60,7 @@ export function buildToolHeaderModel(input: {
         toolForRendering.permission?.status === 'pending' &&
         toolForRendering.state === 'running';
 
-    const agentId = resolveAgentIdFromSessionMetadata(input.metadata);
+    const agentId = input.historicalAgentId ?? resolveAgentIdFromSessionMetadata(input.metadata);
     const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
 
     const shouldHideBodyPermanently = hideUnknownToolsByDefault && isUnknownTool;
@@ -93,7 +99,7 @@ function resolveToolHeaderIcon(params: {
     iconColorSecondary: string;
 }): React.ReactNode {
     if (params.tool.name.startsWith('mcp__')) {
-        return <Ionicons name="extension-puzzle-outline" size={params.iconSize} color={params.iconColorSecondary} />;
+        return <Icon name="puzzle-piece" size={params.iconSize} color={params.iconColorSecondary} />;
     }
 
     if (
@@ -104,17 +110,17 @@ function resolveToolHeaderIcon(params: {
     ) {
         const parsedCmd = (params.tool.input as any).parsed_cmd[0];
         if (parsedCmd?.type === 'read') {
-            return <Octicons name="eye" size={params.iconSize} color={params.iconColorPrimary} />;
+            return <Icon name="eye" size={params.iconSize} color={params.iconColorPrimary} />;
         }
         if (parsedCmd?.type === 'write') {
-            return <Octicons name="file-diff" size={params.iconSize} color={params.iconColorPrimary} />;
+            return <Icon name="git-diff" size={params.iconSize} color={params.iconColorPrimary} />;
         }
-        return <Octicons name="terminal" size={params.iconSize} color={params.iconColorPrimary} />;
+        return <Icon name="terminal" size={params.iconSize} color={params.iconColorPrimary} />;
     }
 
     if (params.knownTool && typeof params.knownTool.icon === 'function') {
         return params.knownTool.icon(params.iconSize, params.iconColorPrimary);
     }
 
-    return <Ionicons name="construct-outline" size={params.iconSize} color={params.iconColorSecondary} />;
+    return <Icon name="wrench" size={params.iconSize} color={params.iconColorSecondary} />;
 }

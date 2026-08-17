@@ -80,11 +80,9 @@ export function createLegacyVoiceOutputAdapter(input: Readonly<{ streamId: strin
         if (mode === 'legacy') throw new Error('voice_output_mixed_stream');
         mode = 'native';
         const output = VoiceAgentOutputEventV1Schema.parse(event.output);
-        if (output.turnId !== streamId || output.seq !== nextSeq) {
-          throw new Error('voice_output_native_sequence_invalid');
-        }
-        nextSeq += 1;
-        if (output.kind === 'turn_final' || output.kind === 'turn_cancelled') terminal = true;
+        // Native sequence, turn, terminal, and stable-id semantics belong to the
+        // Protocol ingest owner. This adapter only validates the wire shape and
+        // translates the legacy delta/done form.
         return [output];
       }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveVoiceExecutionMachineIdFromState } from './executionMachine';
+import { resolveVoiceExecutionMachineIdFromState, resolveVoiceExecutionMachineSelectionFromState } from './executionMachine';
 
 function machine(id: string, active: boolean, extra: Record<string, unknown> = {}) {
   return { id, active, createdAt: 1, updatedAt: 1, metadata: {}, ...extra } as any;
@@ -38,6 +38,28 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
     expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('replacement');
     state.machines.replacement.active = false;
     expect(resolveVoiceExecutionMachineIdFromState(state)).toBe(null);
+    expect(resolveVoiceExecutionMachineSelectionFromState(state)).toEqual({
+      kind: 'selected_unreachable',
+      machineId: 'replacement',
+    });
+  });
+
+  it('uses the canonical online grace rule for a recently disconnected fixed machine', () => {
+    const state = {
+      machines: {
+        fixed: machine('fixed', false, { activeAt: Date.now() - 1_000 }),
+      },
+      settings: {
+        voice: {
+          executionMachine: { mode: 'fixed', machineId: 'fixed', autoMachineId: null },
+        },
+      },
+    };
+
+    expect(resolveVoiceExecutionMachineSelectionFromState(state)).toEqual({
+      kind: 'resolved',
+      machineId: 'fixed',
+    });
   });
 
   it('fails closed instead of roaming when a sticky target disconnects', () => {

@@ -282,6 +282,94 @@ describe('appPaneReduce', () => {
         expect(state.scopes['session:1']?.details.groupsById['group:2']).toBeUndefined();
     });
 
+    it('opens a qualified details overlay above the retained workspace and restores its prior focus/maximize state on close', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('a.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, {
+            type: 'splitDetailsGroup',
+            scopeId: 'session:1',
+            axis: 'vertical',
+        });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('b.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'setActiveDetailsTab', scopeId: 'session:1', tabKey: 'file:a.txt' });
+        state = appPaneReduce(state, { type: 'setMaximizedDetailsGroup', scopeId: 'session:1', groupId: 'group:1' });
+
+        const rootBeforeOverlay = state.scopes['session:1']?.details.root;
+        state = appPaneReduce(state, {
+            type: 'openDetailsOverlay',
+            scopeId: 'session:1',
+            destination: {
+                pluginId: 'acme.review',
+                localId: 'activity-log',
+            },
+            instanceKey: 'activity:run-1',
+        });
+
+        expect(state.scopes['session:1']?.details).toMatchObject({
+            isOpen: true,
+            overlay: {
+                destination: { pluginId: 'acme.review', localId: 'activity-log' },
+                instanceKey: 'activity:run-1',
+                returnFocusedGroupId: 'group:1',
+                returnMaximizedGroupId: 'group:1',
+                returnIsOpen: true,
+            },
+            root: rootBeforeOverlay,
+        });
+        expect(state.scopes['session:1']?.details.groupsById['group:1']?.tabKeys).toEqual(['file:a.txt']);
+        expect(state.scopes['session:1']?.details.groupsById['group:2']?.tabKeys).toEqual(['file:b.txt']);
+
+        state = appPaneReduce(state, { type: 'closeDetailsOverlay', scopeId: 'session:1' });
+        expect(state.scopes['session:1']?.details).toMatchObject({
+            isOpen: true,
+            overlay: null,
+            focusedGroupId: 'group:1',
+            maximizedGroupId: 'group:1',
+            root: rootBeforeOverlay,
+        });
+    });
+
+    it('restores an overlay return group before a full details close', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('a.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, {
+            type: 'splitDetailsGroup',
+            scopeId: 'session:1',
+            axis: 'vertical',
+        });
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('b.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'setActiveDetailsTab', scopeId: 'session:1', tabKey: 'file:a.txt' });
+        state = appPaneReduce(state, { type: 'setMaximizedDetailsGroup', scopeId: 'session:1', groupId: 'group:1' });
+        state = appPaneReduce(state, {
+            type: 'openDetailsOverlay',
+            scopeId: 'session:1',
+            destination: {
+                pluginId: 'acme.review',
+                localId: 'activity-log',
+            },
+        });
+
+        // A full-bleed plugin can open an existing Details tab through the
+        // canonical host handler while the overlay is retained. That changes
+        // the hidden workspace's current focus, but it must not replace the
+        // overlay's captured Back/return destination.
+        state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: 'session:1', tab: createFileTab('b.txt'), openAs: 'pinned' });
+        state = appPaneReduce(state, { type: 'setMaximizedDetailsGroup', scopeId: 'session:1', groupId: 'group:2' });
+
+        state = appPaneReduce(state, { type: 'closeDetails', scopeId: 'session:1' });
+
+        expect(state.scopes['session:1']?.details).toMatchObject({
+            isOpen: false,
+            overlay: null,
+            focusedGroupId: 'group:1',
+            maximizedGroupId: 'group:1',
+        });
+        expect(state.scopes['session:1']?.details.groupsById['group:1']?.tabKeys).toEqual(['file:a.txt']);
+        expect(state.scopes['session:1']?.details.groupsById['group:2']?.tabKeys).toEqual(['file:b.txt']);
+    });
+
     it('preserves requested split placement for details groups', () => {
         let state = createAppPaneState({ maxScopesInMemory: 3 });
         state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
@@ -421,6 +509,35 @@ describe('appPaneReduce', () => {
         expect(state.scopes['session:1']?.right.tabState.git).toEqual({ commitMessageDraft: 'wip: draft' });
     });
 
+    it('keeps the incumbent right-tab selection while a qualified plugin pane destination is selected', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+        state = appPaneReduce(state, { type: 'openRight', scopeId: 'session:1', tabId: 'git' });
+
+        state = appPaneReduce(state, {
+            type: 'selectRightDestination',
+            scopeId: 'session:1',
+            destination: {
+                kind: 'plugin',
+                destination: { pluginId: 'acme.review', localId: 'review' },
+                instanceKey: 'selected-review',
+            },
+        });
+
+        expect(state.scopes['session:1']?.right).toEqual(expect.objectContaining({
+            isOpen: true,
+            // The legacy tab is the return selection; a plugin pane must not
+            // replace it with a lossy local id.
+            activeTabId: 'git',
+            selectedDestination: {
+                kind: 'plugin',
+                destination: { pluginId: 'acme.review', localId: 'review' },
+                instanceKey: 'selected-review',
+            },
+        }));
+        expect(state.scopes['session:1']?.right.selectedDestination).not.toHaveProperty('input');
+    });
+
     it('treats repeated right tab state writes with the same serializable value as a no-op', () => {
         let state = createAppPaneState({ maxScopesInMemory: 3 });
         state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
@@ -440,6 +557,27 @@ describe('appPaneReduce', () => {
         });
 
         expect(repeated).toBe(state);
+    });
+
+    it('does not treat inherited prototype entries as existing right or bottom tab state', () => {
+        let state = createAppPaneState({ maxScopesInMemory: 3 });
+        state = appPaneReduce(state, { type: 'activateScope', scopeId: 'session:1' });
+
+        state = appPaneReduce(state, {
+            type: 'setRightTabState',
+            scopeId: 'session:1',
+            tabId: '__proto__',
+            nextState: Object.prototype,
+        });
+        state = appPaneReduce(state, {
+            type: 'setBottomTabState',
+            scopeId: 'session:1',
+            tabId: 'constructor',
+            nextState: Object,
+        });
+
+        expect(Object.prototype.hasOwnProperty.call(state.scopes['session:1']?.right.tabState, '__proto__')).toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(state.scopes['session:1']?.bottom.tabState, 'constructor')).toBe(true);
     });
 
     it('treats reopening the same right tab as a no-op', () => {
@@ -538,7 +676,7 @@ describe('appPaneReduce', () => {
             type: 'mergePersistedScopes',
             scopes: {
                 'session:1': {
-                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
                     details: {
                         isOpen: false,
                         tabState: {},
@@ -548,8 +686,9 @@ describe('appPaneReduce', () => {
                         focusedGroupId: null,
                         maximizedGroupId: null,
                         nextGroupOrdinal: 1,
+                        overlay: null,
                     },
-                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
                 },
             },
         });

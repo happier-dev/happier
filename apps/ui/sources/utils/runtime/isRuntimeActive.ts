@@ -35,6 +35,57 @@ export function isRuntimeActive(): boolean {
     return true;
 }
 
+function readDocument(): (Document & {
+    addEventListener?: Document['addEventListener'];
+    removeEventListener?: Document['removeEventListener'];
+}) | undefined {
+    try {
+        return (globalThis as unknown as { document?: Document }).document;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Notifies when the runtime's active/inactive state may have changed: the app
+ * moved between foreground and background, or (on web) the document was hidden
+ * or shown.
+ *
+ * This is the single owner of "what counts as a lifecycle transition" that
+ * `isRuntimeActive` reads. Every gated worker subscribes here instead of
+ * attaching its own `AppState` / `visibilitychange` listeners, so a component
+ * gate and a timer gate can never disagree about whether the user is present.
+ * The listener is called on every transition signal, including ones that leave
+ * the state unchanged; a caller that needs edge semantics compares
+ * `isRuntimeActive()` itself.
+ */
+export function subscribeToRuntimeActiveChange(listener: () => void): () => void {
+    const detach: Array<() => void> = [];
+
+    const doc = readDocument();
+    if (typeof doc?.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
+        doc.addEventListener('visibilitychange', listener);
+        detach.push(() => {
+            doc.removeEventListener?.('visibilitychange', listener);
+        });
+    }
+
+    try {
+        const subscription = AppState.addEventListener?.('change', listener);
+        if (subscription && typeof subscription.remove === 'function') {
+            detach.push(() => subscription.remove());
+        }
+    } catch {
+        // ignore
+    }
+
+    return () => {
+        for (const stop of detach.splice(0)) {
+            stop();
+        }
+    };
+}
+
 export function startRuntimeActiveGatedInterval(callback: () => void, intervalMs: number): () => void {
     const delayMs = Math.max(1, Math.trunc(intervalMs));
     let stopped = false;
@@ -53,32 +104,14 @@ export function startRuntimeActiveGatedInterval(callback: () => void, intervalMs
         }
     };
 
-    const subscriptions: Array<() => void> = [];
-    try {
-        const subscription = AppState.addEventListener?.('change', onPotentiallyActive);
-        if (subscription && typeof subscription.remove === 'function') {
-            subscriptions.push(() => subscription.remove());
-        }
-    } catch {
-        // ignore
-    }
-
-    try {
-        const doc = (globalThis as unknown as { document?: Document }).document;
-        if (doc && typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
-            doc.addEventListener('visibilitychange', onPotentiallyActive);
-            subscriptions.push(() => doc.removeEventListener('visibilitychange', onPotentiallyActive));
-        }
-    } catch {
-        // ignore
-    }
+    // Consumes the single lifecycle-transition owner above rather than attaching
+    // its own listeners, so the timer gate and any component gate agree.
+    const stopListening = subscribeToRuntimeActiveChange(onPotentiallyActive);
 
     return () => {
         if (stopped) return;
         stopped = true;
         clearInterval(interval);
-        for (const unsubscribe of subscriptions.splice(0)) {
-            unsubscribe();
-        }
+        stopListening();
     };
 }

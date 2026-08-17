@@ -12,9 +12,6 @@ import type { BrowserDiagnosticsEngineBridgeConfig } from './frame/types';
 
 const simulatorTargetProps: Array<Readonly<Record<string, unknown>>> = [];
 const desktopWebViewTargetProps: Array<Readonly<Record<string, unknown>>> = [];
-const endpointConnectivityState = vi.hoisted(() => ({
-    status: 'online' as 'online' | 'offline',
-}));
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -37,11 +34,6 @@ vi.mock('@/components/browser/frame/engines/DesktopWebViewEngine', () => ({
             testID: props.testID ?? 'desktop-webview-target',
         });
     },
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/state/storage')>(),
-    useEndpointStatus: () => endpointConnectivityState.status,
 }));
 
 function createHostedPluginView(): BrowserControlViewState {
@@ -270,61 +262,26 @@ describe('BrowserViewHost', () => {
     beforeEach(() => {
         simulatorTargetProps.length = 0;
         desktopWebViewTargetProps.length = 0;
-        endpointConnectivityState.status = 'online';
     });
 
-    it('renders hosted-plugin browser views through the semantic hosted-plugin adapter', async () => {
+    it('fails closed when a hosted-plugin Browser view supplies only raw current or pending URLs', async () => {
+        const view = {
+            ...createHostedPluginView(),
+            currentUrl: 'https://unadmitted.example.test/current',
+            pendingUrl: 'https://unadmitted.example.test/pending',
+        };
         const screen = await renderScreen(
             <BrowserViewHost
-                view={createHostedPluginView()}
+                view={view}
                 pluginUiProjection={pluginUiProjection}
                 browserProfile={pluginBrowserProfile}
                 testID="browser-view"
             />,
         );
 
-        const iframe = screen.findByType('iframe');
-        // Phase 1.3: the browser-view hosted-web pane now carries a live host API,
-        // so a bridged surface receives the bridge handshake query params.
-        const src = new URL(iframe.props.src);
-        expect(`${src.origin}${src.pathname}`).toBe('https://plugins.happier.test/plugin.example/surface.main/');
-        expect(src.searchParams.get('happierPluginId')).toBe('plugin.example');
-        expect(src.searchParams.get('happierContributionId')).toBe('surface.main');
-        expect(src.searchParams.get('happierSurfaceId')).toBe('hosted_1');
-        expect(typeof src.searchParams.get('happierBridgeNonce')).toBe('string');
-        expect(iframe.props.sandbox).toBe('allow-scripts allow-popups');
-        expect(screen.findByTestId('browser-view-unavailable')).toBeNull();
-    });
-
-    it('keeps a loaded hosted-plugin iframe as a non-interactive snapshot while the endpoint is offline', async () => {
-        endpointConnectivityState.status = 'offline';
-        const renderElement = () => (
-            <BrowserViewHost
-                view={createHostedPluginView()}
-                pluginUiProjection={pluginUiProjection}
-                browserProfile={pluginBrowserProfile}
-                testID="browser-view"
-            />
-        );
-
-        const screen = await renderScreen(renderElement());
-
-        expect(screen.findByType('iframe')).toBeTruthy();
-        expect(
-            screen.findByTestId('plugin-surface-interaction-boundary:hosted_1')?.props,
-        ).toMatchObject({
-            inert: true,
-            'aria-hidden': true,
-        });
-
-        endpointConnectivityState.status = 'online';
-        await screen.update(renderElement());
-        expect(
-            screen.findByTestId('plugin-surface-interaction-boundary:hosted_1')?.props,
-        ).toMatchObject({
-            inert: false,
-            'aria-hidden': false,
-        });
+        expect(screen.findAllByType('iframe')).toHaveLength(0);
+        expect(screen.findByTestId('browser-view-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('browser-view-unavailable-diagnostic-hosted_plugin_artifact_unavailable')).toBeTruthy();
     });
 
     it('fails closed for hosted-plugin browser views without a matching browser profile', async () => {
@@ -576,29 +533,6 @@ describe('BrowserViewHost', () => {
         expect(reload).not.toHaveBeenCalled();
     });
 
-    it('passes hosted-plugin web reload effects to the hosted iframe remount key', async () => {
-        const screen = await renderScreen(
-            <BrowserViewHost
-                view={createHostedPluginView()}
-                pluginUiProjection={pluginUiProjection}
-                browserProfile={pluginBrowserProfile}
-                navigationEffect={{
-                    kind: 'clientLocalNavigation',
-                    viewId: 'view_1',
-                    command: {
-                        kind: 'reload',
-                        commandId: 'command_reload_hosted_1',
-                        browserSessionId: 'browser_session_1',
-                        viewId: 'view_1',
-                    },
-                }}
-                testID="browser-view"
-            />,
-        );
-
-        expect(screen.findByType('iframe').props['data-browser-navigation-key']).toBe('command_reload_hosted_1');
-    });
-
     it('does not pass stale diagnostics bridge config into rendered frame targets', async () => {
         const view = createLocalPreviewView();
         const staleView = {
@@ -622,7 +556,7 @@ describe('BrowserViewHost', () => {
         expect(collectorScripts).toHaveLength(0);
     });
 
-    it('passes diagnostics bridge config through hosted-plugin policy pane into the shared frame target', async () => {
+    it('does not attach diagnostics to a raw-URL hosted-plugin Browser view', async () => {
         const view = createHostedPluginView();
         const collectorScripts: string[] = [];
 
@@ -639,12 +573,10 @@ describe('BrowserViewHost', () => {
         );
         await flushHookEffects();
 
-        expect(collectorScripts).toHaveLength(1);
-        expect(collectorScripts[0]).toContain('"viewId":"view_1"');
-        expect(collectorScripts[0]).toContain('"collectorId":"collector:view_1"');
+        expect(collectorScripts).toHaveLength(0);
     });
 
-    it('fails closed for hosted-plugin browser views with invalid or expired hosted-web endpoints', async () => {
+    it('does not promote invalid or expired Browser URLs into hosted-plugin endpoints', async () => {
         const invalid = createHostedPluginView();
         const invalidScreen = await renderScreen(
             <BrowserViewHost
@@ -668,9 +600,9 @@ describe('BrowserViewHost', () => {
             />,
         );
 
-        expect(invalidScreen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(invalidScreen.findByTestId('browser-view-invalid-unavailable')).toBeTruthy();
         expect(invalidScreen.findAllByType('iframe')).toHaveLength(0);
-        expect(expiredScreen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(expiredScreen.findByTestId('browser-view-expired-unavailable')).toBeTruthy();
         expect(expiredScreen.findAllByType('iframe')).toHaveLength(0);
     });
 

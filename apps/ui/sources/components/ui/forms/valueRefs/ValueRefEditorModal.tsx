@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { McpValueRefV1 } from '@happier-dev/protocol';
@@ -19,6 +18,7 @@ import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
 
 import { SavedSecretPickerModal } from './SavedSecretPickerModal';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ValueRefKind = 'env' | 'header';
 type ValueRefSource = 'literal' | 'savedSecret';
@@ -104,13 +104,13 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                 id: 'literal',
                 title: t('settings.mcpServersValueSourceLiteral'),
                 subtitle: t('settings.mcpServersValueSourceLiteralSubtitle'),
-                icon: <Ionicons name="text-outline" size={22} color={theme.colors.text.secondary} />,
+                icon: <Icon name="text-aa" size={20} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'savedSecret',
                 title: t('settings.mcpServersValueSourceSavedSecret'),
                 subtitle: t('settings.mcpServersValueSourceSavedSecretSubtitle'),
-                icon: <Ionicons name="key-outline" size={22} color={theme.colors.text.secondary} />,
+                icon: <Icon name="key" size={20} color={theme.colors.text.secondary} />,
             },
         ];
     }, [theme.colors.text.secondary]);
@@ -183,7 +183,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                         itemTrigger={{
                             title: t('settings.mcpServersValueSourceTitle'),
                             subtitle: source === 'literal' ? t('settings.mcpServersValueSourceLiteral') : t('settings.mcpServersValueSourceSavedSecret'),
-                            icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.purple} />,
+                            icon: <Icon name="arrows-left-right" size={29} color={theme.colors.accent.purple} />,
                         }}
                         rowKind="item"
                         connectToTrigger
@@ -216,7 +216,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                                 testID="mcp.valueRefEditor.secret"
                                 title={secretName ?? t('settings.mcpServersValueSecretSelect')}
                                 subtitle={secretId ? secretId : t('settings.mcpServersValueSecretSelectSubtitle')}
-                                icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.indigo} />}
+                                icon={<Icon name="key" size={29} color={theme.colors.accent.indigo} />}
                                 onPress={pickSecret}
                             />
                         </>
@@ -228,7 +228,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                 <Item
                     testID="mcp.valueRefEditor.save"
                     title={t('common.save')}
-                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.state.success.foreground} />}
+                    icon={<Icon name="floppy-disk" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={onSave}
                     disabled={!canSave}
                 />
@@ -237,7 +237,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                     <Item
                         testID="mcp.valueRefEditor.delete"
                         title={t('common.delete')}
-                        icon={<Ionicons name="trash-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                        icon={<Icon name="trash" size={29} color={theme.colors.state.danger.foreground} />}
                         onPress={() => {
                             props.onDelete?.();
                             props.onClose();

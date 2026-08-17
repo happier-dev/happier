@@ -6,12 +6,12 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from '
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { ControlRow, TactilePressable } from '../ConceptControls';
-import { Bloom, Grain, LightRule, PlanetLimb } from '../VoiceLight';
-import { TranscriptStream } from '../TranscriptStream';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
-import { controlsForState } from '../voiceLabModel';
-import { VOICE_MOTION, light, useVoiceLabTokens } from '../voiceLabTokens';
+import { ControlRow, TactilePressable } from '@/components/voice/controls/VoiceControls';
+import { Bloom, Grain, LightRule, PlanetLimb } from '@/components/voice/light/VoiceLight';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
+import { controlsForState, VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
+import { VOICE_MOTION, light, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, number, number, number]));
@@ -31,8 +31,8 @@ const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, n
  * disappearing, which is what makes the transition feel continuous.
  */
 function AuroraBand(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const [width, setWidth] = React.useState(320);
     const onLayout = React.useCallback((e: LayoutChangeEvent) => {
         const next = Math.round(e.nativeEvent.layout.width);
@@ -119,7 +119,7 @@ function AuroraBand(props: VoiceConceptProps) {
                 >
                     {conversational ? (
                         <View style={{ height: 148, marginBottom: 10 }}>
-                            <TranscriptStream compact />
+                            <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} compact />
                         </View>
                     ) : null}
 
@@ -192,7 +192,7 @@ function AuroraBand(props: VoiceConceptProps) {
 }
 
 export function AuroraConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
 
     // In-session, the horizon attaches to the composer's top edge instead of the
     // sidebar's, so the same identity reads as "attached to this conversation".

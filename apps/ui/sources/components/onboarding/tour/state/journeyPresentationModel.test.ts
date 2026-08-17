@@ -27,9 +27,12 @@ describe('journeyPresentationModel', () => {
         });
     });
 
-    it('normalizes hidden or missing current beats to the first visible beat', () => {
-        // A8 is not on the native surface, so it normalizes to the first visible beat.
-        expect(buildJourneyPresentationModel({ surface: 'native', currentBeatId: 'A8' }).currentBeat.id).toBe('A1');
+    it('normalizes a hidden current beat to the nearest visible one and a missing one to the first', () => {
+        // A8 is not in the native cut. Restarting at the first beat would throw a
+        // mid-journey user back to the opening slide whenever the cut changes
+        // under them (a window crossing the mobile breakpoint), so the model lands
+        // on the nearest beat that cut kept instead.
+        expect(buildJourneyPresentationModel({ surface: 'native', currentBeatId: 'A8' }).currentBeat.id).toBe('A7');
         expect(buildJourneyPresentationModel({ surface: 'web' }).currentBeat.id).toBe('A1');
     });
 

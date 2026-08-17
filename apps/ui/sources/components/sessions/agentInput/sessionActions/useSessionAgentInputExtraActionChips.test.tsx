@@ -2,7 +2,10 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BrowserAdapterCapabilitiesV1, BrowserContextCapabilities } from '@happier-dev/protocol';
 
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type {
+    AgentInputAttachmentsRowItem,
+    AgentInputExtraActionChip,
+} from '@/components/sessions/agentInput/agentInputContracts';
 import { renderScreen } from '@/dev/testkit';
 import {
     attachBrowserContextToComposer,
@@ -71,7 +74,10 @@ type HookWithBrowserContext = (params: Readonly<{
         onRemoveAttachment?: (attachmentId: string) => void;
         disabledReason?: string | null;
     }> | null;
-}>) => ReadonlyArray<AgentInputExtraActionChip> | undefined;
+}>) => Readonly<{
+    actionChips: readonly AgentInputExtraActionChip[];
+    attachmentRowItems: readonly AgentInputAttachmentsRowItem[];
+}>;
 
 describe('useSessionAgentInputExtraActionChips browser context integration', () => {
     const contextCapabilities = {
@@ -155,10 +161,10 @@ describe('useSessionAgentInputExtraActionChips browser context integration', () 
     it('does not show an empty browser-context chip before context is attached', async () => {
         const { useSessionAgentInputExtraActionChips } = await import('./useSessionAgentInputExtraActionChips');
         const hook = useSessionAgentInputExtraActionChips as unknown as HookWithBrowserContext;
-        let chips: ReadonlyArray<AgentInputExtraActionChip> | undefined;
+        let presentation: ReturnType<HookWithBrowserContext> | undefined;
 
         function Probe() {
-            chips = hook({
+            presentation = hook({
                 sessionId: 'session-1',
                 attachmentsUploadsEnabled: false,
                 isReadOnly: false,
@@ -182,16 +188,17 @@ describe('useSessionAgentInputExtraActionChips browser context integration', () 
 
         await renderScreen(<Probe />);
 
-        expect(chips?.some((chip) => chip.key === 'browser-context')).toBe(false);
+        expect(presentation?.actionChips.some((chip) => chip.key === 'browser-context')).toBe(false);
+        expect(presentation?.attachmentRowItems).toEqual([]);
     });
 
     it('adds the browser-context chip through the existing session composer extra-chip pipeline when context is attached', async () => {
         const { useSessionAgentInputExtraActionChips } = await import('./useSessionAgentInputExtraActionChips');
         const hook = useSessionAgentInputExtraActionChips as unknown as HookWithBrowserContext;
-        let chips: ReadonlyArray<AgentInputExtraActionChip> | undefined;
+        let presentation: ReturnType<HookWithBrowserContext> | undefined;
 
         function Probe() {
-            chips = hook({
+            presentation = hook({
                 sessionId: 'session-1',
                 attachmentsUploadsEnabled: false,
                 isReadOnly: false,
@@ -215,9 +222,14 @@ describe('useSessionAgentInputExtraActionChips browser context integration', () 
 
         await renderScreen(<Probe />);
 
-        const browserContextChip = chips?.find((chip) => chip.key === 'browser-context');
+        const browserContextChip = presentation?.actionChips.find((chip) => chip.key === 'browser-context');
         expect(browserContextChip?.controlId).toBe('shortcuts');
-        expect(browserContextChip?.composerAttachmentBadge?.testID).toBe('agent-input-browser-context-attachment-badge');
+        expect('composerAttachmentBadge' in (browserContextChip ?? {})).toBe(false);
+        const browserContextRowItem = presentation?.attachmentRowItems.find((item) => item.key === 'browser-context');
+        expect(browserContextRowItem).toMatchObject({
+            kind: 'badge',
+            testID: 'agent-input-browser-context-attachment-badge',
+        });
 
         const rendered = browserContextChip?.render({
             chipStyle: () => null,

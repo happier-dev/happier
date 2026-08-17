@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    applySessionFolderTreeToSessionListIndex,
     buildSessionFolderAssignmentKey,
     buildSessionFolderCollapseKey,
     buildSessionFolderTree,
@@ -269,6 +270,136 @@ describe('session folder domain helpers', () => {
                 depth: 1,
                 disabled: true,
             },
+        ]);
+    });
+
+    it('keeps an assigned locked folder as a typed folder group without using its id as a name', () => {
+        const result = applySessionFolderTreeToSessionListIndex({
+            source: [
+                {
+                    type: 'header',
+                    title: 'Project',
+                    headerKind: 'project',
+                    serverId: 'server-a',
+                    workspaceScopeHint: {
+                        serverId: 'server-a',
+                        machineId: 'machine-a',
+                        rootPath: '/Users/lee/project',
+                    },
+                },
+                {
+                    type: 'session',
+                    sessionId: 'session-a',
+                    serverId: 'server-a',
+                },
+            ],
+            folders: {
+                v: 1,
+                folders: [{
+                    id: 'folder-locked',
+                    workspace: null,
+                    parentId: null,
+                    name: '',
+                    sortKey: 'a0',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    displayState: {
+                        status: 'locked',
+                        reason: 'account_key_unavailable',
+                    },
+                }],
+            },
+            assignmentsBySessionKey: {
+                'server-a:session-a': 'folder-locked',
+            },
+            collapsedGroupKeys: {},
+            focusedFolder: null,
+        });
+
+        expect(result.items).toEqual([
+            expect.objectContaining({
+                type: 'header',
+                title: 'Project',
+            }),
+            expect.objectContaining({
+                type: 'header',
+                headerKind: 'folder',
+                folderId: 'folder-locked',
+                title: '',
+                displayState: {
+                    status: 'locked',
+                    reason: 'account_key_unavailable',
+                },
+            }),
+            expect.objectContaining({
+                type: 'session',
+                sessionId: 'session-a',
+                folderId: 'folder-locked',
+            }),
+        ]);
+        expect(JSON.stringify(result.items)).not.toContain(
+            '"title":"folder-locked"',
+        );
+    });
+
+    it('keeps unassigned locked folder hierarchy visible after project groups', () => {
+        const locked = {
+            status: 'locked' as const,
+            reason: 'content_unreadable' as const,
+        };
+        const result = applySessionFolderTreeToSessionListIndex({
+            source: [{
+                type: 'header',
+                title: 'Project',
+                headerKind: 'project',
+                serverId: 'server-a',
+                workspaceScopeHint: {
+                    serverId: 'server-a',
+                    machineId: 'machine-a',
+                    rootPath: '/Users/lee/project',
+                },
+            }],
+            folders: {
+                v: 1,
+                folders: [
+                    {
+                        id: 'locked-parent',
+                        workspace: null,
+                        parentId: null,
+                        name: '',
+                        sortKey: 'a0',
+                        createdAt: 1,
+                        updatedAt: 1,
+                        displayState: locked,
+                    },
+                    {
+                        id: 'locked-child',
+                        workspace: null,
+                        parentId: 'locked-parent',
+                        name: '',
+                        sortKey: 'a1',
+                        createdAt: 2,
+                        updatedAt: 2,
+                        displayState: locked,
+                    },
+                ],
+            },
+            assignmentsBySessionKey: {},
+            collapsedGroupKeys: {},
+            focusedFolder: null,
+        });
+
+        expect(result.items.slice(1)).toEqual([
+            expect.objectContaining({
+                folderId: 'locked-parent',
+                folderDepth: 0,
+                displayState: locked,
+            }),
+            expect.objectContaining({
+                folderId: 'locked-child',
+                folderDepth: 1,
+                displayState: locked,
+            }),
         ]);
     });
 });

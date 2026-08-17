@@ -360,6 +360,60 @@ describe('sessionHandoffs ops', () => {
         });
     });
 
+    it('normalizes predecessor prepare responses into the canonical Agent runtime descriptor', async () => {
+        const { normalizePrepareTargetResponseCandidate } = await import('./sessionHandoffs');
+
+        expect(normalizePrepareTargetResponseCandidate({
+            handoffId: 'handoff_predecessor',
+            status: {
+                handoffId: 'handoff_predecessor',
+                status: 'ready_for_cutover',
+                phase: 'staging_target',
+                recoveryActions: [],
+            },
+            remoteSessionId: 'remote-session-1',
+            directSource: {
+                kind: 'codex',
+                source: {},
+            },
+            agentRuntimeDescriptorV1: {
+                v: 1,
+                providerId: 'codex',
+                provider: {
+                    backendMode: 'appServer',
+                    providerExtra: {
+                        owner: 'codex',
+                        schemaId: 'codex.agentRuntimeDescriptorExtra',
+                        v: 1,
+                        runtimeAffinity: {
+                            backendMode: 'appServer',
+                        },
+                    },
+                },
+            },
+            resume: {
+                directory: '/repo',
+                agent: 'codex',
+                resume: 'vendor-session-1',
+                transcriptStorage: 'persisted',
+                approvedNewDirectoryCreation: true,
+            },
+        })).toMatchObject({
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: {
+                    backendMode: 'appServer',
+                    agentExtra: {
+                        owner: 'codex',
+                        schemaId: 'codex.agentRuntimeDescriptorExtra',
+                        v: 1,
+                    },
+                },
+            },
+        });
+    });
+
     it('maps macOS /Users/<user> paths into the target machine homeDir when preparing a Linux target', async () => {
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({
             status: 'ready',
@@ -492,6 +546,142 @@ describe('sessionHandoffs ops', () => {
             method: 'daemon.sessionHandoff.prepareTarget',
             payload: expect.objectContaining({
                 targetPath: '/home/guest/wsrepl-large',
+            }),
+        }));
+    });
+
+    it('maps macOS /Users/<user> paths into the target machine homeDir when preparing a Windows target', async () => {
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: {
+                        enabled: true,
+                        handoff: {
+                            enabled: true,
+                            serverRoutedTransfer: { enabled: true },
+                        },
+                    },
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: { enabled: true },
+                            serverRouted: { enabled: true },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        });
+
+        storageGetStateMock.mockReturnValue({
+            sessions: {},
+            machines: {
+                machine_source: {
+                    id: 'machine_source',
+                    seq: 1,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    active: true,
+                    activeAt: 0,
+                    metadataVersion: 1,
+                    metadata: {
+                        host: 'source-host',
+                        platform: 'darwin',
+                        happyCliVersion: '0.0.0',
+                        happyHomeDir: '/Users/leeroy/.happy-dev',
+                        homeDir: '/Users/leeroy',
+                    },
+                    daemonState: null,
+                    daemonStateVersion: 1,
+                },
+                machine_target: {
+                    id: 'machine_target',
+                    seq: 1,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    active: true,
+                    activeAt: 0,
+                    metadataVersion: 1,
+                    metadata: {
+                        host: 'target-host',
+                        platform: 'win32',
+                        happyCliVersion: '0.0.0',
+                        happyHomeDir: 'C:\\Users\\test_qa\\.happy-dev',
+                        homeDir: 'C:\\Users\\test_qa',
+                    },
+                    daemonState: null,
+                    daemonStateVersion: 1,
+                },
+            },
+            applySessions: (...args: unknown[]) => storageApplySessionsMock(...args),
+        });
+
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_windows_map',
+                status: { handoffId: 'handoff_windows_map', status: 'pending', phase: 'preparing', recoveryActions: [] },
+                endpointCandidates: [],
+                handoffMetadataV2: {},
+                targetPath: '/Users/leeroy/happier-transfer-gate-workspace',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_windows_map',
+                status: {
+                    handoffId: 'handoff_windows_map',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'remote_session_windows_map',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: 'C:\\Users\\test_qa\\happier-transfer-gate-workspace',
+                    agent: 'claude',
+                    resume: 'remote_session_windows_map',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_windows_map',
+                status: {
+                    handoffId: 'handoff_windows_map',
+                    status: 'completed',
+                    phase: 'finalizing',
+                    recoveryActions: [],
+                },
+            });
+
+        resumeSessionMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_windows_map' });
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        await completeSessionHandoff({
+            sessionId: 'sess_windows_map',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            sourceMetadata: {
+                flavor: 'claude',
+                path: '/Users/leeroy/happier-transfer-gate-workspace',
+                host: 'source-host',
+                machineId: 'machine_source',
+                claudeSessionId: 'claude_session_windows_map',
+            },
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            machineId: 'machine_target',
+            method: 'daemon.sessionHandoff.prepareTarget',
+            payload: expect.objectContaining({
+                targetPath: 'C:\\Users\\test_qa\\happier-transfer-gate-workspace',
             }),
         }));
     });
@@ -783,6 +973,169 @@ describe('sessionHandoffs ops', () => {
             method: 'daemon.sessionHandoff.prepareTarget',
             payload: expect.objectContaining({
                 targetPath: '/Users/leeroy/wsrepl-large',
+            }),
+        }));
+    });
+
+    it('targets the original Windows source workspace root when handing back from a Linux conflict sibling', async () => {
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {
+                    sessions: {
+                        enabled: true,
+                        handoff: {
+                            enabled: true,
+                            serverRoutedTransfer: { enabled: true },
+                        },
+                    },
+                    machines: {
+                        enabled: true,
+                        transfer: {
+                            enabled: true,
+                            directPeer: { enabled: true },
+                            serverRouted: { enabled: true },
+                        },
+                    },
+                },
+                capabilities: {},
+            },
+        });
+
+        storageGetStateMock.mockReturnValue({
+            sessions: {},
+            machines: {
+                machine_windows_origin: {
+                    id: 'machine_windows_origin',
+                    seq: 1,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    active: true,
+                    activeAt: 0,
+                    metadataVersion: 1,
+                    metadata: {
+                        host: 'windows-origin',
+                        platform: 'win32',
+                        happyCliVersion: '0.0.0',
+                        happyHomeDir: 'C:\\Users\\alice\\.happy-dev',
+                        homeDir: 'C:\\Users\\alice',
+                    },
+                    daemonState: null,
+                    daemonStateVersion: 1,
+                },
+                machine_linux_sibling: {
+                    id: 'machine_linux_sibling',
+                    seq: 1,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    active: true,
+                    activeAt: 0,
+                    metadataVersion: 1,
+                    metadata: {
+                        host: 'linux-sibling',
+                        platform: 'linux',
+                        happyCliVersion: '0.0.0',
+                        happyHomeDir: '/home/guest/.happy-dev',
+                        homeDir: '/home/guest',
+                    },
+                    daemonState: null,
+                    daemonStateVersion: 1,
+                },
+            },
+            applySessions: (...args: unknown[]) => storageApplySessionsMock(...args),
+        });
+
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_back_windows_origin',
+                status: {
+                    handoffId: 'handoff_back_windows_origin',
+                    status: 'pending',
+                    phase: 'preparing',
+                    recoveryActions: [],
+                },
+                endpointCandidates: [],
+                handoffMetadataV2: {},
+                targetPath: '/home/guest/projects/demo-replication-9',
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_back_windows_origin',
+                status: {
+                    handoffId: 'handoff_back_windows_origin',
+                    status: 'ready_for_cutover',
+                    phase: 'staging_target',
+                    recoveryActions: [],
+                },
+                remoteSessionId: 'remote_session_back_windows_origin',
+                directSource: {
+                    kind: 'claudeConfig',
+                    configDir: null,
+                    projectId: null,
+                },
+                resume: {
+                    directory: 'C:\\Users\\alice\\projects\\demo',
+                    agent: 'claude',
+                    resume: 'remote_session_back_windows_origin',
+                    transcriptStorage: 'persisted',
+                    approvedNewDirectoryCreation: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                handoffId: 'handoff_back_windows_origin',
+                status: {
+                    handoffId: 'handoff_back_windows_origin',
+                    status: 'completed',
+                    phase: 'finalizing',
+                    recoveryActions: [],
+                },
+            });
+
+        resumeSessionMock.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_back_windows_origin',
+        });
+        patchSessionMetadataWithRetryMock.mockResolvedValueOnce(undefined);
+
+        const { completeSessionHandoff } = await import('./sessionHandoffs');
+        await completeSessionHandoff({
+            sessionId: 'sess_back_windows_origin',
+            sourceMachineId: 'machine_linux_sibling',
+            targetMachineId: 'machine_windows_origin',
+            sessionStorageMode: 'persisted',
+            preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
+            workspaceTransfer: {
+                enabled: true,
+                strategy: 'sync_changes',
+                conflictPolicy: 'create_sibling_copy',
+                includeIgnoredMode: 'exclude',
+                ignoredIncludeGlobs: [],
+            },
+            sourceMetadata: {
+                flavor: 'claude',
+                path: '/home/guest/projects/demo-replication-9',
+                host: 'linux-sibling',
+                machineId: 'machine_linux_sibling',
+                claudeSessionId: 'remote_session_back_windows_origin',
+                handoffV1: {
+                    v: 1,
+                    sourceMachineId: 'machine_windows_origin',
+                    targetMachineId: 'machine_linux_sibling',
+                    agentId: 'claude',
+                    sessionStorageBefore: 'persisted',
+                    sessionStorageAfter: 'persisted',
+                    transportStrategy: 'server_routed_stream',
+                    completedAtMs: 1,
+                    sourceWorkspaceRootPath: 'C:\\Users\\alice\\projects\\demo',
+                    targetWorkspaceRootPath: '/home/guest/projects/demo-replication-9',
+                },
+            },
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            machineId: 'machine_windows_origin',
+            method: 'daemon.sessionHandoff.prepareTarget',
+            payload: expect.objectContaining({
+                targetPath: 'C:\\Users\\alice\\projects\\demo',
             }),
         }));
     });

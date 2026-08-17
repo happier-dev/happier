@@ -1132,6 +1132,199 @@ describe('Legend installed web-package cleanup', () => {
         expect(prependMVCPWrites.length).toBeGreaterThan(0);
         expect(Math.abs(keyedAnchorTopAfter - keyedAnchorTopBefore)).toBeLessThanOrEqual(1);
     });
+    it('holds a detached reader through expansion, above-viewport growth, and item replacement', async () => {
+        // THE DISCRIMINATING MEASUREMENT for the app-level stabilization hold. It decided the
+        // deletion of the WEB arm of `armVisibleAnchorHold`; the NATIVE arm survives and is
+        // NOT covered here — native MVCP is open-loop and nothing in this file measures it.
+        //
+        // Its whole justification is `types.ts` / `rowLayoutMutationViewportOwnership.ts`:
+        // "Legend MVCP demonstrably re-anchors its mounted window across the expansion item
+        // replacement (live S-C, web + native 2026-07-11)". That capture was taken on
+        // `@legendapp/list` 2.0.0-beta.3; the package moved to 3.3.3, whose 3.1.0 entry adds
+        // the MVCP anchor lock aimed at exactly this class ("keeps the intended anchor when
+        // headers change, browser scroll anchoring runs..."). The two neighbouring cases
+        // (above-anchor remeasure, 600px prepend) are already proven on 3.3.3 by `keeps
+        // nonanimated semantic end maintenance pinned through each MVCP remeasurement
+        // boundary`; expansion was the one row with no current-version evidence, so it decided
+        // whether the arm site could be removed.
+        //
+        // Three phases, all against a BARE `<LegendList>` with the transcript's own MVCP
+        // props and no adapter: (1) the expanding row is the reader's top row, (2) a row
+        // fully above the viewport grows, (3) a mounted row is REPLACED by a different KEY at
+        // a larger height — the identity change that "re-anchors its mounted window" names.
+        //
+        // Basis: jsdom + the installed 3.3.3 package, not a live browser. It is current-version
+        // evidence about the LIBRARY's compensation arithmetic, and it does not stand in for a
+        // live capture of compositor/scroll-anchoring behaviour.
+        const listRef = React.createRef<LegendListRef>();
+        useMeasuredLegendGeometry = true;
+        viewportHeight = 2_400;
+        const readerIndex = 10;
+        const initialRows = Array.from({ length: 20 }, (_value, index) => ({
+            height: 1_200,
+            id: `expansion-mvcp-${index}`,
+        }));
+        const render = (data: readonly Row[]) => (
+            <div id="installed-pinned-host" style={{ height: viewportHeight }}>
+                <LegendList
+                    data={data}
+                    estimatedItemSize={1_200}
+                    getItemType={() => 'message'}
+                    keyExtractor={(item: Row) => item.id}
+                    maintainScrollAtEnd={false}
+                    maintainVisibleContentPosition={{ data: true, size: true }}
+                    recycleItems={false}
+                    ref={listRef}
+                    renderItem={renderRow}
+                    style={{ flex: 1, minHeight: 0 }}
+                />
+            </div>
+        );
+
+        await act(async () => {
+            root.render(render(initialRows));
+        });
+        await flushLegendWork();
+
+        const scheduledFrames: Array<Readonly<{
+            callback: FrameRequestCallback;
+            id: number;
+            stack: string;
+        }>> = [];
+        let nextFrameId = 1;
+        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+            const id = nextFrameId;
+            nextFrameId += 1;
+            scheduledFrames.push({
+                callback,
+                id,
+                stack: new Error('scheduled expansion MVCP frame').stack ?? '',
+            });
+            return id;
+        });
+        vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+            const index = scheduledFrames.findIndex((frame) => frame.id === id);
+            if (index >= 0) scheduledFrames.splice(index, 1);
+        });
+
+        act(() => {
+            listRef.current?.scrollToIndex({ animated: false, index: readerIndex, viewPosition: 0 });
+        });
+        const scrollElement = findInstalledScrollElement();
+        const drainScheduledFrames = async (): Promise<void> => {
+            for (let pass = 0; pass < 32 && scheduledFrames.length > 0; pass += 1) {
+                const nextFrame = scheduledFrames.shift()!;
+                await act(async () => {
+                    nextFrame.callback(Date.now());
+                    await Promise.resolve();
+                });
+            }
+        };
+        const readerId = initialRows[readerIndex]!.id;
+        const readerTop = (): number => (
+            listRef.current!.getState().positionByKey(readerId)! - scrollElement.scrollTop
+        );
+        expect(Math.abs(readerTop())).toBeLessThanOrEqual(1);
+
+        // (1) The reader's OWN top row expands 1200 -> 3600. Its top must not move: the row
+        // grows downward, the reader keeps looking at the same line of content.
+        const inViewportExpandedRows = initialRows.map((row, index) => (
+            index === readerIndex ? { ...row, height: 3_600 } : row
+        ));
+        physicalScrollWrites.length = 0;
+        directScrollTopWrites.length = 0;
+        await act(async () => {
+            root.render(render(inViewportExpandedRows));
+            flushResizeObservers();
+            await Promise.resolve();
+        });
+        await drainScheduledFrames();
+        const inViewportExpansionDriftPx = readerTop();
+        expect(
+            Math.abs(inViewportExpansionDriftPx),
+            `Legend MVCP moved the expanding row itself: ${JSON.stringify({
+                inViewportExpansionDriftPx,
+                scrollTop: scrollElement.scrollTop,
+            })}`,
+        ).toBeLessThanOrEqual(1);
+
+        // (2) A row FULLY ABOVE the viewport grows 1200 -> 4_800. MVCP must absorb the whole
+        // +3600 so the reader does not move.
+        const aboveIndex = readerIndex - 4;
+        const aboveGrownRows = inViewportExpandedRows.map((row, index) => (
+            index === aboveIndex ? { ...row, height: 4_800 } : row
+        ));
+        const readerTopBeforeAboveGrowth = readerTop();
+        physicalScrollWrites.length = 0;
+        await act(async () => {
+            root.render(render(aboveGrownRows));
+            flushResizeObservers();
+            await Promise.resolve();
+        });
+        await drainScheduledFrames();
+        const aboveGrowthMVCPWrites = physicalScrollWrites.filter((write) => (
+            write.stack.includes('requestAdjust')
+            || write.stack.includes('ScrollAdjust')
+            || write.stack.includes('scrollAdjustBy')
+        ));
+        const aboveGrowthDriftPx = readerTop() - readerTopBeforeAboveGrowth;
+        expect(aboveGrowthMVCPWrites.length).toBeGreaterThan(0);
+        expect(
+            Math.abs(aboveGrowthDriftPx),
+            `Legend MVCP did not absorb an above-viewport expansion: ${JSON.stringify({
+                aboveGrowthDriftPx,
+                mvcpWrites: aboveGrowthMVCPWrites.map((write) => write.top),
+            })}`,
+        ).toBeLessThanOrEqual(1);
+
+        // (3) ITEM REPLACEMENT in the viewport: the reader's own top row is swapped for a
+        // DIFFERENT KEY at a much larger height — the identity change S-C attributed the
+        // re-anchoring to, and the only shape the transcript's expansion toggle actually
+        // produces (an unmounted row cannot be re-measured at all, so replacing one above the
+        // window changes nothing: measured, positions and scroll both unmoved).
+        //
+        // The correct outcome is that the reader's scroll offset does NOT move: the replaced
+        // row starts where the old one did, so the content the reader is looking at is
+        // unchanged and everything below it shifts down by the growth. A re-anchor onto a
+        // different mounted row would scroll the viewport instead.
+        const replacementIndex = readerIndex;
+        const followerId = aboveGrownRows[readerIndex + 1]!.id;
+        const replacementGrowthPx = 2_400;
+        const replacedRows = aboveGrownRows.map((row, index) => (
+            index === replacementIndex
+                ? { height: row.height + replacementGrowthPx, id: `${row.id}#expanded` }
+                : row
+        ));
+        const scrollTopBeforeReplacement = scrollElement.scrollTop;
+        const followerTopBefore = listRef.current!.getState().positionByKey(followerId)!
+            - scrollElement.scrollTop;
+        physicalScrollWrites.length = 0;
+        await act(async () => {
+            root.render(render(replacedRows));
+            flushResizeObservers();
+            await Promise.resolve();
+        });
+        await drainScheduledFrames();
+        const replacementScrollShiftPx = scrollElement.scrollTop - scrollTopBeforeReplacement;
+        const followerShiftPx = (
+            listRef.current!.getState().positionByKey(followerId)! - scrollElement.scrollTop
+        ) - followerTopBefore;
+        expect(
+            Math.abs(replacementScrollShiftPx),
+            `Legend MVCP re-anchored the viewport across an in-viewport item replacement: ${JSON.stringify({
+                followerShiftPx,
+                replacementScrollShiftPx,
+            })}`,
+        ).toBeLessThanOrEqual(1);
+        expect(
+            Math.abs(followerShiftPx - replacementGrowthPx),
+            `the row below the replaced row did not follow its growth: ${JSON.stringify({
+                followerShiftPx,
+                replacementGrowthPx,
+            })}`,
+        ).toBeLessThanOrEqual(1);
+        expect(directScrollTopWrites).toHaveLength(0);
+    });
 
     it('preserves explicit index ownership through MVCP when end maintenance is disabled', async () => {
         const listRef = React.createRef<LegendListRef>();

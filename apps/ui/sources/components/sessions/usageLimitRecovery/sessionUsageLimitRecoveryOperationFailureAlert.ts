@@ -28,16 +28,6 @@ export type SessionUsageLimitRecoveryOperationFailureAlertActions = ConnectedSer
 
 type Translate = (key: TranslationKey, params?: Readonly<Record<string, unknown>>) => string;
 
-function translateDiagnosticBody(params: Readonly<{
-    bodyKey: TranslationKey;
-    bodyParams?: Readonly<Record<string, unknown>>;
-    translate: Translate;
-}>): string {
-    return params.bodyParams
-        ? params.translate(params.bodyKey, params.bodyParams)
-        : params.translate(params.bodyKey);
-}
-
 export function buildSessionUsageLimitRecoveryOperationFailureAlert(params: Readonly<{
     result: SessionUsageLimitRecoveryOperationFailureResult;
     fallbackMessage: string;
@@ -55,11 +45,7 @@ export function buildSessionUsageLimitRecoveryOperationFailureAlert(params: Read
 
     return {
         title: params.translate(presentation.titleKey),
-        body: translateDiagnosticBody({
-            bodyKey: presentation.bodyKey,
-            bodyParams: presentation.bodyParams,
-            translate: params.translate,
-        }),
+        body: params.translate(presentation.bodyKey),
         buttons: buildConnectedServiceUxDiagnosticAlertButtons({
             actions: presentation.actions,
             handlers: params.actions,

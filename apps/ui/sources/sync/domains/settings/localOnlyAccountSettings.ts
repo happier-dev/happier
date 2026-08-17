@@ -1,34 +1,40 @@
 import type { Settings } from '@/sync/domains/settings/settings';
 
 import {
-    pickLocalOnlyServerSelectionSettings,
-    stripLocalOnlyServerSelectionSettings,
-} from '@/sync/domains/settings/localOnlyServerSelectionSettings';
-import {
-    pickLocalOnlyTerminalConnectSettings,
-    stripLocalOnlyTerminalConnectSettings,
-} from '@/sync/domains/settings/localOnlyTerminalConnectSettings';
+    parseLocalAccountSettings,
+} from '@/sync/domains/settings/registry/local/localAccountSettingDefinitions';
+
+/**
+ * Runtime projections are non-persisted Settings facts.
+ * Keep this defensive boundary for values that bypass TypeScript (recovered
+ * pending state or JavaScript callers) before they can reach writeback.
+ */
+export function stripDerivedAccountSettingsProjections(
+    settings: Partial<Settings>,
+): Partial<Settings> {
+    const {
+        currentSecretBindingsByProfileId: _currentSecretBindingsByProfileId,
+        currentFavoriteModelSelectionsV1: _currentFavoriteModelSelectionsV1,
+        currentRememberedEngineSelectionsByScopeV1: _currentRememberedEngineSelectionsByScopeV1,
+        ...rest
+    } = settings;
+    return rest;
+}
 
 export function stripLocalOnlyAccountSettings(settings: Partial<Settings>): Partial<Settings> {
-    const stripped = stripLocalOnlyTerminalConnectSettings(stripLocalOnlyServerSelectionSettings(settings));
-    // UI-local: "last used" values should never be synced to the server.
-    // They are device-specific defaults for the new-session wizard and can churn frequently.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const {
-        lastUsedAgent: _dropped,
-        lastUsedBackendTarget: _droppedBackendTarget,
-        lastNewSessionAgentPickerViewV1: _droppedAgentPickerView,
+        lastUsedAgent: _lastUsedAgent,
+        lastUsedBackendTarget: _lastUsedBackendTarget,
+        lastNewSessionAgentPickerViewV1: _lastNewSessionAgentPickerView,
+        serverSelectionGroups: _serverSelectionGroups,
+        serverSelectionActiveTargetKind: _serverSelectionActiveTargetKind,
+        serverSelectionActiveTargetId: _serverSelectionActiveTargetId,
+        terminalConnectLegacySecretExportEnabled: _terminalConnectLegacySecretExportEnabled,
         ...rest
-    } = stripped as any;
+    } = stripDerivedAccountSettingsProjections(settings);
     return rest;
 }
 
 export function pickLocalOnlyAccountSettings(settings: Settings): Partial<Settings> {
-    return {
-        ...pickLocalOnlyServerSelectionSettings(settings),
-        ...pickLocalOnlyTerminalConnectSettings(settings),
-        lastUsedAgent: settings.lastUsedAgent,
-        lastUsedBackendTarget: settings.lastUsedBackendTarget,
-        lastNewSessionAgentPickerViewV1: settings.lastNewSessionAgentPickerViewV1,
-    };
+    return parseLocalAccountSettings(settings);
 }

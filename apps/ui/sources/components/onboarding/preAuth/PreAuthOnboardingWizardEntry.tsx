@@ -2,9 +2,11 @@ import * as React from 'react';
 import { Linking, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { useAuth } from '@/auth/context/AuthContext';
+import {
+    useAuth,
+    type AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
 import { authGetToken } from '@/auth/flows/getToken';
-import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
@@ -45,7 +47,25 @@ import type { WizardStepId } from '@/components/onboarding/state/wizardTypes';
 import { type JourneyBeatId, type JourneySurface } from '@/components/onboarding/tour/state/journeyBeats';
 import { readJourneyReplayBeatId, readWebQueryParam } from '@/components/onboarding/tour/state/journeyReplayIntent';
 import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Text } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/store/hooks';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
+import {
+    guardAccountEncryptionFirstKeyCredentialMutation,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+import { HappyError } from '@/utils/errors/errors';
+
+async function guardOrdinaryAuthIngress(
+): Promise<AuthCredentialLifecycleResult> {
+    const result =
+        await guardAccountEncryptionFirstKeyCredentialMutation();
+    return result.kind === 'allowed'
+        ? { kind: 'completed' }
+        : result;
+}
 
 type OnboardingJourneyHostModule = typeof import('@/components/onboarding/tour/OnboardingJourneyHost');
 let onboardingJourneyHostModulePromise: Promise<OnboardingJourneyHostModule> | null = null;
@@ -69,12 +89,43 @@ const journeyLoadingStylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minHeight: 0,
         backgroundColor: theme.colors.background.canvas,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: theme.margins.md,
+        paddingHorizontal: theme.margins.xxl,
+    },
+    label: {
+        color: theme.colors.text.secondary,
+        textAlign: 'center',
     },
 }));
 
 function OnboardingJourneyLoadingSurface(): React.ReactElement {
-    useUnistyles();
-    return <View testID="onboarding-journey-loading" style={journeyLoadingStylesheet.root} />;
+    const { theme } = useUnistyles();
+    const loadingLabel = t('common.loading');
+
+    return (
+        <View
+            testID="onboarding-journey-loading"
+            accessible
+            accessibilityLabel={loadingLabel}
+            accessibilityRole="progressbar"
+            accessibilityLiveRegion="polite"
+            role="status"
+            aria-live="polite"
+            style={journeyLoadingStylesheet.root}
+        >
+            <ActivitySpinner
+                testID="onboarding-journey-loading-spinner"
+                color={theme.colors.text.secondary}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+            />
+            <Text testID="onboarding-journey-loading-label" style={journeyLoadingStylesheet.label}>
+                {loadingLabel}
+            </Text>
+        </View>
+    );
 }
 
 type JourneyHostErrorBoundaryProps = Readonly<{
@@ -198,19 +249,39 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             const secret = await getRandomBytesAsync(32);
             const token = await authGetToken(secret);
             if (token && secret) {
-                await auth.login(token, encodeBase64(secret, 'base64url'));
-                trackAccountCreated();
+                await presentFirstKeyCredentialLifecycle({
+                    run: async () =>
+                        await auth.login(
+                            token,
+                            encodeBase64(secret, 'base64url'),
+                        ),
+                    onCompleted: trackAccountCreated,
+                });
             }
         } catch (error) {
+            if (error instanceof HappyError && error.code === 'signup-disabled') {
+                authEntryOptions.retryServerCheck();
+                await Modal.alert(t('common.error'), t('errors.signupDisabled'));
+                return;
+            }
             const message = process.env.EXPO_PUBLIC_DEBUG
                 ? formatOperationFailedDebugMessage(t('errors.operationFailed'), error)
                 : t('errors.operationFailed');
             await Modal.alert(t('common.error'), message);
         }
-    }, [auth]);
+    }, [auth, authEntryOptions.retryServerCheck]);
 
     const createAccountViaProvider = React.useCallback(async (providerId: string) => {
         try {
+            let mayStart = false;
+            await presentFirstKeyCredentialLifecycle({
+                run: guardOrdinaryAuthIngress,
+                onCompleted: () => {
+                    mayStart = true;
+                },
+            });
+            if (!mayStart) return;
+
             const proofBytes = await getRandomBytesAsync(32);
             const proof = encodeBase64(proofBytes, 'base64url');
             const proofHashBytes = await digest('SHA-256', new TextEncoder().encode(proof));
@@ -223,13 +294,27 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
 
             const snapshot = getActiveServerSnapshot();
             const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-            await TokenStorage.setPendingExternalAuth({
-                provider: providerId,
-                proof,
-                secret,
-                returnTo: resolveAuthReturnToRoute(),
-                ...(serverUrl ? { serverUrl } : {}),
-            });
+            const stored =
+                await TokenStorage.setPendingExternalAuth({
+                    provider: providerId,
+                    proof,
+                    secret,
+                    returnTo: resolveAuthReturnToRoute(),
+                    ...(serverUrl ? { serverUrl } : {}),
+                });
+            if (!stored) {
+                const guard =
+                    await guardAccountEncryptionFirstKeyCredentialMutation();
+                if (guard.kind !== 'allowed') {
+                    await presentFirstKeyCredentialLifecycle({
+                        run: guardOrdinaryAuthIngress,
+                    });
+                    return;
+                }
+                throw new Error(
+                    'Failed to persist pending external authentication',
+                );
+            }
 
             const provider = getAuthProvider(providerId);
             if (!provider) {
@@ -264,6 +349,15 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
 
     const loginWithKeylessProvider = React.useCallback(async (providerId: string) => {
         try {
+            let mayStart = false;
+            await presentFirstKeyCredentialLifecycle({
+                run: guardOrdinaryAuthIngress,
+                onCompleted: () => {
+                    mayStart = true;
+                },
+            });
+            if (!mayStart) return;
+
             const proofBytes = await getRandomBytesAsync(32);
             const proof = encodeBase64(proofBytes, 'base64url');
             const proofHashBytes = await digest('SHA-256', new TextEncoder().encode(proof));
@@ -271,12 +365,26 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
 
             const snapshot = getActiveServerSnapshot();
             const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-            await TokenStorage.setPendingExternalAuth({
-                provider: providerId,
-                proof,
-                returnTo: resolveAuthReturnToRoute(),
-                ...(serverUrl ? { serverUrl } : {}),
-            });
+            const stored =
+                await TokenStorage.setPendingExternalAuth({
+                    provider: providerId,
+                    proof,
+                    returnTo: resolveAuthReturnToRoute(),
+                    ...(serverUrl ? { serverUrl } : {}),
+                });
+            if (!stored) {
+                const guard =
+                    await guardAccountEncryptionFirstKeyCredentialMutation();
+                if (guard.kind !== 'allowed') {
+                    await presentFirstKeyCredentialLifecycle({
+                        run: guardOrdinaryAuthIngress,
+                    });
+                    return;
+                }
+                throw new Error(
+                    'Failed to persist pending external authentication',
+                );
+            }
 
             const provider = getAuthProvider(providerId);
             if (!provider) {
@@ -337,8 +445,10 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                     return;
                 }
                 const token = String(json.token);
-                const credentials = await buildDataKeyCredentialsForToken(token);
-                await auth.loginWithCredentials(credentials);
+                await presentFirstKeyCredentialLifecycle({
+                    run: async () =>
+                        await auth.loginWithCredentials({ token }),
+                });
             } finally {
                 clearTimeout(timer);
             }
@@ -457,6 +567,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             stepId={controller.stepId}
             isWelcomeStep={controller.stepId === 'welcome'}
             allowMobileBrandHero={controller.stepId === 'welcome'}
+            retentionSummary={authEntryOptions.retentionSummary}
             onOpenRelayCustomFlow={() => {
                 controller.goToStep('relay_select');
             }}
@@ -496,6 +607,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                         surface={journeySurface}
                         isDesktopShell={isDesktopShell}
                         initialBeatId={journeyInitialBeatId}
+                        retentionSummary={authEntryOptions.retentionSummary}
                         preAuthController={controller}
                         wizardSurfaceProps={wizardSurfaceProps}
                     />

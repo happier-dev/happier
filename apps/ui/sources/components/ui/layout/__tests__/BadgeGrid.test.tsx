@@ -54,7 +54,7 @@ async function renderBadgeGrid(items: ReadonlyArray<BadgeGridItem>) {
 describe('BadgeGrid', () => {
     it('renders the correct number of badges', async () => {
         const screen = await renderBadgeGrid(SAMPLE_ITEMS);
-        expect(screen.findAllByType('Ionicons')).toHaveLength(5);
+        expect(screen.findAllByType('Icon')).toHaveLength(5);
         const content = screen.getTextContent();
         expect(content).toContain('Resume');
         expect(content).toContain('Sessions');
@@ -70,10 +70,10 @@ describe('BadgeGrid', () => {
             { id: 'neu', label: 'Neu', status: 'neutral' },
             { id: 'warn', label: 'Warn', status: 'warning' },
         ]);
-        const icons = screen.findAllByType('Ionicons');
-        expect(icons.filter((icon) => icon.props.name === 'checkmark-circle')).toHaveLength(1);
-        expect(icons.filter((icon) => icon.props.name === 'close-circle')).toHaveLength(1);
-        expect(icons.filter((icon) => icon.props.name === 'ellipse')).toHaveLength(1);
+        const icons = screen.findAllByType('Icon');
+        expect(icons.filter((icon) => icon.props.name === 'check-circle')).toHaveLength(1);
+        expect(icons.filter((icon) => icon.props.name === 'x-circle')).toHaveLength(1);
+        expect(icons.filter((icon) => icon.props.name === 'circle')).toHaveLength(1);
         expect(icons.filter((icon) => icon.props.name === 'warning')).toHaveLength(1);
     });
 
@@ -84,7 +84,7 @@ describe('BadgeGrid', () => {
 
     it('renders empty when items is empty', async () => {
         const screen = await renderBadgeGrid([]);
-        expect(screen.findAllByType('Ionicons')).toHaveLength(0);
+        expect(screen.findAllByType('Icon')).toHaveLength(0);
         expect(screen.getTextContent()).toBe('');
     });
 });

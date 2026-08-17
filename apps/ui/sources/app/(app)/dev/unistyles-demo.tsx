@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, Switch, Dimensions } from 'react-native';
 import { StyleSheet, UnistylesRuntime, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -240,8 +240,8 @@ export default function UnistylesDemo() {
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>🔄 Orientation Styles</Text>
                     <View style={styles.orientationBox}>
-                        <Ionicons
-                            name={rt.isPortrait ? 'phone-portrait' : 'phone-landscape'}
+                        <Icon
+                            name="device-mobile"
                             size={24}
                             color="white"
                         />

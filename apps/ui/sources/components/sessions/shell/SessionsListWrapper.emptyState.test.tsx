@@ -299,6 +299,36 @@ describe('SessionsListWrapper (empty state)', () => {
         await screen.unmount();
     });
 
+    it('keeps the phone root list painted and frozen while an overlay route is open over it', async () => {
+        sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
+
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(screen.findByType('SessionsListView' as any).props.surfaceOwnership).toEqual({
+            ownerKey: 'phone-root',
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
+
+        // The new-session modal is presented over the root list, not in place of it: the list must
+        // stay painted with its last active snapshot, non-interactive and unsubscribed.
+        focusState.focused = false;
+        routeState.pathname = '/new';
+        await screen.update(<SessionsListWrapper pathname="/" />);
+
+        const list = screen.findByType('SessionsListView' as any);
+        expect(list.props.paneState.summary.sessionCount).toBe(1);
+        expect(list.props.surfaceOwnership).toEqual({
+            ownerKey: 'phone-root',
+            visible: true,
+            interactive: false,
+            dataActive: false,
+        });
+
+        await screen.unmount();
+    });
+
     it('retains the last active phone root list while unsubscribing after focus loss', async () => {
         sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
 

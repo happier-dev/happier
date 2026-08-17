@@ -7,6 +7,16 @@ export const JOURNEY_SKIP_TO_SETUP_TARGET = 'S1';
 export const JOURNEY_SURFACES = ['desktop', 'web', 'native'] as const;
 
 export type JourneySurface = typeof JOURNEY_SURFACES[number];
+
+/**
+ * The surface key of the phone story cut. Curation and presentation are ONE
+ * decision: `resolveJourneyLayoutMode` (OnboardingJourneyHost) owns whether the
+ * journey plays as the phone story pager or the desktop split, and the host maps
+ * that decision onto this key. Keyed here rather than re-derived from the running
+ * platform, so a browser window narrow enough to get the story pager also gets the
+ * curated phone script instead of the wide 19-beat cut.
+ */
+export const JOURNEY_STORY_SURFACE = 'native' satisfies JourneySurface;
 export type JourneyAct = 'dream' | 'setup';
 export type JourneyBeatId =
     | 'A1'
@@ -85,10 +95,12 @@ const desktopAndWeb = {
     native: false,
 } as const satisfies JourneySurfaceFlags;
 
-// The dream beats whose real seeded surface reads well at phone size render on
-// native too; the desktop-forward feature screens (settings-dense lists, the
-// voice surface, diff review) stay desktop/web to avoid cramped phone frames.
-// This is the explicit per-beat native curation the journey spec asks for.
+// The dream beats whose real seeded surface reads well at phone size also play
+// in the phone story cut (`JOURNEY_STORY_SURFACE`); the desktop-forward feature
+// screens (settings-dense lists, the voice surface, diff review) stay in the wide
+// cut to avoid cramped phone frames. This is the explicit per-beat curation the
+// journey spec asks for, and it applies to every phone-width presentation — a
+// narrow browser window included — not just to the native app.
 const dreamNativeShowcase = allSurfaces;
 const dreamDesktopFeature = desktopAndWeb;
 
@@ -312,4 +324,38 @@ export function isJourneyBeatVisibleOnSurface(beat: JourneyBeat, surface: Journe
 
 export function getJourneyBeatsForSurface(surface: JourneySurface): readonly JourneyBeat[] {
     return journeyBeats.filter((beat) => isJourneyBeatVisibleOnSurface(beat, surface));
+}
+
+/**
+ * The beat a journey should land on when `beatId` itself does not play in
+ * `visibleBeats`.
+ *
+ * The cut a journey plays is a PRESENTATION decision (`resolveJourneyLayoutMode`)
+ * that can change while the user is mid-journey — a browser window crossing the
+ * mobile breakpoint, a phone rotating — so "this beat is not in the new cut" must
+ * never read as "start the journey over". The canonical script order above is the
+ * single source of adjacency: the nearest beat BEFORE the missing one wins,
+ * because a curated cut drops beats from BETWEEN the ones it keeps, and landing
+ * backwards re-shows a beat the user already reached instead of skipping content
+ * they have not seen. Only a beat with no kept predecessor lands forward.
+ */
+export function resolveNearestVisibleBeatId(
+    visibleBeats: readonly JourneyBeat[],
+    beatId: JourneyBeatId,
+): JourneyBeatId | null {
+    const visibleBeatIds = new Set(visibleBeats.map((beat) => beat.id));
+    if (visibleBeatIds.has(beatId)) return beatId;
+
+    const scriptIndex = journeyBeats.findIndex((beat) => beat.id === beatId);
+    if (scriptIndex < 0) return null;
+
+    for (let index = scriptIndex - 1; index >= 0; index -= 1) {
+        const candidate = journeyBeats[index];
+        if (candidate && visibleBeatIds.has(candidate.id)) return candidate.id;
+    }
+    for (let index = scriptIndex + 1; index < journeyBeats.length; index += 1) {
+        const candidate = journeyBeats[index];
+        if (candidate && visibleBeatIds.has(candidate.id)) return candidate.id;
+    }
+    return null;
 }

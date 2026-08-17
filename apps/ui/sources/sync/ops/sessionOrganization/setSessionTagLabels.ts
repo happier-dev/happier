@@ -3,18 +3,18 @@ import {
     normalizeSessionTagLabels,
     readSessionOrganizationServerScopedId,
     readSessionOrganizationTagLabel,
+    type UiSessionOrganizationTag,
 } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { SessionOrganizationTag } from '@happier-dev/protocol';
 
 import { setSessionTagAssignments } from './setSessionTagAssignments';
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';
 import { createSessionOrganizationOpaqueId } from './sessionOrganizationIdAllocation';
 import { upsertSessionTag } from './upsertSessionTag';
 
-function readCurrentServerTags(serverId: string): SessionOrganizationTag[] {
+function readCurrentServerTags(serverId: string): UiSessionOrganizationTag[] {
     const state = getStorage().getState();
-    const tags: SessionOrganizationTag[] = [];
+    const tags: UiSessionOrganizationTag[] = [];
     for (const [key, tag] of Object.entries(state.sessionOrganizationTagsByTagKey)) {
         if (readSessionOrganizationServerScopedId(key, serverId) !== tag.tagId) continue;
         if (tag.archivedAt != null) continue;
@@ -28,18 +28,18 @@ function readCurrentServerTags(serverId: string): SessionOrganizationTag[] {
     });
 }
 
-function findTagByLabel(tags: readonly SessionOrganizationTag[], label: string): SessionOrganizationTag | null {
+function findTagByLabel(tags: readonly UiSessionOrganizationTag[], label: string): UiSessionOrganizationTag | null {
     return tags.find((tag) => readSessionOrganizationTagLabel(tag) === label) ?? null;
 }
 
 function resolveExistingTagsByLabel(params: Readonly<{
     labels: readonly string[];
-    tags: readonly SessionOrganizationTag[];
+    tags: readonly UiSessionOrganizationTag[];
 }>): {
-    resolvedTags: SessionOrganizationTag[];
+    resolvedTags: UiSessionOrganizationTag[];
     missingLabels: string[];
 } {
-    const resolvedTags: SessionOrganizationTag[] = [];
+    const resolvedTags: UiSessionOrganizationTag[] = [];
     const missingLabels: string[] = [];
     for (const label of params.labels) {
         const existing = findTagByLabel([...params.tags, ...resolvedTags], label);
@@ -88,7 +88,7 @@ export async function setSessionTagLabels(params: Readonly<{
     }
 
     const usedIds = new Set(currentTags.map((tag) => tag.tagId));
-    const resolvedTags: SessionOrganizationTag[] = [];
+    const resolvedTags: UiSessionOrganizationTag[] = [];
 
     for (const label of labels) {
         const existing = findTagByLabel([...currentTags, ...resolvedTags], label);

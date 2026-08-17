@@ -1,9 +1,13 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Pressable } from 'react-native';
+import { Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+
+const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
+const HORIZONTAL_TARGET_INSET = (MINIMUM_TARGET_SIZE - 24) / 2;
 
 export function AgentInputExpansionToggle({
     expanded,
@@ -17,7 +21,12 @@ export function AgentInputExpansionToggle({
         <Pressable
             accessibilityLabel={expanded ? t('common.collapse') : t('common.expand')}
             accessibilityRole="button"
-            hitSlop={8}
+            hitSlop={{
+                top: MINIMUM_TARGET_SIZE - 24,
+                right: HORIZONTAL_TARGET_INSET,
+                bottom: 0,
+                left: HORIZONTAL_TARGET_INSET,
+            }}
             testID="agent-input-expand-toggle"
             onPress={onToggle}
             style={({ pressed }) => [
@@ -25,8 +34,8 @@ export function AgentInputExpansionToggle({
                 pressed ? { backgroundColor: theme.colors.surface.pressed } : null,
             ]}
         >
-            <Ionicons
-                name={expanded ? 'contract-outline' : 'expand-outline'}
+            <Icon
+                name={expanded ? 'arrows-in' : 'arrows-out'}
                 size={16}
                 color={theme.colors.text.secondary}
             />

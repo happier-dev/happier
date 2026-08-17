@@ -4,6 +4,7 @@ import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import { RPC_ERROR_CODES, VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { createVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 
 import { resetVoiceQaStoreForTests, useVoiceQaStore } from './voiceQaStore';
 import { createVoiceQaController } from './voiceQaController';
@@ -16,6 +17,7 @@ function createAcceptedPendingPort() {
       externalHandoffClaimed: true,
     } as const)),
     blockPendingDelivery: vi.fn(async () => {}),
+    markPendingDeliveryHandled: vi.fn(async () => {}),
   };
 }
 
@@ -629,7 +631,10 @@ describe('voiceQaController', () => {
     expect(sendLocalTurn).toHaveBeenCalledWith(
       'voice-hidden-s1',
       expect.any(String),
-      { userTranscript: { mode: 'persist', localId: expect.any(String) } },
+      expect.objectContaining({
+        userTranscript: { mode: 'persist', localId: expect.any(String) },
+        onUserTranscriptAccepted: expect.any(Function),
+      }),
     );
     expect(useVoiceQaStore.getState().targetSessionId).toBe('s1');
     expect(useVoiceQaStore.getState().runtimeSessionId).toBe('voice-hidden-s1');
@@ -824,6 +829,7 @@ describe('voiceQaController', () => {
         externalHandoffClaimed: true,
       } as const)),
       blockPendingDelivery: vi.fn(async () => {}),
+      markPendingDeliveryHandled: vi.fn(async () => {}),
     };
     const sendLocalTurn = vi.fn(async (_sessionId: string, prompt: string, _options?: unknown) => {
       if (prompt.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX)) {
@@ -882,6 +888,7 @@ describe('voiceQaController', () => {
     const durableLocalId = pendingPort.enqueuePendingMessage.mock.calls[0]?.[0]?.localId;
     expect(sendLocalTurn).toHaveBeenNthCalledWith(1, 'voice-hidden-s1', 'List the available backends.', {
       userTranscript: { mode: 'persist', localId: durableLocalId },
+      onUserTranscriptAccepted: expect.any(Function),
     });
     expect(sendLocalTurn).toHaveBeenNthCalledWith(
       2,
@@ -960,7 +967,10 @@ describe('voiceQaController', () => {
     expect(sendLocalTurn).toHaveBeenCalledWith(
       'voice-home-hidden',
       'Teleport into the active coding session.',
-      { userTranscript: { mode: 'persist', localId: expect.any(String) } },
+      expect.objectContaining({
+        userTranscript: { mode: 'persist', localId: expect.any(String) },
+        onUserTranscriptAccepted: expect.any(Function),
+      }),
     );
   });
 
@@ -1066,9 +1076,12 @@ describe('voiceQaController', () => {
         blockPendingDelivery,
       },
       sendLocalTurn: vi.fn(async () => {
-        throw new RpcError(
-          'RPC method not available: execution.run.stream.start.v2',
-          RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        throw createVoiceTextTurnRejectedBeforeEffectError(
+          new RpcError(
+            'RPC method not available: execution.run.stream.start.v2',
+            RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+          ),
+          'provider_unavailable_before_acceptance',
         );
       }),
       stopLocal: vi.fn(async () => {}),
@@ -1097,6 +1110,58 @@ describe('voiceQaController', () => {
         (entry) => entry.kind === 'error' && entry.text.includes('RPC method not available'),
       ),
     ).toBe(true);
+  });
+
+  it('retains an untyped post-dispatch method failure as ambiguous custody', async () => {
+    const ensureLocalBinding = vi.fn(async () => ({
+      adapterId: 'local_conversation',
+      controlSessionId: '__voice_agent__',
+      conversationSessionId: 'voice-hidden-s1',
+      transcriptMode: 'native_session' as const,
+      targetSessionId: 's1',
+      updatedAt: 1,
+    }));
+    const blockPendingDelivery = vi.fn(async () => {});
+    const controller = createVoiceQaController({
+      getSettings: () => ({
+        voice: {
+          providerId: 'local_conversation',
+          providers: { local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } } },
+        },
+      }),
+      getVoiceTargetState: () => ({ primaryActionSessionId: 's1', lastFocusedSessionId: null }),
+      ensureLocalBinding,
+      ensureLocalRunningAndMaybeWelcome: vi.fn(async () => null),
+      pendingPort: {
+        ...createAcceptedPendingPort(),
+        blockPendingDelivery,
+      },
+      sendLocalTurn: vi.fn(async () => {
+        throw new RpcError(
+          'RPC method not available: execution.run.stream.start.v2',
+          RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        );
+      }),
+      stopLocal: vi.fn(async () => {}),
+      appendLocalContextUpdate: vi.fn(),
+      startRealtime: vi.fn(async () => {}),
+      isRealtimeStarted: () => false,
+      stopRealtime: vi.fn(async () => {}),
+      getRealtimeSession: () => null,
+      getRealtimeBinding: () => null,
+      sendRealtimeTextTurn: vi.fn(async () => {}),
+      waitForInterruptedLocalAssistantTurn: vi.fn(async () => null),
+      qaStore: useVoiceQaStore,
+    });
+
+    await expect(controller.sendPrompt({ sessionId: 's1', prompt: 'Answer the pending question.' }))
+      .rejects.toThrow('voice_turn_dispatch_ambiguous');
+
+    expect(blockPendingDelivery).toHaveBeenCalledWith({
+      conversationSessionId: 'voice-hidden-s1',
+      localId: expect.any(String),
+      reason: 'delivery_outcome_uncertain',
+    });
   });
 
   it('surfaces the follow-up assistant reply when a local QA turn is interrupted by a higher-priority update', async () => {
@@ -1316,7 +1381,7 @@ describe('voiceQaController', () => {
     const controller = createVoiceQaController({
       getSettings: () => ({
         voice: {
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       }),
       getVoiceTargetState: () => ({ primaryActionSessionId: 's9', lastFocusedSessionId: null }),
@@ -1334,7 +1399,7 @@ describe('voiceQaController', () => {
         sendContextualUpdate: vi.fn(),
       }),
       getRealtimeBinding: () => ({
-        adapterId: 'realtime_elevenlabs',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         controlSessionId: 's9',
         conversationSessionId: 'voice-hidden-s9',
         transcriptMode: 'native_session',
@@ -1361,7 +1426,7 @@ describe('voiceQaController', () => {
     const controller = createVoiceQaController({
       getSettings: () => ({
         voice: {
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       }),
       getVoiceTargetState: () => ({ primaryActionSessionId: 's9', lastFocusedSessionId: null }),
@@ -1390,7 +1455,7 @@ describe('voiceQaController', () => {
     const controller = createVoiceQaController({
       getSettings: () => ({
         voice: {
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       }),
       getVoiceTargetState: () => ({ primaryActionSessionId: 's9', lastFocusedSessionId: null }),
@@ -1629,7 +1694,7 @@ describe('voiceQaController', () => {
     });
 
     await controller.start({ sessionId: 's1' });
-    settings.voice.providerId = 'realtime_elevenlabs';
+    settings.voice.providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
 
     await controller.stop({ sessionId: 's1' });
 
@@ -1687,6 +1752,177 @@ describe('voiceQaController', () => {
     await controller.stop({ sessionId: 'session-media' });
 
     expect(stopMedia).toHaveBeenCalledWith('session-media', 'local_conversation');
+  });
+
+  it('scopes a forced relay requirement to the active media QA attempt', async () => {
+    const releaseTransportRouteRequirement = vi.fn();
+    const installMediaTransportRouteRequirement = vi.fn(() => releaseTransportRouteRequirement);
+    const startMedia = vi.fn(async () => {});
+    const stopMedia = vi.fn(async () => {});
+    const controller = createVoiceQaController({
+      getSettings: () => ({
+        voice: {
+          providerId: 'local_conversation',
+          providers: { local_conversation: { schemaVersion: 1, config: { conversationMode: 'direct_session' } } },
+        },
+      }),
+      getVoiceTargetState: () => ({ primaryActionSessionId: 'session-relay', lastFocusedSessionId: null }),
+      ensureLocalBinding: vi.fn(async () => null),
+      ensureLocalRunningAndMaybeWelcome: vi.fn(async () => null),
+      pendingPort: createAcceptedPendingPort(),
+      sendLocalTurn: vi.fn(async () => ({ assistantText: 'unused', actions: [] })),
+      stopLocal: vi.fn(async () => {}),
+      appendLocalContextUpdate: vi.fn(),
+      startRealtime: vi.fn(async () => {}),
+      isRealtimeStarted: () => false,
+      stopRealtime: vi.fn(async () => {}),
+      getRealtimeSession: () => null,
+      getRealtimeBinding: () => null,
+      sendRealtimeTextTurn: vi.fn(async () => {}),
+      waitForInterruptedLocalAssistantTurn: vi.fn(async () => null),
+      installMediaTransportRouteRequirement,
+      startMedia,
+      stopMedia,
+      getMediaSnapshot: () => ({
+        adapterId: 'local_conversation',
+        sessionId: 'session-relay',
+        status: 'connected',
+        mode: 'listening',
+        canStop: true,
+      }),
+      qaStore: useVoiceQaStore,
+    });
+
+    await controller.start({
+      sessionId: 'session-relay',
+      mode: 'media',
+      transportRouteRequirement: 'server_relay',
+    });
+
+    expect(installMediaTransportRouteRequirement).toHaveBeenCalledWith({
+      sessionId: 'session-relay',
+      routeKind: 'server_relay',
+    });
+    expect(releaseTransportRouteRequirement).not.toHaveBeenCalled();
+
+    await controller.stop({ sessionId: 'session-relay' });
+
+    expect(stopMedia).toHaveBeenCalledWith('session-relay', 'local_conversation');
+    expect(releaseTransportRouteRequirement).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces repeated media Start attempts without toggling the production lifecycle or leaking a forced route', async () => {
+    const releaseTransportRouteRequirement = vi.fn();
+    const installMediaTransportRouteRequirement = vi.fn(() => releaseTransportRouteRequirement);
+    let resolveStartMedia!: () => void;
+    const startMedia = vi.fn(() => new Promise<void>((resolve) => {
+      resolveStartMedia = resolve;
+    }));
+    const stopMedia = vi.fn(async () => {});
+    const controller = createVoiceQaController({
+      getSettings: () => ({ voice: { providerId: 'local_conversation' } }),
+      getVoiceTargetState: () => ({ primaryActionSessionId: 'session-relay', lastFocusedSessionId: null }),
+      ensureLocalBinding: vi.fn(async () => null),
+      ensureLocalRunningAndMaybeWelcome: vi.fn(async () => null),
+      pendingPort: createAcceptedPendingPort(),
+      sendLocalTurn: vi.fn(async () => ({ assistantText: 'unused', actions: [] })),
+      stopLocal: vi.fn(async () => {}),
+      appendLocalContextUpdate: vi.fn(),
+      startRealtime: vi.fn(async () => {}),
+      isRealtimeStarted: () => false,
+      stopRealtime: vi.fn(async () => {}),
+      getRealtimeSession: () => null,
+      getRealtimeBinding: () => null,
+      sendRealtimeTextTurn: vi.fn(async () => {}),
+      waitForInterruptedLocalAssistantTurn: vi.fn(async () => null),
+      installMediaTransportRouteRequirement,
+      startMedia,
+      stopMedia,
+      getMediaSnapshot: () => ({
+        adapterId: 'local_conversation',
+        sessionId: 'session-relay',
+        status: 'connected',
+        mode: 'listening',
+        canStop: true,
+      }),
+      qaStore: useVoiceQaStore,
+    });
+
+    const firstStart = controller.start({
+      sessionId: 'session-relay',
+      mode: 'media',
+      transportRouteRequirement: 'server_relay',
+    });
+    const repeatedStart = controller.start({
+      sessionId: 'session-relay',
+      mode: 'media',
+      transportRouteRequirement: 'server_relay',
+    });
+
+    expect(startMedia).toHaveBeenCalledTimes(1);
+    expect(installMediaTransportRouteRequirement).toHaveBeenCalledTimes(1);
+
+    resolveStartMedia();
+    await expect(Promise.all([firstStart, repeatedStart])).resolves.toEqual([
+      { provider: 'local_voice_agent', sessionId: 'session-relay' },
+      { provider: 'local_voice_agent', sessionId: 'session-relay' },
+    ]);
+    await expect(controller.start({
+      sessionId: 'session-relay',
+      mode: 'media',
+      transportRouteRequirement: 'server_relay',
+    })).resolves.toEqual({ provider: 'local_voice_agent', sessionId: 'session-relay' });
+
+    expect(startMedia).toHaveBeenCalledTimes(1);
+    expect(installMediaTransportRouteRequirement).toHaveBeenCalledTimes(1);
+    expect(releaseTransportRouteRequirement).not.toHaveBeenCalled();
+
+    await controller.stop({ sessionId: 'session-relay' });
+
+    expect(stopMedia).toHaveBeenCalledExactlyOnceWith('session-relay', 'local_conversation');
+    expect(releaseTransportRouteRequirement).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it('releases a forced relay requirement when media start fails', async () => {
+    const releaseTransportRouteRequirement = vi.fn();
+    const controller = createVoiceQaController({
+      getSettings: () => ({ voice: { providerId: 'local_conversation' } }),
+      getVoiceTargetState: () => ({ primaryActionSessionId: 'session-relay', lastFocusedSessionId: null }),
+      ensureLocalBinding: vi.fn(async () => null),
+      ensureLocalRunningAndMaybeWelcome: vi.fn(async () => null),
+      pendingPort: createAcceptedPendingPort(),
+      sendLocalTurn: vi.fn(async () => ({ assistantText: 'unused', actions: [] })),
+      stopLocal: vi.fn(async () => {}),
+      appendLocalContextUpdate: vi.fn(),
+      startRealtime: vi.fn(async () => {}),
+      isRealtimeStarted: () => false,
+      stopRealtime: vi.fn(async () => {}),
+      getRealtimeSession: () => null,
+      getRealtimeBinding: () => null,
+      sendRealtimeTextTurn: vi.fn(async () => {}),
+      waitForInterruptedLocalAssistantTurn: vi.fn(async () => null),
+      installMediaTransportRouteRequirement: vi.fn(() => releaseTransportRouteRequirement),
+      startMedia: vi.fn(async () => {
+        throw new Error('media_start_failed');
+      }),
+      stopMedia: vi.fn(async () => {}),
+      getMediaSnapshot: () => ({
+        adapterId: null,
+        sessionId: null,
+        status: 'disconnected',
+        mode: 'idle',
+        canStop: false,
+      }),
+      qaStore: useVoiceQaStore,
+    });
+
+    await expect(controller.start({
+      sessionId: 'session-relay',
+      mode: 'media',
+      transportRouteRequirement: 'server_relay',
+    })).rejects.toThrow('media_start_failed');
+
+    expect(releaseTransportRouteRequirement).toHaveBeenCalledTimes(1);
   });
 
   it('fails media mode when the production session owner does not establish an active session', async () => {

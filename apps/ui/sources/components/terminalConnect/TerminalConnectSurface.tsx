@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { FlowSurfaceActions, FlowSurfaceChrome } from '@/components/ui/flowSurface';
@@ -8,6 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type TerminalConnectMessageState = Readonly<{
     kind: 'message';
@@ -113,8 +113,8 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
                     {props.state.loading ? (
                         <ActivitySpinner color={theme.colors.button.primary.background} />
                     ) : (
-                        <Ionicons
-                            name={props.state.tone === 'critical' ? 'warning-outline' : 'terminal-outline'}
+                        <Icon
+                            name={props.state.tone === 'critical' ? 'warning' : 'terminal'}
                             size={34}
                             color={props.state.tone === 'critical' ? theme.colors.state.danger.foreground : theme.colors.radio.active}
                         />
@@ -130,7 +130,7 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
             showScrim={false}
             titleLeading={(
                 <View style={styles.icon}>
-                    <Ionicons name="terminal-outline" size={32} color={theme.colors.radio.active} />
+                    <Icon name="terminal" size={32} color={theme.colors.radio.active} />
                 </View>
             )}
             title={t('terminal.connectTerminal')}
@@ -168,7 +168,7 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
             <View style={styles.securityBlock}>
                 <Text style={styles.sectionTitle}>{t('terminal.security')}</Text>
                 <View style={styles.securityRow}>
-                    <Ionicons name="shield-checkmark-outline" size={20} color={theme.colors.state.success.foreground} />
+                    <Icon name="shield-check" size={20} color={theme.colors.state.success.foreground} />
                     <View style={styles.securityCopy}>
                         <Text style={styles.securityTitle}>{t('terminal.clientSideProcessing')}</Text>
                         <Text style={styles.securitySubtitle}>{t('terminal.linkProcessedOnDevice')}</Text>

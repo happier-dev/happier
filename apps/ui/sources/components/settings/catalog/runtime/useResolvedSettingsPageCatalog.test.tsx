@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
+import { normalizePluginUiSettingsPageBindingV1 } from '@happier-dev/protocol/plugins/ui';
+
 import { renderHook } from '@/dev/testkit';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,6 +18,9 @@ const settingsState = vi.hoisted(() => ({
     useProfiles: false,
     devModeEnabled: false,
     tauriDesktop: false,
+}));
+const appShellPluginProjectionState = vi.hoisted(() => ({
+    projection: null as PluginUiProjectionModel | null,
 }));
 
 vi.mock('react-native', async () => {
@@ -49,6 +58,12 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureGateState.enabled(featureId),
 }));
 
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+    useAppShellPluginUiProjection: () => ({
+        pluginUiProjection: appShellPluginProjectionState.projection,
+    }),
+}));
+
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => settingsState.tauriDesktop,
 }));
@@ -81,6 +96,49 @@ function flattenIds(nodes: readonly { id: string; children?: readonly any[] }[])
     return out;
 }
 
+function pluginSettingsProjection(): PluginUiProjectionModel {
+    const binding = normalizePluginUiSettingsPageBindingV1({
+        pluginId: 'examples.descriptor-only',
+        pageId: 'settings',
+        rendererId: 'settings-form',
+    });
+    if (!binding) throw new Error('Settings page fixture needs a normalized binding');
+    return {
+        ...EMPTY_PLUGIN_UI_PROJECTION,
+        settingsGroupsById: {
+            'settingsGroup:examples.descriptor-only:descriptor-preferences': {
+                id: 'settingsGroup:examples.descriptor-only:descriptor-preferences',
+                pluginId: 'examples.descriptor-only',
+                contributionKind: 'settingsGroup',
+                group: {
+                    id: { pluginId: 'examples.descriptor-only', localId: 'descriptor-preferences' },
+                    title: 'Descriptor preferences',
+                },
+            },
+        },
+        settingsPagesById: {
+            'settingsPage:examples.descriptor-only:settings': {
+                id: 'settingsPage:examples.descriptor-only:settings',
+                pluginId: 'examples.descriptor-only',
+                contributionKind: 'settingsPage',
+                descriptorId: 'settings',
+                page: {
+                    id: { pluginId: 'examples.descriptor-only', localId: 'settings' },
+                    group: {
+                        kind: 'plugin',
+                        id: { pluginId: 'examples.descriptor-only', localId: 'descriptor-preferences' },
+                    },
+                    title: 'Descriptor-only settings',
+                    icon: 'settings',
+                },
+                binding,
+                renderer: { kind: 'declarative' },
+                availability: { state: 'available', reason: 'available', diagnostics: [] },
+            },
+        },
+    };
+}
+
 describe('useResolvedSettingsPageCatalog', () => {
     afterEach(() => {
         pathnameState.value = '/settings';
@@ -88,6 +146,7 @@ describe('useResolvedSettingsPageCatalog', () => {
         settingsState.useProfiles = false;
         settingsState.devModeEnabled = false;
         settingsState.tauriDesktop = false;
+        appShellPluginProjectionState.projection = null;
     });
 
     it('filters feature-gated pages out of the visible tree', async () => {
@@ -135,6 +194,22 @@ describe('useResolvedSettingsPageCatalog', () => {
         await disabledHook.unmount();
     });
 
+    it('uses the canonical pets companion feature decision for navigation and search', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+
+        featureGateState.enabled = (featureId: string) => featureId === 'pets.companion';
+        const enabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(enabledHook.getCurrent().tree)).toContain('pets');
+        expect(enabledHook.getCurrent().search('companion').some((result: any) => result.id === 'pets')).toBe(true);
+        await enabledHook.unmount();
+
+        featureGateState.enabled = () => false;
+        const disabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(disabledHook.getCurrent().tree)).not.toContain('pets');
+        expect(disabledHook.getCurrent().search('companion').some((result: any) => result.id === 'pets')).toBe(false);
+        await disabledHook.unmount();
+    });
+
     it('resolves active page id from the current pathname', async () => {
         pathnameState.value = '/settings/notifications';
 
@@ -162,6 +237,70 @@ describe('useResolvedSettingsPageCatalog', () => {
         const results = hook.getCurrent().search('notif');
         expect(results.some((result: any) => result.id === 'notifications')).toBe(true);
 
+        await hook.unmount();
+    });
+
+    it('feeds the public descriptor-only Settings page and an incumbent built-in page through one resolved catalog', async () => {
+        pathnameState.value = '/settings/plugins/examples.descriptor-only/settings';
+        appShellPluginProjectionState.projection = pluginSettingsProjection();
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        const current = hook.getCurrent();
+        expect(flattenIds(current.tree)).toEqual(expect.arrayContaining([
+            'plugins',
+            'pluginSettingsPage:examples.descriptor-only:settings',
+        ]));
+        expect(current.search('descriptor').some((result: any) => (
+            result.id === 'pluginSettingsPage:examples.descriptor-only:settings'
+            && result.route === '/settings/plugins/examples.descriptor-only/settings'
+        ))).toBe(true);
+        expect(current.search('plugin').some((result: any) => result.id === 'plugins')).toBe(true);
+        expect(current.activePageId).toBe('pluginSettingsPage:examples.descriptor-only:settings');
+        await hook.unmount();
+    });
+
+    it('leaves a plugin Settings tombstone unselected rather than prefix-matching an admitted page', async () => {
+        pathnameState.value = '/settings/plugins/examples.descriptor-only/settings-retired';
+        appShellPluginProjectionState.projection = pluginSettingsProjection();
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        const current = hook.getCurrent();
+        expect(flattenIds(current.tree)).toContain('pluginSettingsPage:examples.descriptor-only:settings');
+        expect(current.activePageId).toBeNull();
+        await hook.unmount();
+    });
+
+    it('keeps the plugin marketplace active for a one-segment plugin detail route', async () => {
+        pathnameState.value = '/settings/plugins/examples.descriptor-only';
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        expect(hook.getCurrent().activePageId).toBe('plugins');
+        await hook.unmount();
+    });
+
+    it('does not treat a route-name prefix as a Settings page match', async () => {
+        pathnameState.value = '/settings/plugins-retired';
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        expect(hook.getCurrent().activePageId).toBeNull();
+        await hook.unmount();
+    });
+
+    it('keeps the owning built-in Settings page active for its nested routes', async () => {
+        pathnameState.value = '/settings/agents/claude/models';
+
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+
+        expect(hook.getCurrent().activePageId).toBe('agents');
         await hook.unmount();
     });
 
@@ -197,13 +336,21 @@ describe('useResolvedSettingsPageCatalog', () => {
         await hook.unmount();
     });
 
-    it('includes remote hosts when remoteHosts.management is enabled, and filters it when disabled', async () => {
+    it('exposes Remote Hosts only on Tauri desktop when remoteHosts.management is enabled', async () => {
         featureGateState.enabled = () => true;
 
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
-        const enabledHook = await renderHook(() => useResolvedSettingsPageCatalog());
-        expect(flattenIds(enabledHook.getCurrent().tree)).toContain('remoteHosts');
-        await enabledHook.unmount();
+        settingsState.tauriDesktop = false;
+        const nonDesktopHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(nonDesktopHook.getCurrent().tree)).not.toContain('remoteHosts');
+        expect(nonDesktopHook.getCurrent().search('remote host').some((result: any) => result.id === 'remoteHosts')).toBe(false);
+        await nonDesktopHook.unmount();
+
+        settingsState.tauriDesktop = true;
+        const desktopHook = await renderHook(() => useResolvedSettingsPageCatalog());
+        expect(flattenIds(desktopHook.getCurrent().tree)).toContain('remoteHosts');
+        expect(desktopHook.getCurrent().search('remote host').some((result: any) => result.id === 'remoteHosts')).toBe(true);
+        await desktopHook.unmount();
 
         featureGateState.enabled = (featureId: string) => featureId !== 'remoteHosts.management';
         const disabledHook = await renderHook(() => useResolvedSettingsPageCatalog());

@@ -27,6 +27,7 @@ describe('Auggie UI behavior projection', () => {
             tint: 'currentColor',
             dismiss: vi.fn(),
             blurInput: vi.fn(),
+            openCollapsedPopover: vi.fn(),
         });
         const actionItem = Array.isArray(action) ? action[0] : action;
 

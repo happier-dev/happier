@@ -6,14 +6,16 @@ import type { Profile } from '@/sync/domains/profiles/profile';
 import { profileParse } from '@/sync/domains/profiles/profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { pickLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
+import {
+    normalizeAccountSettingsForLocalStorage,
+    openAccountSettingsStoredContent,
+} from '@/sync/domains/settings/accountSettingsNormalization';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch } from '@/sync/http/client';
-import { isExpoPushNotificationChannelEnabled, openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
-import { deriveSettingsSecretsKey, sealSecretsDeep } from '@/sync/encryption/secretSettings';
+import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol';
 import { loadLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
 import { readExpoPushToken, readPushPermission } from '@/activity/notifications/permission/pushNotificationAccess';
 
@@ -21,7 +23,9 @@ export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
     updateCreatedAt: number;
     currentProfile: Profile;
-    encryption: Encryption;
+    encryption: Encryption | null;
+    settingsSecretsKey?: Uint8Array | null;
+    settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
     applyProfile: (profile: Profile) => void;
     applySettings: (settings: any, version: number) => void;
     settingsScope?: AccountSettingsScope | null;
@@ -41,6 +45,9 @@ export async function handleUpdateAccountSocketUpdate(params: {
         getLocalSettings,
         log,
     } = params;
+    const settingsSecretsKey = params.settingsSecretsKey ?? null;
+    const settingsSecretsReadKeys = params.settingsSecretsReadKeys
+        ?? (settingsSecretsKey ? [settingsSecretsKey] : []);
 
     const applyAccountSettings = (settings: any, version: number) => {
         if (settingsScope && applySettingsForScope) {
@@ -73,81 +80,61 @@ export async function handleUpdateAccountSocketUpdate(params: {
     // Apply the updated profile to storage
     applyProfile(updatedProfile);
 
+    const applyStoredAccountSettings = (paramsForSettings: Readonly<{
+        content: unknown;
+        version: number;
+        source: 'v1' | 'v2';
+    }>): void => {
+        const opened = openAccountSettingsStoredContent({
+            content: paramsForSettings.content,
+            encryption,
+            ...(paramsForSettings.source === 'v1' ? { expectedMode: 'e2ee' as const } : {}),
+        });
+        const parsedSettings = settingsParse(opened.raw ?? {});
+        const settingsSchemaVersion = parsedSettings.schemaVersion ?? 1;
+        if (settingsSchemaVersion > SUPPORTED_SCHEMA_VERSION) {
+            console.warn(
+                `⚠️ Received settings schema v${settingsSchemaVersion}, `
+                    + `we support v${SUPPORTED_SCHEMA_VERSION}. Update app for full functionality.`,
+            );
+        }
+        const normalizedSettings = normalizeAccountSettingsForLocalStorage({
+            raw: opened.raw,
+            mode: opened.mode,
+            settingsSecretsKey,
+            settingsSecretsReadKeys,
+            localSettings: getLocalSettings?.(),
+        });
+        applyAccountSettings(normalizedSettings, paramsForSettings.version);
+        log.log(
+            paramsForSettings.source === 'v2'
+                ? `📋 Settings synced from server (v2, version ${paramsForSettings.version})`
+                : `📋 Settings synced from server (schema v${settingsSchemaVersion}, version ${paramsForSettings.version})`,
+        );
+    };
+
     // Handle settings updates (new for profile sync)
     if (accountUpdate.settingsV2?.content || accountUpdate.settingsV2?.content === null) {
         try {
-            const version = Number(accountUpdate.settingsV2?.version ?? 0);
-            const content = accountUpdate.settingsV2?.content;
-            let decryptedSettings: unknown = null;
-
-            if (!content) {
-                decryptedSettings = null;
-            } else if (content.t === 'plain') {
-                decryptedSettings = content.v;
-            } else if (content.t === 'encrypted') {
-                const machineKey = encryption.getContentPrivateKey();
-                const opened = openAccountScopedBlobCiphertext({
-                    kind: 'account_settings',
-                    material: { type: 'dataKey', machineKey },
-                    ciphertext: content.c,
-                });
-                if (!opened) {
-                    throw new Error('Account settings ciphertext has no authenticated settings domain');
-                }
-                decryptedSettings = opened.value;
-            }
-
-            const parsedSettings = decryptedSettings ? settingsParse(decryptedSettings) : settingsParse({});
-            const secretsKey = await deriveSettingsSecretsKey(encryption.getContentPrivateKey());
-            const sealedSettings = sealSecretsDeep(parsedSettings, secretsKey);
-
-            const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
-            const localOnlyAccountSettings = pickLocalOnlyAccountSettings(localSettings);
-            const mergedSettings = {
-                ...sealedSettings,
-                ...localOnlyAccountSettings,
-            };
-
-            applyAccountSettings(mergedSettings, version);
-            log.log(`📋 Settings synced from server (v2, version ${version})`);
+            applyStoredAccountSettings({
+                content: accountUpdate.settingsV2.content,
+                version: Number(accountUpdate.settingsV2.version ?? 0),
+                source: 'v2',
+            });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log.log(`Failed to process settings v2 update: ${message}`);
         }
     } else if (accountUpdate.settings?.value) {
         try {
-            const machineKey = encryption.getContentPrivateKey();
-            const opened = openAccountScopedBlobCiphertext({
-                kind: 'account_settings',
-                material: { type: 'dataKey', machineKey },
-                ciphertext: accountUpdate.settings.value,
+            applyStoredAccountSettings({
+                content: {
+                    t: 'encrypted',
+                    c: accountUpdate.settings.value,
+                },
+                version: accountUpdate.settings.version,
+                source: 'v1',
             });
-            if (!opened) {
-                throw new Error('Account settings ciphertext has no authenticated settings domain');
-            }
-            const decryptedSettings = opened.value;
-            const parsedSettings = settingsParse(decryptedSettings);
-
-            // Version compatibility check
-            const settingsSchemaVersion = parsedSettings.schemaVersion ?? 1;
-            if (settingsSchemaVersion > SUPPORTED_SCHEMA_VERSION) {
-                console.warn(
-                    `⚠️ Received settings schema v${settingsSchemaVersion}, ` +
-                        `we support v${SUPPORTED_SCHEMA_VERSION}. Update app for full functionality.`,
-                );
-            }
-
-            const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
-            const localOnlyAccountSettings = pickLocalOnlyAccountSettings(localSettings);
-            const mergedSettings = {
-                ...parsedSettings,
-                ...localOnlyAccountSettings,
-            };
-
-            applyAccountSettings(mergedSettings, accountUpdate.settings.version);
-            log.log(
-                `📋 Settings synced from server (schema v${settingsSchemaVersion}, version ${accountUpdate.settings.version})`,
-            );
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log.log(`Failed to process settings update: ${message}`);

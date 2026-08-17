@@ -3,6 +3,13 @@ import type {
 } from '@happier-dev/protocol';
 
 import {
+    resolveConnectedServiceSettingsErrorMessage,
+} from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
+import {
+    computeConnectedServiceQuotaErrorBackoffMs,
+} from '@/sync/domains/connectedServices/connectedServiceQuotaErrorBackoff';
+
+import {
     readQualifiedConnectedAccountQuota,
     refreshQualifiedConnectedAccountQuota,
     type QualifiedConnectedAccountQuotaTransportContext,
@@ -27,11 +34,14 @@ type InternalEntry = {
     loading: boolean;
     refreshing: boolean;
     error: string | null;
+    /** Credential scope this entry was last retained for; drives eviction. */
+    credentialScope: string | null;
     loadAttempted: boolean;
     loadPromise:
         Promise<QualifiedConnectedAccountQuotaSnapshotV4 | null> | null;
     refreshPromise: Promise<void> | null;
     nextFetchAtMs: number;
+    consecutiveErrors: number;
     retainCount: number;
     pollTimer: ReturnType<typeof setTimeout> | null;
     pollContext: QualifiedQuotaSnapshotStoreContext | null;
@@ -40,7 +50,6 @@ type InternalEntry = {
 
 const QUOTA_SNAPSHOT_POLL_MS = 30_000;
 const QUOTA_SNAPSHOT_MISS_RETRY_MS = 30_000;
-const QUOTA_SNAPSHOT_ERROR_RETRY_MS = 30_000;
 const EMPTY_VIEW: QualifiedQuotaSnapshotStoreEntry = Object.freeze({
     snapshot: null,
     supported: null,
@@ -51,14 +60,6 @@ const EMPTY_VIEW: QualifiedQuotaSnapshotStoreEntry = Object.freeze({
 
 const entries = new Map<string, InternalEntry>();
 const listenersByKey = new Map<string, Set<() => void>>();
-
-function readErrorCode(error: unknown): string {
-    if (error && typeof error === 'object') {
-        const code = (error as { code?: unknown }).code;
-        if (typeof code === 'string' && code.trim()) return code;
-    }
-    return 'connected_service_request_failed';
-}
 
 export function buildQualifiedQuotaSnapshotScopeKey(
     context: Pick<
@@ -85,10 +86,12 @@ function getOrCreateEntry(key: string): InternalEntry {
         loading: false,
         refreshing: false,
         error: null,
+        credentialScope: null,
         loadAttempted: false,
         loadPromise: null,
         refreshPromise: null,
         nextFetchAtMs: 0,
+        consecutiveErrors: 0,
         retainCount: 0,
         pollTimer: null,
         pollContext: null,
@@ -115,6 +118,26 @@ function clearPollTimer(entry: InternalEntry): void {
     if (!entry.pollTimer) return;
     clearTimeout(entry.pollTimer);
     entry.pollTimer = null;
+}
+
+/**
+ * Drops cached entries that belong to a superseded credential scope.
+ *
+ * A retained entry is what preserves last-known-good across an unmount, so an
+ * entry is never dropped while its scope is the one in use. Once a re-login,
+ * server switch, or generation bump makes a different scope active, the old
+ * scope's keys can never be read again, so its unretained entries are released
+ * instead of being stranded for the session lifetime.
+ */
+function evictEntriesOutsideCredentialScope(
+    activeCredentialScope: string,
+): void {
+    for (const [key, entry] of entries) {
+        if (entry.retainCount > 0) continue;
+        if (entry.credentialScope === activeCredentialScope) continue;
+        clearPollTimer(entry);
+        entries.delete(key);
+    }
 }
 
 function schedulePolling(key: string): void {
@@ -157,6 +180,7 @@ async function runLoad(
             entry.snapshot = snapshot;
             entry.supported = snapshot !== null;
             entry.error = null;
+            entry.consecutiveErrors = 0;
             entry.nextFetchAtMs = Date.now() + (
                 snapshot
                     ? Math.max(
@@ -170,10 +194,15 @@ async function runLoad(
             );
             return snapshot;
         } catch (error) {
-            entry.supported = true;
-            entry.error = readErrorCode(error);
-            entry.nextFetchAtMs =
-                Date.now() + QUOTA_SNAPSHOT_ERROR_RETRY_MS;
+            // A failed read is NOT evidence that the account supports quotas:
+            // leaving `supported` unknown keeps the refresh affordance hidden
+            // instead of offering an action that cannot work.
+            entry.error = resolveConnectedServiceSettingsErrorMessage(error);
+            entry.consecutiveErrors += 1;
+            entry.nextFetchAtMs = Date.now()
+                + computeConnectedServiceQuotaErrorBackoffMs(
+                    entry.consecutiveErrors,
+                );
             return null;
         } finally {
             entry.loading = false;
@@ -217,6 +246,8 @@ export function retainQualifiedQuotaSnapshotPolling(
     const entry = getOrCreateEntry(key);
     entry.retainCount += 1;
     entry.pollContext = context;
+    entry.credentialScope = context.credentialScope;
+    evictEntriesOutsideCredentialScope(context.credentialScope);
     if (
         !entry.loadAttempted
         || (!entry.loadPromise && Date.now() >= entry.nextFetchAtMs)
@@ -231,6 +262,7 @@ export function retainQualifiedQuotaSnapshotPolling(
     return () => {
         if (released) return;
         released = true;
+        if (entries.get(key) !== entry) return;
         entry.retainCount = Math.max(0, entry.retainCount - 1);
         if (entry.retainCount === 0) {
             entry.pollContext = null;
@@ -246,7 +278,9 @@ export async function refreshQualifiedQuotaSnapshot(
     const entry = getOrCreateEntry(key);
     if (entry.refreshPromise) return entry.refreshPromise;
     clearPollTimer(entry);
-    entry.snapshot = null;
+    // The last-known-good snapshot stays visible for the whole refresh:
+    // `refreshing` is the in-flight signal, and blanking here would flash an
+    // empty gauge on every manual refresh.
     entry.refreshing = true;
     entry.error = null;
     publish(key, entry);
@@ -257,8 +291,7 @@ export async function refreshQualifiedQuotaSnapshot(
             await refreshQualifiedConnectedAccountQuota(context);
             await runLoad(key, context);
         } catch (error) {
-            entry.supported = true;
-            entry.error = readErrorCode(error);
+            entry.error = resolveConnectedServiceSettingsErrorMessage(error);
         } finally {
             entry.refreshPromise = null;
             entry.refreshing = false;

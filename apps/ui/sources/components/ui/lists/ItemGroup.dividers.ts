@@ -9,7 +9,34 @@ type FragmentProps = {
     children?: React.ReactNode;
 };
 
-export function withItemGroupDividers(children: React.ReactNode): React.ReactNode {
+export type ItemGroupVirtualizedSegment = Readonly<{
+    first: boolean;
+    last: boolean;
+}>;
+
+/**
+ * Flattens an ItemGroup's children to the renderable element rows, splicing
+ * fragments into the sequence and dropping primitives (whitespace/`0`) that
+ * would otherwise become invalid `View` text nodes. Shared by both row-position
+ * owners below so a fragment counts identically in either layout.
+ */
+export function flattenItemGroupElementChildren(node: React.ReactNode): React.ReactElement[] {
+    return React.Children.toArray(node).reduce<React.ReactElement[]>((rows, child) => {
+        if (!React.isValidElement(child)) return rows;
+        if (child.type === React.Fragment) {
+            const fragment = child as React.ReactElement<FragmentProps>;
+            rows.push(...flattenItemGroupElementChildren(fragment.props.children));
+            return rows;
+        }
+        rows.push(child);
+        return rows;
+    }, []);
+}
+
+export function withItemGroupDividers(
+    children: React.ReactNode,
+    virtualizedSegment?: ItemGroupVirtualizedSegment,
+): React.ReactNode {
     const stripNonElementChildren = (node: React.ReactNode): React.ReactNode => {
         return React.Children.map(node, (child) => {
             if (!React.isValidElement(child)) {
@@ -52,8 +79,8 @@ export function withItemGroupDividers(children: React.ReactNode): React.ReactNod
                 return React.cloneElement(fragment, {}, apply(fragment.props.children));
             }
 
-            const isFirst = index === 0;
-            const isLast = index === total - 1;
+            const isFirst = index === 0 && virtualizedSegment?.first !== false;
+            const isLast = index === total - 1 && virtualizedSegment?.last !== false;
             index += 1;
 
             const element = child as React.ReactElement<DividerChildProps>;

@@ -1,16 +1,17 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { AccessibilityInfo, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type SurfaceStateKind = 'empty' | 'loading' | 'error' | 'unavailable';
+export type SurfaceStateAccessibilitySemantics = 'status' | 'alert';
 
 export type SurfaceStateAction = Readonly<{
     /** Already-translated action label. */
@@ -18,10 +19,10 @@ export type SurfaceStateAction = Readonly<{
     onPress: () => void | Promise<unknown>;
 }>;
 
-const DEFAULT_ICONS: Record<Exclude<SurfaceStateKind, 'loading'>, React.ComponentProps<typeof SafeIonicons>['name']> = {
-    empty: 'file-tray-outline',
-    error: 'alert-circle-outline',
-    unavailable: 'cloud-offline-outline',
+const DEFAULT_ICONS: Record<Exclude<SurfaceStateKind, 'loading'>, IconName> = {
+    empty: 'tray',
+    error: 'warning-circle',
+    unavailable: 'cloud-slash',
 };
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -90,8 +91,10 @@ export function SurfaceStateCard(props: Readonly<{
     /** Caller-owned glyph when a surface has a domain-specific icon. */
     icon?: React.ReactNode;
     /** Override the per-kind default glyph. */
-    iconName?: React.ComponentProps<typeof SafeIonicons>['name'];
+    iconName?: IconName;
     animationEnabled?: boolean;
+    /** Opts this dynamic state into one live-region owner; static cards stay silent by default. */
+    accessibilitySemantics?: SurfaceStateAccessibilitySemantics;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -99,6 +102,28 @@ export function SurfaceStateCard(props: Readonly<{
     const tint = props.kind === 'error'
         ? theme.colors.state.danger.foreground
         : theme.colors.text.secondary;
+    const accessibilityLiveRegion = props.accessibilitySemantics === 'alert'
+        ? 'assertive'
+        : props.accessibilitySemantics === 'status'
+            ? 'polite'
+            : undefined;
+    const accessibilityAnnouncement = [props.title, props.reason, props.detail]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value))
+        .join('. ');
+    const lastIosAnnouncementRef = React.useRef<string | null>(null);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'ios' || !props.accessibilitySemantics) return;
+        const transitionKey = `${props.accessibilitySemantics}\u0000${accessibilityAnnouncement}`;
+        if (lastIosAnnouncementRef.current === transitionKey) return;
+        lastIosAnnouncementRef.current = transitionKey;
+        try {
+            AccessibilityInfo.announceForAccessibility(accessibilityAnnouncement);
+        } catch {
+            // Accessibility announcements are best effort on native platforms.
+        }
+    }, [accessibilityAnnouncement, props.accessibilitySemantics]);
 
     const icon = props.kind === 'loading' ? (
         <ActivitySpinner
@@ -108,7 +133,7 @@ export function SurfaceStateCard(props: Readonly<{
             animationEnabled={props.animationEnabled !== false}
         />
     ) : props.icon ?? (
-        <SafeIonicons
+        <Icon
             name={props.iconName ?? DEFAULT_ICONS[props.kind]}
             size={32}
             color={tint}
@@ -119,6 +144,16 @@ export function SurfaceStateCard(props: Readonly<{
         <View
             testID={props.testID}
             style={styles.root}
+            accessibilityRole={props.accessibilitySemantics === 'alert'
+                ? 'alert'
+                : props.accessibilitySemantics === 'status'
+                    ? 'text'
+                    : undefined}
+            accessibilityLiveRegion={accessibilityLiveRegion}
+            {...(props.accessibilitySemantics ? ({
+                role: props.accessibilitySemantics,
+                'aria-live': accessibilityLiveRegion,
+            } as Record<string, unknown>) : {})}
         >
             <SurfaceCard
                 testID={props.testID ? `${props.testID}-card` : undefined}

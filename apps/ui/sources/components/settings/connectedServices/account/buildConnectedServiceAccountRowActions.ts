@@ -1,8 +1,4 @@
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import {
-    isConnectedServiceCredentialHealthStatusUsable,
-    type ConnectedServiceCredentialHealthStatusV1,
-} from '@happier-dev/protocol';
 import { t } from '@/text';
 
 /**
@@ -15,7 +11,7 @@ import { t } from '@/text';
  * affordance (account-detail row kebab, profile-detail header, inline rows) reads
  * it from here so the icon can never drift back to a refresh look.
  */
-export const CONNECTED_SERVICE_RECONNECT_ICON = 'log-in-outline';
+export const CONNECTED_SERVICE_RECONNECT_ICON = 'sign-in';
 
 export type ConnectedServiceAccountKind = 'token' | 'oauth' | null;
 
@@ -23,15 +19,21 @@ export type ConnectedServiceAccountKind = 'token' | 'oauth' | null;
  * Build the ordered overflow-menu actions for a connected-service account row.
  *
  * ONE builder for every account surface (the per-provider detail list, the
- * single-profile detail header, …) so the action set, ordering, icons, and
- * kind/status gating live in exactly one place. Each action is included only when
- * its handler is supplied AND its kind/status precondition holds, so a caller that
- * lacks (say) an open/disconnect handler simply omits it — no parallel inline
- * action arrays drifting across screens.
+ * single-profile detail header, …) so the action set, ordering, icons, and kind
+ * gating live in exactly one place. Each action is included only when its handler
+ * is supplied AND its kind precondition holds, so a caller that lacks (say) an
+ * open/disconnect handler simply omits it — no parallel inline action arrays
+ * drifting across screens.
  */
 export function buildConnectedServiceAccountRowActions(params: Readonly<{
     kind: ConnectedServiceAccountKind;
-    status: ConnectedServiceCredentialHealthStatusV1 | null;
+    /**
+     * Current credential health, carried for caller symmetry with the other
+     * account surfaces. It does NOT gate any action: disconnect in particular is
+     * offered for unusable records too, because the account detail screen
+     * disconnects unconditionally and a broken (`needs_reauth`) account is the
+     * one users most need to remove.
+     */
     /** Open the account's own detail screen. */
     onOpen?: () => void;
     /** Rename the account's display label. */
@@ -40,17 +42,17 @@ export function buildConnectedServiceAccountRowActions(params: Readonly<{
     onReplaceToken?: () => void;
     /** Re-run the OAuth connect flow (oauth accounts only). */
     onReconnect?: () => void;
-    /** Disconnect / remove the credential (usable account records only). */
+    /** Disconnect / remove the credential. */
     onDisconnect?: () => void;
 }>): ItemAction[] {
-    const { kind, status } = params;
+    const { kind } = params;
     const actions: ItemAction[] = [];
 
     if (params.onOpen) {
         actions.push({
             id: 'open',
             title: t('connectedServices.detail.actions.openAccount'),
-            icon: 'open-outline',
+            icon: 'arrow-square-out',
             onPress: params.onOpen,
         });
     }
@@ -58,7 +60,7 @@ export function buildConnectedServiceAccountRowActions(params: Readonly<{
         actions.push({
             id: 'label',
             title: t('connectedServices.detail.actions.editLabel'),
-            icon: 'pencil-outline',
+            icon: 'pencil',
             onPress: params.onEditLabel,
         });
     }
@@ -66,7 +68,7 @@ export function buildConnectedServiceAccountRowActions(params: Readonly<{
         actions.push({
             id: 'replace-token',
             title: t('connectedServices.detail.actions.replaceToken'),
-            icon: 'key-outline',
+            icon: 'key',
             onPress: params.onReplaceToken,
         });
     }
@@ -78,11 +80,11 @@ export function buildConnectedServiceAccountRowActions(params: Readonly<{
             onPress: params.onReconnect,
         });
     }
-    if (isConnectedServiceCredentialHealthStatusUsable(status) && params.onDisconnect) {
+    if (params.onDisconnect) {
         actions.push({
             id: 'disconnect',
             title: t('modals.disconnect'),
-            icon: 'trash-outline',
+            icon: 'trash',
             destructive: true,
             onPress: params.onDisconnect,
         });

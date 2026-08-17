@@ -1,8 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { scaleTextStyle } from './uiFontScale';
 
 describe('uiFontScale', () => {
+    it('widens scaled metric literals while retaining opaque host fields', () => {
+        const style = { hostToken: 'opaque-host-token', fontSize: 10 } as const;
+        const scaled = scaleTextStyle(style, 2);
+
+        expectTypeOf(scaled).toEqualTypeOf<Readonly<{
+            hostToken: 'opaque-host-token';
+            fontSize: number;
+        }>>();
+    });
+
     it('scales fontSize, lineHeight, and letterSpacing', () => {
         const tokenStyle = { unistyles_abc: 1, color: 'red' } as any;
         const scaled = scaleTextStyle(

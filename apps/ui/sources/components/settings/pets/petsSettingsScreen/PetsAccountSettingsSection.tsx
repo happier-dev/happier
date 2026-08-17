@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -12,6 +11,7 @@ import { t } from '@/text';
 import { isPetEnabledOverride } from './helpers';
 import { PetCompanionSizeSlider } from './PetCompanionSizeSlider';
 import type { PetEnabledOverride } from './types';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type PetsAccountSettingsSectionProps = Readonly<{
     companionSizeScale: number;
@@ -33,7 +33,7 @@ export function PetsAccountSettingsSection(props: PetsAccountSettingsSectionProp
             <Item
                 title={t('settingsPets.enabledTitle')}
                 subtitle={t('settingsPets.enabledSubtitle')}
-                icon={<Ionicons name="paw-outline" size={25} color={theme.colors.accent.green} />}
+                icon={<Icon name="paw-print" size={24} color={theme.colors.accent.green} />}
                 rightElement={(
                     <Switch
                         testID="settings-pets-enabled"
@@ -57,7 +57,7 @@ export function PetsAccountSettingsSection(props: PetsAccountSettingsSectionProp
                     itemTrigger={{
                         title: t('settingsPets.deviceOverrideTitle'),
                         subtitle: t('settingsPets.deviceOverrideSubtitle'),
-                        icon: <Ionicons name="hardware-chip-outline" size={25} color={theme.colors.accent.blue} />,
+                        icon: <Icon name="cpu" size={24} color={theme.colors.accent.blue} />,
                         itemProps: { showDivider: false },
                     }}
                     rowKind="item"

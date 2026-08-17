@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import plist from 'plist';
 
 test('apps/ui package.json exposes shared stack-owned Tauri dev entrypoints', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -12,7 +13,8 @@ test('apps/ui package.json exposes shared stack-owned Tauri dev entrypoints', as
   const pkg = JSON.parse(raw);
   const scripts = pkg?.scripts ?? {};
 
-  assert.equal(scripts['typecheck'], 'node scripts/ensureWorkspacePackagesBuilt.mjs && tsc -p tsconfig.json --noEmit');
+  assert.equal(scripts['typecheck'], '../stack/bin/hstack-exec --script=typecheck:local');
+  assert.equal(scripts['typecheck:local'], 'node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit');
   assert.equal(scripts['tauri:dev'], 'yarn -s ensure:workspace:built && node ../stack/scripts/tauri_dev.mjs');
   assert.equal(scripts['ui:tauri'], 'yarn -s ensure:workspace:built && node ../stack/scripts/tauri_dev.mjs');
   assert.equal(scripts['tauri:qa'], 'yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs');
@@ -72,6 +74,27 @@ test('apps/ui Tauri channel configs leave HTML5 file drag-and-drop available to 
       assert.equal(windowConfig?.dragDropEnabled, false, `${configName} should let HTML5 file drag-and-drop reach the web frontend`);
     }
   }
+});
+
+test('apps/ui macOS Tauri bundles declare microphone privacy and hardened-runtime access', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const srcTauriDir = join(packageRoot, 'src-tauri');
+
+  const config = JSON.parse(await readFile(join(srcTauriDir, 'tauri.conf.json'), 'utf-8'));
+  const infoPlist = plist.parse(await readFile(join(srcTauriDir, 'Info.plist'), 'utf-8'));
+  const entitlements = plist.parse(await readFile(join(srcTauriDir, 'Entitlements.plist'), 'utf-8'));
+
+  assert.equal(config?.bundle?.macOS?.hardenedRuntime, true);
+  assert.equal(config?.bundle?.macOS?.entitlements, './Entitlements.plist');
+  assert.equal(Object.hasOwn(config?.bundle?.macOS ?? {}, 'infoPlist'), false);
+  assert.equal(
+    infoPlist.NSMicrophoneUsageDescription,
+    'Happier uses your microphone for voice conversations and dictation.',
+  );
+  assert.equal(typeof infoPlist.NSSpeechRecognitionUsageDescription, 'string');
+  assert.ok(infoPlist.NSSpeechRecognitionUsageDescription.trim().length > 0);
+  assert.equal(entitlements['com.apple.security.device.audio-input'], true);
 });
 
 test('apps/ui Tauri config runs beforeBuildCommand/beforeDevCommand via node wrapper (works on Windows CI)', async () => {

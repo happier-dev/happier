@@ -87,7 +87,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionId={null}
                 focusedOptionId="opt-25"
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -118,7 +119,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionId="opt-7"
                 focusedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -140,7 +142,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionId={null}
                 focusedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -155,7 +158,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionId={null}
                 focusedOptionId="opt-30"
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -177,7 +181,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionId={null}
                 focusedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -188,7 +193,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionId={null}
                 focusedOptionId="opt-30"
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -208,7 +214,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionId={null}
                 focusedOptionId={null}
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 
@@ -220,7 +227,8 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 selectedOptionId={null}
                 // Focus belongs to a different section's option id.
                 focusedOptionId="favorite:/Users/me/elsewhere"
-                onSelectOption={() => {}}
+                onSelect={() => {}}
+                onPushStep={() => {}}
             />,
         );
 

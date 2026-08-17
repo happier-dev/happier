@@ -17,13 +17,13 @@ type ProjectCockpitTabDefinition = Readonly<{
 
 export const ProjectCockpitTabBar = React.memo((props: ProjectCockpitTabBarProps) => {
     const tabs: readonly ProjectCockpitTabDefinition[] = [
-        { id: 'overview', label: t('diagnosis.sections.overview'), icon: 'grid-outline' },
-        { id: 'browse', label: t('common.files'), icon: 'folder-outline' },
-        { id: 'git', label: t('session.rightPanel.tabs.git'), icon: 'git-branch-outline' },
-        { id: 'tabs', label: t('common.tabs'), icon: 'albums-outline' },
-        { id: 'browser', label: t('browserSurface.title'), icon: 'globe-outline' },
-        { id: 'services', label: t('localServices.inventory.title'), icon: 'server-outline' },
-        { id: 'terminal', label: t('settings.terminal'), icon: 'terminal-outline' },
+        { id: 'overview', label: t('diagnosis.sections.overview'), icon: 'grid-four' },
+        { id: 'browse', label: t('common.files'), icon: 'folder' },
+        { id: 'git', label: t('session.rightPanel.tabs.git'), icon: 'git-branch' },
+        { id: 'tabs', label: t('common.tabs'), icon: 'stack' },
+        { id: 'browser', label: t('browserSurface.title'), icon: 'globe' },
+        { id: 'services', label: t('localServices.inventory.title'), icon: 'hard-drives' },
+        { id: 'terminal', label: t('settings.terminal'), icon: 'terminal' },
     ];
 
     return (

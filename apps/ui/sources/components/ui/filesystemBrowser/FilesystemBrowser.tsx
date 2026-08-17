@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -10,13 +9,14 @@ import { Typography } from '@/constants/Typography';
 import { FilesystemBrowserList } from './FilesystemBrowserList';
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type FilesystemBrowserProps = FilesystemBrowserListProps & Readonly<{
     loadingTestID?: string;
     errorTestID?: string;
     emptyTestID?: string;
     emptyLabel: string;
-    emptyIconName?: React.ComponentProps<typeof Ionicons>['name'];
+    emptyIconName?: IconName;
     loadingLabelCentered?: string;
     retryLabel?: string;
 }>;
@@ -65,7 +65,7 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     paddingHorizontal: 20,
                 }}
             >
-                <Ionicons name="alert-circle-outline" size={28} color={theme.colors.text.secondary} />
+                <Icon name="warning-circle" size={29} color={theme.colors.text.secondary} />
                 <Text style={{ fontSize: 13, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {props.rootError}
                 </Text>
@@ -86,7 +86,7 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     paddingHorizontal: 20,
                 }}
             >
-                <Ionicons name={props.emptyIconName ?? 'folder-outline'} size={48} color={theme.colors.text.secondary} />
+                <Icon name={props.emptyIconName ?? 'folder'} size={48} color={theme.colors.text.secondary} />
                 <Text
                     style={{
                         fontSize: 16,

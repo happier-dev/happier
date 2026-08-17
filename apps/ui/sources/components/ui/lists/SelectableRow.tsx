@@ -3,9 +3,27 @@ import { Platform, Pressable, View, StyleProp, ViewStyle, TextStyle, StyleSheet 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
+import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 
+
+/**
+ * Resizes an icon-like accessory, and only an icon-like one.
+ *
+ * A node is icon-like when it names a glyph and takes a size and has no children. Avatars, gauges
+ * and composed nodes are laid out by their own owner and must not be stretched to the icon box.
+ */
+function sizeRowIconForDensity(node: React.ReactNode, glyphSize: number): React.ReactNode {
+    if (!React.isValidElement(node) || node.type === React.Fragment) return node;
+    const nodeProps = (node.props ?? {}) as Record<string, unknown>;
+    const isIconLike = typeof nodeProps.name === 'string'
+        && (typeof nodeProps.size === 'number' || typeof nodeProps.size === 'string')
+        && nodeProps.children == null;
+    if (!isIconLike) return node;
+    return React.cloneElement(node, { size: glyphSize } as Record<string, unknown>);
+}
 
 export type SelectableRowVariant = 'slim' | 'default' | 'selectable';
 
@@ -16,6 +34,8 @@ export type SelectableRowProps = Readonly<{
     subtitle?: React.ReactNode;
     left?: React.ReactNode;
     right?: React.ReactNode;
+    /** Renders the right accessory beside, rather than inside, the row activation target. */
+    rightElementOutsidePressable?: boolean;
     leftGap?: number;
 
     selected?: boolean;
@@ -32,8 +52,11 @@ export type SelectableRowProps = Readonly<{
     onPress?: () => void;
     onHover?: () => void;
     onMouseDownCapture?: (event: unknown) => void;
+    onKeyDown?: (event: unknown) => void;
     accessibilityLabel?: string;
+    accessibilityRole?: 'radio';
     webRole?: React.AriaRole;
+    tabIndex?: 0 | -1;
 
     containerStyle?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
@@ -90,6 +113,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginRight: 12,
         alignItems: 'center',
         justifyContent: 'center',
+        // Optical, not geometric — see ICON_LABEL_OPTICAL_NUDGE_STYLE.
+        ...ICON_LABEL_OPTICAL_NUDGE_STYLE,
     },
     content: {
         flex: 1,
@@ -142,9 +167,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignSelf: 'flex-start',
         marginTop: 2,
     },
+    splitPressable: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
 }));
 
-export function SelectableRow(props: SelectableRowProps) {
+export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>, SelectableRowProps>(function SelectableRow(props, ref) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [isHovered, setIsHovered] = React.useState(false);
@@ -182,44 +213,50 @@ export function SelectableRow(props: SelectableRowProps) {
     const titleColorStyle = props.destructive ? styles.titleDestructive : null;
     const titleVariantStyle = variant === 'selectable' ? styles.titleSelectable : null;
     const subtitleVariantStyle = variant === 'selectable' ? styles.subtitleSelectable : null;
-    const leftAccessory = React.useMemo(() => normalizeNodeForView(props.left ?? null), [props.left]);
+    // A menu row's icon is one size whichever row kind the dropdown chose, and whatever list density
+    // the user prefers. `SelectableRow` rows used to pass the call site's number straight through, so
+    // the same DropdownMenu could show 16px icons on one menu and 24px on the next.
+    const iconGlyphSize = MENU_ROW_METRICS.iconGlyphSizePx;
+    const leftAccessory = React.useMemo(
+        () => sizeRowIconForDensity(normalizeNodeForView(props.left ?? null), iconGlyphSize),
+        [props.left, iconGlyphSize],
+    );
     const rightAccessory = React.useMemo(() => normalizeNodeForView(props.right ?? null), [props.right]);
     const titleAccessory = React.useMemo(() => normalizeNodeForView(props.titleAccessory ?? null), [props.titleAccessory]);
     const accessoryTitleAlignmentStyle = props.subtitle ? styles.accessoryTitleAligned : null;
-    const webRole = Platform.OS === 'web' && props.onPress && !disabled
-        ? (props.webRole ?? 'button')
+    const explicitWebRole = props.webRole ?? (props.accessibilityRole === 'radio' ? 'radio' : undefined);
+    const webRole = Platform.OS === 'web' && props.onPress && (!disabled || explicitWebRole)
+        ? (explicitWebRole ?? 'button')
         : undefined;
+    const isRadio = props.accessibilityRole === 'radio' || webRole === 'radio';
     const accessibilityLabel = props.accessibilityLabel ?? (
         webRole ? buildActionRowAccessibilityLabel([props.title, props.subtitle]) : undefined
     );
-
-    return (
-        <Pressable
-            testID={props.testID}
-            onPress={disabled ? undefined : props.onPress}
-            accessibilityState={disabled ? ({ disabled: true } as const) : undefined}
-            accessibilityRole={Platform.OS === 'web' ? undefined : (props.onPress ? 'button' : undefined)}
-            accessibilityLabel={accessibilityLabel}
-            {...(webRole ? { role: webRole } : undefined)}
-            pointerEvents={disabled && allowChildInteractionWhenDisabled ? 'box-none' : 'auto'}
-            style={({ pressed }) => ([
-                styles.row,
-                rowVariantStyle,
-                Platform.OS === 'web' && disabled ? ({ cursor: 'not-allowed' } as any) : null,
-                pressed && !disabled
-                    ? (variant === 'selectable' ? styles.rowSelectablePressed : styles.rowPressed)
-                    : null,
-                isHovered && !selected && !disabled
-                    ? (variant === 'selectable' ? styles.rowSelectableHovered : styles.rowHovered)
-                    : null,
-                selected
-                    ? styles.rowSelected
-                    : null,
-                disabled ? styles.rowDisabled : null,
-                props.containerStyle,
-            ])}
-            {...pressableProps}
-        >
+    const accessibilityState = isRadio
+        ? {
+            checked: selected,
+            ...(disabled ? { disabled: true } : {}),
+        }
+        : (disabled ? ({ disabled: true } as const) : undefined);
+    const splitRightAccessory = Boolean(props.rightElementOutsidePressable && rightAccessory);
+    const rowStyle = (pressed: boolean) => ([
+        styles.row,
+        rowVariantStyle,
+        Platform.OS === 'web' && disabled ? ({ cursor: 'not-allowed' } as any) : null,
+        pressed && !disabled
+            ? (variant === 'selectable' ? styles.rowSelectablePressed : styles.rowPressed)
+            : null,
+        isHovered && !selected && !disabled
+            ? (variant === 'selectable' ? styles.rowSelectableHovered : styles.rowHovered)
+            : null,
+        selected
+            ? styles.rowSelected
+            : null,
+        disabled ? styles.rowDisabled : null,
+        props.containerStyle,
+    ]);
+    const content = (includeRightAccessory: boolean) => (
+        <>
             {leftAccessory ? (
                 <View style={[styles.left, accessoryTitleAlignmentStyle, typeof props.leftGap === 'number' ? { marginRight: props.leftGap } : null]}>
                     {leftAccessory}
@@ -246,11 +283,55 @@ export function SelectableRow(props: SelectableRowProps) {
                 ) : null}
             </View>
 
-            {rightAccessory ? (
+            {includeRightAccessory && rightAccessory ? (
                 <View style={[styles.right, accessoryTitleAlignmentStyle]}>
                     {rightAccessory}
                 </View>
             ) : null}
+        </>
+    );
+    const handleKeyDown = React.useCallback((event: unknown) => {
+        props.onKeyDown?.(event);
+    }, [props.onKeyDown]);
+    const semanticProps = {
+        ref,
+        testID: props.testID,
+        onPress: disabled ? undefined : props.onPress,
+        onKeyDown: Platform.OS === 'web' && props.onKeyDown
+            ? handleKeyDown
+            : undefined,
+        accessibilityState,
+        accessibilityRole: Platform.OS === 'web' ? undefined : (props.accessibilityRole ?? (props.onPress ? 'button' : undefined)),
+        accessibilityLabel,
+        ...(webRole ? { role: webRole } : undefined),
+        ...(isRadio && Platform.OS === 'web' ? { 'aria-checked': selected } : undefined),
+        ...(Platform.OS === 'web' && props.tabIndex !== undefined ? { tabIndex: props.tabIndex } : undefined),
+        pointerEvents: disabled && allowChildInteractionWhenDisabled ? 'box-none' : 'auto',
+        ...pressableProps,
+    };
+
+    if (splitRightAccessory) {
+        return (
+            <View style={rowStyle(false)}>
+                <Pressable
+                    {...semanticProps}
+                    style={({ pressed }) => [styles.splitPressable, pressed && !disabled ? { opacity: 0.72 } : null]}
+                >
+                    {content(false)}
+                </Pressable>
+                <View style={[styles.right, accessoryTitleAlignmentStyle]}>
+                    {rightAccessory}
+                </View>
+            </View>
+        );
+    }
+
+    return (
+        <Pressable
+            {...semanticProps}
+            style={({ pressed }) => rowStyle(pressed)}
+        >
+            {content(true)}
         </Pressable>
     );
-}
+});

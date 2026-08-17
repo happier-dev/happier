@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -19,6 +18,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { supportsDirectTranscriptStorageForNewSession } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { readAccountTranscriptStorageDefaults, type SessionTranscriptStorageMode } from '@/sync/domains/session/transcriptStorageDefaults';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type PermissionApplyTiming = 'immediate' | 'next_prompt';
 type PermissionPromptSurfaceMenuOption = 'composer' | 'transcript';
@@ -156,7 +156,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                     popoverBoundaryRef={popoverBoundaryRef}
                     itemTrigger={{
                         title: t('settingsSession.defaultPermissions.applyPermissionChangesTitle'),
-                        icon: <Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.state.success.foreground} />,
+                        icon: <Icon name="shield-check" size={29} color={theme.colors.state.success.foreground} />,
                         // Keep the compact label as a fallback; selected option subtitle will override by default.
                         subtitle: applyTimingLabel,
                     }}
@@ -166,7 +166,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                         subtitle: opt.subtitle,
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="options-outline" size={22} color={theme.colors.text.secondary} />
+                                <Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />
                             </View>
                         ),
                     }))}
@@ -194,7 +194,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                     popoverBoundaryRef={popoverBoundaryRef}
                     itemTrigger={{
                         title: t('settingsSession.permissions.promptSurfaceTitle'),
-                        icon: <Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />,
+                        icon: <Icon name="chat-dots" size={29} color={theme.colors.text.secondary} />,
                         subtitle: promptSurfaceOptions.find((opt) => opt.key === normalizedPromptSurface)?.title ?? normalizedPromptSurface,
                     }}
                     items={promptSurfaceOptions.map((opt) => ({
@@ -203,7 +203,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                         subtitle: opt.subtitle,
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="chatbox-ellipses-outline" size={22} color={theme.colors.text.secondary} />
+                                <Icon name="chat-dots" size={20} color={theme.colors.text.secondary} />
                             </View>
                         ),
                     }))}
@@ -234,7 +234,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: t(core.displayNameKey),
-                                icon: <Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.text.secondary} />,
+                                icon: <Icon name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.text.secondary} />,
                                 itemProps: { showDivider },
                             }}
                             items={getPermissionModeOptionsForAgentType(agentId as any).map((opt) => ({
@@ -243,7 +243,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                                 subtitle: opt.description,
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name={opt.icon as any} size={22} color={theme.colors.text.secondary} />
+                                        <Icon name={opt.icon as any} size={20} color={theme.colors.text.secondary} />
                                     </View>
                                 ),
                             }))}
@@ -271,7 +271,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                         popoverBoundaryRef={popoverBoundaryRef}
                         itemTrigger={{
                             title: t('settingsSession.defaultStorage.globalTitle'),
-                            icon: <Ionicons name="layers-outline" size={29} color={theme.colors.text.secondary} />,
+                            icon: <Icon name="stack-simple" size={29} color={theme.colors.text.secondary} />,
                             subtitle: transcriptStorageOptions.find((opt) => opt.key === accountTranscriptStorageDefaults.globalDefault)?.title
                                 ?? t('sessionsList.storagePersistedTab'),
                         }}
@@ -281,7 +281,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                             subtitle: opt.subtitle,
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name={opt.key === 'direct' ? 'radio-outline' : 'save-outline'} size={22} color={theme.colors.text.secondary} />
+                                    <Icon name={opt.key === 'direct' ? 'radio' : 'floppy-disk'} size={20} color={theme.colors.text.secondary} />
                                 </View>
                             ),
                         }))}
@@ -313,7 +313,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                                 popoverBoundaryRef={popoverBoundaryRef}
                                 itemTrigger={{
                                     title: t(core.displayNameKey),
-                                    icon: <Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.text.secondary} />,
+                                    icon: <Icon name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.text.secondary} />,
                                     subtitle: override
                                         ? (transcriptStorageOptions.find((opt) => opt.key === override)?.title ?? t('sessionsList.storagePersistedTab'))
                                         : t('settingsSession.defaultStorage.globalSubtitle', {
@@ -332,7 +332,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                                         }),
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="layers-outline" size={22} color={theme.colors.text.secondary} />
+                                                <Icon name="stack-simple" size={20} color={theme.colors.text.secondary} />
                                             </View>
                                         ),
                                     },
@@ -342,7 +342,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                                         subtitle: opt.subtitle,
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name={opt.key === 'direct' ? 'radio-outline' : 'save-outline'} size={22} color={theme.colors.text.secondary} />
+                                                <Icon name={opt.key === 'direct' ? 'radio' : 'floppy-disk'} size={20} color={theme.colors.text.secondary} />
                                             </View>
                                         ),
                                     })),

@@ -115,7 +115,11 @@ export function SessionAutomationCreateScreen(props: {
             const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
                 credentials,
                 template,
-                encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
+                ...(sync.encryption
+                    ? {
+                        encryptRaw: (value) => sync.encryption!.encryptAutomationTemplateRaw(value),
+                    }
+                    : {}),
             });
 
             await sync.createAutomation({

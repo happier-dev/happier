@@ -1,1 +1,0 @@
-export { DesktopSettingsEntry } from './DesktopSettingsEntryBase';

@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ProviderMachineOption = Readonly<{
     id: string;
@@ -36,7 +37,7 @@ export const ProviderMachineSelector = React.memo(function ProviderMachineSelect
             itemTrigger={{
                 title: t('settingsProviders.detail.targetMachine'),
                 subtitle: items.find((item) => item.id === props.selectedId)?.title,
-                icon: <SafeIonicons name="desktop-outline" size={29} color={theme.colors.text.secondary} />,
+                icon: <Icon name="desktop" size={29} color={theme.colors.text.secondary} />,
                 showSelectedDetail: false,
                 showSelectedSubtitle: false,
             }}

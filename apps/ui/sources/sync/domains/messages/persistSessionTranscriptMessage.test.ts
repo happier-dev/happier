@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { EncryptionCache } from '@/sync/encryption/encryptionCache';
-import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
+import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 import { normalizeRawMessage, type RawRecord } from '@/sync/typesRaw';
 
 import { persistSessionTranscriptMessage } from './persistSessionTranscriptMessage';
@@ -69,6 +68,7 @@ describe('persistSessionTranscriptMessage', () => {
 
         expect(initial).toMatchObject({ didWrite: true, didUpdate: false });
         expect(corrected).toMatchObject({ didWrite: false, didUpdate: true });
+        expect(corrected.message).toMatchObject({ isAuthoritativeUpdate: true });
         expect(request).toHaveBeenCalledTimes(2);
         expect(request).toHaveBeenLastCalledWith(
             '/v2/sessions/carrier/messages',
@@ -83,22 +83,16 @@ describe('persistSessionTranscriptMessage', () => {
         const storedBody = storedBodies.at(-1);
         if (!storedBody) throw new Error('Expected a stored request body');
         const storedContent = storedBody.content;
-        const sessionEncryption = new SessionEncryption(
-            'carrier',
-            {
-                encrypt: vi.fn(),
-                decrypt: vi.fn(),
+        const decrypted = await readStoredSessionMessage({
+            message: {
+                id: 'server-row',
+                seq: 7,
+                localId: input.localId,
+                messageRole: 'user',
+                content: storedContent as { t: 'plain'; v: unknown },
+                createdAt: 100,
             },
-            new EncryptionCache(),
-        );
-        const [decrypted] = await sessionEncryption.decryptMessages([{
-            id: 'server-row',
-            seq: 7,
-            localId: input.localId,
-            messageRole: 'user',
-            content: storedContent as { t: 'plain'; v: unknown },
-            createdAt: 100,
-        }]);
+        });
         const reloaded = decrypted?.content
             ? normalizeRawMessage(
                 decrypted.id,

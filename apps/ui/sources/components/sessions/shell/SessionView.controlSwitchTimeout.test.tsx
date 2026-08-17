@@ -5,6 +5,7 @@ import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { sessionRunnerRuntimeStatusRetention } from '@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,7 +27,9 @@ const agentInputPropsSpy = vi.hoisted(() => vi.fn());
 const warningActionBannerPropsSpy = vi.hoisted(() => vi.fn());
 const sessionUsageLimitWaitResumeEnableSpy = vi.hoisted(() => vi.fn());
 const sessionRunnerRestartSpy = vi.hoisted(() => vi.fn());
-const sessionRunnerStatusGetSpy = vi.hoisted(() => vi.fn<() => Promise<unknown | null>>(async () => null));
+const sessionRunnerStatusGetSpy = vi.hoisted(() =>
+  vi.fn<(request?: unknown) => Promise<unknown | null>>(async () => null),
+);
 const cliDetectionState = vi.hoisted(() => ({
   authStatus: {} as Record<string, { state: 'logged_in' | 'logged_out' | 'unknown'; checkedAt: number } | null>,
 }));
@@ -284,23 +287,27 @@ vi.mock('@/voice/session/voiceSession', () => ({
   voiceSessionManager: {},
 }));
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    markSessionViewed: async () => {},
-    fetchPendingMessages: async () => {},
-    publishSessionPermissionModeToMetadata: async () => {},
-    publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-    publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-    publishSessionModelOverrideToMetadata: async () => {},
-    refreshSessions: async () => {},
-    onSessionVisible: () => () => {},
-    sendMessage: async () => {},
-    enqueuePendingMessage: async () => {},
-    submitMessage: async () => {},
-    encryption: { getMachineEncryption: () => null },
-    onSessionViewportChange: () => {},
-  },
-}));
+vi.mock('@/sync/sync', async () => {
+  const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
+  return {
+    sync: {
+      ...createAcceptedExternalSessionTailCursorSyncBoundary(),
+      markSessionViewed: async () => {},
+      fetchPendingMessages: async () => {},
+      publishSessionPermissionModeToMetadata: async () => {},
+      publishSessionAcpSessionModeOverrideToMetadata: async () => {},
+      publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
+      publishSessionModelOverrideToMetadata: async () => {},
+      refreshSessions: async () => {},
+      onSessionVisible: () => () => {},
+      sendMessage: async () => {},
+      enqueuePendingMessage: async () => {},
+      submitMessage: async () => {},
+      encryption: { getMachineEncryption: () => null },
+      onSessionViewportChange: () => {},
+    },
+  };
+});
 vi.mock('@/sync/ops', async (importOriginal) => {
   const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
   return createSyncOpsModuleMock({
@@ -323,6 +330,12 @@ vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
 }));
 vi.mock('@/sync/ops/sessionRunnerRestart', () => ({
   getSessionRunnerRuntimeStatus: sessionRunnerStatusGetSpy,
+  getSessionRunnerRuntimeStatusSnapshot: async (request: unknown) => {
+    const state = await sessionRunnerStatusGetSpy(request);
+    return state
+      ? { state }
+      : null;
+  },
   restartSessionRunnerOnCurrentRuntime: sessionRunnerRestartSpy,
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
@@ -485,6 +498,7 @@ describe('SessionView (control switch timeout)', () => {
     sessionRunnerRestartSpy.mockReset();
     sessionRunnerStatusGetSpy.mockReset();
     sessionRunnerStatusGetSpy.mockResolvedValue(null);
+    sessionRunnerRuntimeStatusRetention.clearForTests();
     useFeatureEnabledSpy.mockClear();
     enabledFeatureIds.clear();
     cliDetectionState.authStatus = {

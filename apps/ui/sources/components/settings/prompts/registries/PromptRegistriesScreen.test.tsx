@@ -66,9 +66,11 @@ const contextSelectionsState = vi.hoisted(() => ({
     value: { v: 1, selectionsByKey: {} as Record<string, { machineId?: string | null; workspacePath?: string | null }> },
 }));
 const setContextSelectionsMock = vi.hoisted(() => vi.fn());
-const machinesState = vi.hoisted(() => ({
-    value: [
-        {
+const administrationTargetState = vi.hoisted(() => ({
+    current: {
+        target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+        serverId: 'server-1',
+        machine: {
             id: 'machine-1',
             metadata: {
                 displayName: 'Laptop',
@@ -76,22 +78,11 @@ const machinesState = vi.hoisted(() => ({
                 homeDir: '/Users/test',
             },
         },
-        {
-            id: 'machine-2',
-            metadata: {
-                displayName: 'Desktop',
-                host: 'desktop.local',
-                homeDir: '/Users/desktop',
-            },
-        },
-    ] as Array<{
-        id: string;
-        metadata: {
-            displayName: string;
-            host: string;
-            homeDir: string;
-        };
-    }>,
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        serverId: string;
+        machine: { id: string; metadata: { displayName: string; host: string; homeDir: string } };
+    } | null,
 }));
 
 installPromptRegistriesCommonModuleMocks({
@@ -102,7 +93,6 @@ installPromptRegistriesCommonModuleMocks({
         },
     }).module,
     storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-        useAllMachines: () => machinesState.value,
         useSettingMutable: (key: string) => {
             if (key === 'promptRegistrySourcesV1') {
                 return [{ v: 1, sources: [] }, setRegistrySourcesMock];
@@ -136,10 +126,24 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
+    useLayoutMaxWidth: () => 1000,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
 vi.mock('@/components/settings/contextBar/ContextBar', () => ({
     ContextBar: (props: any) => React.createElement('ContextBar', props),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: any) => React.createElement('MachineAdministrationTargetSelector', props),
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.current?.target ?? null,
+        canExecute: administrationTargetState.current !== null,
+        resolveExecutionTarget: () => administrationTargetState.current,
+    }),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -174,10 +178,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'registry-source-1',
-}));
-
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
-    usePrimaryMachineFromActiveSelection: () => machinesState.value[0]?.id ?? null,
 }));
 
 vi.mock('@/sync/ops/machinePromptRegistries', () => ({
@@ -248,8 +248,10 @@ describe('PromptRegistriesScreen', () => {
         modalAlertSpy.mockReset();
         contextSelectionsState.value = { v: 1, selectionsByKey: {} };
         setContextSelectionsMock.mockReset();
-        machinesState.value = [
-            {
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+            serverId: 'server-1',
+            machine: {
                 id: 'machine-1',
                 metadata: {
                     displayName: 'Laptop',
@@ -257,15 +259,7 @@ describe('PromptRegistriesScreen', () => {
                     homeDir: '/Users/test',
                 },
             },
-            {
-                id: 'machine-2',
-                metadata: {
-                    displayName: 'Desktop',
-                    host: 'desktop.local',
-                    homeDir: '/Users/desktop',
-                },
-            },
-        ];
+        };
     });
 
     it('auto-loads sources on mount, opens registry item details, and imports registry items from row actions', async () => {
@@ -275,18 +269,20 @@ describe('PromptRegistriesScreen', () => {
         tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
-        expect(machinePromptRegistriesListAdaptersMock).toHaveBeenCalledWith('machine-1');
+        expect(machinePromptRegistriesListAdaptersMock).toHaveBeenCalledWith('machine-1', { serverId: 'server-1' });
         expect(machinePromptRegistriesListSourcesMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({
                 configuredSources: expect.any(Array),
             }),
+            { serverId: 'server-1' },
         );
         expect(machinePromptRegistriesScanSourceMock).toHaveBeenCalledWith(
             'machine-1',
             expect.objectContaining({
                 sourceId: 'git:local-skills',
             }),
+            { serverId: 'server-1' },
         );
 
         const addSourceExpander = tree.findByType('InlineAddExpander');
@@ -338,6 +334,7 @@ describe('PromptRegistriesScreen', () => {
             expect.objectContaining({
                 sourceId: 'git:local-skills',
             }),
+            { serverId: 'server-1' },
         );
 
         const registryItem = tree.findByTestId('promptRegistries.item.0');
@@ -347,7 +344,7 @@ describe('PromptRegistriesScreen', () => {
         });
 
         expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('/(app)/settings/prompts/registries/item?'));
-        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('machineId=machine-1'));
+        expect(promptRegistriesRouterPushSpy).not.toHaveBeenCalledWith(expect.stringContaining('machineId='));
         expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('sourceId=git%3Alocal-skills'));
         expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('itemId=git%3Alocal-skills%3Areviewer'));
 
@@ -362,6 +359,7 @@ describe('PromptRegistriesScreen', () => {
 
         expect(importPromptRegistrySkillItemMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
+            serverId: 'server-1',
             sourceId: 'git:local-skills',
             itemId: 'git:local-skills:reviewer',
         }));
@@ -393,6 +391,7 @@ describe('PromptRegistriesScreen', () => {
                 sourceId: 'git:local-skills',
                 query: 'design',
             }),
+            { serverId: 'server-1' },
         ]);
     });
 
@@ -433,6 +432,7 @@ describe('PromptRegistriesScreen', () => {
                 sourceId: 'skills_sh:featured',
                 query: 'u',
             }),
+            { serverId: 'server-1' },
         ]);
         expect(machinePromptRegistriesListSourcesMock).not.toHaveBeenCalled();
     });
@@ -617,7 +617,7 @@ describe('PromptRegistriesScreen', () => {
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'promptLibrary.externalAssetsUnsupportedImport');
     });
 
-    it('uses the persisted machine selection when auto-loading registry sources', async () => {
+    it('uses the Administration target rather than a persisted contextual machine selection', async () => {
         contextSelectionsState.value = {
             v: 1,
             selectionsByKey: {
@@ -634,25 +634,35 @@ describe('PromptRegistriesScreen', () => {
         await act(async () => {});
 
         expect(machinePromptRegistriesListSourcesMock).toHaveBeenCalledWith(
-            'machine-2',
+            'machine-1',
             expect.objectContaining({
                 configuredSources: expect.any(Array),
             }),
+            { serverId: 'server-1' },
         );
     });
 
-    it('re-loads registry sources when the selected machine changes', async () => {
+    it('re-loads registry sources when the Administration target changes', async () => {
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         let tree!: ReactTestRenderer;
         tree = (await renderScreen(React.createElement(PromptRegistriesScreen))).tree;
         await act(async () => {});
 
-        const contextBar = tree.findByType('ContextBar' as any);
-        expect(contextBar.props.machine.selectedId).toBe('machine-1');
-
         await act(async () => {
-            contextBar.props.machine.onSelect('machine-2');
+            administrationTargetState.current = {
+                target: { serverIdentityId: 'identity-2', machineId: 'machine-2' },
+                serverId: 'server-2',
+                machine: {
+                    id: 'machine-2',
+                    metadata: {
+                        displayName: 'Desktop',
+                        host: 'desktop.local',
+                        homeDir: '/Users/desktop',
+                    },
+                },
+            };
+            tree.update(React.createElement(PromptRegistriesScreen));
         });
         await act(async () => {});
 
@@ -661,16 +671,20 @@ describe('PromptRegistriesScreen', () => {
             expect.objectContaining({
                 configuredSources: expect.any(Array),
             }),
+            { serverId: 'server-2' },
         );
     });
 
-    it('does not persist an empty machine selection before machines are available', async () => {
-        machinesState.value = [];
+    it('does not invoke registry operations when no fresh Administration target is available', async () => {
+        administrationTargetState.current = null;
 
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
         await renderScreen(React.createElement(PromptRegistriesScreen));
 
         expect(setContextSelectionsMock).not.toHaveBeenCalled();
+        expect(machinePromptRegistriesListAdaptersMock).not.toHaveBeenCalled();
+        expect(machinePromptRegistriesListSourcesMock).not.toHaveBeenCalled();
+        expect(machinePromptRegistriesScanSourceMock).not.toHaveBeenCalled();
     });
 });

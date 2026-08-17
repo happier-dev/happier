@@ -1,6 +1,5 @@
 import { DaemonVoiceAgentClient } from '@/voice/agent/daemonVoiceAgentClient';
 import { initializeVoiceAgentHandle } from '@/voice/agent/initializeVoiceAgentHandle';
-import { OpenAiCompatVoiceAgentClient } from '@/voice/agent/openaiCompatVoiceAgentClient';
 import type { VoiceAgentHandle, VoiceAgentSendTurnOptions } from '@/voice/agent/types';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
 import { clearRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
@@ -37,25 +36,36 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
     const voiceAgentBySessionId = new Map<string, VoiceAgentHandle>();
     const voiceAgentInitBySessionId = new Map<string, Promise<VoiceAgentHandle>>();
     const voiceAgentPendingContextBySessionId = new Map<string, string[]>();
-    const voiceAgentTurnBarrierBySessionId = new Map<string, Promise<void>>();
+    const voiceAgentActiveTurnSettlementsBySessionId = new Map<string, Set<Promise<void>>>();
     const voiceAgentTurnAbortControllerBySessionId = new Map<string, AbortController>();
+    const voiceAgentStopPromiseBySessionId = new Map<string, Promise<void>>();
 
-    let openaiCompatVoiceAgentClient: OpenAiCompatVoiceAgentClient | null = null;
     let daemonVoiceAgentClient: DaemonVoiceAgentClient | null = null;
 
-    const runSerializedTurn = async <T>(sessionId: string, task: () => Promise<T>): Promise<T> => {
-        const previousBarrier = voiceAgentTurnBarrierBySessionId.get(sessionId) ?? Promise.resolve();
-        const taskPromise = previousBarrier.catch(() => undefined).then(task);
-        const nextBarrier = taskPromise.then(() => undefined, () => undefined);
-        voiceAgentTurnBarrierBySessionId.set(sessionId, nextBarrier);
-
+    const trackActiveTurn = async <T>(sessionId: string, task: () => Promise<T>): Promise<T> => {
+        let turn: Promise<T>;
         try {
-            return await taskPromise;
+            turn = task();
+        } catch (error) {
+            turn = Promise.reject(error);
+        }
+        const settlement = turn.then(() => undefined, () => undefined);
+        const activeTurns = voiceAgentActiveTurnSettlementsBySessionId.get(sessionId) ?? new Set<Promise<void>>();
+        activeTurns.add(settlement);
+        voiceAgentActiveTurnSettlementsBySessionId.set(sessionId, activeTurns);
+        try {
+            return await turn;
         } finally {
-            if (voiceAgentTurnBarrierBySessionId.get(sessionId) === nextBarrier) {
-                voiceAgentTurnBarrierBySessionId.delete(sessionId);
+            activeTurns.delete(settlement);
+            if (activeTurns.size === 0 && voiceAgentActiveTurnSettlementsBySessionId.get(sessionId) === activeTurns) {
+                voiceAgentActiveTurnSettlementsBySessionId.delete(sessionId);
             }
         }
+    };
+
+    const waitForActiveTurns = async (sessionId: string): Promise<void> => {
+        const activeTurns = voiceAgentActiveTurnSettlementsBySessionId.get(sessionId);
+        await Promise.all(activeTurns ? [...activeTurns] : []);
     };
 
     const interruptActiveTurn = (sessionId: string): void => {
@@ -75,10 +85,6 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
                 getDaemonVoiceAgentClient: () => {
                     daemonVoiceAgentClient ??= new DaemonVoiceAgentClient();
                     return daemonVoiceAgentClient;
-                },
-                getOpenAiCompatVoiceAgentClient: () => {
-                    openaiCompatVoiceAgentClient ??= new OpenAiCompatVoiceAgentClient();
-                    return openaiCompatVoiceAgentClient;
                 },
                 enqueuePendingContextUpdate: (pendingSessionId, update) => {
                     const existingPendingContext = voiceAgentPendingContextBySessionId.get(pendingSessionId) ?? [];
@@ -103,21 +109,38 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         getVoiceAgentHandle: recovery.getVoiceAgentHandle,
         interruptActiveTurn,
         resetCachedHandle: recovery.resetCachedHandle,
-        runSerializedTurn,
-        stop: recovery.stop,
+        trackActiveTurn,
         voiceAgentPendingContextBySessionId,
         voiceAgentTurnAbortControllerBySessionId,
     });
 
-    const stop = async (sessionId: string): Promise<void> => {
+    const stop = (sessionId: string): Promise<void> => {
+        const existingStop = voiceAgentStopPromiseBySessionId.get(sessionId);
+        if (existingStop) return existingStop;
+
         interruptActiveTurn(sessionId);
-        await runSerializedTurn(sessionId, async () => {
+        const stopPromise = (async () => {
+            await waitForActiveTurns(sessionId);
             try {
                 await recovery.stop(sessionId);
             } finally {
                 clearRetainedLocalVoiceEffectOutcomes(sessionId);
             }
-        });
+        })();
+        voiceAgentStopPromiseBySessionId.set(sessionId, stopPromise);
+        void stopPromise.then(
+            () => {
+                if (voiceAgentStopPromiseBySessionId.get(sessionId) === stopPromise) {
+                    voiceAgentStopPromiseBySessionId.delete(sessionId);
+                }
+            },
+            () => {
+                if (voiceAgentStopPromiseBySessionId.get(sessionId) === stopPromise) {
+                    voiceAgentStopPromiseBySessionId.delete(sessionId);
+                }
+            },
+        );
+        return stopPromise;
     };
 
     const commitUserTranscript = async (sessionId: string, text: string, localId: string): Promise<void> => {

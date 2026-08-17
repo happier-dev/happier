@@ -23,6 +23,8 @@ export function BrowserViewFrame(props: Readonly<{
                     csp={props.engine.csp}
                     onLoad={props.engine.onLoad}
                     onError={props.engine.onError}
+                    revokeOnUnexpectedNavigation={props.engine.revokeOnUnexpectedNavigation}
+                    onUnexpectedNavigation={props.engine.onUnexpectedNavigation}
                     diagnostics={props.engine.diagnostics}
                     automation={props.engine.automation}
                     webMessageBridge={props.engine.webMessageBridge}

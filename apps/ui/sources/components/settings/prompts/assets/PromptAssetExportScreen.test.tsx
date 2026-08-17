@@ -9,6 +9,27 @@ import { installPromptAssetsCommonModuleMocks } from './promptAssetsScreenTestHe
 
 const setPromptExternalLinksMock = vi.hoisted(() => vi.fn());
 const setContextSelectionsMock = vi.hoisted(() => vi.fn());
+const administrationTargetState = vi.hoisted(() => ({
+  current: {
+    target: { serverIdentityId: 'server-identity-1', machineId: 'machine-1' },
+    serverId: 'server-1',
+    machine: {
+      id: 'machine-1',
+      metadata: {
+        displayName: 'Laptop',
+        host: 'laptop.local',
+        homeDir: '/Users/test',
+      },
+    },
+  } as {
+    target: { serverIdentityId: string; machineId: string };
+    serverId: string;
+    machine: {
+      id: string;
+      metadata: { displayName: string; host: string; homeDir: string };
+    };
+  } | null,
+}));
 const machinePromptAssetsListTypesMock = vi.hoisted(() => vi.fn(async () => ({
   ok: true,
   types: [
@@ -256,9 +277,23 @@ installPromptAssetsCommonModuleMocks({
 
 vi.mock('@/components/ui/layout/layout', () => ({
   layout: { maxWidth: 960 },
+  useLayoutMaxWidth: () => 960,
+  useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
 }));
 
 vi.mock('@/components/settings/contextBar/ContextBar', () => createPassThroughModule(['ContextBar']));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => createPassThroughModule([
+  'MachineAdministrationTargetSelector',
+]));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+  useMachineAdministrationTargetSelection: () => ({
+    selectedTarget: administrationTargetState.current?.target ?? null,
+    canExecute: administrationTargetState.current !== null,
+    resolveExecutionTarget: () => administrationTargetState.current,
+  }),
+}));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
 
@@ -299,6 +334,51 @@ describe('PromptAssetExportScreen', () => {
     setContextSelectionsMock.mockReset();
     promptExternalLinksState.value = { v: 1, links: [] };
     contextSelectionsState.value = { v: 1, selectionsByKey: {} };
+    administrationTargetState.current = {
+      target: { serverIdentityId: 'server-identity-1', machineId: 'machine-1' },
+      serverId: 'server-1',
+      machine: {
+        id: 'machine-1',
+        metadata: {
+          displayName: 'Laptop',
+          host: 'laptop.local',
+          homeDir: '/Users/test',
+        },
+      },
+    };
+  });
+
+  it('uses the Administration execution target instead of the legacy context machine for an export', async () => {
+    administrationTargetState.current = {
+      target: { serverIdentityId: 'server-identity-2', machineId: 'machine-2' },
+      serverId: 'server-2',
+      machine: {
+        id: 'machine-2',
+        metadata: {
+          displayName: 'Desktop',
+          host: 'desktop.local',
+          homeDir: '/Users/desktop',
+        },
+      },
+    };
+    contextSelectionsState.value = {
+      v: 1,
+      selectionsByKey: {
+        'promptAssets.export.doc-1': {
+          machineId: 'machine-1',
+          workspacePath: '/Users/test/repo',
+        },
+      },
+    };
+
+    const screen = await renderPromptAssetExportScreen('doc-1');
+
+    await screen.pressByTestIdAsync('promptAssetExport.export');
+
+    expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-2',
+      serverId: 'server-2',
+    }));
   });
 
   it('exports a prompt doc to a compatible external markdown asset and stores the link', async () => {
@@ -396,6 +476,7 @@ describe('PromptAssetExportScreen', () => {
     const contextBar = screen.findByType('ContextBar');
     expect(contextBar.props.workspace.browse).toEqual({
       machineId: 'machine-1',
+      serverId: 'server-1',
       enabled: true,
     });
   });
@@ -436,7 +517,7 @@ describe('PromptAssetExportScreen', () => {
         assetTypeId: 'claude.command',
         externalRef: { relativePath: 'review/code.md' },
       }),
-      undefined,
+      { serverId: 'server-1' },
     );
     expect(setPromptExternalLinksMock).toHaveBeenCalledWith({
       v: 1,

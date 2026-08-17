@@ -144,7 +144,17 @@ function createStableMembers(overrides?: {
             reason: 'test',
             mode: 'hydrating' as const,
         })),
-        resolveWebScrollMetrics: overrides?.resolveWebScrollMetrics ?? vi.fn(() => null),
+        // A mounted web transcript always has a real scroller with a real
+        // scrollable range; an anchored entry restore is a scroll WRITE and is
+        // withheld until that range is measured. `null` metrics model an
+        // unmounted scroller, which would make every anchored assertion below
+        // pass for the wrong reason.
+        resolveWebScrollMetrics: overrides?.resolveWebScrollMetrics ?? vi.fn(() => ({
+            clientHeight: 548,
+            element: {} as HTMLElement,
+            scrollHeight: 46_080,
+            scrollTop: 0,
+        })),
         restoreWebViewportAnchorThroughViewportCommand: overrides?.restoreWebViewportAnchorThroughViewportCommand ?? vi.fn(() => ({
             didAdjustScroll: false,
             status: 'not_found' as const,
@@ -331,6 +341,11 @@ describe('useTranscriptEntryHost fallback guard', () => {
         members.isViewportAnchorSeqLoaded = vi.fn(
             () => members.listDataRef.current.some((item) => item.id === materializedItem.id),
         );
+        // A mounted native list reports its measured geometry; the anchored
+        // restore write is withheld until it does.
+        members.hasNativeContentMeasurementForCurrentSession = vi.fn(() => true);
+        members.listContentHeightRef.current = 20_000;
+        members.listLayoutHeightRef.current = 670;
         syncMockState.loadTargetWindowMessages.mockImplementation(async () => {
             members.listDataRef.current = [materializedItem];
             return {

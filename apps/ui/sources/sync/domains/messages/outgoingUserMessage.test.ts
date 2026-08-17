@@ -142,4 +142,45 @@ describe('outgoing user message projection', () => {
             },
         }));
     });
+
+    it('stamps Voice admission after stripping caller-controlled protected metadata', async () => {
+        const { buildOutgoingUserTextRecord } = await import('./outgoingUserMessage');
+
+        const rawRecord = buildOutgoingUserTextRecord({
+            text: 'send this to the coding session',
+            agentId: null,
+            permissionMode: 'default',
+            settings: {},
+            session: null,
+            metaOverrides: {
+                happierProvenanceV1: { v: 1, kind: 'cli' },
+                happierInputRequestV1: {
+                    v: 1,
+                    producer: 'cli',
+                    caller: { kind: 'host' },
+                    permission: {},
+                },
+                happierInputAuthorityV1: {
+                    v: 1,
+                    producer: 'cli',
+                    caller: { kind: 'host' },
+                    permission: {
+                        admittedPermissionCeiling: 'read',
+                    },
+                },
+            },
+            hostAdmissionOrigin: 'voice',
+        });
+
+        expect(rawRecord.meta).toEqual(expect.objectContaining({
+            happierProvenanceV1: { v: 1, kind: 'voice' },
+            happierInputRequestV1: {
+                v: 1,
+                producer: 'voiceInput',
+                caller: { kind: 'host' },
+                permission: {},
+            },
+        }));
+        expect(rawRecord.meta).not.toHaveProperty('happierInputAuthorityV1');
+    });
 });

@@ -72,6 +72,10 @@ export function resolveEntryRestoreTarget<TItem>(
         return { kind: 'bottom' };
     }
 
+    // An anchor target is a scroll WRITE instruction, so it needs a measured
+    // scrollable range and not only the data fact that the row exists.
+    const hasScrollableRange = contentMeasured && contentHeight > layoutHeight;
+
     const anchor = params.snapshot.anchor;
     if (anchor) {
         const exactTarget = toAnchorTarget(
@@ -79,7 +83,7 @@ export function resolveEntryRestoreTarget<TItem>(
             anchor.itemOffsetPx,
             params.items.length,
         );
-        if (exactTarget) return exactTarget;
+        if (exactTarget) return anchorTargetOrWait(exactTarget, hasScrollableRange);
 
         const anchorSeqHint = resolveDurableAnchorSeqHint(anchor, params.anchorSeqResolver);
         if (
@@ -98,7 +102,7 @@ export function resolveEntryRestoreTarget<TItem>(
             anchor.itemOffsetPx,
             params.items.length,
         );
-        if (survivingTarget) return survivingTarget;
+        if (survivingTarget) return anchorTargetOrWait(survivingTarget, hasScrollableRange);
     }
 
     if (!params.fillSettled) {
@@ -118,6 +122,28 @@ export function resolveEntryRestoreTarget<TItem>(
         kind: 'distance-oneshot',
         targetOffsetY: Math.max(0, maxOffsetY - distanceFromBottom),
     };
+}
+
+/**
+ * Holds a resolved anchor target until the list has a real scrollable range.
+ *
+ * A resolved index is a DATA fact; the write it authorizes is only meaningful
+ * against measured geometry. At entry the list is routinely mounted with no
+ * scrollable range at all (native zeroes the content height when the entry
+ * arms), and `scrollToIndex` there can only land at offset 0 — while the entry
+ * transaction has already counted its one authorized correction as issued, so
+ * the wrong landing is permanent. Deferring to the existing `content-unmeasured`
+ * wait verdict costs nothing: the owner treats it as a no-op and the existing
+ * re-drive re-resolves on the next content/layout measurement. The gate is
+ * MEASUREMENT, never fill settle — an under-filled list that settles is caught
+ * above by the final `content-fits-viewport` verdict, so this cannot wait
+ * forever.
+ */
+function anchorTargetOrWait(
+    target: Extract<EntryRestoreTarget, { kind: 'anchor' }>,
+    hasScrollableRange: boolean,
+): EntryRestoreTarget {
+    return hasScrollableRange ? target : { kind: 'none', reason: 'content-unmeasured' };
 }
 
 function toAnchorTarget(

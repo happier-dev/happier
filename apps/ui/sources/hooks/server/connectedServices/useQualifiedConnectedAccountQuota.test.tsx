@@ -6,6 +6,9 @@ import {
     renderHook,
     standardCleanup,
 } from '@/dev/testkit';
+import {
+    resolveConnectedServiceSettingsErrorMessage,
+} from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 
 const getQuotaMock = vi.hoisted(() => vi.fn());
 const requestRefreshMock = vi.hoisted(() => vi.fn());
@@ -168,12 +171,13 @@ describe('useQualifiedConnectedAccountQuota', () => {
         });
     });
 
-    it('clears the prior snapshot when refresh or reopening fails', async () => {
+    it('keeps the last-known-good snapshot and localizes a failed refresh', async () => {
+        const failure = Object.assign(new Error('stale'), {
+            code: 'qualified_quota_stale',
+        });
         getQuotaMock.mockResolvedValueOnce(response);
         openQuotaMock.mockReturnValueOnce(response.content.v);
-        requestRefreshMock.mockRejectedValueOnce(
-            Object.assign(new Error('stale'), { code: 'qualified_quota_stale' }),
-        );
+        requestRefreshMock.mockRejectedValueOnce(failure);
 
         const { useQualifiedConnectedAccountQuota } = await import(
             './useQualifiedConnectedAccountQuota'
@@ -187,8 +191,9 @@ describe('useQualifiedConnectedAccountQuota', () => {
         });
 
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
-            snapshot: null,
-            error: 'qualified_quota_stale',
+            snapshot: response.content.v,
+            refreshing: false,
+            error: resolveConnectedServiceSettingsErrorMessage(failure),
         }));
     });
 
@@ -197,13 +202,12 @@ describe('useQualifiedConnectedAccountQuota', () => {
             ...ref,
             accountId: 'account-b',
         };
+        const failure = Object.assign(new Error('unavailable'), {
+            code: 'qualified_quota_unavailable',
+        });
         getQuotaMock
             .mockResolvedValueOnce(response)
-            .mockRejectedValueOnce(
-                Object.assign(new Error('unavailable'), {
-                    code: 'qualified_quota_unavailable',
-                }),
-            );
+            .mockRejectedValueOnce(failure);
         openQuotaMock.mockReturnValueOnce(response.content.v);
 
         const { useQualifiedConnectedAccountQuota } = await import(
@@ -222,19 +226,18 @@ describe('useQualifiedConnectedAccountQuota', () => {
         await flushHookEffects();
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
             snapshot: null,
-            error: 'qualified_quota_unavailable',
+            error: resolveConnectedServiceSettingsErrorMessage(failure),
         }));
     });
 
     it('does not let prior unsupported state hide a changed-basis error', async () => {
         const refB = { ...ref, accountId: 'account-b' };
+        const failure = Object.assign(new Error('unavailable'), {
+            code: 'qualified_quota_unavailable',
+        });
         getQuotaMock
             .mockResolvedValueOnce(null)
-            .mockRejectedValueOnce(
-                Object.assign(new Error('unavailable'), {
-                    code: 'qualified_quota_unavailable',
-                }),
-            );
+            .mockRejectedValueOnce(failure);
 
         const { useQualifiedConnectedAccountQuota } = await import(
             './useQualifiedConnectedAccountQuota'
@@ -249,18 +252,22 @@ describe('useQualifiedConnectedAccountQuota', () => {
 
         await hook.rerender(refB);
         await flushHookEffects();
+        // Support is UNKNOWN after a failed read: the prior `false` must not
+        // leak into the new basis, and a failure must not claim support either.
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
-            supported: true,
+            supported: null,
+            loading: false,
             snapshot: null,
-            error: 'qualified_quota_unavailable',
+            error: resolveConnectedServiceSettingsErrorMessage(failure),
         }));
     });
 
     it('does not issue a V4 request when daemon admission contradicts V4', async () => {
-        operationAdmissionMock.mockRejectedValueOnce(Object.assign(
+        const failure = Object.assign(
             new Error('unsupported'),
             { code: 'connected_account_v4_operation_unsupported' },
-        ));
+        );
+        operationAdmissionMock.mockRejectedValueOnce(failure);
 
         const { useQualifiedConnectedAccountQuota } = await import(
             './useQualifiedConnectedAccountQuota'
@@ -270,10 +277,12 @@ describe('useQualifiedConnectedAccountQuota', () => {
         await flushHookEffects();
 
         expect(getQuotaMock).not.toHaveBeenCalled();
+        // A refused operation is not evidence of support: `supported` stays
+        // unknown so the block cannot offer a refresh that cannot work.
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
-            supported: true,
+            supported: null,
             snapshot: null,
-            error: 'connected_account_v4_operation_unsupported',
+            error: resolveConnectedServiceSettingsErrorMessage(failure),
         }));
     });
 });

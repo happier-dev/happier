@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 import { installVitestRnShim } from './vitestRnShim';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { SHADOW_LEVELS } from '@/shadowElevation';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 import { createReactNavigationNativeMock } from './testkit/mocks/reactNavigation';
@@ -306,6 +307,7 @@ vi.mock('react-native', async () => await import('./reactNativeStub'));
 // Provide a minimal in-memory implementation for tests.
 const store = new Map<string, unknown>();
 const asyncStorageBacking = new Map<string, string>();
+const secureStoreBacking = new Map<string, string>();
 const localStorageBacking = new Map<string, string>();
 const sessionStorageBacking = new Map<string, string>();
 
@@ -343,6 +345,7 @@ beforeEach(() => {
 
     store.clear();
     asyncStorageBacking.clear();
+    secureStoreBacking.clear();
     localStorageBacking.clear();
     sessionStorageBacking.clear();
 
@@ -522,6 +525,19 @@ vi.mock('react-native-svg', () => {
         Path: makeHost('Path'),
         Text: makeHost('SvgText'),
         SvgXml: makeHost('SvgXml'),
+        // Gradient primitives. The Voice light material is built from stacked
+        // radial gradients, and a golden-frame test reads their resolved
+        // `offset`/`stopOpacity` props — so these must be real host elements
+        // that preserve props, not omitted.
+        Defs: makeHost('Defs'),
+        G: makeHost('G'),
+        Rect: makeHost('Rect'),
+        Ellipse: makeHost('Ellipse'),
+        Stop: makeHost('Stop'),
+        RadialGradient: makeHost('RadialGradient'),
+        LinearGradient: makeHost('SvgLinearGradient'),
+        ClipPath: makeHost('ClipPath'),
+        Mask: makeHost('Mask'),
     };
 });
 
@@ -597,9 +613,14 @@ vi.mock('expo-video', async () => await import('./expoVideoStub'));
 
 // `expo-secure-store` is native; stub its async API for token storage tests.
 vi.mock('expo-secure-store', () => ({
-    getItemAsync: async () => null,
-    setItemAsync: async () => {},
-    deleteItemAsync: async () => {},
+    getItemAsync: async (key: string) =>
+        secureStoreBacking.get(String(key)) ?? null,
+    setItemAsync: async (key: string, value: string) => {
+        secureStoreBacking.set(String(key), String(value));
+    },
+    deleteItemAsync: async (key: string) => {
+        secureStoreBacking.delete(String(key));
+    },
 }));
 
 // `react-native-unistyles` requires a Babel plugin at runtime which isn't present in Vitest.
@@ -666,14 +687,17 @@ vi.mock('react-native-unistyles', () => {
                 header: { background: '#ffffff', foreground: '#18171C' },
             },
             shadow: { color: '#000000', opacity: 0.1 },
-            shadowLevels: Array.from({ length: 6 }, (_value, idx) => ({
+            // Keyed off the real scale rather than a hand-counted length: as a 0-indexed array of
+            // length 6 this silently had no entry for the highest level, and every consumer of it
+            // crashed on `undefined` the moment the scale grew.
+            shadowLevels: Object.fromEntries(SHADOW_LEVELS.map((level) => [level, {
                 boxShadow: '0 0 0 rgba(0, 0, 0, 0)',
                 shadowColor: '#000000',
-                shadowOffset: { width: 0, height: idx },
+                shadowOffset: { width: 0, height: level },
                 shadowOpacity: 0.1,
-                shadowRadius: idx,
-                elevation: idx,
-            })),
+                shadowRadius: level,
+                elevation: level,
+            }])),
             shadowPopoverArrowBoxShadow: '0 0 0 rgba(0, 0, 0, 0)',
             overlay: {
                 scrim: 'rgba(0, 0, 0, 0.45)',
@@ -776,6 +800,19 @@ vi.mock('react-native-unistyles', () => {
                 inlineRemoved: { background: '#ffd6d6', foreground: '#a8071a' },
             },
         },
+        // Mirrors the canonical spacing scale in `sources/theme/index.ts`. Any
+        // surface projecting the theme (e.g. the plugin theme projection, which
+        // reads `theme.margins.*`) renders under this mock, so an incomplete
+        // scale here reads as a crash in unrelated suites rather than a missing
+        // fixture.
+        margins: {
+            xs: 4,
+            sm: 8,
+            md: 12,
+            lg: 16,
+            xl: 20,
+            xxl: 24,
+        },
         borderRadius: {
             sm: 4,
             md: 8,
@@ -816,5 +853,33 @@ vi.mock('react-native-unistyles', () => {
             setTheme: () => {},
             updateTheme: () => {},
         },
+    };
+});
+// it — so assertions stay `findTestInstanceByTypeWithProps(screen, 'Icon', { name: 'terminal' })`
+// and need not know which Phosphor component a name resolves to. The seam's own behaviour (the
+// per-glyph optical scale, weight defaults) is covered by its dedicated test, which unmocks this.
+// Static, not `importOriginal` — pulling the real module back in here re-enters a module that is
+// mid-require and trips vitest's ERR_INTERNAL_ASSERTION. `ICON_SIZE` is a plain value object, so
+// restating it costs nothing; `IconName` is a type and erases.
+vi.mock('@/components/ui/icons/Icon', () => ({
+    Icon: 'Icon',
+    ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
+}));
+
+// Phosphor draws with `react-native-svg`, whose native primitives do not exist in the node test
+// runtime — without this, every component rendering a real icon fails to construct. Host-element
+// stand-ins keep the icon component in the tree while the leaf drawing primitives become
+// inspectable placeholders. A test needing different behaviour can still mock it locally.
+vi.mock('react-native-svg', () => {
+    const host = (name: string) => name;
+    return {
+        default: host('Svg'), Svg: host('Svg'), SvgXml: host('SvgXml'),
+        Path: host('Path'), G: host('G'), Circle: host('Circle'), Ellipse: host('Ellipse'),
+        Rect: host('Rect'), Line: host('Line'), Polyline: host('Polyline'), Polygon: host('Polygon'),
+        Text: host('SvgText'), TSpan: host('TSpan'), Defs: host('Defs'), Use: host('Use'),
+        Mask: host('Mask'), ClipPath: host('ClipPath'), Pattern: host('Pattern'),
+        Image: host('SvgImage'), LinearGradient: host('LinearGradient'),
+        RadialGradient: host('RadialGradient'), Stop: host('Stop'), Symbol: host('SvgSymbol'),
+        Marker: host('Marker'), ForeignObject: host('ForeignObject'),
     };
 });

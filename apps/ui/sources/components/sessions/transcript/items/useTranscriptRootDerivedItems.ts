@@ -23,6 +23,11 @@ import {
     appendExternalSessionOperationTranscriptItem,
     type ExternalSessionOperationTranscriptDismissal,
 } from '@/components/sessions/transcript/items/externalSessionOperationTranscriptItem';
+import {
+    appendPluginTranscriptActivityTranscriptItems,
+    createPluginTranscriptActivityTranscriptItemsCache,
+    type PluginTranscriptActivityLiveRow,
+} from '@/components/sessions/transcript/items/pluginTranscriptActivityTranscriptItem';
 
 type BuildChatListItemsOptions = Parameters<typeof buildChatListItems>[0];
 
@@ -42,6 +47,11 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         ExternalSessionOperationSharedPresentationV1 | null;
     externalSessionOperationProgress: ExternalSessionOperationProgressV1 | null;
     externalSessionOperationDismissal: ExternalSessionOperationTranscriptDismissal | null;
+    pluginTranscriptActivities: readonly PluginTranscriptActivityLiveRow[];
+    dismissedPluginTranscriptActivityIds: ReadonlySet<string>;
+    isPluginTranscriptActivityActionAvailable: (
+        action: Readonly<{ pluginId: string; localId: string }>,
+    ) => boolean;
     sessionId: string;
     toolCallsGroupStrategy: 'all_tools_in_turn' | 'consecutive_tools';
 }>) {
@@ -60,6 +70,9 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         externalSessionOperationPresentation,
         externalSessionOperationProgress,
         externalSessionOperationDismissal,
+        pluginTranscriptActivities,
+        dismissedPluginTranscriptActivityIds,
+        isPluginTranscriptActivityActionAvailable,
         sessionId,
         toolCallsGroupStrategy,
     } = params;
@@ -68,6 +81,11 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         syncTuning.transcriptDerivedItemsCacheMaxSessions,
     );
     const transcriptMaxTurnEntriesPerListItem = syncTuning.transcriptMaxTurnEntriesPerListItem;
+    // Activity cards are an ephemeral tail. Keep their identity only for this
+    // mounted derivation, never in the cross-session derived-items cache.
+    const pluginTranscriptActivityItemsCacheRef = React.useRef(
+        createPluginTranscriptActivityTranscriptItemsCache(),
+    );
     const derivedItemsCacheEntry = readTranscriptDerivedItemsCacheEntry(
         sessionId,
         derivedItemsCacheMaxSessions,
@@ -179,7 +197,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                 const withForkDividers = !forkedTranscriptEnabled || !fork
                     ? base
                     : insertForkDividersIntoTranscriptItems({ items: base, fork });
-                return appendExternalSessionOperationTranscriptItem(
+                const withExternalOperation = appendExternalSessionOperationTranscriptItem(
                     withForkDividers,
                     {
                         presentation: externalSessionOperationPresentation,
@@ -190,6 +208,13 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                         dismissed: externalSessionOperationDismissal,
                     },
                 );
+                return appendPluginTranscriptActivityTranscriptItems(withExternalOperation, {
+                    sessionId,
+                    activities: pluginTranscriptActivities,
+                    dismissedActivityIds: dismissedPluginTranscriptActivityIds,
+                    isActionAvailable: isPluginTranscriptActivityActionAvailable,
+                    cache: pluginTranscriptActivityItemsCacheRef.current,
+                });
             }
 
             const trailing = buildChatListItems({
@@ -216,8 +241,16 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                 },
             ) as ForkDividerTranscriptItem[];
             const base: ForkDividerTranscriptItem[] = [...turnItems, ...trailing, ...operationItems];
-            if (!forkedTranscriptEnabled || !fork) return base;
-            return insertForkDividersIntoTranscriptItems({ items: base, fork }) as ChatTranscriptListItem[];
+            const withForkDividers = !forkedTranscriptEnabled || !fork
+                ? base
+                : insertForkDividersIntoTranscriptItems({ items: base, fork }) as ChatTranscriptListItem[];
+            return appendPluginTranscriptActivityTranscriptItems(withForkDividers, {
+                sessionId,
+                activities: pluginTranscriptActivities,
+                dismissedActivityIds: dismissedPluginTranscriptActivityIds,
+                isActionAvailable: isPluginTranscriptActivityActionAvailable,
+                cache: pluginTranscriptActivityItemsCacheRef.current,
+            });
         });
     }, [
         actionDrafts,
@@ -233,6 +266,9 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         messagesById,
         pendingMessages,
         pendingUserActionRequests,
+        pluginTranscriptActivities,
+        dismissedPluginTranscriptActivityIds,
+        isPluginTranscriptActivityActionAvailable,
         sessionId,
         turnsCache,
     ]);

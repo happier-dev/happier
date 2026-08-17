@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import { HappierSurface } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
@@ -58,7 +59,7 @@ const styles = StyleSheet.create((theme) => {
     };
 });
 
-function resolvePaddingStyle(padding: SurfaceCardPadding): ViewStyle | undefined {
+function resolvePaddingStyle(padding: SurfaceCardPadding): StyleProp<ViewStyle> {
     if (padding === 'none') {
         return undefined;
     }
@@ -94,22 +95,14 @@ export const SurfaceCard = React.memo(function SurfaceCard(props: SurfaceCardPro
         </View>
     );
 
-    if (typeof onPress !== 'function') {
-        return (
-            <View testID={testID}>
-                {content}
-            </View>
-        );
-    }
-
     return (
-        <Pressable
+        <HappierSurface
             testID={testID}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.pressable, pressed ? styles.pressablePressed : null]}
             onPress={onPress}
+            pressableStyle={styles.pressable}
+            pressedStyle={styles.pressablePressed}
         >
             {content}
-        </Pressable>
+        </HappierSurface>
     );
 });

@@ -1,4 +1,4 @@
-export type AppUpdateStatusKind = 'native-store' | 'desktop' | 'ota' | 'release-notes' | 'changelog';
+export type AppUpdateStatusKind = 'native-store' | 'web-ui' | 'desktop' | 'ota' | 'release-notes' | 'changelog';
 
 export type DesktopUpdateStatus =
     | 'idle'
@@ -15,7 +15,7 @@ export type VisibleAppUpdateStatusModel = Readonly<{
     visible: true;
     kind: AppUpdateStatusKind;
     tone: AppUpdateStatusTone;
-    iconName: 'download-outline' | 'refresh-outline' | 'sparkles-outline';
+    iconName: 'download' | 'arrow-clockwise' | 'sparkle';
     label: string;
     message: string;
     actionLabel: string;
@@ -30,6 +30,7 @@ export type AppUpdateStatusModel =
 export type BuildAppUpdateStatusModelParams = Readonly<{
     platformOs: string;
     nativeUpdateUrl: string | null;
+    webUi?: Readonly<{ updateAvailable: boolean }>;
     desktop: Readonly<{
         status: DesktopUpdateStatus;
         availableVersion: string | null;

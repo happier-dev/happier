@@ -144,6 +144,7 @@ function SelectableMenuRowFrame(props: {
     testID: string;
     style: RowFrameStyle;
     onMouseDownCapture: ((event: unknown) => void) | undefined;
+    onKeyDown: ((event: unknown) => void) | undefined;
     onPointerEnter: (() => void) | undefined;
     onLayout: ScrollItemLayoutHandler | undefined;
 }) {
@@ -158,6 +159,7 @@ function SelectableMenuRowFrame(props: {
                 'data-testid': props.testID,
                 style: props.style as React.CSSProperties | undefined,
                 onMouseDownCapture: props.onMouseDownCapture,
+                onKeyDown: props.onKeyDown,
                 onPointerEnter: props.onPointerEnter,
             },
             props.children,
@@ -230,6 +232,8 @@ export function SelectableMenuResults(props: {
         Omit<ItemProps, 'title' | 'subtitle' | 'icon' | 'rightElement' | 'selected' | 'disabled' | 'showChevron' | 'showDivider' | 'onPress'>
     >;
     registerItemLayout?: (key: string) => ScrollItemLayoutHandler;
+    /** Shared DropdownMenu keyboard policy, delegated through each focusable row. */
+    onKeyDown?: (event: unknown) => void;
 }) {
     const styles = stylesheet;
     const rowAnchorRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
@@ -315,6 +319,8 @@ export function SelectableMenuResults(props: {
                     const itemNode = rowKind === 'item' ? (
                         <Item
                             {...(props.itemProps ?? {})}
+                            // A dropdown row is a menu row, whatever density the user has chosen.
+                            rowRole="menu"
                             pressableStyle={[
                                 props.itemProps?.pressableStyle,
                                 styles.itemRowPressable,
@@ -390,6 +396,7 @@ export function SelectableMenuResults(props: {
                             rowAnchorRef={rowAnchorRef}
                             style={item.hasSubmenu ? styles.submenuAnchorFrame : styles.rowFrame}
                             onMouseDownCapture={handleOptionMouseDownCapture}
+                            onKeyDown={Platform.OS === 'web' ? props.onKeyDown : undefined}
                             onPointerEnter={rowFramePointerEnter}
                             onLayout={scrollFrameLayout}
                         >

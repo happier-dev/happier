@@ -350,7 +350,7 @@ function createJourneyWizardSurfaceProps(): OnboardingWizardSurfaceProps {
             providerKeylessTitle: '',
             anonymousSignupTitle: '',
             mtlsTitle: '',
-            primarySignupTitle: '',
+            primaryAction: null,
             mtlsPrimary: false,
             keylessPrimary: false,
             autoRedirect: {

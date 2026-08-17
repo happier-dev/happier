@@ -9,13 +9,13 @@ export const gitScmBackendSettingsPlugin: ScmBackendSettingsPlugin = {
             id: 'commitModel',
             title: 'Change-set model',
             subtitle: 'Uses the Git index (included vs pending) when Git staging is enabled.',
-            iconName: 'layers-outline',
+            iconName: 'stack-simple',
         },
         {
             id: 'partialSelection',
             title: 'Partial selection',
             subtitle: 'File and line-level include/exclude are available only in Git staging mode.',
-            iconName: 'cut-outline',
+            iconName: 'scissors',
         },
     ],
 };

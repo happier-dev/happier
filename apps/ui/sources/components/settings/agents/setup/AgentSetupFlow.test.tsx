@@ -13,6 +13,16 @@ const capabilitiesState = vi.hoisted(() => ({
         response: { ok: true as const, result: null },
     })),
 }));
+const administrationTargetState = vi.hoisted(() => ({
+    resolveExecutionTarget: vi.fn(() => ({
+        target: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+        serverId: 'server-target',
+        machine: {
+            id: 'machine-target',
+            metadata: { displayName: 'Target Machine' },
+        },
+    })),
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -92,27 +102,34 @@ vi.mock('../authentication/AgentAuthenticationTerminalPane', () => ({
     AgentAuthenticationTerminalPane: (props: Record<string, unknown>) => React.createElement('AgentAuthenticationTerminalPane', props),
 }));
 
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
-    usePrimaryMachineFromActiveSelection: () => 'machine-1',
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => React.createElement('MachineAdministrationTargetSelector', props),
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+        candidates: [],
+        pickerRows: [],
+        state: { kind: 'unselected', candidates: [] },
+        canExecute: true,
+        selectTarget: vi.fn(),
+        clearTarget: vi.fn(),
+        resolveExecutionTarget: administrationTargetState.resolveExecutionTarget,
+    }),
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createPartialStorageModuleMock(importOriginal, {
         useMachine: () => ({
-            id: 'machine-1',
+            id: 'machine-target',
             metadata: {
-                displayName: 'Primary Machine',
+                displayName: 'Target Machine',
             },
         }),
     });
 });
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerId: () => 'server-a',
-    getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://relay.example.test', generation: 1 }),
-    listServerProfiles: () => [],
-}));
 
 const cliRefresh = vi.fn();
 
@@ -181,6 +198,15 @@ describe('AgentSetupFlow', () => {
         tauriDesktopState.value = true;
         modalMock.spies.confirm.mockClear();
         capabilitiesState.invoke.mockClear();
+        administrationTargetState.resolveExecutionTarget.mockReset();
+        administrationTargetState.resolveExecutionTarget.mockReturnValue({
+            target: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+            serverId: 'server-target',
+            machine: {
+                id: 'machine-target',
+                metadata: { displayName: 'Target Machine' },
+            },
+        });
     });
 
     afterEach(() => {
@@ -258,7 +284,7 @@ describe('AgentSetupFlow', () => {
                 title: 'Acme Headless Provider',
                 subtitle: 'Plugin provider',
                 iconAgentId: 'claude',
-                iconName: 'layers-outline',
+                iconName: 'stack-simple',
             }],
         }));
 
@@ -279,14 +305,14 @@ describe('AgentSetupFlow', () => {
                     catalogAgentId: 'codex',
                     title: 'Codex',
                     iconAgentId: 'codex',
-                    iconName: 'code-slash-outline',
+                    iconName: 'code',
                 },
                 {
                     agentId: 'claude',
                     catalogAgentId: 'claude',
                     title: 'Claude',
                     iconAgentId: 'claude',
-                    iconName: 'sparkles-outline',
+                    iconName: 'sparkle',
                 },
                 {
                     agentId: 'acme.review.provider',
@@ -294,7 +320,7 @@ describe('AgentSetupFlow', () => {
                     title: 'Acme Review Provider',
                     subtitle: 'Plugin provider',
                     iconAgentId: null,
-                    iconName: 'layers-outline',
+                    iconName: 'stack-simple',
                 },
             ],
         }));
@@ -314,7 +340,7 @@ describe('AgentSetupFlow', () => {
                 title: 'Acme Review Provider',
                 subtitle: 'Plugin provider',
                 iconAgentId: 'claude',
-                iconName: 'layers-outline',
+                iconName: 'stack-simple',
             }],
         }));
 
@@ -323,9 +349,9 @@ describe('AgentSetupFlow', () => {
         await screen.pressByTestIdAsync('provider-setup-start-card');
 
         expect(capabilitiesState.invoke).toHaveBeenCalledWith(
-            'machine-1',
+            'machine-target',
             expect.objectContaining({ id: 'cli.claude' }),
-            expect.anything(),
+            expect.objectContaining({ serverId: 'server-target' }),
         );
         expect(screen.findByTestId('provider-setup-active-acme.review.provider')).toBeTruthy();
 
@@ -345,7 +371,7 @@ describe('AgentSetupFlow', () => {
                 title: 'Acme Headless Provider',
                 subtitle: 'Plugin provider',
                 iconAgentId: 'claude',
-                iconName: 'layers-outline',
+                iconName: 'stack-simple',
             }],
         }));
 
@@ -362,7 +388,7 @@ describe('AgentSetupFlow', () => {
                 title: 'Acme ACP Provider',
                 subtitle: 'Plugin provider',
                 iconAgentId: null,
-                iconName: 'layers-outline',
+                iconName: 'stack-simple',
             }],
         }));
 

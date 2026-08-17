@@ -8,6 +8,7 @@ import { getVoiceAdapterRegistry, resolveVoiceAdapterContextChannel } from '@/vo
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { localVoiceRuntimeController } from '@/voice/local/localVoiceRuntimeController';
+import { installDaemonSpeechStreamQaRouteRequirement } from '@/voice/runtime/daemonInference/daemonSpeechStreamQaRouteRequirement';
 import {
     submitDurableVoiceTextTurn,
     voiceTextTurnPendingPort,
@@ -102,21 +103,20 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
             const result = await submitDurableVoiceTextTurn({
                 conversationSessionId,
                 text,
-                dispatch: async ({ localId, deliveryCommand }) => {
+                dispatch: async ({ localId, deliveryCommand, onAccepted }) => {
                     await adapter.sendTextTurn!({
                         controlSessionId,
                         conversationSessionId,
                         text,
                         localId,
                         deliveryCommand,
+                        onAccepted,
                     });
                 },
             });
             if (!result.ok) throw new Error(result.message ?? result.reason);
             if (result.disposition === 'settled') return;
-            if (result.disposition !== 'handoff_acknowledged') {
-                throw new Error(result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
-            }
+            throw new Error(result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
         },
         waitForInterruptedLocalAssistantTurn: async ({ conversationSessionId, timeoutMs, baseline }) => {
             const currentBaseline = baseline ?? captureAssistantTextMessageBaseline(conversationSessionId);
@@ -127,6 +127,7 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
                 timeoutMs,
             );
         },
+        installMediaTransportRouteRequirement: installDaemonSpeechStreamQaRouteRequirement,
         startMedia: async (sessionId) => {
             const settings = (storage.getState() as any).settings;
             const expectedProviderId = typeof settings?.voice?.providerId === 'string'

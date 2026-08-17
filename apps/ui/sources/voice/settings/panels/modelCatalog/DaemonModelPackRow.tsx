@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
-import { Pressable } from 'react-native';
+import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -14,10 +13,13 @@ import type { ModelCatalogRow } from './buildModelCatalogRows';
 import { buildModelCatalogRows } from './buildModelCatalogRows';
 import { formatModelCatalogRowDetail } from './formatModelCatalogRowDetail';
 import { useDaemonVoiceModelCatalogController } from './DaemonVoiceModelCatalogContext';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
+const REMOVE_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 const REMOVE_BUTTON_STYLE = {
-    width: 44,
-    height: 44,
+    width: REMOVE_TARGET_SIZE,
+    height: REMOVE_TARGET_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
 } as const;
@@ -40,7 +42,6 @@ export function DaemonModelPackRow(props: Readonly<{
             testID={`voice-model-remove-${row.packId}`}
             accessibilityRole="button"
             accessibilityLabel={`${t('common.remove')}: ${row.displayName}`}
-            hitSlop={4}
             style={REMOVE_BUTTON_STYLE}
             onPress={(event: any) => {
                 event?.stopPropagation?.();
@@ -55,12 +56,12 @@ export function DaemonModelPackRow(props: Readonly<{
                 })(), { tag: 'DaemonModelPackRow.remove' });
             }}
         >
-            <Ionicons name="trash-outline" size={20} color={theme.colors.text.secondary} />
+            <Icon name="trash" size={20} color={theme.colors.text.secondary} />
         </Pressable>
     ) : row.isDefault ? (
-        <Ionicons name="checkmark-circle" size={22} color={theme.colors.text.link} accessibilityLabel={t('settingsVoice.local.models.defaultBadge')} />
+        <Icon name="check-circle" size={20} color={theme.colors.text.link} accessibilityLabel={t('settingsVoice.local.models.defaultBadge')} />
     ) : row.canInstall ? (
-        <Ionicons name="download-outline" size={20} color={theme.colors.text.secondary} />
+        <Icon name="download" size={20} color={theme.colors.text.secondary} />
     ) : undefined;
 
     const isUnknown = row.state === 'unknown';

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { useHappierItemGroupItemBehavior } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -11,13 +11,16 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { WizardIconBox } from './WizardIconBox';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type WizardChoiceRowProps = Readonly<{
     testID: string;
     selected: boolean;
     disabled?: boolean;
     dimmed?: boolean;
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    accessibilityRole?: 'radio';
+    itemGroupRadioIndex?: number;
+    icon: IconName;
     title: string;
     subtitle: string;
     badge?: string;
@@ -68,24 +71,35 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
     const styles = stylesheet;
     const iconColor = props.selected ? theme.colors.text.primary : theme.colors.text.secondary;
     const rowDisabled = Boolean(props.disabled);
+    const isWeb = Platform.OS === 'web';
     const [menuOpen, setMenuOpen] = React.useState(false);
-    const suppressRowPressRef = React.useRef(false);
-
-    const suppressRowPressOnce = React.useCallback(() => {
-        suppressRowPressRef.current = true;
-        setTimeout(() => {
-            suppressRowPressRef.current = false;
-        }, 0);
-    }, []);
+    const groupItem = useHappierItemGroupItemBehavior({
+        role: props.accessibilityRole,
+        itemGroupRadioIndex: props.itemGroupRadioIndex,
+        disabled: rowDisabled,
+    });
 
     const onPress = React.useCallback(() => {
         if (rowDisabled) return;
-        if (suppressRowPressRef.current) {
-            suppressRowPressRef.current = false;
-            return;
-        }
         props.onPress();
     }, [props.onPress, rowDisabled]);
+    const onKeyDown = React.useCallback((event: unknown) => {
+        if (!isWeb || !event || typeof event !== 'object') return;
+        const keyboardEvent = event as Readonly<{
+            key?: unknown;
+            nativeEvent?: Readonly<{ key?: unknown }>;
+            preventDefault?: () => void;
+            stopPropagation?: () => void;
+        }>;
+        const key = typeof keyboardEvent.nativeEvent?.key === 'string'
+            ? keyboardEvent.nativeEvent.key
+            : typeof keyboardEvent.key === 'string'
+                ? keyboardEvent.key
+                : null;
+        if (!key || !groupItem.onKeyDown(key)) return;
+        keyboardEvent.preventDefault?.();
+        keyboardEvent.stopPropagation?.();
+    }, [groupItem, isWeb]);
 
     const badgeNode = props.badge ? (
         <View style={styles.badge}>
@@ -102,20 +116,20 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
         }));
     }, [menuActions]);
 
-    // F-QAVISUAL-1: SelectableRow's default web role renders a real <button>; rows
-    // that embed interactive trailing controls (overflow menu, retry action) would
-    // emit invalid nested-button markup. Use the established `webRole="presentation"`
-    // escape hatch (same pattern as SelectionListOptionRow) for those rows.
     const hasInteractiveTrailingContent = Boolean(props.secondaryAction) || menuActions.length > 0;
 
     return (
         <SelectableRow
+            ref={groupItem.grouped ? groupItem.targetRef : undefined}
             testID={props.testID}
             variant="selectable"
             selected={props.selected}
             disabled={rowDisabled}
-            webRole={hasInteractiveTrailingContent ? 'presentation' : undefined}
-            allowChildInteractionWhenDisabled={rowDisabled && (Boolean(props.secondaryAction) || menuItems.length > 0)}
+            accessibilityRole={props.accessibilityRole}
+            tabIndex={isWeb && groupItem.grouped
+                ? groupItem.tabStopIndex === props.itemGroupRadioIndex ? 0 : -1
+                : undefined}
+            onKeyDown={onKeyDown}
             onPress={onPress}
             containerStyle={props.dimmed ? ({ opacity: 0.55 } as const) : null}
             left={<WizardIconBox icon={props.icon} selected={props.selected} boxSize={32} iconSize={18} />}
@@ -123,6 +137,7 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
             titleAccessory={badgeNode}
             titleStyle={badgeNode ? ({ flexGrow: 0, flexShrink: 1 } as const) : null}
             subtitle={props.subtitle}
+            rightElementOutsidePressable={hasInteractiveTrailingContent}
             right={(
                 <View style={styles.trailing}>
                     {props.secondaryAction ? (
@@ -133,7 +148,6 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
                             style={styles.retryButton}
                             title={props.secondaryAction.title}
                             onPress={() => {
-                                suppressRowPressOnce();
                                 props.secondaryAction?.onPress();
                             }}
                         />
@@ -155,11 +169,7 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
                                 <Pressable
                                     testID={`${props.testID}-menu`}
                                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                                    onPress={(event) => {
-                                        suppressRowPressOnce();
-                                        (event as any)?.stopPropagation?.();
-                                        toggle();
-                                    }}
+                                    onPress={toggle}
                                     style={({ pressed }) => ([
                                         styles.menuTrigger,
                                         { opacity: pressed ? 0.72 : 1 },
@@ -168,14 +178,14 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
                                     accessibilityRole="button"
                                     accessibilityLabel={t('common.more')}
                                 >
-                                    <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.text.secondary} />
+                                    <Icon name="dots-three" size={16} color={theme.colors.text.secondary} />
                                 </Pressable>
                             )}
                         />
                     ) : null}
-                    <Ionicons
-                        name={props.selected ? 'checkmark-circle' : 'ellipse-outline'}
-                        size={18}
+                    <Icon
+                        name={props.selected ? 'check-circle' : 'circle'}
+                        size={16}
                         color={iconColor}
                     />
                 </View>

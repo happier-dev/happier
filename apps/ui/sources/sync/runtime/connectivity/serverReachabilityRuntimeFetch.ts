@@ -1,4 +1,10 @@
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import {
+    AccountStoredContentCompatibilityUnavailableError,
+    readAccountStoredContentCompatibilityRequestDeclaration,
+    resolveAccountStoredContentCompatibilityHeaders,
+    stripAccountStoredContentCompatibilityHeader,
+} from '@/sync/http/accountStoredContentCompatibility';
 
 import {
     peekServerReachabilityScope,
@@ -43,7 +49,31 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
     timeoutMs?: number;
     signal?: AbortSignal;
 }>): Promise<Response> {
-    const headers = new Headers(params.init.headers ?? {});
+    const targetUrl = tryParseUrl(params.url, params.serverUrl);
+    const requestedCompatibilityDeclaration =
+        readAccountStoredContentCompatibilityRequestDeclaration(params.init);
+    const compatibility = targetUrl?.pathname === '/v1/features'
+        ? null
+        : resolveAccountStoredContentCompatibilityHeaders(
+            params.init.headers,
+            {
+                serverUrl: params.serverUrl,
+                ...(requestedCompatibilityDeclaration
+                    ? { declaration: requestedCompatibilityDeclaration }
+                    : {}),
+            },
+        );
+    if (
+        requestedCompatibilityDeclaration
+        && compatibility?.status === 'unavailable'
+    ) {
+        throw new AccountStoredContentCompatibilityUnavailableError(
+            compatibility.reason,
+        );
+    }
+    const headers = compatibility?.status === 'available'
+        ? compatibility.headers
+        : stripAccountStoredContentCompatibilityHeader(params.init.headers);
     const explicitAuthHeader = headers.get('Authorization') ?? '';
     const bearerTokenFromHeader = (() => {
         const header = explicitAuthHeader.trim();
@@ -90,7 +120,10 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
     const probeReportScope = peekServerReachabilityScope(params.serverUrl);
 
     try {
-        const response = await runtimeFetch(params.url, params.init);
+        const response = await runtimeFetch(params.url, {
+            ...params.init,
+            headers,
+        });
         if (hasAuth && isAuthenticationResponseStatus(response.status)) {
             if (probeReportScope) {
                 reportServerAuthFailed(params.serverUrl, response.status, probeReportScope);

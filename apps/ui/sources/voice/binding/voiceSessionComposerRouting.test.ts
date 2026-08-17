@@ -29,7 +29,7 @@ describe('resolveVoiceSessionComposerRouting', () => {
         const store = createVoiceSessionBindingStore();
         setCurrentConversationSession('carrier-s1');
         store.getState().bind({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
             transcriptMode: 'synthetic',
@@ -40,7 +40,7 @@ describe('resolveVoiceSessionComposerRouting', () => {
         expect(resolveVoiceSessionComposerRouting({ conversationSessionId: 'carrier-s1', store })).toEqual({
             kind: 'adapter_text',
             binding: {
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'voice-global',
                 conversationSessionId: 'carrier-s1',
                 transcriptMode: 'synthetic',
@@ -80,7 +80,7 @@ describe('resolveVoiceSessionComposerRouting', () => {
         const sessionMetadata = writeVoiceConversationBindingMetadata(
             { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
             {
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'voice-global',
                 conversationSessionId: 'carrier-s1',
                 transcriptMode: 'synthetic',
@@ -99,7 +99,7 @@ describe('resolveVoiceSessionComposerRouting', () => {
         ).toEqual({
             kind: 'adapter_text',
             binding: {
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'voice-global',
                 conversationSessionId: 'carrier-s1',
                 transcriptMode: 'synthetic',
@@ -120,7 +120,7 @@ describe('resolveVoiceSessionComposerRouting', () => {
         const sessionMetadata = writeVoiceConversationBindingMetadata(
             { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
             {
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'voice-global',
                 conversationSessionId: 'carrier-memo',
                 transcriptMode: 'synthetic',

@@ -8,8 +8,11 @@ import type {
     MachineUpdateMetadataRequest,
     MachineUpdateMetadataResponse,
     SpawnSessionResult,
+    SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import {
+    decodePlainMachineStoredContent,
+    encodePlainMachineStoredContent,
     normalizeSpawnSessionNonceResolution,
     SPAWN_SESSION_ERROR_CODES,
     settleSpawnSessionNonce,
@@ -41,7 +44,11 @@ import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import {
+    requireCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { stopSessionViaDaemonMachineRpc } from './sessionStopStrategy';
 import {
@@ -59,7 +66,6 @@ import {
     isProviderSafeDaemonSessionMethodAbsent,
     requiresProviderSafeSessionRpc,
 } from './providerDaemonSessionCompatibility';
-
 export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnSessionPayload';
 
@@ -94,10 +100,7 @@ export type MachineSpawnNewSessionResult = SpawnSessionResult & Readonly<{
 }>;
 
 export type MachineResolveSpawnSessionByNonceResult =
-    | { status: 'success'; sessionId: string }
-    | { status: 'pending' }
-    | { status: 'not_found' }
-    | { status: 'unsupported' }
+    | SpawnSessionNonceResolution
     | { status: 'transport_error' };
 
 const DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_POLL_INTERVAL_MS = 1_000;
@@ -278,6 +281,14 @@ async function recoverMachineSpawnResultByNonce(params: Readonly<{
         serverId: params.serverId,
     });
     if (resolved.status !== 'success') {
+        if (resolved.status === 'error') {
+            return {
+                type: 'error',
+                errorCode: resolved.errorCode,
+                errorMessage: resolved.errorMessage,
+                ...(resolved.errorDetail ? { errorDetail: resolved.errorDetail } : {}),
+            };
+        }
         return acceptedPending
             ? {
                 type: 'error',
@@ -446,6 +457,15 @@ async function machineSpawnNewSessionInternal(
                 const completed = buildSpawnAttemptCustodyIdentity('completed', created);
                 return withSpawnAttemptCustody({ type: 'success', sessionId: resolved.sessionId }, completed);
             }
+            if (resolved.status === 'error') {
+                await clearCustody();
+                return withSpawnAttemptCustody({
+                    type: 'error',
+                    errorCode: resolved.errorCode,
+                    errorMessage: resolved.errorMessage,
+                    ...(resolved.errorDetail ? { errorDetail: resolved.errorDetail } : {}),
+                });
+            }
             if (resolved.status === 'not_found') {
                 await clearCustody();
                 return await machineSpawnNewSessionInternal(
@@ -499,15 +519,26 @@ async function machineSpawnNewSessionInternal(
             serverId,
         };
         spawnSubmitted = true;
-        const result = await machineRpcWithServerScope<unknown, SpawnHappySessionRpcParams>({
+        const callSpawnRpc = async (method: string) => await machineRpcWithServerScope<unknown, SpawnHappySessionRpcParams>({
             machineId,
-            method: providerSafeRpcRequired
-                ? RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
-                : RPC_METHODS.SPAWN_HAPPY_SESSION,
+            method,
             payload: params,
             serverId,
             timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
         });
+        let result: unknown;
+        try {
+            result = await callSpawnRpc(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
+        } catch (error) {
+            const rpcErrorCode = readRpcErrorCode(error);
+            const providerSafeMethodIsDefinitelyAbsent =
+                rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+                || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND;
+            if (providerSafeRpcRequired || !providerSafeMethodIsDefinitelyAbsent) {
+                throw error;
+            }
+            result = await callSpawnRpc(RPC_METHODS.SPAWN_HAPPY_SESSION);
+        }
         const normalizedResult = remapLegacyDirectoryCompatibilityError({
             result: normalizeSpawnSessionResult(result),
             directory: preparedOptions.directory,
@@ -557,6 +588,7 @@ async function machineSpawnNewSessionInternal(
         if (
             (providerSafeRpcRequired && isProviderSafeDaemonSessionMethodAbsent(error))
             || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+            || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
         ) {
             await clearCustody();
             return withSpawnAttemptCustody({
@@ -567,7 +599,11 @@ async function machineSpawnNewSessionInternal(
                     `The daemon may be stopped, still starting, or not connected to the server.`,
             });
         }
-        if (isSocketIoAckTimeoutError(error) || isInterruptedSpawnRpcTransportError(error)) {
+        if (
+            isSocketIoAckTimeoutError(error)
+            || isMachineRpcTimeoutError(error)
+            || isInterruptedSpawnRpcTransportError(error)
+        ) {
             const timeoutResult: SpawnSessionResult = {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
@@ -647,6 +683,7 @@ export async function machineResolveSpawnSessionByNonce(params: Readonly<{
     machineId: string;
     spawnNonce: string;
     serverId?: string | null;
+    timeoutMs?: number;
 }>): Promise<MachineResolveSpawnSessionByNonceResult> {
     const spawnNonce = params.spawnNonce.trim();
     if (!spawnNonce) return { status: 'not_found' };
@@ -657,6 +694,7 @@ export async function machineResolveSpawnSessionByNonce(params: Readonly<{
             method,
             payload: { spawnNonce },
             serverId: params.serverId ?? null,
+            timeoutMs: params.timeoutMs,
         });
         try {
             return normalizeSpawnSessionNonceResolution(
@@ -716,8 +754,11 @@ export async function machineResolveSpawnSessionByNonceUntilSettled(params: Read
     let lastResolutionWasTransportError = false;
     const settled = await settleSpawnSessionNonce({
         spawnNonce: params.spawnNonce,
-        resolve: async () => {
-            const result = await machineResolveSpawnSessionByNonce(params);
+        resolve: async (_spawnNonce, remainingTimeoutMs) => {
+            const result = await machineResolveSpawnSessionByNonce({
+                ...params,
+                timeoutMs: remainingTimeoutMs,
+            });
             if (result.status === 'transport_error') {
                 lastResolutionWasTransportError = true;
                 return { status: 'pending' };
@@ -1071,26 +1112,46 @@ export async function machineUpdateMetadata(
     let retryCount = 0;
 
     const sync = getSyncSingleton();
-    const machineEncryption = sync.encryption.getMachineEncryption(machineId);
-    if (!machineEncryption) {
+    const machine = storage.getState().machines[machineId];
+    const storageMode = machine?.storageMode === 'plain' ? 'plain' : 'e2ee';
+    const machineEncryption = storageMode === 'plain'
+        ? null
+        : sync.encryption?.getMachineEncryption(machineId);
+    if (storageMode === 'plain') {
+        await requireCurrentAccountStoredContentServerCompatibility();
+    }
+    if (storageMode === 'e2ee' && !machineEncryption) {
         throw new Error(`Machine encryption not found for ${machineId}`);
     }
 
     while (retryCount < maxRetries) {
-        const encryptedMetadata = await measureMachineEncryptRawAttribution(
-            MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS.metadataWrite,
-            async () => await machineEncryption.encryptRaw(currentMetadata),
-        );
+        const storedMetadata = storageMode === 'plain'
+            ? encodePlainMachineStoredContent(currentMetadata)
+            : await measureMachineEncryptRawAttribution(
+                MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS.metadataWrite,
+                async () => await machineEncryption!.encryptRaw(currentMetadata),
+            );
 
         const request = {
             machineId,
-            metadata: encryptedMetadata,
+            metadata: storedMetadata,
             expectedVersion: currentVersion,
         } satisfies MachineUpdateMetadataRequest;
         const result = await apiSocket.emitWithAck<MachineUpdateMetadataResponse>(
             'machine-update-metadata',
             request,
         );
+
+        if ('error' in result) {
+            throw Object.assign(
+                new Error('Machine metadata update requires a compatible client.'),
+                {
+                    code: result.error,
+                    retryable: false as const,
+                    requirement: result.requirement,
+                },
+            );
+        }
 
         if (result.result === 'success') {
             const currentMachine = storage.getState().machines[machineId] ?? null;
@@ -1108,7 +1169,9 @@ export async function machineUpdateMetadata(
         } else if (result.result === 'version-mismatch') {
             // Get the latest version and metadata from the response
             currentVersion = result.version;
-            const latestMetadata = await machineEncryption.decryptRaw(result.metadata) as MachineMetadata;
+            const latestMetadata = storageMode === 'plain'
+                ? decodePlainMachineStoredContent(result.metadata) as MachineMetadata
+                : await machineEncryption!.decryptRaw(result.metadata) as MachineMetadata;
 
             currentMetadata = mergeMachineMetadataForVersionMismatch({
                 latest: latestMetadata,

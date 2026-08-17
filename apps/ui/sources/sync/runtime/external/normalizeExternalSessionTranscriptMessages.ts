@@ -14,9 +14,10 @@ export function normalizeExternalSessionTranscriptMessages(
             ? makeExternalSessionHistoricalImportLocalId({
                 ...sourceIdentity,
                 directItemId: item.id,
-            })
+        })
             : item.id,
         localId: typeof item.localId === 'string' ? item.localId : null,
+        sidechainId: item.sidechainId ?? undefined,
         createdAt: item.createdAtMs,
         // The projection classifies every row it emits; forwarding that role is what lets
         // normalization drop content-less event rows here exactly as it does for synced sessions.

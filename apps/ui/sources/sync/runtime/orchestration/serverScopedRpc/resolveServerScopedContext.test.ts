@@ -5,11 +5,17 @@ const createEncryptionSpy = vi.hoisted(() => vi.fn());
 const listServerProfilesSpy = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsSpy(...args),
-    },
-}));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    // Only the credential read is stubbed; the credential-shape predicates stay real so
+    // this suite keeps exercising the actual token-only/legacy/dataKey classification.
+    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+    return {
+        ...actual,
+        TokenStorage: {
+            getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsSpy(...args),
+        },
+    };
+});
 
 vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
     createEncryptionFromAuthCredentials: (...args: unknown[]) => createEncryptionSpy(...args),

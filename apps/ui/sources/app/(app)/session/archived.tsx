@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { Pressable, View, Platform } from 'react-native';
 import { VirtualizedSectionList } from '@/components/ui/lists/virtualized/VirtualizedSectionList';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/ui/text/Text';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Typography } from '@/constants/Typography';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Modal } from '@/modal';
@@ -15,9 +14,11 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useAllSessions, useSessionListRowStateByServerId, useSessionOrganizationPinnedSessionKeys, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { sessionUnarchiveWithServerScope } from '@/sync/ops';
 import { sync } from '@/sync/sync';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ArchivedScreenSession = Session | (SessionListRenderableSession & { serverId?: string });
 
@@ -39,7 +40,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     contentContainer: {
         flex: 1,
-        maxWidth: layout.maxWidth,
     },
     list: {
         flex: 1,
@@ -143,6 +143,17 @@ function isHiddenInactiveSession(session: ArchivedScreenSession, pinnedSessionKe
 
 export default function ArchivedSessionsScreen() {
     const safeArea = useSafeAreaInsets();
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+    const contentContainerStyle = React.useMemo(
+        () => [styles.contentContainer, contentMaxWidthStyle],
+        [contentMaxWidthStyle],
+    );
+    const listContentContainerStyle = React.useMemo(
+        () => ({ paddingBottom: safeArea.bottom + 64, maxWidth: contentMaxWidthStyle.maxWidth }),
+        [contentMaxWidthStyle, safeArea.bottom],
+    );
     const { theme } = useUnistyles();
     const navigateToSession = useNavigateToSession();
     const allSessions = useAllSessions();
@@ -172,6 +183,7 @@ export default function ArchivedSessionsScreen() {
                     ...row,
                     serverId,
                 };
+                if (!isUserFacingSession(session)) continue;
                 byId.set(getArchivedSessionKey(session), session);
             }
         }
@@ -184,7 +196,7 @@ export default function ArchivedSessionsScreen() {
             byId.set(getArchivedSessionKey(session), session);
         }
         for (const session of allSessions) {
-            if (session.archivedAt != null) {
+            if (session.archivedAt != null && isUserFacingSession(session)) {
                 byId.set(getArchivedSessionKey(session), session);
             }
         }
@@ -202,7 +214,7 @@ export default function ArchivedSessionsScreen() {
             return [];
         }
         return allSessions
-            .filter((session) => isHiddenInactiveSession(session, pinnedSessionKeysV1))
+            .filter((session) => isUserFacingSession(session) && isHiddenInactiveSession(session, pinnedSessionKeysV1))
             .slice()
             .sort((a, b) => b.updatedAt - a.updatedAt);
     }, [allSessions, hideInactiveSessions, pinnedSessionKeysV1]);
@@ -282,7 +294,7 @@ export default function ArchivedSessionsScreen() {
                             accessibilityLabel={t('sessionInfo.unarchiveSession')}
                             hitSlop={8}
                         >
-                            <Ionicons name="arrow-undo-outline" size={18} color={theme.colors.text.secondary} />
+                            <Icon name="arrow-arc-left" size={16} color={theme.colors.text.secondary} />
                         </Pressable>
                     ) : null}
                 </Pressable>
@@ -307,7 +319,7 @@ export default function ArchivedSessionsScreen() {
 
     return (
         <View style={styles.container}>
-            <View style={styles.contentContainer}>
+            <View style={contentContainerStyle}>
                 {sections.length === 0 ? (
                     <View style={styles.emptyContainer}>
                         <Text style={styles.emptyText}>{t('sessionHistory.empty')}</Text>
@@ -324,7 +336,7 @@ export default function ArchivedSessionsScreen() {
                         webScrollHandlers={Platform.OS === 'web'
                             ? { onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb }
                             : undefined}
-                        contentContainerStyle={{ paddingBottom: safeArea.bottom + 64, maxWidth: layout.maxWidth }}
+                        contentContainerStyle={listContentContainerStyle}
                     />
                 )}
             </View>

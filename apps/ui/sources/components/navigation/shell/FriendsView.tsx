@@ -19,10 +19,9 @@ import { Item } from '@/components/ui/lists/Item';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { Typography } from '@/constants/Typography';
 import { useRouter } from 'expo-router';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { Header } from '@/components/navigation/Header';
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { FeedItemCard } from '@/components/inbox/cards/FeedItemCard';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
@@ -30,11 +29,19 @@ import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityRe
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         backgroundColor: theme.colors.background.canvas,
+    },
+    scrollContent: {
+        alignSelf: 'center',
+        width: '100%',
+        // Lets the loading/empty body fill the viewport so it keeps the centered
+        // composition it had while it was rendered outside the scroll container.
+        flexGrow: 1,
     },
     emptyContainer: {
         flex: 1,
@@ -102,7 +109,7 @@ function HeaderRightTablet() {
                 justifyContent: 'center',
             }}
         >
-            <Ionicons name="person-add-outline" size={24} color={theme.colors.chrome.header.foreground} />
+            <Icon name="user-plus" size={24} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 }
@@ -117,6 +124,13 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
     const friendsLoaded = useFriendsLoaded();
     const { theme } = useUnistyles();
     const isTablet = useIsTablet();
+    // Read at render time so the user's content-width preference keeps applying
+    // here; a module-scope stylesheet would freeze it at the first evaluation.
+    const contentMaxWidth = useLayoutMaxWidth();
+    const scrollContentStyle = React.useMemo(
+        () => [styles.scrollContent, { maxWidth: contentMaxWidth }],
+        [contentMaxWidth],
+    );
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const myId = syncStorage((state) => state.profile.id);
@@ -156,56 +170,15 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
         );
     }
 
-    if (isLoading) {
-        return (
-            <View style={styles.container}>
-                {isTablet && (
-                    <View style={{ backgroundColor: theme.colors.background.canvas }}>
-                        <Header
-                            title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
-                            headerLeft={() => null}
-                            headerShadowVisible={false}
-                            headerTransparent={true}
-                        />
-                    </View>
-                )}
-                <RecoveryKeyReminderBanner />
-                <View style={styles.emptyContainer}>
-                    <ActivitySpinner size="large" color={theme.colors.text.secondary} />
-                </View>
-            </View>
-        );
-    }
-
-    if (isEmpty) {
-        return (
-            <View style={styles.container}>
-                {isTablet && (
-                    <View style={{ backgroundColor: theme.colors.background.canvas }}>
-                        <Header
-                            title={<HeaderTitleTablet />}
-                            headerRight={() => <HeaderRightTablet />}
-                            headerLeft={() => null}
-                            headerShadowVisible={false}
-                            headerTransparent={true}
-                        />
-                    </View>
-                )}
-                <RecoveryKeyReminderBanner />
-                <View style={styles.emptyContainer}>
-                    <Image
-                        source={require('@/assets/images/brutalist/Brutalism 10.png')}
-                        contentFit="contain"
-                        style={[{ width: 64, height: 64 }, styles.emptyIcon]}
-                        tintColor={theme.colors.text.secondary}
-                    />
-                    <Text style={styles.emptyTitle}>{t('friends.emptyTitle')}</Text>
-                    <Text style={styles.emptyDescription}>{t('friends.emptyDescription')}</Text>
-                </View>
-            </View>
-        );
-    }
+    // `isLoading` and `isEmpty` are transient — friends activity flips between
+    // them while the surface is open (a request arrives, the last item is
+    // cleared). They may only change what renders inside the scroll container,
+    // never whether it is mounted, so the ScrollView keeps identity and offset.
+    const body: 'loading' | 'empty' | 'content' = isLoading
+        ? 'loading'
+        : isEmpty
+            ? 'empty'
+            : 'content';
 
     return (
         <View style={styles.container}>
@@ -220,14 +193,29 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     />
                 </View>
             )}
-            <ScrollView contentContainerStyle={{
-                maxWidth: layout.maxWidth,
-                alignSelf: 'center',
-                width: '100%'
-            }}>
+            <ScrollView contentContainerStyle={scrollContentStyle}>
                 <RecoveryKeyReminderBanner />
 
-                {friendRequests.length > 0 && (
+                {body === 'loading' && (
+                    <View style={styles.emptyContainer}>
+                        <ActivitySpinner size="large" color={theme.colors.text.secondary} />
+                    </View>
+                )}
+
+                {body === 'empty' && (
+                    <View style={styles.emptyContainer}>
+                        <Image
+                            source={require('@/assets/images/brutalist/Brutalism 10.png')}
+                            contentFit="contain"
+                            style={[{ width: 64, height: 64 }, styles.emptyIcon]}
+                            tintColor={theme.colors.text.secondary}
+                        />
+                        <Text style={styles.emptyTitle}>{t('friends.emptyTitle')}</Text>
+                        <Text style={styles.emptyDescription}>{t('friends.emptyDescription')}</Text>
+                    </View>
+                )}
+
+                {body === 'content' && friendRequests.length > 0 && (
                     <ItemGroup title={t('friends.pendingRequests')}>
                         {friendRequests.map((friend) => (
                             <UserCard
@@ -242,7 +230,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     </ItemGroup>
                 )}
 
-                {requestedFriends.length > 0 && (
+                {body === 'content' && requestedFriends.length > 0 && (
                     <ItemGroup title={t('friends.requestPending')}>
                         {requestedFriends.map((friend) => (
                             <UserCard
@@ -257,7 +245,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     </ItemGroup>
                 )}
 
-                {sharedSessions.length > 0 && (
+                {body === 'content' && sharedSessions.length > 0 && (
                     <ItemGroup title={t('friends.sharedSessions')}>
                         {sharedSessions.map((session) => {
                             const title = getSessionName(session);
@@ -274,7 +262,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     </ItemGroup>
                 )}
 
-                {feedItems.length > 0 && (
+                {body === 'content' && feedItems.length > 0 && (
                     <ItemGroup title={t('friends.activity')}>
                         {feedItems.map((item) => (
                             <FeedItemCard key={item.id} item={item} />
@@ -282,7 +270,7 @@ export const FriendsView = React.memo(({}: FriendsViewProps) => {
                     </ItemGroup>
                 )}
 
-                {friends.length > 0 && (
+                {body === 'content' && friends.length > 0 && (
                     <ItemGroup title={t('friends.myFriends')}>
                         {friends.map((friend) => (
                             <UserCard

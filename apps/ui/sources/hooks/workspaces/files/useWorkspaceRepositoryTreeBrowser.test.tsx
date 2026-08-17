@@ -41,12 +41,16 @@ describe('useWorkspaceRepositoryTreeBrowser', () => {
             '@/sync/domains/workspaces/files/workspaceRepositoryDirectory'
         );
         const { useWorkspaceRepositoryTreeBrowser } = await import('./useWorkspaceRepositoryTreeBrowser');
+        const { buildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
+
+        // The hook is handed a SCOPE and derives the cache key itself. Clearing by the key
+        // built from that same scope must reach the entry the hook subscribed to — if the two
+        // derivations drifted apart, the reload token below would never move.
+        const scope = { serverId: 'server', machineId: 'm1', rootPath: '/repo' } as const;
 
         function Test() {
             useWorkspaceRepositoryTreeBrowser({
-                workspaceCacheKey: 'server:m1:/repo',
-                machineId: 'm1',
-                rootPath: '/repo',
+                scope,
                 enabled: true,
                 expandedPaths: [],
                 onExpandedPathsChange: () => {},
@@ -60,7 +64,7 @@ describe('useWorkspaceRepositoryTreeBrowser', () => {
         const initialReloadToken = latestLazyDirectoryTreeInput?.reloadToken;
 
         act(() => {
-            clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey: 'server:m1:/repo' });
+            clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey: buildWorkspaceCacheKey(scope) });
         });
 
         await vi.waitFor(() => {

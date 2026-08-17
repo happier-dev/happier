@@ -31,11 +31,11 @@ describe('WizardSectionHeaderRow', () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<WizardSectionHeaderRow
                     rowStyle={{}}
-                    iconName="folder-outline"
+                    iconName="folder"
                     title="Section"
                     action={{
                         accessibilityLabel: 'Refresh',
-                        iconName: 'refresh-outline',
+                        iconName: 'arrow-clockwise',
                         onPress: () => {},
                     }}
                 />)).tree;

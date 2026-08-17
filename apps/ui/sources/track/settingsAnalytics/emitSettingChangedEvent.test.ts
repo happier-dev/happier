@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 const mocks = vi.hoisted(() => ({
     tracking: {
@@ -19,8 +20,8 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import {
     readLocalConversationVoiceSettings,
+    voiceSettingsParse,
     voiceSettingsDefaults,
-    writeLocalConversationVoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 
 import {
@@ -143,16 +144,29 @@ describe('emitAccountSettingChangedEvents', () => {
         const localConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
         const nextSettings = {
             ...settingsDefaults,
-            voice: writeLocalConversationVoiceSettings(
-                { ...voiceSettingsDefaults, providerId: 'local_conversation' },
-                {
+            voice: voiceSettingsParse({
+                ...voiceSettingsDefaults,
+                providerId: 'local_conversation',
+                providers: {
+                    ...voiceSettingsDefaults.providers,
+                    local_conversation: {
+                        schemaVersion: 1,
+                        config: {
                     ...localConversation,
                     agent: {
                         ...localConversation.agent,
-                        backend: 'openai_compat',
+                        providerChat: {
+                            status: 'needs_selection',
+                            providerConnectionId: ProviderConnectionIdSchema.parse('voice-openai-compatible-chat'),
+                            chatModelId: 'custom-chat',
+                            commitModelId: 'custom-commit',
+                            configuration: { temperature: 1.4 },
+                        },
+                    },
+                        },
                     },
                 },
-            ),
+            }),
         };
 
         emitAccountSettingChangedEvents({
@@ -176,12 +190,12 @@ describe('emitAccountSettingChangedEvents', () => {
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
-                setting_key: 'voice__localConversationAgentBackend',
+                setting_key: 'voice__localConversationAgentProviderChatStatus',
                 scope: 'account_setting',
                 identity_scope: 'person',
                 source: 'ui',
-                prev_value: 'daemon',
-                next_value: 'openai_compat',
+                prev_value: 'none',
+                next_value: 'needs_selection',
             }),
         );
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);

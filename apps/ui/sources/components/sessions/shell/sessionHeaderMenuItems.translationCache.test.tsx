@@ -10,9 +10,6 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/components/ui/icons/DependabotIcon', () => ({
-    DependabotIcon: 'DependabotIcon',
-}));
 
 describe('session header menu item translation caching', () => {
     afterEach(() => {

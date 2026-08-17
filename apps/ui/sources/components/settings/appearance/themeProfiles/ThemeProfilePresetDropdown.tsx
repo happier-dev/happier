@@ -1,15 +1,15 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import type { ThemePresetSourceOption } from './themeProfilePresetOptions';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
-const getPresetIconName = (option: ThemePresetSourceOption): React.ComponentProps<typeof Ionicons>['name'] => {
-    if (option.kind === 'builtIn') return 'sparkles-outline';
-    if (option.kind === 'custom') return 'color-palette-outline';
-    return option.id === 'dark' ? 'moon-outline' : 'sunny-outline';
+const getPresetIconName = (option: ThemePresetSourceOption): IconName => {
+    if (option.kind === 'builtIn') return 'sparkle';
+    if (option.kind === 'custom') return 'palette';
+    return option.id === 'dark' ? 'moon' : 'sun';
 };
 
 export const ThemeProfilePresetDropdown = React.memo(function ThemeProfilePresetDropdown(props: Readonly<{
@@ -24,7 +24,7 @@ export const ThemeProfilePresetDropdown = React.memo(function ThemeProfilePreset
         id: option.id,
         title: option.title,
         subtitle: option.subtitle,
-        icon: <Ionicons name={getPresetIconName(option)} size={22} color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting} />,
+        icon: <Icon name={getPresetIconName(option)} size={20} color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting} />,
     })), [props.options, theme.colors.accent.indigo, theme.colors.status.connecting]);
 
     return (
@@ -41,7 +41,7 @@ export const ThemeProfilePresetDropdown = React.memo(function ThemeProfilePreset
             itemTrigger={{
                 title: t('settingsAppearance.themeProfiles.presetSource'),
                 subtitle: props.selectedOption?.title ?? t('settingsAppearance.themeProfiles.presetSourceSubtitle'),
-                icon: <Ionicons name="layers-outline" size={28} color={theme.colors.accent.indigo} />,
+                icon: <Icon name="stack-simple" size={29} color={theme.colors.accent.indigo} />,
                 showSelectedSubtitle: false,
                 itemProps: { testID: 'settings-theme-profile-preset-source' },
             }}

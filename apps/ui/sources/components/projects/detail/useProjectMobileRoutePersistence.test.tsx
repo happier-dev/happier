@@ -10,8 +10,9 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 
 const routerMock = createExpoRouterMock();
 let localSettingsMock: Record<string, unknown> = {};
+let projectLastMobileSurfaceMock: string | null = null;
+const persistProjectLastMobileSurfaceSpy = vi.hoisted(() => vi.fn());
 const setLocalSettingSpies = vi.hoisted(() => ({
-    projectLastMobileSurfaceByWorkspaceRefId: vi.fn(),
     projectLastActiveRootPathByWorkspaceRefId: vi.fn(),
     projectLastActiveWorktreeIdByWorkspaceRefId: vi.fn(),
 }));
@@ -26,6 +27,8 @@ vi.mock('@/sync/domains/state/storage', async () => {
             localSettingsMock[key],
             setLocalSettingSpies[key as keyof typeof setLocalSettingSpies] ?? vi.fn(),
         ],
+        useProjectLastMobileSurface: () => projectLastMobileSurfaceMock,
+        usePersistProjectLastMobileSurface: () => persistProjectLastMobileSurfaceSpy,
     });
 });
 
@@ -59,6 +62,8 @@ const workspaceRef: WorkspaceRefV1 = {
 describe('useProjectMobileRoutePersistence', () => {
     it('canonicalizes a stale explicit worktreeId query param back to the root route selection', async () => {
         localSettingsMock = {};
+        projectLastMobileSurfaceMock = null;
+        persistProjectLastMobileSurfaceSpy.mockClear();
         Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
         routerMock.spies.replace.mockClear();
         routerMock.state.router.setParams({});
@@ -96,6 +101,8 @@ describe('useProjectMobileRoutePersistence', () => {
                 wr_1: 'gitwt_deleted',
             },
         };
+        projectLastMobileSurfaceMock = null;
+        persistProjectLastMobileSurfaceSpy.mockClear();
         Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
         routerMock.state.router.setParams({});
 
@@ -122,6 +129,8 @@ describe('useProjectMobileRoutePersistence', () => {
 
     it('persists the cockpit-era mobile surface instead of the legacy route segment', async () => {
         localSettingsMock = {};
+        projectLastMobileSurfaceMock = null;
+        persistProjectLastMobileSurfaceSpy.mockClear();
         Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
         routerMock.state.router.setParams({});
 
@@ -136,7 +145,7 @@ describe('useProjectMobileRoutePersistence', () => {
         }));
 
         await vi.waitFor(() => {
-            expect(setLocalSettingSpies.projectLastMobileSurfaceByWorkspaceRefId).toHaveBeenCalledWith({ wr_1: 'browse' });
+            expect(persistProjectLastMobileSurfaceSpy).toHaveBeenCalledWith('wr_1', 'browse');
         });
 
         await hook.unmount();
@@ -144,6 +153,8 @@ describe('useProjectMobileRoutePersistence', () => {
 
     it('does not persist surface or canonicalize route params while the route is not focused', async () => {
         localSettingsMock = {};
+        projectLastMobileSurfaceMock = null;
+        persistProjectLastMobileSurfaceSpy.mockClear();
         Object.values(setLocalSettingSpies).forEach((spy) => spy.mockClear());
         routerMock.spies.replace.mockClear();
         routerMock.state.router.setParams({});
@@ -162,7 +173,7 @@ describe('useProjectMobileRoutePersistence', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(routerMock.spies.replace).not.toHaveBeenCalled();
-        expect(setLocalSettingSpies.projectLastMobileSurfaceByWorkspaceRefId).not.toHaveBeenCalled();
+        expect(persistProjectLastMobileSurfaceSpy).not.toHaveBeenCalled();
         expect(setLocalSettingSpies.projectLastActiveRootPathByWorkspaceRefId).not.toHaveBeenCalled();
         expect(setLocalSettingSpies.projectLastActiveWorktreeIdByWorkspaceRefId).not.toHaveBeenCalled();
 

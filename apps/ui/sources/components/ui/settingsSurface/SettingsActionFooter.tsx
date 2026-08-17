@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SplitActionButtons } from '@/components/ui/forms/SplitActionButtons';
 
 export const SettingsActionFooter = React.memo(function SettingsActionFooter(props: Readonly<{
@@ -15,9 +15,11 @@ export const SettingsActionFooter = React.memo(function SettingsActionFooter(pro
     secondaryTestID?: string;
     secondaryTone?: 'default' | 'destructive';
 }>) {
+    const maxWidthStyle = useLayoutMaxWidthStyle();
+
     return (
         <View style={styles.wrapper}>
-            <View style={styles.container}>
+            <View style={[styles.container, maxWidthStyle]}>
                 <SplitActionButtons
                     secondaryLabel={props.secondaryLabel}
                     onSecondaryPress={props.onSecondaryPress ?? undefined}
@@ -39,7 +41,6 @@ const styles = StyleSheet.create(() => ({
     },
     container: {
         width: '100%',
-        maxWidth: layout.maxWidth,
         paddingHorizontal: 16,
         paddingTop: 12,
         paddingBottom: 16,

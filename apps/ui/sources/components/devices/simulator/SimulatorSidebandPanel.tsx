@@ -169,7 +169,7 @@ export function SimulatorSidebandPanel(props: Readonly<{
                 <Text style={simulatorStreamStyles.titleText}>{t('simulatorPreview.sidebands.title')}</Text>
                 <IconButton
                     testID={open ? `${props.testID}-close` : `${props.testID}-open`}
-                    iconName={open ? 'chevron-forward' : 'bug-outline'}
+                    iconName={open ? 'caret-right' : 'bug'}
                     accessibilityLabel={open ? t('simulatorPreview.sidebands.close') : t('simulatorPreview.sidebands.open')}
                     tooltip={open ? t('simulatorPreview.sidebands.close') : t('simulatorPreview.sidebands.open')}
                     size={32}
@@ -203,7 +203,7 @@ export function SimulatorSidebandPanel(props: Readonly<{
                                     <Text style={simulatorStreamStyles.badgeText}>{title}</Text>
                                     <IconButton
                                         testID={`${props.testID}-refresh:${kind}`}
-                                        iconName="refresh-outline"
+                                        iconName="arrow-clockwise"
                                         accessibilityLabel={t('simulatorPreview.sidebands.refreshA11y', { section: title })}
                                         tooltip={t('simulatorPreview.sidebands.refreshA11y', { section: title })}
                                         size={28}

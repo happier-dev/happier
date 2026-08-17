@@ -32,6 +32,31 @@ describe('machineRipgrep', () => {
         });
     });
 
+    it('forwards caller cancellation to the server-scoped machine RPC owner', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValue({
+            success: true,
+            stdout: 'src/a.ts\n',
+            stderr: '',
+            exitCode: 0,
+        });
+        const controller = new AbortController();
+        const { machineRipgrep } = await import('./machineRipgrep');
+
+        await machineRipgrep('m1', ['--files'], '/repo', {
+            serverId: 'server-a',
+            signal: controller.signal,
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'm1',
+            method: 'ripgrep',
+            payload: { args: ['--files'], cwd: '/repo' },
+            serverId: 'server-a',
+            timeoutMs: undefined,
+            signal: controller.signal,
+        });
+    });
+
     it('fails closed on RPC error', async () => {
         machineRpcWithServerScopeMock.mockRejectedValueOnce(new Error('boom'));
         const { machineRipgrep } = await import('./machineRipgrep');

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -8,6 +7,7 @@ import { t } from '@/text';
 
 import type { MemoryStatusV1 } from '@happier-dev/protocol';
 import { readMemoryStatusTelemetry } from '@/sync/domains/memory/memoryStatusTelemetry';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function count(value: number | null | undefined): number {
     return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -36,7 +36,7 @@ export const MemorySettingsIndexTelemetrySection = React.memo(function MemorySet
                             lightShards: count(indexContent.lightShardCount),
                             deepChunks: count(indexContent.deepChunkCount),
                         })}
-                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="stack" size={29} color={theme.colors.accent.blue} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -58,7 +58,7 @@ export const MemorySettingsIndexTelemetrySection = React.memo(function MemorySet
                             failed: count(queue.failedSessionCount),
                             waiting: count(queue.waitingSessionCount),
                         })}
-                        icon={<Ionicons name="file-tray-stacked-outline" size={29} color={theme.colors.accent.orange} />}
+                        icon={<Icon name="stack" size={29} color={theme.colors.accent.orange} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -74,7 +74,7 @@ export const MemorySettingsIndexTelemetrySection = React.memo(function MemorySet
                             semanticRows: count(lastRun.semanticRowsFound),
                             failures: count(lastRun.failures),
                         })}
-                        icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.purple} />}
+                        icon={<Icon name="pulse" size={29} color={theme.colors.accent.purple} />}
                         showChevron={false}
                     />
                 </ItemGroup>

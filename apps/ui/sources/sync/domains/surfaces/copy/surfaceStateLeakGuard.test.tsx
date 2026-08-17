@@ -79,6 +79,22 @@ describe('surface terminal states never leak machine vocabulary (L0-3 closure)',
         expectNoMachineTokens(screen.getTextContent(), 'PluginHostedWebUnavailable');
     });
 
+    it('generic plugin fallback state', async () => {
+        const { PluginSurfaceFallback } = await import('@/components/sessions/panes/PluginSurfaceFallback');
+        const props = {
+            testID: 'plugin-surface-fallback',
+            reasonCode: 'runtime_unavailable',
+        } as React.ComponentProps<typeof PluginSurfaceFallback> & Readonly<{
+            reasonCode: string;
+        }>;
+        const screen = await renderScreen(<PluginSurfaceFallback {...props} />);
+        expectNoMachineTokens(screen.getTextContent(), 'PluginSurfaceFallback');
+        expectNoRawA11yLabel(screen, ['runtime_unavailable'], 'PluginSurfaceFallback');
+        expect(screen.findByTestId(
+            'plugin-surface-fallback-diagnostic-runtime_unavailable',
+        )).toBeTruthy();
+    });
+
     it('shared SurfaceStateCard never renders its diagnostic code', async () => {
         const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
         const screen = await renderScreen(

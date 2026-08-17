@@ -1,7 +1,4 @@
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
-import { OpenAiCompatDaemonClient } from '@/voice/local/openaiCompat/client';
-import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
-import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 
 /**
  * Ordering envelope shared by every chunk in the ordered TTS playback queue.
@@ -56,8 +53,6 @@ export type TtsPlaybackControllerDeps<TPayload = TtsAudioChunkPayload> = Readonl
     prefetchDepth?: number;
     /** Notified with the bounded count of chunks to prefetch. */
     onPrefetch?: (count: number) => void;
-    /** TTL after which a late playback-confirm for a retired group is dropped. */
-    lateConfirmTtlMs?: number;
 }>;
 
 export type TtsPlaybackController<TPayload = TtsAudioChunkPayload> = Readonly<{
@@ -65,8 +60,6 @@ export type TtsPlaybackController<TPayload = TtsAudioChunkPayload> = Readonly<{
     speak: () => TtsSpeakHandle;
     /** Enqueue an audio chunk against the current speak generation. */
     enqueue: (chunk: TtsChunk<TPayload>) => void;
-    /** Accept a playback confirmation that arrived after group retirement. */
-    confirmLatePlayback?: (groupId: string, chunkIndex: number) => void;
 }>;
 
 type QueueGroup<TPayload> = {
@@ -91,9 +84,6 @@ function chunkKey(groupId: string, chunkIndex: number): string {
  * - Playback remains contiguous: the next ready chunk starts after local
  *   playback resolves, without waiting for remote confirmation RTT.
  * - Bounded prefetch (default ~2) requested via `onPrefetch`.
- * - Late confirms (arriving after a group is retired) are tolerated and dropped
- *   after `lateConfirmTtlMs`.
- *
  * Epoch/latest-wins staleness is backed by the shared {@link createAttemptGuard}.
  */
 export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
@@ -101,7 +91,6 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
 ): TtsPlaybackController<TPayload> {
     const epochGuard = createAttemptGuard();
     const prefetchDepth = Math.max(1, deps.prefetchDepth ?? DEFAULT_PREFETCH_DEPTH);
-    const lateConfirmTtlMs = deps.lateConfirmTtlMs ?? 5_000;
 
     let activeEpoch = epochGuard.next();
     let group: QueueGroup<TPayload> | null = null;
@@ -109,7 +98,6 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
     let aborted = false;
     let finished = false;
     let resolveDone: (() => void) | null = null;
-    const retiredGroups = new Set<string>();
     const pendingConfirmations = new Set<Promise<void>>();
 
     const settleDone = () => {
@@ -154,8 +142,6 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
                 const nextChunk = g.chunks.get(g.nextChunkToPlay);
                 if (!nextChunk) {
                     if (groupIsFinished(g)) {
-                        retiredGroups.add(g.groupId);
-                        scheduleRetirementExpiry(g.groupId);
                         group = null;
                         settleWhenConfirmationsComplete(generation);
                     }
@@ -229,13 +215,6 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
         }
     };
 
-    const scheduleRetirementExpiry = (groupId: string) => {
-        const timer = setTimeout(() => {
-            retiredGroups.delete(groupId);
-        }, lateConfirmTtlMs);
-        (timer as { unref?: () => void })?.unref?.();
-    };
-
     return {
         speak: () => {
             // Advance the generation: any in-flight chunks for the old epoch drop.
@@ -285,67 +264,5 @@ export function createTtsPlaybackController<TPayload = TtsAudioChunkPayload>(
             }
             void processQueue();
         },
-        confirmLatePlayback: (groupId, _chunkIndex) => {
-            // A confirm that arrives after the group retired is simply ignored;
-            // tolerated within the TTL window, harmless afterwards.
-            retiredGroups.delete(groupId);
-        },
     };
-}
-
-export async function speakOpenAiCompatText(opts: {
-  baseUrl: string;
-  insecureLocalOriginConsent: string | null;
-  insecureLocalConsentMachineId?: string | null;
-  credentialKind: string;
-  model: string;
-  voice: string;
-  format: 'mp3' | 'wav';
-  input: string;
-  registerPlaybackStopper: VoicePlaybackStopperRegistrar;
-  onPlaybackStarted?: () => void;
-  signal?: AbortSignal | null;
-  client?: Pick<OpenAiCompatDaemonClient, 'synthesize'>;
-}): Promise<void> {
-  const controller = new AbortController();
-  let stopPlayback: (() => void) | null = null;
-  let clearStopper: () => void = () => undefined;
-  const abort = () => controller.abort();
-  if (opts.signal?.aborted) abort();
-  else opts.signal?.addEventListener('abort', abort, { once: true });
-
-  try {
-    clearStopper = opts.registerPlaybackStopper(() => {
-      abort();
-      stopPlayback?.();
-    });
-    const synthesized = await (opts.client ?? new OpenAiCompatDaemonClient()).synthesize({
-      baseUrl: opts.baseUrl,
-      insecureLocalOriginConsent: opts.insecureLocalOriginConsent,
-      insecureLocalConsentMachineId: opts.insecureLocalConsentMachineId ?? null,
-      credentialKind: opts.credentialKind,
-      model: opts.model,
-      voice: opts.voice,
-      responseFormat: opts.format,
-      text: opts.input,
-      signal: controller.signal,
-    });
-    const buffer = new Uint8Array(synthesized.bytes).buffer;
-    const registerPlaybackOnly: VoicePlaybackStopperRegistrar = (stopper) => {
-      stopPlayback = stopper;
-      return () => {
-        if (stopPlayback === stopper) stopPlayback = null;
-      };
-    };
-
-    return await playAudioBytesWithStopper({
-      bytes: buffer,
-      format: opts.format,
-      registerPlaybackStopper: registerPlaybackOnly,
-      onPlaybackStarted: opts.onPlaybackStarted,
-    });
-  } finally {
-    opts.signal?.removeEventListener('abort', abort);
-    clearStopper();
-  }
 }

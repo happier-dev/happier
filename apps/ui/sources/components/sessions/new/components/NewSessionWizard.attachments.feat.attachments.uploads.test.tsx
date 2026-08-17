@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
@@ -144,8 +145,32 @@ vi.mock('@/components/profiles/ProfilesList', () => ({
     ProfilesList: () => null,
 }));
 describe('NewSessionWizard (attachments.uploads)', () => {
-    it('wires AgentInput attachments handlers and attach action when enabled', async () => {
+    it('wires AgentInput attachments and its semantic Composer document when enabled', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
+        const onStructuredInputMentionsChange = vi.fn();
+        const composerDocument = {
+            ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+            revision: 1,
+            attachments: [{
+                v: 1,
+                instanceId: 'issue-42',
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                key: '42',
+                value: { issueId: 42 },
+                presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+            }],
+            structuredInputMentions: [],
+            onStructuredInputMentionsChange,
+            attachmentRowItems: [{
+                kind: 'badge',
+                key: 'issue-42',
+                label: 'Issue #42',
+                availability: 'ready',
+            }],
+            hasSendableAttachments: true,
+            captureSubmissionSnapshot: () => null,
+            clearAcceptedSnapshot: () => false,
+        };
 
         AgentInputMock.mockClear();
 
@@ -232,12 +257,13 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
+                        composerDocument: composerDocument as any,
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: true,
                         isCreating: false,
-                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteKinds: [],
                         emptyAutocompleteSuggestions: async () => [],
                         agentInputExtraActionChips: [],
                     },
@@ -254,6 +280,13 @@ describe('NewSessionWizard (attachments.uploads)', () => {
             controlId: 'attachments',
         });
         expect(typeof attachmentChip?.collapsedAction).toBe('function');
+        expect(props.structuredInputMentions).toEqual([]);
+        expect(props.onStructuredInputMentionsChange).toBe(onStructuredInputMentionsChange);
+        expect(props.hasSendableAttachments).toBe(true);
+        expect(props.attachmentRowItems).toContainEqual(expect.objectContaining({
+            key: 'issue-42',
+            label: 'Issue #42',
+        }));
     });
 
     it('does not render an inline automation section (automation is controlled via the action chip popover)', async () => {
@@ -342,12 +375,12 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                 setFavoriteDirectories: () => {},
             },
             footer: {
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 setSessionPrompt: () => {},
                 handleCreateSession: () => {},
                 canCreate: true,
                 isCreating: false,
-                emptyAutocompletePrefixes: [],
+                emptyAutocompleteKinds: [],
                 emptyAutocompleteSuggestions: async () => [],
                 agentInputExtraActionChips: [],
             },
@@ -482,12 +515,12 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: false,
                         isCreating: false,
-                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteKinds: [],
                         emptyAutocompleteSuggestions: async () => [],
                         agentInputExtraActionChips: [],
                     },
@@ -586,12 +619,12 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: '',
+                        promptStore: createNewSessionPromptStore(''),
                         setSessionPrompt: () => {},
                         handleCreateSession: () => {},
                         canCreate: true,
                         isCreating: false,
-                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteKinds: [],
                         emptyAutocompleteSuggestions: async () => [],
                         agentInputExtraActionChips: [],
                     },
@@ -729,12 +762,12 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         setFavoriteDirectories: () => {},
                     },
                     footer: {
-                        sessionPrompt: 'Investigate this bug',
+                        promptStore: createNewSessionPromptStore('Investigate this bug'),
                         setSessionPrompt: () => {},
                         handleCreateSession,
                         canCreate: true,
                         isCreating: false,
-                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteKinds: [],
                         emptyAutocompleteSuggestions: async () => [],
                         agentInputExtraActionChips: [],
                     },

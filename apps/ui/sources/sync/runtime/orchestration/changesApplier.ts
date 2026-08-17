@@ -7,6 +7,7 @@ import {
     type PlannedChangeActions,
 } from './changesPlanner';
 import { runTasksWithLimit } from './runTasksWithLimit';
+import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 
 export type TodoSocketUpdate = Readonly<{
     key: string;
@@ -56,6 +57,12 @@ export async function applyPlannedChangeActions(params: {
         pets?: () => Promise<void>;
     };
     refreshSessionOrganization?: (plan: Exclude<PlannedChangeActions['sessionOrganization'], { mode: 'none' }>) => Promise<void>;
+    /**
+     * Data owns filtering and delivery of its closed content-free
+     * `pluginDomain.dataCollection` invalidations. The shared Account-change
+     * applier only hands it the canonical page before checkpointing.
+     */
+    publishPluginCollectionChanges?: (changes: readonly ApiChangeEntry[]) => void;
     invalidateMessagesForSession: (sessionId: string) => Promise<void>;
     repairSessionTranscriptRevision?: (repair: PlannedChangeActions['sessionTranscriptRepairs'][number]) => Promise<void>;
     invalidateScmStatusForSession: (sessionId: string) => void;
@@ -64,6 +71,11 @@ export async function applyPlannedChangeActions(params: {
     convergePendingForSession?: (sessionId: string) => Promise<void>;
 }): Promise<PlannedChangesApplyResult> {
     const { planned } = params;
+
+    // Registering Data's wakeup before any awaited work preserves the
+    // subscribe-then-initial-query race contract without giving UI a second
+    // AccountChange broker or a collection query engine.
+    params.publishPluginCollectionChanges?.(planned.changes);
 
     const concurrencyLimit = typeof params.concurrencyLimit === 'number' && params.concurrencyLimit > 0
         ? Math.trunc(params.concurrencyLimit)

@@ -5,6 +5,7 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import {
     getServerProfileById,
+    listServerProfiles,
     removeServerProfile,
     resolveServerProfileScopeId,
     upsertServerProfile,
@@ -59,11 +60,16 @@ export function useServerAutoAddFromRoute(params: Readonly<{
             if (!isValid) return;
 
             const normalized = normalizeUrl(url);
+            const preexistingProfileIds = new Set(
+                listServerProfiles().map((profile) => profile.id),
+            );
             const created = upsertServerProfile({
                 serverUrl: normalized,
                 name: defaultServerName(normalized),
                 source: params.source,
             });
+            const createdForThisAttempt =
+                !preexistingProfileIds.has(created.id);
 
             let profile = created;
             try {
@@ -77,7 +83,10 @@ export function useServerAutoAddFromRoute(params: Readonly<{
                             name: created.name,
                             source: params.source,
                         });
-                        if (canonical.id !== created.id) {
+                        if (
+                            createdForThisAttempt
+                            && canonical.id !== created.id
+                        ) {
                             try {
                                 removeServerProfile(created.id);
                             } catch {

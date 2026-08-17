@@ -48,7 +48,7 @@ describe('voiceHooks sink routing', () => {
   beforeEach(() => {
     resetVoiceAdapterRegistryForTests();
     registerVoiceAdapters([{
-      id: 'realtime_elevenlabs',
+      id: 'happier.voice.elevenlabs/realtime-elevenlabs',
       engineKind: 'realtime',
       start: async () => {},
       stop: async () => {},
@@ -62,7 +62,7 @@ describe('voiceHooks sink routing', () => {
         sendTextMessage: (text) => realtimeState.session?.sendTextMessage(text),
       } : null,
       getSnapshot: () => ({
-        adapterId: 'realtime_elevenlabs', sessionId: 'realtime-s1',
+        adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs', sessionId: 'realtime-s1',
         status: realtimeState.started ? 'connected' : 'disconnected', mode: 'idle', canStop: realtimeState.started,
       }),
     }, createLocalConversationVoiceAdapter()]);
@@ -168,7 +168,7 @@ describe('voiceHooks sink routing', () => {
         ...state.settings,
         voice: {
           ...state.settings.voice,
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       },
     }));
@@ -177,7 +177,7 @@ describe('voiceHooks sink routing', () => {
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 'realtime-s1',
       status: 'connected',
       mode: 'speaking',
@@ -202,7 +202,7 @@ describe('voiceHooks sink routing', () => {
         ...state.settings,
         voice: {
           ...state.settings.voice,
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       },
     }));
@@ -211,7 +211,7 @@ describe('voiceHooks sink routing', () => {
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 'realtime-s1',
       status: 'connected',
       mode: 'speaking',
@@ -250,7 +250,7 @@ describe('voiceHooks sink routing', () => {
         ...state.settings,
         voice: {
           ...state.settings.voice,
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       },
     }));
@@ -303,7 +303,7 @@ describe('voiceHooks sink routing', () => {
     });
     isLocalVoiceAgentActive.mockImplementation((sessionId: string) => sessionId === 'voice-conversation-1');
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 'realtime-s1',
       status: 'connected',
       mode: 'speaking',
@@ -335,7 +335,7 @@ describe('voiceHooks sink routing', () => {
         ...state.settings,
         voice: {
           ...state.settings.voice,
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       },
     }));
@@ -429,7 +429,7 @@ describe('voiceHooks sink routing', () => {
         ...state.settings,
         voice: {
           ...state.settings.voice,
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       },
     }));
@@ -438,7 +438,7 @@ describe('voiceHooks sink routing', () => {
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 'realtime-s1',
       status: 'connected',
       mode: 'speaking',
@@ -658,7 +658,7 @@ describe('voiceHooks sink routing', () => {
         ...state.settings,
         voice: {
           ...state.settings.voice,
-          providerId: 'realtime_elevenlabs',
+          providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         },
       },
     }));
@@ -667,7 +667,7 @@ describe('voiceHooks sink routing', () => {
     realtimeState.started = true;
     realtimeState.session = { sendContextualUpdate, sendTextMessage };
     setVoiceSessionSnapshot({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       sessionId: 'realtime-s1',
       status: 'connected',
       mode: 'speaking',

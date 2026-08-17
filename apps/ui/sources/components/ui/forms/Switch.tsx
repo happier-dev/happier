@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { Platform, Switch as RNSwitch, SwitchProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -15,11 +16,15 @@ export type AppSwitchProps = SwitchProps & {
     compact?: boolean;
 };
 
-export const Switch = ({ compact: _compact, style, ...props }: AppSwitchProps) => {
+export const Switch = React.forwardRef<React.ElementRef<typeof RNSwitch>, AppSwitchProps>(function Switch(
+    { compact: _compact, style, ...props },
+    ref,
+) {
     const { theme } = useUnistyles();
     return (
         <Deferred enabled={Platform.OS === 'android'}>
             <RNSwitch
+                ref={ref}
                 {...props}
                 style={[style, MINIMUM_INTERACTIVE_TARGET_STYLE]}
                 trackColor={{ false: theme.colors.switch.track.inactive, true: theme.colors.switch.track.active }}
@@ -31,4 +36,4 @@ export const Switch = ({ compact: _compact, style, ...props }: AppSwitchProps) =
             />
         </Deferred>
     );
-}
+});

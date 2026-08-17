@@ -6,6 +6,9 @@ import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import type { Machine, PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 
+import { buildDemoProfile, type DemoWorldProfile } from './connectedAccounts';
+import { buildDemoLocalSettings, type DemoWorldLocalSettings } from './localSettings';
+
 import {
     DEMO_MACHINE_ID,
     DEMO_NOW_MS,
@@ -32,6 +35,8 @@ export type DemoWorld = Readonly<{
     reviewComments: Record<string, ReviewCommentDraft[]>;
     serverFeatures: FeaturesResponse;
     settings: DemoWorldSettings;
+    localSettings: DemoWorldLocalSettings;
+    profile: DemoWorldProfile;
 }>;
 
 export function buildDemoWorld(): DemoWorld {
@@ -43,6 +48,8 @@ export function buildDemoWorld(): DemoWorld {
         reviewComments: buildDemoReviewComments(),
         serverFeatures: buildDemoServerFeatures(),
         settings: buildDemoSettings(),
+        localSettings: buildDemoLocalSettings(),
+        profile: buildDemoProfile(),
     };
 }
 

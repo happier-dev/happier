@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Octicons } from '@expo/vector-icons';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
-type OcticonName = React.ComponentProps<typeof Octicons>['name'];
+type OcticonName = IconName;
 
 export type TranscriptNavigationActionButtonProps = Readonly<{
     iconName: OcticonName;
@@ -43,7 +43,7 @@ export const TranscriptNavigationActionButton = React.memo((props: TranscriptNav
             accessibilityLabel={props.accessibilityLabel}
             accessibilityState={{ disabled: props.disabled === true }}
         >
-            <Octicons name={props.iconName} size={16} color={theme.colors.text.secondary} />
+            <Icon name={props.iconName} size={16} color={theme.colors.text.secondary} />
         </Pressable>
     );
 });

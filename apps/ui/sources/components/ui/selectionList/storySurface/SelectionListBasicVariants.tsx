@@ -146,6 +146,44 @@ const SELECTED_DISABLED_STEP: SelectionListStep = {
     ],
 };
 
+/**
+ * Enough rows to show more than one grid row, plus a disabled one so the
+ * "disabled rows still occupy a cell" behaviour is visible in the deck rather
+ * than only in a unit test.
+ */
+const COLUMNS_STEP: SelectionListStep = {
+    id: 'columns',
+    title: 'Two columns',
+    inputPlaceholder: 'Search models',
+    sections: [
+        {
+            kind: 'static',
+            id: 'fast',
+            title: 'FAST',
+            options: [
+                { id: 'col-a', label: 'Sonnet', subtitle: 'balanced' },
+                { id: 'col-b', label: 'Haiku', subtitle: 'fastest' },
+                { id: 'col-c', label: 'Opus', subtitle: 'deepest' },
+                { id: 'col-d', label: 'Gemini Flash', subtitle: 'long context' },
+                { id: 'col-e', label: 'Preview build', subtitle: 'not enabled here', disabled: true },
+            ],
+        },
+        {
+            kind: 'static',
+            id: 'local',
+            title: 'LOCAL',
+            options: [
+                { id: 'col-f', label: 'Ollama', subtitle: 'on this machine' },
+                { id: 'col-g', label: 'LM Studio', subtitle: 'on this machine' },
+            ],
+        },
+    ],
+    footerHints: [
+        { id: 'navigate', label: '↑↓←→', description: 'navigate' },
+        { id: 'enter', label: '↵', description: 'select' },
+    ],
+};
+
 const EMPTY_STEP: SelectionListStep = {
     id: 'empty',
     title: 'Empty state',
@@ -189,6 +227,17 @@ export function SelectionListBasicVariants(props: Readonly<{
                 <SelectionList
                     {...makeVariantProps(WITH_SEARCH_STEP, `${rootTestID}-footer-list`)}
                     keyboardHintsEnabled={true}
+                />
+            </VariantBlock>
+
+            <VariantBlock testID={storyVariantTestId(rootTestID, 'columns')} title="Two columns (grid variant)">
+                <SelectionList
+                    {...makeVariantProps(COLUMNS_STEP, `${rootTestID}-columns-list`)}
+                    // The deck host is narrow, so the minimum has to be small
+                    // enough for a second column to actually resolve here —
+                    // the same call the model picker has to make in a popover.
+                    columns={{ max: 2, minColumnWidthPx: 150 }}
+                    selectedOptionId="col-a"
                 />
             </VariantBlock>
 

@@ -7,11 +7,20 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import {
     useServerFeaturesRuntimeSnapshot,
 } from '@/sync/domains/features/featureDecisionRuntime';
-import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import {
+    normalizeConnectedServiceQuotaProfileRefs,
+    type ConnectedServiceQuotaProfileRefInput,
+    type LegacyConnectedServiceQuotaProfileRefInput,
+    type NormalizedConnectedServiceQuotaProfileRef,
+    type NormalizedLegacyConnectedServiceQuotaProfileRef,
+} from '@/sync/domains/connectedServices/connectedServiceQuotaProfileRefs';
 import {
     resolveBuiltInConnectedAccountQuotaTransport,
     type BuiltInConnectedAccountQuotaNegotiation,
 } from '@/sync/domains/connectedServices/resolveBuiltInConnectedAccountQuotaTransport';
+import {
+    resolveConnectedAccountUiNegotiation,
+} from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useProfile } from '@/sync/store/hooks';
 
 import type {
@@ -20,7 +29,6 @@ import type {
     QualifiedConnectedAccountQuotaSnapshotV4,
 } from '@happier-dev/protocol';
 import {
-    ConnectedServiceIdSchema,
     ConnectedServiceQuotaSnapshotV1Schema,
     type ConnectedServiceId,
 } from '@happier-dev/protocol';
@@ -44,17 +52,6 @@ import {
     useConnectedServiceLegacyOperationAdmission,
 } from './useConnectedServiceLegacyOperationAdmission';
 
-export type ConnectedServiceQuotaProfileRef = Readonly<{
-    serviceId: string;
-    profileId: string;
-}>;
-
-type NormalizedProfileRef = Readonly<{
-    key: string;
-    serviceId: ConnectedServiceId;
-    profileId: string;
-}>;
-
 type LegacyQuotaRegistration = Readonly<{
     kind: 'legacy';
     key: string;
@@ -66,8 +63,11 @@ type QualifiedQuotaRegistration = Readonly<{
     kind: 'v4';
     key: string;
     profileKey: string;
-    serviceId: ConnectedServiceId;
-    profileId: string;
+    /** Present only when a released scalar caller is projected through V4. */
+    legacyProfile?: Readonly<{
+        serviceId: ConnectedServiceId;
+        profileId: string;
+    }>;
     loadContext: QualifiedQuotaSnapshotStoreContext;
 }>;
 
@@ -75,62 +75,38 @@ type QuotaRegistration =
     | LegacyQuotaRegistration
     | QualifiedQuotaRegistration;
 
+export type ConnectedServiceQuotaSnapshotForUi =
+    | ConnectedServiceQuotaSnapshotV1
+    | QualifiedConnectedAccountQuotaSnapshotV4;
+
 export type ConnectedServiceQuotaSnapshotsResult = Readonly<{
+    /**
+     * The normalized refs this hook actually polls, in the canonical order.
+     *
+     * Callers that need the same keyed refs (badge and summary projections)
+     * read them from here instead of normalizing the same input a second time.
+     */
+    profiles: ReadonlyArray<NormalizedConnectedServiceQuotaProfileRef>;
+    snapshotsByKey: Readonly<Record<string, ConnectedServiceQuotaSnapshotForUi | null>>;
+    loadingByKey: Readonly<Record<string, boolean>>;
+}>;
+
+type LegacyConnectedServiceQuotaSnapshotsResult = Readonly<{
+    profiles: ReadonlyArray<NormalizedLegacyConnectedServiceQuotaProfileRef>;
     snapshotsByKey: Readonly<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>;
     loadingByKey: Readonly<Record<string, boolean>>;
 }>;
 
 export type ConnectedServiceQuotaSnapshotsFetchPolicy = 'poll' | 'cache_only';
 
-function normalizeProfileRef(profile: ConnectedServiceQuotaProfileRef): NormalizedProfileRef | null {
-    const serviceIdRaw = String(profile.serviceId ?? '').trim();
-    const parsedServiceId = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
-    const profileId = String(profile.profileId ?? '').trim();
-    if (!parsedServiceId.success || !profileId) {
-        return null;
-    }
-
-    return {
-        key: connectedServiceProfileKey({ serviceId: parsedServiceId.data, profileId }),
-        serviceId: parsedServiceId.data,
-        profileId,
-    };
-}
-
-function normalizeProfileRefs(profiles: ReadonlyArray<ConnectedServiceQuotaProfileRef>): NormalizedProfileRef[] {
-    const entries: NormalizedProfileRef[] = [];
-    const seenKeys = new Set<string>();
-    for (const profile of profiles) {
-        const normalized = normalizeProfileRef(profile);
-        if (!normalized || seenKeys.has(normalized.key)) {
-            continue;
-        }
-        seenKeys.add(normalized.key);
-        entries.push(normalized);
-    }
-    return entries.sort((a, b) => a.key.localeCompare(b.key));
-}
-
-function buildProfilesSignature(profiles: ReadonlyArray<ConnectedServiceQuotaProfileRef>): string {
-    return normalizeProfileRefs(profiles)
-        .map((profile) => `${profile.key}\u0000${profile.serviceId}\u0000${profile.profileId}`)
+function buildProfilesSignature(
+    profiles: ReadonlyArray<NormalizedConnectedServiceQuotaProfileRef>,
+): string {
+    return profiles
+        .map((profile) => profile.kind === 'legacy'
+            ? `${profile.kind}\u0000${profile.key}\u0000${profile.serviceId}\u0000${profile.profileId}`
+            : `${profile.kind}\u0000${profile.key}\u0000${profile.ref.service.pluginId}\u0000${profile.ref.service.localId}\u0000${profile.ref.accountId}`)
         .join('\u0001');
-}
-
-function resolveQuotaNegotiation(
-    snapshot: ReturnType<typeof useServerFeaturesRuntimeSnapshot>,
-): BuiltInConnectedAccountQuotaNegotiation {
-    if (snapshot.status === 'loading') return 'indeterminate';
-    if (snapshot.status === 'ready') {
-        return snapshot.features.capabilities.connectedServices
-            .qualifiedAccounts?.protocolVersion === 4
-            ? 'advertised-v4'
-            : 'legacy';
-    }
-    return snapshot.status === 'unsupported'
-        && snapshot.reason === 'endpoint_missing'
-        ? 'legacy'
-        : 'indeterminate';
 }
 
 function projectQualifiedQuotaForLegacyUi(params: Readonly<{
@@ -147,7 +123,15 @@ function projectQualifiedQuotaForLegacyUi(params: Readonly<{
 }
 
 export function useConnectedServiceQuotaSnapshots(
-    profiles: ReadonlyArray<ConnectedServiceQuotaProfileRef>,
+    profiles: ReadonlyArray<LegacyConnectedServiceQuotaProfileRefInput>,
+    options?: Readonly<{ fetchPolicy?: ConnectedServiceQuotaSnapshotsFetchPolicy }>,
+): LegacyConnectedServiceQuotaSnapshotsResult;
+export function useConnectedServiceQuotaSnapshots(
+    profiles: ReadonlyArray<ConnectedServiceQuotaProfileRefInput>,
+    options?: Readonly<{ fetchPolicy?: ConnectedServiceQuotaSnapshotsFetchPolicy }>,
+): ConnectedServiceQuotaSnapshotsResult;
+export function useConnectedServiceQuotaSnapshots(
+    profiles: ReadonlyArray<ConnectedServiceQuotaProfileRefInput>,
     options: Readonly<{ fetchPolicy?: ConnectedServiceQuotaSnapshotsFetchPolicy }> = {},
 ): ConnectedServiceQuotaSnapshotsResult {
     const auth = useAuth();
@@ -173,26 +157,60 @@ export function useConnectedServiceQuotaSnapshots(
     const assertQualifiedOperationAllowed =
         useConnectedAccountOperationAdmission();
 
-    const profilesSignature = React.useMemo(() => buildProfilesSignature(profiles), [profiles]);
-    const normalizedProfiles = React.useMemo(() => normalizeProfileRefs(profiles), [profilesSignature]);
-    const negotiation = resolveQuotaNegotiation(serverFeatures);
+    const normalizedInput = React.useMemo(
+        () => normalizeConnectedServiceQuotaProfileRefs(profiles),
+        [profiles],
+    );
+    const profilesSignature = React.useMemo(
+        () => buildProfilesSignature(normalizedInput),
+        [normalizedInput],
+    );
+    // Re-held by signature so a fresh input array carrying the same refs keeps
+    // one identity, and every downstream memo/subscription stays stable.
+    const normalizedProfiles = React.useMemo(() => normalizedInput, [profilesSignature]);
+    const negotiation: BuiltInConnectedAccountQuotaNegotiation =
+        resolveConnectedAccountUiNegotiation(serverFeatures);
     const loadContexts = React.useMemo(() => {
         if (!quotasEnabled || !credentials || !activeServer.serverId) {
             return [] as ReadonlyArray<QuotaRegistration>;
         }
         return normalizedProfiles.flatMap<QuotaRegistration>(
             (quotaProfile) => {
+            const serverBasis = {
+                serverId: activeServer.serverId,
+                generation: activeServer.generation,
+            };
+            if (quotaProfile.kind === 'qualified') {
+                // A direct V4 ref has no scalar compatibility representation.
+                // Never infer one or fall back when the server cannot prove V4.
+                if (negotiation !== 'advertised-v4') return [];
+                const loadContext: QualifiedQuotaSnapshotStoreContext = {
+                    credentials,
+                    credentialScope,
+                    serverBasis,
+                    ref: quotaProfile.ref,
+                    assertOperationAllowed: (
+                        operation: BuiltInLegacyConnectedAccountOperation,
+                    ) => assertQualifiedOperationAllowed(
+                        quotaProfile.ref.service,
+                        { kind: 'v4' },
+                        operation,
+                    ),
+                };
+                return [{
+                    kind: 'v4' as const,
+                    key: buildQualifiedQuotaSnapshotScopeKey(loadContext),
+                    profileKey: quotaProfile.key,
+                    loadContext,
+                }];
+            }
             const transport =
                 resolveBuiltInConnectedAccountQuotaTransport({
                     negotiation,
                     profile: quotaProfile,
                     qualifiedAccounts: profile.connectedAccountsV4,
-                });
+            });
             if (!transport) return [];
-            const serverBasis = {
-                serverId: activeServer.serverId,
-                generation: activeServer.generation,
-            };
             if (transport.kind === 'v4') {
                 const loadContext: QualifiedQuotaSnapshotStoreContext = {
                     credentials,
@@ -214,8 +232,7 @@ export function useConnectedServiceQuotaSnapshots(
                     key:
                         buildQualifiedQuotaSnapshotScopeKey(loadContext),
                     profileKey: quotaProfile.key,
-                    serviceId: quotaProfile.serviceId,
-                    profileId: quotaProfile.profileId,
+                    legacyProfile: transport.legacyProfile,
                     loadContext,
                 }];
             }
@@ -297,10 +314,14 @@ export function useConnectedServiceQuotaSnapshots(
     }, [fetchPolicy, loadContexts]);
 
     return React.useMemo(() => {
-        const snapshotsByKey: Record<string, ConnectedServiceQuotaSnapshotV1 | null> = {};
+        const snapshotsByKey: Record<string, ConnectedServiceQuotaSnapshotForUi | null> = {};
         const loadingByKey: Record<string, boolean> = {};
         if (!quotasEnabled) {
-            return { snapshotsByKey, loadingByKey } satisfies ConnectedServiceQuotaSnapshotsResult;
+            return {
+                profiles: normalizedProfiles,
+                snapshotsByKey,
+                loadingByKey,
+            } satisfies ConnectedServiceQuotaSnapshotsResult;
         }
 
         void version;
@@ -309,11 +330,13 @@ export function useConnectedServiceQuotaSnapshots(
                 const entry =
                     getQualifiedQuotaSnapshotEntry(registration.key);
                 snapshotsByKey[registration.profileKey] = entry.snapshot
-                    ? projectQualifiedQuotaForLegacyUi({
-                        snapshot: entry.snapshot,
-                        serviceId: registration.serviceId,
-                        profileId: registration.profileId,
-                    })
+                    ? registration.legacyProfile
+                        ? projectQualifiedQuotaForLegacyUi({
+                            snapshot: entry.snapshot,
+                            serviceId: registration.legacyProfile.serviceId,
+                            profileId: registration.legacyProfile.profileId,
+                        })
+                        : entry.snapshot
                     : null;
                 loadingByKey[registration.profileKey] = entry.loading;
                 continue;
@@ -323,6 +346,10 @@ export function useConnectedServiceQuotaSnapshots(
             loadingByKey[registration.profileKey] = entry.loading;
         }
 
-        return { snapshotsByKey, loadingByKey } satisfies ConnectedServiceQuotaSnapshotsResult;
-    }, [loadContexts, quotasEnabled, version]);
+        return {
+            profiles: normalizedProfiles,
+            snapshotsByKey,
+            loadingByKey,
+        } satisfies ConnectedServiceQuotaSnapshotsResult;
+    }, [loadContexts, normalizedProfiles, quotasEnabled, version]);
 }

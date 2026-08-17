@@ -15,6 +15,9 @@ import {
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
 import {
+    computeConnectedServiceQuotaErrorBackoffMs,
+} from '@/sync/domains/connectedServices/connectedServiceQuotaErrorBackoff';
+import {
     buildProviderAccountUsageScopeKey,
     readProviderAccountUsageSnapshotForMode,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
@@ -44,16 +47,6 @@ export type ProviderAccountUsageSnapshotsResult = Readonly<{
 
 const PROVIDER_ACCOUNT_USAGE_POLL_MS = 30_000;
 const PROVIDER_ACCOUNT_USAGE_MISS_RETRY_MS = 30_000;
-const PROVIDER_ACCOUNT_USAGE_ERROR_BACKOFF_MIN_MS = 30_000;
-const PROVIDER_ACCOUNT_USAGE_ERROR_BACKOFF_MAX_MS = 5 * 60_000;
-
-function computeErrorBackoffMs(consecutiveErrors: number): number {
-    const exp = PROVIDER_ACCOUNT_USAGE_ERROR_BACKOFF_MIN_MS * Math.pow(2, Math.max(0, consecutiveErrors - 1));
-    return Math.max(
-        PROVIDER_ACCOUNT_USAGE_ERROR_BACKOFF_MIN_MS,
-        Math.min(PROVIDER_ACCOUNT_USAGE_ERROR_BACKOFF_MAX_MS, Math.trunc(exp)),
-    );
-}
 
 function buildRecordIdsSignature(recordIds: ReadonlyArray<string>): string {
     return normalizeProviderAccountUsageRecordIds(recordIds).join('\u0001');
@@ -240,7 +233,10 @@ export function useProviderAccountUsageSnapshots(
                                 ...entries,
                                 [recordId]: {
                                     snapshot: existing?.snapshot ?? null,
-                                    nextFetchAtMs: now + computeErrorBackoffMs(consecutiveErrors),
+                                    nextFetchAtMs: now
+                                        + computeConnectedServiceQuotaErrorBackoffMs(
+                                            consecutiveErrors,
+                                        ),
                                     consecutiveErrors,
                                     loading: false,
                                     hadError: Boolean(existing?.snapshot),

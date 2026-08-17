@@ -1,32 +1,61 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
+import {
+    projectPluginSettingsContributionV2,
+    readManagedServiceEndpointUrl,
+} from '@happier-dev/protocol';
+import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 import type {
     PluginProjectionEditableSettingField,
     PluginProjectionEditableSettingsGroup,
     PluginProjectionEntry,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { mapV2EditableSettingsGroup } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 import {
-    machinePluginSettingsGet,
-    machinePluginSettingsSet,
-    type MachinePluginSettingsResult,
-} from '@/sync/ops/machineContributionRegistryProjection';
+    resolveScopedPluginSettingsTarget,
+    type ScopedPluginSettingsAccountTarget,
+    type ScopedPluginSettingsDaemonTarget,
+    type ScopedPluginSettingsMutation,
+    type ScopedPluginSettingsScope,
+    type ScopedPluginSettingsTarget,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
+import {
+    createScopedPluginSettingsSetMutation,
+    projectScopedPluginSettingsField,
+    projectScopedPluginSettingsFields,
+    readScopedPluginSettingsDeclaredFieldValue,
+    resolveScopedPluginSettingsDeclaredFieldMutation,
+    scopedPluginSettingsFieldDeclarationIdentity,
+    type ScopedPluginSettingsFieldModel,
+    useScopedPluginSettingsProjection,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
+import {
+    scopedPluginAccountSecretSettingsAdapter,
+    scopedPluginSettingsAdapter,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
+import {
+    captureActiveServerAccountScopeLifetime,
+    type ActiveServerAccountScopeLifetime,
+} from '@/sync/domains/scope/activeServerAccountScope';
 import {
     evaluatePluginUiPolicy,
     type PluginUiPolicyEvaluationContext,
 } from '@/sync/domains/plugins/ui/policy/evaluate';
 import { emitPluginSettingChangedEvent } from '@/track/settingsAnalytics/emitPluginSettingChangedEvent';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     PluginSettingSelectField,
     PluginSettingSwitchField,
@@ -66,6 +95,22 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     fieldActions: {
         alignItems: 'flex-end',
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        justifyContent: 'flex-end',
+        marginTop: 8,
+    },
+    secretStatus: {
+        ...Typography.default(),
+        color: theme.colors.text.secondary,
+        fontSize: 13,
+        marginTop: 8,
+    },
+    fieldError: {
+        ...Typography.default(),
+        color: theme.colors.state.danger.foreground,
+        fontSize: 13,
         marginTop: 8,
     },
     saveButton: {
@@ -73,28 +118,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-type SettingsValues = Readonly<Record<string, unknown>>;
-type TextDraft = Readonly<{
-    value: string;
-    revision: number;
-    dirty: boolean;
-}>;
-type TextDrafts = Readonly<Record<string, TextDraft>>;
-type FieldCommit =
-    | Readonly<{ kind: 'text'; draft: TextDraft }>
-    | Readonly<{ kind: 'switch' }>
-    | Readonly<{ kind: 'direct' }>;
-type InFlightFieldOperation = Readonly<{
-    id: number;
-    declarationEpoch: number;
-}>;
-type PersistenceScope = Readonly<{
-    machineId: string;
-    serverId: string | null;
-    pluginId: string;
-}>;
-
 const EMPTY_EDITABLE_SETTINGS_GROUPS: readonly PluginProjectionEditableSettingsGroup[] = Object.freeze([]);
+const ACCOUNT_PLUGIN_SETTINGS_SCOPE: ScopedPluginSettingsScope = Object.freeze({ kind: 'account' });
+const DAEMON_PLUGIN_SETTINGS_SCOPE: ScopedPluginSettingsScope = Object.freeze({ kind: 'daemon' });
 
 function compareSettingsFields(
     left: PluginProjectionEditableSettingField,
@@ -118,131 +144,78 @@ function isRedactedField(field: PluginProjectionEditableSettingField): boolean {
     return field.control === 'password' || (field.redaction ?? 'none') !== 'none';
 }
 
-function sanitizeSnapshotValues(
-    groups: readonly PluginProjectionEditableSettingsGroup[],
-    result: Extract<MachinePluginSettingsResult, { supported: true }>,
-): SettingsValues {
-    const redactedKeys = new Set(result.snapshot.redactedKeys);
-    const redactedByMetadata = new Set(
-        groups.flatMap((group) => group.fields.filter(isRedactedField).map((field) => field.key)),
-    );
-    const values: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(result.snapshot.values)) {
-        if (redactedKeys.has(key) || redactedByMetadata.has(key)) {
-            continue;
-        }
-        values[key] = value;
-    }
-    return values;
+function isAccountSavedSecretField(field: PluginProjectionEditableSettingField): boolean {
+    return field.secretCustody === 'account';
 }
 
-function readBoundSettingValue(
-    values: SettingsValues,
-    field: PluginProjectionEditableSettingField,
-    serverId: string | null,
-): unknown {
-    const binding = field.presentation?.binding;
-    if (binding?.kind === 'direct' && binding.settingId) {
-        return values[binding.settingId];
-    }
-    if (binding?.kind === 'perActiveServer') {
-        const byServer = values[binding.byServerIdSettingId];
-        if (
-            serverId
-            && byServer
-            && typeof byServer === 'object'
-            && !Array.isArray(byServer)
-            && Object.prototype.hasOwnProperty.call(byServer, serverId)
-        ) {
-            return Reflect.get(byServer, serverId);
-        }
-        return values[binding.fallbackSettingId];
-    }
-    return values[field.key];
+function isDaemonCustodiedSecretField(field: PluginProjectionEditableSettingField): boolean {
+    return field.secretCustody === 'daemon';
 }
 
-function readTextValue(
-    values: SettingsValues,
-    field: PluginProjectionEditableSettingField,
-    serverId: string | null = null,
-): string {
-    const boundValue = readBoundSettingValue(values, field, serverId);
-    const value = boundValue !== undefined
-        ? boundValue
-        : field.defaultValue;
-    if (typeof value === 'string') return value;
-    if (typeof value === 'number') return String(value);
-    if (value === undefined) return '';
-    try {
-        return JSON.stringify(value, null, 2);
-    } catch {
-        return '';
-    }
-}
+/**
+ * The daemon projection remains the primary Settings source. When it is
+ * unavailable, Account Availability may admit the current normalized manifest
+ * only for Account-scoped recovery. Reuse the Protocol normalizer and the
+ * existing UI projection mapper rather than recreating a Settings parser here.
+ */
+function projectAccountRecoverySettingsGroups(params: Readonly<{
+    pluginId: string;
+    declaration: PluginPortableReleaseManifestV1 | null | undefined;
+}>): readonly PluginProjectionEditableSettingsGroup[] {
+    const declaration = params.declaration;
+    if (!declaration || declaration.id !== params.pluginId) return EMPTY_EDITABLE_SETTINGS_GROUPS;
 
-function resolveBoundSettingMutation(params: Readonly<{
-    values: SettingsValues;
-    field: PluginProjectionEditableSettingField;
-    serverId: string | null;
-    value: unknown;
-}>): Readonly<{ fieldId: string; value: unknown }> {
-    const binding = params.field.presentation?.binding;
-    if (binding?.kind === 'direct' && binding.settingId) {
-        return { fieldId: binding.settingId, value: params.value };
-    }
-    if (binding?.kind !== 'perActiveServer' || !params.serverId) {
-        return {
-            fieldId: binding?.kind === 'perActiveServer'
-                ? binding.fallbackSettingId
-                : params.field.key,
-            value: params.value,
-        };
-    }
-    const rawByServer = params.values[binding.byServerIdSettingId];
-    const byServer = rawByServer && typeof rawByServer === 'object' && !Array.isArray(rawByServer)
-        ? { ...(rawByServer as Readonly<Record<string, unknown>>) }
-        : {};
-    if (typeof params.value === 'string' && params.value.trim() === '') {
-        delete byServer[params.serverId];
-    } else {
-        byServer[params.serverId] = params.value;
-    }
-    return { fieldId: binding.byServerIdSettingId, value: byServer };
-}
-
-function readSwitchValue(values: SettingsValues, field: PluginProjectionEditableSettingField): boolean {
-    const value = values[field.key];
-    if (typeof value === 'boolean') return value;
-    return field.defaultBooleanValue === true;
-}
-
-function parseTextDraft(
-    field: PluginProjectionEditableSettingField,
-    draft: string,
-): Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false }> {
-    if (field.control === 'number' || field.valueType === 'number' || field.valueType === 'integer') {
-        if (draft.trim() === '' && settingSchemaAcceptsNull(field.valueSchema)) {
-            return { ok: true, value: null };
-        }
-        const value = Number(draft);
-        if (!Number.isFinite(value) || (field.valueType === 'integer' && !Number.isInteger(value))) {
-            return { ok: false };
-        }
-        return { ok: true, value };
-    }
-    if (field.control === 'json' || ['object', 'array', 'null'].includes(field.valueType)) {
+    const groups: PluginProjectionEditableSettingsGroup[] = [];
+    for (const definition of declaration.contributes.settings ?? []) {
+        if (definition.scope !== 'account' || definition.target.kind !== 'plugin') continue;
         try {
-            return { ok: true, value: JSON.parse(draft) };
+            const projected = projectPluginSettingsContributionV2({
+                pluginId: params.pluginId,
+                definition,
+            });
+            const group = mapV2EditableSettingsGroup(projected);
+            // Cold Account recovery has no selected daemon target. Keep only
+            // fields whose projected custody is available through Account;
+            // never reinterpret a daemon secret as an Account SavedSecret.
+            const fields = group.fields.filter((field) => field.secretCustody !== 'daemon');
+            if (fields.length > 0) {
+                groups.push(Object.freeze({ ...group, fields: Object.freeze(fields) }));
+            }
         } catch {
-            return { ok: false };
+            // The release is syntactically current but semantically unsuitable
+            // for editable Settings. Recovery fails closed for that declaration.
         }
     }
-    return { ok: true, value: draft };
+    return groups.length > 0 ? Object.freeze(groups) : EMPTY_EDITABLE_SETTINGS_GROUPS;
 }
 
-function settingSchemaAcceptsNull(schema: PluginProjectionEditableSettingField['valueSchema']): boolean {
-    if (schema.type === 'null') return true;
-    return [...(schema.anyOf ?? []), ...(schema.oneOf ?? [])].some(settingSchemaAcceptsNull);
+/**
+ * A raw secret draft belongs to one current daemon generation or one current
+ * Account-release declaration. A legacy projection without an immutable
+ * generation still retains its declared numeric/label generation when one is
+ * available; field-declaration identity supplies the remaining local fence.
+ */
+function settingsSourceLifetimeIdentity(params: Readonly<{
+    projection: PluginProjectionEntry | null;
+    accountSettingsDeclaration: PluginPortableReleaseManifestV1 | null | undefined;
+}>): string {
+    const projection = params.projection;
+    if (projection) {
+        if (typeof projection.immutableGenerationId === 'string') {
+            return `daemon-generation:${projection.immutableGenerationId}`;
+        }
+        if (typeof projection.generation === 'number') {
+            return `daemon-generation:${projection.generation}`;
+        }
+        if (projection.generationLabel !== null) {
+            return `daemon-generation-label:${projection.generationLabel}`;
+        }
+        return 'daemon-generation:unavailable';
+    }
+    const declaration = params.accountSettingsDeclaration;
+    return declaration
+        ? `account-declaration:${declaration.id}@${declaration.version}`
+        : 'account-declaration:unavailable';
 }
 
 function localizedPresentationText(
@@ -251,158 +224,7 @@ function localizedPresentationText(
     return typeof value === 'string' ? value : value?.fallback ?? '';
 }
 
-function createTextDrafts(
-    groups: readonly PluginProjectionEditableSettingsGroup[],
-    values: SettingsValues,
-    serverId: string | null = null,
-): TextDrafts {
-    const drafts: Record<string, TextDraft> = {};
-    for (const group of groups) {
-        for (const field of group.fields) {
-            if (['switch', 'select', 'multiSelect'].includes(field.control)) continue;
-            drafts[field.key] = {
-                value: isRedactedField(field) ? '' : readTextValue(values, field, serverId),
-                revision: 0,
-                dirty: false,
-            };
-        }
-    }
-    return drafts;
-}
-
-function resolvePersistenceScope(props: Readonly<{
-    machineId: string | null;
-    serverId: string | null;
-    pluginId: string;
-}>): PersistenceScope | null {
-    if (!props.machineId) return null;
-    return {
-        machineId: props.machineId,
-        serverId: props.serverId,
-        pluginId: props.pluginId,
-    };
-}
-
-function isSamePersistenceScope(
-    left: PersistenceScope | null,
-    right: PersistenceScope | null,
-): boolean {
-    return left !== null
-        && right !== null
-        && left.machineId === right.machineId
-        && left.serverId === right.serverId
-        && left.pluginId === right.pluginId;
-}
-
-function findEditableField(
-    groups: readonly PluginProjectionEditableSettingsGroup[],
-    fieldKey: string,
-): PluginProjectionEditableSettingField | null {
-    for (const group of groups) {
-        const field = group.fields.find((candidate) => candidate.key === fieldKey);
-        if (field) return field;
-    }
-    return null;
-}
-
-function isSameFieldDeclaration(
-    previous: PluginProjectionEditableSettingField,
-    current: PluginProjectionEditableSettingField,
-): boolean {
-    if (
-        previous.valueType !== current.valueType
-        || previous.clearWhenEmpty !== current.clearWhenEmpty
-        || isRedactedField(previous) !== isRedactedField(current)
-    ) {
-        return false;
-    }
-    return previous.control === current.control;
-}
-
-function reconcileTextDrafts(
-    groups: readonly PluginProjectionEditableSettingsGroup[],
-    values: SettingsValues,
-    current: TextDrafts,
-    previousGroups: readonly PluginProjectionEditableSettingsGroup[],
-    protectedFieldKeys: ReadonlySet<string>,
-    serverId: string | null,
-): TextDrafts {
-    const next = { ...createTextDrafts(groups, values, serverId) };
-    for (const group of groups) {
-        for (const field of group.fields) {
-            if (['switch', 'select', 'multiSelect'].includes(field.control)) continue;
-            const activeDraft = current[field.key];
-            const previousField = findEditableField(previousGroups, field.key);
-            if (
-                activeDraft
-                && previousField
-                && !['switch', 'select', 'multiSelect'].includes(previousField.control)
-                && isSameFieldDeclaration(previousField, field)
-                && (activeDraft.dirty || protectedFieldKeys.has(field.key))
-            ) {
-                next[field.key] = activeDraft;
-            }
-        }
-    }
-    return next;
-}
-
-function replaceSnapshotPreservingFields(
-    current: SettingsValues,
-    snapshotValues: SettingsValues,
-    protectedFieldKeys: ReadonlySet<string>,
-): SettingsValues {
-    if (protectedFieldKeys.size === 0) return snapshotValues;
-    const next: Record<string, unknown> = { ...snapshotValues };
-    for (const fieldKey of protectedFieldKeys) {
-        if (Object.prototype.hasOwnProperty.call(current, fieldKey)) {
-            next[fieldKey] = current[fieldKey];
-        } else {
-            delete next[fieldKey];
-        }
-    }
-    return next;
-}
-
-function withoutRecordKey<T>(
-    record: Readonly<Record<string, T>>,
-    key: string,
-): Readonly<Record<string, T>> {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) return record;
-    const next = { ...record };
-    delete next[key];
-    return next;
-}
-
-function withoutRecordKeys<T>(
-    record: Readonly<Record<string, T>>,
-    keys: ReadonlySet<string>,
-): Readonly<Record<string, T>> {
-    if (keys.size === 0) return record;
-    let next: Record<string, T> | null = null;
-    for (const key of keys) {
-        if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-        next ??= { ...record };
-        delete next[key];
-    }
-    return next ?? record;
-}
-
-function applyFieldSnapshot(
-    values: SettingsValues,
-    snapshotValues: SettingsValues,
-    fieldKey: string,
-): SettingsValues {
-    if (Object.prototype.hasOwnProperty.call(snapshotValues, fieldKey)) {
-        return { ...values, [fieldKey]: snapshotValues[fieldKey] };
-    }
-    if (!Object.prototype.hasOwnProperty.call(values, fieldKey)) return values;
-    const next = { ...values };
-    delete next[fieldKey];
-    return next;
-}
-
-function PluginSettingTextField(props: Readonly<{
+export function PluginSettingTextField(props: Readonly<{
     pluginId: string;
     group: PluginProjectionEditableSettingsGroup;
     field: PluginProjectionEditableSettingField;
@@ -411,8 +233,26 @@ function PluginSettingTextField(props: Readonly<{
     saving: boolean;
     saveFailed: boolean;
     persistenceDisabled: boolean;
+    /**
+     * A queued text event may safely update a presentation-local draft after
+     * Save has disabled the visible control. Unavailable/loading controls
+     * remain fully inert.
+     */
+    acceptDraftInputWhileBusy?: boolean;
+    /** Another mutation is authoritative; preserve the editable local draft but block its submit. */
+    commitDisabled?: boolean;
     onChangeText: (value: string) => void;
     onCommit: () => void;
+    /** Account SavedSecret deletion is always an explicit user action. */
+    onDelete?: () => void;
+    /** Binds a host-private existing SavedSecret without projecting its id. */
+    onBindExisting?: () => void;
+    /** Removes only the current binding; it preserves the SavedSecret record. */
+    onUnbind?: () => void;
+    /** Safe presence state only; the SavedSecret value never reaches the control. */
+    status?: string | null;
+    /** A safe field-local mutation status; never interpolate raw draft bytes. */
+    errorMessage?: string | null;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -429,8 +269,16 @@ function PluginSettingTextField(props: Readonly<{
             <TextInput
                 testID={testID}
                 accessibilityLabel={props.field.title}
+                accessibilityHint={props.status ?? undefined}
                 value={props.value}
-                onChangeText={props.onChangeText}
+                onChangeText={(value) => {
+                    // Native controls ignore input while non-editable, but
+                    // keep the same invariant at this presentation boundary
+                    // for programmatic and web event paths as well.
+                    if (!props.persistenceDisabled || props.acceptDraftInputWhileBusy) {
+                        props.onChangeText(value);
+                    }
+                }}
                 editable={!props.persistenceDisabled}
                 secureTextEntry={isSecret}
                 multiline={multiline}
@@ -448,19 +296,649 @@ function PluginSettingTextField(props: Readonly<{
                     },
                 ]}
             />
+            {props.status ? (
+                <Text
+                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.status`}
+                    style={styles.secretStatus}
+                >
+                    {props.status}
+                </Text>
+            ) : null}
+            {props.errorMessage ? (
+                <Text
+                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.error`}
+                    style={styles.fieldError}
+                >
+                    {props.errorMessage}
+                </Text>
+            ) : null}
             <View style={styles.fieldActions}>
+                {props.onDelete ? (
+                    <RoundButton
+                        testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.delete`}
+                        size="normal"
+                        display="inverted"
+                        title={t('common.delete')}
+                        accessibilityLabel={`${t('common.delete')}: ${props.field.title}`}
+                        textStyle={{ color: theme.colors.state.danger.foreground }}
+                        disabled={props.saving || props.persistenceDisabled}
+                        onPress={props.onDelete}
+                    />
+                ) : null}
+                {props.onUnbind ? (
+                    <RoundButton
+                        testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.unbind`}
+                        size="normal"
+                        display="inverted"
+                        title={t('common.remove')}
+                        accessibilityLabel={`${t('common.remove')}: ${props.field.title}`}
+                        disabled={props.saving || props.persistenceDisabled}
+                        onPress={props.onUnbind}
+                    />
+                ) : null}
+                {props.onBindExisting ? (
+                    <RoundButton
+                        testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.bind`}
+                        size="normal"
+                        display="inverted"
+                        title={t('settings.mcpServersImportMappingSavedSecret')}
+                        accessibilityLabel={`${t('settings.mcpServersImportMappingSavedSecret')}: ${props.field.title}`}
+                        disabled={props.saving || props.persistenceDisabled}
+                        onPress={props.onBindExisting}
+                    />
+                ) : null}
                 <RoundButton
                     testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.save`}
                     size="normal"
                     title={saveLabel}
                     accessibilityLabel={`${saveLabel}: ${props.field.title}`}
                     style={styles.saveButton}
-                    disabled={!props.dirty || props.saving || props.persistenceDisabled}
+                    disabled={!props.dirty || props.saving || props.persistenceDisabled || props.commitDisabled}
                     loading={props.saving}
                     onPress={props.onCommit}
                 />
             </View>
         </View>
+    );
+}
+
+/**
+ * Account-redacted declarative Settings have a different persistence owner
+ * than ordinary Account plugin-record fields. This control is deliberately
+ * presentation-only: its adapter projects configured/missing state, never a
+ * raw SavedSecret value, and owns the Account Settings CAS mutation beneath it.
+ */
+function PluginSettingAccountSecretField(props: Readonly<{
+    pluginId: string;
+    group: PluginProjectionEditableSettingsGroup;
+    field: PluginProjectionEditableSettingField;
+    target: ScopedPluginSettingsAccountTarget | null;
+    accountLifetime: ActiveServerAccountScopeLifetime | null;
+    enabled: boolean;
+    /** Current generation/declaration boundary for presentation-local bytes. */
+    lifetimeIdentity: string;
+}>) {
+    const secretField = React.useMemo(() => projectScopedPluginSettingsField(props.field), [props.field]);
+    const secretFields = React.useMemo(() => [secretField], [secretField]);
+    const secretSettings = useScopedPluginSettingsProjection({
+        pluginId: props.pluginId,
+        scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
+        target: props.target,
+        accountLifetime: props.accountLifetime,
+        fields: secretFields,
+        sourceLifetimeIdentity: props.lifetimeIdentity,
+        perActiveServerIdentityId: null,
+        enabled: props.enabled,
+        adapter: scopedPluginAccountSecretSettingsAdapter,
+    });
+    const revision = secretSettings.state.revision?.kind === 'account-secret'
+        ? secretSettings.state.revision
+        : null;
+    const loading = secretSettings.state.loading;
+    // Raw Account-secret input is presentation-local and disappears with this
+    // host control. The shared record owns only safe status/revision/mutation.
+    const [draft, setDraft] = React.useState('');
+    const [saving, setSaving] = React.useState(false);
+    const [saveFailed, setSaveFailed] = React.useState(false);
+    const [saveOutcomeUnknown, setSaveOutcomeUnknown] = React.useState(false);
+    const [dirty, setDirty] = React.useState(false);
+    const writePending = secretSettings.state.writePending;
+    const mountedRef = React.useRef(true);
+    const operationIdRef = React.useRef(0);
+    const draftVersionRef = React.useRef(0);
+    const lifetimeIdentityRef = React.useRef(props.lifetimeIdentity);
+    const targetIdentity = props.target?.serverIdentityId ?? '';
+    const accountScopeIsCurrent = React.useCallback((): boolean => {
+        const lifetime = props.accountLifetime;
+        if (!lifetime) return false;
+        try {
+            return lifetime.isCurrent();
+        } catch {
+            return false;
+        }
+    }, [props.accountLifetime]);
+    const configured = accountScopeIsCurrent()
+        && secretSettings.state.secretStates[props.field.key] === 'configured';
+
+    React.useLayoutEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            operationIdRef.current += 1;
+        };
+    }, []);
+
+    React.useLayoutEffect(() => {
+        const lifetime = props.accountLifetime;
+        if (!lifetime) return;
+        const retirement = lifetime.onRetire(() => {
+            // The shared Account record retires its read/watch/write state.
+            // This presentation owner also holds raw draft/error bytes, so
+            // clear them synchronously and fence its pending continuation.
+            operationIdRef.current += 1;
+            draftVersionRef.current += 1;
+            setDraft('');
+            setDirty(false);
+            setSaving(false);
+            setSaveFailed(false);
+            setSaveOutcomeUnknown(false);
+        });
+        return () => retirement.dispose();
+    }, [props.accountLifetime]);
+
+    React.useLayoutEffect(() => {
+        lifetimeIdentityRef.current = props.lifetimeIdentity;
+        const operationId = operationIdRef.current + 1;
+        operationIdRef.current = operationId;
+        draftVersionRef.current += 1;
+        setDraft('');
+        setDirty(false);
+        setSaving(false);
+        setSaveFailed(false);
+        setSaveOutcomeUnknown(false);
+    }, [props.accountLifetime, props.field.key, props.lifetimeIdentity, props.pluginId, targetIdentity]);
+
+    const commit = React.useCallback((mutation: ScopedPluginSettingsMutation) => {
+        const operationLifetimeIdentity = props.lifetimeIdentity;
+        if (
+            !mountedRef.current
+            || lifetimeIdentityRef.current !== operationLifetimeIdentity
+            || !revision
+            || loading
+            || saving
+            || writePending
+            || !props.enabled
+            || !accountScopeIsCurrent()
+        ) return;
+        const operationId = operationIdRef.current + 1;
+        operationIdRef.current = operationId;
+        const draftVersion = draftVersionRef.current;
+        setSaving(true);
+        setSaveFailed(false);
+        setSaveOutcomeUnknown(false);
+        void secretSettings.commit({
+            fieldId: props.field.key,
+            mutation,
+        }).then((result) => {
+            if (
+                !mountedRef.current
+                || lifetimeIdentityRef.current !== operationLifetimeIdentity
+                || operationIdRef.current !== operationId
+                || !accountScopeIsCurrent()
+            ) return;
+            if (result?.status === 'conflict' && result.snapshot.revision.kind === 'account-secret') {
+                // A one-shot SavedSecret mutation was rejected. Its safe
+                // snapshot is new authority for retry, but the draft remains
+                // local until the user explicitly chooses to submit again.
+                setSaving(false);
+                setSaveFailed(true);
+                return;
+            }
+            if (result?.status === 'outcomeUnknown') {
+                // A safe snapshot may refresh presentation, but it cannot
+                // establish that this SavedSecret mutation authored it.
+                setSaving(false);
+                setSaveFailed(true);
+                setSaveOutcomeUnknown(true);
+                return;
+            }
+            if (result?.status !== 'ready' || result.snapshot.revision.kind !== 'account-secret') {
+                setSaving(false);
+                setSaveFailed(result !== null);
+                return;
+            }
+            if (draftVersionRef.current === draftVersion) {
+                setDraft('');
+                setDirty(false);
+            }
+            setSaving(false);
+            setSaveFailed(false);
+            setSaveOutcomeUnknown(false);
+        }).catch(() => {
+            if (
+                !mountedRef.current
+                || lifetimeIdentityRef.current !== operationLifetimeIdentity
+                || operationIdRef.current !== operationId
+                || !accountScopeIsCurrent()
+            ) return;
+            setSaving(false);
+            setSaveFailed(true);
+            setSaveOutcomeUnknown(false);
+        });
+    }, [accountScopeIsCurrent, loading, props.enabled, props.field.key, props.lifetimeIdentity, revision, saving, secretSettings, writePending]);
+
+    const save = React.useCallback(() => {
+        const mutation = createScopedPluginSettingsSetMutation(draft);
+        if (mutation) commit(mutation);
+    }, [commit, draft]);
+
+    const deleteSecret = React.useCallback(() => {
+        commit({ kind: 'delete' });
+    }, [commit]);
+
+    const unbindSecret = React.useCallback(() => {
+        commit({ kind: 'unbind' });
+    }, [commit]);
+
+    const bindExistingSecret = React.useCallback(() => {
+        if (!revision || loading || saving || writePending || !props.enabled || !accountScopeIsCurrent()) return;
+        Modal.show({
+            component: SavedSecretPickerModal,
+            props: {
+                // A binding identity is never projected back into the control,
+                // so this picker is deliberately not told which secret is
+                // currently configured.
+                selectedId: null,
+                includeNoneRow: false,
+                allowAdd: false,
+                allowEdit: false,
+                onSelectId: (savedSecretId) => {
+                    if (!savedSecretId) return;
+                    commit({ kind: 'bind', savedSecretId });
+                },
+            },
+            chrome: {
+                kind: 'card',
+                title: t('settings.mcpServersPickSecretTitle'),
+                dimensions: { size: 'lg' },
+            },
+            closeOnBackdrop: true,
+        });
+    }, [accountScopeIsCurrent, commit, loading, props.enabled, revision, saving, writePending]);
+
+    return (
+        <PluginSettingTextField
+            pluginId={props.pluginId}
+            group={props.group}
+            field={props.field}
+            value={draft}
+            dirty={dirty}
+            saving={saving}
+            saveFailed={saveFailed}
+            persistenceDisabled={!props.enabled || !accountScopeIsCurrent() || loading || writePending || revision === null}
+            acceptDraftInputWhileBusy={props.enabled && accountScopeIsCurrent() && !loading && revision !== null}
+            onChangeText={(value) => {
+                if (!accountScopeIsCurrent()) return;
+                draftVersionRef.current += 1;
+                setDraft(value);
+                setDirty(true);
+                setSaveFailed(false);
+                setSaveOutcomeUnknown(false);
+            }}
+            onCommit={save}
+            onDelete={configured ? deleteSecret : undefined}
+            onBindExisting={bindExistingSecret}
+            onUnbind={configured ? unbindSecret : undefined}
+            status={configured ? t('memorySearchSettings.embeddings.secretSet') : null}
+            errorMessage={saveOutcomeUnknown
+                ? t('settingsProviders.errors.mutationOutcomeUnknownDescription')
+                : saveFailed ? t('settingsPlugins.genericSettingsSaveError') : null}
+        />
+    );
+}
+
+/**
+ * Read the user-selected endpoint through the existing Account field binding,
+ * then use the shared URL policy to derive its credential identity. This is
+ * presentation metadata only: the URL is never copied beside secret custody.
+ */
+function readManagedServiceSecretCanonicalOrigin(params: Readonly<{
+    group: PluginProjectionEditableSettingsGroup;
+    field: PluginProjectionEditableSettingField;
+    values: Readonly<Record<string, unknown>>;
+    perActiveServerIdentityId: string | null;
+}>): string | null {
+    const endpointSettingId = params.field.managedServiceOrigin?.endpointSettingId;
+    if (!endpointSettingId) return null;
+    const endpointField = params.group.fields.find((field) => field.key === endpointSettingId);
+    if (!endpointField) return null;
+    const endpoint = readManagedServiceEndpointUrl(readScopedPluginSettingsDeclaredFieldValue({
+        values: params.values,
+        field: endpointField,
+        serverIdentityId: params.perActiveServerIdentityId,
+    }), {
+        hostPolicy: 'userDeclaredAttach',
+        allowSearch: true,
+        allowHash: true,
+    });
+    if (!endpoint.ok) return null;
+    return new URL(endpoint.endpoint.baseUrl).origin;
+}
+
+type ManagedServiceSecretPresentationState =
+    | Readonly<{ kind: 'loading' }>
+    | Readonly<{
+        kind: 'ready';
+        state: 'configured' | 'missing' | 'denied' | 'unavailable';
+        revision: string;
+    }>
+    | Readonly<{ kind: 'unavailable' }>;
+
+/**
+ * Origin-bound daemon custody has no daemon Settings record. The Account
+ * field remains the UI-only endpoint relation; status/set/delete travel to
+ * the one declaration-aware daemon secret owner with that exact origin.
+ */
+function PluginSettingDaemonSecretField(props: Readonly<{
+    pluginId: string;
+    group: PluginProjectionEditableSettingsGroup;
+    field: PluginProjectionEditableSettingField;
+    values?: Readonly<Record<string, unknown>>;
+    perActiveServerIdentityId?: string | null;
+    target: ScopedPluginSettingsDaemonTarget | null;
+    enabled: boolean;
+    /** The Account endpoint owner is refreshing; retained values are inert. */
+    endpointSettingsLoading?: boolean;
+    /** Owns currentness for the Account endpoint relation behind this secret. */
+    accountLifetime: ActiveServerAccountScopeLifetime | null;
+    isDaemonTargetCurrent?: (target: ScopedPluginSettingsDaemonTarget) => boolean;
+    /** Current generation/declaration boundary for presentation-local bytes. */
+    lifetimeIdentity: string;
+}>) {
+    const hasManagedServiceOrigin = Boolean(props.field.managedServiceOrigin);
+    const canonicalOrigin = React.useMemo(() => hasManagedServiceOrigin
+        ? readManagedServiceSecretCanonicalOrigin({
+            group: props.group,
+            field: props.field,
+            values: props.values ?? {},
+            perActiveServerIdentityId: props.perActiveServerIdentityId ?? null,
+        })
+        : null, [hasManagedServiceOrigin, props.field, props.group, props.perActiveServerIdentityId, props.values]);
+    const originIsReady = !hasManagedServiceOrigin || canonicalOrigin !== null;
+    const endpointSettingsLoading = hasManagedServiceOrigin && props.endpointSettingsLoading === true;
+    const targetKey = props.target
+        ? `${props.target.serverIdentityId}:${props.target.machineId}:${props.target.serverId}`
+        : '';
+    const requestIdentity = `${targetKey}:${hasManagedServiceOrigin ? canonicalOrigin ?? 'invalid-origin' : 'unscoped-secret'}`;
+    const [status, setStatus] = React.useState<ManagedServiceSecretPresentationState>({ kind: 'unavailable' });
+    const [draft, setDraft] = React.useState('');
+    const [dirty, setDirty] = React.useState(false);
+    const [saving, setSaving] = React.useState(false);
+    const [saveFailed, setSaveFailed] = React.useState(false);
+    const [saveOutcomeUnknown, setSaveOutcomeUnknown] = React.useState(false);
+    const mountedRef = React.useRef(true);
+    const operationIdRef = React.useRef(0);
+    const draftVersionRef = React.useRef(0);
+    const lifetimeIdentityRef = React.useRef(props.lifetimeIdentity);
+    const writeAbortRef = React.useRef<AbortController | null>(null);
+    const daemonSecretAdapter = scopedPluginSettingsAdapter.daemonSecret;
+
+    const targetIsCurrent = React.useCallback((target: ScopedPluginSettingsDaemonTarget | null): boolean => {
+        if (!target) return false;
+        try {
+            return props.isDaemonTargetCurrent?.(target) !== false;
+        } catch {
+            return false;
+        }
+    }, [props.isDaemonTargetCurrent]);
+    const accountScopeIsCurrent = React.useCallback((): boolean => {
+        const lifetime = props.accountLifetime;
+        if (!lifetime) return false;
+        try {
+            return lifetime.isCurrent();
+        } catch {
+            return false;
+        }
+    }, [props.accountLifetime]);
+
+    React.useLayoutEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            operationIdRef.current += 1;
+            writeAbortRef.current?.abort();
+            writeAbortRef.current = null;
+        };
+    }, []);
+
+    React.useLayoutEffect(() => {
+        const lifetime = props.accountLifetime;
+        if (!lifetime) return;
+        const retirement = lifetime.onRetire(() => {
+            // Account lifetime owns every mounted plugin Settings control,
+            // including an exact daemon target. Retire local secret bytes and
+            // requests before the next Account can mount the same target.
+            operationIdRef.current += 1;
+            writeAbortRef.current?.abort();
+            writeAbortRef.current = null;
+            draftVersionRef.current += 1;
+            setDraft('');
+            setDirty(false);
+            setSaving(false);
+            setSaveFailed(false);
+            setSaveOutcomeUnknown(false);
+            setStatus({ kind: 'unavailable' });
+        });
+        return () => retirement.dispose();
+    }, [props.accountLifetime]);
+
+    React.useLayoutEffect(() => {
+        lifetimeIdentityRef.current = props.lifetimeIdentity;
+        operationIdRef.current += 1;
+        writeAbortRef.current?.abort();
+        writeAbortRef.current = null;
+        draftVersionRef.current += 1;
+        setDraft('');
+        setDirty(false);
+        setSaving(false);
+        setSaveFailed(false);
+        setSaveOutcomeUnknown(false);
+        setStatus({ kind: 'unavailable' });
+    }, [props.accountLifetime, props.field.key, props.lifetimeIdentity, props.pluginId, requestIdentity]);
+
+    React.useEffect(() => {
+        const target = props.target;
+        if (
+            !props.enabled
+            || endpointSettingsLoading
+            || !originIsReady
+            || !target
+            || !daemonSecretAdapter
+            || !accountScopeIsCurrent()
+            || !targetIsCurrent(target)
+        ) {
+            return;
+        }
+        const controller = new AbortController();
+        let active = true;
+        setStatus({ kind: 'loading' });
+        void daemonSecretAdapter.read({
+            pluginId: props.pluginId,
+            target,
+            secretId: props.field.key,
+            ...(canonicalOrigin ? { canonicalOrigin } : {}),
+            signal: controller.signal,
+        }).then((result) => {
+            if (
+                !active
+                || !mountedRef.current
+                || lifetimeIdentityRef.current !== props.lifetimeIdentity
+                || !accountScopeIsCurrent()
+                || !targetIsCurrent(target)
+            ) return;
+            if (result.status !== 'ready') {
+                setStatus({ kind: 'unavailable' });
+                return;
+            }
+            setStatus({
+                kind: 'ready',
+                state: result.snapshot.state,
+                revision: result.snapshot.revision,
+            });
+        });
+        return () => {
+            active = false;
+            controller.abort();
+        };
+    }, [accountScopeIsCurrent, canonicalOrigin, daemonSecretAdapter, endpointSettingsLoading, originIsReady, props.enabled, props.field.key, props.lifetimeIdentity, props.pluginId, props.target, requestIdentity, targetIsCurrent]);
+
+    const commit = React.useCallback((kind: 'set' | 'delete') => {
+        const target = props.target;
+        const operationLifetimeIdentity = props.lifetimeIdentity;
+        const readyStatus = status.kind === 'ready' ? status : null;
+        const acceptedState = readyStatus?.state === 'configured' || readyStatus?.state === 'missing';
+        if (
+            !mountedRef.current
+            || !props.enabled
+            || endpointSettingsLoading
+            || !originIsReady
+            || !target
+            || !daemonSecretAdapter
+            || !accountScopeIsCurrent()
+            || !targetIsCurrent(target)
+            || !readyStatus
+            || !acceptedState
+            || saving
+        ) return;
+        const operationId = operationIdRef.current + 1;
+        operationIdRef.current = operationId;
+        const draftVersion = draftVersionRef.current;
+        const controller = new AbortController();
+        writeAbortRef.current?.abort();
+        writeAbortRef.current = controller;
+        setSaving(true);
+        setSaveFailed(false);
+        setSaveOutcomeUnknown(false);
+        const input = {
+            target,
+            pluginId: props.pluginId,
+            secretId: props.field.key,
+            ...(canonicalOrigin ? { canonicalOrigin } : {}),
+            expectedRevision: readyStatus.revision,
+            signal: controller.signal,
+        };
+        const mutation = daemonSecretAdapter.write({
+            ...input,
+            mutation: kind === 'set'
+                ? { kind: 'set', value: draft }
+                : { kind: 'delete' },
+        });
+        void mutation.then((result) => {
+            if (
+                !mountedRef.current
+                || lifetimeIdentityRef.current !== operationLifetimeIdentity
+                || operationIdRef.current !== operationId
+                || !accountScopeIsCurrent()
+                || !targetIsCurrent(target)
+            ) return;
+            if (writeAbortRef.current === controller) writeAbortRef.current = null;
+            const draftIsCurrent = draftVersionRef.current === draftVersion;
+            if (result.status === 'outcomeUnknown') {
+                // The adapter already performed one safe status readback for
+                // this exact target/origin. Keep the draft and preserve the
+                // ambiguity rather than replaying a possible mutation.
+                setSaving(false);
+                if (!draftIsCurrent) return;
+                if (result.snapshot) {
+                    setStatus({
+                        kind: 'ready',
+                        state: result.snapshot.state,
+                        revision: result.snapshot.revision,
+                    });
+                }
+                setSaveFailed(true);
+                setSaveOutcomeUnknown(true);
+                return;
+            }
+            if (result.status !== 'ready') {
+                setSaving(false);
+                if (!draftIsCurrent) return;
+                setSaveFailed(true);
+                return;
+            }
+            setSaving(false);
+            if (!draftIsCurrent) return;
+            setStatus({
+                kind: 'ready',
+                state: result.snapshot.state,
+                revision: result.snapshot.revision,
+            });
+            if (kind === 'set') {
+                setDraft('');
+                setDirty(false);
+            } else if (kind === 'delete') {
+                setDraft('');
+                setDirty(false);
+            }
+            setSaveFailed(false);
+            setSaveOutcomeUnknown(false);
+        }).catch(() => {
+            if (
+                !mountedRef.current
+                || lifetimeIdentityRef.current !== operationLifetimeIdentity
+                || operationIdRef.current !== operationId
+                || !accountScopeIsCurrent()
+                || !targetIsCurrent(target)
+            ) return;
+            if (writeAbortRef.current === controller) writeAbortRef.current = null;
+            setSaving(false);
+            if (draftVersionRef.current !== draftVersion) return;
+            setSaveFailed(true);
+            setSaveOutcomeUnknown(false);
+        });
+    }, [accountScopeIsCurrent, canonicalOrigin, daemonSecretAdapter, draft, endpointSettingsLoading, originIsReady, props.enabled, props.field.key, props.lifetimeIdentity, props.pluginId, props.target, saving, status, targetIsCurrent]);
+
+    const ready = status.kind === 'ready';
+    const secretConfigured = !endpointSettingsLoading && ready && status.state === 'configured';
+    const secretUsable = !endpointSettingsLoading && ready && (status.state === 'configured' || status.state === 'missing');
+    const persistenceDisabled = !props.enabled
+        || endpointSettingsLoading
+        || !originIsReady
+        || !props.target
+        || !daemonSecretAdapter
+        || !accountScopeIsCurrent()
+        || !targetIsCurrent(props.target)
+        || !secretUsable;
+
+    return (
+        <PluginSettingTextField
+            pluginId={props.pluginId}
+            group={props.group}
+            field={props.field}
+            value={draft}
+            dirty={dirty}
+            saving={saving}
+            saveFailed={saveFailed}
+            persistenceDisabled={persistenceDisabled}
+            acceptDraftInputWhileBusy={!persistenceDisabled && !saving}
+            status={secretConfigured ? t('memorySearchSettings.embeddings.secretSet') : null}
+            errorMessage={saveOutcomeUnknown
+                ? t('settingsProviders.errors.mutationOutcomeUnknownDescription')
+                : saveFailed
+                    ? t('settingsPlugins.genericSettingsSaveError')
+                : hasManagedServiceOrigin && !canonicalOrigin && !endpointSettingsLoading
+                    ? t('settingsPlugins.genericSettingsUnavailable')
+                    : null}
+            onChangeText={(value) => {
+                draftVersionRef.current += 1;
+                setDraft(value);
+                setDirty(true);
+                setSaveFailed(false);
+                setSaveOutcomeUnknown(false);
+            }}
+            onCommit={() => commit('set')}
+            onDelete={secretConfigured ? () => commit('delete') : undefined}
+        />
     );
 }
 
@@ -485,7 +963,7 @@ function PluginSettingMultiSelectField(props: Readonly<{
                         key={optionId}
                         title={localizedPresentationText(option.title)}
                         subtitle={localizedPresentationText(option.description) || undefined}
-                        icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
                         rightElement={(
                             <Switch
                                 value={selected}
@@ -515,32 +993,159 @@ function PluginSettingMultiSelectField(props: Readonly<{
     );
 }
 
-export function PluginDetailGenericSettingsSection(props: Readonly<{
+type PluginDetailGenericSettingsSectionProps = Readonly<{
     pluginId: string;
     projection: PluginProjectionEntry | null;
+    /** Current Account-release declaration used only while daemon projection is absent. */
+    accountSettingsDeclaration?: PluginPortableReleaseManifestV1 | null;
     machineId: string | null;
     serverId: string | null;
+    /** Exact Account identity selected by the authenticated server owner. */
+    accountServerIdentityId?: string | null;
+    /** Exact daemon identity selected by the administration target owner. */
+    daemonServerIdentityId?: string | null;
     daemonOperationsAvailable: boolean;
+    /**
+     * Optional owner-local freshness fence for a daemon target. Callers that
+     * own a mutable execution selection supply this immediately before write.
+     */
+    isDaemonTargetCurrent?: (target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>) => boolean;
     policyContext?: PluginUiPolicyEvaluationContext;
+}>;
+
+export function PluginDetailGenericSettingsSection(props: PluginDetailGenericSettingsSectionProps) {
+    const groups = React.useMemo(() => (
+        props.projection?.editableSettingsGroups
+        ?? projectAccountRecoverySettingsGroups({
+            pluginId: props.pluginId,
+            declaration: props.accountSettingsDeclaration,
+        })
+    ), [props.accountSettingsDeclaration, props.pluginId, props.projection]);
+    const sourceLifetimeIdentity = settingsSourceLifetimeIdentity({
+        projection: props.projection,
+        accountSettingsDeclaration: props.accountSettingsDeclaration,
+    });
+    const { accountGroups, daemonGroups } = React.useMemo(() => ({
+        accountGroups: groups
+            .filter((group) => group.scope.kind === 'account'),
+        daemonGroups: groups.filter((group) => group.scope.kind === 'daemon'),
+    }), [groups]);
+    // Daemon storage authority stays exact-machine, but its mounted record,
+    // LKG, and parked watch are UI Account-lifetime state. Capture the one
+    // incumbent lifetime for either Settings scope so Account A cannot leak
+    // into Account B when the daemon target remains unchanged.
+    const requiresAccountLifetime = groups.length > 0;
+    const accountLifetime = requiresAccountLifetime
+        ? captureActiveServerAccountScopeLifetime()
+        : null;
+    const accountTarget = React.useMemo(() => resolveScopedPluginSettingsTarget({
+        scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
+        serverIdentityId: props.accountServerIdentityId,
+    }), [props.accountServerIdentityId]);
+    const daemonTarget = React.useMemo(() => resolveScopedPluginSettingsTarget({
+        scope: DAEMON_PLUGIN_SETTINGS_SCOPE,
+        machineId: props.machineId,
+        serverId: props.serverId,
+        serverIdentityId: props.daemonServerIdentityId,
+    }), [props.daemonServerIdentityId, props.machineId, props.serverId]);
+    const accountSecretTarget = accountTarget?.kind === 'account' ? accountTarget : null;
+    const daemonSecretTarget = daemonTarget?.kind === 'daemon' ? daemonTarget : null;
+
+    if (accountGroups.length === 0 && daemonGroups.length === 0) return null;
+    return (
+        <>
+            {accountGroups.length > 0 ? (
+                <PluginDetailScopedSettingsSection
+                    {...props}
+                    groups={accountGroups}
+                    scope={ACCOUNT_PLUGIN_SETTINGS_SCOPE}
+                    target={accountTarget}
+                    accountSecretTarget={accountSecretTarget}
+                    daemonSecretTarget={daemonSecretTarget}
+                    accountLifetime={accountLifetime}
+                    sourceLifetimeIdentity={sourceLifetimeIdentity}
+                />
+            ) : null}
+            {daemonGroups.length > 0 ? (
+                <PluginDetailScopedSettingsSection
+                    {...props}
+                    groups={daemonGroups}
+                    scope={DAEMON_PLUGIN_SETTINGS_SCOPE}
+                    target={daemonTarget}
+                    accountSecretTarget={accountSecretTarget}
+                    daemonSecretTarget={daemonSecretTarget}
+                    accountLifetime={accountLifetime}
+                    sourceLifetimeIdentity={sourceLifetimeIdentity}
+                />
+            ) : null}
+        </>
+    );
+}
+
+function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSectionProps & Readonly<{
+    groups: readonly PluginProjectionEditableSettingsGroup[];
+    scope: ScopedPluginSettingsScope;
+    target: ScopedPluginSettingsTarget | null;
+    accountSecretTarget: ScopedPluginSettingsAccountTarget | null;
+    daemonSecretTarget: ScopedPluginSettingsDaemonTarget | null;
+    accountLifetime: ActiveServerAccountScopeLifetime | null;
+    /** Current source generation/declaration inherited by secret controls. */
+    sourceLifetimeIdentity: string;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const groups = props.projection?.editableSettingsGroups ?? EMPTY_EDITABLE_SETTINGS_GROUPS;
+    const groups = props.groups;
     const sortedGroups = React.useMemo(() => [...groups].sort(compareSettingsGroups), [groups]);
-    const persistenceScope = React.useMemo(() => resolvePersistenceScope(props), [
-        props.machineId,
-        props.pluginId,
-        props.serverId,
-    ]);
-    const [loading, setLoading] = React.useState(false);
-    const [loadError, setLoadError] = React.useState<string | null>(null);
-    const [hydratedPersistenceScope, setHydratedPersistenceScope] = React.useState<PersistenceScope | null>(null);
-    const [values, setValues] = React.useState<SettingsValues>({});
-    const [settingsRevision, setSettingsRevision] = React.useState<string | null>(null);
-    const [textDraftByKey, setTextDraftByKey] = React.useState<TextDrafts>({});
-    const [switchDraftByKey, setSwitchDraftByKey] = React.useState<Readonly<Record<string, boolean>>>({});
-    const [savingByKey, setSavingByKey] = React.useState<Readonly<Record<string, boolean>>>({});
-    const [saveErrorByKey, setSaveErrorByKey] = React.useState<Readonly<Record<string, boolean>>>({});
+    // Secret raw bytes remain inside their dedicated presentation controls.
+    // Every other declared field enters the one canonical scoped projection.
+    const ordinaryFields = React.useMemo(() => sortedGroups.flatMap((group) => group.fields.filter((field) => (
+        !isAccountSavedSecretField(field)
+        && !isDaemonCustodiedSecretField(field)
+        && !isRedactedField(field)
+    ))), [sortedGroups]);
+    const adapterFields = React.useMemo(
+        () => projectScopedPluginSettingsFields(ordinaryFields),
+        [ordinaryFields],
+    );
+    const hasAccountSavedSecretFields = sortedGroups
+        .some((group) => group.fields.some(isAccountSavedSecretField));
+    const accountScopeCurrent = React.useMemo(() => {
+        if (props.scope.kind !== 'account') return true;
+        if (!props.target || !props.accountLifetime) return false;
+        try {
+            return props.accountLifetime.isCurrent();
+        } catch {
+            return false;
+        }
+    }, [props.accountLifetime, props.scope.kind, props.target]);
+    const scopedOperationsAvailable = props.scope.kind === 'account'
+        ? accountScopeCurrent
+        : props.daemonOperationsAvailable;
+    const scopedSettings = useScopedPluginSettingsProjection({
+        pluginId: props.pluginId,
+        scope: props.scope,
+        target: props.target,
+        accountLifetime: props.accountLifetime,
+        fields: adapterFields,
+        declaredFields: ordinaryFields,
+        sourceLifetimeIdentity: props.sourceLifetimeIdentity,
+        perActiveServerIdentityId: props.daemonServerIdentityId ?? null,
+        enabled: scopedOperationsAvailable,
+        adapter: scopedPluginSettingsAdapter,
+    });
+    const loading = scopedSettings.state.loading;
+    // The record's typed mutation result remains available to its field
+    // model. Only an unavailable snapshot is a section-level load failure;
+    // rendering a rejected save as a load error would misstate recovery and
+    // let one field's old result leak into its siblings.
+    const loadError = scopedSettings.state.error === 'unavailable'
+        ? t('settingsPlugins.genericSettingsLoadError')
+        : null;
+    const values = scopedSettings.state.values;
+    const fieldModelByKey = React.useMemo(
+        () => new Map(scopedSettings.fieldModels.map((model) => [model.field.key, model] as const)),
+        [scopedSettings.fieldModels],
+    );
     const visibleGroups = React.useMemo(() => sortedGroups.flatMap((group) => {
         const visibleFields = group.fields.filter((field) => (
             field.presentation?.hidden !== true
@@ -564,375 +1169,51 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
             }),
         }));
     }), [props.policyContext, sortedGroups, values]);
-    const loadGenerationRef = React.useRef(0);
-    const activeLoadGenerationRef = React.useRef<number | null>(null);
-    const nextOperationIdRef = React.useRef(0);
-    const nextDeclarationEpochRef = React.useRef(0);
-    const declarationEpochByKeyRef = React.useRef(new Map<string, number>());
-    const inFlightOperationByKeyRef = React.useRef(new Map<string, InFlightFieldOperation>());
-    const mountedRef = React.useRef(true);
-    const currentPersistenceScopeRef = React.useRef<PersistenceScope | null>(persistenceScope);
-    const currentGroupsRef = React.useRef<readonly PluginProjectionEditableSettingsGroup[]>(sortedGroups);
-    const currentTextDraftByKeyRef = React.useRef<TextDrafts>(textDraftByKey);
-    const currentValuesRef = React.useRef<SettingsValues>(values);
-    const settingsRevisionRef = React.useRef<string | null>(settingsRevision);
-    const daemonOperationsAvailableRef = React.useRef(props.daemonOperationsAvailable);
-    const effectPersistenceScopeRef = React.useRef<PersistenceScope | null>(null);
-    const effectGroupsRef = React.useRef<readonly PluginProjectionEditableSettingsGroup[]>(
-        EMPTY_EDITABLE_SETTINGS_GROUPS,
-    );
-    currentPersistenceScopeRef.current = persistenceScope;
-    currentGroupsRef.current = sortedGroups;
-    currentTextDraftByKeyRef.current = textDraftByKey;
-    currentValuesRef.current = values;
-    settingsRevisionRef.current = settingsRevision;
-    daemonOperationsAvailableRef.current = props.daemonOperationsAvailable;
-
-    React.useLayoutEffect(() => {
-        mountedRef.current = true;
-        return () => {
-            mountedRef.current = false;
-            currentPersistenceScopeRef.current = null;
-            activeLoadGenerationRef.current = null;
-            declarationEpochByKeyRef.current.clear();
-            inFlightOperationByKeyRef.current.clear();
-        };
-    }, []);
-
-    React.useLayoutEffect(() => {
-        const previousPersistenceScope = effectPersistenceScopeRef.current;
-        const samePersistenceScope = isSamePersistenceScope(previousPersistenceScope, persistenceScope);
-        const previousGroups = effectGroupsRef.current;
-        effectPersistenceScopeRef.current = persistenceScope;
-        effectGroupsRef.current = sortedGroups;
-
-        const invalidatedFieldKeys = new Set<string>();
-        if (!samePersistenceScope) {
-            declarationEpochByKeyRef.current.clear();
-            for (const group of sortedGroups) {
-                for (const field of group.fields) {
-                    const nextEpoch = nextDeclarationEpochRef.current + 1;
-                    nextDeclarationEpochRef.current = nextEpoch;
-                    declarationEpochByKeyRef.current.set(field.key, nextEpoch);
-                }
-            }
-        } else {
-            const fieldKeys = new Set<string>();
-            for (const group of previousGroups) {
-                for (const field of group.fields) fieldKeys.add(field.key);
-            }
-            for (const group of sortedGroups) {
-                for (const field of group.fields) fieldKeys.add(field.key);
-            }
-            for (const fieldKey of fieldKeys) {
-                const previousField = findEditableField(previousGroups, fieldKey);
-                const currentField = findEditableField(sortedGroups, fieldKey);
-                const existingEpoch = declarationEpochByKeyRef.current.get(fieldKey);
-                if (
-                    previousField
-                    && currentField
-                    && existingEpoch !== undefined
-                    && isSameFieldDeclaration(previousField, currentField)
-                ) {
-                    continue;
-                }
-                if (previousField || existingEpoch !== undefined) {
-                    invalidatedFieldKeys.add(fieldKey);
-                }
-                if (currentField) {
-                    const nextEpoch = nextDeclarationEpochRef.current + 1;
-                    nextDeclarationEpochRef.current = nextEpoch;
-                    declarationEpochByKeyRef.current.set(fieldKey, nextEpoch);
-                } else {
-                    declarationEpochByKeyRef.current.delete(fieldKey);
-                }
-            }
-        }
-
-        const loadGeneration = loadGenerationRef.current + 1;
-        loadGenerationRef.current = loadGeneration;
-        if (!samePersistenceScope) {
-            inFlightOperationByKeyRef.current.clear();
-            setHydratedPersistenceScope(null);
-            setValues({});
-            setSettingsRevision(null);
-            setTextDraftByKey({});
-            setSwitchDraftByKey({});
-            setSavingByKey({});
-            setSaveErrorByKey({});
-        } else if (invalidatedFieldKeys.size > 0) {
-            for (const fieldKey of invalidatedFieldKeys) {
-                inFlightOperationByKeyRef.current.delete(fieldKey);
-            }
-            setValues((current) => withoutRecordKeys(current, invalidatedFieldKeys));
-            setTextDraftByKey((current) => withoutRecordKeys(current, invalidatedFieldKeys));
-            setSwitchDraftByKey((current) => withoutRecordKeys(current, invalidatedFieldKeys));
-            setSavingByKey((current) => withoutRecordKeys(current, invalidatedFieldKeys));
-            setSaveErrorByKey((current) => withoutRecordKeys(current, invalidatedFieldKeys));
-        }
-        setLoadError(null);
-        if (!persistenceScope || sortedGroups.length === 0 || !props.daemonOperationsAvailable) {
-            if (!props.daemonOperationsAvailable) {
-                inFlightOperationByKeyRef.current.clear();
-                setSwitchDraftByKey({});
-                setSavingByKey({});
-            }
-            activeLoadGenerationRef.current = null;
-            if (sortedGroups.length === 0) setHydratedPersistenceScope(null);
-            setLoading(false);
-            return () => {
-                if (loadGenerationRef.current === loadGeneration) {
-                    loadGenerationRef.current += 1;
-                }
-            };
-        }
-
-        const protectedFieldKeys = samePersistenceScope
-            ? new Set(inFlightOperationByKeyRef.current.keys())
-            : new Set<string>();
-        let active = true;
-        activeLoadGenerationRef.current = loadGeneration;
-        setLoading(true);
-        void (async () => {
-            const result = await machinePluginSettingsGet(persistenceScope.machineId, {
-                serverId: persistenceScope.serverId,
-                pluginId: persistenceScope.pluginId,
-            });
-            if (!active || loadGenerationRef.current !== loadGeneration) return;
-            activeLoadGenerationRef.current = null;
-            if (result.supported) {
-                const snapshotValues = sanitizeSnapshotValues(sortedGroups, result);
-                setValues((current) => samePersistenceScope
-                    ? replaceSnapshotPreservingFields(current, snapshotValues, protectedFieldKeys)
-                    : snapshotValues);
-                setTextDraftByKey((current) => samePersistenceScope
-                    ? reconcileTextDrafts(
-                        sortedGroups,
-                        snapshotValues,
-                        current,
-                        previousGroups,
-                        protectedFieldKeys,
-                        props.serverId,
-                    )
-                    : createTextDrafts(sortedGroups, snapshotValues, props.serverId));
-                setHydratedPersistenceScope(persistenceScope);
-                setSettingsRevision(result.snapshot.revision);
-                setLoadError(null);
-            } else {
-                setLoadError(t('settingsPlugins.genericSettingsLoadError'));
-            }
-            setLoading(false);
-        })();
-        return () => {
-            active = false;
-            if (activeLoadGenerationRef.current === loadGeneration) {
-                activeLoadGenerationRef.current = null;
-            }
-            if (loadGenerationRef.current === loadGeneration) {
-                loadGenerationRef.current += 1;
-            }
-        };
-    }, [persistenceScope, props.daemonOperationsAvailable, props.projection, sortedGroups]);
-
-    const commitSetting = React.useCallback((
-        field: PluginProjectionEditableSettingField,
-        value: unknown,
-        commit: FieldCommit,
-        declarationEpoch: number | null,
-    ) => {
-        const requestScope = persistenceScope;
-        if (
-            !requestScope
-            || !daemonOperationsAvailableRef.current
-            || declarationEpoch === null
-            || activeLoadGenerationRef.current !== null
-            || declarationEpochByKeyRef.current.get(field.key) !== declarationEpoch
-            || inFlightOperationByKeyRef.current.has(field.key)
-        ) {
-            return;
-        }
-
-        const operationId = nextOperationIdRef.current + 1;
-        nextOperationIdRef.current = operationId;
-        const operation: InFlightFieldOperation = { id: operationId, declarationEpoch };
-        inFlightOperationByKeyRef.current.set(field.key, operation);
-        setSavingByKey((current) => ({ ...current, [field.key]: true }));
-        setSaveErrorByKey((current) => withoutRecordKey(current, field.key));
-
-        void (async () => {
-            const previousValue = readBoundSettingValue(
-                currentValuesRef.current,
-                field,
-                requestScope.serverId,
-            );
-            const mutation = resolveBoundSettingMutation({
-                values: currentValuesRef.current,
-                field,
-                serverId: requestScope.serverId,
-                value,
-            });
-            const result = await machinePluginSettingsSet(requestScope.machineId, {
-                serverId: requestScope.serverId,
-                pluginId: requestScope.pluginId,
-                fieldId: mutation.fieldId,
-                value: mutation.value,
-                ...(settingsRevisionRef.current ? { expectedRevision: settingsRevisionRef.current } : {}),
-            });
-            const activeOperation = inFlightOperationByKeyRef.current.get(field.key);
-            if (
-                !mountedRef.current
-                || !isSamePersistenceScope(currentPersistenceScopeRef.current, requestScope)
-                || declarationEpochByKeyRef.current.get(field.key) !== declarationEpoch
-                || activeOperation?.id !== operationId
-                || activeOperation?.declarationEpoch !== declarationEpoch
-            ) {
-                return;
-            }
-
-            inFlightOperationByKeyRef.current.delete(field.key);
-            setSavingByKey((current) => withoutRecordKey(current, field.key));
-            const currentField = findEditableField(currentGroupsRef.current, field.key);
-            const fieldStillMatchesCommit = currentField !== null && (
-                commit.kind === 'switch'
-                    ? currentField.control === 'switch'
-                    : commit.kind === 'direct'
-                        ? currentField.control === 'select' || currentField.control === 'multiSelect'
-                        : !['switch', 'select', 'multiSelect'].includes(currentField.control)
-            );
-            if (!currentField || !fieldStillMatchesCommit) {
-                setSwitchDraftByKey((current) => withoutRecordKey(current, field.key));
-                setSaveErrorByKey((current) => withoutRecordKey(current, field.key));
-                return;
-            }
-            if (!result.supported) {
-                let belongsToCurrentDraft = true;
-                if (commit.kind === 'switch') {
-                    setSwitchDraftByKey((current) => withoutRecordKey(current, field.key));
-                } else if (commit.kind === 'text') {
-                    const activeDraft = currentTextDraftByKeyRef.current[field.key];
-                    if (
-                        !activeDraft
-                        || activeDraft.revision !== commit.draft.revision
-                        || activeDraft.value !== commit.draft.value
-                    ) {
-                        belongsToCurrentDraft = false;
-                    }
-                }
-                if (belongsToCurrentDraft) {
-                    setSaveErrorByKey((current) => ({ ...current, [field.key]: true }));
-                }
-                const refreshed = await machinePluginSettingsGet(requestScope.machineId, {
-                    serverId: requestScope.serverId,
-                    pluginId: requestScope.pluginId,
-                });
-                if (
-                    refreshed.supported
-                    && mountedRef.current
-                    && isSamePersistenceScope(currentPersistenceScopeRef.current, requestScope)
-                    && declarationEpochByKeyRef.current.get(field.key) === declarationEpoch
-                ) {
-                    const refreshedValues = sanitizeSnapshotValues(currentGroupsRef.current, refreshed);
-                    setValues(refreshedValues);
-                    setSettingsRevision(refreshed.snapshot.revision);
-                }
-                return;
-            }
-
-            const snapshotValues = sanitizeSnapshotValues(currentGroupsRef.current, result);
+    const commitOrdinaryField = React.useCallback((params: Readonly<{
+        field: PluginProjectionEditableSettingField;
+        model: ScopedPluginSettingsFieldModel;
+        hasDraft: boolean;
+        draft?: unknown;
+    }>) => {
+        const daemonTarget = props.target?.kind === 'daemon' ? props.target : null;
+        const isCurrent = daemonTarget && props.isDaemonTargetCurrent
+            ? () => props.isDaemonTargetCurrent!(daemonTarget)
+            : undefined;
+        const previousValue = params.model.value;
+        void params.model.commit({
+            ...(params.hasDraft ? { draft: params.draft } : {}),
+            ...(isCurrent ? { isCurrent } : {}),
+        }).then((result) => {
+            if (result?.status !== 'ready') return;
             emitPluginSettingChangedEvent({
                 previousValue,
-                nextValue: readBoundSettingValue(snapshotValues, currentField, requestScope.serverId),
-                field: currentField,
+                nextValue: readScopedPluginSettingsDeclaredFieldValue({
+                    values: result.snapshot.values,
+                    field: params.field,
+                    serverIdentityId: props.daemonServerIdentityId ?? null,
+                }),
+                field: params.field,
             });
-            setSettingsRevision(result.snapshot.revision);
-            setValues((current) => applyFieldSnapshot(current, snapshotValues, mutation.fieldId));
-            setSaveErrorByKey((current) => withoutRecordKey(current, field.key));
-            if (commit.kind === 'switch') {
-                setSwitchDraftByKey((current) => withoutRecordKey(current, field.key));
-                return;
-            }
-            if (commit.kind === 'direct') return;
-
-            setTextDraftByKey((current) => {
-                const activeDraft = current[field.key];
-                if (
-                    !activeDraft
-                    || activeDraft.revision !== commit.draft.revision
-                    || activeDraft.value !== commit.draft.value
-                ) {
-                    return current;
-                }
-                return {
-                    ...current,
-                    [field.key]: {
-                        value: isRedactedField(currentField)
-                            ? ''
-                            : readTextValue(snapshotValues, currentField, props.serverId),
-                        revision: activeDraft.revision,
-                        dirty: false,
-                    },
-                };
-            });
-        })();
-    }, [persistenceScope]);
-
-    const handleTextChange = React.useCallback((field: PluginProjectionEditableSettingField, value: string) => {
-        if (!daemonOperationsAvailableRef.current) return;
-        const activeDraft = currentTextDraftByKeyRef.current[field.key] ?? {
-            value: '',
-            revision: 0,
-            dirty: false,
-        };
-        const nextDraft: TextDraft = {
-            value,
-            revision: activeDraft.revision + 1,
-            dirty: true,
-        };
-        currentTextDraftByKeyRef.current = {
-            ...currentTextDraftByKeyRef.current,
-            [field.key]: nextDraft,
-        };
-        setTextDraftByKey((current) => {
-            return {
-                ...current,
-                [field.key]: nextDraft,
-            };
         });
-        setSaveErrorByKey((current) => withoutRecordKey(current, field.key));
-    }, []);
-
-    const handleSwitchChange = React.useCallback((
-        field: PluginProjectionEditableSettingField,
-        value: boolean,
-        declarationEpoch: number | null,
-    ) => {
-        if (
-            !daemonOperationsAvailableRef.current
-            ||
-            declarationEpoch === null
-            || activeLoadGenerationRef.current !== null
-            || declarationEpochByKeyRef.current.get(field.key) !== declarationEpoch
-            || inFlightOperationByKeyRef.current.has(field.key)
-        ) {
-            return;
-        }
-        setSwitchDraftByKey((current) => ({ ...current, [field.key]: value }));
-        commitSetting(field, value, { kind: 'switch' }, declarationEpoch);
-    }, [commitSetting]);
-
-    const hasHydratedCurrentScope = isSamePersistenceScope(hydratedPersistenceScope, persistenceScope);
+    }, [props.daemonServerIdentityId, props.isDaemonTargetCurrent, props.target]);
+    const hasHydratedCurrentScope = scopedOperationsAvailable && props.target !== null && (
+        adapterFields.length === 0 || scopedSettings.state.ready
+    );
 
     if (sortedGroups.length === 0) {
         return null;
     }
 
-    if (!props.machineId) {
+    if (
+        (!props.target || (props.scope.kind === 'account' && !scopedOperationsAvailable))
+        && !hasAccountSavedSecretFields
+    ) {
         return (
             <ItemGroup title={t('settingsPlugins.genericSettingsTitle')}>
                 <Item
                     testID={`settings.plugins.detail.${props.pluginId}.settings.unavailable`}
                     title={t('settingsPlugins.genericSettingsUnavailable')}
-                    icon={<Ionicons name="cloud-offline-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="cloud-slash" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -940,13 +1221,13 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
         );
     }
 
-    if (loading && !hasHydratedCurrentScope) {
+    if (loading && !hasHydratedCurrentScope && !hasAccountSavedSecretFields) {
         return (
             <ItemGroup title={t('settingsPlugins.genericSettingsTitle')}>
                 <Item
                     testID={`settings.plugins.detail.${props.pluginId}.settings.loading`}
                     title={t('settingsPlugins.genericSettingsLoading')}
-                    icon={<Ionicons name="sync-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="arrows-clockwise" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -954,13 +1235,13 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
         );
     }
 
-    if (loadError && !hasHydratedCurrentScope) {
+    if (loadError && !hasHydratedCurrentScope && !hasAccountSavedSecretFields) {
         return (
             <ItemGroup title={t('settingsPlugins.genericSettingsTitle')}>
                 <Item
                     testID={`settings.plugins.detail.${props.pluginId}.settings.error`}
                     title={loadError}
-                    icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                    icon={<Icon name="warning-circle" size={29} color={theme.colors.state.danger.foreground} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -972,20 +1253,28 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
         <>
             {visibleGroups.map((group, groupIndex) => {
                 const fields = [...group.fields].sort(compareSettingsFields);
-                const groupHasSaveError = fields.some((field) => saveErrorByKey[field.key] === true);
+                const groupOutcomeUnknown = fields.some(
+                    (field) => fieldModelByKey.get(field.key)?.error === 'outcomeUnknown',
+                );
+                const groupHasSaveError = fields.some((field) => {
+                    const error = fieldModelByKey.get(field.key)?.error;
+                    return error === 'failed' || error === 'outcomeUnknown';
+                });
                 return (
                     <ItemGroup
                         key={group.id}
                         title={group.title}
-                        footer={groupHasSaveError
-                            ? t('settingsPlugins.genericSettingsSaveError')
+                        footer={groupOutcomeUnknown
+                            ? t('settingsProviders.errors.mutationOutcomeUnknownDescription')
+                            : groupHasSaveError
+                                ? t('settingsPlugins.genericSettingsSaveError')
                             : group.description ?? t('settingsPlugins.genericSettingsFooter')}
                     >
                         {groupIndex === 0 && loadError ? (
                             <Item
                                 testID={`settings.plugins.detail.${props.pluginId}.settings.error`}
                                 title={loadError}
-                                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                                icon={<Icon name="warning-circle" size={29} color={theme.colors.state.danger.foreground} />}
                                 showChevron={false}
                                 mode="info"
                             />
@@ -994,7 +1283,7 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
                             <Item
                                 testID={`settings.plugins.detail.${props.pluginId}.settings.${group.id}.empty`}
                                 title={t('settingsPlugins.genericSettingsEmpty')}
-                                icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
                                 showChevron={false}
                                 mode="info"
                             />
@@ -1003,46 +1292,89 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
                                 { availability: field.availability },
                                 { ...props.policyContext, data: values },
                             );
+                            const secretLifetimeIdentity = `${props.sourceLifetimeIdentity}:${scopedPluginSettingsFieldDeclarationIdentity(field)}`;
+                            if (isAccountSavedSecretField(field)) {
+                                return (
+                                    <PluginSettingAccountSecretField
+                                        key={`${field.key}:${secretLifetimeIdentity}`}
+                                        pluginId={props.pluginId}
+                                        group={group}
+                                        field={field}
+                                        target={props.accountSecretTarget}
+                                        accountLifetime={props.accountLifetime}
+                                        enabled={policy.enabled}
+                                        lifetimeIdentity={secretLifetimeIdentity}
+                                    />
+                                );
+                            }
+                            if (isDaemonCustodiedSecretField(field)) {
+                                if (field.managedServiceOrigin) {
+                                    return (
+                                        <PluginSettingDaemonSecretField
+                                            key={`${field.key}:${secretLifetimeIdentity}`}
+                                            pluginId={props.pluginId}
+                                            group={group}
+                                            field={field}
+                                            values={values}
+                                            perActiveServerIdentityId={props.daemonServerIdentityId ?? null}
+                                            target={props.daemonSecretTarget}
+                                            enabled={policy.enabled && props.daemonOperationsAvailable}
+                                            endpointSettingsLoading={loading}
+                                            accountLifetime={props.accountLifetime}
+                                            isDaemonTargetCurrent={props.isDaemonTargetCurrent}
+                                            lifetimeIdentity={secretLifetimeIdentity}
+                                        />
+                                    );
+                                }
+                                return (
+                                    <PluginSettingDaemonSecretField
+                                        key={`${field.key}:${secretLifetimeIdentity}`}
+                                        pluginId={props.pluginId}
+                                        group={group}
+                                        field={field}
+                                        target={props.daemonSecretTarget}
+                                        accountLifetime={props.accountLifetime}
+                                        enabled={policy.enabled && props.daemonOperationsAvailable}
+                                        isDaemonTargetCurrent={props.isDaemonTargetCurrent}
+                                        lifetimeIdentity={secretLifetimeIdentity}
+                                    />
+                                );
+                            }
+                            const model = fieldModelByKey.get(field.key);
+                            // A malformed/unsupported declaration never falls
+                            // back to a renderer-local storage path.
+                            if (!model) return null;
+                            const disabled = !policy.enabled
+                                || !scopedOperationsAvailable
+                                || loading
+                                || model.pending;
                             if (field.control === 'switch') {
-                                const hasSwitchDraft = Object.prototype.hasOwnProperty.call(switchDraftByKey, field.key);
-                                const declarationEpoch = declarationEpochByKeyRef.current.get(field.key) ?? null;
                                 return (
                                     <PluginSettingSwitchField
                                         key={field.key}
                                         pluginId={props.pluginId}
                                         group={group}
                                         field={field}
-                                        value={hasSwitchDraft ? switchDraftByKey[field.key]! : readSwitchValue(values, field)}
-                                        disabled={!policy.enabled || !props.daemonOperationsAvailable || loading || savingByKey[field.key] === true}
-                                        onChangeValue={(changedField, value) => {
-                                            handleSwitchChange(changedField, value, declarationEpoch);
+                                        value={model.draft === true}
+                                        disabled={disabled}
+                                        onChangeValue={(_changedField, value) => {
+                                            commitOrdinaryField({ field, model, hasDraft: true, draft: value });
                                         }}
                                     />
                                 );
                             }
                             if (field.control === 'select' || field.control === 'multiSelect') {
-                                const declarationEpoch = declarationEpochByKeyRef.current.get(field.key) ?? null;
-                                const value = Object.prototype.hasOwnProperty.call(values, field.key)
-                                    ? values[field.key]
-                                    : field.defaultValue;
-                                const disabled = !props.daemonOperationsAvailable
-                                    || !policy.enabled
-                                    || loading
-                                    || savingByKey[field.key] === true;
                                 return field.control === 'select' ? (
                                     <PluginSettingSelectField
                                         key={field.key}
                                         pluginId={props.pluginId}
                                         group={group}
                                         field={field}
-                                        value={value}
+                                        value={model.draft}
                                         disabled={disabled}
-                                        onChangeValue={(nextValue) => commitSetting(
-                                            field,
-                                            nextValue,
-                                            { kind: 'direct' },
-                                            declarationEpoch,
-                                        )}
+                                        onChangeValue={(nextValue) => {
+                                            commitOrdinaryField({ field, model, hasDraft: true, draft: nextValue });
+                                        }}
                                     />
                                 ) : (
                                     <PluginSettingMultiSelectField
@@ -1050,48 +1382,28 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
                                         pluginId={props.pluginId}
                                         group={group}
                                         field={field}
-                                        value={value}
+                                        value={model.draft}
                                         disabled={disabled}
-                                        onChangeValue={(nextValue) => commitSetting(
-                                            field,
-                                            nextValue,
-                                            { kind: 'direct' },
-                                            declarationEpoch,
-                                        )}
+                                        onChangeValue={(nextValue) => {
+                                            commitOrdinaryField({ field, model, hasDraft: true, draft: nextValue });
+                                        }}
                                     />
                                 );
                             }
-                            const draft = textDraftByKey[field.key] ?? {
-                                value: isRedactedField(field) ? '' : readTextValue(values, field, props.serverId),
-                                revision: 0,
-                                dirty: false,
-                            };
-                            const declarationEpoch = declarationEpochByKeyRef.current.get(field.key) ?? null;
                             return (
                                 <PluginSettingTextField
                                     key={field.key}
                                     pluginId={props.pluginId}
                                     group={group}
                                     field={field}
-                                    value={draft.value}
-                                    dirty={draft.dirty}
-                                    saving={savingByKey[field.key] === true}
-                                    saveFailed={saveErrorByKey[field.key] === true}
-                                    persistenceDisabled={!policy.enabled || !props.daemonOperationsAvailable || loading}
-                                    onChangeText={(value) => handleTextChange(field, value)}
-                                    onCommit={() => {
-                                        const parsed = parseTextDraft(field, draft.value);
-                                        if (!parsed.ok) {
-                                            setSaveErrorByKey((current) => ({ ...current, [field.key]: true }));
-                                            return;
-                                        }
-                                        commitSetting(
-                                            field,
-                                            parsed.value,
-                                            { kind: 'text', draft },
-                                            declarationEpoch,
-                                        );
-                                    }}
+                                    value={typeof model.draft === 'string' ? model.draft : ''}
+                                    dirty={model.dirty}
+                                    saving={model.pending}
+                                    saveFailed={model.error !== null}
+                                    persistenceDisabled={!policy.enabled || !scopedOperationsAvailable || loading}
+                                    commitDisabled={model.pending}
+                                    onChangeText={model.setDraft}
+                                    onCommit={() => commitOrdinaryField({ field, model, hasDraft: false })}
                                 />
                             );
                         })}
@@ -1110,8 +1422,8 @@ export function PluginDetailGenericSettingsSection(props: Readonly<{
                             title={localizedPresentationText(item.title)}
                             subtitle={localizedPresentationText(item.description) || undefined}
                             icon={(
-                                <Ionicons
-                                    name={(item.iconIonName ?? 'git-branch-outline') as never}
+                                <Icon
+                                    name={(item.iconIonName ?? 'git-branch') as never}
                                     size={29}
                                     color={theme.colors.text.secondary}
                                 />

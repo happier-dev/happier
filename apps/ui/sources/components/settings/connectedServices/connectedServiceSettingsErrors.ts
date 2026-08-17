@@ -31,10 +31,6 @@ export function isConnectedServiceCredentialReferencedByGroupError(error: unknow
     return readConnectedServiceSettingsErrorCode(error) === 'connect_credential_referenced_by_group';
 }
 
-export function isConnectedServiceCredentialMutationSupersededError(error: unknown): boolean {
-    return readConnectedServiceSettingsErrorCode(error) === 'connect_credential_mutation_superseded';
-}
-
 export function readConnectedServiceRuntimeCooldownResetAtMs(error: unknown): number | null {
     const value = asErrorLike(error).resetAtMs;
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -50,6 +46,8 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
     const code = readConnectedServiceSettingsErrorCode(error);
 
     switch (code) {
+        case 'connected_account_configuration_invalid':
+            return t('connectedServices.account.configurationInvalid');
         case 'connect_credential_referenced_by_group':
             return t('connectedServices.errors.credentialReferencedByGroup');
         case 'connect_credential_mutation_superseded':
@@ -57,6 +55,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
         case 'connect_group_profile_runtime_cooldown':
             return t('connectedServices.errors.runtimeCooldown', { time: formatResetAt(error) });
         case 'connect_group_generation_conflict':
+        case 'connect_group_incarnation_conflict':
         case 'connect_group_runtime_state_revision_conflict':
         case 'connect_group_source_revision_conflict':
             return typeof errorLike.generation === 'number'
@@ -89,9 +88,6 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown): str
 
     if (typeof errorLike.status === 'number') {
         return t('connectedServices.errors.requestFailedWithStatus', { status: errorLike.status });
-    }
-    if (error instanceof Error && error.message && !/^connect[_a-z0-9]+$/i.test(error.message)) {
-        return error.message;
     }
     return t('connectedServices.errors.generic');
 }

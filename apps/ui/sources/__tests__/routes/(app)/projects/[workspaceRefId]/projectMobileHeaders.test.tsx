@@ -12,6 +12,7 @@ const paneOpenDetailsTabSpy = vi.fn();
 const setLocalSettingSpy = vi.fn();
 const setSettingSpy = vi.fn();
 let localSettingsMock: Record<string, unknown> = {};
+let projectLastMobileSurfaceByWorkspaceRefIdMock: Record<string, string> = {};
 let accountSettingsMock: Record<string, unknown> = {};
 let deviceTypeMock: 'phone' | 'tablet' | 'desktop' = 'phone';
 let paneScopeStateMock: {
@@ -107,6 +108,9 @@ vi.mock('@/sync/domains/state/storage', async () => {
                 setLocalSettingSpy(value);
             },
         ],
+        useProjectLastMobileSurface: (workspaceRefId: string | null) => (
+            workspaceRefId ? projectLastMobileSurfaceByWorkspaceRefIdMock[workspaceRefId] ?? null : null
+        ),
     });
 });
 
@@ -157,6 +161,7 @@ vi.mock('@/components/workspaceCockpit/project/ProjectCockpitShell', () => ({
 describe('project mobile route headers', () => {
     beforeEach(() => {
         localSettingsMock = {};
+        projectLastMobileSurfaceByWorkspaceRefIdMock = {};
         accountSettingsMock = {};
         deviceTypeMock = 'phone';
         paneScopeStateMock = {
@@ -382,10 +387,10 @@ describe('project mobile route headers', () => {
     it('uses the mobile header test-id prefix on the phone index cockpit route', async () => {
         accountSettingsMock = { mobileWorkspaceExperienceV1: 'cockpit' };
         localSettingsMock = {
-            projectLastMobileSurfaceByWorkspaceRefId: { wr_1: 'overview' },
             projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/Users/test/repo/.worktrees/feature-auth' },
             projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
         };
+        projectLastMobileSurfaceByWorkspaceRefIdMock = { wr_1: 'overview' };
 
         const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/index')).default as React.ComponentType;
         await renderScreen(<Screen />);

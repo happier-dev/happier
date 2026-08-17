@@ -1,13 +1,15 @@
 import {
     RestartSessionRunnerRequestV1Schema,
+    RestartSessionRunnerRequestV2Schema,
     RestartSessionRunnerResultV1Schema,
     SessionProviderBindingSecurityChangeConfirmationV1Schema,
     SessionRunnerRuntimeStateV1Schema,
+    SessionRunnerRuntimeStatusV2Schema,
     SessionRunnerStatusGetRequestV1Schema,
     type RestartSessionRunnerResultV1,
     type SessionProviderBindingMetadataV1,
-    type SessionProviderBindingSecurityChangeConfirmationV1,
     type SessionRunnerRuntimeStateV1,
+    type SessionRunnerProcessIdentityV2,
     type SessionRunnerStatusGetRequestV1,
 } from '@happier-dev/protocol';
 import {
@@ -30,12 +32,18 @@ export type RestartStaleSessionRunnerResult = RestartSessionRunnerResultV1;
 type RestartSessionRunnerForProviderBindingChangeInput = RestartSessionRunnerInput & Readonly<{
     launchBinding?: SessionProviderBindingMetadataV1 | null;
     nextBindingSecurityFingerprint?: string | null;
+    runnerProcessIdentity: SessionRunnerProcessIdentityV2 | null;
 }>;
 
 type GetSessionRunnerRuntimeStatusInput = Readonly<{
     sessionId: string;
     machineId: string;
     serverId?: string | null;
+}>;
+
+export type FetchedSessionRunnerRuntimeStatus = Readonly<{
+    state: SessionRunnerRuntimeStateV1;
+    runnerProcessIdentity: SessionRunnerProcessIdentityV2 | null;
 }>;
 
 function buildResult(input: Readonly<{
@@ -137,39 +145,20 @@ function readRestartIdentityGuard(
     };
 }
 
-async function requestSessionRunnerRestart(input: RestartSessionRunnerInput & Readonly<{
-    mode: 'if_stale' | 'force_current_cli';
-    reason: 'ui_stale_runner_banner' | 'provider_binding_change_recovery';
-    providerBindingSecurityChangeConfirmationV1?: SessionProviderBindingSecurityChangeConfirmationV1;
+async function sendSessionRunnerRestartRequest<Request>(input: RestartSessionRunnerInput & Readonly<{
+    method:
+        | typeof RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART
+        | typeof RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2;
+    request: Request;
 }>): Promise<RestartSessionRunnerResultV1> {
     const machineId = input.runtimeState.machineId?.trim() ?? '';
-    if (machineId.length === 0) {
-        return buildUnsupportedDaemonResult(input.runtimeState.sessionId);
-    }
-
-    const identityGuard = readRestartIdentityGuard(input.runtimeState);
-    if ('ok' in identityGuard) {
-        return identityGuard;
-    }
-
-    const payload = RestartSessionRunnerRequestV1Schema.parse({
-        sessionId: input.runtimeState.sessionId,
-        mode: input.mode,
-        reason: input.reason,
-        expectedRunnerPid: identityGuard.expectedRunnerPid,
-        expectedProcessCommandHash: identityGuard.expectedProcessCommandHash,
-        expectedRunnerEntrypointIdentity: identityGuard.expectedRunnerEntrypointIdentity,
-        ...(input.providerBindingSecurityChangeConfirmationV1
-            ? { providerBindingSecurityChangeConfirmationV1: input.providerBindingSecurityChangeConfirmationV1 }
-            : {}),
-    });
-
+    if (machineId.length === 0) return buildUnsupportedDaemonResult(input.runtimeState.sessionId);
     try {
-        const raw = await machineRpcWithServerScope<unknown, typeof payload>({
+        const raw = await machineRpcWithServerScope<unknown, Request>({
             machineId,
             serverId: input.serverId ?? undefined,
-            method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
-            payload,
+            method: input.method,
+            payload: input.request,
             authorization: {
                 kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
                 sessionId: input.runtimeState.sessionId,
@@ -202,19 +191,38 @@ async function requestSessionRunnerRestart(input: RestartSessionRunnerInput & Re
     }
 }
 
+async function requestSessionRunnerRestart(input: RestartSessionRunnerInput): Promise<RestartSessionRunnerResultV1> {
+    const identityGuard = readRestartIdentityGuard(input.runtimeState);
+    if ('ok' in identityGuard) return identityGuard;
+    const request = RestartSessionRunnerRequestV1Schema.parse({
+        sessionId: input.runtimeState.sessionId,
+        mode: 'if_stale',
+        reason: 'ui_stale_runner_banner',
+        expectedRunnerPid: identityGuard.expectedRunnerPid,
+        expectedProcessCommandHash: identityGuard.expectedProcessCommandHash,
+        expectedRunnerEntrypointIdentity: identityGuard.expectedRunnerEntrypointIdentity,
+    });
+    return await sendSessionRunnerRestartRequest({
+        ...input,
+        method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
+        request,
+    });
+}
+
 export async function restartSessionRunnerOnCurrentRuntime(
     input: RestartSessionRunnerInput,
 ): Promise<RestartSessionRunnerResultV1> {
-    return await requestSessionRunnerRestart({
-        ...input,
-        mode: 'if_stale',
-        reason: 'ui_stale_runner_banner',
-    });
+    return await requestSessionRunnerRestart(input);
 }
 
 export async function restartSessionRunnerForProviderBindingChange(
     input: RestartSessionRunnerForProviderBindingChangeInput,
 ): Promise<RestartSessionRunnerResultV1> {
+    if (!input.runnerProcessIdentity) {
+        return buildUnsupportedDaemonResult(input.runtimeState.sessionId);
+    }
+    const identityGuard = readRestartIdentityGuard(input.runtimeState);
+    if ('ok' in identityGuard) return identityGuard;
     const nextFingerprint = readNonEmptyString(input.nextBindingSecurityFingerprint);
     const confirmation = input.launchBinding && nextFingerprint
         ? SessionProviderBindingSecurityChangeConfirmationV1Schema.parse({
@@ -225,22 +233,36 @@ export async function restartSessionRunnerForProviderBindingChange(
             nextBindingSecurityFingerprint: nextFingerprint,
         })
         : undefined;
-    return await requestSessionRunnerRestart({
-        runtimeState: input.runtimeState,
-        serverId: input.serverId,
+    const request = RestartSessionRunnerRequestV2Schema.parse({
+        v: 2,
+        sessionId: input.runtimeState.sessionId,
         mode: 'force_current_cli',
         reason: 'provider_binding_change_recovery',
+        expectedRunnerPid: identityGuard.expectedRunnerPid,
+        expectedProcessCommandHash: identityGuard.expectedProcessCommandHash,
+        expectedRunnerEntrypointIdentity: identityGuard.expectedRunnerEntrypointIdentity,
+        expectedRunnerProcessIdentity: input.runnerProcessIdentity,
         ...(confirmation ? { providerBindingSecurityChangeConfirmationV1: confirmation } : {}),
+    });
+    return await sendSessionRunnerRestartRequest({
+        runtimeState: input.runtimeState,
+        serverId: input.serverId,
+        method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2,
+        request,
     });
 }
 
 export async function getSessionRunnerRuntimeStatus(
     input: GetSessionRunnerRuntimeStatusInput,
 ): Promise<SessionRunnerRuntimeStateV1 | null> {
+    return (await getSessionRunnerRuntimeStatusSnapshot(input))?.state ?? null;
+}
+
+async function getSessionRunnerRuntimeStatusV1Fallback(
+    input: GetSessionRunnerRuntimeStatusInput,
+    payload: SessionRunnerStatusGetRequestV1,
+): Promise<FetchedSessionRunnerRuntimeStatus | null> {
     try {
-        const payload = SessionRunnerStatusGetRequestV1Schema.parse({
-            sessionId: input.sessionId,
-        } satisfies SessionRunnerStatusGetRequestV1);
         const raw = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: input.machineId,
             serverId: input.serverId ?? undefined,
@@ -250,9 +272,36 @@ export async function getSessionRunnerRuntimeStatus(
         if (isRpcMethodNotFoundResult(raw) || isUnsupportedDaemonError(raw)) return null;
         const parsed = SessionRunnerRuntimeStateV1Schema.safeParse(raw);
         if (!parsed.success || parsed.data.sessionId !== payload.sessionId) return null;
-        return parsed.data;
-    } catch (error) {
-        if (isUnsupportedDaemonError(error)) return null;
+        return { state: parsed.data, runnerProcessIdentity: null };
+    } catch {
         return null;
     }
+}
+
+export async function getSessionRunnerRuntimeStatusSnapshot(
+    input: GetSessionRunnerRuntimeStatusInput,
+): Promise<FetchedSessionRunnerRuntimeStatus | null> {
+    const payload = SessionRunnerStatusGetRequestV1Schema.parse({
+        sessionId: input.sessionId,
+    } satisfies SessionRunnerStatusGetRequestV1);
+    try {
+        const raw = await machineRpcWithServerScope<unknown, typeof payload>({
+            machineId: input.machineId,
+            serverId: input.serverId ?? undefined,
+            method: RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET,
+            payload,
+        });
+        if (!isRpcMethodNotFoundResult(raw) && !isUnsupportedDaemonError(raw)) {
+            const parsed = SessionRunnerRuntimeStatusV2Schema.safeParse(raw);
+            if (parsed.success && parsed.data.state.sessionId === payload.sessionId) {
+                return {
+                    state: parsed.data.state,
+                    runnerProcessIdentity: parsed.data.runnerProcessIdentity,
+                };
+            }
+        }
+    } catch {
+        // Additive V2 may be absent on supported older daemons; V1 remains the status fallback.
+    }
+    return await getSessionRunnerRuntimeStatusV1Fallback(input, payload);
 }

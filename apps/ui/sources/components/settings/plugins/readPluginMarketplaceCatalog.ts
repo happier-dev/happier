@@ -1,4 +1,4 @@
-import type { MarketplaceIndexQueryResultV1 } from '@happier-dev/protocol';
+import type { MarketplaceIndexQueryResultV1 } from '@happier-dev/protocol/marketplace';
 
 export type PluginMarketplaceCatalogEntry = Readonly<{
     id: string;

@@ -5,6 +5,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
+import { buildSelectionListSectionHeaderGridA11yProps } from './buildSelectionListOptionA11yProps';
+
 /**
  * R6 — Premium UI design polish (Fix 1): a lighter, command-bar-style section
  * header used for SelectionList sections on web. Replaces the heavy `ItemGroup`
@@ -33,6 +35,21 @@ export type SelectionListSectionHeaderProps = Readonly<{
     count?: number;
     /** Stable testID anchor (e.g. `<sectionTestId>:header`). */
     testID?: string;
+    /**
+     * The header's identity as a GRID ROW, when the popup composes its rows
+     * with the grid pattern. A grid may own only rows, and this header renders
+     * text, so it takes a row of its own containing one full-width
+     * `columnheader` — see `buildSelectionListSectionHeaderGridA11yProps`.
+     *
+     * Absent in `listbox` mode and in the identity-free measure mirror, both of
+     * which keep the historical role-free markup.
+     */
+    gridRow?: Readonly<{
+        /** Popup-wide 1-based `aria-rowindex`, from the shared row model. */
+        rowIndex: number;
+        /** The grid's declared column count — what this header spans. */
+        columnCount: number;
+    }>;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -84,12 +101,33 @@ export function SelectionListSectionHeader(
     const styles = stylesheet;
     if (props.title === undefined || props.title.length === 0) return null;
     const title = props.title.toLocaleUpperCase();
-    return (
-        <View testID={props.testID} style={styles.container}>
+    // In `grid` mode the header's own box becomes the row's single cell, so the
+    // visible chrome — padding, typography, the count accessory — stays on the
+    // exact same node it has always been on, and only a role-carrying row is
+    // added around it.
+    const gridAria = props.gridRow === undefined
+        ? null
+        : buildSelectionListSectionHeaderGridA11yProps({
+            pattern: 'grid',
+            rowIndex: props.gridRow.rowIndex,
+            columnCount: props.gridRow.columnCount,
+        });
+    const header = (
+        <View
+            testID={props.testID}
+            style={styles.container}
+            {...(gridAria === null ? {} : (gridAria.cell as unknown as Record<string, never>))}
+        >
             <Text style={styles.label}>{title}</Text>
             {typeof props.count === 'number' ? (
                 <Text style={[styles.count, Typography.tabular()]}>{String(props.count)}</Text>
             ) : null}
+        </View>
+    );
+    if (gridAria === null) return header;
+    return (
+        <View {...(gridAria.row as unknown as Record<string, never>)}>
+            {header}
         </View>
     );
 }

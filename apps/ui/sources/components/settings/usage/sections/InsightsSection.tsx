@@ -12,6 +12,7 @@ import type {
 import { formatCount } from './shared';
 import { EntranceView } from './EntranceView';
 import { UsageStatRow } from '../UsageStatRow';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 const Ionicons = SafeIonicons;
 
@@ -30,7 +31,7 @@ const styles = StyleSheet.create(() => ({
 interface RowModel {
     key: string;
     testID: string;
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    icon: IconName;
     label: string;
     value: string;
 }
@@ -46,21 +47,21 @@ export const InsightsSection: React.FC<InsightsSectionProps> = ({ insights, cach
         {
             key: 'streak',
             testID: 'usage-insight-streak',
-            icon: 'flame-outline',
+            icon: 'flame',
             label: t('usage.summary.currentStreak'),
             value: t('usage.daysShort', { count: insights.currentStreakDays }),
         },
         {
             key: 'busiest',
             testID: 'usage-insight-busiest',
-            icon: 'time-outline',
+            icon: 'clock',
             label: t('usage.busiestWindow'),
             value: insights.busiestHour?.label ?? t('usage.noData.title'),
         },
         {
             key: 'models',
             testID: 'usage-insight-models-tried',
-            icon: 'cube-outline',
+            icon: 'cube',
             label: t('usage.modelsTried'),
             value: insights.favoriteModel
                 ? `${formatCount(insights.modelsTried)} · ${insights.favoriteModel.label}`
@@ -72,7 +73,7 @@ export const InsightsSection: React.FC<InsightsSectionProps> = ({ insights, cach
         rows.push({
             key: 'cache',
             testID: 'usage-insight-cache-savings',
-            icon: 'flash-outline',
+            icon: 'lightning',
             label: t('usage.cacheSavings'),
             value: cacheSavings.cacheSavingsUsd !== null
                 ? formatUsageCost(cacheSavings.cacheSavingsUsd, 'USD')

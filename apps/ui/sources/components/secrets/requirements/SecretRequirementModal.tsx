@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, Platform, ScrollView, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -24,6 +23,7 @@ import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicator
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 const secretRequirementSelectionMemory = new Map<string, 'machine' | 'saved' | 'once'>();
@@ -348,7 +348,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                     >
-                        <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
+                        <Icon name="x" size={20} color={theme.colors.text.secondary} />
                     </Pressable>
                 </View>
             ) : null}
@@ -412,10 +412,10 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                             selected={false}
                                             title={activeEnvVarName}
                                             subtitle={t('profiles.requirements.modalHelpWithEnv', { env: activeEnvVarName })}
-                                            icon={<Ionicons name="key-outline" size={24} color={theme.colors.text.secondary} />}
+                                            icon={<Icon name="key" size={24} color={theme.colors.text.secondary} />}
                                             rightElement={(
-                                                <Ionicons
-                                                    name={open ? 'chevron-up' : 'chevron-down'}
+                                                <Icon
+                                                    name={open ? 'caret-up' : 'caret-down'}
                                                     size={20}
                                                     color={theme.colors.text.secondary}
                                                 />
@@ -438,7 +438,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                     subtitle: undefined,
                                     icon: (
                                         <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                            <Ionicons name="key-outline" size={24} color={theme.colors.text.secondary} />
+                                            <Icon name="key" size={24} color={theme.colors.text.secondary} />
                                         </View>
                                     ),
                                 }))}
@@ -500,23 +500,23 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                                         : undefined
                                             }
                                             icon={(
-                                                <Ionicons
+                                                <Icon
                                                     name={
                                                         selectedSource === 'saved'
-                                                            ? 'key-outline'
+                                                            ? 'key'
                                                             : selectedSource === 'once'
-                                                                ? 'flash-outline'
+                                                                ? 'lightning'
                                                             : selectedSource === 'machine'
-                                                                ? 'desktop-outline'
-                                                                : 'options-outline'
+                                                                ? 'desktop'
+                                                                : 'sliders-horizontal'
                                                     }
                                                     size={24}
                                                     color={theme.colors.text.secondary}
                                                 />
                                             )}
                                             rightElement={(
-                                                <Ionicons
-                                                    name={open ? 'chevron-up' : 'chevron-down'}
+                                                <Icon
+                                                    name={open ? 'caret-up' : 'caret-down'}
                                                     size={20}
                                                     color={theme.colors.text.secondary}
                                                 />
@@ -541,7 +541,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                         subtitle: machineEnvSubtitle,
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="desktop-outline" size={24} color={theme.colors.text.secondary} />
+                                                <Icon name="desktop" size={24} color={theme.colors.text.secondary} />
                                             </View>
                                         ),
                                         disabled: machineHasRequiredSecret !== true,
@@ -552,7 +552,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                         subtitle: t('profiles.requirements.options.useSavedSecret.subtitle'),
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="key-outline" size={24} color={theme.colors.text.secondary} />
+                                                <Icon name="key" size={24} color={theme.colors.text.secondary} />
                                             </View>
                                         ),
                                     },
@@ -562,7 +562,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                         subtitle: t('profiles.requirements.options.enterOnce.subtitle'),
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="flash-outline" size={24} color={theme.colors.text.secondary} />
+                                                <Icon name="lightning" size={24} color={theme.colors.text.secondary} />
                                             </View>
                                         ),
                                     }] : []),

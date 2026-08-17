@@ -1,18 +1,37 @@
 import React from 'react';
 import { vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { PendingExternalAuth, PendingExternalConnect } from '@/auth/storage/tokenStorage';
+import type {
+    AuthCredentials,
+    PendingExternalAuth,
+    PendingExternalConnect,
+} from '@/auth/storage/tokenStorage';
+import type {
+    AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
 
 export const replaceSpy = vi.fn();
 export const localSearchParamsMock = vi.fn();
 
-export const loginSpy = vi.fn(async () => {});
-export const loginWithCredentialsSpy = vi.fn(async () => {});
+export const loginSpy = vi.fn<
+    (...args: unknown[]) => Promise<AuthCredentialLifecycleResult>
+>(async () => ({ kind: 'completed' }));
+export const loginWithCredentialsSpy = vi.fn<
+    (...args: unknown[]) => Promise<AuthCredentialLifecycleResult>
+>(async () => ({ kind: 'completed' }));
+export const getRandomBytesSpy = vi.fn(() => new Uint8Array(32).fill(9));
 export const upsertAndActivateServerSpy = vi.fn();
 export const trackAccountCreatedSpy = vi.fn();
 export const trackAccountRestoredSpy = vi.fn();
+export const resumeAccountEncryptionFirstKeyExternalAuthSpy =
+    vi.fn(async () => ({ returnTo: '/settings/account' }));
 const hoistedModal = vi.hoisted(() => ({
+    show: vi.fn((config: { onRequestClose?: () => void }) => {
+        config.onRequestClose?.();
+        return 'modal-id';
+    }),
     alert: vi.fn(async () => {}),
+    alertAsync: vi.fn(async () => {}),
     prompt: vi.fn<(title: string, message: string, opts: Record<string, unknown>) => Promise<string | null>>(async () => null),
     confirm: vi.fn(async () => true),
 }));
@@ -40,17 +59,42 @@ let pendingExternalAuthState: PendingExternalAuth | null = {
 };
 let pendingExternalAuthServerMismatch = false;
 let pendingExternalConnectState: PendingExternalConnect | null = null;
-let storedCredentialsState: { token: string; secret: string } | null = null;
+let storedCredentialsState: AuthCredentials | null = null;
 let authState: {
     isAuthenticated: boolean;
-    credentials: { token: string; secret: string } | null;
+    credentials: AuthCredentials | null;
 } = {
     isAuthenticated: false,
     credentials: null,
 };
 
-export const clearPendingExternalAuthMock = vi.fn(async () => true);
+async function clearPendingExternalAuthForHarness(
+    options?: Readonly<{
+        removeFirstKeyMigrationAttempted?:
+            PendingExternalAuth;
+    }>,
+): Promise<boolean> {
+    const marked =
+        pendingExternalAuthState
+            ?.accountEncryptionFirstKey
+            ?.migrationSubmissionAttempted === true;
+    if (
+        marked
+        && !options?.removeFirstKeyMigrationAttempted
+    ) {
+        return false;
+    }
+    pendingExternalAuthState = null;
+    return true;
+}
+
+export const clearPendingExternalAuthMock =
+    vi.fn(clearPendingExternalAuthForHarness);
 export const clearPendingExternalConnectMock = vi.fn(async () => true);
+export const readPendingExternalAuthStateMock = vi.fn(async () => ({
+    value: pendingExternalAuthState,
+    serverMismatch: pendingExternalAuthServerMismatch,
+}));
 
 export function setPendingExternalAuthState(next: PendingExternalAuth | null) {
     pendingExternalAuthState = next;
@@ -64,11 +108,11 @@ export function setPendingExternalConnectState(next: PendingExternalConnect | nu
     pendingExternalConnectState = next;
 }
 
-export function setStoredCredentialsState(next: { token: string; secret: string } | null) {
+export function setStoredCredentialsState(next: AuthCredentials | null) {
     storedCredentialsState = next;
 }
 
-export function setAuthState(next: { isAuthenticated: boolean; credentials: { token: string; secret: string } | null }) {
+export function setAuthState(next: { isAuthenticated: boolean; credentials: AuthCredentials | null }) {
     authState = next;
 }
 
@@ -96,6 +140,14 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
+vi.mock(
+    '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth',
+    () => ({
+        resumeAccountEncryptionFirstKeyExternalAuth:
+            resumeAccountEncryptionFirstKeyExternalAuthSpy,
+    }),
+);
+
 vi.mock('@/track', () => ({
     trackAccountCreated: trackAccountCreatedSpy,
     trackAccountRestored: trackAccountRestoredSpy,
@@ -118,7 +170,7 @@ vi.mock('@/sync/api/capabilities/sessionSharingSupport', () => ({
 }));
 
 vi.mock('@/platform/cryptoRandom', () => ({
-    getRandomBytes: () => new Uint8Array(32).fill(9),
+    getRandomBytes: () => getRandomBytesSpy(),
     getRandomBytesAsync: async () => new Uint8Array(32).fill(9),
 }));
 
@@ -129,10 +181,7 @@ vi.mock('@/auth/storage/tokenStorage', async () => {
         TokenStorage: {
             ...actual.TokenStorage,
             getPendingExternalAuth: async () => (pendingExternalAuthServerMismatch ? null : pendingExternalAuthState),
-            readPendingExternalAuthState: async () => ({
-                value: pendingExternalAuthState,
-                serverMismatch: pendingExternalAuthServerMismatch,
-            }),
+            readPendingExternalAuthState: readPendingExternalAuthStateMock,
             clearPendingExternalAuth: clearPendingExternalAuthMock,
             getPendingExternalConnect: async () => pendingExternalConnectState,
             clearPendingExternalConnect: clearPendingExternalConnectMock,
@@ -190,15 +239,25 @@ export async function renderOAuthReturnScreen() {
 export function resetOAuthHarness() {
     replaceSpy.mockReset();
     loginSpy.mockReset();
+    loginSpy.mockResolvedValue({ kind: 'completed' });
     loginWithCredentialsSpy.mockReset();
+    loginWithCredentialsSpy.mockResolvedValue({ kind: 'completed' });
+    getRandomBytesSpy.mockReset();
+    getRandomBytesSpy.mockImplementation(() => new Uint8Array(32).fill(9));
     upsertAndActivateServerSpy.mockReset();
     trackAccountCreatedSpy.mockReset();
     trackAccountRestoredSpy.mockReset();
+    resumeAccountEncryptionFirstKeyExternalAuthSpy.mockReset();
+    resumeAccountEncryptionFirstKeyExternalAuthSpy.mockResolvedValue({
+        returnTo: '/settings/account',
+    });
     if (typeof modal.alert.mockReset === 'function') {
         modal.alert.mockReset();
     } else {
         modal.alert = vi.fn(async () => {});
     }
+    modal.show.mockClear();
+    modal.alertAsync.mockClear();
     if (typeof modal.prompt.mockReset === 'function') {
         modal.prompt.mockReset();
     } else {
@@ -212,9 +271,12 @@ export function resetOAuthHarness() {
         modal.confirm = vi.fn(async () => true);
     }
     clearPendingExternalAuthMock.mockReset();
-    clearPendingExternalAuthMock.mockResolvedValue(true);
+    clearPendingExternalAuthMock.mockImplementation(
+        clearPendingExternalAuthForHarness,
+    );
     clearPendingExternalConnectMock.mockReset();
     clearPendingExternalConnectMock.mockResolvedValue(true);
+    readPendingExternalAuthStateMock.mockClear();
     setPendingExternalAuthState({
         provider: 'github',
         secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',

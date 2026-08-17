@@ -43,6 +43,10 @@ export type PluginProjectionEditableSettingValueType =
 export type PluginProjectionEditableSettingField = Readonly<{
     key: string;
     control: PluginProjectionEditableSettingControl;
+    /** Canonical secret owner from the daemon projection, never inferred from Settings scope. */
+    secretCustody: PluginProjectedSettingsFieldV2['secretCustody'];
+    /** Account endpoint relation used only as credential-origin metadata. */
+    managedServiceOrigin?: PluginProjectedSettingsFieldV2['managedServiceOrigin'];
     valueType: PluginProjectionEditableSettingValueType;
     valueSchema: PluginProjectedSettingsFieldV2['valueSchema'];
     title: string;
@@ -64,7 +68,8 @@ export type PluginProjectionEditableSettingsGroup = Readonly<{
     version: 1;
     title: string;
     description?: string | null;
-    storageScope: 'local' | 'synced' | 'project' | 'session';
+    /** One declared record owner. Legacy storageScope is intentionally not inferred. */
+    scope: PluginProjectedSettingsV2['scope'];
     presentation: PluginProjectedSettingsV2['presentation'];
     target:
         | Readonly<{ kind: 'plugin' }>
@@ -76,9 +81,24 @@ export type PluginProjectionAction = Readonly<{
     id: string;
     title: string;
     description: string | null;
+    /** Manifest-declared icon slug; renderers map only known local icon names. */
+    icon: string | null;
     scopes: readonly string[];
     surfaces: readonly string[];
-    placement: string;
+    /**
+     * UI-capable Actions carry all Protocol-declared semantic placement
+     * bindings. Plugin-only Actions do not invent one while flowing through
+     * the shared registry projection.
+     */
+    placementBindings: readonly string[];
+    /** Canonical Action input contract used by host-owned selection validation. */
+    inputSchema: PluginProjectedActionV2['inputSchema'] | null;
+    /** Protocol-normalized SDK-ACTION-FORM descriptor; no renderer infers a form from schema. */
+    inputHints: PluginProjectedActionV2['inputHints'] | null;
+    /** Action-owned composer slash presentation; the picker never parses a manifest itself. */
+    slash?: PluginProjectedActionV2['slash'] | null;
+    /** Smaller values present before larger values within each semantic placement. */
+    priority: number | null;
     dangerLevel: PluginProjectedActionV2['dangerLevel'];
     confirmation: PluginActionConfirmationV2 | null;
     available: boolean | null;
@@ -94,6 +114,11 @@ export type PluginProjectionResource = Readonly<{
 
 export type PluginProjectionEntry = Readonly<{
     pluginId: string;
+    /**
+     * Current committed plugin generation, when this entry came from the
+     * resolved daemon registry. Metadata-only and legacy rows have none.
+     */
+    immutableGenerationId?: string | null;
     title: string;
     description: string | null;
     version: string | null;
@@ -109,7 +134,6 @@ export type PluginProjectionEntry = Readonly<{
         sourceKind: string | null;
         sourceLabel: string | null;
         trustPolicy: string | null;
-        manifestDigest: string | null;
     }> | null;
     diagnostics: readonly PluginProjectionDiagnostic[];
     actions: readonly PluginProjectionAction[];
@@ -180,9 +204,14 @@ function mapV2Action(action: PluginProjectedActionV2): PluginProjectionAction {
         id: action.id,
         title: action.title,
         description: action.description ?? null,
+        icon: action.icon ?? null,
         scopes: action.scopes,
         surfaces: action.surfaces,
-        placement: action.placement,
+        placementBindings: action.placementBindings ?? [],
+        inputSchema: action.inputSchema ?? null,
+        inputHints: action.inputHints ?? null,
+        slash: action.slash ?? null,
+        priority: action.priority ?? null,
         dangerLevel: action.dangerLevel,
         confirmation: action.confirmation ?? null,
         available: typeof action.available === 'boolean' ? action.available : null,
@@ -207,6 +236,8 @@ function mapV2EditableSettingsField(field: PluginProjectedSettingsFieldV2): Plug
     return {
         key: field.id,
         control: field.control,
+        secretCustody: field.secretCustody,
+        ...(field.managedServiceOrigin ? { managedServiceOrigin: field.managedServiceOrigin } : {}),
         valueType: field.valueType,
         valueSchema: field.valueSchema,
         title: field.displayKey,
@@ -225,14 +256,20 @@ function mapV2EditableSettingsField(field: PluginProjectedSettingsFieldV2): Plug
     };
 }
 
-function mapV2EditableSettingsGroup(settings: PluginProjectedSettingsV2): PluginProjectionEditableSettingsGroup {
+/**
+ * The one UI presentation mapping for daemon-projected Settings and
+ * activation-independent Account recovery declarations.
+ */
+export function mapV2EditableSettingsGroup(
+    settings: PluginProjectedSettingsV2,
+): PluginProjectionEditableSettingsGroup {
     return {
         id: settings.id,
         pluginId: settings.pluginId,
         version: settings.version,
         title: settings.title,
         ...(settings.description ? { description: settings.description } : {}),
-        storageScope: settings.storageScope,
+        scope: settings.scope,
         presentation: settings.presentation,
         target: settings.target,
         fields: settings.fields.map(mapV2EditableSettingsField),
@@ -253,11 +290,16 @@ function buildV1PluginProjectionById(
             id: actionId,
             title,
             description: readOptionalString(action.description),
+            icon: null,
             scopes: [],
             surfaces: Object.entries(action.surfaces ?? {})
                 .filter((entry): entry is [string, boolean] => entry[1] === true)
                 .map(([surface]) => surface),
-            placement: 'detailsPanel',
+            placementBindings: ['detailsPanel'],
+            inputSchema: null,
+            inputHints: null,
+            slash: null,
+            priority: null,
             dangerLevel: mapV1ActionDangerLevel(action.safety),
             confirmation: null,
             available: null,
@@ -292,6 +334,7 @@ function buildV1PluginProjectionById(
     for (const pluginId of pluginIds) {
         entries[pluginId] = {
             pluginId,
+            immutableGenerationId: null,
             title: pluginId,
             description: null,
             version: null,
@@ -350,6 +393,7 @@ function buildV2PluginProjectionById(
     for (const [pluginId, installedPackage] of Object.entries(projection.installedPackagesById)) {
         entries[pluginId] = {
             pluginId,
+            immutableGenerationId: installedPackage.immutableGenerationId ?? null,
             title: installedPackage.displayName,
             description: null,
             version: installedPackage.version ?? null,
@@ -361,7 +405,6 @@ function buildV2PluginProjectionById(
                 sourceKind: installedPackage.source.kind,
                 sourceLabel: installedPackage.source.locator,
                 trustPolicy: null,
-                manifestDigest: installedPackage.digest ?? null,
             },
             diagnostics: diagnosticsByPluginId.get(pluginId) ?? [],
             actions: actionsByPluginId.get(pluginId) ?? [],

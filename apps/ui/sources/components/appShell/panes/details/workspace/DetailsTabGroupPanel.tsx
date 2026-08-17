@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Text } from '@/components/ui/text/Text';
 import { useWebScrollLockBypass } from '@/components/ui/scroll/useWebScrollLockBypass';
 import { resolveWebScrollableElementWithin } from '@/components/ui/scroll/resolveWebScrollableElement';
@@ -12,6 +12,7 @@ import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPa
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
 import { DetailsTabStrip, type DetailsTabPresentation, type DetailsTabStripTestIds } from './DetailsTabStrip';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
 
@@ -145,7 +146,9 @@ const DetailsTabSurface = React.memo((props: Readonly<{ isActive: boolean; child
             style={[{ flex: 1, minHeight: 0, minWidth: 0 }, !props.isActive ? { display: 'none' } : null]}
             {...a11yHiddenProps}
         >
-            {props.children}
+            <PluginSurfaceFocusEligibilityProvider active={props.isActive}>
+                {props.children}
+            </PluginSurfaceFocusEligibilityProvider>
         </View>
     );
 });
@@ -226,7 +229,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                             titleTestID="pane-details-empty-state-title"
                             descriptionTestID="pane-details-empty-state-description"
                             icon={(
-                                <Octicons
+                                <Icon
                                     name="plus-circle"
                                     size={44}
                                     color={theme.colors.text.secondary}

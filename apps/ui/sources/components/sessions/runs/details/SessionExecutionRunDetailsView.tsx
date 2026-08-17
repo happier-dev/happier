@@ -27,10 +27,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
-import {
-    buildExecutionRunPublicStateFromTranscriptState,
-    findTranscriptExecutionRunState,
-} from '@/sync/domains/session/subagents/executionRuns/deriveExecutionRunSubagents';
+import { findTranscriptExecutionRunState } from '@/sync/domains/session/subagents/executionRuns/deriveTranscriptExecutionRunStateIndex';
+import { buildExecutionRunPublicStateFromTranscriptState } from '@/sync/domains/session/subagents/executionRuns/executionRunPublicStateFromTranscript';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     deriveTranscriptInteraction,

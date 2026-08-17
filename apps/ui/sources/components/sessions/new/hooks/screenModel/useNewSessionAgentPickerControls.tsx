@@ -24,10 +24,8 @@ import {
     type FavoriteModelTogglePayload,
 } from './newSessionFavoriteModelsPickerOption';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
-import {
-    resolveNewSessionAgentPickerEntryByTargetKey,
-    resolveNewSessionAgentPickerSingleSelectFallbackEntry,
-} from './resolveNewSessionAgentPickerDispatch';
+import { resolveNewSessionAgentPickerSingleSelectFallbackEntry } from './resolveNewSessionAgentPickerDispatch';
+import { useSessionAgentPickerControls } from '@/components/sessions/agentPicker/useSessionAgentPickerControls';
 import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 
@@ -242,49 +240,40 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         selectEngineSelection,
     ]);
 
-    const agentPickerSelectedOptionId = React.useMemo(() => {
-        const fallbackOptionId = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
-        const pickerOptions = agentPickerOptions ?? [];
-        if (params.rememberedAgentPickerView?.kind === 'favoriteModels') {
-            const hasFavoriteModelsOption = pickerOptions.some((option) => option.id === FAVORITE_MODELS_AGENT_PICKER_OPTION_ID);
-            if (hasFavoriteModelsOption) {
-                return FAVORITE_MODELS_AGENT_PICKER_OPTION_ID;
-            }
+    const fallbackOptionId = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
+    const rememberedAgentPickerView = params.rememberedAgentPickerView;
+    const preferredOptionId = React.useMemo(() => {
+        if (rememberedAgentPickerView?.kind === 'favoriteModels') {
+            return FAVORITE_MODELS_AGENT_PICKER_OPTION_ID;
         }
-        const rememberedView = params.rememberedAgentPickerView;
-        if (rememberedView?.kind === 'backend') {
-            const hasRememberedBackendOption = rememberedView.backendTargetKey === fallbackOptionId
-                && pickerOptions.some((option) => option.id === rememberedView.backendTargetKey);
-            if (hasRememberedBackendOption) {
-                return rememberedView.backendTargetKey;
-            }
+        // A remembered backend view only survives while it still matches the selected
+        // engine; an external change to the selection must not restore a stale detail pane.
+        if (rememberedAgentPickerView?.kind === 'backend' && rememberedAgentPickerView.backendTargetKey === fallbackOptionId) {
+            return rememberedAgentPickerView.backendTargetKey;
         }
-        return fallbackOptionId;
-    }, [
-        agentPickerOptions,
-        params.rememberedAgentPickerView,
-        params.selectedBackendEntry?.backendTargetKey,
-        params.selectedBackendTargetKey,
-    ]);
+        return null;
+    }, [fallbackOptionId, rememberedAgentPickerView]);
 
-    const handleAgentPickerSelect = React.useCallback((selectedId: string) => {
-        if (selectedId === FAVORITE_MODELS_AGENT_PICKER_OPTION_ID) {
-            params.onRememberAgentPickerView?.({ kind: 'favoriteModels' });
-            return;
-        }
-        const nextEntry = resolveNewSessionAgentPickerEntryByTargetKey({
-            resolvedBackendEntries: selectableBackendEntries,
-            selectedId,
-        });
-        if (nextEntry) {
+    const {
+        agentPickerSelectedOptionId,
+        handleAgentPickerSelect,
+    } = useSessionAgentPickerControls({
+        options: agentPickerOptions,
+        selectableEntries: selectableBackendEntries,
+        fallbackOptionId,
+        preferredOptionId,
+        onSelectEntry: (nextEntry) => {
             params.onRememberAgentPickerView?.({
                 kind: 'backend',
                 backendTargetKey: nextEntry.backendTargetKey,
             });
-            const nextSelection = getEngineSelectionForTargetKey(nextEntry.backendTargetKey);
-            selectEngineSelection(nextEntry, nextSelection);
-        }
-    }, [getEngineSelectionForTargetKey, params.onRememberAgentPickerView, selectableBackendEntries, selectEngineSelection]);
+            selectEngineSelection(nextEntry, getEngineSelectionForTargetKey(nextEntry.backendTargetKey));
+        },
+        onSelectNonEntryOption: (selectedId) => {
+            if (selectedId !== FAVORITE_MODELS_AGENT_PICKER_OPTION_ID) return;
+            params.onRememberAgentPickerView?.({ kind: 'favoriteModels' });
+        },
+    });
 
     const handleAgentClick = React.useCallback(() => {
         const nextEntry = resolveNewSessionAgentPickerSingleSelectFallbackEntry({

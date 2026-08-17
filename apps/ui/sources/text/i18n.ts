@@ -4,6 +4,7 @@ import { getDeviceLocales } from './deviceLocales';
 import { ca } from './translations/ca';
 import { en } from './translations/en';
 import { es } from './translations/es';
+import { fr } from './translations/fr';
 import { it } from './translations/it';
 import { ja } from './translations/ja';
 import { pl } from './translations/pl';
@@ -22,18 +23,31 @@ type TranslationFunction = (...args: any[]) => string;
 type TranslationLeaf = string | TranslationFunction;
 type TranslationNode = Record<string, unknown>;
 
+/**
+ * Locale trees are held behind thunks, not as a module-scope object of the imported bindings.
+ *
+ * `metro.config.js` enables `inlineRequires`, which defers an imported binding's `require` to its
+ * reference site — but a module-scope object literal *is* that reference, so the previous shape
+ * evaluated every locale module (megabytes of source) as soon as anything imported `t()`, i.e.
+ * before the app could paint. With thunks each locale's `require` is deferred to the first lookup
+ * for that language: in practice the active language plus the English fallback.
+ *
+ * Where inline requires are not applied (vitest) the thunks are ordinary closures and behaviour is
+ * identical, so this degrades gracefully if that Metro flag is ever turned off.
+ */
 const TRANSLATIONS_BY_LANGUAGE = {
-    en,
-    ru,
-    pl,
-    es,
-    it,
-    pt,
-    ca,
-    'zh-Hans': zhHans,
-    'zh-Hant': zhHant,
-    ja,
-} as const satisfies Record<SupportedLanguage, TranslationNode>;
+    en: () => en,
+    ru: () => ru,
+    pl: () => pl,
+    es: () => es,
+    fr: () => fr,
+    it: () => it,
+    pt: () => pt,
+    ca: () => ca,
+    'zh-Hans': () => zhHans,
+    'zh-Hant': () => zhHant,
+    ja: () => ja,
+} as const satisfies Record<SupportedLanguage, () => TranslationNode>;
 
 type JoinPath<Prefix extends string, Key extends string> = Prefix extends '' ? Key : `${Prefix}.${Key}`;
 
@@ -118,7 +132,8 @@ function resolveActiveLanguage(): SupportedLanguage {
 }
 
 function getTranslationTree(language: SupportedLanguage): TranslationNode {
-    return (TRANSLATIONS_BY_LANGUAGE[language] ?? en) as TranslationNode;
+    const resolve = TRANSLATIONS_BY_LANGUAGE[language];
+    return (resolve ? resolve() : en) as TranslationNode;
 }
 
 function getValueAtPath(root: TranslationNode, key: string): unknown {
@@ -173,10 +188,22 @@ function collectTranslationKeys(node: TranslationNode, prefix = '', out: string[
     return out;
 }
 
-const ALL_TRANSLATION_KEYS = [
-    ...collectTranslationKeys(en as TranslationNode),
-    ...Object.values(BUNDLED_PLUGIN_TRANSLATIONS).flatMap((bundle) => Object.keys(bundle)),
-] as TranslationKey[];
+/**
+ * Computed on first use, not at module scope: this is a full recursive walk of the entire English
+ * tree (and it forces that tree to be evaluated), and its only callers are development/diagnostic
+ * surfaces — paying for it on the import that gates first paint bought nothing.
+ */
+let allTranslationKeysCache: TranslationKey[] | null = null;
+
+function readAllTranslationKeys(): TranslationKey[] {
+    if (!allTranslationKeysCache) {
+        allTranslationKeysCache = [
+            ...collectTranslationKeys(en as TranslationNode),
+            ...Object.values(BUNDLED_PLUGIN_TRANSLATIONS).flatMap((bundle) => Object.keys(bundle)),
+        ] as TranslationKey[];
+    }
+    return allTranslationKeysCache;
+}
 
 export function hasTranslation(key: string): boolean {
     return resolveRawTranslationValue(key) !== undefined;
@@ -187,7 +214,7 @@ export function getTranslationValue(key: string): unknown {
 }
 
 export function getAllTranslationKeys(): TranslationKey[] {
-    return [...ALL_TRANSLATION_KEYS];
+    return [...readAllTranslationKeys()];
 }
 
 export function setPreferredLanguageFromSettings(value: unknown): void {

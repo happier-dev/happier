@@ -4,6 +4,7 @@ import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { resolveAgentInputControlLines } from './controls/resolveAgentInputControlLines';
 import type { AgentInputControlId } from './controls/agentInputControlTypes';
 import { buildCoreCollapsedControlActions } from './controls/buildCoreCollapsedControlActions';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 export function buildAgentInputActionMenuActions(opts: {
     actionBarIsCollapsed: boolean;
@@ -11,7 +12,7 @@ export function buildAgentInputActionMenuActions(opts: {
     tint: string;
     agentId: AgentId;
     profileLabel: string | null;
-    profileIcon: string;
+    profileIcon: IconName;
     envVarsCount?: number;
     agentLabel?: string | null;
     engineLabel?: string | null;

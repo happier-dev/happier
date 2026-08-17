@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -142,12 +143,12 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
                     newSessionBottomPadding={12}
                     shouldBottomAnchor
                     containerStyle={{}}
-                    sessionPrompt=""
+                    promptStore={createNewSessionPromptStore('')}
                     setSessionPrompt={() => {}}
                     handleCreateSession={() => {}}
                     canCreate
                     isCreating={false}
-                    emptyAutocompletePrefixes={[]}
+                    emptyAutocompleteKinds={[]}
                     emptyAutocompleteSuggestions={async () => []}
                     sessionPromptInputMaxHeight={200}
                     agentType="codex"
@@ -199,12 +200,12 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
                     newSessionBottomPadding={12}
                     shouldBottomAnchor
                     containerStyle={{}}
-                    sessionPrompt=""
+                    promptStore={createNewSessionPromptStore('')}
                     setSessionPrompt={() => {}}
                     handleCreateSession={() => {}}
                     canCreate
                     isCreating={false}
-                    emptyAutocompletePrefixes={[]}
+                    emptyAutocompleteKinds={[]}
                     emptyAutocompleteSuggestions={async () => []}
                     sessionPromptInputMaxHeight={200}
                     agentType="codex"

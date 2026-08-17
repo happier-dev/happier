@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Appearance, Platform, View } from 'react-native';
 import { setStatusBarStyle } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -23,6 +22,7 @@ import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime
 import { isThemeProfileActive, setActiveThemeProfileForMode } from '@/theme/profiles/themeProfilePersistence';
 import type { ThemeProfileMode, ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { buildThemePresetSourceOptions, type ThemePresetSourceOption } from './themeProfilePresetOptions';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     createThemeProfileId,
     nowThemeProfileTimestamp,
@@ -139,7 +139,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 id: `duplicate-${option.id}`,
                 title: t('settingsAppearance.themeProfiles.duplicateTheme'),
                 subtitle: option.title,
-                icon: 'copy-outline',
+                icon: 'copy',
                 color: theme.colors.accent.blue,
                 inlineTestID: `settings-theme-duplicate-${option.id}`,
                 onPress: () => duplicateTheme(option),
@@ -152,7 +152,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 id: `edit-${option.id}`,
                 title: t('settingsAppearance.themeProfiles.editProfile'),
                 subtitle: option.title,
-                icon: 'create-outline',
+                icon: 'pencil-simple',
                 color: theme.colors.accent.blue,
                 inlineTestID: `settings-theme-edit-${option.id}`,
                 onPress: () => router.push(profileEditorRoute(profile.id)),
@@ -161,7 +161,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 id: `delete-${option.id}`,
                 title: t('settingsAppearance.themeProfiles.deleteProfile'),
                 subtitle: option.title,
-                icon: 'trash-outline',
+                icon: 'trash',
                 destructive: true,
                 inlineTestID: `settings-theme-delete-${option.id}`,
                 onPress: () => { void deleteProfile(profile); },
@@ -171,7 +171,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         return (
             <View testID={`settings-theme-profile-${option.kind === 'custom' ? 'custom' : 'built-in'}-actions-${option.id}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 {isPresetOptionActive(option) ? (
-                    <Ionicons name="checkmark-circle" size={20} color={theme.colors.status.connected} />
+                    <Icon name="check-circle" size={20} color={theme.colors.status.connected} />
                 ) : null}
                 <ItemRowActions
                     title={option.title}
@@ -188,7 +188,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
 
     const renderPresetRow = React.useCallback((option: ThemePresetSourceOption) => {
         const builtIn = option.kind !== 'custom';
-        const iconName = option.kind === 'builtIn' ? 'sparkles-outline' : option.id === 'dark' ? 'moon-outline' : 'sunny-outline';
+        const iconName = option.kind === 'builtIn' ? 'sparkle' : option.id === 'dark' ? 'moon' : 'sun';
         return (
             <Item
                 key={option.id}
@@ -196,7 +196,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                 title={option.title}
                 subtitle={option.subtitle}
                 selected={isPresetOptionActive(option)}
-                icon={<Ionicons name={iconName} size={28} color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting} />}
+                icon={<Icon name={iconName} size={29} color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting} />}
                 rightElement={renderPresetActions(option)}
                 onPress={() => activatePresetOption(option)}
             />
@@ -205,13 +205,13 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
 
     const builtInDropdownItems = React.useMemo((): readonly DropdownMenuItem[] => (
         builtInPresetOptions.map((option) => {
-            const iconName = option.kind === 'builtIn' ? 'sparkles-outline' : option.id === 'dark' ? 'moon-outline' : 'sunny-outline';
+            const iconName = option.kind === 'builtIn' ? 'sparkle' : option.id === 'dark' ? 'moon' : 'sun';
             return {
                 id: option.id,
                 testID: `settings-theme-profile-built-in-option-${option.id}`,
                 title: option.title,
                 subtitle: option.subtitle,
-                icon: <Ionicons name={iconName} size={22} color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting} />,
+                icon: <Icon name={iconName} size={20} color={option.kind === 'builtIn' ? theme.colors.accent.indigo : theme.colors.status.connecting} />,
                 rightElement: renderPresetActions(option),
             };
         })
@@ -233,7 +233,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                     itemTrigger={{
                         title: t('settingsAppearance.themeProfiles.builtInGroup'),
                         subtitle: t('settingsAppearance.themeProfiles.builtInFooter'),
-                        icon: <Ionicons name="sparkles-outline" size={28} color={theme.colors.accent.indigo} />,
+                        icon: <Icon name="sparkle" size={29} color={theme.colors.accent.indigo} />,
                         showSelectedSubtitle: false,
                         itemProps: { testID: 'settings-theme-profile-built-in-dropdown-trigger' },
                     }}
@@ -256,7 +256,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                     testID="settings-theme-profile-create"
                     title={t('settingsAppearance.themeProfiles.createProfile')}
                     subtitle={t('settingsAppearance.themeProfiles.createProfileSubtitle')}
-                    icon={<Ionicons name="add-circle-outline" size={28} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="plus-circle" size={29} color={theme.colors.accent.blue} />}
                     onPress={openCreate}
                     disabled={profileLimitReached}
                 />
@@ -264,7 +264,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
                     testID="settings-theme-profile-import"
                     title={t('settingsAppearance.themeProfiles.importProfile')}
                     subtitle={t('settingsAppearance.themeProfiles.importProfileSubtitle')}
-                    icon={<Ionicons name="code-download-outline" size={28} color={theme.colors.accent.green} />}
+                    icon={<Icon name="file-arrow-down" size={29} color={theme.colors.accent.green} />}
                     onPress={openImport}
                 />
             </ItemGroup>

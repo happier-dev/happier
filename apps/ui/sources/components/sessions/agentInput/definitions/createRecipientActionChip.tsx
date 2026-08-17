@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
@@ -12,6 +11,8 @@ import type { SessionParticipantTarget } from '@/sync/domains/session/participan
 import { t } from '@/text';
 
 import { RecipientChip } from '../routing/RecipientChip';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 import {
     buildRecipientPopoverOptions,
     resolveRecipientControlLabel,
@@ -78,7 +79,7 @@ export function createRecipientActionChip(params: Readonly<{
             presentation: 'list',
             title: t('session.participants.sendToTitle'),
             label,
-            icon: (tint) => <Ionicons name="navigate-outline" size={16} color={tint} />,
+            icon: (tint) => <Icon name="navigation-arrow" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />,
             rootStep,
             selectedOptionId,
             onSelect: () => {

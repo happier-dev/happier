@@ -15,7 +15,7 @@ import { useSetting } from '@/sync/store/hooks';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { parseSshTarget } from '@happier-dev/protocol';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
-import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
+import { readRemoteHosts, type RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -181,7 +181,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         ...(props.initialDraft ?? {}),
         ...(props.runner?.mode === 'native' && !props.initialDraft?.authMode ? { authMode: 'password' as const } : {}),
     }));
-    const remoteHostsV1 = useSetting('remoteHostsV1');
+    const remoteHostsRaw = useSetting('remoteHostsV1');
+    const remoteHostsV1 = React.useMemo(() => readRemoteHosts(remoteHostsRaw), [remoteHostsRaw]);
     const [hostPickerOpen, setHostPickerOpen] = React.useState(false);
     const [selectedSavedRemoteHostId, setSelectedSavedRemoteHostId] = React.useState<string>(SAVED_REMOTE_HOST_NEW_ID);
     const savedDraftRef = React.useRef<SshCredentialsDraft>(draft);
@@ -461,7 +462,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             persistRemoteHostAfterRemoteSshCompletion({
                 managementEnabled: remoteHostsManagementEnabled,
                 secretMaterialEnabled: remoteHostsSecretMaterialEnabled,
-                remoteHostsV1,
+                remoteHostsRaw,
                 selectedSavedRemoteHostId,
                 runContext: currentRun,
                 newHostSentinelId: SAVED_REMOTE_HOST_NEW_ID,
@@ -487,7 +488,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         completionRelayUrl,
         remoteHostsManagementEnabled,
         remoteHostsSecretMaterialEnabled,
-        remoteHostsV1,
+        remoteHostsRaw,
         selectedSavedRemoteHostId,
     ]);
 

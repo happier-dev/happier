@@ -1,4 +1,7 @@
-import type { Settings } from '@/sync/domains/settings/settings';
+import type {
+    Settings,
+    WritableSettingsKey,
+} from '@/sync/domains/settings/settings';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { normalizeTrimmedString } from '@/sync/domains/session/listing/normalizeTrimmedString';
@@ -24,6 +27,7 @@ export type StorageRuntimeOptions = Readonly<{
 }>;
 
 const createDefaultMutableSetter: StorageMutableSetterFactory = () => () => undefined;
+const emptyCurrentSecretBindingsByProfileId: Settings['currentSecretBindingsByProfileId'] = {};
 
 const defaultProfile: Profile = Object.freeze({
     id: '',
@@ -52,6 +56,22 @@ const buildSessionListReachabilityRenderableKey: StorageModule['buildSessionList
 
 function resolveMutableSetterFactory(options?: StorageRuntimeOptions): StorageMutableSetterFactory {
     return options?.createMutableSetter ?? createDefaultMutableSetter;
+}
+
+export function createUseCurrentSecretBindingsByProfileIdMutableMock(
+    useSetting: StorageModule['useSetting'],
+    options?: StorageRuntimeOptions,
+): StorageModule['useCurrentSecretBindingsByProfileIdMutable'] {
+    const createMutableSetter = resolveMutableSetterFactory(options);
+    return () => {
+        const value = useSetting('currentSecretBindingsByProfileId');
+        return [
+            value && typeof value === 'object' && !Array.isArray(value)
+                ? value
+                : emptyCurrentSecretBindingsByProfileId,
+            createMutableSetter(),
+        ];
+    };
 }
 
 export function isStorageStoreLike(value: unknown): value is StorageStoreLike {
@@ -93,6 +113,8 @@ export function createStorageModuleStub<TOverrides extends object>(
     const sessionListIndexByServerId = {} as ReturnType<StorageModule['useSessionListIndexByServerId']>;
     const useSetting = createUseSettingMock();
     const useSettingMutable = createUseSettingMutableMock(useSetting, options);
+    const useCurrentSecretBindingsByProfileIdMutable =
+        createUseCurrentSecretBindingsByProfileIdMutableMock(useSetting, options);
     const useLocalSetting = createUseLocalSettingMock();
     const useLocalSettingMutable = createUseLocalSettingMutableMock(useLocalSetting, options);
     const updateWorkspaceScmSnapshot = () => undefined;
@@ -101,6 +123,12 @@ export function createStorageModuleStub<TOverrides extends object>(
     const pruneWorkspaceScmTouchedPaths = () => undefined;
     const pruneWorkspaceScmCommitSelectionPaths = () => undefined;
     const pruneWorkspaceScmCommitSelectionPatches = () => undefined;
+    // A transcript session reference is present-and-unnamed by default: not deleted, and with no
+    // cached metadata, which is what an uncached (for example archived) target looks like.
+    const sessionReferenceTarget = {
+        deleted: false,
+        metadata: null,
+    } satisfies ReturnType<StorageModule['useSessionReferenceTarget']>;
     const store = createStorageStoreMock({
         sessions: {},
         machines: {},
@@ -125,16 +153,17 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSettings: () => ({} as Settings),
         useSetting,
         useSettingMutable,
+        useCurrentSecretBindingsByProfileIdMutable,
         useLocalSetting,
         useLocalSettingMutable,
         useActiveServerAccountScope: () => null,
         useSessionLastMobileSurface: () => null,
         usePersistSessionLastMobileSurface: () => () => undefined,
         useProjectLastMobileSurface: () => null,
+        useProjectLastMobileSurfacesByWorkspaceRefId: () => ({}),
         usePersistProjectLastMobileSurface: () => () => undefined,
         useProfile: () => store.getState().profile ?? defaultProfile,
         useIsDataReady: () => true,
-        useRealtimeStatus: () => 'connected',
         useAutomations: () => [],
         useSessionMessages: () => ({ messages: [], isLoaded: true } as const),
         useSessionMessagesReducerState: () => sessionMessagesReducerState,
@@ -152,6 +181,8 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSessionSubagentSourceMessages: () => [],
         useMachineCliDetectionTarget: () => ({ daemonStateVersion: 0, isOnline: false }),
         useSessionForkSupportSource: () => null,
+        useSessionInteractionSource: () => null,
+        useSessionReferenceTarget: () => sessionReferenceTarget,
         useSessionChatFooterState: () => null,
         useSessionCatchingUpNewer: () => false,
         useHasUnreadMessages: () => false,
@@ -217,19 +248,29 @@ export function createStorageModuleStub<TOverrides extends object>(
     } satisfies Partial<StorageModule>;
 
     const module = { ...defaults, ...(overrides as Partial<StorageModule>) } as StorageModule;
+    const moduleWithCurrentSecretBindings: StorageModule = Object.prototype.hasOwnProperty.call(
+        overrides,
+        'useCurrentSecretBindingsByProfileIdMutable',
+    )
+        ? module
+        : {
+            ...module,
+            useCurrentSecretBindingsByProfileIdMutable:
+                createUseCurrentSecretBindingsByProfileIdMutableMock(module.useSetting, options),
+        };
     const storageOverride = (overrides as { storage?: unknown }).storage;
     const finalStorage = isStorageStoreLike(storageOverride) && typeof storageOverride !== 'function'
         ? adaptStorageStoreLike(storageOverride)
-        : module.storage;
-    if (finalStorage !== module.storage) {
+        : moduleWithCurrentSecretBindings.storage;
+    if (finalStorage !== moduleWithCurrentSecretBindings.storage) {
         return {
-            ...module,
+            ...moduleWithCurrentSecretBindings,
             storage: finalStorage,
             getStorage: () => finalStorage,
         };
     }
     return {
-        ...module,
+        ...moduleWithCurrentSecretBindings,
         getStorage: () => finalStorage,
     };
 }
@@ -257,7 +298,10 @@ export function createUseSettingMutableMock(
 ): StorageModule['useSettingMutable'] {
     const createMutableSetter = resolveMutableSetterFactory(options);
 
-    return ((key: keyof Settings) => [useSetting(key), createMutableSetter()]) as StorageModule['useSettingMutable'];
+    return ((key: WritableSettingsKey) => [
+        useSetting(key),
+        createMutableSetter(),
+    ]) as StorageModule['useSettingMutable'];
 }
 
 export type CreateUseLocalSettingMockOptions = Readonly<{
@@ -299,6 +343,7 @@ export function createStorageStoreMock(state: Partial<StorageState>): UseBoundSt
         sessionPending: {},
         sessionListRenderables: {},
         sessionTailContiguousFloorSeq: {},
+        sessionTranscriptLoadIssues: {},
         ...state,
         localSettings: state.localSettings ?? localSettingsDefaults,
     } as StorageState;
@@ -328,6 +373,7 @@ export function createLiveStorageStoreMock(readState: () => Partial<StorageState
             sessionPending: {},
             sessionListRenderables: {},
             sessionTailContiguousFloorSeq: {},
+            sessionTranscriptLoadIssues: {},
             ...state,
             localSettings: state.localSettings ?? localSettingsDefaults,
         } as StorageState;

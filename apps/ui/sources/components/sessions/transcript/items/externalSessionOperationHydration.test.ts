@@ -110,6 +110,33 @@ describe('external session operation transcript hydration', () => {
         })]);
     });
 
+    it.each([
+        ['kind', { kind: 'takeover_external_linked' }],
+        ['status', { status: 'cancel_requested' }],
+        ['phase', { phase: 'staging' }],
+    ] as const)(
+        'does not embed complete progress when presentation %s differs at the same operation revision',
+        (_field, presentationOverride) => {
+            const presentation = ExternalSessionOperationSharedPresentationV1Schema.parse({
+                v: 1,
+                operationId: 'operation-1',
+                revision: 4,
+                kind: 'materialize',
+                status: 'running',
+                phase: 'validating',
+                ...presentationOverride,
+            });
+
+            expect(appendExternalSessionOperationTranscriptItem([], {
+                presentation,
+                progress: createCompleteProgress(),
+            })).toEqual([expect.objectContaining({
+                presentation,
+                progress: null,
+            })]);
+        },
+    );
+
     it('fails closed for malformed, private, or legacy complete shared metadata', () => {
         expect(readExternalSessionOperationPresentationFromMetadata({
             externalSessionOperationPresentationV1: {
@@ -130,7 +157,7 @@ describe('external session operation transcript hydration', () => {
         })).toBeNull();
     });
 
-    it('dismisses only the exact presented revision', () => {
+    it('dismisses only the exact session, operation, and presented revision', () => {
         const presentation = ExternalSessionOperationSharedPresentationV1Schema.parse({
             v: 1,
             operationId: 'operation-1',
@@ -156,6 +183,31 @@ describe('external session operation transcript hydration', () => {
             progress: null,
         }, {
             sessionId: 'session-1',
+            dismissed: {
+                sessionId: 'session-1',
+                operationId: 'operation-1',
+                revision: 4,
+            },
+        })).toHaveLength(1);
+        expect(appendExternalSessionOperationTranscriptItem([], {
+            presentation: {
+                ...presentation,
+                operationId: 'operation-2',
+            },
+            progress: null,
+        }, {
+            sessionId: 'session-1',
+            dismissed: {
+                sessionId: 'session-1',
+                operationId: 'operation-1',
+                revision: 4,
+            },
+        })).toHaveLength(1);
+        expect(appendExternalSessionOperationTranscriptItem([], {
+            presentation,
+            progress: null,
+        }, {
+            sessionId: 'session-2',
             dismissed: {
                 sessionId: 'session-1',
                 operationId: 'operation-1',

@@ -4,44 +4,26 @@ import {
     isAuthenticationResponseStatus,
     isTerminalAuthError,
 } from '@/sync/runtime/connectivity/authErrors';
+import { isPlainMachineDataKeyMarker } from '@happier-dev/protocol';
+
+import { getOrCreateScopedCacheTokenKey, resetScopedCacheTokenKeysForTests } from './scopedCacheTokenKey';
+import { createScopedResolutionSingleFlight } from './scopedResolutionSingleFlight';
+
+export type ScopedMachineTransport =
+    | Readonly<{ mode: 'plain' }>
+    | Readonly<{ mode: 'e2ee'; dataKey: Uint8Array | null }>;
 
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
 
-function getOrCreateTokenCacheKey(token: string): string {
-    // Avoid using the raw token in cache keys (accidental leaks in error/debug output),
-    // but also avoid collision-prone hashing (which can cause cross-token cache reuse).
-    let key = tokenCacheKeyByToken.get(token);
-    if (key) {
-        // Refresh LRU ordering.
-        tokenCacheKeyByToken.delete(token);
-        tokenCacheKeyByToken.set(token, key);
-        return key;
-    }
-
-    const cryptoAny = (globalThis as any).crypto as { randomUUID?: () => string } | undefined;
-    key =
-        typeof cryptoAny?.randomUUID === 'function'
-            ? cryptoAny.randomUUID()
-            : `tk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-    tokenCacheKeyByToken.set(token, key);
-
-    const max = readMaxMachineKeyCacheEntriesFromEnv();
-    while (tokenCacheKeyByToken.size > max) {
-        const oldest = tokenCacheKeyByToken.keys().next();
-        if (oldest.done) break;
-        tokenCacheKeyByToken.delete(oldest.value);
-    }
-    return key;
+function toMachineTransportCacheKey(serverId: string, machineId: string, token: string): string {
+    const tokenKey = getOrCreateScopedCacheTokenKey(token, readMaxMachineKeyCacheEntriesFromEnv());
+    return `${serverId}::${machineId}::${tokenKey}`;
 }
 
-function toMachineDataKeyCacheKey(serverId: string, machineId: string, token: string): string {
-    return `${serverId}::${machineId}::${getOrCreateTokenCacheKey(token)}`;
-}
-
-const machineDataKeyCache = new Map<string, Uint8Array | null>();
-const tokenCacheKeyByToken = new Map<string, string>();
+const machineTransportCache = new Map<string, ScopedMachineTransport>();
+const machineTransportResolutions = createScopedResolutionSingleFlight<ScopedMachineTransport | null>();
 
 function readMaxMachineKeyCacheEntriesFromEnv(): number {
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX ?? '').trim();
@@ -51,33 +33,33 @@ function readMaxMachineKeyCacheEntriesFromEnv(): number {
     return Math.max(1, Math.min(10_000, parsed));
 }
 
-function getMachineDataKeyFromCache(cacheKey: string): Uint8Array | null | undefined {
-    const existing = machineDataKeyCache.get(cacheKey);
+function getMachineTransportFromCache(cacheKey: string): ScopedMachineTransport | undefined {
+    const existing = machineTransportCache.get(cacheKey);
     if (existing === undefined) return undefined;
     // Refresh LRU ordering.
-    machineDataKeyCache.delete(cacheKey);
-    machineDataKeyCache.set(cacheKey, existing);
+    machineTransportCache.delete(cacheKey);
+    machineTransportCache.set(cacheKey, existing);
     return existing;
 }
 
-function setMachineDataKeyCache(cacheKey: string, value: Uint8Array | null): void {
-    machineDataKeyCache.set(cacheKey, value);
+function setMachineTransportCache(cacheKey: string, value: ScopedMachineTransport): void {
+    machineTransportCache.set(cacheKey, value);
 
     const max = readMaxMachineKeyCacheEntriesFromEnv();
-    while (machineDataKeyCache.size > max) {
-        const oldest = machineDataKeyCache.keys().next();
+    while (machineTransportCache.size > max) {
+        const oldest = machineTransportCache.keys().next();
         if (oldest.done) break;
-        machineDataKeyCache.delete(oldest.value);
+        machineTransportCache.delete(oldest.value);
     }
 }
 
-async function fetchMachineDataKey(params: Readonly<{
+async function fetchMachineTransport(params: Readonly<{
     serverUrl: string;
     token: string;
     machineId: string;
-    decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+    decryptEncryptionKey?: (value: string) => Promise<Uint8Array | null>;
     timeoutMs: number;
-}>): Promise<Uint8Array | null> {
+}>): Promise<ScopedMachineTransport | null> {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timeoutId = controller
         ? setTimeout(() => controller.abort(), Math.max(1, params.timeoutMs))
@@ -87,7 +69,7 @@ async function fetchMachineDataKey(params: Readonly<{
         const response = await runtimeFetchWithServerReachability({
             serverUrl: params.serverUrl,
             token: params.token,
-            url: `${params.serverUrl}/v1/machines`,
+            url: `${params.serverUrl}/v1/machines/${encodeURIComponent(params.machineId)}`,
             init: {
                 method: 'GET',
                 headers: {
@@ -105,14 +87,30 @@ async function fetchMachineDataKey(params: Readonly<{
             return null;
         }
 
-        const machines = await response.json() as Array<{
-            id: string;
-            dataEncryptionKey?: string | null;
-        }>;
-        const machine = machines.find((item) => normalizeId(item.id) === params.machineId);
-        if (!machine?.dataEncryptionKey) return null;
+        const body = await response.json() as {
+            machine?: {
+                id?: unknown;
+                dataEncryptionKey?: unknown;
+            };
+        };
+        const machine = body?.machine;
+        if (normalizeId(machine?.id) !== params.machineId) {
+            return null;
+        }
+        if (!machine?.dataEncryptionKey) {
+            return null;
+        }
+        if (
+            typeof machine.dataEncryptionKey === 'string'
+            && isPlainMachineDataKeyMarker(machine.dataEncryptionKey)
+        ) {
+            return { mode: 'plain' };
+        }
+        if (typeof machine.dataEncryptionKey !== 'string') return null;
+        if (!params.decryptEncryptionKey) return null;
 
-        return await params.decryptEncryptionKey(machine.dataEncryptionKey);
+        const dataKey = await params.decryptEncryptionKey(machine.dataEncryptionKey);
+        return dataKey ? { mode: 'e2ee', dataKey } : null;
     } catch (error) {
         if (isTerminalAuthError(error)) {
             throw error;
@@ -123,37 +121,50 @@ async function fetchMachineDataKey(params: Readonly<{
     }
 }
 
-export async function resolveScopedMachineDataKey(params: Readonly<{
+export async function resolveScopedMachineTransport(params: Readonly<{
     serverId: string;
     serverUrl: string;
     token: string;
     machineId: string;
-    decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+    decryptEncryptionKey?: (value: string) => Promise<Uint8Array | null>;
     timeoutMs?: number;
-}>): Promise<Uint8Array | null> {
+}>): Promise<ScopedMachineTransport | null> {
     const machineId = normalizeId(params.machineId);
     const serverId = normalizeId(params.serverId);
     const token = String(params.token ?? '');
     const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
-    const keyCacheKey = toMachineDataKeyCacheKey(serverId, machineId, token);
+    const keyCacheKey = toMachineTransportCacheKey(serverId, machineId, token);
 
-    let machineDataKey = getMachineDataKeyFromCache(keyCacheKey);
-    if (machineDataKey === undefined) {
-        machineDataKey = await fetchMachineDataKey({
+    const cached = getMachineTransportFromCache(keyCacheKey);
+    if (cached !== undefined) {
+        return cached;
+    }
+
+    // Coalesce the burst. The cache is read-await-write, so without this every concurrent
+    // caller misses and repeats the whole machine lookup plus its asymmetric envelope
+    // open; the new-session screen's capability preflights fan out ~8-10 of those against
+    // one machine at once. `keyCacheKey` covers the target server, the machine and the
+    // bearer token, and the token determines the credentials the caller's
+    // `decryptEncryptionKey` was built from — so a joiner can only ever adopt a result
+    // computed from its own inputs.
+    const transport = await machineTransportResolutions.run(keyCacheKey, async () => {
+        const resolved = await fetchMachineTransport({
             serverUrl: params.serverUrl,
             token,
             machineId,
             decryptEncryptionKey: params.decryptEncryptionKey,
             timeoutMs,
         });
-        if (machineDataKey) {
-            setMachineDataKeyCache(keyCacheKey, machineDataKey);
+        if (resolved && (resolved.mode === 'plain' || resolved.dataKey)) {
+            setMachineTransportCache(keyCacheKey, resolved);
         }
-    }
-    return machineDataKey ?? null;
+        return resolved;
+    });
+    return transport ?? null;
 }
 
-export function resetScopedMachineDataKeyCacheForTests(): void {
-    machineDataKeyCache.clear();
-    tokenCacheKeyByToken.clear();
+export function resetScopedMachineTransportCacheForTests(): void {
+    machineTransportCache.clear();
+    machineTransportResolutions.reset();
+    resetScopedCacheTokenKeysForTests();
 }

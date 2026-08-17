@@ -20,6 +20,8 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800, headerMaxWidth: 800 },
+    useLayoutMaxWidth: () => 800,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 800 }),
 }));
 
 const storageSettings: Settings = {
@@ -159,10 +161,6 @@ vi.mock('@/components/ui/feedback/Shaker', () => ({
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
-}));
-
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
 }));
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
@@ -310,6 +308,9 @@ describe('AgentInput (action menu popover props)', () => {
         captured.last = null;
         vi.doMock('@/components/autocomplete/useActiveSuggestions', () => ({
             useActiveSuggestions: () => [[{
+                // `kind` is the registry lookup the row mapper resolves its section
+                // header and icon from; every suggestion carries one.
+                kind: 'slashCommand',
                 key: 'slash-command',
                 text: '/mcp',
                 label: '/mcp',
@@ -324,7 +325,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={['/']}
+                    autocompleteKinds={['slashCommand']}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -342,7 +343,7 @@ describe('AgentInput (action menu popover props)', () => {
     it('ignores autocomplete suggestions whose component is missing instead of crashing', async () => {
         vi.resetModules();
         vi.doMock('@/components/autocomplete/useActiveSuggestions', () => ({
-            useActiveSuggestions: () => [[{ key: 'broken', text: '/broken', component: undefined }], 0, () => {}, () => {}],
+            useActiveSuggestions: () => [[{ kind: 'slashCommand', key: 'broken', text: '/broken', component: undefined }], 0, () => {}, () => {}],
         }));
 
         const { AgentInput } = await import('./AgentInput');
@@ -353,7 +354,7 @@ describe('AgentInput (action menu popover props)', () => {
                 placeholder="Type"
                 onChangeText={() => {}}
                 onSend={() => {}}
-                autocompletePrefixes={['/']}
+                autocompleteKinds={['slashCommand']}
                 autocompleteSuggestions={async () => []}
             />,
         )).resolves.toEqual(expect.objectContaining({ tree: expect.anything() }));
@@ -370,7 +371,7 @@ describe('AgentInput (action menu popover props)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     onPermissionModeChange={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -403,7 +404,7 @@ describe('AgentInput (action menu popover props)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     onPermissionModeChange={onPermissionModeChange}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -450,7 +451,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
@@ -521,7 +522,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
@@ -587,7 +588,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
@@ -649,7 +650,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
@@ -712,7 +713,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
@@ -769,7 +770,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     agentType={"codex" as any}
                     onAgentClick={() => {}}
@@ -824,7 +825,7 @@ describe('AgentInput (action menu popover props)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     resumeSessionId="session-42"
                     resumePopover={{
@@ -955,7 +956,7 @@ describe('AgentInput (action menu popover props)', () => {
                 placeholder="Type"
                 onChangeText={() => {}}
                 onSend={() => {}}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
                 extraActionChips={[checkoutChip]}
             />,

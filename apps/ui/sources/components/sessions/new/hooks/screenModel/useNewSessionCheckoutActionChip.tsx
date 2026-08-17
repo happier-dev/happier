@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -17,6 +16,8 @@ import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { isFirstPartyGitScmBackendId } from '@/scm/registry/firstPartyScmBackendIdentity';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 
 import {
     buildWorktreeSelectionListSteps,
@@ -26,6 +27,57 @@ import {
 
 const CHIP_KEY = 'new-session-checkout';
 const WORKTREE_RELATIVE_TIME_TICK_MS = 60_000;
+
+/**
+ * Module scope on purpose. The chip descriptor below is rebuilt whenever any of its inputs move —
+ * including the once-a-minute tick that keeps the picker's relative times fresh. A component
+ * declared inside that rebuild would be a new type each time, so React would unmount and remount the
+ * chip on a timer, dropping its press state and re-running the popover bridge below as if it were a
+ * fresh mount. Everything the chip used to close over arrives as props instead.
+ */
+function CheckoutChip(props: Readonly<{
+    ctx: AgentInputExtraActionChipRenderContext;
+    label: string;
+    checkoutPickerOpen: boolean;
+    setCheckoutPickerOpen: React.Dispatch<React.SetStateAction<boolean>>;
+}>) {
+    const { ctx, checkoutPickerOpen, setCheckoutPickerOpen } = props;
+    const toggleCollapsedPopover = ctx.toggleCollapsedPopover;
+
+    React.useEffect(() => {
+        if (!checkoutPickerOpen) return;
+        // Bridge the legacy auto-open state into the shared overlay controller so the checkout picker
+        // participates in the global "only one popover open" behaviour. `checkoutPickerOpen` is a
+        // dependency because the chip now survives the rebuild that used to remount it.
+        toggleCollapsedPopover?.(CHIP_KEY);
+        setCheckoutPickerOpen(false);
+    }, [toggleCollapsedPopover, checkoutPickerOpen, setCheckoutPickerOpen]);
+
+    return (
+        <Pressable
+            ref={ctx.chipAnchorRef}
+            testID="new-session-checkout-chip"
+            onPress={() => {
+                if (toggleCollapsedPopover) {
+                    toggleCollapsedPopover(CHIP_KEY);
+                    return;
+                }
+                setCheckoutPickerOpen((current) => !current);
+            }}
+            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+            style={({ pressed }) => ctx.chipStyle(pressed)}
+            accessibilityRole="button"
+            accessibilityLabel={t('newSession.checkout.selectTitle')}
+        >
+            {normalizeNodeForView(<Icon name="stack-simple" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
+            {ctx.showLabel ? (
+                <Text numberOfLines={1} style={ctx.textStyle}>
+                    {props.label}
+                </Text>
+            ) : null}
+        </Pressable>
+    );
+}
 
 function useWorktreePickerNowMs(): number {
     const [nowMs, setNowMs] = React.useState(() => Date.now());
@@ -182,43 +234,6 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
             : optionsById[params.checkoutChipModel.selectedOptionId]?.label
                 ?? t('newSession.checkout.noWorktree');
 
-        function CheckoutChip(props: { ctx: AgentInputExtraActionChipRenderContext }) {
-            const { ctx } = props;
-
-            React.useEffect(() => {
-                if (!params.checkoutPickerOpen) return;
-                // Bridge the legacy auto-open state into the shared overlay controller so the checkout picker
-                // participates in the global "only one popover open" behaviour.
-                ctx.toggleCollapsedPopover?.(CHIP_KEY);
-                params.setCheckoutPickerOpen(false);
-            }, [ctx.toggleCollapsedPopover]);
-
-            return (
-                <Pressable
-                    ref={ctx.chipAnchorRef}
-                    testID="new-session-checkout-chip"
-                    onPress={() => {
-                        if (ctx.toggleCollapsedPopover) {
-                            ctx.toggleCollapsedPopover(CHIP_KEY);
-                            return;
-                        }
-                        params.setCheckoutPickerOpen((current) => !current);
-                    }}
-                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                    style={({ pressed }) => ctx.chipStyle(pressed)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('newSession.checkout.selectTitle')}
-                >
-                    {normalizeNodeForView(<Ionicons name="layers-outline" size={16} color={ctx.iconColor} />)}
-                    {ctx.showLabel ? (
-                        <Text numberOfLines={1} style={ctx.textStyle}>
-                            {selectedLabel}
-                        </Text>
-                    ) : null}
-                </Pressable>
-            );
-        }
-
         return {
             key: CHIP_KEY,
             controlId: 'checkout',
@@ -226,7 +241,7 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                 presentation: 'list',
                 title: t('newSession.checkout.selectTitle'),
                 label: selectedLabel,
-                icon: (tint: string) => normalizeNodeForView(<Ionicons name="layers-outline" size={16} color={tint} />),
+                icon: (tint: string) => normalizeNodeForView(<Icon name="stack-simple" size={16} color={tint} />),
                 rootStep,
                 selectedOptionId: pendingWorktreeName
                     ? PENDING_GIT_WORKTREE_OPTION_ID
@@ -240,7 +255,14 @@ export function useNewSessionCheckoutActionChip(params: Readonly<{
                 maxWidthCap: 720,
                 heightBehavior: 'stabilizedContentHeight',
             },
-            render: (ctx) => <CheckoutChip ctx={ctx} />,
+            render: (ctx) => (
+                <CheckoutChip
+                    ctx={ctx}
+                    label={selectedLabel}
+                    checkoutPickerOpen={params.checkoutPickerOpen}
+                    setCheckoutPickerOpen={params.setCheckoutPickerOpen}
+                />
+            ),
         };
     }, [
         params.checkoutChipModel,

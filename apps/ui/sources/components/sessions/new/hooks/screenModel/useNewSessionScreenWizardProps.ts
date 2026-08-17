@@ -133,7 +133,8 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
     >;
     footer: Pick<
         NewSessionWizardParams,
-        | 'sessionPrompt'
+        | 'promptStore'
+        | 'composerDocument'
         | 'setSessionPrompt'
         | 'handleCreateSession'
         | 'canCreate'
@@ -142,9 +143,8 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'providerLaunchError'
         | 'retryProviderLaunch'
         | 'submitAccessibilityLabel'
-        | 'emptyAutocompletePrefixes'
+        | 'emptyAutocompleteKinds'
         | 'emptyAutocompleteSuggestions'
-        | 'onAutocompleteSuggestionSelect'
         | 'connectionStatus'
         | 'machinePopover'
         | 'pathPopover'
@@ -153,6 +153,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'isResumeSupportChecking'
         | 'sessionPromptInputMaxHeight'
         | 'agentInputExtraActionChips'
+        | 'sourceContextPresentation'
         | 'attachmentFlowId'
         | 'statusBadges'
     >;

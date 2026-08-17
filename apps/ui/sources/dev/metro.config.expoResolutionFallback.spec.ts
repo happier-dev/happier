@@ -80,6 +80,46 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         expect(fs.existsSync(String(result?.filePath))).toBe(true);
     });
 
+    it('resolves the patched enriched-markdown streaming reveal module without Metro package exports', () => {
+        // metro.config.js is CommonJS; replace the cached Sentry factory because Vitest's ESM
+        // mocks do not intercept its require() call.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const sentryMetro = require('@sentry/react-native/metro');
+        const originalGetSentryExpoConfig = sentryMetro.getSentryExpoConfig;
+        const genericResolver = vi.fn(() => {
+            throw new Error('generic Metro resolution rejected a private package subpath');
+        });
+        sentryMetro.getSentryExpoConfig = (...args: Parameters<typeof originalGetSentryExpoConfig>) => {
+            const originalConfig = originalGetSentryExpoConfig(...args);
+            return {
+                ...originalConfig,
+                resolver: {
+                    ...originalConfig.resolver,
+                    resolveRequest: genericResolver,
+                },
+            };
+        };
+
+        try {
+            const config = requireFreshMetroConfig();
+            const result = config.resolver.resolveRequest(
+                { resolveRequest: genericResolver },
+                'react-native-enriched-markdown/lib/module/web/streamingReveal.js',
+                'windows',
+            );
+            const expectedPath = path.resolve(
+                __dirname,
+                '../../node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js',
+            );
+
+            expect(result).toEqual({ type: 'sourceFile', filePath: expectedPath });
+            expect(fs.existsSync(expectedPath)).toBe(true);
+            expect(genericResolver).not.toHaveBeenCalled();
+        } finally {
+            sentryMetro.getSentryExpoConfig = originalGetSentryExpoConfig;
+        }
+    });
+
     it('rewrites @noble/hashes/crypto.js to an exported subpath', () => {
         const config = requireFreshMetroConfig();
 
@@ -143,6 +183,16 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
             type: 'sourceFile',
             filePath: path.resolve(__dirname, '../../../../packages/plugins/opencode/src/index.ts'),
         });
+
+        const realtimeVoiceResult = config.resolver.resolveRequest(
+            {},
+            '@happier-dev/protocol/voice/realtime',
+            'web',
+        );
+        expect(realtimeVoiceResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/protocol/src/voice/realtime/index.ts'),
+        });
     });
 
     it('resolves browser-safe plugin leaf exports without pulling broad agent barrels', () => {
@@ -163,6 +213,24 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
             type: 'sourceFile',
             filePath: path.resolve(__dirname, '../../../../packages/plugins/claude/src/agent/permissions/requestSource.ts'),
         });
+    });
+
+    it('ignores internal workspace dist publications while continuing to watch source', () => {
+        process.env.HAPPIER_STACK_STACK = 'qa-test';
+        delete process.env.CI;
+        delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
+        delete process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS;
+
+        const config = requireFreshMetroConfig();
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const isBlocked = (filePath: string) => blockList.some(
+            (pattern: RegExp | undefined) => pattern instanceof RegExp && pattern.test(filePath),
+        );
+
+        expect(isBlocked(path.resolve(__dirname, '../../../../packages/agents/dist/models.js'))).toBe(true);
+        expect(isBlocked(path.resolve(__dirname, '../../../../packages/agents/src/models.ts'))).toBe(false);
     });
 
     it('preserves platform conditions when resolving internal workspace exports from source', () => {
@@ -243,6 +311,7 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
             type: 'sourceFile',
             filePath: path.resolve(__dirname, '../../../../packages/protocol/src/rpc/socket.ts'),
         });
+
     });
 
     it('falls back from missing internal workspace dist subpath exports to source files', () => {
@@ -262,6 +331,32 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         const config = requireFreshMetroConfig();
 
         const actionsResult = config.resolver.resolveRequest({}, '@happier-dev/protocol/actions', 'web');
+        expect(actionsResult).toEqual({
+            type: 'sourceFile',
+            filePath: path.resolve(__dirname, '../../../../packages/protocol/src/actions/index.ts'),
+        });
+    });
+
+    it('falls back from missing absolute internal workspace dist targets to source files', () => {
+        process.env.HAPPIER_STACK_STACK = 'qa-test';
+        delete process.env.CI;
+        delete process.env.EXPO_NO_METRO_WORKSPACE_ROOT;
+        delete process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS;
+
+        const missingDistTarget = path.resolve(
+            __dirname,
+            '../../../../node_modules/@happier-dev/protocol/dist/actions/index.js',
+        );
+        const realExistsSync = fs.existsSync.bind(fs);
+        vi.spyOn(fs, 'existsSync').mockImplementation((candidate) => (
+            path.normalize(String(candidate)) === path.normalize(missingDistTarget)
+                ? false
+                : realExistsSync(candidate)
+        ));
+
+        const config = requireFreshMetroConfig();
+
+        const actionsResult = config.resolver.resolveRequest({}, missingDistTarget, 'web');
         expect(actionsResult).toEqual({
             type: 'sourceFile',
             filePath: path.resolve(__dirname, '../../../../packages/protocol/src/actions/index.ts'),

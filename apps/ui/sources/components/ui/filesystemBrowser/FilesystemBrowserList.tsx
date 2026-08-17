@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -9,6 +8,7 @@ import { Typography } from '@/constants/Typography';
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE = 38;
 type FilesystemBrowserListNode = FilesystemBrowserListProps['nodes'][number];
@@ -44,7 +44,7 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
                     gap: 10,
                 }}
             >
-                <Ionicons name="alert-circle-outline" size={16} color={theme.colors.text.secondary} />
+                <Icon name="warning-circle" size={16} color={theme.colors.text.secondary} />
                 <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {props.inlineRetryLabel}
                 </Text>

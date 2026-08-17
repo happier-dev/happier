@@ -54,6 +54,8 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 720 },
+    useLayoutMaxWidth: () => 720,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 720 }),
 }));
 
 vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({

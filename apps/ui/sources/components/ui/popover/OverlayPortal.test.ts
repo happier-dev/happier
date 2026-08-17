@@ -19,6 +19,20 @@ installPopoverCommonModuleMocks({
     },
 });
 
+function findPointerEventsInStyle(style: unknown): unknown {
+    if (Array.isArray(style)) {
+        for (let index = style.length - 1; index >= 0; index -= 1) {
+            const resolved = findPointerEventsInStyle(style[index]);
+            if (resolved !== undefined) return resolved;
+        }
+        return undefined;
+    }
+    if (style && typeof style === 'object' && 'pointerEvents' in style) {
+        return (style as { pointerEvents?: unknown }).pointerEvents;
+    }
+    return undefined;
+}
+
 describe('OverlayPortalProvider', () => {
     it('does not re-render its children when portal nodes change', async () => {
         const { OverlayPortalHost, OverlayPortalProvider, useOverlayPortal } = await import('./OverlayPortal');
@@ -106,7 +120,7 @@ describe('OverlayPortalProvider', () => {
         expect(renderCount).toBe(1);
     });
 
-    it('renders the host view as non-collapsable (enables reliable native measurement)', async () => {
+    it('renders the host view as non-collapsable without intercepting web descendants', async () => {
         const { OverlayPortalHost, OverlayPortalProvider, useOverlayPortal } = await import('./OverlayPortal');
 
         let dispatch: ReturnType<typeof useOverlayPortal> | null = null;
@@ -130,9 +144,14 @@ describe('OverlayPortalProvider', () => {
         const hosts = screen.tree.root.findAll((node: any) => (
             node?.type === 'View'
             && node?.props?.collapsable === false
-            && typeof node?.props?.pointerEvents === 'string'
         ));
         expect(hosts.length).toBeGreaterThan(0);
+        expect(
+            hosts.some((host: any) => (
+                host?.props?.pointerEvents === 'box-none'
+                || findPointerEventsInStyle(host?.props?.style) === 'box-none'
+            )),
+        ).toBe(true);
     });
 
     it('allows callers to lower the host z-index for screen-level portals that must sit below modals', async () => {

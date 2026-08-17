@@ -58,6 +58,10 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     groupOptionsByServiceId: ConnectedServicesAccountGroupOptionsByServiceId;
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
     defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
+    /** Connected-account-only consumers can suppress the implicit local CLI auth fallback. */
+    includeNativeAuthOption?: boolean;
+    /** Exact-binding consumers can prevent stale selections from visually adopting a different default profile. */
+    allowDefaultProfileFallback?: boolean;
     quotaBadgesByKey: Readonly<Record<string, ReadonlyArray<ConnectedServicesSelectionListBadge> | undefined>>;
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     onOpenSettings: (serviceId: string) => void;
@@ -175,11 +179,13 @@ export function buildNewSessionConnectedServicesSelectionListModel(
         const effectiveProfileId = binding?.source === 'connected' && binding.selection !== 'group'
             ? explicitProfileId && connectedProfileIds.includes(explicitProfileId)
                 ? explicitProfileId
-                : resolveConnectedServiceDefaultProfileId({
-                    serviceId,
-                    connectedProfileIds,
-                    defaultProfileByServiceId: params.defaultProfileIdByServiceId ?? {},
-                })
+                : params.allowDefaultProfileFallback === false
+                    ? null
+                    : resolveConnectedServiceDefaultProfileId({
+                        serviceId,
+                        connectedProfileIds,
+                        defaultProfileByServiceId: params.defaultProfileIdByServiceId ?? {},
+                    })
             : null;
         const usesConnectedProfile = Boolean(effectiveProfileId);
         const options: SelectionListOption[] = [];
@@ -281,26 +287,28 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             });
         }
 
-        const nativeOptionId = createNativeServiceOptionId(serviceId);
-        const nativeSelected = !usesConnectedProfile && !usesConnectedGroup;
-        const nativeBinding = { source: 'native' } satisfies ConnectedServicesServiceBinding;
-        const nativeAvailability = resolveAvailability({
-            rootParams: params,
-            serviceId,
-            optionId: nativeOptionId,
-            binding: nativeBinding,
-        });
-        if (nativeSelected && firstSelectedOptionId === null) firstSelectedOptionId = nativeOptionId;
-        const nativeLabel = params.translate('connectedServices.authModal.nativeAuthTitle');
-        options.push({
-            id: nativeOptionId,
-            label: nativeLabel,
-            subtitle: nativeAvailability.subtitle ?? params.translate('connectedServices.authModal.nativeAuthSubtitle'),
-            accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: nativeLabel }),
-            icon: params.renderSelectionIcon({ selected: nativeSelected, variant: nativeAvailability.disabled ? 'warning' : 'default' }),
-            disabled: nativeAvailability.disabled === true,
-            onSelect: () => params.setBindingForService(serviceId, nativeBinding),
-        });
+        if (params.includeNativeAuthOption !== false) {
+            const nativeOptionId = createNativeServiceOptionId(serviceId);
+            const nativeSelected = !usesConnectedProfile && !usesConnectedGroup;
+            const nativeBinding = { source: 'native' } satisfies ConnectedServicesServiceBinding;
+            const nativeAvailability = resolveAvailability({
+                rootParams: params,
+                serviceId,
+                optionId: nativeOptionId,
+                binding: nativeBinding,
+            });
+            if (nativeSelected && firstSelectedOptionId === null) firstSelectedOptionId = nativeOptionId;
+            const nativeLabel = params.translate('connectedServices.authModal.nativeAuthTitle');
+            options.push({
+                id: nativeOptionId,
+                label: nativeLabel,
+                subtitle: nativeAvailability.subtitle ?? params.translate('connectedServices.authModal.nativeAuthSubtitle'),
+                accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: nativeLabel }),
+                icon: params.renderSelectionIcon({ selected: nativeSelected, variant: nativeAvailability.disabled ? 'warning' : 'default' }),
+                disabled: nativeAvailability.disabled === true,
+                onSelect: () => params.setBindingForService(serviceId, nativeBinding),
+            });
+        }
 
         if (connectedProfiles.length === 0) {
             const connectLabel = params.translate('connectedServices.authModal.notConnectedTitle');

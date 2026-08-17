@@ -7,12 +7,13 @@ import {
 } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ensureSidechainMessagesLoadedMock = vi.fn();
 
-let settings: Record<string, unknown> = {};
+let settings: Partial<Settings> = {};
 
 installToolShellCommonModuleMocks({
     storage: async (importOriginal) => {
@@ -20,7 +21,7 @@ installToolShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: createUseSettingMock({ fallback: (key) => settings[key] }),
+                useSetting: createUseSettingMock({ fallback: (key) => settings[key] ?? settingsDefaults[key] }),
             },
         });
     },

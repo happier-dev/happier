@@ -2,12 +2,59 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
+
+const mountedTarget = {
+    pluginId: 'acme.preview',
+    immutableGenerationId: 'target-generation-a',
+} as const;
+
+function targetedSnapshot(
+    target: Readonly<{ pluginId: string; immutableGenerationId: string }> = mountedTarget,
+) {
+    return {
+        target,
+        points: [],
+    } as const;
+}
+
+function automationEligibleEventsSnapshot() {
+    return [{
+        event: {
+            id: 'acme.events/repository/updated',
+            identity: { pluginId: 'acme.events', localId: 'repository/updated' },
+            immutableGenerationId: 'event-generation-a',
+            title: 'Repository updated',
+            description: null,
+            payloadSchema: { type: 'object', additionalProperties: false },
+            automation: {
+                v: 1,
+                eligible: true,
+                source: {
+                    sourceContractVersion: 1,
+                    supportedObservationTransports: ['checkpointedPull'],
+                    sourceConfigSchema: { type: 'object', additionalProperties: false },
+                    setupActionRef: { pluginId: 'acme.events', localId: 'configure-source' },
+                },
+            },
+        },
+        setupAction: {
+            id: 'acme.events/configure-source',
+            identity: { pluginId: 'acme.events', localId: 'configure-source' },
+            immutableGenerationId: 'event-generation-a',
+            title: 'Configure source',
+            description: null,
+            inputSchema: { type: 'object', additionalProperties: false },
+            inputHints: null,
+        },
+    }] as const;
+}
 
 describe('machine contribution registry projection ops', () => {
     beforeEach(() => {
@@ -59,12 +106,18 @@ describe('machine contribution registry projection ops', () => {
             createdAt: null,
             isEmbeddedLaunch: true,
         }));
+        vi.doMock('@/components/plugins/hostedWeb/hostedWebFrameCapability', () => ({
+            resolveHostedWebFrameCapability: () => platform === 'web'
+                ? { platform: 'web' as const, adapter: 'domIframe' as const }
+                : null,
+        }));
     }
 
     it('routes projection.describe through server-scoped machine rpc', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             protocolVersion: 1,
             projection: { v: 1, agentsById: {}, backendsById: {} },
+            automationEligibleEvents: automationEligibleEventsSnapshot(),
         });
         const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
 
@@ -77,6 +130,7 @@ describe('machine contribution registry projection ops', () => {
                 agentsById: {},
                 backendsById: {},
             }),
+            automationEligibleEvents: automationEligibleEventsSnapshot(),
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
@@ -84,6 +138,52 @@ describe('machine contribution registry projection ops', () => {
             method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
             payload: expect.objectContaining({ machineId: 'machine-1' }),
         }));
+    });
+
+    it('forwards one exact mounted target and preserves only its matching admitted snapshot', async () => {
+        const targetedSurfaceMounts = [] as const;
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            protocolVersion: 1,
+            projection: { v: 1, agentsById: {}, backendsById: {} },
+            targetedContributions: targetedSnapshot(),
+            targetedSurfaceMounts,
+        });
+        const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
+
+        const res = await machineContributionRegistryProjectionDescribe('machine-1', {
+            serverId: 'server-a',
+            mountedTarget,
+        });
+
+        expect(res).toEqual({
+            supported: true,
+            projection: expect.objectContaining({ v: 1 }),
+            targetedContributions: targetedSnapshot(),
+            targetedSurfaceMounts,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({
+                machineId: 'machine-1',
+                mountedTarget,
+            }),
+        }));
+    });
+
+    it('rejects a targeted snapshot whose target differs from the requested current generation', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            protocolVersion: 1,
+            projection: { v: 1, agentsById: {}, backendsById: {} },
+            targetedContributions: targetedSnapshot({
+                pluginId: 'acme.preview',
+                immutableGenerationId: 'target-generation-b',
+            }),
+        });
+        const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
+
+        await expect(machineContributionRegistryProjectionDescribe('machine-1', {
+            serverId: 'server-a',
+            mountedTarget,
+        })).resolves.toEqual({ supported: false, reason: 'error' });
     });
 
     it('coalesces concurrent projection reads for the same current scope', async () => {
@@ -113,6 +213,57 @@ describe('machine contribution registry projection ops', () => {
             expect.anything(),
         ]);
         expect(issuedRpcCount).toBe(1);
+    });
+
+    it('does not join an in-flight fallback projection after the browser observes an exact frame fact', async () => {
+        let browserFrameReady = false;
+        const pendingResolvers: Array<(value: unknown) => void> = [];
+        vi.doMock('@/components/plugins/hostedWeb/hostedWebFrameCapability', () => ({
+            resolveHostedWebFrameCapability: () => browserFrameReady
+                ? { platform: 'web' as const, adapter: 'domIframe' as const }
+                : null,
+        }));
+        machineRpcWithServerScopeMock.mockImplementation(async () => await new Promise((resolve) => {
+            pendingResolvers.push(resolve);
+        }));
+        const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
+
+        const beforeBrowserFrame = machineContributionRegistryProjectionDescribe('machine-1', {
+            serverId: 'server-a',
+            timeoutMs: 5_000,
+        });
+        await Promise.resolve();
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        browserFrameReady = true;
+        const afterBrowserFrame = machineContributionRegistryProjectionDescribe('machine-1', {
+            serverId: 'server-a',
+            timeoutMs: 5_000,
+        });
+
+        await Promise.resolve();
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+        expect(pendingResolvers).toHaveLength(2);
+        expect(machineRpcWithServerScopeMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            payload: expect.not.objectContaining({
+                hostedWebFrameCapability: expect.anything(),
+            }),
+        }));
+        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+            payload: expect.objectContaining({
+                hostedWebFrameCapability: {
+                    platform: 'web',
+                    adapter: 'domIframe',
+                },
+            }),
+        }));
+
+        for (const resolve of pendingResolvers) {
+            resolve({
+                protocolVersion: 1,
+                projection: { v: 1, agentsById: {}, backendsById: {} },
+            });
+        }
+        await expect(Promise.all([beforeBrowserFrame, afterBrowserFrame])).resolves.toHaveLength(2);
     });
 
     it('does not join a pre-reconnect projection flight after the caller advances its request epoch', async () => {
@@ -249,6 +400,10 @@ describe('machine contribution registry projection ops', () => {
             timeoutMs: 5_000,
             signal: controller.signal,
         });
+        // Desktop capability discovery is an async native boundary. Wait for
+        // the shared flight to issue before exercising waiter-only cancellation.
+        await Promise.resolve();
+        await Promise.resolve();
         controller.abort();
         resolveRpc({
             protocolVersion: 1,
@@ -268,30 +423,35 @@ describe('machine contribution registry projection ops', () => {
             .mockResolvedValueOnce({
                 protocolVersion: 1,
                 pluginId: 'acme.hooks',
-                storageScope: 'local',
+                scope: { kind: 'daemon' },
                 revision: '3',
                 values: { endpoint: 'https://api.example.test' },
                 redactedKeys: ['apiToken'],
             })
             .mockResolvedValueOnce({
-                protocolVersion: 1,
-                pluginId: 'acme.hooks',
-                storageScope: 'local',
-                revision: '4',
-                values: { endpoint: 'https://api.changed.test' },
-                redactedKeys: ['apiToken'],
+                status: 'applied',
+                snapshot: {
+                    protocolVersion: 1,
+                    pluginId: 'acme.hooks',
+                    scope: { kind: 'daemon' },
+                    revision: '4',
+                    values: { endpoint: 'https://api.changed.test' },
+                    redactedKeys: ['apiToken'],
+                },
             });
         const mod = await import('./machineContributionRegistryProjection');
 
         const snapshot = await mod.machinePluginSettingsGet('machine-1', {
             serverId: 'server-a',
+            serverIdentityId: 'srv_server_a',
             pluginId: 'acme.hooks',
         });
         const updated = await mod.machinePluginSettingsSet('machine-1', {
             serverId: 'server-a',
+            serverIdentityId: 'srv_server_a',
             pluginId: 'acme.hooks',
             fieldId: 'endpoint',
-            value: 'https://api.changed.test',
+            mutation: { kind: 'set', value: 'https://api.changed.test' },
             expectedRevision: '3',
         });
 
@@ -304,18 +464,23 @@ describe('machine contribution registry projection ops', () => {
         });
         expect(updated).toEqual({
             supported: true,
-            snapshot: expect.objectContaining({
-                values: { endpoint: 'https://api.changed.test' },
-                redactedKeys: ['apiToken'],
-            }),
+            result: {
+                status: 'applied',
+                snapshot: expect.objectContaining({
+                    values: { endpoint: 'https://api.changed.test' },
+                    redactedKeys: ['apiToken'],
+                }),
+            },
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET,
             payload: {
+                serverIdentityId: 'srv_server_a',
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
+                scope: { kind: 'daemon' },
             },
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
@@ -323,71 +488,224 @@ describe('machine contribution registry projection ops', () => {
             serverId: 'server-a',
             method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET,
             payload: {
+                serverIdentityId: 'srv_server_a',
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
+                scope: { kind: 'daemon' },
                 fieldId: 'endpoint',
-                value: 'https://api.changed.test',
+                mutation: { kind: 'set', value: 'https://api.changed.test' },
                 expectedRevision: '3',
             },
         }));
     });
 
-    it('routes structured-message resolution through the generation-leased daemon RPC', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            ok: false,
-            code: 'plugin_structured_message_payload_invalid',
-            reason: 'invalid_payload',
-        });
-        const { machinePluginStructuredMessageResolve } = await import('./machineContributionRegistryProjection');
+    it('forwards daemon Settings invalidation as revision-only parked watches without duplicate publishes', async () => {
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({ status: 'ready', revision: 'settings-r1' })
+            .mockResolvedValueOnce({ status: 'changed', revision: 'settings-r1' })
+            .mockResolvedValueOnce({ status: 'changed', revision: 'settings-r2' })
+            .mockImplementationOnce((input: Readonly<{ signal?: AbortSignal }>) => new Promise<never>((_resolve, reject) => {
+                input.signal?.addEventListener('abort', () => {
+                    reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+                }, { once: true });
+            }));
+        const { watchMachinePluginSettingsChanges } = await import('./machineContributionRegistryProjection');
+        const onInvalidated = vi.fn();
 
-        await expect(machinePluginStructuredMessageResolve('machine-1', {
+        const watch = watchMachinePluginSettingsChanges('machine-1', {
             serverId: 'server-a',
-            expectedGeneration: '7',
-            kind: 'acme.preview/preview-card.v1',
-            payload: { previewId: 42 },
-            resourceRefs: ['preview-icon'],
-            facts: { 'plugin.enabled': true, 'session.exists': true },
-        })).resolves.toEqual({
-            supported: true,
-            resolution: {
-                ok: false,
-                code: 'plugin_structured_message_payload_invalid',
-                reason: 'invalid_payload',
-            },
+            serverIdentityId: 'srv_server_a',
+            pluginId: 'acme.hooks',
+            onInvalidated,
         });
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+
+        await vi.waitFor(() => {
+            expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(4);
+        });
+        expect(onInvalidated).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock.mock.calls.slice(0, 3).map(([input]) => input)).toEqual([
+            expect.objectContaining({
+                machineId: 'machine-1',
+                serverId: 'server-a',
+                method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_WATCH,
+                timeoutMs: 35_000,
+                payload: {
+                    serverIdentityId: 'srv_server_a',
+                    machineId: 'machine-1',
+                    pluginId: 'acme.hooks',
+                    scope: { kind: 'daemon' },
+                },
+            }),
+            expect.objectContaining({
+                payload: {
+                    serverIdentityId: 'srv_server_a',
+                    machineId: 'machine-1',
+                    pluginId: 'acme.hooks',
+                    scope: { kind: 'daemon' },
+                    knownRevision: 'settings-r1',
+                },
+            }),
+            expect.objectContaining({
+                payload: {
+                    serverIdentityId: 'srv_server_a',
+                    machineId: 'machine-1',
+                    pluginId: 'acme.hooks',
+                    scope: { kind: 'daemon' },
+                    knownRevision: 'settings-r1',
+                },
+            }),
+        ]);
+        expect(JSON.stringify(machineRpcWithServerScopeMock.mock.calls)).not.toContain('values');
+
+        watch.dispose();
+        await Promise.resolve();
+        expect(onInvalidated).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes an origin-bound daemon secret only through its exact secret custody RPCs', async () => {
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                protocolVersion: 1,
+                pluginId: 'happier.agent.opencode',
+                secretId: 'opencodeServerPassword',
+                state: 'missing',
+                revision: 'origin-1',
+            })
+            .mockResolvedValueOnce({
+                protocolVersion: 1,
+                pluginId: 'happier.agent.opencode',
+                secretId: 'opencodeServerPassword',
+                state: 'configured',
+                revision: 'origin-2',
+            })
+            .mockResolvedValueOnce({
+                protocolVersion: 1,
+                pluginId: 'happier.agent.opencode',
+                secretId: 'opencodeServerPassword',
+                state: 'missing',
+                revision: 'origin-3',
+            });
+        const mod = await import('./machineContributionRegistryProjection');
+        const identity = {
+            serverId: 'server-a',
+            serverIdentityId: 'srv_server_a',
+            pluginId: 'happier.agent.opencode',
+            secretId: 'opencodeServerPassword',
+            canonicalOrigin: 'https://opencode.example.test',
+        };
+
+        const status = await mod.machinePluginSecretStatus('machine-1', identity);
+        const created = await mod.machinePluginSecretSet('machine-1', {
+            ...identity,
+            value: 'user-entered-secret',
+            expectedRevision: 'origin-1',
+        });
+        const deleted = await mod.machinePluginSecretDelete('machine-1', {
+            ...identity,
+            expectedRevision: 'origin-2',
+        });
+
+        expect(status).toEqual({
+            supported: true,
+            result: expect.objectContaining({ state: 'missing', revision: 'origin-1' }),
+        });
+        expect(created).toEqual({
+            supported: true,
+            result: expect.objectContaining({ state: 'configured', revision: 'origin-2' }),
+        });
+        expect(deleted).toEqual({
+            supported: true,
+            result: expect.objectContaining({ state: 'missing', revision: 'origin-3' }),
+        });
+        expect(created).not.toHaveProperty('value');
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_RESOLVE,
-            payload: expect.objectContaining({
+            method: RPC_METHODS.DAEMON_PLUGIN_SECRET_STATUS,
+            payload: {
+                serverIdentityId: 'srv_server_a',
                 machineId: 'machine-1',
-                expectedGeneration: '7',
-                resourceRefs: ['preview-icon'],
-            }),
+                pluginId: 'happier.agent.opencode',
+                secretId: 'opencodeServerPassword',
+                canonicalOrigin: 'https://opencode.example.test',
+            },
+        }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: RPC_METHODS.DAEMON_PLUGIN_SECRET_SET,
+            payload: {
+                serverIdentityId: 'srv_server_a',
+                machineId: 'machine-1',
+                pluginId: 'happier.agent.opencode',
+                secretId: 'opencodeServerPassword',
+                canonicalOrigin: 'https://opencode.example.test',
+                value: 'user-entered-secret',
+                expectedRevision: 'origin-1',
+            },
+        }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+            method: RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE,
+            payload: {
+                serverIdentityId: 'srv_server_a',
+                machineId: 'machine-1',
+                pluginId: 'happier.agent.opencode',
+                secretId: 'opencodeServerPassword',
+                canonicalOrigin: 'https://opencode.example.test',
+                expectedRevision: 'origin-2',
+            },
         }));
     });
 
-    it('propagates structured-message cancellation to the server-scoped RPC owner', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            ok: false,
-            code: 'plugin_structured_message_unavailable',
-            reason: 'unavailable',
-        });
-        const { machinePluginStructuredMessageResolve } = await import('./machineContributionRegistryProjection');
-        const abortController = new AbortController();
-
-        await machinePluginStructuredMessageResolve('machine-1', {
+    it('distinguishes a failed SET before issuance from a lost acknowledgement after issuance', async () => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new Error('connection unavailable before SET emission'))
+            .mockImplementationOnce(async (input: Readonly<{ onIssued?: () => void }>) => {
+                input.onIssued?.();
+                throw new Error('SET acknowledgement lost after emission');
+            });
+        const { machinePluginSettingsSet } = await import('./machineContributionRegistryProjection');
+        const input = {
             serverId: 'server-a',
-            expectedGeneration: '7',
-            kind: 'acme.preview/preview-card.v1',
-            payload: { previewId: 'preview-1' },
-            facts: {},
-            signal: abortController.signal,
-        });
+            serverIdentityId: 'srv_server_a',
+            pluginId: 'acme.hooks',
+            fieldId: 'endpoint',
+            mutation: { kind: 'set' as const, value: 'https://api.changed.test' },
+            expectedRevision: '3',
+        };
 
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            signal: abortController.signal,
+        await expect(machinePluginSettingsSet('machine-1', input)).resolves.toEqual({
+            supported: false,
+            reason: 'error',
+        });
+        await expect(machinePluginSettingsSet('machine-1', input)).resolves.toEqual({
+            supported: false,
+            reason: 'outcomeUnknown',
+        });
+        expect(machineRpcWithServerScopeMock.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+            onIssued: expect.any(Function),
         }));
+    });
+
+    it.each([
+        RPC_ERROR_CODES.METHOD_NOT_FOUND,
+        RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    ])('treats a thrown older-daemon Settings receiver absence (%s) as unsupported', async (rpcErrorCode) => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new RpcError('older daemon receiver missing', rpcErrorCode))
+            .mockRejectedValueOnce(new RpcError('older daemon receiver missing', rpcErrorCode));
+        const mod = await import('./machineContributionRegistryProjection');
+
+        await expect(mod.machinePluginSettingsGet('machine-1', {
+            serverId: 'server-a',
+            serverIdentityId: 'srv_server_a',
+            pluginId: 'acme.hooks',
+        })).resolves.toEqual({ supported: false, reason: 'not-supported' });
+        await expect(mod.machinePluginSettingsSet('machine-1', {
+            serverId: 'server-a',
+            serverIdentityId: 'srv_server_a',
+            pluginId: 'acme.hooks',
+            fieldId: 'endpoint',
+            mutation: { kind: 'delete' },
+        })).resolves.toEqual({ supported: false, reason: 'not-supported' });
     });
 
     it('routes structured-message actions through the canonical generation-leased daemon RPC', async () => {
@@ -400,8 +718,20 @@ describe('machine contribution registry projection ops', () => {
             expectedGeneration: '7',
             qualifiedActionId: 'acme.preview/open-preview',
             input: { previewId: 'preview-1' },
+            expectedContributorImmutableGenerationId: 'contributor-generation-a',
             sessionId: 'session-1',
             executionSurface: 'ui',
+            invocation: {
+                kind: 'mountedPluginSurface',
+                mountedBinding: {
+                    contributionLocalId: 'message-preview',
+                    materializationRef: {
+                        machineId: 'machine-1',
+                        materializationId: 'materialization-preview-current',
+                        pluginId: 'acme.preview',
+                    },
+                },
+            },
             signal: abortController.signal,
         })).resolves.toEqual({
             supported: true,
@@ -416,38 +746,283 @@ describe('machine contribution registry projection ops', () => {
                 expectedGeneration: '7',
                 qualifiedActionId: 'acme.preview/open-preview',
                 input: { previewId: 'preview-1' },
+                expectedContributorImmutableGenerationId: 'contributor-generation-a',
                 sessionId: 'session-1',
                 executionSurface: 'ui',
+                invocation: {
+                    kind: 'mountedPluginSurface',
+                    mountedBinding: {
+                        contributionLocalId: 'message-preview',
+                        materializationRef: {
+                            machineId: 'machine-1',
+                            materializationId: 'materialization-preview-current',
+                            pluginId: 'acme.preview',
+                        },
+                    },
+                },
             },
             signal: abortController.signal,
         }));
     });
 
-    it('fails closed when an older daemon does not expose structured-message RPC methods', async () => {
+    it('keeps an omitted structured Action input distinct from an explicit JSON null at the daemon RPC boundary', async () => {
         machineRpcWithServerScopeMock
-            .mockResolvedValueOnce({
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
-                error: 'Method not found',
-            })
-            .mockResolvedValueOnce({
-                errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
-                error: 'Method not found',
-            });
-        const mod = await import('./machineContributionRegistryProjection');
+            .mockResolvedValueOnce({ ok: true, result: null })
+            .mockResolvedValueOnce({ ok: true, result: null });
+        const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
 
-        await expect(mod.machinePluginStructuredMessageResolve('machine-1', {
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', {
             serverId: 'server-a',
             expectedGeneration: '7',
-            kind: 'acme.preview/preview-card.v1',
-            payload: {},
-            facts: {},
-        })).resolves.toEqual({ supported: false, reason: 'not-supported' });
+            qualifiedActionId: 'acme.preview/open-preview',
+            executionSurface: 'ui',
+        })).resolves.toEqual({ supported: true, result: { ok: true, result: null } });
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/open-preview',
+            input: null,
+            executionSurface: 'ui',
+        })).resolves.toEqual({ supported: true, result: { ok: true, result: null } });
+
+        const omittedPayload = machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.payload as Readonly<Record<string, unknown>>;
+        const nullPayload = machineRpcWithServerScopeMock.mock.calls[1]?.[0]?.payload as Readonly<Record<string, unknown>>;
+        expect(Object.prototype.hasOwnProperty.call(omittedPayload, 'input')).toBe(false);
+        expect(Object.prototype.hasOwnProperty.call(nullPayload, 'input')).toBe(true);
+        expect(nullPayload.input).toBeNull();
+    });
+
+    it('fails closed when an older daemon does not expose the structured-message Action RPC', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+            error: 'Method not found',
+        });
+        const mod = await import('./machineContributionRegistryProjection');
+
         await expect(mod.machinePluginStructuredMessageActionExecute('machine-1', {
             serverId: 'server-a',
             expectedGeneration: '7',
             qualifiedActionId: 'acme.preview/open-preview',
             input: null,
             executionSurface: 'ui',
+        })).resolves.toEqual({ supported: false, reason: 'not-supported' });
+    });
+
+    it('routes a current grouped Composer attachment prepare request through the registry projection RPC', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            ok: true,
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            result: {
+                attachments: [{
+                    instanceId: 'issue-42',
+                    status: 'ready',
+                    value: { issueId: 42 },
+                    presentation: { label: 'Issue #42' },
+                }],
+            },
+        });
+        const { machinePluginComposerAttachmentPrepare } = await import('./machineContributionRegistryProjection');
+        const abortController = new AbortController();
+
+        await expect(machinePluginComposerAttachmentPrepare('machine-1', {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            request: {
+                sessionId: 'session-1',
+                localId: 'pending-1',
+                attachments: [{
+                    instanceId: 'issue-42',
+                    key: '42',
+                    value: { issueId: 42 },
+                }],
+            },
+            signal: abortController.signal,
+        })).resolves.toEqual({
+            supported: true,
+            result: {
+                ok: true,
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                result: {
+                    attachments: [{
+                        instanceId: 'issue-42',
+                        status: 'ready',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    }],
+                },
+            },
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE,
+            payload: {
+                machineId: 'machine-1',
+                expectedGeneration: '7',
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                request: {
+                    sessionId: 'session-1',
+                    localId: 'pending-1',
+                    attachments: [{
+                        instanceId: 'issue-42',
+                        key: '42',
+                        value: { issueId: 42 },
+                    }],
+                },
+            },
+            signal: abortController.signal,
+        }));
+    });
+
+    it('preserves daemon-owned stale-generation failure while classifying a cancelled prepare transport', async () => {
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                ok: false,
+                code: 'stale_generation',
+                reason: 'stale_generation',
+            })
+            .mockRejectedValueOnce(Object.assign(new Error('cancelled'), { code: 'MACHINE_RPC_ABORTED' }));
+        const { machinePluginComposerAttachmentPrepare } = await import('./machineContributionRegistryProjection');
+        const request = {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            request: {
+                sessionId: 'session-1',
+                localId: 'pending-1',
+                attachments: [{ instanceId: 'issue-42', key: '42', value: { issueId: 42 } }],
+            },
+        };
+
+        await expect(machinePluginComposerAttachmentPrepare('machine-1', request)).resolves.toEqual({
+            supported: true,
+            result: { ok: false, code: 'stale_generation', reason: 'stale_generation' },
+        });
+        await expect(machinePluginComposerAttachmentPrepare('machine-1', {
+            ...request,
+            signal: new AbortController().signal,
+        })).resolves.toEqual({ supported: false, reason: 'aborted' });
+    });
+
+    it('reads one bounded host-owned Connected Account form option result without sending purpose or service authority', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            ok: true,
+            options: [{
+                value: {
+                    service: { pluginId: 'com.acme.accounts', localId: 'service' },
+                    accountId: 'account-1',
+                },
+                label: 'Work account',
+            }],
+        });
+        const { machinePluginActionFormConnectedAccountOptionsResolve } = await import('./machineContributionRegistryProjection');
+
+        await expect(machinePluginActionFormConnectedAccountOptionsResolve('machine-1', {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/configure-account',
+            fieldPath: 'credentialRef',
+        })).resolves.toEqual({
+            supported: true,
+            result: {
+                ok: true,
+                options: [{
+                    value: {
+                        service: { pluginId: 'com.acme.accounts', localId: 'service' },
+                        accountId: 'account-1',
+                    },
+                    label: 'Work account',
+                }],
+            },
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            serverId: 'server-a',
+            method: RPC_METHODS.DAEMON_PLUGIN_ACTION_FORM_CONNECTED_ACCOUNT_OPTIONS_RESOLVE,
+            payload: {
+                machineId: 'machine-1',
+                expectedGeneration: '7',
+                qualifiedActionId: 'acme.preview/configure-account',
+                fieldPath: 'credentialRef',
+            },
+        }));
+    });
+
+    it('forwards one host-stamped Session Resource context through read and watch-open RPCs', async () => {
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce({
+                ok: true,
+                resource: { pluginId: 'acme.preview', localId: 'live-activity' },
+                kind: 'config',
+                contentType: 'application/json',
+                digest: `sha256:${'a'.repeat(64)}`,
+                bytesBase64: Buffer.from('{"activities":[]}').toString('base64'),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                subscriptionId: 'watch-1',
+                digest: `sha256:${'a'.repeat(64)}`,
+            });
+        const {
+            machinePluginUiResourceRead,
+            machinePluginUiResourceWatchOpen,
+        } = await import('./machineContributionRegistryProjection');
+        const context = { kind: 'session' as const, sessionId: 'session-a' };
+
+        await machinePluginUiResourceRead('machine-1', {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            callerPluginId: 'acme.preview',
+            resource: { pluginId: 'acme.preview', localId: 'live-activity' },
+            context,
+        });
+        await machinePluginUiResourceWatchOpen('machine-1', {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            callerPluginId: 'acme.preview',
+            subscriptionId: 'watch-1',
+            resource: { pluginId: 'acme.preview', localId: 'live-activity' },
+            context,
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
+            payload: expect.objectContaining({ context }),
+        }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+            payload: expect.objectContaining({ context }),
+        }));
+    });
+
+    it('preserves the stable machine-RPC timeout fact for Resource transport consumers', async () => {
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(Object.assign(
+            new Error('opaque transport failure'),
+            { code: 'MACHINE_RPC_TIMEOUT' },
+        ));
+        const { machinePluginUiResourceRead } = await import('./machineContributionRegistryProjection');
+
+        await expect(machinePluginUiResourceRead('machine-1', {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            callerPluginId: 'acme.preview',
+            resource: { pluginId: 'acme.preview', localId: 'live-activity' },
+        })).resolves.toEqual({ supported: false, reason: 'timeout' });
+    });
+
+    it('fails closed when an older daemon does not expose the Connected Account form-option RPC', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+            error: 'Method not found',
+        });
+        const { machinePluginActionFormConnectedAccountOptionsResolve } = await import('./machineContributionRegistryProjection');
+
+        await expect(machinePluginActionFormConnectedAccountOptionsResolve('machine-1', {
+            serverId: 'server-a',
+            expectedGeneration: '7',
+            qualifiedActionId: 'acme.preview/configure-account',
+            fieldPath: 'credentialRef',
         })).resolves.toEqual({ supported: false, reason: 'not-supported' });
     });
 
@@ -481,7 +1056,7 @@ describe('machine contribution registry projection ops', () => {
         expect(request.payload?.reactNativeHostRuntimeIdentity).not.toHaveProperty('scriptManagerRuntimeIntegrated');
     });
 
-    it('omits native identity but reports the installed web loader capability on web requests', async () => {
+    it('omits native identity but reports only observed web runtime capabilities on web requests', async () => {
         await installReactNativeRuntimeMocks('web');
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             protocolVersion: 1,
@@ -503,6 +1078,10 @@ describe('machine contribution registry projection ops', () => {
                 integrated: true,
                 installedArtifactLoaderAvailable: true,
             },
+            hostedWebFrameCapability: {
+                platform: 'web',
+                adapter: 'domIframe',
+            },
         });
     });
 
@@ -522,7 +1101,6 @@ describe('machine contribution registry projection ops', () => {
                             kind: 'path',
                             locator: '/plugins/acme-review',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
                 agentsById: {},
@@ -550,6 +1128,55 @@ describe('machine contribution registry projection ops', () => {
                 }),
             }),
         });
+    });
+
+    it('receives an active predecessor external-session source through the canonical response normalizer', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            protocolVersion: 1,
+            projection: {
+                v: 2,
+                generation: 3,
+                agentsById: {
+                    'acme-agent': {
+                        id: 'acme-agent',
+                        externalSessions: {
+                            agent: { pluginId: 'acme.external', localId: 'acme-agent' },
+                            generation: 3,
+                            operations: {
+                                listCandidates: true,
+                                resolveLinkIdentity: true,
+                                pageTranscript: true,
+                                readAfterTranscript: true,
+                            },
+                            sources: [{
+                                sourceKind: 'acmeArchive',
+                                schema: {
+                                    fields: [{ name: 'kind', kind: 'literal', value: 'acmeArchive' }],
+                                    passthrough: true,
+                                },
+                                key: { segments: [{ kind: 'literal', value: 'acmeArchive' }] },
+                            }],
+                        },
+                    },
+                },
+            },
+        });
+        const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
+
+        await expect(machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' }))
+            .resolves.toMatchObject({
+                supported: true,
+                projection: {
+                    v: 2,
+                    agentsById: {
+                        'acme-agent': {
+                            externalSessions: {
+                                sources: [{ schema: { fields: expect.any(Array) } }],
+                            },
+                        },
+                    },
+                },
+            });
     });
 
     it('treats method-not-found as unsupported (mixed-version daemon)', async () => {

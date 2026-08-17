@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +9,7 @@ import { t } from '@/text';
 
 import type { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
 import { buildMachineSetupWizardHref } from '@/utils/routes/setupWizardHref';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type MachinesSettingsViewModel = ReturnType<typeof useMachinesSettingsViewModel>;
 
@@ -31,7 +31,7 @@ export const MachinesListSection = React.memo(function MachinesListSection(props
                 <Item
                     testID={props.viewModel.isLoadingMachines ? undefined : 'settings.machines.openSetupWizard'}
                     title={emptyStateTitle}
-                    icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="desktop" size={29} color={theme.colors.text.secondary} />}
                     showChevron={props.viewModel.isLoadingMachines ? false : true}
                     onPress={props.viewModel.isLoadingMachines ? undefined : openSetupWizard}
                 />

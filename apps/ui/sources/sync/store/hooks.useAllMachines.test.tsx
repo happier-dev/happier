@@ -3,7 +3,13 @@ import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
-import { useAllMachines, useLaunchSelectionMachines, useMachineListByServerId, useSessionForkSupportSource } from '@/sync/domains/state/storage';
+import {
+    useAllMachines,
+    useLaunchSelectionMachines,
+    useMachineCliDetectionTargets,
+    useMachineListByServerId,
+    useSessionForkSupportSource,
+} from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
@@ -12,6 +18,91 @@ afterEach(() => {
 });
 
 describe('useAllMachines', () => {
+    it('projects a stable requested currentness set without subscribing to unrelated machines', async () => {
+        const previousState = storage.getState();
+        const now = Date.now();
+        const onlineMachine = {
+            id: 'm1',
+            seq: 1,
+            createdAt: now,
+            updatedAt: now,
+            active: true,
+            activeAt: now,
+            metadata: { host: 'online', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+        };
+        const offlineMachine = {
+            id: 'm3',
+            seq: 1,
+            createdAt: now,
+            updatedAt: now,
+            active: false,
+            activeAt: now - 10 * 60_000,
+            metadata: { host: 'offline', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 3,
+        };
+        const unrelatedMachine = {
+            id: 'm2',
+            seq: 1,
+            createdAt: now,
+            updatedAt: now,
+            active: true,
+            activeAt: now,
+            metadata: { host: 'unrelated', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+        };
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: { m1: onlineMachine, m3: offlineMachine },
+            }));
+            const hook = await renderHook(() => useMachineCliDetectionTargets(['m3', 'm1', 'm3']), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const firstTargets = hook.getCurrent();
+
+            expect(firstTargets).toEqual({
+                m1: { daemonStateVersion: 1, isOnline: true },
+                m3: { daemonStateVersion: 3, isOnline: false },
+            });
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    machines: { ...state.machines, m2: unrelatedMachine },
+                }));
+            });
+            expect(hook.getCurrent()).toBe(firstTargets);
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    machines: {
+                        ...state.machines,
+                        m3: { ...offlineMachine, active: true, activeAt: now, daemonStateVersion: 4 },
+                    },
+                }));
+            });
+            expect(hook.getCurrent()).toEqual({
+                m1: { daemonStateVersion: 1, isOnline: true },
+                m3: { daemonStateVersion: 4, isOnline: true },
+            });
+            expect(hook.getCurrent()).not.toBe(firstTargets);
+            expect(hook.getCurrent().m1).toBe(firstTargets.m1);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('returns cached machines even when bootstrap is not fully ready (avoids empty flicker)', async () => {
         const previousState = storage.getState();
         try {
@@ -486,6 +577,39 @@ describe('useAllMachines', () => {
 
             await allMachinesHook.unmount();
             await byServerHook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('retains revoked records for administration-only tombstone presentation', async () => {
+        const storageModule = await import('@/sync/domains/state/storage') as unknown as Readonly<{
+            useMachineRecordListsByServerId?: () => Record<string, Array<{ id: string } | null> | null>;
+        }>;
+        const previousState = storage.getState();
+        try {
+            const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || 'server-active';
+            storage.setState((state) => ({
+                ...state,
+                machineListByServerId: {
+                    [activeServerId]: [
+                        { id: 'm-online', active: true, activeAt: 1000, createdAt: 1000, updatedAt: 1000, metadata: { host: 'online' }, revokedAt: null } as any,
+                        { id: 'm-revoked', active: false, activeAt: 1200, createdAt: 1200, updatedAt: 1200, metadata: { host: 'revoked' }, revokedAt: 1700000000000 } as any,
+                    ],
+                },
+            }));
+
+            expect(typeof storageModule.useMachineRecordListsByServerId).toBe('function');
+            const hook = await renderHook(() => storageModule.useMachineRecordListsByServerId!(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect((hook.getCurrent()[activeServerId] ?? []).map((machine) => machine?.id)).toEqual([
+                'm-online',
+                'm-revoked',
+            ]);
+
+            await hook.unmount();
         } finally {
             storage.setState(previousState);
         }

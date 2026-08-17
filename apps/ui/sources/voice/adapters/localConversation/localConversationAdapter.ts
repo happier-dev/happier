@@ -33,7 +33,7 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
       return {
         allowsGlobalStart: agentMode,
         controlSessionScope: agentMode ? 'global' : 'surface',
-        requiresVoiceAgentFeature: agentMode && config.agent.backend === 'daemon',
+        requiresVoiceAgentFeature: agentMode,
         bargeInEnabled: config.tts.bargeInEnabled !== false,
         cancelResponse: 'immediate',
       };

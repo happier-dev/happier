@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -8,6 +7,7 @@ import type {
     DaemonMcpServersDetectWarningV1,
     DaemonMcpServersPreviewResponse,
     DetectedMcpServerV1,
+    MachineAdministrationTargetV1,
     McpServerBindingV1,
     McpServerCatalogEntryV1,
     McpServersSettingsV1,
@@ -19,28 +19,71 @@ import { McpConfiguredServersTab } from '@/components/settings/mcpServers/McpCon
 import { McpDetectedServersTab } from '@/components/settings/mcpServers/McpDetectedServersTab';
 import { McpPreviewServersTab } from '@/components/settings/mcpServers/McpPreviewServersTab';
 import { McpSegmentedHeader } from '@/components/settings/mcpServers/McpSegmentedHeader';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
 import { machineMcpServersDetect, machineMcpServersPreview } from '@/sync/ops/machineMcpServers';
-import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
+import {
+    normalizeMcpServersSettingsV1,
+    readWritableMcpServersSettingsV1,
+} from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { resolveImportedMcpServerFromDetectedV1 } from '@/sync/domains/settings/mcpServers/importDetectedMcpServerV1';
 import { deleteMcpServerCatalogEntryV1 } from '@/sync/domains/settings/mcpServers/mcpServerCrud';
-import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import {
+    useMachineAdministrationTargetSelection,
+    type FreshMachineAdministrationExecutionTargetV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
 import { getPreferredMcpPreviewAgentId, listDetectedMcpProviderIds, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const McpServersSettingsScreen = React.memo(function McpServersSettingsScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
     const machines = useAllMachines();
-    const primaryMachineId = usePrimaryMachineFromActiveSelection();
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers,
+    );
+    const selectedTarget = administrationTargetSelection.selectedTarget;
+    const selectionKey = selectedTarget
+        ? `${selectedTarget.serverIdentityId}\0${selectedTarget.machineId}`
+        : '';
+    const selectionKeyRef = React.useRef(selectionKey);
+    selectionKeyRef.current = selectionKey;
+    const resolveExecutionTargetRef = React.useRef(administrationTargetSelection.resolveExecutionTarget);
+    resolveExecutionTargetRef.current = administrationTargetSelection.resolveExecutionTarget;
+    const resolveExactExecutionTarget = React.useCallback((
+        expectedTarget: MachineAdministrationTargetV1 | null,
+    ): FreshMachineAdministrationExecutionTargetV1 | null => {
+        const resolved = resolveExecutionTargetRef.current();
+        return expectedTarget !== null
+            && resolved !== null
+            && machineAdministrationTargetsEqual(expectedTarget, resolved.target)
+            ? resolved
+            : null;
+    }, []);
+    const isExecutionTargetCurrent = React.useCallback((
+        requestedSelection: string,
+        executionTarget: FreshMachineAdministrationExecutionTargetV1,
+    ): boolean => {
+        if (selectionKeyRef.current !== requestedSelection) return false;
+        const current = resolveExactExecutionTarget(executionTarget.target);
+        return current !== null
+            && current.serverId === executionTarget.serverId
+            && current.machine.id === executionTarget.machine.id;
+    }, [resolveExactExecutionTarget]);
 
     const [mcpSettingsRaw, setMcpSettings] = useSettingMutable('mcpServersSettingsV1');
     const mcpSettings: McpServersSettingsV1 = React.useMemo(() => normalizeMcpServersSettingsV1(mcpSettingsRaw), [mcpSettingsRaw]);
+    const writableMcpSettings = React.useMemo(
+        () => readWritableMcpServersSettingsV1(mcpSettingsRaw),
+        [mcpSettingsRaw],
+    );
 
     const bindingsByServerId = React.useMemo(() => {
         const map = new Map<string, McpServerBindingV1[]>();
@@ -60,8 +103,6 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
     }, [bindingsByServerId, mcpSettings.servers]);
 
     const [segment, setSegment] = React.useState<'configured' | 'detected' | 'preview'>('configured');
-    const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => primaryMachineId);
-    const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
     const [selectedAgentId, setSelectedAgentId] = React.useState<AgentId>(() => getPreferredMcpPreviewAgentId(listMcpPreviewAgentIds(), null));
     const [agentMenuOpen, setAgentMenuOpen] = React.useState(false);
     const [directory, setDirectory] = React.useState('');
@@ -69,20 +110,20 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
     const [detected, setDetected] = React.useState<DetectedMcpServerV1[] | null>(null);
     const [detectWarnings, setDetectWarnings] = React.useState<DaemonMcpServersDetectWarningV1[] | null>(null);
     const [preview, setPreview] = React.useState<Extract<DaemonMcpServersPreviewResponse, { ok: true }> | null>(null);
+    const previousSelectionKeyRef = React.useRef(selectionKey);
+
+    React.useLayoutEffect(() => {
+        const previousSelectionKey = previousSelectionKeyRef.current;
+        previousSelectionKeyRef.current = selectionKey;
+        if (!previousSelectionKey || previousSelectionKey === selectionKey) return;
+        setDirectory('');
+    }, [selectionKey]);
 
     React.useEffect(() => {
-        if (selectedMachineId && machines.some((machine) => machine.id === selectedMachineId)) return;
-        setSelectedMachineId(primaryMachineId);
-    }, [machines, selectedMachineId, primaryMachineId]);
-
-    const machineItems = React.useMemo((): DropdownMenuItem[] => {
-        return machines.map((machine) => ({
-            id: machine.id,
-            title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
-            subtitle: machine.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
-        }));
-    }, [machines, theme.colors.text.secondary]);
+        setDetected(null);
+        setDetectWarnings(null);
+        setPreview(null);
+    }, [selectionKey]);
 
     const previewAgentIds = React.useMemo(() => listMcpPreviewAgentIds(), []);
 
@@ -99,8 +140,12 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
     const selectedAgentTools = React.useMemo(() => getAgentCore(selectedAgentId).tools, [selectedAgentId]);
 
     const handleToggleStrictMode = React.useCallback(() => {
-        setMcpSettings({ ...mcpSettings, strictMode: !mcpSettings.strictMode });
-    }, [mcpSettings, setMcpSettings]);
+        if (!writableMcpSettings) {
+            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+            return;
+        }
+        setMcpSettings({ ...writableMcpSettings, strictMode: !writableMcpSettings.strictMode });
+    }, [setMcpSettings, writableMcpSettings]);
 
     const handleAddServer = React.useCallback(() => {
         // `router.push` expects the public route (group segments like `/(app)` are not valid here on web).
@@ -112,7 +157,11 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
     }, [router]);
 
     const handleDeleteServer = React.useCallback(async (serverId: string) => {
-        const server = mcpSettings.servers.find((item) => item.id === serverId) ?? null;
+        if (!writableMcpSettings) {
+            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+            return;
+        }
+        const server = writableMcpSettings.servers.find((item) => item.id === serverId) ?? null;
         if (!server) return;
 
         const confirmed = await Modal.confirm(
@@ -122,18 +171,18 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         );
         if (!confirmed) return;
 
-        setMcpSettings(deleteMcpServerCatalogEntryV1(mcpSettings, serverId));
-    }, [mcpSettings, setMcpSettings]);
+        setMcpSettings(deleteMcpServerCatalogEntryV1(writableMcpSettings, serverId));
+    }, [setMcpSettings, writableMcpSettings]);
 
     const detectAction = React.useCallback(async () => {
-        if (!selectedMachineId) {
-            Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
-            return;
-        }
-        const response = await machineMcpServersDetect(selectedMachineId, {
+        const requestedSelection = selectionKey;
+        const executionTarget = resolveExactExecutionTarget(selectedTarget);
+        if (!executionTarget) return;
+        const response = await machineMcpServersDetect(executionTarget.machine.id, {
             providers: listDetectedMcpProviderIds(),
             directory: directory.trim() || undefined,
-        });
+        }, { serverId: executionTarget.serverId });
+        if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
         if (!response.ok) {
             setDetected(null);
             setDetectWarnings(null);
@@ -142,39 +191,44 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         }
         setDetected(response.servers);
         setDetectWarnings(response.warnings ?? null);
-    }, [directory, selectedMachineId]);
+    }, [directory, isExecutionTargetCurrent, resolveExactExecutionTarget, selectedTarget, selectionKey]);
     const [detectLoading, runDetect] = useHappyAction(detectAction, { mode: 'rerun_latest' });
 
     const previewAction = React.useCallback(async () => {
-        if (!selectedMachineId) {
-            Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
-            return;
-        }
+        const requestedSelection = selectionKey;
+        const executionTarget = resolveExactExecutionTarget(selectedTarget);
+        if (!executionTarget) return;
         if (!directory.trim()) {
             Modal.alert(t('common.error'), t('settings.mcpServersPreviewDirectoryRequired'));
             return;
         }
-        const response = await machineMcpServersPreview(selectedMachineId, {
+        const response = await machineMcpServersPreview(executionTarget.machine.id, {
             agentId: selectedAgentId,
             directory: directory.trim(),
-        });
+        }, { serverId: executionTarget.serverId });
+        if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
         if (!response.ok) {
             setPreview(null);
             Modal.alert(t('common.error'), response.error);
             return;
         }
         setPreview(response);
-    }, [directory, selectedAgentId, selectedMachineId]);
+    }, [directory, isExecutionTargetCurrent, resolveExactExecutionTarget, selectedAgentId, selectedTarget, selectionKey]);
     const [previewLoading, runPreview] = useHappyAction(previewAction);
 
     React.useEffect(() => {
         if (segment !== 'detected') return;
-        if (!selectedMachineId) return;
         void runDetect();
-    }, [directory, runDetect, segment, selectedMachineId]);
+    }, [directory, runDetect, segment, selectionKey]);
 
     const handleImportDetected = React.useCallback(async (server: DetectedMcpServerV1) => {
-        if (!selectedMachineId) return;
+        if (!writableMcpSettings) {
+            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+            return;
+        }
+        const requestedSelection = selectionKey;
+        const expectedTarget = selectedTarget;
+        if (!expectedTarget) return;
 
         const confirmed = await Modal.confirm(
             t('settings.mcpServersImportTitle'),
@@ -182,24 +236,27 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
             { cancelText: t('common.cancel'), confirmText: t('settings.mcpServersImportAction') },
         );
         if (!confirmed) return;
+        const executionTarget = resolveExactExecutionTarget(expectedTarget);
+        if (!executionTarget || !isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
 
         try {
             const imported = resolveImportedMcpServerFromDetectedV1({
-                existingSettings: mcpSettings,
+                existingSettings: writableMcpSettings,
                 detected: server,
-                machineId: selectedMachineId,
+                machineId: executionTarget.machine.id,
                 nowMs: Date.now(),
                 generateId: randomUUID,
             });
-            if (imported.nextSettings !== mcpSettings) {
+            if (imported.nextSettings !== writableMcpSettings) {
                 setMcpSettings(imported.nextSettings);
             }
             router.push(`/settings/mcp-server?serverId=${encodeURIComponent(imported.entry.id)}`);
         } catch (error) {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
         }
-    }, [mcpSettings, router, selectedMachineId, setMcpSettings]);
+    }, [isExecutionTargetCurrent, resolveExactExecutionTarget, router, selectedTarget, selectionKey, setMcpSettings, writableMcpSettings]);
 
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
     const managedServerCount = serverRows.length;
     const headerSubtitle = managedServerCount > 0
         ? t('settings.mcpServersHeroSubtitle', { configuredCount: managedServerCount })
@@ -220,6 +277,13 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
                 testIDPrefix="settings.mcpServers.segment"
             />
 
+            {segment !== 'configured' ? (
+                <MachineAdministrationTargetSelector
+                    selection={administrationTargetSelection}
+                    testIDPrefix="settings.mcpServers.administration.target"
+                />
+            ) : null}
+
             {segment === 'configured' ? (
                 <McpConfiguredServersTab
                     settings={mcpSettings}
@@ -235,12 +299,9 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
 
             {segment === 'detected' ? (
                 <McpDetectedServersTab
-                    machines={machines}
-                    machineItems={machineItems}
-                    selectedMachineId={selectedMachineId}
-                    onSelectMachine={setSelectedMachineId}
-                    machineMenuOpen={machineMenuOpen}
-                    onMachineMenuOpenChange={setMachineMenuOpen}
+                    selectedMachineId={executionTarget?.machine.id ?? null}
+                    selectedServerId={executionTarget?.serverId ?? null}
+                    canExecute={executionTarget !== null}
                     directory={directory}
                     onChangeDirectory={setDirectory}
                     loading={detectLoading}
@@ -253,14 +314,11 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
 
             {segment === 'preview' ? (
                 <McpPreviewServersTab
-                    machines={machines}
-                    machineItems={machineItems}
                     agentItems={agentItems}
                     selectedAgentTools={selectedAgentTools}
-                    selectedMachineId={selectedMachineId}
-                    onSelectMachine={setSelectedMachineId}
-                    machineMenuOpen={machineMenuOpen}
-                    onMachineMenuOpenChange={setMachineMenuOpen}
+                    selectedMachineId={executionTarget?.machine.id ?? null}
+                    selectedServerId={executionTarget?.serverId ?? null}
+                    canExecute={executionTarget !== null}
                     selectedAgentId={selectedAgentId}
                     onSelectAgentId={setSelectedAgentId}
                     agentMenuOpen={agentMenuOpen}

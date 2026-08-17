@@ -115,6 +115,7 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         acceptedThroughServerSeq: session.acceptedThroughServerSeq ?? null,
         publishedThroughServerSeq: session.publishedThroughServerSeq ?? null,
         materializedThroughSourceAt: session.materializedThroughSourceAt ?? null,
+        transcriptShareable: session.transcriptShareable ?? null,
         presence: session.presence ?? null,
         thinking: session.thinking === true,
         optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,

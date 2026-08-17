@@ -1,0 +1,105 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`voice light golden frame (M9) > resolves the bloom gradient deterministically at a frozen instant 1`] = `
+[
+  "<Animated.View> opacity=0.4153 height=380 scale=1.1434",
+  "0.0.0.0.<Stop> stopOpacity=0.2903 offset=0%",
+  "0.0.0.1.<Stop> stopOpacity=0.2843 offset=10%",
+  "0.0.0.2.<Stop> stopOpacity=0.2691 offset=20%",
+  "0.0.0.3.<Stop> stopOpacity=0.2208 offset=35%",
+  "0.0.0.4.<Stop> stopOpacity=0.1482 offset=50%",
+  "0.0.0.5.<Stop> stopOpacity=0.0786 offset=65%",
+  "0.0.0.6.<Stop> stopOpacity=0.0302 offset=80%",
+  "0.0.0.7.<Stop> stopOpacity=0.0121 offset=90%",
+  "0.0.0.8.<Stop> stopOpacity=0 offset=100%",
+]
+`;
+
+exports[`voice light golden frame (M9) > resolves the meter deterministically at a frozen instant 1`] = `
+[
+  "<View> height=20",
+  "0.<Animated.View> opacity=0.9819 height=20 scaleY=0.1",
+  "1.<Animated.View> opacity=0.9638 height=20 scaleY=0.1",
+  "2.<Animated.View> opacity=0.9457 height=20 scaleY=0.1",
+  "3.<Animated.View> opacity=0.9276 height=20 scaleY=0.1",
+  "4.<Animated.View> opacity=0.9095 height=20 scaleY=0.1",
+  "5.<Animated.View> opacity=0.8914 height=20 scaleY=0.1",
+  "6.<Animated.View> opacity=0.8733 height=20 scaleY=0.1",
+  "7.<Animated.View> opacity=0.8551 height=20 scaleY=0.1",
+  "8.<Animated.View> opacity=0.837 height=20 scaleY=0.1",
+  "9.<Animated.View> opacity=0.8189 height=20 scaleY=0.1",
+  "10.<Animated.View> opacity=0.8008 height=20 scaleY=0.1",
+  "11.<Animated.View> opacity=0.7827 height=20 scaleY=0.1",
+  "12.<Animated.View> opacity=0.7646 height=20 scaleY=0.1",
+  "13.<Animated.View> opacity=0.7465 height=20 scaleY=0.1",
+  "14.<Animated.View> opacity=0.7284 height=20 scaleY=0.1",
+  "15.<Animated.View> opacity=0.7103 height=20 scaleY=0.1",
+  "16.<Animated.View> opacity=0.6922 height=20 scaleY=0.1",
+  "17.<Animated.View> opacity=0.6741 height=20 scaleY=0.1",
+  "18.<Animated.View> opacity=0.656 height=20 scaleY=0.1",
+  "19.<Animated.View> opacity=0.6379 height=20 scaleY=0.1",
+  "20.<Animated.View> opacity=0.6198 height=20 scaleY=0.1",
+  "21.<Animated.View> opacity=0.6016 height=20 scaleY=0.1",
+  "22.<Animated.View> opacity=0.5835 height=20 scaleY=0.1",
+  "23.<Animated.View> opacity=0.5654 height=20 scaleY=0.1",
+  "24.<Animated.View> opacity=0.5473 height=20 scaleY=0.1",
+  "25.<Animated.View> opacity=0.5292 height=20 scaleY=0.1",
+  "26.<Animated.View> opacity=0.5111 height=20 scaleY=0.1",
+  "27.<Animated.View> opacity=0.493 height=20 scaleY=0.1",
+]
+`;
+
+exports[`voice light golden frame (M9) > resolves the planet body deterministically at a frozen instant 1`] = `
+[
+  "<View> height=34",
+  "0.<Animated.View> opacity=0.2948 height=78.2 scale=1.1506",
+  "0.0.0.0.0.<Stop> stopOpacity=0.1797 offset=0%",
+  "0.0.0.0.1.<Stop> stopOpacity=0.176 offset=10%",
+  "0.0.0.0.2.<Stop> stopOpacity=0.1666 offset=20%",
+  "0.0.0.0.3.<Stop> stopOpacity=0.1367 offset=35%",
+  "0.0.0.0.4.<Stop> stopOpacity=0.0917 offset=50%",
+  "0.0.0.0.5.<Stop> stopOpacity=0.0487 offset=65%",
+  "0.0.0.0.6.<Stop> stopOpacity=0.0187 offset=80%",
+  "0.0.0.0.7.<Stop> stopOpacity=0.0075 offset=90%",
+  "0.0.0.0.8.<Stop> stopOpacity=0 offset=100%",
+  "1.<Animated.View> opacity=0.3073 height=57.8 scale=1.3801",
+  "1.0.0.0.0.<Stop> stopOpacity=0.2074 offset=0%",
+  "1.0.0.0.1.<Stop> stopOpacity=0.203 offset=10%",
+  "1.0.0.0.2.<Stop> stopOpacity=0.1922 offset=20%",
+  "1.0.0.0.3.<Stop> stopOpacity=0.1577 offset=35%",
+  "1.0.0.0.4.<Stop> stopOpacity=0.1058 offset=50%",
+  "1.0.0.0.5.<Stop> stopOpacity=0.0562 offset=65%",
+  "1.0.0.0.6.<Stop> stopOpacity=0.0216 offset=80%",
+  "1.0.0.0.7.<Stop> stopOpacity=0.0086 offset=90%",
+  "1.0.0.0.8.<Stop> stopOpacity=0 offset=100%",
+  "2.<Animated.View> opacity=0.1492 height=34 scale=1.1433",
+  "3.<Animated.View> opacity=0.1239 height=34 scale=1.4534",
+  "4.<Animated.View> opacity=0.0986 height=34 scale=1.7159",
+  "5.<Animated.View> opacity=0.739 height=34 scale=1.127",
+  "5.0.0.0.0.<Stop> offset=0%",
+  "5.0.0.0.1.<Stop> offset=100%",
+  "5.0.0.1.0.<Stop> offset=0%",
+  "5.0.0.1.1.<Stop> offset=42%",
+  "5.0.0.1.2.<Stop> offset=78%",
+  "5.0.0.1.3.<Stop> offset=100%",
+  "5.0.0.2.0.<Stop> offset=0%",
+  "5.0.0.2.1.<Stop> offset=60%",
+  "5.0.0.2.2.<Stop> offset=100%",
+  "5.0.0.3.0.<Stop> offset=0%",
+  "5.0.0.3.1.<Stop> offset=66%",
+  "5.0.0.3.2.<Stop> offset=100%",
+  "5.0.0.4.0.<Stop> offset=0%",
+  "5.0.0.4.1.<Stop> offset=70%",
+  "5.0.0.4.2.<Stop> offset=100%",
+  "5.0.0.5.0.<Stop> offset=58%",
+  "5.0.0.5.1.<Stop> offset=86%",
+  "5.0.0.5.2.<Stop> offset=100%",
+]
+`;
+
+exports[`voice light golden frame (M9) > resolves the planet limb deterministically at a frozen instant 1`] = `
+[
+  "<Animated.View> opacity=0.64 height=394.4 translateY=3.3556 scale=1.0067",
+  "1.<View> opacity=0.16",
+]
+`;

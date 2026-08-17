@@ -25,7 +25,10 @@ describe('describeEffectiveModelMode', () => {
         });
         expect(out.applyScope).toBe('next_prompt');
         expect(out.effectiveModelId).toBe('claude-3.5-sonnet');
-        expect(out.notes.some((note) => /next message/i.test(note))).toBe(true);
+        // When a change takes effect is `applyScope`, not prose: a surface renders
+        // that as one line, so the policy owner no longer ships a timing sentence
+        // for a picker to print as a paragraph.
+        expect(out.notes.some((note) => /next message/i.test(note))).toBe(false);
     });
 
     it('treats Codex MCP model overrides as spawn-only when ACP metadata is absent', () => {

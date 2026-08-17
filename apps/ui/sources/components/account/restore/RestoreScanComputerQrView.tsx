@@ -6,7 +6,10 @@ import { useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { useAuth } from '@/auth/context/AuthContext';
+import {
+    useAuth,
+    type AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
 import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
 import { buildPairingDeepLink, parsePairingDeepLink } from '@/auth/pairing/pairingUrl';
@@ -26,7 +29,28 @@ import { Typography } from '@/constants/Typography';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { trackAccountRestored } from '@/track';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
+import {
+    guardAccountEncryptionFirstKeyCredentialMutation,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { promptAccountConnectApprovalRequired } from './accountConnectApprovalGuidance';
+
+async function guardServerSwitchAuthIngress(
+    serverUrl: string,
+): Promise<AuthCredentialLifecycleResult> {
+    const current =
+        await guardAccountEncryptionFirstKeyCredentialMutation();
+    if (current.kind !== 'allowed') return current;
+    const target =
+        await guardAccountEncryptionFirstKeyCredentialMutation({
+            serverUrl,
+        });
+    return target.kind === 'allowed'
+        ? { kind: 'completed' }
+        : target;
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -197,6 +221,20 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         activeServerUrl,
                     });
                     if (target && activeServerUrl !== target) {
+                        let maySwitch = false;
+                        await presentFirstKeyCredentialLifecycle({
+                            run: async () =>
+                                await guardServerSwitchAuthIngress(
+                                    target,
+                                ),
+                            onCompleted: () => {
+                                maySwitch = true;
+                            },
+                        });
+                        if (!maySwitch) {
+                            setPhase('idle');
+                            return;
+                        }
                         await upsertActivateAndSwitchServer({
                             serverUrl: target,
                             source: 'url',
@@ -253,11 +291,19 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
                 if (credentials && !isCancelledRef.current) {
                     const secretString = encodeBase64(credentials.secret, 'base64url');
-                    await auth.login(credentials.token, secretString);
-                    trackAccountRestored();
-                    if (!isCancelledRef.current) {
-                        router.replace('/');
-                    }
+                    await presentFirstKeyCredentialLifecycle({
+                        run: async () =>
+                            await auth.login(
+                                credentials.token,
+                                secretString,
+                            ),
+                        onCompleted: () => {
+                            trackAccountRestored();
+                            if (!isCancelledRef.current) {
+                                router.replace('/');
+                            }
+                        },
+                    });
                 } else if (!isCancelledRef.current) {
                     await Modal.alertAsync(t('common.error'), t('errors.authenticationFailed'));
                     setPhase('idle');

@@ -8,9 +8,9 @@ import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export const ZenHeader = React.memo(() => {
@@ -114,7 +114,7 @@ function HeaderRight() {
                 justifyContent: 'center',
             }}
         >
-            <Ionicons name="add-outline" size={28} color={theme.colors.chrome.header.foreground} />
+            <Icon name="plus" size={29} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 }   

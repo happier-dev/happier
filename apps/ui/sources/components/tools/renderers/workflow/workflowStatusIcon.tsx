@@ -1,8 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 import type {
     SessionWorkflowAgentStatusV1,
     SessionWorkflowRunStatusV1,
@@ -24,18 +24,18 @@ export const WorkflowStatusIcon = React.memo<{ status: WorkflowEntityStatus; siz
         case 'active':
             return <ActivitySpinner size={iconMatchedSpinnerSize(size)} color={stateColors.info.foreground} />;
         case 'complete':
-            return <Ionicons name="checkmark-circle" size={size} color={stateColors.success.foreground} />;
+            return <Icon name="check-circle" size={size} color={stateColors.success.foreground} />;
         case 'failed':
-            return <Ionicons name="close-circle" size={size} color={stateColors.danger.foreground} />;
+            return <Icon name="x-circle" size={size} color={stateColors.danger.foreground} />;
         case 'blocked':
-            return <Ionicons name="alert-circle" size={size} color={stateColors.warning.foreground} />;
+            return <Icon name="warning-circle" size={size} color={stateColors.warning.foreground} />;
         case 'stopped':
         case 'cancelled':
-            return <Ionicons name="stop-circle" size={size} color={stateColors.neutral.foreground} />;
+            return <Icon name="stop-circle" size={size} color={stateColors.neutral.foreground} />;
         case 'pending':
-            return <Ionicons name="ellipse-outline" size={size} color={stateColors.neutral.foreground} />;
+            return <Icon name="circle" size={size} color={stateColors.neutral.foreground} />;
         default:
-            return <Ionicons name="ellipse-outline" size={size} color={stateColors.neutral.foreground} />;
+            return <Icon name="circle" size={size} color={stateColors.neutral.foreground} />;
     }
 });
 WorkflowStatusIcon.displayName = 'WorkflowStatusIcon';

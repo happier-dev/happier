@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
     canRenderPluginUiProjectionEntry,
-    hasDeferredPluginUiPolicy,
 } from './policy';
 
 describe('plugin UI projection policy', () => {
@@ -11,28 +10,11 @@ describe('plugin UI projection policy', () => {
         expect(canRenderPluginUiProjectionEntry(undefined)).toBe(false);
     });
 
-    it('flags entries that declare host-evaluated policy fields', () => {
-        expect(hasDeferredPluginUiPolicy({
-            id: 'surfacePlacement:acme.preview:preview-pane',
-            pluginId: 'acme.preview',
-            contributionKind: 'surfacePlacement',
-            placement: 'session.rightSidebarTab',
-            compatibility: { platforms: ['web'] },
-        })).toBe(true);
-        expect(hasDeferredPluginUiPolicy({
-            id: 'surfacePlacement:acme.preview:preview-pane',
-            pluginId: 'acme.preview',
-            contributionKind: 'surfacePlacement',
-            placement: 'session.rightSidebarTab',
-        })).toBe(false);
-    });
-
     it('renders entries without declared policy', () => {
         expect(canRenderPluginUiProjectionEntry({
             id: 'surfacePlacement:acme.preview:preview-pane',
             pluginId: 'acme.preview',
             contributionKind: 'surfacePlacement',
-            placement: 'session.rightSidebarTab',
         })).toBe(true);
     });
 
@@ -41,7 +23,6 @@ describe('plugin UI projection policy', () => {
             id: 'surfacePlacement:acme.preview:preview-pane',
             pluginId: 'acme.preview',
             contributionKind: 'surfacePlacement',
-            placement: 'session.rightSidebarTab',
             compatibility: { platforms: ['web'] },
         };
         // Compatible platform: rendered (the old accept-and-hide returned false here).
@@ -55,7 +36,6 @@ describe('plugin UI projection policy', () => {
             id: 'surfacePlacement:acme.preview:review-tab',
             pluginId: 'acme.preview',
             contributionKind: 'surfacePlacement',
-            placement: 'session.rightSidebarTab',
             featureGate: 'plugins.ui.hostedWeb',
             availability: { state: 'available', reason: 'available', diagnostics: [] },
         };
@@ -72,7 +52,6 @@ describe('plugin UI projection policy', () => {
             id: 'surfacePlacement:acme.preview:review-tab',
             pluginId: 'acme.preview',
             contributionKind: 'surfacePlacement',
-            placement: 'session.rightSidebarTab',
             enabled: { operand: 'feature.enabled', value: 'acme.cap' },
             availability: { state: 'available', reason: 'available', diagnostics: [] },
         };

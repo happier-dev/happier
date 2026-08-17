@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Pressable, type GestureResponderEvent } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useAppUpdateStatus } from '@/updates/useAppUpdateStatus';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function resolveToneColor(
     theme: ReturnType<typeof useUnistyles>['theme'],
@@ -45,7 +45,7 @@ export const AppUpdateStatusItemBanner = React.memo(function AppUpdateStatusItem
                 subtitleLines={0}
                 titleStyle={{ color: toneColor }}
                 subtitleStyle={{ color: toneColor }}
-                icon={<Ionicons name={model.iconName} size={28} color={toneColor} />}
+                icon={<Icon name={model.iconName} size={29} color={toneColor} />}
                 onPress={model.actionDisabled ? undefined : () => {
                     void runPrimaryAction();
                 }}
@@ -61,7 +61,7 @@ export const AppUpdateStatusItemBanner = React.memo(function AppUpdateStatusItem
                         accessibilityRole="button"
                         accessibilityLabel={model.dismissLabel}
                     >
-                        <Ionicons name="close" size={20} color={toneColor} />
+                        <Icon name="x" size={20} color={toneColor} />
                     </Pressable>
                 ) : undefined}
             />

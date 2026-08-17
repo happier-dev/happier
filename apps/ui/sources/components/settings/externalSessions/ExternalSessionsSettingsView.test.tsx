@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -10,6 +11,24 @@ import { readExternalSessionLink } from '@/sync/domains/session/external/readExt
 import type { Machine, Metadata, Session } from '@/sync/domains/state/storageTypes';
 
 const modalMock = createModalModuleMock();
+const virtualizedBoundary = vi.hoisted(() => ({
+    props: null as Record<string, any> | null,
+    mountLimit: Number.POSITIVE_INFINITY,
+}));
+const administrationTargetState = vi.hoisted(() => ({
+    current: {
+        target: {
+            serverIdentityId: 'identity-1',
+            machineId: 'machine-1',
+        },
+        serverId: 'server-1',
+        machine: {
+            id: 'machine-1',
+            daemonStateVersion: 1,
+        },
+    },
+}));
+const daemonProjectionRequest = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modal', () => modalMock.module);
 
@@ -56,8 +75,18 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemList', null, children),
 }));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('ItemGroup', props, children),
+vi.mock('@/components/ui/lists/virtualized', () => ({
+    VirtualizedList: (props: Record<string, any>) => {
+        virtualizedBoundary.props = props;
+        const data = (props.data ?? []).slice(0, virtualizedBoundary.mountLimit);
+        return React.createElement(
+            'VirtualizedList',
+            props,
+            props.ListHeaderComponent,
+            ...data.map((item: unknown, index: number) => props.renderItem({ item, index })),
+            props.ListFooterComponent,
+        );
+    },
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -108,7 +137,24 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => effectBoundary.daemonProjection,
+    useDaemonMergedProjectionInputs: (params: Record<string, unknown>) => {
+        daemonProjectionRequest(params);
+        return effectBoundary.daemonProjection;
+    },
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.current.target,
+        canExecute: true,
+        resolveExecutionTarget: () => administrationTargetState.current,
+    }),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
 }));
 
 function createExternalSession(params: Readonly<{
@@ -167,14 +213,83 @@ function createExternalSession(params: Readonly<{
     };
 }
 
+function createFollowCapabilityProjection(params?: Readonly<{ explicit?: boolean }>) {
+    return {
+        generation: 1,
+        installedPackagesById: {
+            'test.follow': { id: 'test.follow', enabled: true },
+        },
+        agentsById: {
+            claude: {
+                id: 'claude',
+                externalSessions: {
+                    agent: { pluginId: 'test.follow', localId: 'claude' },
+                    generation: 1,
+                    operations: {},
+                    sources: [{
+                        sourceKind: 'claudeConfig',
+                        ...(params?.explicit === true
+                            ? { terminalFollow: { userRowClassification: 'explicitV1' } }
+                            : {}),
+                        schema: {
+                            fields: [
+                                { name: 'kind', kind: 'literal', value: 'claudeConfig' },
+                                { name: 'configDir', kind: 'string', min: 1 },
+                            ],
+                        },
+                        key: { segments: [{ kind: 'literal', value: 'claudeConfig' }] },
+                        instances: [{ kind: 'default', constants: { configDir: '/tmp/claude' } }],
+                    }],
+                },
+            },
+        },
+    };
+}
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
+function requireItemGroupSurface(row: ReactTestInstance | null | undefined): ReactTestInstance {
+    if (!row) throw new Error('Expected rendered Item row');
+    let current = row.parent;
+    while (current) {
+        if (typeof current.type === 'string') {
+            const style = flattenStyle(current.props.style);
+            if (style.backgroundColor !== undefined && style.borderRadius !== undefined) {
+                return current;
+            }
+        }
+        current = current.parent;
+    }
+    throw new Error('Expected Item row to be inside real ItemGroup surface chrome');
+}
+
 describe('ExternalSessionsSettingsView passive shell', () => {
     beforeEach(() => {
         effectBoundary.machines = [];
         effectBoundary.machineRpc.mockReset();
         effectBoundary.daemonProjection = {
             phase: 'ready',
-            inputs: null,
+            inputs: {
+                pluginProjectionV2: createFollowCapabilityProjection({ explicit: true }),
+            },
         };
+        administrationTargetState.current = {
+            target: {
+                serverIdentityId: 'identity-1',
+                machineId: 'machine-1',
+            },
+            serverId: 'server-1',
+            machine: {
+                id: 'machine-1',
+                daemonStateVersion: 1,
+            },
+        };
+        daemonProjectionRequest.mockReset();
         effectBoundary.contextSelections = null;
         effectBoundary.setContextSelections.mockReset();
         effectBoundary.setContextSelections.mockImplementation((next) => {
@@ -189,6 +304,113 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         ) => {
             effectBoundary.accountSettings = mutate(effectBoundary.accountSettings);
         });
+        virtualizedBoundary.props = null;
+        virtualizedBoundary.mountLimit = Number.POSITIVE_INFINITY;
+    });
+
+    it('keeps 1k integration and follow inventories as lazy descriptors behind the virtualized window', async () => {
+        virtualizedBoundary.mountLimit = 4;
+        effectBoundary.machines = [createMachineFixture({
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+        })];
+        effectBoundary.sessions = Array.from({ length: 1_000 }, (_, index) => createExternalSession({
+            id: `follow-${index}`,
+            policy: 'attached_only',
+            status: 'disabled',
+            title: `Follow ${index}`,
+        }));
+        const integrations = Array.from({ length: 1_000 }, (_, index) => ({
+            key: `integration-${index}`,
+            machineId: 'machine-1',
+            agent: {
+                pluginId: 'com.example.external-agent',
+                localId: `assistant-${index}`,
+            },
+            agentTitle: `Assistant ${index}`,
+            state: 'installed_enabled' as const,
+            installationId: `installation-${index}`,
+        }));
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(
+            <ExternalSessionsSettingsView integrations={integrations} />,
+        );
+
+        expect(screen.tree.root.findAllByType('ItemList' as never)).toHaveLength(0);
+        expect(screen.tree.root.findAllByType('VirtualizedList' as never)).toHaveLength(1);
+        expect(virtualizedBoundary.props?.data.length).toBeGreaterThan(100);
+        const supplementalRows = virtualizedBoundary.props?.data.filter(
+            (row: { kind?: string }) => row.kind === 'supplemental',
+        );
+        expect(supplementalRows.length).toBeGreaterThan(80);
+        expect(supplementalRows.every((row: Record<string, unknown>) => (
+            typeof row.render === 'function' && !React.isValidElement(row.element)
+        ))).toBe(true);
+        expect(screen.findAllByType('Item' as never).length).toBeLessThanOrEqual(20);
+
+        await screen.unmount();
+    });
+
+    it('keeps integration and follow group chrome and dividers continuous across virtualized chunks', async () => {
+        effectBoundary.machines = [createMachineFixture({
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+        })];
+        effectBoundary.sessions = Array.from({ length: 13 }, (_, index) => createExternalSession({
+            id: `follow-${String(index).padStart(2, '0')}`,
+            policy: 'attached_only',
+            status: 'disabled',
+            title: `Follow ${String(index).padStart(2, '0')}`,
+        }));
+        const integrations = Array.from({ length: 5 }, (_, index) => ({
+            key: `integration-${index}`,
+            machineId: 'machine-1',
+            agent: {
+                pluginId: 'com.example.external-agent',
+                localId: `assistant-${index}`,
+            },
+            agentTitle: `Assistant ${index}`,
+            state: 'installed_enabled' as const,
+            installationId: `installation-${index}`,
+        }));
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(
+            <ExternalSessionsSettingsView integrations={integrations} />,
+        );
+
+        const integrationChunkEnd = screen.findRow(
+            'settings-external-sessions-integration-integration-3',
+        );
+        const integrationContinuation = screen.findRow(
+            'settings-external-sessions-integration-integration-4',
+        );
+        const followChunkEnd = screen.findRow(
+            'settings-external-sessions-follow-item-follow-11',
+        );
+        const followContinuation = screen.findRow(
+            'settings-external-sessions-follow-item-follow-12',
+        );
+
+        expect(integrationChunkEnd?.props.showDivider).toBe(true);
+        expect(followChunkEnd?.props.showDivider).toBe(true);
+
+        const integrationFirstSurface = requireItemGroupSurface(integrationChunkEnd);
+        const integrationLastSurface = requireItemGroupSurface(integrationContinuation);
+        const followFirstSurface = requireItemGroupSurface(followChunkEnd);
+        const followLastSurface = requireItemGroupSurface(followContinuation);
+
+        expect(flattenStyle(integrationFirstSurface.props.style).borderBottomLeftRadius).toBe(0);
+        expect(flattenStyle(integrationLastSurface.props.style).borderTopLeftRadius).toBe(0);
+        expect(flattenStyle(followFirstSurface.props.style).borderBottomLeftRadius).toBe(0);
+        expect(flattenStyle(followLastSurface.props.style).borderTopLeftRadius).toBe(0);
+        expect(integrationLastSurface.parent?.children[0]).toBe(integrationLastSurface);
+        expect(followLastSurface.parent?.children[0]).toBe(followLastSurface);
+
+        await screen.unmount();
     });
 
     it('loads the selected machine integration inventory once without an Agent filter', async () => {
@@ -226,7 +448,7 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         expect(effectBoundary.machineRpc).toHaveBeenCalledOnce();
         expect(effectBoundary.machineRpc).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            serverId: undefined,
+            serverId: 'server-1',
             method: 'daemon.plugins.sessionHooks.status.get',
             payload: {
                 machineId: 'machine-1',
@@ -238,7 +460,90 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         await screen.unmount();
     });
 
-    it('uses the incoming machine context instead of the global hub stored selection', async () => {
+    it('loads the next integration page only when the continuation enters the virtualized viewport', async () => {
+        effectBoundary.sessions = [];
+        effectBoundary.machines = [createMachineFixture({
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+        })];
+        effectBoundary.machineRpc
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{
+                    agent: {
+                        pluginId: 'com.example.external-agent',
+                        localId: 'assistant',
+                    },
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-1',
+                    },
+                }],
+                nextCursor: 'page-2',
+                diagnostics: [],
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{
+                    agent: {
+                        pluginId: 'com.example.external-agent',
+                        localId: 'assistant',
+                    },
+                    status: {
+                        state: 'installed_enabled',
+                        installationId: 'installation-2',
+                    },
+                }],
+                nextCursor: null,
+                diagnostics: [],
+            });
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(
+            <ExternalSessionsSettingsView integrationInventoryEnabled={true} />,
+        );
+        await flushHookEffects();
+
+        expect(effectBoundary.machineRpc).toHaveBeenCalledOnce();
+        const continuation = virtualizedBoundary.props?.data.find(
+            (item: { kind?: string }) => item.kind === 'inventory_continuation',
+        );
+        const initialIntegrationChunkKey = virtualizedBoundary.props?.data.find(
+            (item: { kind?: string }) => item.kind === 'integration_chunk',
+        )?.key;
+        expect(continuation).toBeTruthy();
+
+        await act(async () => {
+            virtualizedBoundary.props?.onViewableItemsChanged({
+                viewableItems: [{ item: continuation }],
+                changed: [],
+            });
+            await Promise.resolve();
+        });
+
+        expect(effectBoundary.machineRpc).toHaveBeenCalledTimes(2);
+        expect(effectBoundary.machineRpc).toHaveBeenLastCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            method: 'daemon.plugins.sessionHooks.status.get',
+            payload: {
+                machineId: 'machine-1',
+                intent: 'passive_inventory',
+                cursor: 'page-2',
+                limit: 50,
+            },
+        });
+        expect(virtualizedBoundary.props?.data.find(
+            (item: { kind?: string }) => item.kind === 'integration_chunk',
+        )?.key).toBe(initialIntegrationChunkKey);
+        expect(screen.findRow(
+            'settings-external-sessions-integration-machine-1\u0000com.example.external-agent\u0000assistant\u0000installation:installation-2',
+        )).toBeTruthy();
+        await screen.unmount();
+    });
+
+    it('uses the exact Administration target rather than the legacy context machine for integration RPCs', async () => {
         effectBoundary.sessions = [];
         effectBoundary.machines = [
             createMachineFixture({
@@ -261,6 +566,17 @@ describe('ExternalSessionsSettingsView passive shell', () => {
                 },
             },
         };
+        administrationTargetState.current = {
+            target: {
+                serverIdentityId: 'identity-2',
+                machineId: 'machine-2',
+            },
+            serverId: 'server-2',
+            machine: {
+                id: 'machine-2',
+                daemonStateVersion: 2,
+            },
+        };
         effectBoundary.machineRpc.mockResolvedValue({
             ok: true,
             rows: [],
@@ -271,14 +587,19 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
         const screen = await renderSettingsView(
             <ExternalSessionsSettingsView
-                initialMachineId="machine-2"
                 integrationInventoryEnabled={true}
             />,
         );
         await flushHookEffects();
 
+        expect(daemonProjectionRequest).toHaveBeenCalledWith({
+            machineId: 'machine-2',
+            serverId: 'server-2',
+            enabled: true,
+        });
         expect(effectBoundary.machineRpc).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-2',
+            serverId: 'server-2',
             payload: expect.objectContaining({
                 machineId: 'machine-2',
             }),
@@ -603,6 +924,32 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         await screen.unmount();
     });
 
+    it('hides the follow toggle when the linked source lacks an explicit terminal-follow declaration', async () => {
+        effectBoundary.sessions = [createExternalSession({
+            id: 'no-explicit-follow',
+            policy: 'attached_only',
+            status: 'disabled',
+            title: 'No explicit follow capability',
+        })];
+        effectBoundary.daemonProjection = {
+            phase: 'ready',
+            inputs: {
+                pluginProjectionV2: createFollowCapabilityProjection(),
+            },
+        };
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+
+        const row = screen.findRow('settings-external-sessions-follow-item-no-explicit-follow');
+        expect(row).toBeTruthy();
+        expect(row?.props.rightElement).toBeUndefined();
+        expect(row?.props.onPress).toBeUndefined();
+        expect(row?.props.subtitle).toBe('externalSessions.followStatusUnsupported');
+
+        await screen.unmount();
+    });
+
     it('renders every linked session with its canonical follow status and scopes notifications to explicit background policies', async () => {
         effectBoundary.sessions = [
             createExternalSession({
@@ -743,6 +1090,36 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         expect(unsupportedRow?.props.subtitle).toBe('externalSessions.followStatusUnsupported');
         expect(unsupportedRow?.props.disabled).toBe(true);
         expect(effectBoundary.applySessionMetadataLocally).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('preserves the stored follow status while capability projection is still loading', async () => {
+        effectBoundary.machines = [createMachineFixture({
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+        })];
+        effectBoundary.sessions = [createExternalSession({
+            id: 'loading-projection',
+            policy: 'attached_only',
+            status: 'paused',
+            title: 'Loading projection follow',
+        })];
+        effectBoundary.daemonProjection = {
+            phase: 'loading',
+            inputs: null,
+        };
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+
+        const row = screen.findRow(
+            'settings-external-sessions-follow-item-loading-projection',
+        );
+        expect(row?.props.subtitle).toBe('externalSessions.followStatusPaused');
+        expect(row?.props.rightElement).toBeTruthy();
+        expect(row?.props.mode).not.toBe('info');
 
         await screen.unmount();
     });

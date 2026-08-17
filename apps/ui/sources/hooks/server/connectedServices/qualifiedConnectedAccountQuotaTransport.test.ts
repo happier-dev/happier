@@ -34,6 +34,9 @@ const credentials = {
     token: 'token',
     secret: 'secret',
 };
+const tokenOnlyCredentials = {
+    token: 'token-only',
+};
 const ref = {
     service: {
         pluginId: 'happier.agent.claude',
@@ -105,6 +108,27 @@ describe('qualifiedConnectedAccountQuotaTransport', () => {
             response,
             expectedRef: ref,
             material: { type: 'legacy' },
+        });
+    });
+
+    it('opens plain V4 quota for token-only credentials without resolving account encryption material', async () => {
+        const assertOperationAllowed = vi.fn(async () => {});
+        const { readQualifiedConnectedAccountQuota } = await import(
+            './qualifiedConnectedAccountQuotaTransport'
+        );
+
+        await expect(readQualifiedConnectedAccountQuota({
+            credentials: tokenOnlyCredentials,
+            ref,
+            serverBasis,
+            assertOperationAllowed,
+        })).resolves.toBe(snapshot);
+
+        expect(resolveMaterialMock).not.toHaveBeenCalled();
+        expect(openQuotaMock).toHaveBeenCalledWith({
+            response,
+            expectedRef: ref,
+            material: null,
         });
     });
 

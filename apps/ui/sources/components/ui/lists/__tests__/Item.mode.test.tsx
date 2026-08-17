@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '../uiListsTestHelpers';
 import { lightTheme } from '@/theme';
+import { ITEM_ICON_GLYPH_SIZE } from '@/components/ui/lists/itemDensityMetrics';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -90,7 +91,7 @@ describe('Item mode prop', () => {
     it('never shows chevron when mode="info" regardless of showChevron prop', async () => {
         const { Item } = await import('../Item');
         const screen = await renderScreen(<Item title="Info" mode="info" showChevron={true} onPress={() => {}} />);
-        expect(screen.findAllByProps({ name: 'chevron-forward' })).toHaveLength(0);
+        expect(screen.findAllByProps({ name: 'caret-right' })).toHaveLength(0);
     });
 
     it('does NOT reduce opacity when mode="info" (unlike disabled)', async () => {
@@ -102,6 +103,28 @@ describe('Item mode prop', () => {
         }
         const flattened = flattenTestStyle(root.props.style);
         expect(flattened.opacity).not.toBe(0.5);
+    });
+
+    it('projects a named polite status for asynchronously inserted info', async () => {
+        const { Item } = await import('../Item');
+        const screen = await renderScreen(
+            <Item
+                title="Setup status"
+                subtitle="The provider credential could not be checked."
+                testID="setup-status"
+                mode="info"
+                webRole="status"
+                accessibilityLiveRegion="polite"
+            />,
+        );
+
+        const root = findHostNodeByTestID(screen, 'setup-status');
+        expect(root?.props.role).toBe('status');
+        expect(root?.props.accessibilityLiveRegion).toBe('polite');
+        expect(root?.props['aria-live']).toBe('polite');
+        expect(root?.props.accessibilityLabel).toBe(
+            'Setup status. The provider credential could not be checked.',
+        );
     });
 
     it('reduces opacity when disabled (not mode="info")', async () => {
@@ -158,6 +181,23 @@ describe('Item mode prop', () => {
         uiItemDensitySetting = 'comfortable';
     });
 
+    it('reserves horizontal space for the primary label when right-side detail is long', async () => {
+        const { Item } = await import('../Item');
+        const screen = await renderScreen(
+            <Item
+                title="OpenAI Realtime"
+                subtitle="Use a saved API key or an explicitly selected OpenAI account."
+                detail="The provider credential could not be checked."
+            />,
+        );
+
+        const titleNode = findTextNode(screen, 'OpenAI Realtime');
+        const detailNode = findTextNode(screen, 'The provider credential could not be checked.');
+        expect(flattenTestStyle(titleNode?.parent?.parent?.props.style)).toMatchObject({ minWidth: 0 });
+        expect(flattenTestStyle(detailNode?.parent?.parent?.props.style)).toMatchObject({ maxWidth: '50%' });
+        expect(flattenTestStyle(detailNode?.props.style)).toMatchObject({ flexShrink: 1 });
+    });
+
     it('forces icon prop size to the resolved density size', async () => {
         uiItemDensitySetting = 'cozy';
         const { Item } = await import('../Item');
@@ -165,12 +205,12 @@ describe('Item mode prop', () => {
         const screen = await renderScreen(
             <Item
                 title="Density icon"
-                icon={React.createElement('Ionicons', { name: 'albums-outline', size: 29, color: '#09f' })}
+                icon={React.createElement('Ionicons', { name: 'stack', size: 29, color: '#09f' })}
             />,
         );
 
-        const leftIcon = screen.findAllByProps({ name: 'albums-outline' })[0];
-        expect(leftIcon?.props?.size).toBe(24);
+        const leftIcon = screen.findAllByProps({ name: 'stack' })[0];
+        expect(leftIcon?.props?.size).toBe(ITEM_ICON_GLYPH_SIZE.cozy);
         uiItemDensitySetting = 'comfortable';
     });
 
@@ -180,7 +220,7 @@ describe('Item mode prop', () => {
 
         const screen = await renderScreen(<Item title="Chevron row" onPress={() => {}} />);
 
-        const chevronIcon = screen.findAllByProps({ name: 'chevron-forward' })[0];
+        const chevronIcon = screen.findAllByProps({ name: 'caret-right' })[0];
         expect(chevronIcon?.props?.size).toBe(15);
         uiItemDensitySetting = 'comfortable';
     });
@@ -190,7 +230,7 @@ describe('Item mode prop', () => {
         const screen = await renderScreen(
             <Item title="Badged" onPress={() => {}} rightElement={React.createElement('Text', null, 'badge')} />,
         );
-        expect(screen.findAllByProps({ name: 'chevron-forward' })).toHaveLength(0);
+        expect(screen.findAllByProps({ name: 'caret-right' })).toHaveLength(0);
     });
 
     it('keeps the chevron alongside a rightElement when keepChevronWithRightElement is set', async () => {
@@ -203,7 +243,7 @@ describe('Item mode prop', () => {
                 keepChevronWithRightElement
             />,
         );
-        expect(screen.findAllByProps({ name: 'chevron-forward' }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ name: 'caret-right' }).length).toBeGreaterThan(0);
     });
 
     it('renders interactive rightElement controls outside the row Pressable when requested', async () => {

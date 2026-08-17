@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type AppTheme = ReturnType<typeof useUnistyles>['theme'];
 
@@ -49,24 +49,24 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
             nextItems.push({
                 id: props.pinAction,
                 title: pinTitle,
-                icon: <Ionicons name="pin-outline" size={16} color={props.theme.colors.text.secondary} />,
+                icon: <Icon name="push-pin" size={16} color={props.theme.colors.text.secondary} />,
             });
         }
         nextItems.push(
             {
                 id: 'rename',
                 title: renameTitle,
-                icon: <Ionicons name="pencil-outline" size={16} color={props.theme.colors.text.secondary} />,
+                icon: <Icon name="pencil" size={16} color={props.theme.colors.text.secondary} />,
             },
             {
                 id: 'reset',
                 title: resetTitle,
-                icon: <Ionicons name="refresh-outline" size={16} color={props.theme.colors.text.secondary} />,
+                icon: <Icon name="arrow-clockwise" size={16} color={props.theme.colors.text.secondary} />,
             },
             {
                 id: 'remove',
                 title: removeTitle,
-                icon: <Ionicons name="trash-outline" size={16} color={props.theme.colors.state.danger.foreground} />,
+                icon: <Icon name="trash" size={16} color={props.theme.colors.state.danger.foreground} />,
             },
         );
         return nextItems;
@@ -114,7 +114,7 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
                     hitSlop={10}
                     style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
                 >
-                    <Octicons name="kebab-horizontal" size={14} color={props.theme.colors.text.secondary} />
+                    <Icon name="dots-three-vertical" size={14} color={props.theme.colors.text.secondary} />
                 </Pressable>
             )}
         />

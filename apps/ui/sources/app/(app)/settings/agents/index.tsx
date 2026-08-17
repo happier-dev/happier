@@ -1,5 +1,4 @@
 import React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -8,51 +7,24 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { AcpCatalogSettingsSections } from '@/components/settings/acpCatalog/AcpCatalogSettingsSections';
 import { AgentSetupFlow } from '@/components/settings/agents/setup/AgentSetupFlow';
 import { resolveAgentChannelLabelKey } from '@/components/settings/agents/agentChannelLabel';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import {
     getResolvedAgentCatalogEntries,
     type ResolvedAgentCatalogEntry,
 } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getAgentCore } from '@/agents/catalog/catalog';
-import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { useSetting } from '@/sync/domains/state/storage';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function resolveAgentRowIconName(entry: ResolvedAgentCatalogEntry): string {
     return entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
-}
-
-function resolveActiveServerMachineIds(params: Readonly<{
-    capabilityServerId: string | null;
-    machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-    machines: readonly Machine[];
-}>): string[] {
-    const capabilityServerId = params.capabilityServerId;
-    if (!capabilityServerId) return [];
-
-    const serverMachineEntries = params.machineListByServerId[capabilityServerId];
-    if (Array.isArray(serverMachineEntries) && serverMachineEntries.length > 0) {
-        return serverMachineEntries
-            .filter((entry) => entry.revokedAt == null)
-            .map((entry) => entry.id);
-    }
-
-    const machineIdsClaimedByOtherServers = new Set<string>();
-    for (const [serverId, entries] of Object.entries(params.machineListByServerId)) {
-        if (serverId === capabilityServerId || !Array.isArray(entries)) continue;
-        for (const entry of entries) {
-            if (entry?.revokedAt == null && typeof entry?.id === 'string' && entry.id.trim().length > 0) {
-                machineIdsClaimedByOtherServers.add(entry.id);
-            }
-        }
-    }
-
-    return params.machines
-        .filter((machine) => machine.revokedAt == null && !machineIdsClaimedByOtherServers.has(machine.id))
-        .map((machine) => machine.id);
 }
 
 export default React.memo(function ProviderSettingsIndexScreen() {
@@ -60,35 +32,22 @@ export default React.memo(function ProviderSettingsIndexScreen() {
     const { theme } = useUnistyles();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1') as AcpCatalogSettingsV1 | undefined;
-    const machines = useAllMachines();
-    const machineListByServerId = useMachineListByServerId();
-    const activeServerSnapshot = useActiveServerSnapshot();
-    const activeServerId = React.useMemo(() => {
-        const value = activeServerSnapshot.serverId;
-        return typeof value === 'string' && value.trim().length > 0 ? value : null;
-    }, [activeServerSnapshot.serverId]);
-    const activeServerMachineIds = React.useMemo(() => {
-        return resolveActiveServerMachineIds({
-            capabilityServerId: activeServerId,
-            machineListByServerId,
-            machines,
-        });
-    }, [activeServerId, machineListByServerId, machines]);
-    const projectionMachineId = React.useMemo(() => {
-        if (activeServerMachineIds.length === 0) {
-            return null;
-        }
-        const machineMap = new Map(machines.map((machine) => [machine.id, machine] as const));
-        const activeServerMachines = activeServerMachineIds
-            .map((machineId) => machineMap.get(machineId) ?? null)
-            .filter((machine): machine is Machine => machine !== null);
-        const activeMachine = activeServerMachines.find((machine) => machine.active === true) ?? null;
-        return activeMachine?.id ?? activeServerMachines[0]?.id ?? null;
-    }, [activeServerMachineIds, machines]);
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents,
+    );
+    const executionTarget = React.useMemo(() => {
+        const selectedTarget = administrationTargetSelection.selectedTarget;
+        const resolvedTarget = administrationTargetSelection.resolveExecutionTarget();
+        return selectedTarget !== null
+            && resolvedTarget !== null
+            && machineAdministrationTargetsEqual(selectedTarget, resolvedTarget.target)
+            ? resolvedTarget
+            : null;
+    }, [administrationTargetSelection]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
-        machineId: projectionMachineId,
-        serverId: activeServerId,
-        enabled: Boolean(projectionMachineId && activeServerId),
+        machineId: executionTarget?.machine.id ?? null,
+        serverId: executionTarget?.serverId ?? null,
+        enabled: executionTarget !== null,
         retainInputsAcrossScopeChange: true,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
@@ -105,6 +64,10 @@ export default React.memo(function ProviderSettingsIndexScreen() {
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            <MachineAdministrationTargetSelector
+                selection={administrationTargetSelection}
+                testIDPrefix="settings.agents.administration.target"
+            />
             <ItemGroup
                 title={t('settingsAgents.title')}
                 footer={t('settingsAgents.footer')}
@@ -113,7 +76,7 @@ export default React.memo(function ProviderSettingsIndexScreen() {
                     <Item
                         title={t('settingsAgents.notAvailable')}
                         subtitle={t('settingsAgents.footer')}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                        icon={<Icon name="warning-circle" size={29} color={theme.colors.state.danger.foreground} />}
                     />
                 ) : agentEntries.map((entry) => {
                     const state = entry.enabled === true
@@ -127,13 +90,15 @@ export default React.memo(function ProviderSettingsIndexScreen() {
                             key={entry.agentId}
                             title={entry.title}
                             subtitle={`${state} • ${channel}`}
-                            icon={<Ionicons name={resolveAgentRowIconName(entry) as any} size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name={resolveAgentRowIconName(entry) as any} size={29} color={theme.colors.text.secondary} />}
                             onPress={() => router.push(`/(app)/settings/agents/${entry.agentId}` as any)}
                         />
                     );
                 })}
             </ItemGroup>
             <AgentSetupFlow
+                machineId={executionTarget?.machine.id ?? null}
+                serverId={executionTarget?.serverId ?? null}
                 agentEntries={agentEntries.map((entry) => ({
                     agentId: entry.agentId,
                     catalogAgentId: entry.catalogAgentId,

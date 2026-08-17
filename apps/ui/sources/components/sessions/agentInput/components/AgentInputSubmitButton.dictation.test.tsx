@@ -96,4 +96,71 @@ describe('AgentInputSubmitButton Dictation routing', () => {
         });
         expect(onDictationPress).not.toHaveBeenCalled();
     });
+
+    it('stops the running turn instead of starting Dictation on an empty composer', async () => {
+        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
+        const onDictationPress = vi.fn();
+        const onStop = vi.fn();
+        const onSend = vi.fn();
+        let renderer: ReturnType<typeof create>;
+
+        await act(async () => {
+            renderer = create(<AgentInputSubmitButton
+                testID="composer-send"
+                sessionId="session-1"
+                disabled={false}
+                hasSendableContent={false}
+                canStop={true}
+                dictationPressHandler={onDictationPress}
+                dictationStatus="idle"
+                onSend={onSend}
+                onStop={onStop}
+            />);
+        });
+        const button = renderer!.root.findByType('PrimaryCircleIconButton' as any);
+
+        expect(button.props.accessibilityLabel).toBe('agentInput.stopCodingTurn');
+        expect(renderer!.root.findAllByType('Image' as any)).toHaveLength(0);
+        expect(renderer!.root.findAllByType('Icon' as any).some((n) => n.props?.name === 'stop')).toBe(true);
+
+        act(() => {
+            button.props.onPress();
+        });
+
+        expect(onStop).toHaveBeenCalledTimes(1);
+        expect(onDictationPress).not.toHaveBeenCalled();
+        expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('keeps an in-flight Dictation on the button while the turn can also be stopped', async () => {
+        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
+        const onDictationPress = vi.fn();
+        const onStop = vi.fn();
+        let renderer: ReturnType<typeof create>;
+
+        await act(async () => {
+            renderer = create(<AgentInputSubmitButton
+                testID="composer-send"
+                sessionId="session-1"
+                disabled={false}
+                hasSendableContent={false}
+                canStop={true}
+                dictationPressHandler={onDictationPress}
+                dictationStatus="listening"
+                onSend={() => {}}
+                onStop={onStop}
+            />);
+        });
+        const button = renderer!.root.findByType('PrimaryCircleIconButton' as any);
+
+        expect(button.props.accessibilityLabel).toBe('voiceAssistant.endDictation');
+        expect(renderer!.root.findAllByType('Icon' as any).some((n) => n.props?.name === 'stop-circle')).toBe(true);
+
+        act(() => {
+            button.props.onPress();
+        });
+
+        expect(onDictationPress).toHaveBeenCalledTimes(1);
+        expect(onStop).not.toHaveBeenCalled();
+    });
 });

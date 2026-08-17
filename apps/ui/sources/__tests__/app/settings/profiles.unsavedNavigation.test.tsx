@@ -27,10 +27,15 @@ type BeforeRemoveEvent = {
 type CapturedProfilesListProps = {
     onAddProfilePress?: () => void;
     onEditProfile?: (profile: AIBackendProfile) => void;
+    machineId: string | null;
+    serverId?: string | null;
+    header?: React.ReactNode;
 };
 
 type CapturedEditFormProps = {
     profile: AiLaunchProfile;
+    machineId: string | null;
+    serverId?: string | null;
     onSave: (profile: AiLaunchProfile) => boolean;
     onCancel: () => void;
     onDirtyChange: (isDirty: boolean) => void;
@@ -54,6 +59,24 @@ const settingsState = vi.hoisted(() => ({
         providerSettingsV1: null,
         secretBindingsByProfileId: {},
     } as Record<string, unknown>,
+}));
+const administrationTargetState = vi.hoisted(() => ({
+    selectedTarget: {
+        serverIdentityId: 'server-identity-b',
+        machineId: 'machine-b',
+    } as { serverIdentityId: string; machineId: string } | null,
+    executionTarget: {
+        target: {
+            serverIdentityId: 'server-identity-b',
+            machineId: 'machine-b',
+        },
+        machine: { id: 'machine-b' },
+        serverId: 'server-profile-b',
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        machine: { id: string };
+        serverId: string;
+    } | null,
 }));
 
 installProfilesCommonModuleMocks({
@@ -97,6 +120,17 @@ vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
 
 vi.mock('@/components/secrets/useSavedSecretsMutable', () => ({
     useSavedSecretsMutable: () => [[], vi.fn()],
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.selectedTarget,
+        resolveExecutionTarget: () => administrationTargetState.executionTarget,
+    }),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: createPassThroughComponent('MachineAdministrationTargetSelector'),
 }));
 
 let capturedProfilesListProps: CapturedProfilesListProps | null = null;
@@ -181,10 +215,84 @@ describe('ProfileManager web unsaved navigation', () => {
         promptUnsavedChangesAlertSpy.mockReset();
         settingsState.values.useProfiles = true;
         settingsState.values.profiles = [];
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-identity-b',
+            machineId: 'machine-b',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-identity-b',
+                machineId: 'machine-b',
+            },
+            machine: { id: 'machine-b' },
+            serverId: 'server-profile-b',
+        };
     });
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('uses the exact Administration target for V2 profile reads instead of an active or first machine', async () => {
+        await renderDirtyInlineEditor();
+
+        expect(capturedProfilesListProps).toMatchObject({
+            machineId: 'machine-b',
+            serverId: 'server-profile-b',
+        });
+        const header = capturedProfilesListProps?.header;
+        expect(React.isValidElement(header)).toBe(true);
+        if (!React.isValidElement(header)) throw new Error('Expected the Administration target selector');
+        expect(header.props).toMatchObject({
+            testIDPrefix: 'settings.profiles.administration.target',
+        });
+        expect(capturedEditFormProps).toMatchObject({
+            machineId: 'machine-b',
+            serverId: 'server-profile-b',
+        });
+    });
+
+    it('does not substitute another machine when the selected Administration target is no longer executable', async () => {
+        administrationTargetState.executionTarget = null;
+
+        await renderDirtyInlineEditor();
+
+        expect(capturedProfilesListProps).toMatchObject({
+            machineId: null,
+            serverId: null,
+        });
+        expect(capturedEditFormProps).toMatchObject({
+            machineId: null,
+            serverId: null,
+        });
+    });
+
+    it('keeps legacy profile preview selection explicit', async () => {
+        const { DEFAULT_PROFILES } = await import('@/sync/domains/profiles/profileUtils');
+        const builtInDefinition = DEFAULT_PROFILES[0];
+        if (!builtInDefinition) throw new Error('Expected a legacy profile fixture');
+        const { createEmptyCustomProfile } = await import('@/sync/domains/profiles/profileMutations');
+        const { projectAiLaunchProfileForLegacyUi } = await import('@/sync/domains/profiles/aiLaunchProfileCollection');
+        const legacyProfile = {
+            ...projectAiLaunchProfileForLegacyUi({
+                ...createEmptyCustomProfile(),
+                id: builtInDefinition.id,
+                name: builtInDefinition.name,
+            }),
+            isBuiltIn: true,
+        } satisfies AIBackendProfile;
+        const ProfileManager = (await import('@/app/(app)/settings/profiles')).default;
+        await renderScreen(React.createElement(ProfileManager));
+
+        await act(async () => {
+            capturedProfilesListProps?.onEditProfile?.(legacyProfile);
+        });
+
+        expect(capturedEditFormProps).toMatchObject({
+            profile: legacyProfile,
+            machineId: null,
+            serverId: null,
+        });
     });
 
     it('serializes repeated navigator exits while the first decision is pending', async () => {

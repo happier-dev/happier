@@ -5,7 +5,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStackOptionsCapture } from '@/dev/testkit/mocks/router';
 import { renderScreen } from '@/dev/testkit';
 import { installAutomationAppRouteCommonModuleMocks } from './automationAppRouteTestHelpers';
+import {
+    AutomationSourceSelectorIdV1Schema,
+    AutomationV3DefinitionDetailSchema,
+    sealAutomationTriggerDefinitionStoredEnvelopeV1,
+} from '@happier-dev/protocol';
+import type { AutomationV3DefinitionDetail } from '@happier-dev/protocol';
+import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
+import type { Automation } from '@/sync/domains/automations/automationTypes';
+import type { NewSessionData } from '@/utils/sessions/tempDataStore';
 
+type LegacyAutomationFixture = Pick<
+    Automation,
+    'id' | 'enabled' | 'name' | 'description' | 'targetType' | 'templateCiphertext' | 'schedule'
+> & Partial<Pick<Automation, 'templateVersion' | 'nextRunAt' | 'lastRunAt' | 'createdAt' | 'updatedAt'>> & {
+    assignments: ReadonlyArray<Readonly<{
+        machineId: string;
+        enabled: boolean;
+        priority: number;
+        updatedAt?: number | null;
+    }>>;
+    projectedExistingSessionId?: string | null;
+};
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,10 +34,30 @@ const routerBackSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const updateAutomationSpy = vi.hoisted(() => vi.fn(async () => {}));
 const refreshAutomationsSpy = vi.hoisted(() => vi.fn(async () => {}));
+const refreshAutomationDefinitionDetailSpy = vi.hoisted(() => vi.fn(async () => {}));
 const getSessionEncryptionKeyBase64ForResumeSpy = vi.hoisted(() => vi.fn((_sessionId: string) => null));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
-const storeTempDataSpy = vi.hoisted(() => vi.fn(() => 'temp-edit-seed'));
+const storeTempDataSpy = vi.hoisted(() => vi.fn<(data: NewSessionData) => string>(() => 'temp-edit-seed'));
 const updateExistingSessionAutomationTemplateMessageSpy = vi.hoisted(() => vi.fn(async () => 'updated-template'));
+const decryptAutomationTemplateRawSpy = vi.hoisted(() => vi.fn(async () => null as unknown));
+const modalAlertSpy = vi.hoisted(() => vi.fn());
+const tryDecodeAutomationTemplateEnvelopeSpy = vi.hoisted(() => vi.fn((_templateCiphertext: string) => null as any));
+const resolveAutomationTemplatePayloadSpy = vi.hoisted(() => vi.fn(async (params: Readonly<{
+    templateCiphertext: string;
+    decryptRaw?: (payloadCiphertext: string) => Promise<unknown | null>;
+}>) => {
+    const envelope = tryDecodeAutomationTemplateEnvelopeSpy(params.templateCiphertext);
+    if (!envelope) return { kind: 'invalid' as const };
+    if (envelope.kind === 'happier_automation_template_plain_v1') {
+        return { kind: 'ready' as const, envelope, payload: envelope.payload };
+    }
+    const payload = params.decryptRaw
+        ? await params.decryptRaw(envelope.payloadCiphertext)
+        : null;
+    return payload === null || payload === undefined
+        ? { kind: 'locked' as const, reason: 'encryption_material_unavailable' as const }
+        : { kind: 'ready' as const, envelope, payload };
+}));
 const latestAgentInputProps = vi.hoisted(() => ({
     value: null as any,
 }));
@@ -30,7 +71,7 @@ const latestUnavailableNoticeProps = vi.hoisted(() => ({
     value: null as any,
 }));
 const automationState = vi.hoisted(() => ({
-    value: {
+    value: ({
         id: 'a1',
         enabled: true,
         name: 'Nightly',
@@ -44,7 +85,8 @@ const automationState = vi.hoisted(() => ({
             scheduleExpr: null as string | null,
             timezone: null as string | null,
         },
-    },
+    } satisfies LegacyAutomationFixture) as LegacyAutomationFixture,
+    definitionOverride: null as any,
 }));
 const sessionState = vi.hoisted(() => ({
     value: null as any,
@@ -60,6 +102,139 @@ const settingsState = vi.hoisted(() => ({
     },
 }));
 const stackOptionsCapture = createStackOptionsCapture();
+const legacyDirectDefinitionCache = new WeakMap<
+    LegacyAutomationFixture,
+    ReturnType<typeof createAutomationDefinitionFromDetail>
+>();
+
+function toLegacyDirectDefinition(automation: LegacyAutomationFixture) {
+    const cached = legacyDirectDefinitionCache.get(automation);
+    if (cached) return cached;
+
+    const templateVersion = typeof automation.templateVersion === 'number' ? automation.templateVersion : 1;
+    const trigger = { kind: 'schedule' as const, schedule: automation.schedule };
+    const targetType = automation.targetType === 'existing_session' ? 'existingSession' as const : 'newSession' as const;
+    const definition = createAutomationDefinitionFromDetail(AutomationV3DefinitionDetailSchema.parse({
+        id: automation.id,
+        name: automation.name,
+        description: automation.description,
+        enabled: automation.enabled,
+        trigger,
+        targetType,
+        templateVersion,
+        nextRunAt: automation.nextRunAt ?? null,
+        lastRunAt: automation.lastRunAt ?? null,
+        createdAt: automation.createdAt ?? 1,
+        updatedAt: automation.updatedAt ?? 1,
+        assignments: automation.assignments.map((assignment) => ({
+            ...assignment,
+            updatedAt: assignment.updatedAt ?? 0,
+        })),
+        templateCiphertext: automation.templateCiphertext,
+        triggerDefinitionEnvelope: null,
+    }));
+    const directDefinition = {
+        ...definition,
+        linkedExistingSessionId: automation.projectedExistingSessionId ?? definition.linkedExistingSessionId,
+    };
+    legacyDirectDefinitionCache.set(automation, directDefinition);
+    return directDefinition;
+}
+
+function directEventDefinition(params: Readonly<{
+    assignments?: ReadonlyArray<Readonly<{
+        machineId: string;
+        enabled: boolean;
+        priority: number;
+        updatedAt: number | null;
+    }>>;
+}> = {}) {
+    const templateVersion = 7;
+    const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111');
+    const detail = AutomationV3DefinitionDetailSchema.parse({
+        id: 'a1',
+        name: 'Repository triage',
+        description: 'Review repository activity',
+        enabled: true,
+        trigger: {
+            kind: 'pluginEvent',
+            eventRef: { pluginId: 'acme.github', localId: 'repository-updated' },
+            sourceSelectorId,
+            sourceContractVersion: 3,
+            observation: {
+                kind: 'checkpointedPull',
+                watcher: {
+                    machineId: 'watcher-machine',
+                    machineInstallationId: 'watcher-installation',
+                    pluginId: 'acme.github',
+                    materializationId: 'github-materialization',
+                },
+            },
+        },
+        targetType: 'newSession',
+        templateVersion,
+        nextRunAt: null,
+        lastRunAt: null,
+        createdAt: 1,
+        updatedAt: 2,
+        assignments: params.assignments ?? [{ machineId: 'executor-machine', enabled: true, priority: 100, updatedAt: null }],
+        triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            mode: 'plain',
+            binding: {
+                v: 1,
+                automationId: 'a1',
+                templateVersion,
+                triggerKind: 'pluginEvent',
+                eventRef: { pluginId: 'acme.github', localId: 'repository-updated' },
+                sourceSelectorId,
+            },
+            definition: {
+                v: 1,
+                sourceInstanceId: 'repository:42',
+                sourceConfig: { repository: 'acme/widgets' },
+                displayLabel: 'acme/widgets',
+                filter: null,
+                maximumObservationAgeMs: 60_000,
+            },
+        })),
+        executionRecipe: {
+            v: 1,
+            templateVersion,
+            template: { t: 'plain', v: { v: 1, prompt: 'Review {{input}}' } },
+            triggerEvidence: null,
+            target: {
+                kind: 'newSession',
+                spawn: {
+                    executionTarget: { serverId: 'server-1', machineId: 'executor-machine' },
+                    directory: '/workspace/acme',
+                    organizationPlacement: { folderId: null, tagIds: [] },
+                    agentTarget: {
+                        kind: 'agent',
+                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    },
+                    permissionMode: 'default',
+                    configuration: {
+                        mode: { value: null, updatedAtMs: 1 },
+                        model: { value: null, updatedAtMs: 1 },
+                        permissionIntent: { value: 'default', updatedAtMs: 1 },
+                        options: {},
+                    },
+                },
+            },
+        },
+    });
+    const {
+        triggerDefinitionEnvelope: _triggerDefinitionEnvelope,
+        executionRecipe: _executionRecipe,
+        templateCiphertext: _templateCiphertext,
+        ...summary
+    } = detail;
+    return {
+        ...summary,
+        detail: { kind: 'available' as const, templateVersion, value: detail },
+        linkedExistingSessionId: null,
+    };
+}
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -87,6 +262,8 @@ vi.mock('@/components/sessions/agentInput', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
+    useLayoutMaxWidth: () => 1000,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
 vi.mock('@/components/automations/gating/AutomationsGate', () => ({
@@ -124,7 +301,11 @@ vi.mock('@/sync/sync', () => ({
     sync: {
         updateAutomation: updateAutomationSpy,
         refreshAutomations: refreshAutomationsSpy,
+        refreshAutomationDefinitionDetail: refreshAutomationDefinitionDetailSpy,
         getSessionEncryptionKeyBase64ForResume: getSessionEncryptionKeyBase64ForResumeSpy,
+        encryption: {
+            decryptAutomationTemplateRaw: decryptAutomationTemplateRawSpy,
+        },
     },
 }));
 
@@ -133,8 +314,8 @@ vi.mock('@/sync/domains/automations/automationExistingSessionTemplateUpdate', ()
 }));
 
 vi.mock('@/sync/domains/automations/automationTemplateTransport', () => ({
-    tryDecodeAutomationTemplateEnvelope: vi.fn(() => null),
-    tryReadAutomationTemplateEnvelopeExistingSessionId: vi.fn(() => null),
+    tryDecodeAutomationTemplateEnvelope: tryDecodeAutomationTemplateEnvelopeSpy,
+    resolveAutomationTemplatePayload: resolveAutomationTemplatePayloadSpy,
 }));
 
 vi.mock('@/sync/domains/automations/automationTemplateCodec', () => ({
@@ -166,7 +347,7 @@ installAutomationAppRouteCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         const readSnapshot = () => getStateSpy();
         return createStorageModuleStub({
-            useAutomation: () => automationState.value,
+            useAutomation: () => automationState.definitionOverride ?? toLegacyDirectDefinition(automationState.value),
             useSession: () => sessionState.value,
             useSettings: () => settingsState.value,
             storage: Object.assign(
@@ -190,6 +371,8 @@ installAutomationAppRouteCommonModuleMocks({
             const labels: Record<string, string> = {
                 'automations.edit.title': 'Edit automation',
                 'automations.edit.saveAutomationLabel': 'Save automation',
+                'settingsAccount.restoreRequiredTitle': 'Restore required',
+                'settingsAccount.secretKeyMissing': 'Secret key unavailable. Please restore your account first.',
                 'common.back': 'Back',
             };
             return labels[key] ?? key;
@@ -201,7 +384,7 @@ installAutomationAppRouteCommonModuleMocks({
     },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock().module;
+        return createModalModuleMock({ spies: { alert: modalAlertSpy } }).module;
     },
 });
 
@@ -213,14 +396,22 @@ describe('AutomationEditScreen route', () => {
         routerReplaceSpy.mockReset();
         updateAutomationSpy.mockClear();
         refreshAutomationsSpy.mockClear();
+        refreshAutomationDefinitionDetailSpy.mockClear();
         getSessionEncryptionKeyBase64ForResumeSpy.mockClear();
         navigateWithBlurOnWebSpy.mockClear();
         storeTempDataSpy.mockClear();
         updateExistingSessionAutomationTemplateMessageSpy.mockClear();
+        decryptAutomationTemplateRawSpy.mockReset();
+        decryptAutomationTemplateRawSpy.mockResolvedValue(null);
+        modalAlertSpy.mockClear();
+        tryDecodeAutomationTemplateEnvelopeSpy.mockReset();
+        tryDecodeAutomationTemplateEnvelopeSpy.mockReturnValue(null);
+        resolveAutomationTemplatePayloadSpy.mockClear();
         latestAgentInputProps.value = null;
         latestContextSectionProps.value = null;
         latestAutomationSettingsFormProps.value = null;
         latestUnavailableNoticeProps.value = null;
+        automationState.definitionOverride = null;
         automationState.value = {
             id: 'a1',
             enabled: true,
@@ -269,10 +460,42 @@ describe('AutomationEditScreen route', () => {
     });
 
     const settle = async () => {
-        await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
     };
+
+    it('loads direct V3 detail before admitting the retained schedule editor', async () => {
+        automationState.definitionOverride = {
+            id: 'a1',
+            name: 'Nightly',
+            description: null,
+            enabled: true,
+            trigger: {
+                kind: 'schedule',
+                schedule: {
+                    kind: 'interval',
+                    everyMs: 60_000,
+                    scheduleExpr: null,
+                    timezone: null,
+                },
+            },
+            targetType: 'newSession',
+            templateVersion: 2,
+            nextRunAt: null,
+            lastRunAt: null,
+            createdAt: 1,
+            updatedAt: 1,
+            assignments: [],
+            detail: { kind: 'unloaded', templateVersion: 2 },
+            linkedExistingSessionId: null,
+        };
+        const EditRoute = (await import('@/app/(app)/automations/edit')).default;
+
+        await renderScreen(React.createElement(EditRoute));
+        await settle();
+
+        expect(refreshAutomationDefinitionDetailSpy).toHaveBeenCalledWith('a1');
+        expect(storeTempDataSpy).not.toHaveBeenCalled();
+    });
 
     it('redirects new-session automations into the shared new-session composer with hydrated temp data', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
@@ -324,6 +547,50 @@ describe('AutomationEditScreen route', () => {
         expect(routerReplaceSpy).toHaveBeenCalledWith('/new?automation=1&automationEditId=a1&dataId=temp-edit-seed');
     });
 
+    it('redirects a plain direct Event definition into the same composer without collapsing its assignment topology into editable state', async () => {
+        automationState.definitionOverride = directEventDefinition({
+            assignments: [
+                { machineId: 'executor-primary', enabled: true, priority: 400, updatedAt: 12 },
+                { machineId: 'executor-disabled', enabled: false, priority: 17, updatedAt: 13 },
+                { machineId: 'executor-fallback', enabled: true, priority: 3, updatedAt: null },
+            ],
+        });
+        const EditRoute = (await import('@/app/(app)/automations/edit')).default;
+
+        await renderScreen(React.createElement(EditRoute));
+        await settle();
+
+        const tempData = storeTempDataSpy.mock.calls.at(-1)?.[0];
+        expect(tempData).toEqual(expect.objectContaining({
+            prompt: 'Review {{input}}',
+            machineId: 'executor-machine',
+            directory: '/workspace/acme',
+            automationDraft: expect.objectContaining({
+                enabled: true,
+                name: 'Repository triage',
+                description: 'Review repository activity',
+            }),
+            eventAutomationEditSeed: expect.objectContaining({
+                automationId: 'a1',
+                expectedTemplateVersion: 7,
+                eventRef: { pluginId: 'acme.github', localId: 'repository-updated' },
+                source: expect.objectContaining({
+                    sourceInstanceId: 'repository:42',
+                    sourceContractVersion: 3,
+                }),
+                watcherMaterializationRef: expect.objectContaining({
+                    machineId: 'watcher-machine',
+                    materializationId: 'github-materialization',
+                }),
+            }),
+        }));
+        // Placement is not editable on this route. Keeping the direct-detail
+        // assignment collection out of the temp seed leaves the writer's
+        // immediately re-read current detail as its sole authority.
+        expect(tempData?.eventAutomationEditSeed).not.toHaveProperty('assignments');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/new?automation=1&automationEditId=a1&dataId=temp-edit-seed');
+    });
+
     it('renders the shared unavailable notice for blocked existing-session automations', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
@@ -334,6 +601,7 @@ describe('AutomationEditScreen route', () => {
             description: null,
             targetType: 'existing_session',
             templateCiphertext: 'template',
+            projectedExistingSessionId: 's1',
             assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
             schedule: {
                 kind: 'interval',
@@ -354,7 +622,6 @@ describe('AutomationEditScreen route', () => {
             },
         };
         getSessionEncryptionKeyBase64ForResumeSpy.mockReturnValueOnce(null);
-        vi.mocked(transport.tryReadAutomationTemplateEnvelopeExistingSessionId).mockReturnValue('s1');
         vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
             kind: 'happier_automation_template_plain_v1',
             existingSessionId: 's1',
@@ -380,13 +647,17 @@ describe('AutomationEditScreen route', () => {
         expect(latestAgentInputProps.value).toBeNull();
     });
 
-    it('hydrates the shared composer with inherited existing-session context when editing an automation', async () => {
+    it('hydrates the shared composer from the sync-projected encrypted existing-session association', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
         automationState.value = {
             ...automationState.value,
             targetType: 'existing_session',
-            templateCiphertext: 'template',
+            templateCiphertext: JSON.stringify({
+                kind: 'happier_automation_template_encrypted_v1',
+                payloadCiphertext: 'template-ciphertext',
+            }),
+            projectedExistingSessionId: 'session-1',
         };
         sessionState.value = {
             id: 'session-1',
@@ -424,11 +695,15 @@ describe('AutomationEditScreen route', () => {
                 }
                 : null,
         }));
-        vi.mocked(transport.tryReadAutomationTemplateEnvelopeExistingSessionId).mockReturnValue('session-1');
-        vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
-            kind: 'happier_automation_template_plain_v1',
+        decryptAutomationTemplateRawSpy.mockResolvedValue({
+            directory: '/repo/project',
             existingSessionId: 'session-1',
-            payload: { prompt: 'Resume the review' },
+            prompt: 'Resume the review',
+            displayText: 'Resume the review',
+        });
+        vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
+            kind: 'happier_automation_template_encrypted_v1',
+            payloadCiphertext: 'template-ciphertext',
         } as any);
         vi.mocked(codec.decodeAutomationTemplate).mockReturnValue({
             existingSessionId: 'session-1',
@@ -452,6 +727,7 @@ describe('AutomationEditScreen route', () => {
             permissionMode: 'read-only',
             modelMode: 'claude-sonnet-4-6',
         }));
+        expect(getSessionEncryptionKeyBase64ForResumeSpy).toHaveBeenCalledWith('session-1');
     });
 
     it('preserves configured ACP backend targets when redirecting new-session automations into the shared composer', async () => {
@@ -481,29 +757,46 @@ describe('AutomationEditScreen route', () => {
         }));
     });
 
-    it('waits for existing-session deep-link hydration before showing the session-not-found state', async () => {
+    it('reports a retained encrypted automation as locked instead of treating it as invalid or empty', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
-        const codec = await import('@/sync/domains/automations/automationTemplateCodec');
-        hydrateReadyState.ready = false;
-        vi.mocked(transport.tryReadAutomationTemplateEnvelopeExistingSessionId).mockReturnValue('s1');
         vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
-            kind: 'happier_automation_template_plain_v1',
-            payload: { prompt: 'Follow up', displayText: 'Follow up', existingSessionId: 's1' },
-            existingSessionId: 's1',
+            kind: 'happier_automation_template_encrypted_v1',
+            payloadCiphertext: 'retained-ciphertext',
         } as any);
-        vi.mocked(codec.decodeAutomationTemplate).mockReturnValue({
-            directory: '/tmp/project',
-            prompt: 'Follow up',
-            displayText: 'Follow up',
-            existingSessionId: 's1',
-        } as any);
+
+        const EditRoute = (await import('@/app/(app)/automations/edit')).default;
+        await renderScreen(React.createElement(EditRoute));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'Restore required',
+            'Secret key unavailable. Please restore your account first.',
+        );
+        expect(storeTempDataSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+    });
+
+    it('waits for existing-session deep-link hydration before showing the session-not-found state', async () => {
+        hydrateReadyState.ready = false;
         automationState.value = {
             id: 'a1',
             enabled: true,
             name: 'Nightly',
             description: null,
             targetType: 'existing_session',
-            templateCiphertext: 'template',
+            templateCiphertext: JSON.stringify({
+                kind: 'happier_automation_template_plain_v1',
+                payload: {
+                    directory: '/tmp/project',
+                    prompt: 'Follow up',
+                    displayText: 'Follow up',
+                    existingSessionId: 's1',
+                },
+            }),
+            projectedExistingSessionId: 's1',
             assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
             schedule: {
                 kind: 'interval',
@@ -528,7 +821,6 @@ describe('AutomationEditScreen route', () => {
     it('replaces to the automation detail route after save', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
-        vi.mocked(transport.tryReadAutomationTemplateEnvelopeExistingSessionId).mockReturnValue('s1');
         vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
             kind: 'happier_automation_template_plain_v1',
             payload: { prompt: 'Follow up', displayText: 'Follow up', existingSessionId: 's1' },
@@ -547,6 +839,7 @@ describe('AutomationEditScreen route', () => {
             description: null,
             targetType: 'existing_session',
             templateCiphertext: 'template',
+            projectedExistingSessionId: 's1',
             assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
             schedule: {
                 kind: 'interval',
@@ -640,7 +933,6 @@ describe('AutomationEditScreen route', () => {
     it('routes the existing-session save action through the shared composer only', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
-        vi.mocked(transport.tryReadAutomationTemplateEnvelopeExistingSessionId).mockReturnValue('s1');
         vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
             kind: 'happier_automation_template_plain_v1',
             payload: { prompt: 'Follow up', displayText: 'Follow up', existingSessionId: 's1' },
@@ -659,6 +951,7 @@ describe('AutomationEditScreen route', () => {
             description: null,
             targetType: 'existing_session',
             templateCiphertext: 'template',
+            projectedExistingSessionId: 's1',
             assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
             schedule: {
                 kind: 'interval',
@@ -732,7 +1025,6 @@ describe('AutomationEditScreen route', () => {
     it('does not save an existing-session automation when the target session is not resumable', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
-        vi.mocked(transport.tryReadAutomationTemplateEnvelopeExistingSessionId).mockReturnValue('s1');
         vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
             kind: 'happier_automation_template_plain_v1',
             payload: { prompt: 'Follow up', displayText: 'Follow up', existingSessionId: 's1' },
@@ -751,6 +1043,7 @@ describe('AutomationEditScreen route', () => {
             description: null,
             targetType: 'existing_session',
             templateCiphertext: 'template',
+            projectedExistingSessionId: 's1',
             assignments: [{ machineId: 'machine-1', enabled: true, priority: 100 }],
             schedule: {
                 kind: 'interval',

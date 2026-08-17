@@ -13,7 +13,6 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { shouldHoldAuthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride';
 import { resolveAuthenticatedWebServerUrlOverrideAction } from '@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction';
 import {
-    bootstrapActiveServerFromWebLocation,
     commitWebServerUrlOverride,
 } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
@@ -24,8 +23,6 @@ import {
     doesOnboardingJourneyOwnTransientDemoServer,
     useOnboardingJourneySessionActive,
 } from '@/components/onboarding/tour/state/journeySession';
-
-const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
 /**
  * Single navigation-subscribing render owner for the app root layout.
@@ -48,6 +45,10 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
     const activeServerSnapshot = useActiveServerSnapshot();
+    const bootstrappedServerUrlRef =
+        React.useRef(
+            activeServerSnapshot.serverUrl ?? null,
+        );
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     const onboardingJourneyOwnsTransientDemoServer =
         doesOnboardingJourneyOwnTransientDemoServer(onboardingJourneyActive);
@@ -95,7 +96,8 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
         if (webServerOverrideHandledRef.current) return;
         const overrideAction = resolveAuthenticatedWebServerUrlOverrideAction({
             isAuthenticated,
-            bootstrappedServerUrl: bootstrappedWebServerOverride?.serverUrl ?? null,
+            bootstrappedServerUrl:
+                bootstrappedServerUrlRef.current,
         });
         if (overrideAction.kind === 'none') {
             setIsApplyingWebServerOverride(false);

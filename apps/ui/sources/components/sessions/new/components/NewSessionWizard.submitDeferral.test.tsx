@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { describe, expect, it, vi } from 'vitest';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
@@ -220,12 +221,12 @@ describe('NewSessionWizard submit deferral', () => {
                         setFavoriteDirectories: () => {},
                     } as any}
                     footer={{
-                        sessionPrompt: 'hello',
+                        promptStore: createNewSessionPromptStore('hello'),
                         setSessionPrompt: () => {},
                         handleCreateSession,
                         canCreate: true,
                         isCreating: false,
-                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteKinds: [],
                         emptyAutocompleteSuggestions: async () => [],
                         agentInputExtraActionChips: [],
                     }}

@@ -14,7 +14,6 @@ import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/d
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let pinnedSessionKeysV1: string[] = [];
-const setPinnedSessionKeysV1 = vi.fn();
 let sessionMruOrderV1: string[] = [];
 const setSessionMruOrderV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
@@ -32,12 +31,9 @@ let mockPathname = '';
 let platformOs: 'ios' | 'android' = 'ios';
 
 let sessionTagsV1: Record<string, string[]> = {};
-const setSessionTagsV1 = vi.fn();
 let sessionListOrderingModeV1: 'custom' | 'created' | 'updated' = 'custom';
 const setSessionListOrderingModeV1 = vi.fn();
 let workspacePathDisplayModeV1: 'name' | 'path' | null = null;
-let workspaceLabelsV1: Record<string, string> = {};
-const setWorkspaceLabelsV1 = vi.fn();
 let workspaceRefsV1: any[] = [];
 const setWorkspaceRefsV1 = vi.fn();
 let collapsedGroupKeysV1: Record<string, boolean> = {};
@@ -228,6 +224,7 @@ vi.mock('@/components/ui/feedback/UpdateBanner', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1280 },
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1280 }),
     useLayoutMaxWidth: () => 1280,
 }));
 
@@ -378,12 +375,8 @@ installSessionShellCommonModuleMocks({
                     allMachines.map((machine) => [machine.id, buildMachineDisplayRenderableFromMachine(machine as any)]),
                 ),
                 useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-                    if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
                     if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
-                    if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
                     if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
-                    if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
                     return [null, vi.fn()];
                 }),
                 useLocalSettingMutable: <K extends keyof LocalSettings>(key: K): [LocalSettings[K], (value: LocalSettings[K]) => void] => {
@@ -670,19 +663,16 @@ function findRecordedGestureDetectors(
 
 describe('SessionsList (native virtualization)', () => {
     beforeEach(async () => {
+        virtualizedListState.current = null;
         sessionListOrderingModeV1 = 'custom';
         mockPathname = '';
         pinnedSessionKeysV1 = [];
         sessionMruOrderV1 = [];
         sessionTagsV1 = {};
-        workspaceLabelsV1 = {};
         workspaceRefsV1 = [];
         collapsedGroupKeysV1 = {};
-        setPinnedSessionKeysV1.mockClear();
         setSessionMruOrderV1.mockClear();
-        setSessionTagsV1.mockClear();
         setSessionListOrderingModeV1.mockClear();
-        setWorkspaceLabelsV1.mockClear();
         setWorkspaceRefsV1.mockClear();
         setCollapsedGroupKeysV1.mockClear();
         setSessionPinOp.mockClear();

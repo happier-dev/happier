@@ -366,8 +366,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
         const mention = {
             kind: 'skill' as const,
             tokenText: '$review',
-            start: 4,
-            end: 11,
             name: 'review',
         };
 
@@ -418,8 +416,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
             const mention = {
                 kind: 'skill' as const,
                 tokenText: '$review',
-                start: 4,
-                end: 11,
                 name: 'review',
             };
 
@@ -475,8 +471,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
             const mention = {
                 kind: 'skill' as const,
                 tokenText: '$review',
-                start: 4,
-                end: 11,
                 name: 'review',
             };
 
@@ -732,15 +726,11 @@ describe('useSessionAgentInputComposerPersistence', () => {
         const survivingMention = {
             kind: 'skill' as const,
             tokenText: '$review',
-            start: 4,
-            end: 11,
             name: 'review',
         };
         const staleMention = {
             kind: 'skill' as const,
             tokenText: '$gone',
-            start: 12,
-            end: 17,
             name: 'gone',
         };
         draftValueStore.writeSessionDraftValue(activeScopeState.value, 'session-a', 'structuredInput.mentions', [
@@ -773,8 +763,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
         const mention = {
             kind: 'skill' as const,
             tokenText: '$review',
-            start: 4,
-            end: 11,
             name: 'review',
         };
 
@@ -805,8 +793,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
         const mention = {
             kind: 'skill' as const,
             tokenText: '$review',
-            start: 4,
-            end: 11,
             name: 'review',
         };
 
@@ -871,8 +857,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
         const staleMention = {
             kind: 'skill' as const,
             tokenText: '$review',
-            start: 4,
-            end: 11,
             name: 'review',
         };
         const scope = activeScopeState.value;
@@ -939,8 +923,6 @@ describe('useSessionAgentInputComposerPersistence', () => {
             const staleMention = {
                 kind: 'skill' as const,
                 tokenText: '$review',
-                start: 4,
-                end: 11,
                 name: 'review',
             };
             const scope = activeScopeState.value;

@@ -51,13 +51,43 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
     const keylessPrimary = props.options.keylessPrimary;
     const providerId = props.options.providerId;
     const keylessProviderId = props.options.keylessProviderId;
+    const primaryAction = props.options.primaryAction;
     const showSecondaryKeylessProviderLogin = props.options.showKeylessProviderLogin && !keylessPrimary && !!keylessProviderId;
     const showOpenSetupAction = props.isDesktopShell && props.showOpenSetupAction !== false;
 
     const isLandscape = props.layout === 'landscape';
     const actionStackStyle = isLandscape ? styles.landscapeActionStack : styles.actionStack;
-    const smallButtonSize = isLandscape ? 'small' : 'small';
+    const smallButtonSize = 'small';
     const normalButtonSize = 'normal';
+
+    const invokePrimaryAction = () => {
+        switch (primaryAction?.kind) {
+            case 'anonymous':
+                return props.onCreateAccount();
+            case 'provider-keyed':
+                return providerId ? props.onCreateAccountViaProvider(providerId) : undefined;
+            case 'mtls':
+                return props.onLoginWithMtls();
+            case 'keyless':
+                return keylessProviderId ? props.onLoginWithKeylessProvider(keylessProviderId) : undefined;
+            default:
+                return undefined;
+        }
+    };
+
+    const primaryActionTestId = primaryAction?.kind === 'provider-keyed'
+        ? 'welcome-signup-provider'
+        : primaryAction?.kind === 'keyless'
+            ? 'welcome-provider-primary'
+            : primaryAction?.kind === 'mtls'
+                ? 'welcome-mtls-primary'
+                : 'welcome-create-account';
+
+    const signupDisabledNotice = primaryAction === null ? (
+        <Text testID="welcome-signup-disabled" style={[styles.serverStatusBody, styles.signupDisabledNotice]}>
+            {t('errors.signupDisabled')}
+        </Text>
+    ) : null;
 
     const renderServerLoading = () => (
         <View style={styles.serverLoadingBlock}>
@@ -72,7 +102,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                 <Text style={styles.serverUnavailableTitle}>
                     {props.options.serverAvailability === 'incompatible' ? t('welcome.serverIncompatibleTitle') : t('welcome.serverUnavailableTitle')}
                 </Text>
-                <Text style={styles.serverUnavailableBody}>
+                <Text style={styles.serverStatusBody}>
                     {props.options.serverAvailability === 'incompatible'
                         ? t('welcome.serverIncompatibleBody', { serverUrl: props.options.serverUrlForCopy })
                         : t('welcome.serverUnavailableBody', { serverUrl: props.options.serverUrlForCopy })}
@@ -102,6 +132,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
 
     const renderReadyActions = () => (
         <>
+            {signupDisabledNotice}
             <View style={actionStackStyle}>
                 {showOpenSetupAction && (
                     <View style={styles.actionRow}>
@@ -164,36 +195,24 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                         />
                     </View>
                 )}
-                {!showProviderSignup && !showAnonymousSignup && (
+                {!showProviderSignup && !showAnonymousSignup && primaryAction ? (
                     <View style={styles.actionRow}>
                         <RoundButton
-                            testID="welcome-create-account"
+                            testID={primaryActionTestId}
                             size={smallButtonSize}
-                            title={props.options.primarySignupTitle}
-                            action={
-                                mtlsPrimary
-                                    ? wrapAsyncAction(props.onLoginWithMtls)
-                                    : keylessPrimary && keylessProviderId
-                                        ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
-                                        : showProviderSignup && providerId
-                                            ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
-                                            : undefined
-                            }
-                            onPress={
-                                mtlsPrimary || (keylessPrimary && keylessProviderId) || (showProviderSignup && providerId)
-                                    ? undefined
-                                    : handleCreateAccountPress
-                            }
+                            title={primaryAction.title}
+                            action={wrapAsyncAction(invokePrimaryAction)}
                             display="inverted"
                         />
                     </View>
-                )}
+                ) : null}
             </View>
         </>
     );
 
     const renderMobileActions = () => (
         <>
+            {signupDisabledNotice}
             <View style={actionStackStyle}>
                 {showOpenSetupAction && (
                     <View style={styles.actionRow}>
@@ -206,27 +225,16 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                         />
                     </View>
                 )}
-                <View style={styles.actionRow}>
-                    <RoundButton
-                        testID={showProviderSignup ? 'welcome-signup-provider' : 'welcome-create-account'}
-                        size={normalButtonSize}
-                        title={props.options.primarySignupTitle}
-                        action={
-                            mtlsPrimary
-                                ? wrapAsyncAction(props.onLoginWithMtls)
-                                : keylessPrimary && keylessProviderId
-                                    ? wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId))
-                                    : showProviderSignup && providerId
-                                        ? wrapAsyncAction(() => props.onCreateAccountViaProvider(providerId))
-                                        : undefined
-                        }
-                        onPress={
-                            mtlsPrimary || (keylessPrimary && keylessProviderId) || (showProviderSignup && providerId)
-                                ? undefined
-                                : handleCreateAccountPress
-                        }
-                    />
-                </View>
+                {primaryAction ? (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID={primaryActionTestId}
+                            size={normalButtonSize}
+                            title={primaryAction.title}
+                            action={wrapAsyncAction(invokePrimaryAction)}
+                        />
+                    </View>
+                ) : null}
                 {showMtlsLogin && !mtlsPrimary && (
                     <View style={styles.actionRow}>
                         <RoundButton
@@ -310,12 +318,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 16,
         color: theme.colors.text.primary,
     },
-    serverUnavailableBody: {
+    serverStatusBody: {
         ...Typography.default(),
         fontSize: 14,
         color: theme.colors.text.secondary,
         marginTop: 2,
         lineHeight: 20,
+    },
+    signupDisabledNotice: {
+        width: '100%',
+        maxWidth: 360,
+        alignSelf: 'center',
+        textAlign: 'center',
+        marginBottom: 20,
     },
     serverLoadingBlock: {
         alignItems: 'center',

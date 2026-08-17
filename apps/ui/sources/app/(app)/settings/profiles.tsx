@@ -1,15 +1,25 @@
 import React from 'react';
 import { View, Pressable, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRouter } from 'expo-router';
-import { useAllMachines, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import {
+    useCurrentSecretBindingsByProfileIdMutable,
+    useSetting,
+    useSettingMutable,
+} from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { DEFAULT_PROFILES, getBuiltInProfileNameKey, isProfileEnabled, resolveProfileById, setProfileEnabledOverride } from '@/sync/domains/profiles/profileUtils';
+import {
+    DEFAULT_PROFILES,
+    getBuiltInProfileNameKey,
+    isProfileEnabled,
+    readProfileEnabledById,
+    resolveProfileById,
+    setProfileEnabledOverride,
+} from '@/sync/domains/profiles/profileUtils';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -31,10 +41,15 @@ import {
     runUnsavedChangesGuard,
 } from '@/utils/navigation/runGuardedNavigation';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+import { Icon } from '@/components/ui/icons/Icon';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import {
     appendAiLaunchProfile,
-    projectAiLaunchProfileForLegacyUi,
     readUiAiLaunchProfiles,
+    readUiAiLaunchProfilesForLegacyUi,
     removeAiLaunchProfile,
     replaceAiLaunchProfile,
 } from '@/sync/domains/profiles/aiLaunchProfileCollection';
@@ -52,16 +67,17 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [rawProfiles, setRawProfiles] = useSettingMutable('profiles');
     const launchProfiles = React.useMemo(() => readUiAiLaunchProfiles(rawProfiles), [rawProfiles]);
-    const profiles = React.useMemo(
-        () => launchProfiles.map(projectAiLaunchProfileForLegacyUi),
-        [launchProfiles],
-    );
+    const profiles = React.useMemo(() => readUiAiLaunchProfilesForLegacyUi(rawProfiles), [rawProfiles]);
     const writeRawProfiles = React.useCallback((next: readonly unknown[]) => {
         setRawProfiles(next as AIBackendProfile[]);
     }, [setRawProfiles]);
     const [lastUsedProfile, setLastUsedProfile] = useSettingMutable('lastUsedProfile');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
-    const [profileEnabledById, setProfileEnabledById] = useSettingMutable('profileEnabledById');
+    const [profileEnabledByIdRaw, setProfileEnabledById] = useSettingMutable('profileEnabledById');
+    const profileEnabledById = React.useMemo(
+        () => readProfileEnabledById(profileEnabledByIdRaw),
+        [profileEnabledByIdRaw],
+    );
     const [editingProfile, setEditingProfile] = React.useState<AiLaunchProfile | null>(null);
     const [migrationReviewProfile, setMigrationReviewProfile] = React.useState<AIBackendProfile | null>(null);
     const [migrationConflictProfile, setMigrationConflictProfile] = React.useState<AIBackendProfile | null>(null);
@@ -71,11 +87,19 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     const isEditingDirtyRef = React.useRef(false);
     const saveRef = React.useRef<(() => boolean) | null>(null);
     const [secrets, setSecrets] = useSavedSecretsMutable();
-    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
-    const machines = useAllMachines();
-    const profileValidationMachineId = React.useMemo(() => (
-        machines.find((machine) => machine.active)?.id ?? machines[0]?.id ?? null
-    ), [machines]);
+    const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents,
+    );
+    const executionTarget = React.useMemo(() => {
+        const selectedTarget = administrationTargetSelection.selectedTarget;
+        const resolvedTarget = administrationTargetSelection.resolveExecutionTarget();
+        return selectedTarget !== null
+            && resolvedTarget !== null
+            && machineAdministrationTargetsEqual(selectedTarget, resolvedTarget.target)
+            ? resolvedTarget
+            : null;
+    }, [administrationTargetSelection]);
 
     const openSecretModal = React.useCallback((profile: AIBackendProfile, envVarName?: string) => {
         const requiredSecretNames = getRequiredSecretEnvVarNames(profile);
@@ -239,25 +263,25 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
             ...(migrationStatus === 'review' && actual && !isLaunchProfileV2(actual) ? [{
                 id: 'reviewProviderMigration',
                 title: t('settingsProviders.migration.reviewAction'),
-                icon: 'git-compare-outline' as const,
+                icon: 'git-diff' as const,
                 onPress: () => setMigrationReviewProfile(actual),
             }] : []),
             ...(migrationStatus === 'conflict' && actual && !isLaunchProfileV2(actual) ? [{
                 id: 'reviewProviderMigrationConflict',
                 title: t('settingsProviders.migration.conflictReviewAction'),
-                icon: 'git-compare-outline' as const,
+                icon: 'git-diff' as const,
                 onPress: () => setMigrationConflictProfile(actual),
             }] : []),
             {
                 id: 'profileEnabled',
                 title: enabled ? t('common.enabled') : t('common.disabled'),
-                icon: enabled ? 'eye-outline' : 'eye-off-outline',
+                icon: enabled ? 'eye' : 'eye-slash',
                 onPress: () => {
-                    setProfileEnabledById(setProfileEnabledOverride(profileEnabledById, profile, !enabled));
+                    setProfileEnabledById(setProfileEnabledOverride(profileEnabledByIdRaw, profile, !enabled));
                 },
             },
         ];
-    }, [launchProfiles, profileEnabledById, providerSettingsV1, setProfileEnabledById]);
+    }, [launchProfiles, profileEnabledById, profileEnabledByIdRaw, providerSettingsV1, setProfileEnabledById]);
 
     const getProfileEnablementSubtitle = React.useCallback((profile: AIBackendProfile) => {
         const actual = launchProfiles.find((entry) => entry.id === profile.id);
@@ -337,7 +361,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                     <Item
                         title={t('settingsFeatures.profiles')}
                         subtitle={t('settingsFeatures.profilesDisabled')}
-                        icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.purple} />}
+                        icon={<Icon name="person" size={29} color={theme.colors.accent.purple} />}
                         rightElement={
                             <Switch
                                 value={useProfiles}
@@ -363,7 +387,14 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 onPressProfile={(profile) => handleEditProfile(profile)}
                 includeDefaultEnvironmentRow
                 onPressDefaultEnvironment={() => handleSelectProfile(null)}
-                machineId={null}
+                machineId={executionTarget?.machine.id ?? null}
+                serverId={executionTarget?.serverId ?? null}
+                header={(
+                    <MachineAdministrationTargetSelector
+                        selection={administrationTargetSelection}
+                        testIDPrefix="settings.profiles.administration.target"
+                    />
+                )}
                 includeAddProfileRow
                 onAddProfilePress={handleAddProfile}
                 onEditProfile={(profile) => handleEditProfile(profile)}
@@ -395,12 +426,12 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                         profile,
                         secrets,
                         defaultBindings: secretBindingsByProfileId[profile.id] ?? null,
-                        // No machine selected on this screen; explicitly treat machine env as unavailable.
+                        // This predicate only recognizes Account-managed saved secrets. Machine-env
+                        // readiness remains the exact target-scoped preflight rendered by the badge.
                         machineEnvReadyByName: null,
                     });
                     return satisfaction.isSatisfied && satisfaction.items.some((i) => i.required && i.satisfiedBy !== 'machineEnv');
                 }}
-                // No machine selected on this screen, so machine-env preflight is intentionally omitted.
             />
 
             {/* Profile Add/Edit Modal */}
@@ -412,7 +443,8 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                     <Pressable style={profileManagerStyles.modalContent} onPress={() => { }}>
                         <LaunchProfileEditForm
                             profile={editingProfile}
-                            machineId={isLaunchProfileV2(editingProfile) ? profileValidationMachineId : null}
+                            machineId={isLaunchProfileV2(editingProfile) ? executionTarget?.machine.id ?? null : null}
+                            serverId={isLaunchProfileV2(editingProfile) ? executionTarget?.serverId ?? null : null}
                             onSave={handleSaveProfile}
                             onCancel={requestCloseEditor}
                             onDirtyChange={setIsEditingDirty}

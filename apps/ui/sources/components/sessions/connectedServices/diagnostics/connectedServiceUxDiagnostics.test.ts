@@ -10,7 +10,7 @@ import {
 import { resolveConnectedServiceUxDiagnosticPresentation } from './connectedServiceUxDiagnostics';
 
 describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
-    it('maps resume-unreachable diagnostics to the shared start-fresh presentation data', () => {
+    it('maps resume-unreachable diagnostics to product copy without forwarding raw diagnostic detail', () => {
         const diagnostic: ConnectedServiceUxDiagnosticV1 = {
             code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
             failurePhase: 'continuity',
@@ -22,7 +22,7 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
                 CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.openConnectedAccounts,
             ],
             diagnostics: {
-                reason: 'no_resumable_session_file',
+                reason: '/private/runner/session?token=never-render-this',
             },
         };
 
@@ -37,10 +37,7 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
                 expect.objectContaining({ kind: 'open_connected_accounts' }),
             ],
         });
-        expect(presentation?.bodyParams).toMatchObject({
-            reason: 'no_resumable_session_file',
-            agentId: 'pi',
-        });
+        expect(presentation).not.toHaveProperty('bodyParams');
     });
 
     it('uses one presentation mapping for switch verification failures', () => {

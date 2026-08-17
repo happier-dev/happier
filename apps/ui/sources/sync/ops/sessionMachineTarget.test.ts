@@ -40,6 +40,50 @@ describe('sessionMachineTarget', () => {
         });
     });
 
+    it('maps an agent-visible workspace root onto the owning machine path', async () => {
+        const { readMachineControlTargetForSession, readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadataLayoutVersion: 1,
+                    metadata: {},
+                    ownerMetadataView: {
+                        machineId: 'm1',
+                        path: '/home/coder/project',
+                        sessionWorkspaceLocationV1: {
+                            v: 1,
+                            machineId: 'm1',
+                            agentPath: '/home/coder/project',
+                            machinePath: '/Users/alice/project',
+                        },
+                    },
+                },
+            },
+            machines: {
+                m1: {
+                    id: 'm1',
+                    active: true,
+                    activeAt: 1,
+                    metadata: { host: 'host' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm1',
+            basePath: '/Users/alice/project',
+            agentBasePath: '/home/coder/project',
+        });
+        expect(readMachineControlTargetForSession('s1')).toEqual({
+            machineId: 'm1',
+            basePath: '/Users/alice/project',
+            agentBasePath: '/home/coder/project',
+            confidence: 'reachable',
+        });
+    });
+
     it('resolves machine target from linked direct-session metadata when top-level machine id is absent', async () => {
         const { readMachineTargetForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({

@@ -166,10 +166,6 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ activeWord: null, setActiveWord: () => {} }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: () => [[], null, () => {}, () => {}],
 }));
@@ -250,6 +246,8 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 920 },
+    useLayoutMaxWidth: () => 920,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 920 }),
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -325,7 +323,7 @@ describe('AgentInput (permission requests)', () => {
             sessionId: 's1',
             onSend: () => {},
             maxPanelHeight: 80,
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
                 { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
@@ -344,7 +342,7 @@ describe('AgentInput (permission requests)', () => {
             onChangeText: () => {},
             sessionId: 's1',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
                 { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
@@ -364,7 +362,7 @@ describe('AgentInput (permission requests)', () => {
             onChangeText: () => {},
             sessionId: 's1',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
                 { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
@@ -388,7 +386,7 @@ describe('AgentInput (permission requests)', () => {
             sessionId: 's1',
             onSend: () => {},
             maxPanelHeight: 80,
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
                 { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },

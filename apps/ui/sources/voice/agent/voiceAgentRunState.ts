@@ -109,7 +109,7 @@ export function resolvePersistedDaemonConversationSessionId(): string | null {
 
 export function resolveVoiceRunMetadataSessionId(
     managedSessionId: string,
-    backend: 'daemon' | 'openai_compat',
+    backend: 'daemon',
     conversationSessionId?: string | null,
 ): string | null {
     if (backend !== 'daemon') return null;

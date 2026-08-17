@@ -150,6 +150,36 @@ describe('fetchAndApplyNewerMessages', () => {
     expect(normalized?.seq).toBe(2);
   });
 
+  it('marks only explicitly stale ids as authoritative updates during a targeted newer refetch', async () => {
+    const applyMessages = vi.fn();
+    const request = vi.fn(async () => new Response(
+      JSON.stringify({
+        messages: [buildPlainApiMessage('ordinary-row', 2), buildPlainApiMessage('stale-row', 3)],
+        nextAfterSeq: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    const targetRefetch = {
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain' as const,
+      afterSeq: 1,
+      limit: 150,
+      getSessionEncryption: () => null,
+      request,
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
+      applyMessages,
+      log: { log: () => {} },
+      authoritativeUpdateMessageIds: new Set(['stale-row']),
+    };
+
+    await fetchAndApplyNewerMessages(targetRefetch);
+
+    const normalized = applyMessages.mock.calls[0]?.[1];
+    expect(normalized?.[0]).toMatchObject({ id: 'ordinary-row' });
+    expect(normalized?.[0]).not.toHaveProperty('isAuthoritativeUpdate');
+    expect(normalized?.[1]).toMatchObject({ id: 'stale-row', isAuthoritativeUpdate: true });
+  });
+
   it('calls onNormalizedMessages with the normalized messages before applying them', async () => {
     const applyMessages = vi.fn();
     const onNormalizedMessages = vi.fn();

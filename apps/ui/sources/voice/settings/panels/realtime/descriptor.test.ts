@@ -106,6 +106,11 @@ describe('realtime settings descriptor boundary', () => {
       ...base, providerId: 'acme', links: { privacy: 'javascript:alert(1)' },
     })).toBeNull();
     expect(parseRealtimeSettingsDescriptor('acme', {
+      ...base,
+      providerId: 'acme',
+      credential: { ...base.credential, credentialPurpose: '   ' },
+    })).toBeNull();
+    expect(parseRealtimeSettingsDescriptor('acme', {
       ...base, providerId: 'acme', fields: [{
         kind: 'server_vad', path: 'turnDetection',
         subfields: [{ kind: 'text', path: 'turnDetection.threshold', min: 0.1, max: 0.9 }],

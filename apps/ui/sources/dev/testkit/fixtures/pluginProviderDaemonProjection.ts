@@ -13,7 +13,6 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
                 kind: 'path',
                 locator: '/plugins/acme-review',
             },
-            digest: 'sha256:test-fixture',
         },
     },
     agentsById: {

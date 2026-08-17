@@ -1,6 +1,11 @@
 import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import {
+  isAccountStoredContentClientUpgradeRequiredError,
+  requireCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -17,14 +22,90 @@ import { t, tLoose } from '@/text';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import {
+  runVoiceTranscriptHistoryCarrierOperation,
+} from '@/voice/persistence/voiceTranscriptHistorySession';
 
 import {
   createVoiceHistoryConsumer,
   type VoiceHistoryCapturedScope,
   type VoiceHistoryPageResult,
   type VoiceHistoryProviderSource,
+  isVoiceHistoryOperationSupersededError,
 } from './voiceHistoryConsumer';
 import { discoverVoiceHistorySession } from './voiceHistorySessionDiscovery';
+
+type VoiceHistoryLoadStage =
+  | 'capture_scope'
+  | 'compatibility'
+  | 'lookup'
+  | 'hydrate'
+  | 'refresh';
+
+class VoiceHistoryLoadError extends Error {
+  readonly code = 'voice_history_load_failed';
+
+  constructor(
+    readonly stage: VoiceHistoryLoadStage,
+    status?: number,
+  ) {
+    super('Voice History failed to load');
+    this.name = 'VoiceHistoryLoadError';
+    const normalizedStatus = normalizeVoiceHistoryHttpStatus(status);
+    if (normalizedStatus !== undefined) {
+      Object.defineProperty(this, 'status', {
+        value: normalizedStatus,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+}
+
+function normalizeVoiceHistoryHttpStatus(status: unknown): number | undefined {
+  return typeof status === 'number'
+    && Number.isInteger(status)
+    && status >= 100
+    && status <= 599
+    ? status
+    : undefined;
+}
+
+function readBoundedVoiceHistoryHttpStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  return normalizeVoiceHistoryHttpStatus(
+    Object.getOwnPropertyDescriptor(error, 'status')?.value,
+  );
+}
+
+function rethrowVoiceHistoryLoadFailure(
+  stage: VoiceHistoryLoadStage,
+  error: unknown,
+): never {
+  if (
+    error instanceof VoiceHistoryLoadError
+    || isVoiceHistoryOperationSupersededError(error)
+    || isAccountStoredContentClientUpgradeRequiredError(error)
+  ) {
+    throw error;
+  }
+  throw new VoiceHistoryLoadError(
+    stage,
+    stage === 'lookup' ? readBoundedVoiceHistoryHttpStatus(error) : undefined,
+  );
+}
+
+async function runVoiceHistoryLoadStage<T>(
+  stage: VoiceHistoryLoadStage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    return rethrowVoiceHistoryLoadFailure(stage, error);
+  }
+}
 
 function findVoiceHistoryProviderEntry(
   registry: VoiceProviderRegistry,
@@ -36,7 +117,6 @@ function findVoiceHistoryProviderEntry(
     && candidate.pluginId === source.pluginId
     && (
       candidate.declaration?.id === source.contributionId
-      || candidate.providerId === source.contributionId
       || (
         candidate.source.kind === 'external'
         && candidate.source.pluginId === source.pluginId
@@ -71,6 +151,7 @@ type DefaultVoiceHistoryCapturedScope = VoiceHistoryCapturedScope & Readonly<{
 export type DefaultVoiceHistoryRuntime = Readonly<{
   readActiveScope(): ServerAccountScope | null;
   captureAuthority(scope: ServerAccountScope): Promise<ServerAccountSessionRequestAuthority>;
+  prepareSessionLookup(authority: ServerAccountSessionRequestAuthority): Promise<void>;
   lookupByTags(
     tags: readonly string[],
     authority: ServerAccountSessionRequestAuthority,
@@ -88,7 +169,7 @@ export type DefaultVoiceHistoryRuntime = Readonly<{
     sessionId: string,
     authority: ServerAccountSessionRequestAuthority,
   ): Promise<VoiceHistoryPageResult>;
-  readMessages(sessionId: string): ReturnType<typeof readStoredSessionMessages>;
+  readMessages(sessionId: string): readonly Message[];
   deleteSession(
     sessionId: string,
     authority: ServerAccountSessionRequestAuthority,
@@ -106,25 +187,48 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
       const scope = runtime.readActiveScope();
       return scope ? serverAccountScopeKeySuffix(scope) : null;
     },
-    captureScope: async (): Promise<DefaultVoiceHistoryCapturedScope | null> => {
-      const scope = runtime.readActiveScope();
-      if (!scope) return null;
-      const authority = await runtime.captureAuthority(scope);
-      return {
-        key: serverAccountScopeKeySuffix(scope),
-        authority,
-      };
-    },
+    captureScope: () => runVoiceHistoryLoadStage(
+      'capture_scope',
+      async (): Promise<DefaultVoiceHistoryCapturedScope | null> => {
+        const scope = runtime.readActiveScope();
+        if (!scope) return null;
+        const authority = await runtime.captureAuthority(scope);
+        return {
+          key: serverAccountScopeKeySuffix(scope),
+          authority,
+        };
+      },
+    ),
     discoverHistorySession: (scope) => discoverVoiceHistorySession({
-      lookupByTags: (tags) => runtime.lookupByTags(tags, scope.authority),
-      hydrateSession: (sessionId) => runtime.hydrateSession(sessionId, scope.authority),
-      readHydratedSession: runtime.readHydratedSession,
+      prepareLookup: () => runVoiceHistoryLoadStage(
+        'compatibility',
+        () => runtime.prepareSessionLookup(scope.authority),
+      ),
+      lookupByTags: (tags) => runVoiceHistoryLoadStage(
+        'lookup',
+        () => runtime.lookupByTags(tags, scope.authority),
+      ),
+      hydrateSession: (sessionId) => runVoiceHistoryLoadStage(
+        'hydrate',
+        () => runtime.hydrateSession(sessionId, scope.authority),
+      ),
+      readHydratedSession: (sessionId) => {
+        try {
+          return runtime.readHydratedSession(sessionId);
+        } catch (error) {
+          return rethrowVoiceHistoryLoadFailure('hydrate', error);
+        }
+      },
     }),
     refreshSessionMessages: (sessionId, scope) =>
-      runtime.refreshSessionMessages(sessionId, scope.authority),
+      runVoiceHistoryLoadStage(
+        'refresh',
+        () => runtime.refreshSessionMessages(sessionId, scope.authority),
+      ),
     loadOlderMessages: (sessionId, scope) =>
       runtime.loadOlderMessages(sessionId, scope.authority),
     readMessages: runtime.readMessages,
+    readProjectionRevision: () => providerRegistry.getRevision?.() ?? 0,
     resolveProviderLabel: (source) => {
       return resolveVoiceHistoryProviderLabel(providerRegistry, source, tLoose)
         ?? source?.contributionId
@@ -134,6 +238,7 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
       runtime.deleteSession(sessionId, scope.authority),
     canDeleteSession: runtime.canDeleteSession,
     retireLocalSession: runtime.retireLocalSession,
+    runCarrierOperation: runVoiceTranscriptHistoryCarrierOperation,
     now: () => new Date(),
   });
 }
@@ -155,6 +260,10 @@ export function createDefaultVoiceHistoryConsumer() {
         scope,
         activeRequest: (path, init) => apiSocket.request(path, init),
       }),
+    prepareSessionLookup: (authority) =>
+      requireCurrentAccountStoredContentServerCompatibility({
+        serverId: authority.scope.serverId,
+      }),
     lookupByTags: async (tags, authority) => {
       const response = await authority.request('/v2/sessions/lookup-by-tags', {
         method: 'POST',
@@ -162,11 +271,11 @@ export function createDefaultVoiceHistoryConsumer() {
         body: JSON.stringify({ tags }),
       });
       if (!response.ok) {
-        throw new Error(`Voice History lookup failed (${response.status})`);
+        throw new VoiceHistoryLoadError('lookup', response.status);
       }
       const parsed = SessionLookupByTagsResponseV2Schema.safeParse(await response.json());
       if (!parsed.success) {
-        throw new Error('Voice History lookup returned an invalid response');
+        throw new VoiceHistoryLoadError('lookup');
       }
       return parsed.data.sessions;
     },
@@ -184,7 +293,7 @@ export function createDefaultVoiceHistoryConsumer() {
       readStoredSessionMessages(storage.getState(), sessionId),
     deleteSession: sessionDeleteWithServerAccountAuthority,
     canDeleteSession: canDeleteVoiceHistorySession,
-    retireLocalSession: (sessionId) => storage.getState().deleteSession(sessionId),
+    retireLocalSession: (sessionId) => sync.retireLocalSession(sessionId),
   };
   return createDefaultVoiceHistoryConsumerFromRuntime(runtime, providerRegistry);
 }

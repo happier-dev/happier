@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -11,7 +10,12 @@ import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWi
 import { Item } from '@/components/ui/lists/Item';
 import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { useAllMachines, useLocalSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import {
+    useAllMachines,
+    useLocalSetting,
+    useProjectLastMobileSurfacesByWorkspaceRefId,
+    useSettingMutable,
+} from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { Modal } from '@/modal';
@@ -34,6 +38,7 @@ import {
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { resolveWorkspaceRefDisplayName } from './resolveWorkspaceRefDisplayName';
 import { resolveProjectMobileSurfaceIntent, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const ProjectsListView = React.memo(() => {
     const { theme } = useUnistyles();
@@ -44,7 +49,7 @@ export const ProjectsListView = React.memo(() => {
     const activeServer = useActiveServerSnapshot();
     const allMachines = useAllMachines();
     const addFirstMachines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
-    const lastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
+    const lastMobileSurfaceByWorkspaceRefId = useProjectLastMobileSurfacesByWorkspaceRefId();
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
 
@@ -71,7 +76,7 @@ export const ProjectsListView = React.memo(() => {
 
         const scopeId = buildProjectPaneScopeId(workspaceRef.id);
         const rememberedRightTabId = paneContext?.state.scopes[scopeId]?.right?.activeTabId;
-        const persistedSegment = typeof lastMobileSurfaceByWorkspaceRefId?.[workspaceRef.id] === 'string'
+        const persistedSegment = typeof lastMobileSurfaceByWorkspaceRefId[workspaceRef.id] === 'string'
             ? lastMobileSurfaceByWorkspaceRefId[workspaceRef.id]
             : null;
         const persistedRootPath = lastActiveRootPathByWorkspaceRefId?.[workspaceRef.id];
@@ -228,8 +233,8 @@ export const ProjectsListView = React.memo(() => {
             {!hasAnyProjects ? (
                 <CenteredInfoTile
                     icon={(
-                        <Ionicons
-                            name="folder-open-outline"
+                        <Icon
+                            name="folder-open"
                             size={48}
                             color={theme.colors.text.secondary}
                             style={{ marginBottom: 12 }}
@@ -249,7 +254,7 @@ export const ProjectsListView = React.memo(() => {
                             title={resolveWorkspaceRefDisplayName(workspaceRef)}
                             subtitle={workspaceRef.rootPath}
                             subtitleLines={1}
-                            icon={<Ionicons name="folder-outline" size={22} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="folder" size={20} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <ProjectsListItemMenu
                                     theme={theme}
@@ -279,7 +284,7 @@ export const ProjectsListView = React.memo(() => {
                                 action={{
                                     testID: `projects-add-machine:${group.machineId}`,
                                     accessibilityLabel: t('projects.actions.addProjectToMachine'),
-                                    iconName: 'add-outline',
+                                    iconName: 'plus',
                                     iconColor: theme.colors.text.secondary,
                                     disabled: false,
                                     onPress: () => { void handleAddProjectToMachine(group.machineId); },
@@ -294,7 +299,7 @@ export const ProjectsListView = React.memo(() => {
                                 title={resolveWorkspaceRefDisplayName(workspaceRef)}
                                 subtitle={workspaceRef.rootPath}
                                 subtitleLines={1}
-                                icon={<Ionicons name="folder-outline" size={22} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="folder" size={20} color={theme.colors.text.secondary} />}
                                 rightElement={(
                                     <ProjectsListItemMenu
                                         theme={theme}
@@ -323,7 +328,7 @@ export const ProjectsListView = React.memo(() => {
                                 machine: getMachineDisplayName(machine) ?? machine.metadata?.host ?? machine.id,
                             })}
                             subtitle={t('projects.actions.chooseProjectFolderSubtitle')}
-                            icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
                             onPress={() => { void handleAddProjectToMachine(machine.id); }}
                         />
                     ))}

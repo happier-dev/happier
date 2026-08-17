@@ -9,14 +9,11 @@ import { Linking, Platform } from 'react-native';
 import type { NavigationFocusReturnCapture } from '@/utils/navigation/useNavigationFocusReturn';
 
 import type { VoiceSurfaceVariant } from './voiceSurfaceTypes';
-import { voiceSurfaceHaptics } from './voiceSurfaceHaptics';
 import type { VoiceConnectRecoveryTarget } from './resolveVoiceConnectRecoveryTarget';
 
 export function createVoiceSurfaceActionHandlers(params: Readonly<{
     activeAdapterId: string | null;
     globalStartAuthorized: boolean;
-    canMute: boolean;
-    canStop: boolean;
     fallbackOpenConversationControlSessionId: string | null;
     openConversationSessionId: string | null;
     providerId: string;
@@ -34,7 +31,6 @@ export function createVoiceSurfaceActionHandlers(params: Readonly<{
     navigateWithFocusReturn?: (navigate: () => void) => void;
     sessionId: string | null | undefined;
     snapSessionId: string | null;
-    muted: boolean;
     startSessionId: string | null;
     variant: VoiceSurfaceVariant;
 }>) {
@@ -60,12 +56,6 @@ export function createVoiceSurfaceActionHandlers(params: Readonly<{
             if (!sessionId) return;
             fireAndForget(voiceSessionManager.interrupt(sessionId), { tag: 'VoiceSurface.cancelTurn' });
         },
-        onToggleMute: () => {
-            if (!params.canMute || typeof params.snapSessionId !== 'string') return;
-            const sessionId = params.snapSessionId.trim();
-            if (!sessionId) return;
-            fireAndForget(voiceSessionManager.setMuted(sessionId, !params.muted), { tag: 'VoiceSurface.mute' });
-        },
         onOpenConversation: () => {
             const openConversationSessionId = params.openConversationSessionId;
             if (!openConversationSessionId) return;
@@ -89,7 +79,15 @@ export function createVoiceSurfaceActionHandlers(params: Readonly<{
                         ? result.conversationSessionId
                         : openConversationSessionId;
                     if (!nextSessionId) {
-                        focusReturn?.cancel();
+                        // A targetless direct-media attempt is attached to the hidden
+                        // Voice History carrier. Ordinary session routes intentionally
+                        // reject that carrier, so its only valid projection is History.
+                        const performNavigation = () => params.router.push(SETTINGS_ROUTES.voiceHistory);
+                        if (focusReturn) {
+                            focusReturn.navigate(performNavigation);
+                            return;
+                        }
+                        navigate(SETTINGS_ROUTES.voiceHistory);
                         return;
                     }
                     const performNavigation = () => params.router.push(`/session/${nextSessionId}` as any);
@@ -163,19 +161,6 @@ export function createVoiceSurfaceActionHandlers(params: Readonly<{
                 if (retrySessionId === null) return;
                 fireAndForget(voiceSessionManager.toggle(retrySessionId), { tag: 'VoiceSurface.recover' });
             }
-        },
-        onTogglePress: () => {
-            if (params.canStop) {
-                const sessionId = typeof params.snapSessionId === 'string' ? params.snapSessionId.trim() : '';
-                if (!sessionId) return;
-                voiceSurfaceHaptics.notify('start_stop');
-                fireAndForget(voiceSessionManager.stop(sessionId), { tag: 'VoiceSurface.stop' });
-                return;
-            }
-            const resolvedStartSessionId = params.globalStartAuthorized ? (params.startSessionId ?? '') : params.startSessionId;
-            if (!resolvedStartSessionId && !params.globalStartAuthorized) return;
-            voiceSurfaceHaptics.notify('start_stop');
-            fireAndForget(voiceSessionManager.toggle(resolvedStartSessionId ?? ''), { tag: 'VoiceSurface.toggle' });
         },
     };
 }

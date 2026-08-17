@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
@@ -8,6 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type NotificationLocalDeviceSectionProps = Readonly<{
     localSettings: LocalSettings;
@@ -56,7 +56,7 @@ export function NotificationLocalDeviceSection({
                 testID="settings-notifications-local-enabled"
                 title={t('common.enabled')}
                 subtitle={t('settingsNotifications.local.enabledSubtitle')}
-                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="device-mobile" size={29} color={theme.colors.accent.blue} />}
                 rightElement={(
                     <Switch
                         value={!disabled}
@@ -68,7 +68,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.readyTitle')}
                 subtitle={t('settingsNotifications.local.readySubtitle')}
-                icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
+                icon={<Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.events.ready !== false}
@@ -81,7 +81,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.readyPreviewTitle')}
                 subtitle={t('settingsNotifications.local.readyPreviewSubtitle')}
-                icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="chat-circle-dots" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.previewBehavior !== 'status_only'}
@@ -96,7 +96,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.permissionRequestsTitle')}
                 subtitle={t('settingsNotifications.local.permissionRequestsSubtitle')}
-                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="hand" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.events.permission_request !== false}
@@ -109,7 +109,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.userActionsTitle')}
                 subtitle={t('settingsNotifications.local.userActionsSubtitle')}
-                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="chat-dots" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.events.user_action_request !== false}

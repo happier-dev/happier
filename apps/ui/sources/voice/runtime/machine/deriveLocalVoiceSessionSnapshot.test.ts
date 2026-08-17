@@ -21,10 +21,10 @@ function createRuntimeSnapshot(
 describe('deriveLocalVoiceSessionSnapshot', () => {
     it('projects provider-neutral reconnecting presentation ahead of an interrupted machine state', () => {
         const snapshot = deriveLocalVoiceSessionSnapshot(
-            'realtime_elevenlabs',
+            'happier.voice.elevenlabs/realtime-elevenlabs',
             'realtime',
             createRuntimeSnapshot({
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'session-reconnecting',
                 state: 'interrupted',
                 reconnecting: true,
@@ -36,13 +36,13 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
 
     it('does not project a null-owned local machine snapshot for a realtime adapter', () => {
         const snapshot = deriveLocalVoiceSessionSnapshot(
-            'realtime_elevenlabs',
+            'happier.voice.elevenlabs/realtime-elevenlabs',
             'realtime',
             createRuntimeSnapshot({ controlSessionId: 'session-1', state: 'listening' }),
         );
 
         expect(snapshot).toEqual({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             sessionId: null,
             status: 'disconnected',
             mode: 'idle',
@@ -112,7 +112,7 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
             'local_direct',
             'local',
             createRuntimeSnapshot({
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'session-1',
                 state: 'speaking',
             }),
@@ -129,17 +129,17 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
 
     it('projects the snapshot when the requesting adapter owns the machine', () => {
         const snapshot = deriveLocalVoiceSessionSnapshot(
-            'realtime_elevenlabs',
+            'happier.voice.elevenlabs/realtime-elevenlabs',
             'realtime',
             createRuntimeSnapshot({
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'session-1',
                 state: 'speaking',
             }),
         );
 
         expect(snapshot).toMatchObject({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             status: 'connected',
             mode: 'speaking',
         });
@@ -164,10 +164,10 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
 
     it('projects a recoverable error state as a graceful disconnected end carrying the error code', () => {
         const snapshot = deriveLocalVoiceSessionSnapshot(
-            'realtime_elevenlabs',
+            'happier.voice.elevenlabs/realtime-elevenlabs',
             'realtime',
             createRuntimeSnapshot({
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'session-2',
                 state: 'error',
                 error: createVoiceMachineError({ kind: 'provider_error', reason: 'realtime_provider_error' }),
@@ -187,10 +187,10 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
 
     it('projects a recoverable disconnected end carrying the error code without a stop affordance', () => {
         const snapshot = deriveLocalVoiceSessionSnapshot(
-            'realtime_elevenlabs',
+            'happier.voice.elevenlabs/realtime-elevenlabs',
             'realtime',
             createRuntimeSnapshot({
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionId: 'session-3',
                 state: 'disconnected',
                 error: createVoiceMachineError({ kind: 'mic_plateau', reason: 'realtime_outbound_audio_plateau' }),
@@ -207,10 +207,10 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
 
     it('preserves structured recovery for a disconnected credential preflight failure', () => {
         const projection = deriveLocalVoiceSessionSnapshot(
-            'realtime_grok',
+            'happier.voice.xai/realtime-grok',
             'realtime',
             createRuntimeSnapshot({
-                adapterId: 'realtime_grok',
+                adapterId: 'happier.voice.xai/realtime-grok',
                 controlSessionId: 'session-4',
                 state: 'disconnected',
                 error: createVoiceMachineError({ kind: 'provider_auth_invalid', reason: 'credential_unavailable' }),
@@ -226,15 +226,43 @@ describe('deriveLocalVoiceSessionSnapshot', () => {
         });
     });
 
+    it('surfaces an indeterminate preflight failure instead of ending the attempt silently', () => {
+        // A preflight refusal the user must act on (retry) has to be visible.
+        // Projected as a recoverable "notice" it reads as `disconnected`, which
+        // the surface renders as plain `idle`: Start does nothing and says
+        // nothing, which is indistinguishable from the press never landing.
+        const projection = deriveLocalVoiceSessionSnapshot(
+            'happier.voice.openai/realtime-openai',
+            'realtime',
+            createRuntimeSnapshot({
+                adapterId: 'happier.voice.openai/realtime-openai',
+                controlSessionId: 'session-indeterminate',
+                state: 'disconnected',
+                error: createVoiceMachineError({
+                    kind: 'service_temporarily_unavailable',
+                    reason: 'service_temporarily_unavailable',
+                }),
+            }),
+        );
+
+        expect(projection).toMatchObject({
+            status: 'error',
+            canStop: false,
+            errorCode: 'service_temporarily_unavailable',
+            errorRecoveryAction: 'retry',
+            errorPresentation: 'error',
+        });
+    });
+
     it.each([
         'session_unavailable',
         'feature_unavailable',
     ] as const)('projects the non-retryable %s failure as a hard error with no recovery action', (kind) => {
         const projection = deriveLocalVoiceSessionSnapshot(
-            'realtime_codex',
+            'happier.agent.codex/realtime-codex',
             'realtime',
             createRuntimeSnapshot({
-                adapterId: 'realtime_codex',
+                adapterId: 'happier.agent.codex/realtime-codex',
                 controlSessionId: 'session-hard-error',
                 state: 'error',
                 error: createVoiceMachineError({ kind, reason: kind }),

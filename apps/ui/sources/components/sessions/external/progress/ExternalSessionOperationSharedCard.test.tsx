@@ -61,6 +61,66 @@ function createPresentation(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ExternalSessionOperationSharedCard accessibility', () => {
+    it('offers local Dismiss for a terminal shared presentation with the exact identity', async () => {
+        accessibilityPlatform.os = 'web';
+        const onDismiss = vi.fn();
+        const presentation = createPresentation({
+            status: 'completed',
+            phase: 'publishing',
+        });
+        const { ExternalSessionOperationSharedCard } = await import(
+            './ExternalSessionOperationSharedCard'
+        );
+        const screen = await renderScreen(
+            <ExternalSessionOperationSharedCard
+                presentation={presentation}
+                onDismiss={onDismiss}
+            />,
+        );
+
+        expect(
+            screen.findByTestId('external-session-operation-action-dismiss')?.props,
+        ).toMatchObject({
+            accessibilityRole: 'button',
+            accessibilityLabel: 'externalSessions.operationActionDismiss',
+        });
+        await screen.pressByTestIdAsync(
+            'external-session-operation-action-dismiss',
+        );
+        expect(onDismiss).toHaveBeenCalledWith({
+            operationId: 'private-operation-id',
+            revision: 41,
+        });
+    });
+
+    it.each([
+        ['a running shared presentation', createPresentation(), vi.fn()],
+        [
+            'a terminal presentation without a mounted dismissal owner',
+            createPresentation({ status: 'completed', phase: 'publishing' }),
+            undefined,
+        ],
+    ] as const)('does not offer Dismiss for %s', async (
+        _label,
+        presentation,
+        onDismiss,
+    ) => {
+        accessibilityPlatform.os = 'web';
+        const { ExternalSessionOperationSharedCard } = await import(
+            './ExternalSessionOperationSharedCard'
+        );
+        const screen = await renderScreen(
+            <ExternalSessionOperationSharedCard
+                presentation={presentation}
+                onDismiss={onDismiss}
+            />,
+        );
+
+        expect(
+            screen.findByTestId('external-session-operation-action-dismiss'),
+        ).toBeNull();
+    });
+
     it.each(['web', 'android'] as const)(
         'publishes one polite shared-safe status region on %s',
         async (platformOS) => {

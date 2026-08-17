@@ -6,6 +6,8 @@ export type ResolvedPopoverPlacement = 'top' | 'bottom' | 'left' | 'right';
 export type PopoverPlacement = ResolvedPopoverPlacement | 'auto' | 'auto-vertical' | 'auto-horizontal';
 export type PopoverBackdropEffect = 'none' | 'dim' | 'blur';
 export type PopoverOutsidePointerEventsMode = 'full' | 'above-anchor';
+/** The Popover owner decides which dismissal paths return focus. */
+export type PopoverCloseReason = 'dismiss' | 'selection' | 'escape' | 'back';
 
 type WindowRect = Readonly<{ x: number; y: number; width: number; height: number }>;
 export type PopoverWindowRect = WindowRect;
@@ -108,4 +110,9 @@ export type PopoverRenderProps = Readonly<{
     maxHeight: number;
     maxWidth: number;
     placement: ResolvedPopoverPlacement;
+    /**
+     * Dismiss through the incumbent Popover lifecycle. Selection, Escape, and
+     * Android Back restore the configured trigger; outside dismissal does not.
+     */
+    requestClose(reason: PopoverCloseReason): void;
 }>;

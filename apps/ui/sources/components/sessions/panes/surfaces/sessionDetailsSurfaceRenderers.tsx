@@ -5,6 +5,10 @@ import type {
     DetailsSurfaceRenderInputV1,
 } from '@/components/appShell/panes/details/surfaces';
 import {
+    createPluginDetailsDestinationLaunchScopeFacts,
+    createPluginDetailsDestinationSurfaceRenderer,
+} from '@/components/appShell/panes/details/surfaces/pluginDetailsDestination';
+import {
     BrowserDetailsSurface,
     createBrowserViewDetailsSurfaceRenderer,
     createOpenBrowserTargetInWorkspace,
@@ -15,7 +19,6 @@ import {
 } from '@/components/browser/surfaces';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { SessionFileDeepLinkAnchor } from '@/components/sessions/files/views/SessionFileDetailsView';
-import { resolvePluginUiOcticonName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { SessionExecutionRunLauncherView } from '@/components/sessions/runs/launcher/SessionExecutionRunLauncherView';
 import { SessionEmbeddedTerminalPane } from '@/components/sessions/terminal/SessionEmbeddedTerminalPane';
 import { SESSION_PRIMARY_TERMINAL_INSTANCE_ID } from '@/components/sessions/terminal/embeddedTerminalDocking';
@@ -24,11 +27,13 @@ import {
     renderProviderSessionDetailsTab,
 } from '@/agents/registry/sessionSubagentUiBehavior';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/actions';
-import { selectPluginSessionSurfacePlacementById } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
+import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { PeerMediationObservabilityUiStore } from '@/sync/domains/machines/peer/mediation/observability';
 import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol';
+import type { PluginUiDestinationRuntimeFormFactorV1 } from '@happier-dev/protocol/plugins/ui';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
 import {
@@ -48,6 +53,7 @@ type SessionDetailsSurfaceRendererOptions = Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
+    pluginUiProjectionPhase?: PluginUiProjectionPhase;
     pluginUiInteractionEnabled?: boolean;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;
@@ -55,6 +61,7 @@ type SessionDetailsSurfaceRendererOptions = Readonly<{
     peerMediationObservabilityScope?: PeerMediationObservabilityScopeV1 | null;
     simulatorPreview?: SimulatorPreviewSurfaceRuntime | null;
     platform?: LocalServicePreviewPlatform;
+    formFactor?: PluginUiDestinationRuntimeFormFactorV1;
     productModels?: BrowserSurfaceProductModels;
     browserRecording?: React.ComponentProps<typeof BrowserDetailsSurface>['browserRecording'];
     launchpadRows?: BrowserDetailsSurfaceRendererOptions['launchpadRows'];
@@ -107,19 +114,6 @@ function isExecutionRunLauncherResource(value: unknown): value is Readonly<{
     return maybe.intent == null || maybe.intent === 'review' || maybe.intent === 'plan' || maybe.intent === 'delegate';
 }
 
-function isPluginSessionSurfaceResource(value: unknown): value is Readonly<{
-    kind: 'pluginSessionSurface';
-    surfaceId: string;
-}> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return false;
-    }
-    const maybe = value as { kind?: unknown; surfaceId?: unknown };
-    return maybe.kind === 'pluginSessionSurface'
-        && typeof maybe.surfaceId === 'string'
-        && maybe.surfaceId.trim().length > 0;
-}
-
 function isSimulatorPreviewResource(value: unknown): boolean {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return false;
@@ -158,32 +152,38 @@ export function createSessionDetailsSurfaceRenderers(
             localServicePreviewState: options.localServicePreviewState,
         })
         : undefined;
+    const pluginDetailsDestinationMount = {
+        machineId: options.machineId,
+        serverId: options.serverId,
+        sessionId: options.sessionId,
+        platform: options.platform,
+        formFactor: options.formFactor,
+        projectionPhase: options.pluginUiProjectionPhase ?? 'unavailable',
+        projectionInteractionEnabled: options.pluginUiInteractionEnabled,
+    };
+    const pluginDetailsDestinationLaunchScopeFacts = createPluginDetailsDestinationLaunchScopeFacts({
+        projection: options.pluginUiProjection,
+        mount: pluginDetailsDestinationMount,
+    });
 
     return [
         {
             id: 'session-surface-registry',
             owner: 'session',
             order: 0,
-            canRender: (input) => {
-                const kind = readResourceKind(input);
-                return kind === 'pluginSessionSurface' || kind === 'simulatorPreview';
-            },
+            canRender: (input) => readResourceKind(input) === 'simulatorPreview',
             render: (input) => renderSessionSurfaceTab({
                 sessionId: options.sessionId,
                 tab: input.tab,
-                machineId: options.machineId,
-                serverId: options.serverId,
-                pluginUiProjection: options.pluginUiProjection,
-                localServicePreviewState: options.localServicePreviewState,
-                peerMediationObservabilityState: options.peerMediationObservabilityState,
-                peerMediationObservabilityScope: options.peerMediationObservabilityScope,
                 simulatorPreview: options.simulatorPreview,
-                platform: options.platform,
-                productModels,
-                browserRecording: options.browserRecording,
                 nowMs: options.nowMs,
             }),
         },
+        createPluginDetailsDestinationSurfaceRenderer({
+            targetKind: 'session',
+            projection: options.pluginUiProjection,
+            mount: pluginDetailsDestinationMount,
+        }),
         createBrowserViewDetailsSurfaceRenderer({
             localServicePreviewState: options.localServicePreviewState,
             localServicePreviewServerId: options.serverId,
@@ -219,6 +219,13 @@ export function createSessionDetailsSurfaceRenderers(
                         deepLinkAnchor={readDeepLinkAnchor(input.tab.resource)}
                         presentation="panel"
                         scopeId={options.scopeId}
+                        openableContentViewer={{
+                            targetKind: 'session',
+                            projection: options.pluginUiProjection,
+                            platform: resolveLocalServicePreviewPlatform(options.platform),
+                            details: input,
+                            scopedLaunchFacts: pluginDetailsDestinationLaunchScopeFacts,
+                        }}
                         onStartEditingFile={options.getStartEditingFileHandler(input.tab.key, input.tab.isPreview)}
                     />
                 );
@@ -343,19 +350,9 @@ export function createSessionDetailsSurfaceRenderers(
 
 export function resolveSessionDetailsSurfaceIconName(params: Readonly<{
     tab: DetailsSurfaceRenderInputV1['tab'];
-    pluginUiProjection?: PluginUiProjectionModel | null;
 }>): string | null {
     if (isSimulatorPreviewResource(params.tab.resource)) {
         return 'device-mobile';
     }
-    if (!isPluginSessionSurfaceResource(params.tab.resource)) {
-        return null;
-    }
-    const descriptor = params.pluginUiProjection
-        ? selectPluginSessionSurfacePlacementById(params.pluginUiProjection, params.tab.resource.surfaceId)
-        : null;
-    const iconToken = descriptor?.display && typeof descriptor.display === 'object'
-        ? (descriptor.display as { iconToken?: unknown }).iconToken
-        : null;
-    return resolvePluginUiOcticonName(typeof iconToken === 'string' ? iconToken : null);
+    return null;
 }

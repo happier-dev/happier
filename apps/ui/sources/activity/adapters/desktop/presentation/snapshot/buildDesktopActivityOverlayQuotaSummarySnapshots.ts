@@ -29,7 +29,7 @@ export function buildDesktopActivityOverlayQuotaSummarySnapshots(
 ): readonly DesktopActivityOverlayQuotaSummarySnapshot[] {
     return summaries.slice(0, 3).map((summary) => ({
         id: summary.key,
-        title: summary.profileLabel?.trim() || summary.serviceId,
+        title: summary.profileLabel?.trim() || summary.serviceLabel,
         summary: formatRemainingSummary(summary),
     }));
 }

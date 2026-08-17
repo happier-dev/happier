@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -24,9 +23,9 @@ import {
   useMachineListByServerId,
   useMachineListStatusByServerId,
   useProfile,
-  useRealtimeStatus,
   useSocketStatus,
 } from '@/sync/domains/state/storage';
+import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { t } from '@/text';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -41,6 +40,7 @@ import {
 } from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshotCollection';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { OtaUpdateStatusSection } from './OtaUpdateStatusSection';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function formatRelativeTimeMs(ms: number | null | undefined): string {
   if (!ms) return t('status.unknown');
@@ -87,7 +87,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
 
   const profile = useProfile();
   const isDataReady = useIsDataReady();
-  const realtimeStatus = useRealtimeStatus();
+  const voiceStatus = useVoiceSessionSnapshot().status;
   const socket = useSocketStatus();
   const lastSyncAt = useLastSyncAt();
   const appRuntimeInfo = React.useMemo(() => readCurrentAppRuntimeInfo(), []);
@@ -170,7 +170,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
       },
       ui: {
         isDataReady,
-        realtimeStatus,
+        voiceStatus,
         socketStatus: socket.status,
         socketLastError: socket.lastError,
         socketLastErrorAt: socket.lastErrorAt,
@@ -260,24 +260,24 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
           <Item
             title={t('bugReports.composer.environment.appVersionLabel')}
             detail={appRuntimeInfo.appVersion ?? t('status.unknown')}
-            icon={<Ionicons name="phone-portrait-outline" size={24} color={theme.colors.accent.indigo} />}
+            icon={<Icon name="device-mobile" size={24} color={theme.colors.accent.indigo} />}
             copy={appRuntimeInfo.appVersion ?? false}
           />
           <Item
             title={t('settingsAgents.releaseChannelTitle')}
             detail={appRuntimeInfo.updateChannel ?? t('status.unknown')}
-            icon={<Ionicons name="git-branch-outline" size={24} color={theme.colors.accent.blue} />}
+            icon={<Icon name="git-branch" size={24} color={theme.colors.accent.blue} />}
             copy={appRuntimeInfo.updateChannel ?? false}
           />
           <Item
             title={t('systemStatus.ui.dataReady')}
             detail={isDataReady ? t('common.yes') : t('common.no')}
-            icon={<Ionicons name="pulse-outline" size={24} color={theme.colors.accent.indigo} />}
+            icon={<Icon name="pulse" size={24} color={theme.colors.accent.indigo} />}
           />
           <Item
             title={t('systemStatus.ui.realtime')}
-            detail={String(realtimeStatus)}
-            icon={<Ionicons name="wifi-outline" size={24} color={theme.colors.accent.blue} />}
+            detail={String(voiceStatus)}
+            icon={<Icon name="wifi-high" size={24} color={theme.colors.accent.blue} />}
           />
           <Item
             title={t('systemStatus.ui.socket')}
@@ -287,12 +287,12 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                 ? <Text style={{ color: theme.colors.text.secondary }}>{t('systemStatus.ui.socketLastError', { error: socket.lastError })}</Text>
                 : undefined
             }
-            icon={<Ionicons name="cloud-outline" size={24} color={theme.colors.accent.blue} />}
+            icon={<Icon name="cloud" size={24} color={theme.colors.accent.blue} />}
           />
           <Item
             title={t('systemStatus.ui.lastSync')}
             detail={lastSyncAt ? new Date(lastSyncAt).toLocaleString() : t('status.unknown')}
-            icon={<Ionicons name="time-outline" size={24} color={theme.colors.accent.orange} />}
+            icon={<Icon name="clock" size={24} color={theme.colors.accent.orange} />}
           />
         </ItemGroup>
 
@@ -303,7 +303,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             title={t('systemStatus.server.activeServer')}
             subtitle={<Text style={{ color: theme.colors.text.secondary }}>{activeServerUrl || t('status.unknown')}</Text>}
             detail={activeServerSnapshot.serverId}
-            icon={<Ionicons name="server-outline" size={24} color={theme.colors.accent.blue} />}
+            icon={<Icon name="hard-drives" size={24} color={theme.colors.accent.blue} />}
             onPress={() => router.push('/settings/server')}
           />
         </ItemGroup>
@@ -312,13 +312,13 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
           <Item
             title={t('systemStatus.identity.accountId')}
             detail={profile?.id ?? t('status.unknown')}
-            icon={<Ionicons name="person-outline" size={24} color={theme.colors.accent.purple} />}
+            icon={<Icon name="person" size={24} color={theme.colors.accent.purple} />}
             copy={profile?.id ?? false}
           />
           <Item
             title={t('systemStatus.identity.username')}
             detail={profile?.username ?? t('status.unknown')}
-            icon={<Ionicons name="at-outline" size={24} color={theme.colors.accent.purple} />}
+            icon={<Icon name="at" size={24} color={theme.colors.accent.purple} />}
             copy={profile?.username ?? false}
           />
         </ItemGroup>
@@ -327,7 +327,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
           {serverProfiles.length === 0 ? (
             <Item
               title={t('systemStatus.servers.noneConfigured')}
-              icon={<Ionicons name="server-outline" size={24} color={theme.colors.text.secondary} />}
+              icon={<Icon name="hard-drives" size={24} color={theme.colors.text.secondary} />}
               disabled
             />
           ) : serverProfiles.map((p) => (
@@ -336,7 +336,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
               title={resolveServerProfileLabel(p)}
               subtitle={<Text style={{ color: theme.colors.text.secondary }}>{sanitizeBugReportUrl(p.serverUrl) ?? p.serverUrl}</Text>}
               detail={p.id === activeServerSnapshot.serverId ? t('systemStatus.servers.active') : p.id}
-              icon={<Ionicons name="server-outline" size={24} color={p.id === activeServerSnapshot.serverId ? theme.colors.state.success.foreground : theme.colors.accent.blue} />}
+              icon={<Icon name="hard-drives" size={24} color={p.id === activeServerSnapshot.serverId ? theme.colors.state.success.foreground : theme.colors.accent.blue} />}
               copy
             />
           ))}
@@ -363,7 +363,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                 >
                   <Item
                     title={t('systemStatus.machines.none')}
-                    icon={<Ionicons name="laptop-outline" size={24} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="laptop" size={24} color={theme.colors.text.secondary} />}
                     disabled
                   />
                 </ItemGroup>
@@ -437,7 +437,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                       <Item
                         title={displayName}
                         subtitle={subtitle}
-                        icon={<Ionicons name="laptop-outline" size={24} color={online ? theme.colors.state.success.foreground : theme.colors.text.secondary} />}
+                        icon={<Icon name="laptop" size={24} color={online ? theme.colors.state.success.foreground : theme.colors.text.secondary} />}
                         onPress={() => {
                           const query = serverId ? `?serverId=${encodeURIComponent(serverId)}` : '';
                           router.push(`/machine/${machine.id}${query}`);
@@ -467,13 +467,13 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             testID="system-status-run-diagnosis"
             title={t('systemStatus.actions.runDiagnosis')}
             subtitle={t('systemStatus.actions.runDiagnosisSubtitle')}
-            icon={<Ionicons name="medkit-outline" size={24} color={theme.colors.accent.orange} />}
+            icon={<Icon name="first-aid-kit" size={24} color={theme.colors.accent.orange} />}
             onPress={openDiagnosis}
           />
           <Item
             title={t('systemStatus.actions.refreshMachineAttribution')}
             subtitle={t('systemStatus.actions.refreshMachineAttributionSubtitle')}
-            icon={<Ionicons name="refresh-outline" size={24} color={theme.colors.accent.blue} />}
+            icon={<Icon name="arrow-clockwise" size={24} color={theme.colors.accent.blue} />}
             onPress={runRefreshMachineAttribution}
             loading={refreshingMachines}
             showChevron={false}
@@ -482,7 +482,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             testID="system-status-copy-json"
             title={t('systemStatus.actions.copyJson')}
             subtitle={t('systemStatus.actions.copyJsonSubtitle')}
-            icon={<Ionicons name="copy-outline" size={24} color={theme.colors.accent.indigo} />}
+            icon={<Icon name="copy" size={24} color={theme.colors.accent.indigo} />}
             onPress={copySystemStatusJson}
             rightElement={<CopiedPill visible={copyFeedback.isCopied('system-status')} testID="system-status-copy-feedback" />}
             loading={copying}

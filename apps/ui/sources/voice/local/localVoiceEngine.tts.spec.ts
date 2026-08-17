@@ -52,18 +52,13 @@ describe('local voice engine TTS behavior', () => {
                             ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
                                 ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                             tts: {
                                 ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: true,
                                 provider: 'device',
                                 bargeInEnabled: true,
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_direct.config.tts.openaiCompat,
-                                    baseUrl: null,
-                                },
                             },
                         } },
                     },
@@ -124,18 +119,13 @@ describe('local voice engine TTS behavior', () => {
                             ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
                                 ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                             tts: {
                                 ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: true,
                                 provider: 'device',
                                 bargeInEnabled: false,
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_direct.config.tts.openaiCompat,
-                                    baseUrl: null,
-                                },
                             },
                         } },
                     },
@@ -199,11 +189,7 @@ describe('local voice engine TTS behavior', () => {
                             tts: {
                                 ...storage.getState().settings.voice.providers.local_direct.config.tts,
                                 autoSpeakReplies: true,
-                                provider: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_direct.config.tts.openaiCompat,
-                                    baseUrl: 'http://localhost:8001',
-                                },
+                                provider: 'happier.voice.openai-compat/tts',
                             },
                         } },
                     },

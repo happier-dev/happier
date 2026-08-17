@@ -32,6 +32,7 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import { useSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveProfileBackendTargetKeyForEntry } from './profileBackendEntryStorage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type Entry = ResolvedBackendCatalogEntry;
 
@@ -239,7 +240,7 @@ export function SlimProfileRoutingFields(props: Readonly<{
                     itemTrigger={{
                         title: entry.title,
                         subtitle: selected ? getPermissionModeLabelForAgentType(agentId, selected as PermissionMode) : t('profiles.defaultPermissions.useAccountDefault'),
-                        icon: <SafeIonicons name="shield-outline" size={29} color={theme.colors.text.secondary} />,
+                        icon: <Icon name="shield" size={29} color={theme.colors.text.secondary} />,
                         showSelectedDetail: false,
                         showSelectedSubtitle: false,
                     }}
@@ -277,7 +278,7 @@ export function SlimProfileRoutingFields(props: Readonly<{
                     itemTrigger={{
                         title: entry.title,
                         subtitle: selected ? t(`sessionsList.storage${selected === 'direct' ? 'Direct' : 'Persisted'}Tab`) : t('profiles.defaultStorage.useAccountDefault'),
-                        icon: <SafeIonicons name="save-outline" size={29} color={theme.colors.text.secondary} />,
+                        icon: <Icon name="floppy-disk" size={29} color={theme.colors.text.secondary} />,
                         showSelectedDetail: false,
                         showSelectedSubtitle: false,
                     }}

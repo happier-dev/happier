@@ -6,9 +6,8 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 
-import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
-import { buildNewSessionAgentPickerDetailContent } from './buildNewSessionAgentPickerDetailContent';
-import { deferAgentInputPopoverClose } from '@/components/sessions/agentInput/selection/deferAgentInputPopoverClose';
+import type { SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
+import { buildSessionAgentPickerDetailContent } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import type { FavoriteModelTogglePayload } from './newSessionFavoriteModelsPickerOption';
 
 type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
@@ -27,8 +26,8 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     }>;
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
-    getEngineSelectionForTargetKey: (targetKey: string) => NewSessionAgentPickerSelection;
-    selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
+    getEngineSelectionForTargetKey: (targetKey: string) => SessionAgentPickerSelection;
+    selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => void;
 }>;
 
 export function buildNewSessionAgentPickerOptionInteractions(
@@ -60,9 +59,9 @@ export function buildNewSessionAgentPickerOptionInteractions(
             const nextSelection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             params.selectEngineSelection(params.entry, nextSelection);
         },
-        renderDetailContent: ({ onRequestClose }) => {
+        renderDetailContent: () => {
             const selection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
-            return buildNewSessionAgentPickerDetailContent({
+            return buildSessionAgentPickerDetailContent({
                 backendTarget: params.entry.backendTarget,
                 runtimeCarrierAgentId: params.entry.catalogAgentId,
                 selectedMachineId: params.selectedMachineId,
@@ -79,9 +78,6 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 experimentalConfirmation: params.experimentalConfirmation,
                 onSelectionChange: (nextSelection) => {
                     params.selectEngineSelection(params.entry, nextSelection);
-                },
-                onModelSelectionChange: () => {
-                    deferAgentInputPopoverClose(onRequestClose);
                 },
             });
         },

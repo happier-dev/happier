@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -13,6 +12,7 @@ import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ServerReachabilityRemediationCardProps = Readonly<{
     remediation: EndpointReachabilityRemediation;
@@ -76,7 +76,7 @@ export function ServerReachabilityRemediationCard(props: ServerReachabilityRemed
         <View testID="server-settings-add-reachability-remediation" style={styles.container}>
             <View style={styles.headerRow}>
                 <View style={styles.iconWrap}>
-                    <Ionicons name="shield-checkmark-outline" size={16} color={theme.colors.text.link} />
+                    <Icon name="shield-check" size={16} color={theme.colors.text.link} />
                 </View>
                 <View style={styles.textColumn}>
                     <Text style={styles.title}>{t(props.remediation.titleKey)}</Text>

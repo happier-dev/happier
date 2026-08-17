@@ -3,11 +3,21 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import {
+  readLocalConversationVoiceSettings,
+  voiceSettingsParse,
+} from '@/sync/domains/settings/voiceSettings';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { resetVoiceQaStoreForTests, useVoiceQaStore } from '@/voice/qa/voiceQaStore';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
-import { flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+  flushHookEffects,
+  pressTestInstanceAsync,
+  renderScreen as renderTestScreen,
+  standardCleanup,
+} from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { installVoiceQaCommonModuleMocks } from './voiceQaScreenTestHelpers';
 import {
@@ -67,6 +77,15 @@ function createPassthroughComponentMock(typeName: string) {
 }
 
 const expoRouterMock = createExpoRouterMock();
+
+async function renderScreen(element: React.ReactElement) {
+  const { AuthProvider } = await import('@/auth/context/AuthContext');
+  return await renderTestScreen(
+    <AuthProvider initialCredentials={{ token: 'voice-qa-token', secret: 'voice-qa-secret' }}>
+      {element}
+    </AuthProvider>,
+  );
+}
 
 installVoiceQaCommonModuleMocks({
     reactNative: async () => {
@@ -185,6 +204,7 @@ describe('VoiceQaScreen', () => {
     expoRouterMock.state.router.setParams({
       voiceQaSessionId: undefined,
       voiceQaMode: undefined,
+      voiceQaTransportRoute: undefined,
       voiceQaOutputCapture: undefined,
       voiceQaOutputFixtureUrl: undefined,
       voiceQaOutputCancelMs: undefined,
@@ -215,14 +235,21 @@ describe('VoiceQaScreen', () => {
       mode: 'idle',
       canStop: false,
     });
-    storage.setState({
-      settings: {
-            ...(storage.getState() as any).settings,
-            voice: {
-                providerId: 'local_conversation',
-                providers: { local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } } },
-            },
+    const voice = voiceSettingsParse({
+      providerId: 'local_conversation',
+      providers: {
+        local_conversation: {
+          schemaVersion: 1,
+          config: { conversationMode: 'agent' },
         },
+      },
+    });
+    storage.setState({
+      settings: settingsParse({
+        ...(storage.getState() as any).settings,
+        voiceSettingsV1: voice,
+        voice,
+      }),
         sessionMessages: {},
     } as any);
     globalThis.URL.createObjectURL = vi.fn(() => 'blob:voice-qa-recording');
@@ -275,7 +302,7 @@ describe('VoiceQaScreen', () => {
   it('projects bounded voice machine-RPC routing receipts into dev QA evidence', async () => {
     recordMachineRpcPeerMediationReceipt({
       receipt: 'machine_rpc_fell_back_to_server',
-      method: 'daemon.voiceOpenAiCompat.transcribe.upload.init',
+      method: 'daemon.voice.speech.transcribe.upload.init',
       reasonCode: 'loopback_unavailable',
       requestId: 'rpc-qa-1',
     });
@@ -293,7 +320,7 @@ describe('VoiceQaScreen', () => {
 
     expect(snapshot.machineRpcReceipts).toEqual([{
       receipt: 'machine_rpc_fell_back_to_server',
-      method: 'daemon.voiceOpenAiCompat.transcribe.upload.init',
+      method: 'daemon.voice.speech.transcribe.upload.init',
       reasonCode: 'loopback_unavailable',
       requestId: 'rpc-qa-1',
     }]);
@@ -791,6 +818,30 @@ describe('VoiceQaScreen', () => {
     });
   });
 
+  it('passes the explicit dev-route server-relay requirement to the media attempt', async () => {
+    expoRouterMock.state.router.setParams({
+      voiceQaMode: 'media',
+      voiceQaTransportRoute: 'server_relay',
+    });
+    const { VoiceQaScreen } = await import('./VoiceQaScreen');
+
+    const tree = (await renderScreen(<VoiceQaScreen />)).tree;
+    const sessionInput = tree.find((node) => String(node.props?.testID) === 'voiceQa.sessionIdInput');
+    const startButton = tree.find((node) => String(node.props?.testID) === 'voiceQa.start');
+
+    await act(async () => {
+      sessionInput.props.onChangeText('session_relay');
+      await pressTestInstanceAsync(startButton);
+    });
+
+    expect(voiceQaControllerMocks.start).toHaveBeenCalledWith({
+      sessionId: 'session_relay',
+      initialContext: '',
+      mode: 'media',
+      transportRouteRequirement: 'server_relay',
+    });
+  });
+
   it('enables bounded output evidence and plays a route fixture from a user gesture through the QA playback owner', async () => {
     expoRouterMock.state.router.setParams({
       voiceQaOutputCapture: '1',
@@ -1054,29 +1105,9 @@ describe('VoiceQaScreen', () => {
     expect(String(statusText.props.children)).toContain('success');
     expect(String(resultText.props.children)).toContain('hello explicit daemon stt');
     expect(storage.getState().settings.voice).toEqual(configuredVoiceBeforeTranscription);
-    expect((storage.getState() as any).sessions?.['session-daemon-stt']).toMatchObject({
-      id: 'session-daemon-stt',
-      metadata: expect.objectContaining({
-        machineId: 'machine-daemon-stt',
-        path: '/tmp/voice-agent',
-        host: 'voice-qa',
-        name: 'Recorded audio daemon STT target',
-      }),
-    });
-    expect((storage.getState() as any).sessionListRenderables?.['session-daemon-stt']).toMatchObject({
-      id: 'session-daemon-stt',
-      metadata: expect.objectContaining({
-        machineId: 'machine-daemon-stt',
-        path: '/tmp/voice-agent',
-      }),
-    });
-    expect((storage.getState() as any).machines?.['machine-daemon-stt']).toEqual(expect.objectContaining({
-      id: 'machine-daemon-stt',
-      active: true,
-      metadata: expect.objectContaining({
-        host: 'voice-qa',
-      }),
-    }));
+    expect((storage.getState() as any).sessions?.['session-daemon-stt']).toBeUndefined();
+    expect((storage.getState() as any).sessionListRenderables?.['session-daemon-stt']).toBeUndefined();
+    expect((storage.getState() as any).machines?.['machine-daemon-stt']).toBeUndefined();
   });
 
   it('uses recorded-audio daemon route params for the explicit daemon fallback path', async () => {
@@ -1126,12 +1157,7 @@ describe('VoiceQaScreen', () => {
       | { resolveVoiceHomeDaemonMachineId?: () => string | null }
       | undefined;
     expect(daemonClientDeps?.resolveVoiceHomeDaemonMachineId?.()).toBe('machine-from-route');
-    expect((storage.getState() as any).sessions?.['session-from-route']).toEqual(expect.objectContaining({
-      metadata: expect.objectContaining({
-        machineId: 'machine-from-route',
-        path: '/tmp/voice-from-route',
-      }),
-    }));
+    expect((storage.getState() as any).sessions?.['session-from-route']).toBeUndefined();
     const statusText = tree.find((node) => String(node.props?.testID) === 'voiceQa.recordedAudio.status');
     const resultText = tree.find((node) => String(node.props?.testID) === 'voiceQa.recordedAudio.result');
     expect(String(statusText.props.children)).toContain('success');
@@ -1172,12 +1198,7 @@ describe('VoiceQaScreen', () => {
       | { resolveVoiceHomeDaemonMachineId?: () => string | null }
       | undefined;
     expect(daemonClientDeps?.resolveVoiceHomeDaemonMachineId?.()).toBe('machine-after-rerender');
-    expect((storage.getState() as any).sessions?.['session-latest-target']).toEqual(expect.objectContaining({
-      metadata: expect.objectContaining({
-        machineId: 'machine-after-rerender',
-        path: '/repo/after-rerender',
-      }),
-    }));
+    expect((storage.getState() as any).sessions?.['session-latest-target']).toBeUndefined();
   });
 
   it('restores temporarily primed recorded-audio settings when the QA screen unmounts mid-action', async () => {
@@ -1188,6 +1209,7 @@ describe('VoiceQaScreen', () => {
     const baseline = {
       experiments: storage.getState().settings.experiments,
       featureToggles: storage.getState().settings.featureToggles,
+      voiceSettingsV1: storage.getState().settings.voiceSettingsV1,
       voice: storage.getState().settings.voice,
     };
     const { VoiceQaScreen } = await import('./VoiceQaScreen');
@@ -1211,7 +1233,15 @@ describe('VoiceQaScreen', () => {
         expect(recordedAudioTranscriptionControllerMocks.transcribe).toHaveBeenCalledTimes(1);
       });
     });
-    expect(storage.getState().settings.voice).not.toEqual(baseline.voice);
+    const primedSettings = storage.getState().settings;
+    expect(readLocalConversationVoiceSettings(primedSettings.voice).stt.localNeural).toMatchObject({
+      assetId: 'sherpa-onnx-stt-en-v1',
+      execution: 'daemon',
+    });
+    expect(readLocalConversationVoiceSettings(primedSettings.voiceSettingsV1).stt.localNeural).toMatchObject({
+      assetId: 'sherpa-onnx-stt-en-v1',
+      execution: 'daemon',
+    });
 
     await act(async () => {
       tree.unmount();

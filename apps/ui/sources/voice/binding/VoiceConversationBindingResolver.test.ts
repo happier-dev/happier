@@ -101,7 +101,7 @@ describe('VoiceConversationBindingResolver', () => {
 
         const store = createVoiceSessionBindingStore();
         store.getState().bind({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-a',
             transcriptMode: 'synthetic',
@@ -109,7 +109,7 @@ describe('VoiceConversationBindingResolver', () => {
             updatedAt: 10,
         });
         store.getState().bind({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: 'voice-other',
             conversationSessionId: 'carrier-b',
             transcriptMode: 'synthetic',
@@ -129,11 +129,11 @@ describe('VoiceConversationBindingResolver', () => {
 
         expect(
             resolver.resolveLatest({
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                 controlSessionIds: ['voice-global'],
             }),
         ).toEqual({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-a',
             transcriptMode: 'synthetic',
@@ -196,7 +196,7 @@ describe('VoiceConversationBindingResolver', () => {
                         metadata: writeVoiceConversationBindingMetadata(
                             { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
                             {
-                                adapterId: 'realtime_elevenlabs',
+                                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                                 controlSessionId: '__voice_agent__',
                                 conversationSessionId: 'carrier-s1',
                                 transcriptMode: 'synthetic',
@@ -222,10 +222,10 @@ describe('VoiceConversationBindingResolver', () => {
         expect(
             resolver.resolveByControlSessionId({
                 controlSessionId: '__voice_agent__',
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             }),
         ).toEqual({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: '__voice_agent__',
             conversationSessionId: 'carrier-s1',
             transcriptMode: 'synthetic',
@@ -339,7 +339,7 @@ describe('VoiceConversationBindingResolver', () => {
 
         const store = createVoiceSessionBindingStore();
         store.getState().bind({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionId: 'session_a',
             conversationSessionId: 'carrier_old',
             transcriptMode: 'synthetic',
@@ -352,7 +352,7 @@ describe('VoiceConversationBindingResolver', () => {
                     carrier_new: createTestSession(
                         'carrier_new',
                         createVoiceConversationMetadata({
-                            adapterId: 'realtime_elevenlabs',
+                            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
                             controlSessionId: 'session_a',
                             conversationSessionId: 'carrier_new',
                             transcriptMode: 'synthetic',
@@ -377,7 +377,7 @@ describe('VoiceConversationBindingResolver', () => {
         });
 
         const binding = resolver.resolveLatest({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             controlSessionIds: ['session_a'],
         });
 
@@ -438,7 +438,7 @@ describe('VoiceConversationBindingResolver', () => {
 
         const store = createVoiceSessionBindingStore();
         const runtimeAttemptBinding = {
-            adapterId: 'realtime_openai',
+            adapterId: 'happier.voice.openai/realtime-openai',
             controlSessionId: 'account-b-control',
             conversationSessionId: 'voice-direct-media:attempt-b',
             lifetime: 'runtime_attempt' as const,
@@ -455,7 +455,7 @@ describe('VoiceConversationBindingResolver', () => {
         expect(
             resolver.resolveByControlSessionId({
                 controlSessionId: 'account-b-control',
-                adapterId: 'realtime_openai',
+                adapterId: 'happier.voice.openai/realtime-openai',
             }),
         ).toEqual(runtimeAttemptBinding);
         expect(

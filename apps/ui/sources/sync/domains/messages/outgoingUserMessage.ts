@@ -8,8 +8,14 @@ import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes'
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { nowServerMs } from '@/sync/runtime/time';
 import type { RawRecord } from '@/sync/typesRaw';
+import type { SessionMessageHostAdmissionOrigin } from '@/sync/domains/session/input/types';
 import {
     projectSessionMessageModelSelectionToLegacyModelV1,
+    SESSION_INPUT_REQUEST_META_KEY,
+    SESSION_MESSAGE_PROVENANCE_META_KEY,
+    SessionInputRequestV1Schema,
+    SessionMessageProvenanceV1Schema,
+    stripSessionInputProtectedMeta,
     withSessionMessageModelSelectionV1,
     type SentFrom,
     type SessionModelSelectionV1,
@@ -48,6 +54,30 @@ function resolveStructuredOutgoingModelSelection(sessionValue: unknown): Session
     return modelOverride?.modelSelection ?? null;
 }
 
+function stripOutgoingUserMessageProtectedMeta(
+    meta: Record<string, unknown> | Partial<MessageMeta> | null | undefined,
+): Record<string, unknown> {
+    const next = stripSessionInputProtectedMeta(meta as Record<string, unknown> | null | undefined);
+    delete next[SESSION_MESSAGE_PROVENANCE_META_KEY];
+    return next;
+}
+
+function buildHostAdmissionMeta(origin: SessionMessageHostAdmissionOrigin | undefined): Record<string, unknown> {
+    if (origin !== 'voice') return {};
+    return {
+        [SESSION_MESSAGE_PROVENANCE_META_KEY]: SessionMessageProvenanceV1Schema.parse({
+            v: 1,
+            kind: 'voice',
+        }),
+        [SESSION_INPUT_REQUEST_META_KEY]: SessionInputRequestV1Schema.parse({
+            v: 1,
+            producer: 'voiceInput',
+            caller: { kind: 'host' },
+            permission: {},
+        }),
+    };
+}
+
 export function buildOutgoingUserTextRecord(params: Readonly<{
     text: string;
     displayText?: string;
@@ -57,10 +87,12 @@ export function buildOutgoingUserTextRecord(params: Readonly<{
     settings: Record<string, unknown>;
     session: unknown;
     metaOverrides?: Record<string, unknown> | Partial<MessageMeta> | null;
+    hostAdmissionOrigin?: SessionMessageHostAdmissionOrigin;
     sentFrom?: SentFrom;
 }>): RawRecord {
     const structuredModelSelection = resolveStructuredOutgoingModelSelection(params.session);
-    const meta = buildSendMessageMeta({
+    const callerMeta = stripOutgoingUserMessageProtectedMeta(params.metaOverrides);
+    const mergedMeta = buildSendMessageMeta({
         sentFrom: params.sentFrom ?? resolveSentFrom(),
         permissionMode: params.permissionMode || 'default',
         model: resolveOutgoingUserMessageModel({
@@ -72,8 +104,12 @@ export function buildOutgoingUserTextRecord(params: Readonly<{
         agentId: params.agentId,
         settings: params.settings,
         session: params.session,
-        metaOverrides: params.metaOverrides ?? undefined,
+        metaOverrides: callerMeta as Partial<MessageMeta>,
     });
+    const meta = {
+        ...stripOutgoingUserMessageProtectedMeta(mergedMeta),
+        ...buildHostAdmissionMeta(params.hostAdmissionOrigin),
+    };
     return {
         role: 'user',
         content: {

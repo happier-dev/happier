@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -14,7 +13,13 @@ import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { sync } from '@/sync/sync';
 
-import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
+import {
+    readRemoteHosts,
+    removeRemoteHost,
+    upsertRemoteHost,
+    type RemoteHost,
+    type RemoteHostsV1Raw,
+} from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverrides, deleteRemoteHostLocalOverrides, upsertRemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { resolveRemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/resolveRemoteHostEffectiveSshConfig';
 import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
@@ -42,26 +47,12 @@ import { pinnedRemoteHostOutcomeActionIds } from './remoteHostOutcomeActions';
 import { useRemoteHostOutcomeActions } from './useRemoteHostOutcomeActions';
 import { useRemoteHostSshTunnelControl } from './useRemoteHostSshTunnelControl';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const REMOTE_HOST_ROW_ACTIONS_OVERFLOW_THRESHOLD = Number.MAX_SAFE_INTEGER;
 
 function sortByLastUsedDesc(hosts: readonly RemoteHost[]): RemoteHost[] {
     return [...hosts].sort((left, right) => (right.lastUsedAt ?? 0) - (left.lastUsedAt ?? 0));
-}
-
-function upsertRemoteHost(list: readonly RemoteHost[], remoteHost: RemoteHost): RemoteHost[] {
-    const next = [...list];
-    const index = next.findIndex((entry) => entry.id === remoteHost.id);
-    if (index >= 0) {
-        next[index] = remoteHost;
-        return next;
-    }
-    next.push(remoteHost);
-    return next;
-}
-
-function removeRemoteHost(list: readonly RemoteHost[], remoteHostId: string): RemoteHost[] {
-    return list.filter((entry) => entry.id !== remoteHostId);
 }
 
 function hasNativeUsableSshCredentialMaterial(
@@ -157,8 +148,9 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
     const supportsRemoteHostManagementSurface = isDesktop || runner.mode === 'native';
     const { theme } = useUnistyles();
     const supportsWholeRowPress = Platform.OS !== 'web';
-    const [remoteHosts, setRemoteHosts] = useSettingMutable('remoteHostsV1');
-    const hosts = React.useMemo(() => sortByLastUsedDesc(remoteHosts ?? []), [remoteHosts]);
+    const [remoteHostsRaw, setRemoteHosts] = useSettingMutable('remoteHostsV1');
+    const remoteHosts = React.useMemo(() => readRemoteHosts(remoteHostsRaw), [remoteHostsRaw]);
+    const hosts = React.useMemo(() => sortByLastUsedDesc(remoteHosts), [remoteHosts]);
     useSettings(); // Ensure settings are hydrated for feature decisions.
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
@@ -202,6 +194,7 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
         <RemoteHostsScreenBody
             hosts={hosts}
             remoteHosts={remoteHosts}
+            remoteHostsRaw={remoteHostsRaw}
             setRemoteHosts={setRemoteHosts}
             runner={runner}
             remoteSshMachineSetupAllowed={remoteSshMachineSetupAllowed}
@@ -215,11 +208,12 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
 
 const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: Readonly<{
     hosts: RemoteHost[];
-    remoteHosts: RemoteHost[] | null;
+    remoteHosts: RemoteHost[];
+    remoteHostsRaw: RemoteHostsV1Raw;
     runner: ReturnType<typeof getDefaultSystemTaskRunner>;
     remoteSshMachineSetupAllowed: boolean;
     nativeSshTransportAllowed: boolean;
-    setRemoteHosts: (value: RemoteHost[]) => void;
+    setRemoteHosts: (value: RemoteHostsV1Raw) => void;
     secretMaterialAllowed: boolean;
     supportsWholeRowPress: boolean;
     themeTextSecondary: string;
@@ -264,7 +258,8 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
     const sshTunnelControl = useRemoteHostSshTunnelControl({ runner });
     const remoteHostOutcomeActions = useRemoteHostOutcomeActions({
         runner,
-        remoteHosts: props.remoteHosts ?? [],
+        remoteHosts: props.remoteHosts,
+        remoteHostsRaw: props.remoteHostsRaw,
         secretMaterialAllowed: props.secretMaterialAllowed,
         onSshTunnelEnsured: () => {
             void sshTunnelControl.refreshTunnels();
@@ -407,24 +402,23 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
             props: {
                 remoteHost: existing,
                 localOverrides,
-                savedRemoteHosts: props.remoteHosts ?? [],
+                savedRemoteHosts: props.remoteHosts,
                 systemTaskRunner: runner,
                 secretMaterialAllowed: props.secretMaterialAllowed,
                 remoteMaintenanceSupported: canRunRemoteHostMaintenanceTasks,
                 onSave: ({ remoteHost, localOverrides }) => {
-                    const nextList = upsertRemoteHost(props.remoteHosts ?? [], remoteHost);
-                    props.setRemoteHosts(nextList);
+                    props.setRemoteHosts(upsertRemoteHost(props.remoteHostsRaw, remoteHost));
                     upsertRemoteHostLocalOverrides(remoteHost.id, localOverrides);
                 },
                 onDelete: (id) => {
-                    props.setRemoteHosts(removeRemoteHost(props.remoteHosts ?? [], id));
+                    props.setRemoteHosts(removeRemoteHost(props.remoteHostsRaw, id));
                     deleteRemoteHostLocalOverrides(id);
                 },
                 onTestConnection: (host) => void startManageHostAction(host, 'testConnection', t('settings.remoteHostsTestConnectionTitle')),
             },
             closeOnBackdrop: true,
         });
-    }, [props.hosts, props.remoteHosts, props.secretMaterialAllowed, props.setRemoteHosts, startManageHostAction]);
+    }, [props.hosts, props.remoteHosts, props.remoteHostsRaw, props.secretMaterialAllowed, props.setRemoteHosts, startManageHostAction]);
 
     return (
         <ItemList>
@@ -447,7 +441,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                             ...(canSetupAsMachine ? [{
                                 id: 'setupAsMachine',
                                 title: t('settings.remoteHostsSetupAsMachineTitle'),
-                                icon: 'rocket-outline',
+                                icon: 'rocket',
                                 inlineTestID: `settings.remoteHosts.action.setupAsMachine.${host.id}`,
                                 onPress: () => {
                                     void remoteHostOutcomeActions.setupAsMachine(host);
@@ -457,7 +451,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 id: 'connectFromThisDevice',
                                 title: t('settings.remoteHostsConnectFromThisDeviceTitle'),
                                 subtitle: t('settings.remoteHostsConnectFromThisDeviceSubtitle'),
-                                icon: 'git-network-outline',
+                                icon: 'graph',
                                 inlineTestID: `settings.remoteHosts.action.connectFromThisDevice.${host.id}`,
                                 onPress: () => {
                                     void remoteHostOutcomeActions.connectFromThisDevice(host);
@@ -467,7 +461,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 id: 'useAsRelayHost',
                                 title: t('settings.remoteHostsUseAsRelayHostTitle'),
                                 subtitle: t('settings.remoteHostsUseAsRelayHostSubtitle'),
-                                icon: 'radio-outline',
+                                icon: 'radio',
                                 inlineTestID: `settings.remoteHosts.action.useAsRelayHost.${host.id}`,
                                 onPress: () => {
                                     void remoteHostOutcomeActions.openRelayAccess(host);
@@ -477,7 +471,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 id: 'configureAccess',
                                 title: t('settings.remoteHostsConfigureAccessTitle'),
                                 subtitle: t('settings.remoteHostsConfigureAccessSubtitle'),
-                                icon: 'git-network-outline',
+                                icon: 'graph',
                                 inlineTestID: `settings.remoteHosts.action.configureAccess.${host.id}`,
                                 onPress: () => {
                                     void remoteHostOutcomeActions.openRelayAccess(host);
@@ -486,88 +480,88 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                             {
                                 id: 'openDetails',
                                 title: t('settings.remoteHostsOpenDetailsTitle'),
-                                icon: 'information-circle-outline',
+                                icon: 'info',
                                 onPress: () => openEditor(host.id),
                             },
                             ...(canRunRemoteHostMaintenanceTasks ? [{
                                 id: 'testConnection',
                                 title: t('settings.remoteHostsTestConnectionTitle'),
-                                icon: 'pulse-outline',
+                                icon: 'pulse',
                                 inlineTestID: 'settings.remoteHosts.action.testConnection',
                                 onPress: () => void startManageHostAction(host, 'testConnection', t('settings.remoteHostsTestConnectionTitle')),
                             },
                             {
                                 id: 'installOrUpdateCli',
                                 title: t('settings.remoteHostsInstallOrUpdateCliTitle'),
-                                icon: 'cloud-download-outline',
+                                icon: 'cloud-arrow-down',
                                 inlineTestID: 'settings.remoteHosts.action.installOrUpdateCli',
                                 onPress: () => void startManageHostAction(host, 'installOrUpdateCli', t('settings.remoteHostsInstallOrUpdateCliTitle')),
                             },
                             {
                                 id: 'daemonService.installOrUpdate',
                                 title: t('settings.remoteHostsDaemonServiceInstallOrUpdateTitle'),
-                                icon: 'construct-outline',
+                                icon: 'wrench',
                                 onPress: () => void startManageHostAction(host, 'daemonService.installOrUpdate', t('settings.remoteHostsDaemonServiceInstallOrUpdateTitle')),
                             },
                             {
                                 id: 'daemonService.start',
                                 title: t('settings.remoteHostsDaemonServiceStartTitle'),
-                                icon: 'play-outline',
+                                icon: 'play',
                                 onPress: () => void startManageHostAction(host, 'daemonService.start', t('settings.remoteHostsDaemonServiceStartTitle')),
                             },
                             {
                                 id: 'daemonService.stop',
                                 title: t('settings.remoteHostsDaemonServiceStopTitle'),
-                                icon: 'stop-outline',
+                                icon: 'stop',
                                 onPress: () => void startManageHostAction(host, 'daemonService.stop', t('settings.remoteHostsDaemonServiceStopTitle')),
                             },
                             {
                                 id: 'daemonService.restart',
                                 title: t('settings.remoteHostsDaemonServiceRestartTitle'),
-                                icon: 'refresh-outline',
+                                icon: 'arrow-clockwise',
                                 onPress: () => void startManageHostAction(host, 'daemonService.restart', t('settings.remoteHostsDaemonServiceRestartTitle')),
                             },
                             {
                                 id: 'relayRuntime.status',
                                 title: t('settings.remoteHostsRelayRuntimeStatusTitle'),
-                                icon: 'information-circle-outline',
+                                icon: 'info',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.status', t('settings.remoteHostsRelayRuntimeStatusTitle')),
                             },
                             {
                                 id: 'relayRuntime.installOrUpdate',
                                 title: t('settings.remoteHostsRelayRuntimeInstallOrUpdateTitle'),
-                                icon: 'download-outline',
+                                icon: 'download',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.installOrUpdate', t('settings.remoteHostsRelayRuntimeInstallOrUpdateTitle')),
                             },
                             {
                                 id: 'relayRuntime.start',
                                 title: t('settings.remoteHostsRelayRuntimeStartTitle'),
-                                icon: 'play-outline',
+                                icon: 'play',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.start', t('settings.remoteHostsRelayRuntimeStartTitle')),
                             },
                             {
                                 id: 'relayRuntime.stop',
                                 title: t('settings.remoteHostsRelayRuntimeStopTitle'),
-                                icon: 'stop-outline',
+                                icon: 'stop',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.stop', t('settings.remoteHostsRelayRuntimeStopTitle')),
                             },
                             {
                                 id: 'relayRuntime.restart',
                                 title: t('settings.remoteHostsRelayRuntimeRestartTitle'),
-                                icon: 'refresh-outline',
+                                icon: 'arrow-clockwise',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.restart', t('settings.remoteHostsRelayRuntimeRestartTitle')),
                             }] satisfies ItemAction[] : []),
                             {
                                 id: 'edit',
                                 title: t('common.edit'),
-                                icon: 'pencil-outline',
+                                icon: 'pencil',
                                 inlineTestID: `settings.remoteHosts.action.edit.${host.id}`,
                                 onPress: () => openEditor(host.id),
                             },
                             {
                                 id: 'remove',
                                 title: t('common.remove'),
-                                icon: 'trash-outline',
+                                icon: 'trash',
                                 destructive: true,
                                 onPress: () => {
                                     void (async () => {
@@ -577,7 +571,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                             { destructive: true, confirmText: t('common.remove'), cancelText: t('common.cancel') },
                                         );
                                         if (!confirmed) return;
-                                        props.setRemoteHosts(removeRemoteHost(props.remoteHosts ?? [], host.id));
+                                        props.setRemoteHosts(removeRemoteHost(props.remoteHostsRaw, host.id));
                                         deleteRemoteHostLocalOverrides(host.id);
                                     })();
                                 },
@@ -598,7 +592,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 title={host.name}
                                 subtitle={subtitle}
                                 subtitleLines={0}
-                                icon={<Ionicons name="desktop-outline" size={18} color={props.themeTextSecondary} />}
+                                icon={<Icon name="desktop" size={16} color={props.themeTextSecondary} />}
                                 showChevron={false}
                                 onPress={props.supportsWholeRowPress ? () => openEditor(host.id) : undefined}
                                 rightElement={(
@@ -701,7 +695,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                     actions={[{
                                         id: 'clearInterruptedBootstrap',
                                         title: t('common.remove'),
-                                        icon: 'close-circle-outline',
+                                        icon: 'x-circle',
                                         onPress: () => {
                                             nativeSshBootstrapInterruptions.clearInterruption(interruption.marker.key);
                                         },

@@ -1,5 +1,9 @@
 import * as React from 'react';
-import { areProviderContributionKeysEqualV1, type ProviderErrorV1 } from '@happier-dev/protocol';
+import {
+    areProviderContributionKeysEqualV1,
+    type ProviderErrorV1,
+    type QualifiedConnectedAccountPurposeBindingTargetV1,
+} from '@happier-dev/protocol';
 import type {
     DaemonProviderConnectionMutationRequestV1,
     DaemonProviderConnectionViewV1,
@@ -18,14 +22,13 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { ProviderMachineSelector } from '@/components/settings/providers/ProviderMachineSelector';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { ProviderExternalLinkItem } from '@/components/settings/providers/ProviderExternalLinkItem';
+import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
-import {
-    formatManagedPurposeTargetInput,
-    parseManagedPurposeTargetInput,
-} from '@/providers/connection/managedPurposeTargetInput';
 import {
     presentProviderConnection,
     PROVIDER_CONNECTION_STATUS_KEY,
@@ -38,19 +41,19 @@ import { useProviderConnectionMachineViews } from '@/providers/hooks/useProvider
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import { probeProviderConnection, providerErrorFromRpcFailure } from '@/providers/rpc/client';
 import { useAllMachines, useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useProfile, useSettings } from '@/sync/store/hooks';
+import { sync } from '@/sync/sync';
 import { t } from '@/text';
+import { resolveConnectedAccountPurposeTargetDisplay } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import {
     ProviderCompatibilitySection,
     ProviderEndpointOverridesSection,
 } from './detail/ProviderConnectionDetailSections';
 import { ProviderFeatureAvailabilityNotice, useProviderFeatureAvailability } from './ProviderFeatureAvailability';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function machineName(machine: ReturnType<typeof useAllMachines>[number]): string {
     return machine.metadata?.displayName || machine.metadata?.host || machine.id;
-}
-
-function contributionIdentityLabel(identity: Readonly<{ pluginId: string; localId: string }>): string {
-    return `${identity.pluginId}/${identity.localId}`;
 }
 
 type ManagedDeployment = Extract<
@@ -67,19 +70,21 @@ type ManagedDeploymentUpdate = Extract<
     { kind: 'managedLocal' }
 >;
 
-function managedPurposeTargetLabel(
-    target: NonNullable<ManagedDeployment['effects']>['connectedAccountPurposes'][number]['target'],
-): string {
-    return target.kind === 'account'
-        ? `${contributionIdentityLabel(target.account.service)} · ${target.account.accountId}`
-        : `${contributionIdentityLabel(target.service)} · ${target.groupId}`;
-}
+type ManagedPurposeDraft = Readonly<{
+    machineId: string;
+    connectionId: string;
+    revision: number;
+    targets: Readonly<Record<string, QualifiedConnectedAccountPurposeBindingTargetV1 | null>>;
+}>;
 
 export const ProviderConnectionDetailScreen = React.memo(function ProviderConnectionDetailScreen(
     props: Readonly<{ connectionId: string }>,
 ) {
     const router = useRouter();
     const { theme } = useUnistyles();
+    const profile = useProfile();
+    const settings = useSettings();
+    const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const machines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
@@ -111,6 +116,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const [deletePending, setDeletePending] = React.useState(false);
     const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
     const [probeError, setProbeError] = React.useState<ProviderErrorV1 | null>(null);
+    const [managedPurposeDraft, setManagedPurposeDraft] = React.useState<ManagedPurposeDraft | null>(null);
     const probeGenerationRef = React.useRef(0);
     const connection = query.data?.connections.find((item) => item.connectionId === props.connectionId) ?? null;
     const managedDeployment = connection?.deployment.kind === 'managedLocal'
@@ -293,67 +299,62 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         }, `start:${connection.contributionKey}`);
     }, [connection?.contributionKey, invalidateProbe, localInstallation?.managedStartAvailable, machineId, mutation, props.connectionId]);
 
-    const promptManagedPurposeBindingDefaults = React.useCallback(async (): Promise<
-        ManagedDeploymentUpdate['purposeBindingDefaults'] | null
-    > => {
-        if (!managedLocalOption) return null;
+    const beginManagedPurposeConfiguration = React.useCallback(() => {
+        if (!machineId || !connection || !managedLocalOption) return;
         const currentTargets = new Map(
             managedDeployment?.effects?.connectedAccountPurposes.map(
                 (binding) => [binding.purpose, binding.target] as const,
             ) ?? [],
         );
+        const targets: Record<string, QualifiedConnectedAccountPurposeBindingTargetV1 | null> = {};
+        for (const declaration of managedLocalOption.connectedAccountPurposes) {
+            targets[declaration.purpose] = currentTargets.get(declaration.purpose) ?? null;
+        }
+        setManagedPurposeDraft({
+            machineId,
+            connectionId: connection.connectionId,
+            revision: connection.revision,
+            targets,
+        });
+    }, [connection, machineId, managedDeployment?.effects?.connectedAccountPurposes, managedLocalOption]);
+
+    const updateManagedPurposeDraftTarget = React.useCallback((purpose: string, target: QualifiedConnectedAccountPurposeBindingTargetV1 | null) => {
+        setManagedPurposeDraft((current) => current
+            ? { ...current, targets: { ...current.targets, [purpose]: target } }
+            : current);
+    }, []);
+
+    const reloadManagedPurposeTargets = React.useCallback(async () => {
+        await Promise.all([sync.refreshProfile(), refreshConnectionDetail()]);
+    }, [refreshConnectionDetail]);
+
+    const saveManagedPurposeConfiguration = React.useCallback(async () => {
+        if (!machineId || !connection || !managedLocalOption || !managedPurposeDraft) return;
+        if (
+            managedPurposeDraft.machineId !== machineId
+            || managedPurposeDraft.connectionId !== connection.connectionId
+            || managedPurposeDraft.revision !== connection.revision
+        ) {
+            // A connection refresh replaced the CAS basis while the editor was
+            // open. Drop the draft rather than applying its targets to a newer
+            // deployment snapshot.
+            setManagedPurposeDraft(null);
+            return;
+        }
         const purposeBindingDefaults: ManagedDeploymentUpdate['purposeBindingDefaults'] = {};
         for (const declaration of managedLocalOption.connectedAccountPurposes) {
-            const currentTarget = currentTargets.get(declaration.purpose);
-            let promptValue = currentTarget
-                ? formatManagedPurposeTargetInput(currentTarget)
-                : '';
-            while (true) {
-                const raw = await Modal.prompt(
-                    t('settingsProviders.local.purposeTargetTitle'),
-                    [
-                        t('settingsProviders.local.purposeTargetDescription'),
-                        `${declaration.purpose} · ${contributionIdentityLabel(declaration.service)}`,
-                    ].join('\n'),
-                    {
-                        defaultValue: promptValue,
-                        confirmText: t('common.save'),
-                    },
-                );
-                if (raw === null) return null;
-                if (!raw.trim() && !declaration.required) break;
-                const target = parseManagedPurposeTargetInput({
-                    input: raw,
-                    service: declaration.service,
-                });
-                if (target) {
-                    purposeBindingDefaults[declaration.purpose] = target;
-                    break;
-                }
-                promptValue = raw;
-                await Modal.alertAsync(
+            const target = managedPurposeDraft.targets[declaration.purpose] ?? null;
+            if (!target && declaration.required) {
+                await Modal.alert(
                     t('settingsProviders.local.invalidPurposeTargetTitle'),
                     t('settingsProviders.local.invalidPurposeTargetDescription'),
                 );
+                return;
             }
+            if (target) purposeBindingDefaults[declaration.purpose] = target;
         }
-        if (Object.keys(purposeBindingDefaults).length === 0) {
-            Modal.alert(
-                t('settingsProviders.local.invalidPurposeTargetTitle'),
-                t('settingsProviders.local.invalidPurposeTargetDescription'),
-            );
-            return null;
-        }
-        return purposeBindingDefaults;
-    }, [managedDeployment?.effects?.connectedAccountPurposes, managedLocalOption]);
-
-    const configureManagedDeployment = React.useCallback(async () => {
-        if (!machineId || !connection || !managedLocalOption) return;
-        const purposeBindingDefaults =
-            await promptManagedPurposeBindingDefaults();
-        if (!purposeBindingDefaults) return;
         invalidateProbe();
-        await mutation.run(
+        const result = await mutation.run(
             {
                 action: 'update',
                 machineId,
@@ -366,15 +367,27 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             },
             'deployment:managedLocal',
         );
+        if (result?.status === 'success') setManagedPurposeDraft(null);
     }, [
         connection,
         invalidateProbe,
         machineId,
         managedLocalOption,
+        managedPurposeDraft,
         mutation,
-        promptManagedPurposeBindingDefaults,
         props.connectionId,
     ]);
+
+    React.useEffect(() => {
+        if (!managedPurposeDraft) return;
+        if (
+            managedPurposeDraft.machineId !== machineId
+            || managedPurposeDraft.connectionId !== connection?.connectionId
+            || managedPurposeDraft.revision !== connection?.revision
+        ) {
+            setManagedPurposeDraft(null);
+        }
+    }, [connection?.connectionId, connection?.revision, machineId, managedPurposeDraft]);
 
     const useExternalDeployment = React.useCallback(async () => {
         if (!machineId || !connection || !managedDeployment) return;
@@ -446,7 +459,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         mode="info"
                         title={deleted?.lastDisplayName ?? t('settingsProviders.detail.notFoundTitle')}
                         subtitle={deleted ? t('settingsProviders.detail.deletedDescription') : t('settingsProviders.detail.notFoundDescription')}
-                        icon={<SafeIonicons name="alert-circle-outline" size={29} color={theme.colors.state.warning.foreground} />}
+                        icon={<Icon name="warning-circle" size={29} color={theme.colors.state.warning.foreground} />}
                     />
                 </ItemGroup>
             </ItemList>
@@ -501,33 +514,21 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         mode="info"
                         title={t('settingsProviders.local.subscriptionPolicyTitle')}
                         subtitle={t('settingsProviders.local.subscriptionPolicyDescription')}
-                        icon={<SafeIonicons name="warning-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="warning" size={29} color={theme.colors.text.secondary} />}
                     />
                     {managedDeployment?.effects ? (
                         <>
                             <Item
                                 testID="provider-connection-managed-implementation"
                                 mode="info"
-                                title={contributionIdentityLabel(managedDeployment.effects.implementationIdentity)}
+                                title={connection.providerName}
                                 subtitle={[
                                     t('settingsProviders.local.startedByHappier'),
                                     managedTargetMachine
                                         ? machineName(managedTargetMachine)
                                         : managedDeployment.targetMachineId,
-                                    managedDeployment.effects.process.lifetime,
-                                    managedDeployment.effects.process.network,
-                                    managedDeployment.effects.process.restart,
                                 ].join(' · ')}
-                                icon={<SafeIonicons name="hardware-chip-outline" size={29} color={theme.colors.text.secondary} />}
-                            />
-                            <Item
-                                testID="provider-connection-managed-dependency"
-                                mode="info"
-                                title={managedDeployment.effects.dependency.executableBaseName}
-                                subtitle={[
-                                    managedDeployment.effects.dependency.kind,
-                                    managedDeployment.effects.dependency.directorySegments.join('/'),
-                                ].join(' · ')}
+                                icon={<Icon name="cpu" size={29} color={theme.colors.text.secondary} />}
                             />
                             <Item
                                 testID="provider-connection-managed-protocols"
@@ -540,8 +541,20 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                     key={`${purpose.service.pluginId}/${purpose.service.localId}/${purpose.purpose}`}
                                     testID={`provider-connection-managed-purpose:${purpose.purpose}`}
                                     mode="info"
-                                    title={purpose.purpose}
-                                    subtitle={managedPurposeTargetLabel(purpose.target)}
+                                    title={purpose.title ?? resolveQualifiedConnectedServiceRegistryDisplayName(
+                                        connectedServicesRegistry, purpose.service, t,
+                                    )}
+                                    subtitle={resolveConnectedAccountPurposeTargetDisplay({
+                                        target: purpose.target,
+                                        accounts: profile.connectedAccountsV4 ?? [],
+                                        groups: profile.connectedAccountGroupsV4 ?? [],
+                                        labelsByKey: settings.connectedServicesProfileLabelByKey,
+                                        serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
+                                            connectedServicesRegistry,
+                                            purpose.service,
+                                            t,
+                                        ),
+                                    })}
                                 />
                             ))}
                         </>
@@ -555,7 +568,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 : t('settingsProviders.status.needsAttention')}
                         />
                     ) : null}
-                    {managedLocalOption ? (
+                    {managedLocalOption && !managedPurposeDraft ? (
                         <Item
                             testID="provider-connection-managed-configure"
                             title={managedDeployment
@@ -564,16 +577,42 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             subtitle={managedDeployment
                                 ? t('settingsProviders.local.editManagedDefaultsDescription')
                                 : t('settingsProviders.local.configureManagedDescription')}
-                            loading={mutation.pendingKey === 'deployment:managedLocal'}
-                            onPress={() => void configureManagedDeployment()}
+                            loading={mutation.isPending('deployment:managedLocal')}
+                            onPress={beginManagedPurposeConfiguration}
                         />
+                    ) : null}
+                    {managedLocalOption && managedPurposeDraft ? (
+                        <>
+                            {managedLocalOption.connectedAccountPurposes.map((declaration) => (
+                                <ConnectedAccountPurposeTargetChooser
+                                    key={`${declaration.service.pluginId}/${declaration.service.localId}/${declaration.purpose}`}
+                                    testID={`provider-connection-managed-purpose-chooser:${declaration.purpose}`}
+                                    declaration={declaration}
+                                    value={managedPurposeDraft.targets[declaration.purpose] ?? null}
+                                    onChange={(target) => updateManagedPurposeDraftTarget(declaration.purpose, target)}
+                                    onReload={reloadManagedPurposeTargets}
+                                    reloadSubtitle={t(PROVIDER_CONNECTION_STATUS_KEY[presentation.status])}
+                                />
+                            ))}
+                            <Item
+                                testID="provider-connection-managed-purpose-save"
+                                title={t('common.save')}
+                                loading={mutation.isPending('deployment:managedLocal')}
+                                onPress={() => void saveManagedPurposeConfiguration()}
+                            />
+                            <Item
+                                testID="provider-connection-managed-purpose-cancel"
+                                title={t('common.cancel')}
+                                onPress={() => setManagedPurposeDraft(null)}
+                            />
+                        </>
                     ) : null}
                     {managedDeployment ? (
                         <Item
                             testID="provider-connection-managed-use-external"
                             title={t('settingsProviders.local.useExternal')}
                             subtitle={t('settingsProviders.local.useExternalDescription')}
-                            loading={mutation.pendingKey === 'deployment:external'}
+                            loading={mutation.isPending('deployment:external')}
                             onPress={() => void useExternalDeployment()}
                         />
                     ) : null}
@@ -590,7 +629,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             subtitle={localCandidate.ownership === 'owned'
                                 ? t('settingsProviders.local.startedByHappier')
                                 : t('settingsProviders.local.runningOutsideHappier')}
-                            icon={<SafeIonicons name="hardware-chip-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="cpu" size={29} color={theme.colors.text.secondary} />}
                         />
                     ) : null}
                     {localInstallation?.managedStartAvailable ? (
@@ -600,7 +639,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             subtitle={localInstallation.status === 'app_running_server_off'
                                 ? t('settingsProviders.local.appRunningServerOff')
                                 : t('settingsProviders.local.installedNotRunning')}
-                            loading={mutation.pendingKey === `start:${localInstallation.contributionKey}`}
+                            loading={mutation.isPending(`start:${localInstallation.contributionKey}`)}
                             onPress={() => void startLocal()}
                         />
                     ) : null}
@@ -612,7 +651,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     <Item
                         title={t('settingsProviders.detail.accountAccess')}
                         subtitle={t('settingsProviders.detail.accountAccessDescription')}
-                        rightElement={mutation.pendingKey === 'enable:account'
+                        rightElement={mutation.isPending('enable:account')
                             ? <ActivitySpinner size="small" />
                             : <Switch accessibilityLabel={t('settingsProviders.detail.accountAccess')} value={accountGrantValid} onValueChange={(next) => {
                                 invalidateProbe();
@@ -629,7 +668,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         mode="info"
                         title={t('settingsProviders.detail.testNotSupported')}
                         subtitle={t('settingsProviders.detail.testOnFirstSession')}
-                        icon={<SafeIonicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
                     />
                 ) : (
                     <Item
@@ -642,7 +681,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 ? t('settingsProviders.detail.testNotSupported')
                                 : t('settingsProviders.detail.testDescription')}
                         loading={probeState === 'probing'}
-                        icon={<SafeIonicons name="pulse-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="pulse" size={29} color={theme.colors.text.secondary} />}
                         onPress={() => void runProbe()}
                     />
                 )}
@@ -673,7 +712,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                         : machineEndpoint || (selected
                                             ? t('settingsProviders.detail.currentMachine')
                                             : t('settingsProviders.detail.selectMachineToManage'))}
-                                rightElement={!selected ? undefined : mutation.pendingKey === `machine:${machine.id}`
+                                rightElement={!selected ? undefined : mutation.isPending(`machine:${machine.id}`)
                                     || machineViewState?.status === 'loading'
                                     ? <ActivitySpinner size="small" />
                                     : <Switch
@@ -704,7 +743,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     <Item
                         title={t('settingsProviders.detail.accountApiKey')}
                         subtitle={connection.credential.accountBound ? t('settingsProviders.detail.apiKeyConfigured') : t('settingsProviders.detail.apiKeyMissing')}
-                        icon={<SafeIonicons name="key-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="key" size={29} color={theme.colors.text.secondary} />}
                         onPress={() => bindSecret('account', machineId)}
                     />
                     <Item
@@ -725,14 +764,14 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     subtitle={connection.runtime.modelCount === null
                         ? t('settingsProviders.detail.modelsUnknown')
                         : t('settingsProviders.detail.modelCount', { count: connection.runtime.modelCount })}
-                    icon={<SafeIonicons name="layers-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="stack-simple" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => router.push(`/(app)/settings/providers/${props.connectionId}/models` as never)}
                 />
                 {connection.manualModelPolicy === 'allowed' && connection.runtime.modelCount === null ? (
                     <Item
                         title={t('settingsProviders.models.add')}
                         subtitle={t('settingsProviders.models.addDescription')}
-                        icon={<SafeIonicons name="add-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="plus-circle" size={29} color={theme.colors.text.secondary} />}
                         onPress={() => router.push(`/(app)/settings/providers/${props.connectionId}/models?add=1` as never)}
                     />
                 ) : null}

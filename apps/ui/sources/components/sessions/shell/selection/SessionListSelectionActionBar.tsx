@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as safeAreaContext from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -37,6 +36,7 @@ import {
     useOptionalSessionListSelectionState,
 } from './SessionListSelectionContext';
 import { resolveSelectionActionBarBottomInset } from './selectionActionBarBottomInset';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type MoveFolderSelection = Readonly<{
     folderId: string | null;
@@ -475,7 +475,7 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
                     dataSet: { actionId: descriptor.id },
                 } as Record<string, unknown>)}
             >
-                <Ionicons
+                <Icon
                     name={descriptor.icon}
                     size={14}
                     color={iconColor}

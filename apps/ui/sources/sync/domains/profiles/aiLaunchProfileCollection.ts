@@ -32,6 +32,15 @@ export function readUiAiLaunchProfiles(raw: unknown): readonly AiLaunchProfile[]
     ));
 }
 
+/**
+ * The existing profile UI still consumes the legacy compatibility shape. Keep
+ * conversion beside the Protocol-owned collection reader so opaque retained
+ * rows never reach a legacy UI consumer as executable profile data.
+ */
+export function readUiAiLaunchProfilesForLegacyUi(raw: unknown): AIBackendProfile[] {
+    return readUiAiLaunchProfiles(raw).map(projectAiLaunchProfileForLegacyUi);
+}
+
 function asRawCollection(raw: unknown): readonly unknown[] {
     return Array.isArray(raw) ? raw : [];
 }

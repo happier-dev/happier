@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
-import { Octicons } from '@expo/vector-icons';
 
 import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
 import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFilesList';
@@ -24,6 +23,8 @@ import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from
 import { sessionScmStashList } from '@/sync/ops';
 import { resolveSnapshotScmStashCount, useScmStashSummaryCount } from '@/scm/stash/useScmStashSummaryCount';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type SessionRightPanelGitCommitTabProps = Readonly<{
     theme: any;
@@ -542,7 +543,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         })}
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                            <Octicons name="archive" size={14} color={themeTextSecondary} />
+                            <Icon name="archive" size={14} color={themeTextSecondary} />
                             <Text
                                 numberOfLines={1}
                                 style={{ fontSize: 12, color: themeTextPrimary, ...Typography.default('semiBold') }}
@@ -554,7 +555,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                             <Text style={{ fontSize: 12, color: themeTextSecondary, ...Typography.mono('semiBold') }}>
                                 {String(stashCount)}
                             </Text>
-                            <Octicons name="chevron-right" size={14} color={themeTextSecondary} />
+                            <Icon name="caret-right" size={14} color={themeTextSecondary} />
                         </View>
                     </Pressable>
                 ) : null}
@@ -616,30 +617,12 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: hasChangedFilesViewSelector ? 'flex-start' : 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                             {props.onOpenReviewAllChanges ? (
-                                <Pressable
+                                <ToolbarButton
                                     testID="session-rightpanel-git-open-review"
-                                    accessibilityRole="button"
-                                    accessibilityLabel={t('files.toolbar.review')}
+                                    label={t('files.toolbar.review')}
+                                    icon={<Icon name="git-diff" size={14} color={themeTextSecondary} />}
                                     onPress={props.onOpenReviewAllChanges}
-                                    style={({ pressed }) => ({
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        paddingHorizontal: 10,
-                                        height: 30,
-                                        borderRadius: 10,
-                                        borderWidth: 1,
-                                        borderColor: themeBorderDefault,
-                                        backgroundColor: themeSurfaceBase,
-                                        opacity: pressed ? 0.78 : 1,
-                                        gap: 6,
-                                    })}
-                                >
-                                    <Octicons name="diff" size={14} color={themeTextSecondary} />
-                                    <Text style={{ fontSize: 12, color: themeTextSecondary, ...Typography.default('semiBold') }}>
-                                        {t('files.toolbar.review')}
-                                    </Text>
-                                </Pressable>
+                                />
                             ) : null}
                         </View>
                     </View>

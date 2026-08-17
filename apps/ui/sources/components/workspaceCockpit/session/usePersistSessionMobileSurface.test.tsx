@@ -4,7 +4,7 @@ import { renderHook } from '@/dev/testkit';
 
 const storageState = vi.hoisted(() => ({
     localSettingReads: [] as string[],
-    persistedSurfaces: [] as Array<Readonly<{ sessionId: string; surface: string }>>,
+    persistedSurfaces: [] as Array<Readonly<{ sessionId: string; surface: string; serverId: string | null }>>,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -13,8 +13,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         return null;
     },
     useLocalSettingMutable: () => [null, () => {}],
-    usePersistSessionLastMobileSurface: () => (sessionId: string, surface: string) => {
-        storageState.persistedSurfaces.push({ sessionId, surface });
+    usePersistSessionLastMobileSurface: () => (sessionId: string, surface: string, serverId?: string | null) => {
+        storageState.persistedSurfaces.push({ sessionId, surface, serverId: serverId ?? null });
     },
 }));
 
@@ -27,9 +27,10 @@ describe('usePersistSessionMobileSurface', () => {
         await renderHook(() => usePersistSessionMobileSurface({
             sessionId: 'session-1',
             surface: 'git',
+            serverId: 'server-b',
         }));
 
         expect(storageState.localSettingReads).not.toContain('sessionLastMobileSurfaceBySessionId');
-        expect(storageState.persistedSurfaces).toEqual([{ sessionId: 'session-1', surface: 'git' }]);
+        expect(storageState.persistedSurfaces).toEqual([{ sessionId: 'session-1', surface: 'git', serverId: 'server-b' }]);
     });
 });

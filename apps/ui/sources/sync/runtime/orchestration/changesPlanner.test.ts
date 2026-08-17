@@ -188,6 +188,38 @@ describe('planSyncActionsFromChanges', () => {
         expect(planned.invalidate.sessions).toBe(false);
     });
 
+    it('acknowledges a closed pluginDomain invalidation without creating a generic UI data store', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 4,
+                kind: 'pluginDomain',
+                entityId: 'pluginDomain/example.tasks/availability',
+                hint: { pluginDomain: 'availability', pluginId: 'example.tasks' },
+            }),
+        ]);
+
+        expect(planned.unsupportedChanges).toEqual([]);
+        expect(classifyChangeForCheckpoint(planned.changes[0]!, {
+            isSessionMessagesLoaded: () => false,
+        })).toMatchObject({
+            decision: 'critical',
+            plannerOwner: 'plugin-domain',
+            snapshotDomain: 'plugin-domain-level-triggered',
+        });
+        expect(planned.invalidate).toEqual({
+            sessions: false,
+            machines: false,
+            artifacts: false,
+            settings: false,
+            profile: false,
+            friends: false,
+            feed: false,
+            automations: false,
+            pets: false,
+            sessionFolderAssignments: false,
+        });
+    });
+
     it('maps every protocol change kind in the checkpoint coverage matrix', () => {
         expect(Object.keys(CHANGE_CHECKPOINT_COVERAGE).sort()).toEqual([...ChangeKindSchema.options].sort());
     });

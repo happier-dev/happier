@@ -1,11 +1,13 @@
 import * as React from 'react';
+import { HappierLink } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ProviderExternalLinkKind = 'providerWebsite' | 'getApiKey';
 
@@ -14,6 +16,7 @@ export function ProviderExternalLinkItem(props: Readonly<{
     url: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const label = t(`settingsProviders.links.${props.kind}`);
 
     const open = React.useCallback(async () => {
@@ -32,8 +35,19 @@ export function ProviderExternalLinkItem(props: Readonly<{
         <Item
             title={label}
             accessibilityLabel={label}
-            icon={<SafeIonicons name="open-outline" size={29} color={theme.colors.text.secondary} />}
-            onPress={() => { void open(); }}
+            icon={<Icon name="arrow-square-out" size={29} color={theme.colors.text.secondary} />}
+            mode="info"
+            style={{ paddingVertical: 0 }}
+            rightElement={(
+                <HappierLink
+                    label={label}
+                    onPress={open}
+                    theme={presentationTheme}
+                >
+                    {label}
+                </HappierLink>
+            )}
+            rightElementOutsidePressable
         />
     );
 }

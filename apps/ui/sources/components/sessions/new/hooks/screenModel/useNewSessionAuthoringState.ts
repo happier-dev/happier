@@ -18,6 +18,7 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import type { BackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { NewSessionPromptStore } from './newSessionPromptStore';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
@@ -36,7 +37,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     selectedPath: string;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     agentType: AgentId;
     backendTarget: BackendTargetRefV2 | null;
     transcriptStorage: BuildResolvedInputs['transcriptStorage'];
@@ -57,6 +58,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedSecretIdByProfileIdByEnvVarName: BuildPersistedInputs['selectedSecretIdByProfileIdByEnvVarName'];
     getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => BuildPersistedInputs['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
     backendNewSessionOptionStateByTargetKey: BackendNewSessionOptionStateByTargetKey;
+    composerAttachments?: BuildPersistedInputs['composerAttachments'];
     draftScope?: ServerAccountScope | null;
     launchUserAttemptId?: string | null;
 }>): Readonly<{
@@ -79,11 +81,17 @@ export function useNewSessionAuthoringState(params: Readonly<{
         selectedBuiltInAgentId: params.agentType,
     }), [params.agentType, params.backendTarget, params.settings.lastUsedAgent]);
 
-    const buildCurrentAuthoringDraft = React.useCallback((effectiveAutomationDraft: NewSessionAutomationDraft) => buildNewSessionAuthoringDraftFromResolvedInputs({
+    // The live composer text is read from its store at build time instead of being a render
+    // dependency: typing must not rebuild the authoring draft, but every build (render-time
+    // or imperative, e.g. persist/submit) must see the current text.
+    const promptStore = params.promptStore;
+    const buildCurrentAuthoringDraft = React.useCallback((effectiveAutomationDraft: NewSessionAutomationDraft) => {
+        const sessionPrompt = promptStore.getPrompt();
+        return buildNewSessionAuthoringDraftFromResolvedInputs({
         directory: params.selectedPath,
         checkoutCreationDraft: params.checkoutCreationDraft,
-        prompt: params.sessionPrompt,
-        displayText: params.sessionPrompt,
+        prompt: sessionPrompt,
+        displayText: sessionPrompt,
         agentId: draftAgentId,
         backendTarget: params.backendTarget,
         transcriptStorage: params.transcriptStorage ?? null,
@@ -109,7 +117,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         acpSessionModeId: params.acpSessionModeId ?? null,
         sessionConfigOptionOverrides: params.sessionConfigOptionOverrides,
         automation: effectiveAutomationDraft.enabled ? effectiveAutomationDraft : null,
-    }), [
+        });
+    }, [
         params.acpSessionModeId,
         params.agentType,
         params.agentNewSessionOptions,
@@ -125,7 +134,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.selectedPath,
         params.selectedProfileId,
         params.sessionConfigOptionOverrides,
-        params.sessionPrompt,
+        promptStore,
         params.settings,
         params.transcriptStorage,
         params.useProfiles,
@@ -156,8 +165,10 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const canCreate = authoringContext.canSubmit;
 
     const buildCurrentPersistedDraft = React.useCallback(() => {
+        // Rebuild from the live composer text rather than the last-rendered draft: the model
+        // no longer re-renders per keystroke, so `currentAuthoringDraft` can lag the input.
         const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
-            draft: currentAuthoringDraft,
+            draft: buildCurrentAuthoringDraft(effectiveAutomationDraft),
             machineId: params.selectedMachineId,
             targetServerId: params.targetServerId,
             windowsRemoteSessionLaunchModeOverride: params.windowsRemoteSessionLaunchModeOverride,
@@ -166,6 +177,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
             selectedSecretIdByProfileIdByEnvVarName: params.selectedSecretIdByProfileIdByEnvVarName,
             sessionOnlySecretValueEncByProfileIdByEnvVarName: params.getSessionOnlySecretValueEncByProfileIdByEnvVarName(),
             backendNewSessionOptionStateByTargetKey: params.backendNewSessionOptionStateByTargetKey,
+            composerAttachments: params.composerAttachments,
             preferredPersistedAgentId: draftAgentId,
             updatedAt: Date.now(),
         });
@@ -187,9 +199,11 @@ export function useNewSessionAuthoringState(params: Readonly<{
             }),
         };
     }, [
-        currentAuthoringDraft,
+        buildCurrentAuthoringDraft,
+        effectiveAutomationDraft,
         params.agentType,
         params.backendNewSessionOptionStateByTargetKey,
+        params.composerAttachments,
         params.automationRequestedByRoute,
         draftAgentId,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,

@@ -8,9 +8,18 @@ Happier is committed to protecting your privacy. This policy explains how Happie
 
 ## What We Collect
 
-### Encrypted Data
-- **Messages and Code**: Conversations and code snippets stored for Happier sync are end-to-end encrypted on your device before transmission. We store this encrypted data but have no ability to decrypt or read it.
-- **Encryption Keys**: When you pair devices, encryption keys are transmitted between your devices in encrypted form. We cannot access or decrypt these keys.
+### Synchronized Content
+- **E2EE Mode**: Conversations, code snippets, and other content stored in E2EE mode
+  are encrypted on your device before transmission. Happier-owned sync stores the
+  ciphertext but cannot decrypt the content.
+- **Plaintext Mode**: Content stored for a plaintext account or plaintext Session is
+  intentionally readable by the Happier sync server. A deployment may optionally
+  seal selected plaintext values with a server-owned key at rest, but the live server
+  still opens those values for authorized use.
+- **Encryption Keys**: E2EE Account and Session keys are client-held and are shared
+  between authorized devices only in encrypted form. A plaintext account has no
+  Account E2EE material. Device-local keys may protect local caches or daemon state,
+  but are not uploaded or used as Account keys.
 
 ### Metadata (Not Encrypted)
 - **Message IDs**: Unique identifiers for message ordering and synchronization
@@ -27,22 +36,29 @@ Happier is committed to protecting your privacy. This policy explains how Happie
 
 ### Subscription Management (Revenue Cat)
 - **Account ID**: Revenue Cat uses your account ID to manage subscriptions and enable premium features
-- **Backend Integration**: This ID allows us to provide additional features from our backend while maintaining end-to-end encryption for your content
+- **Backend Integration**: This ID allows us to provide additional features from our backend while preserving the privacy boundary selected for your content
 - **Data Separation**: Purchase analytics sent to PostHog use the anonymized ID instead - we cannot match Revenue Cat data with PostHog analytics
 
-## What Happier's Sync Service Cannot Read
-- Code and conversation content stored for Happier sync is end-to-end encrypted and cannot be decrypted by the Happier service
-- Personal information beyond what you voluntarily include in encrypted messages
+## What Happier's Sync Service Can and Cannot Read
+- Content stored in E2EE mode remains opaque and cannot be decrypted by the Happier
+  sync service.
+- Content stored in plaintext mode is intentionally server-readable. Authentication,
+  authorization, recipient projection, and TLS still restrict access.
+- Device-local secret material is not uploaded as an Account key.
 - Device information beyond anonymous IDs
 - Location data
 
-This guarantee is about Happier-owned sync and storage. It does not mean an external service cannot process data that your device or daemon sends to that service when you select and use it.
+These guarantees are about Happier-owned sync and storage. They do not mean an
+external service cannot process data that your device or daemon sends to that service
+when you select and use it.
 
 ## How We Use Data
 
-### Encrypted Data
-- Stored on our servers solely for synchronization between your devices
-- Transmitted to your paired devices when requested
+### Synchronized Content
+- Stored on our servers for synchronization between authorized devices
+- Represented as opaque ciphertext in E2EE mode or server-readable content in
+  plaintext mode
+- Transmitted to authorized clients when requested
 - Retained until you delete it through the app
 
 ### Metadata
@@ -57,19 +73,25 @@ notifications and Live Activity updates. This means:
 - Happier stores the device push token needed for delivery
 - The backend sends Expo a bounded delivery payload, which may include badge state and Live Activity state intended for system display
 - Expo and the operating-system push service process that token and payload to deliver the update
-- Conversation and code content stored for Happier synchronization remains end-to-end encrypted; the backend does not decrypt that stored content to create a notification
+- E2EE conversation and code content remains encrypted; the backend does not decrypt
+  that stored content to create a notification. Plaintext content is already
+  server-readable under the selected storage mode.
 
 ## Data Security
 
-- **End-to-End Encryption**: Happier uses TweetNaCl to protect sensitive content stored and transmitted for synchronization
-- **Zero-Knowledge Sync**: The Happier service cannot decrypt content stored for encrypted synchronization
-- **Secure Key Exchange**: Encryption keys are transmitted between your devices only in encrypted form that we cannot access
+- **End-to-End Encryption**: E2EE content uses client-held cryptographic material and
+  remains opaque to the Happier sync service
+- **Explicit Plaintext Mode**: Plaintext content is intentionally server-readable and
+  may optionally be sealed by the server at rest
+- **Secure Key Exchange**: E2EE keys are transmitted between authorized devices only
+  in encrypted form that the Happier sync service cannot open
 - **Open Source**: Our encryption implementation is publicly auditable
-- **No Sync Backdoors**: Happier's synchronization architecture does not give the Happier service a way to decrypt your encrypted content
+- **No E2EE Sync Backdoors**: Happier's synchronization architecture does not give the
+  Happier service a way to decrypt content stored in E2EE mode
 
 ## Data Retention
 
-- Encrypted messages are retained indefinitely until you delete them
+- Synchronized messages are retained indefinitely until you delete them
 - Metadata is retained for system functionality
 - Deleted data is permanently removed from our servers within 30 days
 
@@ -77,13 +99,17 @@ notifications and Live Activity updates. This means:
 
 You have the right to:
 - Delete all your data through the app
-- Export your encrypted data
+- Export your synchronized data
 - Audit our open-source code
 - Use the app without providing any personal information
 
 ## External Service Processing
 
-Happier does not decrypt content stored for synchronization and then share it with external providers. When you explicitly select and use a voice, agent, model, or connected-service provider, however, your device or daemon sends that provider the data needed for the requested operation.
+Happier does not decrypt E2EE content stored for synchronization and then share it
+with external providers. Plaintext-mode content is server-readable under the selected
+storage policy. When you explicitly select and use a voice, agent, model, or
+connected-service provider, your device or daemon sends that provider the data needed
+for the requested operation.
 
 Depending on the selected feature and provider, this may include:
 - Audio and conversation text
@@ -115,4 +141,7 @@ Happier is designed with privacy by default and complies with:
 
 ---
 
-**Remember**: Your encryption keys are shared only between your own devices in encrypted form, so the Happier sync service cannot read content stored for synchronization. A provider you select can still process data sent to it for the service you request.
+**Remember**: Content stored in E2EE mode remains opaque to the Happier sync service.
+Content stored in plaintext mode is intentionally server-readable, even when the
+server optionally seals it at rest. A provider you select can still process data sent
+to it for the service you request.

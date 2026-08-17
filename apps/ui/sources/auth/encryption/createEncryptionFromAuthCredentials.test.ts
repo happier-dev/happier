@@ -9,6 +9,12 @@ import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { createEncryptionFromAuthCredentials } from './createEncryptionFromAuthCredentials';
 
 describe('createEncryptionFromAuthCredentials', () => {
+    it('rejects token-only credentials instead of inventing Account encryption material', async () => {
+        await expect(createEncryptionFromAuthCredentials({
+            token: 'plain-account-token',
+        })).rejects.toThrow('Account encryption material is unavailable for token-only credentials');
+    });
+
     it('creates Encryption from dataKey credentials (publicKey + machineKey) that can decrypt encryption keys', async () => {
         const seed = new Uint8Array(32).fill(7);
         const keyPair = sodium.crypto_box_seed_keypair(seed);

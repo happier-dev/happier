@@ -16,8 +16,8 @@ type WatchdogStringStorage = Readonly<{
 }>;
 
 const NATIVE_STORAGE_BASE_ID = 'plugin-react-native-watchdog';
-const SNAPSHOT_KEY = 'state-v1';
-const WEB_SNAPSHOT_BASE_KEY = 'happier:plugin-react-native-watchdog:state-v1';
+const SNAPSHOT_KEY = 'pending-v3';
+const WEB_SNAPSHOT_BASE_KEY = 'happier:plugin-react-native-watchdog:pending-v3';
 
 function readStorageValue(storage: WatchdogStringStorage, key: string): string | null {
     try {

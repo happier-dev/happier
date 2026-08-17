@@ -2,9 +2,9 @@ import React from 'react';
 import { View } from 'react-native';
 import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const LINE_ADDED_PREFIX = '+';
 const LINE_REMOVED_PREFIX = '-';
@@ -58,8 +58,8 @@ export function CompactSourceControlStatus({ sessionId }: CompactSourceControlSt
 
     return (
         <View style={styles.container}>
-            <Ionicons
-                name="git-branch-outline"
+            <Icon
+                name="git-branch"
                 size={10}
                 color={styles.fileCountText.color}
                 style={{ marginRight: 2 }}

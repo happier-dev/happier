@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ACCOUNT_SETTING_ARTIFACTS, accountSettingsParse } from '@happier-dev/protocol';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 vi.mock('@happier-dev/agents', async (importOriginal) => {
@@ -25,20 +26,24 @@ vi.mock('@/agents/registry/registryCore', async (importOriginal) => {
 });
 
 describe('account provider universe projection', () => {
-    it('derives account backend and permission defaults from the shared provider universe instead of the UI-local agent list', async () => {
-        vi.resetModules();
-        const { ACCOUNT_BACKEND_SETTING_ARTIFACTS } = await import('./accountBackendSettingDefinitions');
-        const { ACCOUNT_PERMISSION_SETTING_ARTIFACTS } = await import('./accountPermissionSettingDefinitions');
-
+    it('keeps target-keyed Account defaults in the Protocol catalog while accepting shared provider identities', () => {
         const acmeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'acme.review.backend' });
         const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
 
-        expect(ACCOUNT_BACKEND_SETTING_ARTIFACTS.defaults.backendEnabledByTargetKey).toMatchObject({
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults.backendEnabledByTargetKey).toEqual({});
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults.backendCliSourcePreferenceByTargetKey).toEqual({});
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults.sessionDefaultPermissionModeByTargetKey).toEqual({});
+        expect(ACCOUNT_SETTING_ARTIFACTS.shape.backendEnabledByTargetKey.parse({
+            [claudeTargetKey]: true,
+            [acmeTargetKey]: true,
+        })).toEqual({
             [claudeTargetKey]: true,
             [acmeTargetKey]: true,
         });
-        expect(ACCOUNT_BACKEND_SETTING_ARTIFACTS.defaults.backendCliSourcePreferenceByTargetKey).toEqual({});
-        expect(ACCOUNT_PERMISSION_SETTING_ARTIFACTS.defaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
+        expect(ACCOUNT_SETTING_ARTIFACTS.shape.sessionDefaultPermissionModeByTargetKey.parse({
+            [claudeTargetKey]: 'default',
+            [acmeTargetKey]: 'default',
+        })).toEqual({
             [claudeTargetKey]: 'default',
             [acmeTargetKey]: 'default',
         });
@@ -50,31 +55,27 @@ describe('account provider universe projection', () => {
 
         const acmeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'acme.review.backend' });
         const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
-        const migrated = applyAccountSettingsCompatibilityMigrations({
-            input: {
-                backendEnabledById: {
-                    claude: false,
-                    'acme.review.backend': false,
-                },
-                backendCliSourcePreferenceById: {
-                    claude: 'managed-first',
-                    'acme.review.backend': 'system-first',
-                },
-                sessionDefaultPermissionModeByAgent: {
-                    claude: 'read-only',
-                    'acme.review.backend': 'read-only',
-                },
-                newSessionDefaultPersistenceModeByAgentV1: {
-                    claude: 'direct',
-                    'acme.review.backend': 'persisted',
-                },
+        const input = {
+            backendEnabledById: {
+                claude: false,
+                'acme.review.backend': false,
             },
-            settings: {
-                backendEnabledByTargetKey: {},
-                backendCliSourcePreferenceByTargetKey: {},
-                sessionDefaultPermissionModeByTargetKey: {},
-                newSessionDefaultPersistenceModeByTargetKeyV1: {},
-            } as Record<string, unknown>,
+            backendCliSourcePreferenceById: {
+                claude: 'managed-first',
+                'acme.review.backend': 'system-first',
+            },
+            sessionDefaultPermissionModeByAgent: {
+                claude: 'read-only',
+                'acme.review.backend': 'read-only',
+            },
+            newSessionDefaultPersistenceModeByAgentV1: {
+                claude: 'direct',
+                'acme.review.backend': 'persisted',
+            },
+        };
+        const migrated = applyAccountSettingsCompatibilityMigrations({
+            input,
+            settings: accountSettingsParse(input),
             inputSchemaVersion: 5,
             supportedSchemaVersion: 6,
         });
@@ -99,21 +100,19 @@ describe('account provider universe projection', () => {
 
     it('normalizes predecessor Oh My Pi account target keys through the generic V2 owner', async () => {
         vi.resetModules();
-        const { ACCOUNT_BACKEND_SETTING_DEFINITIONS } = await import('./accountBackendSettingDefinitions');
-        const { ACCOUNT_PERMISSION_SETTING_DEFINITIONS } = await import('./accountPermissionSettingDefinitions');
         const qualifiedKey = 'agent:happier.agent.ohmypi/ohmypi';
 
-        expect(ACCOUNT_BACKEND_SETTING_DEFINITIONS.backendEnabledByTargetKey.schema.parse({
+        expect(ACCOUNT_SETTING_ARTIFACTS.shape.backendEnabledByTargetKey.parse({
             'agent:ohMyPi': false,
         })).toEqual({
             [qualifiedKey]: false,
         });
-        expect(ACCOUNT_BACKEND_SETTING_DEFINITIONS.backendCliSourcePreferenceByTargetKey.schema.parse({
+        expect(ACCOUNT_SETTING_ARTIFACTS.shape.backendCliSourcePreferenceByTargetKey.parse({
             'agent:ohMyPi': 'managed-first',
         })).toEqual({
             [qualifiedKey]: 'managed-first',
         });
-        expect(ACCOUNT_PERMISSION_SETTING_DEFINITIONS.sessionDefaultPermissionModeByTargetKey.schema.parse({
+        expect(ACCOUNT_SETTING_ARTIFACTS.shape.sessionDefaultPermissionModeByTargetKey.parse({
             'agent:ohMyPi': 'read-only',
         })).toEqual({
             [qualifiedKey]: 'read-only',

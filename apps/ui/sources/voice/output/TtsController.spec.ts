@@ -168,16 +168,20 @@ describe('createTtsPlaybackController — ordered ack\'d playback queue', () => 
         await handle.done;
     });
 
-    it('drops a late confirm after its TTL without crashing', async () => {
-        const controller = createTtsPlaybackController({
-            playChunk: async () => {},
-            lateConfirmTtlMs: 0,
-        });
-        const handle = controller.speak();
-        controller.enqueue(chunk('g1', 0, true));
-        await handle.done;
-        // A confirm arriving after retirement is tolerated.
-        expect(() => controller.confirmLatePlayback?.('g1', 0)).not.toThrow();
+    it('settles completed playback without retaining a retired-group timer', async () => {
+        vi.useFakeTimers();
+        try {
+            const controller = createTtsPlaybackController({
+                playChunk: async () => {},
+            });
+            const handle = controller.speak();
+            controller.enqueue(chunk('g1', 0, true));
+            await handle.done;
+
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('does not confirm playback for a chunk whose playback failed', async () => {

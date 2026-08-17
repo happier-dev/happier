@@ -3,6 +3,7 @@ import { Platform, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
+import type { PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
     SessionCockpitBottomChromeHeightContext,
@@ -13,14 +14,17 @@ import { useScopedPluginUiProjection } from '@/components/plugins/projection/use
 import { BrowserMobileSurfaceScreen } from '@/components/browser/surfaces/BrowserMobileSurfaceScreen';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useDetailsTabCount } from '@/components/appShell/panes/hooks/useDetailsTabCount';
-import {
-    resolveRightSidebarMobileProjection,
-} from '@/components/appShell/rightSidebar/rightSidebarMobileProjection';
-import {
-    resolveSessionRightSidebarTabs,
-} from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
-import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
+import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
+import {
+    createPluginSurfaceDestinationOpenSurfaceHandler,
+    PluginSurfacePaneLaunchScope,
+    stagePluginSurfacePaneLaunch,
+    usePluginSurfacePaneLaunch,
+    usePluginSurfacePaneLaunchScope,
+} from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
+import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/PluginReactNativeUnavailable';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
@@ -41,16 +45,20 @@ import {
 } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
+import { useDeviceType } from '@/utils/platform/responsive';
 import {
     resolveSessionRightTabIdForSurface,
     type SessionMobileSurface,
 } from './sessionCockpitState';
+import { resolveSessionCockpitMobileCatalog } from './sessionCockpitMobileCatalog';
 import { SessionServicesSurfaceScreen } from './SessionServicesSurfaceScreen';
 import { useSessionCockpitSurfaceNavigation } from './SessionCockpitSurfaceNavigation';
 
@@ -67,8 +75,30 @@ export type SessionCockpitSurfaceScreenProps = Readonly<{
     routeHydrationState?: SessionRouteHydrationState | null;
 }>;
 
+const EMPTY_PLUGIN_DESTINATION: PluginUiDestinationReferenceV1 = Object.freeze({
+    pluginId: '',
+    localId: '',
+});
+
+/**
+ * The tab navigator supplies one cockpit-wide handoff owner. Keep the
+ * standalone screen route viable through that same generic owner rather than
+ * creating a cockpit-local navigation store.
+ */
 export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurfaceScreenProps) => {
+    const inheritedPaneLaunchScope = usePluginSurfacePaneLaunchScope();
+    return inheritedPaneLaunchScope
+        ? <SessionCockpitSurfaceScreenContent {...props} />
+        : (
+            <PluginSurfacePaneLaunchScope>
+                <SessionCockpitSurfaceScreenContent {...props} />
+            </PluginSurfacePaneLaunchScope>
+        );
+});
+
+const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurfaceScreenProps) => {
     const { theme } = useUnistyles();
+    const deviceType = useDeviceType();
     const isFocused = useIsFocused();
     const pane = useAppPaneScope(props.scopeId);
     const surfaceNavigation = useSessionCockpitSurfaceNavigation();
@@ -97,6 +127,7 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
     const openRight = pane.openRight;
     const closeRight = pane.closeRight;
     const closeDetails = pane.closeDetails;
+    const selectRightDestination = pane.selectRightDestination;
     const setRightTab = pane.setRightTab;
     const terminalTabAvailable = props.terminalTabAvailable !== false;
     const hasDeepLinkedDetailsTarget = props.paneUrlState?.details != null;
@@ -104,25 +135,133 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         machineId: sessionMachineTarget?.machineId ?? null,
         serverId: servicesServerId,
     });
-    const pluginMobileTab = React.useMemo<RightSidebarPluginTabDefinition | null>(() => {
+    const runtimeAdmission = React.useMemo(() => Object.freeze({
+        platform: pluginProjection.platform,
+        formFactor: resolvePluginUiRuntimeFormFactor({ deviceType }),
+    }), [deviceType, pluginProjection.platform]);
+    const pluginPlacements = React.useMemo(() => (
+        pluginProjection.pluginUiProjection
+            ? selectPluginRightSidebarTabPlacements(pluginProjection.pluginUiProjection, 'session')
+            : []
+    ), [pluginProjection.pluginUiProjection]);
+    const mobileCatalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({
+        terminalTabAvailable,
+        pluginPlacements,
+        projectionGeneration: pluginProjection.pluginUiProjection?.generation ?? null,
+        runtimeAdmission,
+    }), [
+        pluginPlacements,
+        pluginProjection.pluginUiProjection?.generation,
+        runtimeAdmission,
+        terminalTabAvailable,
+    ]);
+    const pluginMobileTab = React.useMemo(() => {
         if (!props.surface.startsWith('plugin:')) {
             return null;
         }
-        const pluginPlacements = pluginProjection.pluginUiProjection
-            ? selectPluginRightSidebarTabPlacements(pluginProjection.pluginUiProjection, 'session')
-            : [];
-        const tabs = resolveSessionRightSidebarTabs({
-            presentation: 'mobile',
-            terminalTabAvailable,
-            pluginPlacements,
-            projectionGeneration: pluginProjection.pluginUiProjection?.generation ?? null,
+        const entry = mobileCatalog.find((candidate) => candidate.id === props.surface);
+        return entry?.owner === 'rightSidebar' && entry.tab.owner === 'plugin'
+            ? entry.tab
+            : null;
+    }, [mobileCatalog, props.surface]);
+    const findPluginMobileTab = React.useCallback((placementId: string) => {
+        const entry = mobileCatalog.find((candidate) => (
+            candidate.owner === 'rightSidebar'
+            && candidate.tab.owner === 'plugin'
+            && candidate.tab.placement.id === placementId
+        ));
+        return entry?.owner === 'rightSidebar' && entry.tab.owner === 'plugin'
+            ? entry.tab
+            : null;
+    }, [mobileCatalog]);
+    const paneLaunchScope = usePluginSurfacePaneLaunchScope();
+    if (!paneLaunchScope) {
+        // The wrapper above always supplies this generic host owner. Do not
+        // invent a cockpit-local launch store if that invariant is broken.
+        return null;
+    }
+    const { accountLifetime, store: paneLaunchStore } = paneLaunchScope;
+    const scopedLaunchFacts = React.useMemo<PluginSurfaceScopedLaunchFacts>(() => Object.freeze({
+        serverId: pluginProjection.serverId ?? null,
+        machineId: pluginProjection.machineId ?? null,
+        generation: pluginProjection.pluginUiProjection?.generation ?? null,
+        interactionEnabled: pluginProjection.interactionEnabled === true,
+    }), [
+        pluginProjection.interactionEnabled,
+        pluginProjection.machineId,
+        pluginProjection.pluginUiProjection?.generation,
+        pluginProjection.serverId,
+    ]);
+    const selectedRightPluginDestination = pane.scopeState?.right.selectedDestination?.kind === 'plugin'
+        ? pane.scopeState.right.selectedDestination
+        : null;
+    const activeInstanceKey = selectedRightPluginDestination
+        && pluginMobileTab
+        && selectedRightPluginDestination.destination.pluginId === pluginMobileTab.placement.binding.destination.pluginId
+        && selectedRightPluginDestination.destination.localId === pluginMobileTab.placement.binding.destination.localId
+        ? selectedRightPluginDestination.instanceKey
+        : undefined;
+    const hasSelectedPluginMobileTab = selectedRightPluginDestination !== null
+        && pluginMobileTab !== null
+        && selectedRightPluginDestination.destination.pluginId === pluginMobileTab.placement.binding.destination.pluginId
+        && selectedRightPluginDestination.destination.localId === pluginMobileTab.placement.binding.destination.localId;
+    const activePaneLaunch = usePluginSurfacePaneLaunch({
+        store: paneLaunchStore,
+        placement: pluginMobileTab?.placement ?? null,
+        targetKind: 'session',
+        container: 'rightSidebarTab',
+        accountLifetime,
+        scopedLaunchFacts,
+        destination: pluginMobileTab?.placement.binding.destination ?? EMPTY_PLUGIN_DESTINATION,
+        ...(activeInstanceKey === undefined ? {} : { instanceKey: activeInstanceKey }),
+    });
+    const openPluginMobileTab = React.useCallback((resolution: Parameters<typeof stagePluginSurfacePaneLaunch>[0]['resolution']) => {
+        const targetTab = findPluginMobileTab(resolution.placement.id);
+        if (!targetTab || !surfaceNavigation) {
+            return {
+                ok: false as const,
+                code: 'unavailable' as const,
+                reason: 'plugin_surface_open_destination_owner_unavailable',
+            };
+        }
+        if (!stagePluginSurfacePaneLaunch({ store: paneLaunchStore, resolution })) {
+            return {
+                ok: false as const,
+                code: 'unavailable' as const,
+                reason: 'plugin_surface_open_origin_unavailable',
+            };
+        }
+        // The AppPane selection is the only durable destination identity. Keep
+        // the admitted instance key there so this exact mobile mount can
+        // consume the private handoff; input itself remains only in the shared
+        // ephemeral launch store.
+        selectRightDestination({
+            kind: 'plugin',
+            destination: resolution.placement.binding.destination,
+            ...(resolution.request.instanceKey === undefined
+                ? {}
+                : { instanceKey: resolution.request.instanceKey }),
         });
-        const entry = resolveRightSidebarMobileProjection({
-            scope: 'session',
-            tabs,
-        }).find((candidate) => candidate.owner === 'plugin' && candidate.tabId === props.surface);
-        return entry?.tab.owner === 'plugin' ? entry.tab : null;
-    }, [pluginProjection.pluginUiProjection, props.surface, terminalTabAvailable]);
+        surfaceNavigation.switchSurface(targetTab.id as SessionMobileSurface);
+        return { ok: true as const };
+    }, [findPluginMobileTab, paneLaunchStore, selectRightDestination, surfaceNavigation]);
+    const openSurface = React.useMemo(() => createPluginSurfaceDestinationOpenSurfaceHandler({
+        placements: pluginProjection.pluginUiProjection
+            ? Object.values(pluginProjection.pluginUiProjection.surfacePlacementsById)
+            : [],
+        targetKind: 'session',
+        accountLifetime,
+        scopedLaunchFacts,
+        runtimeAdmission,
+        handlers: { rightSidebarTab: openPluginMobileTab },
+    }), [
+        accountLifetime,
+        openPluginMobileTab,
+        pluginProjection.pluginUiProjection,
+        runtimeAdmission,
+        scopedLaunchFacts,
+    ]);
+    const pluginBinding = React.useMemo<BoundPluginSurfaceBinding>(() => ({ openSurface }), [openSurface]);
 
     const switchSurface = React.useCallback((surface: SessionMobileSurface) => {
         surfaceNavigationRef.current?.switchSurface(surface);
@@ -143,11 +282,15 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
             activeSurface: props.surface,
             terminalTabAvailable,
             openDetailsTabCount,
+            pluginPlacements,
+            projectionGeneration: pluginProjection.pluginUiProjection?.generation ?? null,
             switchSurface,
         });
     }, [
         isFocused,
         openDetailsTabCount,
+        pluginPlacements,
+        pluginProjection.pluginUiProjection?.generation,
         props.sessionId,
         props.surface,
         registerCockpitChrome,
@@ -156,14 +299,27 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         terminalTabAvailable,
     ]);
 
-    const targetRightTabId = pluginMobileTab?.id
-        ?? (
+    const targetRightTabId = pluginMobileTab || props.surface.startsWith('plugin:')
+        ? null
+        : (
             props.surface === 'browser' || props.surface === 'services'
                 ? null
                 : resolveSessionRightTabIdForSurface(props.surface, terminalTabAvailable)
         );
     React.useEffect(() => {
         if (!isFocused) return;
+        if (pluginMobileTab) {
+            // A direct cockpit selection has no launch instance. Do not rewrite
+            // a current `openSurface` selection just after it supplied the
+            // exact multiple-instance identity needed by the AppPane mount.
+            if (!hasSelectedPluginMobileTab) {
+                selectRightDestination({
+                    kind: 'plugin',
+                    destination: pluginMobileTab.placement.binding.destination,
+                });
+            }
+            return;
+        }
         if (!targetRightTabId) return;
         if (rightIsOpen === true && activeRightTabId === targetRightTabId) return;
 
@@ -171,7 +327,17 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         if (activeRightTabId !== targetRightTabId) {
             setRightTab(targetRightTabId);
         }
-    }, [activeRightTabId, isFocused, openRight, rightIsOpen, setRightTab, targetRightTabId]);
+    }, [
+        activeRightTabId,
+        isFocused,
+        hasSelectedPluginMobileTab,
+        openRight,
+        pluginMobileTab,
+        rightIsOpen,
+        selectRightDestination,
+        setRightTab,
+        targetRightTabId,
+    ]);
 
     React.useEffect(() => {
         if (!isFocused) return;
@@ -351,7 +517,11 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         return renderSessionChrome(
             <SessionCockpitFullscreenSurface screenTestID="session-browser-screen" safeAreaPadding={false}>
                 <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}>
-                    <BrowserMobileSurfaceScreen sessionId={props.sessionId} scopeId={`${props.scopeId}:browser`} />
+                    <BrowserMobileSurfaceScreen
+                        sessionId={props.sessionId}
+                        scopeId={`${props.scopeId}:browser`}
+                        pluginProjection={pluginProjection}
+                    />
                 </React.Suspense>
             </SessionCockpitFullscreenSurface>,
         );
@@ -371,19 +541,34 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         );
     }
 
-    if (pluginMobileTab) {
+    if (props.surface.startsWith('plugin:')) {
+        if (!pluginMobileTab) {
+            return renderSessionChrome(
+                <SessionCockpitFullscreenSurface screenTestID="session-plugin-screen-unavailable" safeAreaPadding={false}>
+                    {pluginProjection.pluginUiProjection
+                        ? <PluginReactNativeUnavailable diagnostics={['plugin_destination_unavailable']} />
+                        : <SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}
+                </SessionCockpitFullscreenSurface>,
+            );
+        }
         return renderSessionChrome(
-            <SessionCockpitFullscreenSurface screenTestID={`session-plugin-screen-${pluginMobileTab.id}`} safeAreaPadding={false}>
-                <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}>
-                    <PluginSurfacePlacementHost
-                        placement={pluginMobileTab.placement}
-                        machineId={pluginProjection.machineId}
-                        serverId={pluginProjection.serverId}
-                        pluginUiProjection={pluginProjection.pluginUiProjection}
-                        projectionInteractionEnabled={pluginProjection.interactionEnabled}
-                        platform={pluginProjection.platform}
-                    />
-                </React.Suspense>
+                <SessionCockpitFullscreenSurface screenTestID={`session-plugin-screen-${pluginMobileTab.id}`} safeAreaPadding={false}>
+                    <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}>
+                        <PluginSurfaceFocusEligibilityProvider active={isFocused}>
+                            <PluginSurfacePlacementHost
+                                placement={pluginMobileTab.placement}
+                                machineId={pluginProjection.machineId}
+                                serverId={pluginProjection.serverId}
+                                sessionId={props.sessionId}
+                                pluginUiProjection={pluginProjection.pluginUiProjection}
+                                projectionInteractionEnabled={pluginProjection.interactionEnabled}
+                                platform={pluginProjection.platform}
+                                binding={pluginBinding}
+                                launchInput={activePaneLaunch?.input}
+                                mountInstanceKey={activeInstanceKey}
+                            />
+                        </PluginSurfaceFocusEligibilityProvider>
+                    </React.Suspense>
             </SessionCockpitFullscreenSurface>,
         );
     }

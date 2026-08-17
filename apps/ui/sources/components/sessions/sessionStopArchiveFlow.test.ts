@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 const applySessionListRenderablePatchesSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
@@ -24,9 +23,12 @@ vi.mock('@/modal', () => createModalModuleMock({
     },
 }).module);
 
-vi.mock('@/text', () => createTextModuleMock({
-    translate: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
 
 describe('stopSessionAndMaybeArchive', () => {
     afterEach(() => {
@@ -145,12 +147,12 @@ describe('stopSessionAndMaybeArchive', () => {
         expect(archiveSpy).toHaveBeenCalledTimes(2);
     });
 
-    it('surfaces actionable upgrade recovery when the runtime cannot stop the session', async () => {
+    it('surfaces truthful recovery when session control is unavailable', async () => {
         const stopSpy = vi.fn(async () => ({
             success: false,
             message: 'RPC method not available',
-            code: 'session_stop_unsupported',
-            recovery: 'upgrade_runtime' as const,
+            code: 'session_stop_control_unavailable',
+            recovery: 'retry_when_runtime_available' as const,
         }));
 
         const { stopSessionAndMaybeArchive } = await import('./sessionStopArchiveFlow');
@@ -165,7 +167,7 @@ describe('stopSessionAndMaybeArchive', () => {
             stopErrorMessage: 'stop failed',
             archiveErrorMessage: 'archive failed',
         })).rejects.toMatchObject({
-            message: 'sessionInfo.stopSessionUpgradeRequired',
+            message: 'sessionInfo.stopSessionControlUnavailable',
         });
     });
 

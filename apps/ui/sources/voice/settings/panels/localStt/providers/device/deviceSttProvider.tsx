@@ -10,7 +10,7 @@ export const deviceSttProviderSpec: LocalSttProviderSpec = {
   id: 'device',
   title: t('settingsVoice.local.deviceStt'),
   subtitle: t('settingsVoice.local.deviceSttSubtitle'),
-  iconName: 'mic-outline',
+  iconName: 'microphone',
   detail: t('settingsVoice.local.deviceSttDetail'),
   Settings: DeviceSttSettings,
 };

@@ -14,10 +14,18 @@ test('apps/ui exposes a rollout-local activity-surfaces typecheck and certificat
 
   assert.equal(
     scripts['typecheck:activity-surfaces'],
-    'node ./scripts/ensureWorkspacePackagesBuilt.mjs && tsc -p tsconfig.activity-surfaces-rollout.json --noEmit --pretty false',
+    '../stack/bin/hstack-exec --script=typecheck:activity-surfaces:local',
+  );
+  assert.equal(
+    scripts['typecheck:activity-surfaces:local'],
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.activity-surfaces-rollout.json --noEmit --pretty false',
   );
   assert.equal(
     scripts['test:activity-surfaces'],
+    '../stack/bin/hstack-exec --script=test:activity-surfaces:local',
+  );
+  assert.equal(
+    scripts['test:activity-surfaces:local'],
     'node ./scripts/runActivitySurfacesVitestSuite.mjs',
   );
   assert.equal(

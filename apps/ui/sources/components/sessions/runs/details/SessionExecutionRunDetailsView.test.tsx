@@ -573,7 +573,7 @@ describe('SessionExecutionRunDetailsView', () => {
                 callId: 'toolu_1',
                 sidechainId: 'toolu_1',
                 intent: 'review',
-                backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+                backendTarget: { kind: 'backend', backendId: 'codex' },
                 runClass: 'bounded',
                 ioMode: 'streaming',
                 retentionPolicy: 'ephemeral',

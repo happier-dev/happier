@@ -7,6 +7,7 @@ import type { ChipOptionInteraction } from '../chipOptionInteraction';
 import type { AgentInputExtraActionChip } from '../agentInputContracts';
 import { useAgentInputActionMenuActions } from './useAgentInputActionMenuActions';
 import type { AgentInputSelectionOverlayId } from '../selection/agentInputSelectionOverlayTypes';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 export function useAgentInputActionMenuControls(params: Readonly<{
     showActionMenu: boolean;
@@ -33,7 +34,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     tint: string;
     agentId: AgentId;
     profileLabel: string | null;
-    profileIcon: string;
+    profileIcon: IconName;
     envVarsCount?: number;
     agentLabel?: string | null;
     engineLabel?: string | null;

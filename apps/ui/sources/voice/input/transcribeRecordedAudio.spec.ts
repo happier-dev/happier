@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { recordedAudioTranscriptionController } from '@/voice/runtime/input/recordedAudioTranscriptionController';
 
 const fileBase64Spy = vi.fn<() => Promise<string>>().mockResolvedValue('BASE64_AUDIO');
 
@@ -58,24 +59,19 @@ vi.mock('@/voice/runtime/daemonInference/daemonVoiceInferencePolicy', () => ({
   resolveDaemonVoiceInferenceExecution: async (params: { requestedExecution?: string | null }) =>
     params.requestedExecution === 'daemon' ? 'daemon' : 'device',
 }));
-vi.mock('@/voice/local/openaiCompat/client', () => ({
-  OpenAiCompatDaemonClient: class {
-    transcribe(params: unknown) {
-      return openAiCompatTranscribeSpy(params);
-    }
-  },
-}));
 vi.mock('@/voice/credentials/bundledSpeechClient', () => ({
   bundledSpeechDaemonClient: {
-    transcribe: (params: unknown) => googleGeminiTranscribeSpy(params),
+    transcribe: (params: Readonly<{ entry?: Readonly<{ providerId?: string }> }>) => (
+      params.entry?.providerId === 'happier.voice.openai-compat/stt'
+        ? openAiCompatTranscribeSpy(params)
+        : googleGeminiTranscribeSpy(params)
+    ),
     synthesize: vi.fn(),
   },
 }));
 
 describe('recordedAudioTranscriptionController', () => {
-  it('routes openai_compat recorded audio through the selected-daemon client without decrypting the legacy key', async () => {
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
-
+  it('routes qualified OpenAI-compatible recorded audio through the generic selected-daemon speech client', async () => {
     const text = await recordedAudioTranscriptionController.transcribe({
       uri: 'file:///rec.m4a',
       settings: {
@@ -85,28 +81,21 @@ describe('recordedAudioTranscriptionController', () => {
           providers: {
             local_direct: { schemaVersion: 1, config: {
               stt: {
-                provider: 'openai_compat',
-                openaiCompat: {
-                  baseUrl: 'https://openai-compat.example/api',
-                  insecureLocalOriginConsent: 'http://localhost:8002',
-                  insecureLocalConsentMachineId: 'machine-a',
-                  apiKey: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'secret' } },
-                  model: 'whisper-1',
-                },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                provider: 'happier.voice.openai-compat/stt',
                 localNeural: { assetId: 'dummy', language: 'en' },
               },
               networkTimeoutMs: 15000,
             } },
-            local_conversation: { schemaVersion: 1, config: {
-              stt: {
-                provider: 'openai_compat',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
-                localNeural: { assetId: 'dummy', language: 'en' },
+            'happier.voice.openai-compat/stt': {
+              schemaVersion: 2,
+              config: {
+                baseUrl: 'https://openai-compat.example/api',
+                insecureLocalOriginConsent: '',
+                insecureLocalConsentMachineId: '',
+                model: 'whisper-1',
+                language: 'en',
               },
-              networkTimeoutMs: 15000,
-            } },
+            },
           },
         },
       },
@@ -114,20 +103,16 @@ describe('recordedAudioTranscriptionController', () => {
 
     expect(text).toBe('hello openai compat');
     expect(openAiCompatTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
-      baseUrl: 'https://openai-compat.example/api',
-      insecureLocalOriginConsent: 'http://localhost:8002',
-      insecureLocalConsentMachineId: 'machine-a',
-      credentialKind: 'stt_api_key',
+      entry: expect.objectContaining({ providerId: 'happier.voice.openai-compat/stt' }),
       model: 'whisper-1',
+      language: 'en',
       source: { kind: 'native', uri: 'file:///rec.m4a' },
     }));
+    expect(openAiCompatTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('baseUrl');
     expect(openAiCompatTranscribeSpy.mock.calls[0]?.[0]).not.toHaveProperty('apiKey');
   });
 
-  it('routes canonical google_gemini STT through the selected-daemon credential client without a synced key', async () => {
-
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
-
+  it('routes canonical qualified Google STT settings through the selected-daemon credential client without a synced key', async () => {
     const text = await recordedAudioTranscriptionController.transcribe({
       uri: 'file:///rec.m4a',
       settings: {
@@ -137,24 +122,22 @@ describe('recordedAudioTranscriptionController', () => {
           providers: {
             local_direct: { schemaVersion: 1, config: {
               stt: {
-                provider: 'google_gemini',
+                provider: 'happier.voice.google/gemini-stt',
                 openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                providers: {
-                  google_gemini: {
-                    schemaVersion: 2,
-                    config: { model: 'gemini-2.5-flash', language: 'en' },
-                  },
-                },
               },
               networkTimeoutMs: 15000,
             } },
+            'happier.voice.google/gemini-stt': {
+              schemaVersion: 2,
+              config: { model: 'gemini-2.5-flash', language: 'en' },
+            },
           },
         },
       },
     });
 
     expect(googleGeminiTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
-      entry: expect.objectContaining({ providerId: 'google_gemini' }),
+      entry: expect.objectContaining({ providerId: 'happier.voice.google/gemini-stt' }),
       model: 'gemini-2.5-flash',
       source: { kind: 'native', uri: 'file:///rec.m4a' },
       mimeType: 'audio/mp4',
@@ -164,41 +147,45 @@ describe('recordedAudioTranscriptionController', () => {
     expect(text).toBe('hello gemini');
   });
 
-  it('keeps a secret-bearing Google v1 envelope inert until credential migration succeeds', async () => {
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
-
-    await expect(recordedAudioTranscriptionController.transcribe({
+  it('normalizes the released secret-bearing Google adapter shape without disclosing the secret', async () => {
+    const text = await recordedAudioTranscriptionController.transcribe({
       uri: 'file:///rec.m4a',
       settings: {
         voice: {
           providerId: 'local_direct',
-          providers: {
-            local_direct: { schemaVersion: 1, config: {
+          adapters: {
+            local_direct: {
               stt: {
                 provider: 'google_gemini',
-                providers: {
-                  google_gemini: {
-                    schemaVersion: 1,
-                    config: {
-                      apiKey: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'x' } },
-                      model: 'gemini-2.5-flash',
-                      language: 'en',
-                    },
+                googleGemini: {
+                  apiKey: {
+                    _isSecretValue: true,
+                    encryptedValue: { t: 'enc-v1', c: 'legacy-google-secret-ciphertext' },
                   },
+                  model: 'gemini-2.5-flash',
+                  language: 'en',
                 },
               },
-            } },
+            },
           },
         },
       },
-    })).rejects.toMatchObject({ code: 'provider_settings_invalid' });
-    expect(googleGeminiTranscribeSpy).not.toHaveBeenCalled();
+    });
+
+    expect(text).toBe('hello gemini');
+    expect(googleGeminiTranscribeSpy).toHaveBeenCalledTimes(1);
+    expect(googleGeminiTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      entry: expect.objectContaining({ providerId: 'happier.voice.google/gemini-stt' }),
+      model: 'gemini-2.5-flash',
+      language: 'en',
+    }));
+    const dispatch = googleGeminiTranscribeSpy.mock.calls[0]?.[0];
+    expect(dispatch).not.toHaveProperty('apiKey');
+    expect(JSON.stringify(dispatch)).not.toContain('legacy-google-secret-ciphertext');
   });
 
   it('trims the voice provider id before selecting the local adapter', async () => {
     googleGeminiTranscribeSpy.mockResolvedValueOnce('hello trimmed provider');
-
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
 
     const text = await recordedAudioTranscriptionController.transcribe({
       uri: 'file:///rec.m4a',
@@ -207,16 +194,13 @@ describe('recordedAudioTranscriptionController', () => {
           providerId: ' local_direct ',
           assistantLanguage: 'en',
           providers: {
+            'happier.voice.google/gemini-stt': {
+              schemaVersion: 2,
+              config: { model: 'gemini-2.5-flash', language: 'en' },
+            },
             local_direct: { schemaVersion: 1, config: {
               stt: {
-                provider: 'google_gemini',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                providers: {
-                  google_gemini: {
-                    schemaVersion: 2,
-                    config: { model: 'gemini-2.5-flash', language: 'en' },
-                  },
-                },
+                provider: 'happier.voice.google/gemini-stt',
               },
               networkTimeoutMs: 15000,
             } },
@@ -241,8 +225,6 @@ describe('recordedAudioTranscriptionController', () => {
   it('treats local_neural STT as non-file-based on web and returns null', async () => {
     const fetchSpy = vi.fn();
     setRuntimeFetch(fetchSpy as any);
-
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
 
     const text = await recordedAudioTranscriptionController.transcribe({
       uri: 'file:///rec.m4a',
@@ -275,8 +257,6 @@ describe('recordedAudioTranscriptionController', () => {
       language: 'en',
       modelPackId: 'dummy',
     });
-
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
 
     const text = await recordedAudioTranscriptionController.transcribe({
       sessionId: 'session-1',
@@ -333,8 +313,6 @@ describe('recordedAudioTranscriptionController', () => {
       modelPackId: 'dummy',
     });
 
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
-
     const text = await recordedAudioTranscriptionController.transcribe({
       sessionId: 'session-1',
       uri: 'blob:voice-recording',
@@ -371,6 +349,145 @@ describe('recordedAudioTranscriptionController', () => {
     expect(call?.source.file.type).toBe('audio/webm');
   });
 
+  it('reuses the admitted web recording blob instead of reading its object URL again before daemon upload', async () => {
+    (Platform as unknown as { OS: string }).OS = 'web';
+    (Platform as unknown as {
+      select: (spec: Record<string, unknown>) => unknown;
+    }).select = (spec) => spec.web ?? spec.default;
+    const runtimeFetchSpy = vi.fn(async () => {
+      throw new Error('recording_blob_refetched');
+    });
+    setRuntimeFetch(
+      runtimeFetchSpy as unknown as Parameters<typeof setRuntimeFetch>[0],
+    );
+    daemonSttControllerTranscribeSpy.mockResolvedValue({
+      text: 'hello admitted daemon web',
+      language: 'en',
+      modelPackId: 'dummy',
+    });
+    const webBlob = new Blob(['already-admitted-webm-bytes'], { type: 'audio/webm' });
+    (globalThis as unknown as {
+      AudioContext?: new () => unknown;
+    }).AudioContext = class {
+      constructor() {
+        throw new Error('web_audio_context_unavailable');
+      }
+    };
+
+    const request: Parameters<typeof recordedAudioTranscriptionController.transcribe>[0] & Readonly<{
+      webBlob: Blob;
+    }> = {
+      sessionId: 'session-1',
+      uri: 'blob:voice-recording',
+      webBlob,
+      settings: {
+        voice: {
+          providerId: 'local_direct',
+          assistantLanguage: 'en',
+          providers: {
+            local_direct: { schemaVersion: 1, config: {
+              stt: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
+                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                localNeural: { assetId: 'dummy', language: 'en', execution: 'daemon' },
+              },
+              networkTimeoutMs: 15000,
+            } },
+          },
+        },
+      },
+    };
+
+    await expect(recordedAudioTranscriptionController.transcribe(request)).resolves.toBe(
+      'hello admitted daemon web',
+    );
+    expect(runtimeFetchSpy).not.toHaveBeenCalled();
+    expect(daemonSttControllerTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.objectContaining({ kind: 'web' }),
+      inputMimeType: 'audio/webm',
+    }));
+    (globalThis as unknown as {
+      AudioContext?: unknown;
+    }).AudioContext = undefined;
+  });
+
+  it('falls back to daemon decode for an admitted Chrome WebM recording that Web Audio cannot decode', async () => {
+    (Platform as unknown as { OS: string }).OS = 'web';
+    (Platform as unknown as {
+      select: (spec: Record<string, unknown>) => unknown;
+    }).select = (spec) => spec.web ?? spec.default;
+    const runtimeFetchSpy = vi.fn(async () => {
+      throw new Error('recording_blob_refetched');
+    });
+    setRuntimeFetch(
+      runtimeFetchSpy as unknown as Parameters<typeof setRuntimeFetch>[0],
+    );
+    daemonSttControllerTranscribeSpy.mockResolvedValue({
+      text: 'open the project settings',
+      language: 'en',
+      modelPackId: 'dummy',
+    });
+    const webBlob = new Blob(
+      [new Uint8Array(1_080)],
+      { type: 'audio/webm;codecs=opus' },
+    );
+    const close = vi.fn(async () => {});
+    (globalThis as unknown as {
+      AudioContext?: new () => unknown;
+    }).AudioContext = class {
+      decodeAudioData = vi.fn(async () => {
+        throw new DOMException('Unable to decode audio data', 'EncodingError');
+      });
+      close = close;
+    };
+
+    const request: Parameters<typeof recordedAudioTranscriptionController.transcribe>[0] = {
+      sessionId: 'session-1',
+      uri: 'blob:chrome-recording',
+      webBlob,
+      executionMachineId: 'machine-ready-at-start',
+      settings: {
+        voice: {
+          providerId: 'local_direct',
+          assistantLanguage: 'en',
+          providers: {
+            local_direct: { schemaVersion: 1, config: {
+              stt: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
+                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                localNeural: { assetId: 'dummy', language: 'en', execution: 'daemon' },
+              },
+              networkTimeoutMs: 15000,
+            } },
+          },
+        },
+      },
+    };
+
+    await expect(recordedAudioTranscriptionController.transcribe(request)).resolves.toBe(
+      'open the project settings',
+    );
+    expect(runtimeFetchSpy).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(daemonSttControllerTranscribeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      machineTarget: { machineId: 'machine-ready-at-start' },
+      source: expect.objectContaining({
+        kind: 'web',
+        file: expect.objectContaining({
+          size: 1_080,
+          type: 'audio/webm;codecs=opus',
+        }),
+      }),
+      inputMimeType: 'audio/webm;codecs=opus',
+      normalization: expect.objectContaining({ strategy: 'daemon_decode' }),
+    }));
+    (globalThis as unknown as {
+      AudioContext?: unknown;
+    }).AudioContext = undefined;
+  });
+
   it('pretranscodes web recordings to wav before daemon local_neural STT when browser decode is available', async () => {
     (Platform as any).OS = 'web';
     (Platform as any).select = (spec: Record<string, unknown>) => spec.web ?? spec.default;
@@ -392,8 +509,6 @@ describe('recordedAudioTranscriptionController', () => {
     (globalThis as any).AudioContext = class {
       decodeAudioData = decodeAudioData;
     };
-
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
 
     const text = await recordedAudioTranscriptionController.transcribe({
       sessionId: 'session-1',
@@ -445,8 +560,6 @@ describe('recordedAudioTranscriptionController', () => {
       modelPackId: 'dummy',
     });
 
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
-
     const text = await recordedAudioTranscriptionController.transcribe({
       sessionId: 'session-1',
       uri: 'file:///rec.m4a',
@@ -487,8 +600,6 @@ describe('recordedAudioTranscriptionController', () => {
         code: 'runtime_unavailable',
       }),
     );
-
-    const { recordedAudioTranscriptionController } = await import('@/voice/runtime/input/recordedAudioTranscriptionController');
 
     await expect(
       recordedAudioTranscriptionController.transcribe({

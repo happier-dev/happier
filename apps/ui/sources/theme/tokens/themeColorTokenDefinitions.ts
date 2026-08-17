@@ -206,7 +206,10 @@ const desktopPetOverlayTokenClassifications = [
     reason: 'Feature-specific desktop pet bubble palette; not part of the V1 public theme profile surface.',
 } as const));
 
-const shadowLevelTokenClassifications = [1, 2, 3, 4, 5].flatMap((level) => [
+// Every step of SHADOW_LEVELS, including 6 (the wide, faint cast used by full-height
+// floating panels). The classification test is the drift guard: a new level that is not
+// listed here fails as an unclassified token leaf.
+const shadowLevelTokenClassifications = [1, 2, 3, 4, 5, 6].flatMap((level) => [
     {
         path: ['shadowLevels', String(level), 'boxShadow'],
         status: 'internal',
@@ -241,9 +244,12 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
     { path: ['diff', 'outline'], status: 'internal', reason: 'Diff outline is an internal renderer detail rather than a V1 public token.' },
     { path: ['diff', 'success'], status: 'derived', reason: 'Diff success summary color follows state success semantics.' },
 
+    { path: ['border', 'subtle'], status: 'internal', reason: 'Half-weight seam hairline for pane edges and quiet toolbar controls; an internal chrome detail rather than a V1 public border token, and deliberately absent from the theme-profile border palette.' },
+
     { path: ['feed', 'card', 'background'], status: 'derived', reason: 'Tool feed card surface derived from surface.elevated so private transcript chrome follows active theme profiles.' },
     { path: ['shadow', 'color'], status: 'internal', reason: 'Legacy tint helper for computed shadows, not a standalone editable color token.' },
     { path: ['shadowPopoverArrowBoxShadow'], status: 'internal', reason: 'Popover arrow shadow recipe string, not a standalone editable color token.' },
+    { path: ['shadowSeamCastBoxShadow'], status: 'internal', reason: 'Sideways cast for the seam between a docked pane and the content sheet beside it; internal chrome recipe rather than a standalone editable color token.' },
     { path: ['glass', 'border'], status: 'internal', reason: 'Floating glass surface rim recipe (GlassPanel); V1 exposes shared border tokens rather than feature-specific chrome details.' },
     { path: ['glass', 'innerShadow'], status: 'internal', reason: 'Floating glass surface inner shadow recipe string (GlassPanel), not a standalone editable color token.' },
     { path: ['glass', 'composerInnerShadow'], status: 'internal', reason: 'Reduced-opacity inner shadow recipe for the opt-in glass composer surface only; internal chrome recipe rather than a standalone editable color token.' },

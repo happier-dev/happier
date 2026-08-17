@@ -32,6 +32,7 @@ type WorkspaceStatFileResponse =
         exists: boolean;
         kind?: 'file' | 'directory' | 'other';
         sizeBytes?: number;
+        modifiedMs?: number;
       }>
     | WorkspaceRpcFailure;
 
@@ -96,10 +97,12 @@ export type WorkspaceWriteFileRpcResponse =
 
 function resolveAbsoluteWorkspacePath(params: Readonly<{
     rootPath: string;
+    agentRootPath?: string | null;
     requestPath: string;
 }>): string {
     return resolveMachineAbsolutePath({
         rootPath: params.rootPath,
+        agentRootPath: params.agentRootPath,
         requestPath: params.requestPath,
     });
 }
@@ -108,8 +111,10 @@ export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     rootPath: string;
+    agentRootPath?: string | null;
     request: Readonly<{ path: string }>;
     timeoutMs?: number | null;
+    signal?: AbortSignal | null;
 }>): Promise<WorkspaceStatFileResponse> {
     const transferClient = createWorkspaceFileTransferRpcCaller({
         machineId: params.machineId,
@@ -118,10 +123,11 @@ export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
 
     return await transferClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
         request: {
-            path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path }),
+            path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path }),
         },
         machineMethod: RPC_METHODS.STAT_FILE,
         timeoutMs: params.timeoutMs ?? null,
+        ...(params.signal ? { signal: params.signal } : {}),
     });
 }
 
@@ -129,6 +135,7 @@ export async function callDaemonWorkspaceWriteFileRpc(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     rootPath: string;
+    agentRootPath?: string | null;
     request: WorkspaceWriteFileRpcRequest;
 }>): Promise<WorkspaceWriteFileRpcResponse> {
     const transferClient = createWorkspaceFileTransferRpcCaller({
@@ -139,7 +146,7 @@ export async function callDaemonWorkspaceWriteFileRpc(params: Readonly<{
     return await transferClient.call<WorkspaceWriteFileRpcResponse, WorkspaceWriteFileRpcRequest>({
         request: {
             ...params.request,
-            path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path }),
+            path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path }),
         },
         machineMethod: RPC_METHODS.WRITE_FILE,
     });
@@ -149,6 +156,7 @@ export async function uploadDaemonWorkspaceFileFromReader(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     rootPath: string;
+    agentRootPath?: string | null;
     fileReader: TransferFileReader;
     request: WorkspaceFileUploadInitRequest;
     signal?: AbortSignal | null;
@@ -158,7 +166,7 @@ export async function uploadDaemonWorkspaceFileFromReader(params: Readonly<{
     | TransferFailureResponse
     | TransferFinalizeRecoveryFailure<WorkspaceFileUploadFinalizeResponse>
 > {
-    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path });
+    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path });
     const transferClient = createWorkspaceFileTransferRpcCaller({
         machineId: params.machineId,
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
@@ -210,6 +218,7 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
     machineId: string;
     serverId?: string | null;
     rootPath: string;
+    agentRootPath?: string | null;
     request: Readonly<{ path: string; asZip: boolean }>;
     destination: TransferFileDestination;
     onInit?: ((init: Readonly<{ name: string; sizeBytes: number }>) => Promise<void | TransferFailureResponse>) | null;
@@ -228,12 +237,13 @@ export async function downloadDaemonWorkspaceFileToDestination(params: Readonly<
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
     });
 
-    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.request.path });
+    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path });
 
     if (!params.request.asZip) {
         const stat = await initTransferClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
             request: { path: absolutePath },
             machineMethod: RPC_METHODS.STAT_FILE,
+            signal: params.signal ?? null,
         });
         if (stat.success !== true) {
             return { ok: false, error: stat.error };
@@ -376,6 +386,7 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
     machineId: string;
     serverId?: string | null;
     rootPath: string;
+    agentRootPath?: string | null;
     path: string;
     maxBytes: number;
     signal?: AbortSignal | null;
@@ -384,7 +395,7 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
         machineId: params.machineId,
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
     });
-    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, requestPath: params.path });
+    const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.path });
     const stat = await statClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
         request: { path: absolutePath },
         machineMethod: RPC_METHODS.STAT_FILE,

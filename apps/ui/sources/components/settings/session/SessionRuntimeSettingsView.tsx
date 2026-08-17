@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
@@ -8,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSettingsView() {
     const { theme } = useUnistyles();
@@ -21,7 +21,7 @@ export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSett
                     testID="settings-session-tmux-enabled-item"
                     title={t('profiles.tmux.spawnSessionsTitle')}
                     subtitle={useTmux ? t('profiles.tmux.spawnSessionsEnabledSubtitle') : t('profiles.tmux.spawnSessionsDisabledSubtitle')}
-                    icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="terminal" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={useTmux} onValueChange={setUseTmux} />}
                     showChevron={false}
                     onPress={() => setUseTmux(!useTmux)}
@@ -33,7 +33,7 @@ export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSett
                     subtitle={terminalConnectLegacySecretExportEnabled
                         ? t('settingsSession.terminalConnect.legacySecretExportEnabledSubtitle')
                         : t('settingsSession.terminalConnect.legacySecretExportDisabledSubtitle')}
-                    icon={<Ionicons name="shield-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="shield" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={terminalConnectLegacySecretExportEnabled} onValueChange={setTerminalConnectLegacySecretExportEnabled} />}
                     showChevron={false}
                     onPress={() => setTerminalConnectLegacySecretExportEnabled(!terminalConnectLegacySecretExportEnabled)}

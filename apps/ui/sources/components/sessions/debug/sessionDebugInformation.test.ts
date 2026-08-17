@@ -116,6 +116,28 @@ describe('sessionDebugInformation', () => {
         expect(resolveProviderSessionArtifactPath({
             piSessionFile: ' /tmp/pi/legacy.jsonl ',
         })).toBe('/tmp/pi/legacy.jsonl');
+
+        expect(resolveProviderSessionArtifactPath({
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                provider: {
+                    sessionFile: '/tmp/not-pi.jsonl',
+                },
+            },
+            piSessionFile: '/tmp/pi/legacy.jsonl',
+        })).toBeNull();
+
+        expect(resolveProviderSessionArtifactPath({
+            runtimeDescriptorV1: {
+                v: 2,
+                agentId: 'pi',
+                provider: {
+                    sessionFile: '/tmp/pi/malformed.jsonl',
+                },
+            },
+            piSessionFile: '/tmp/pi/legacy.jsonl',
+        })).toBeNull();
     });
 
     it('adds the provider logs line only when a known artifact path exists', () => {

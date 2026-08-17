@@ -2699,7 +2699,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
             return {
                 ...actual,
-                buildSessionListCacheEntriesFromRenderables: vi.fn(actual.buildSessionListCacheEntriesFromRenderables),
+                buildPersistedSessionListCacheEntriesFromRenderables: vi.fn(actual.buildPersistedSessionListCacheEntriesFromRenderables),
             };
         });
 
@@ -2743,7 +2743,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         ]);
 
         const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
-        const buildPreviousEntries = warmCacheAdapters.buildSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
+        const buildPreviousEntries = warmCacheAdapters.buildPersistedSessionListCacheEntriesFromRenderables as unknown as ReturnType<typeof vi.fn>;
         const initialIndex = get().sessionListIndexByServerId['server-active'];
         expect(Array.isArray(initialIndex)).toBe(true);
         expect(saveWarmCache).toHaveBeenCalledTimes(1);

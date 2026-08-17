@@ -9,6 +9,7 @@ const machineState = vi.hoisted(() => ({
   daemonStateVersion: 1,
   isOnline: true,
 }));
+const activeVoiceAttempt = vi.hoisted(() => ({ sessionId: null as string | null }));
 const testState = vi.hoisted(() => ({
   artifacts: [] as any[],
   deleteError: null as Error | null,
@@ -53,6 +54,15 @@ const status = vi.hoisted(() => vi.fn(async (machineId: string) => ({
 vi.mock('@/components/ui/lists/Item', () => ({ Item: (props: any) => React.createElement('Item', props) }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children) }));
 vi.mock('@/components/ui/forms/Switch', () => ({ Switch: (props: any) => React.createElement('Switch', props) }));
+vi.mock('react-native', () => ({
+  Platform: { OS: 'web' },
+  Pressable: 'Pressable',
+  View: 'View',
+}));
+vi.mock('react-native-unistyles', () => ({
+  useUnistyles: () => ({ theme: { colors: { status: { error: '#f00' }, text: { secondary: '#777' } } } }),
+}));
+vi.mock('@/components/ui/text/Text', () => ({ Text: 'Text' }));
 vi.mock('@/modal', () => ({ Modal: { confirm: vi.fn(async () => true), alert: modalAlert } }));
 vi.mock('@/text', () => ({ t: (key: string) => key, tLoose: (key: string) => key }));
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -61,7 +71,11 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 vi.mock('@/sync/domains/settings/voiceSettings', () => ({
   readVoiceDiagnosticsSettings: (voice: any) => voice.diagnostics,
   writeVoiceDiagnosticsSettings: (voice: any, diagnostics: any) => ({ ...voice, diagnostics }),
-  voiceSettingsParse: (voice: any) => voice,
+  voiceSettingsDefaults: { credentialBindings: [] },
+  voiceSettingsParse: (voice: any) => ({ credentialBindings: [], ...(voice ?? {}) }),
+}));
+vi.mock('@/sync/domains/state/storage', () => ({
+  useSetting: () => ({ diagnostics }),
 }));
 vi.mock('@/sync/store/hooks', () => ({
   useActiveServerAccountScope: () => null,
@@ -69,9 +83,20 @@ vi.mock('@/sync/store/hooks', () => ({
     daemonStateVersion: machineState.daemonStateVersion,
     isOnline: machineState.isOnline,
   }),
+  useMachineCliDetectionTargets: (machineIds: readonly string[]) => Object.fromEntries(machineIds.map((machineId) => [
+    machineId,
+    {
+      daemonStateVersion: machineState.daemonStateVersion,
+      isOnline: machineState.isOnline,
+    },
+  ])),
 }));
 vi.mock('@/voice/credentials/useExecutionMachinePresentation', () => ({
   useVoiceExecutionMachinePresentation: () => ({ machineId: machineState.machineId, machineLabel: machineState.machineId }),
+}));
+vi.mock('@/components/voice/attempt/useVoiceAttemptControl', () => ({
+  useVoiceAttemptControl: () => ({ sessionId: activeVoiceAttempt.sessionId }),
+  VOICE_ATTEMPT_IDLE_TARGET_GLOBAL: { kind: 'global' },
 }));
 vi.mock('./artifactExportTarget', () => ({ createVoiceDiagnosticArtifactExportTarget: vi.fn() }));
 vi.mock('./client', () => ({
@@ -96,10 +121,12 @@ vi.mock('./client', () => ({
 import { VoiceDiagnosticsSettingsSection } from './VoiceDiagnosticsSettingsSection';
 import { useVoiceDiagnosticsRuntimeSync } from './useVoiceDiagnosticsRuntimeSync';
 import {
+  beginVoiceDiagnosticsRevocationObligation,
   publishVoiceDiagnosticsRuntimeStatus,
   resetVoiceDiagnosticsRuntimeStatusForTests,
 } from './runtimeStatus';
 import { resetVoiceDiagnosticsRevocationForTests } from './runtimeRevocation';
+import { resetVoiceDiagnosticsSessionPolicyForTests } from './capturePolicy';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
 function RuntimeSyncSettingsHarness(props: Readonly<{ voice: any }>) {
@@ -127,8 +154,10 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     machineState.machineId = 'm1';
     machineState.daemonStateVersion = 1;
     machineState.isOnline = true;
+    activeVoiceAttempt.sessionId = null;
     resetVoiceDiagnosticsRuntimeStatusForTests();
     resetVoiceDiagnosticsRevocationForTests();
+    resetVoiceDiagnosticsSessionPolicyForTests();
     configure.mockClear();
     status.mockClear();
     modalAlert.mockClear();
@@ -164,6 +193,47 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
       'settingsVoice.diagnostics.sttInput',
       'settingsVoice.diagnostics.ttsOutput',
     ]);
+  });
+
+  it('keeps a failed persisted shutdown visible and retryable in Voice Settings', async () => {
+    beginVoiceDiagnosticsRevocationObligation(
+      { kind: 'machine_policy', machineId: 'former-machine' },
+      'failed',
+    );
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(React.createElement(VoiceDiagnosticsSettingsSection, {
+        voice: { diagnostics } as any,
+        setVoice: vi.fn(),
+      }));
+    });
+
+    expect(tree.root.findAllByType('Text' as any).some(
+      (node) => node.children.join('') === 'settingsVoice.diagnostics.shutdownFailedIndicator',
+    )).toBe(true);
+    const retry = tree.root.findByProps({
+      accessibilityLabel: 'settingsVoice.diagnostics.retryShutdown',
+    });
+    expect(retry.props.accessibilityRole).toBe('button');
+    expect(retry.props.disabled).toBe(false);
+  });
+
+  it('offers session opt-out in Voice Settings for the canonical active Voice attempt', async () => {
+    activeVoiceAttempt.sessionId = 'active-diagnostics-session';
+    publishVoiceDiagnosticsRuntimeStatus({ machineId: 'm1', phase: 'active' });
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(React.createElement(VoiceDiagnosticsSettingsSection, {
+        voice: { diagnostics } as any,
+        setVoice: vi.fn(),
+      }));
+    });
+
+    const optOut = tree.root.findByProps({
+      accessibilityLabel: 'settingsVoice.diagnostics.sessionOptOut',
+    });
+    expect(optOut.props.accessibilityRole).toBe('button');
+    expect(optOut.props.disabled).toBe(false);
   });
 
   it('invalidates retained artifacts and reloads status from the newly selected machine', async () => {

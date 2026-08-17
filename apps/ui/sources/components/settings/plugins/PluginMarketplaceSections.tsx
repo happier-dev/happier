@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { PluginProjectionDiagnostic } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -12,6 +11,7 @@ import { t } from '@/text';
 
 import { PluginDiagnosticsSection } from './diagnostics/PluginDiagnosticsSection';
 import type { PluginMarketplaceCatalog } from './readPluginMarketplaceCatalog';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     formatCatalogEntryVersion,
     formatCatalogSubtitle,
@@ -40,7 +40,7 @@ export function InstalledPluginsSection(props: Readonly<{
                     title={entry.title}
                     subtitle={formatInstalledSubtitle(entry)}
                     detail={entry.version}
-                    icon={<Ionicons name="archive-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="archive" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onNavigateToPlugin(entry.pluginId)}
                     rightElementOutsidePressable
                     rightElement={(
@@ -53,7 +53,7 @@ export function InstalledPluginsSection(props: Readonly<{
                                     id: entry.enabled ? 'disable' : 'enable',
                                     title: entry.enabled ? t('common.disable') : t('common.enable'),
                                     subtitle: entry.enabled ? t('common.enabled') : t('common.disabled'),
-                                    icon: entry.enabled ? 'close-circle-outline' : 'checkmark-circle-outline',
+                                    icon: entry.enabled ? 'x-circle' : 'check-circle',
                                     inlineTestID: `settings.plugins.marketplace.installed.${entry.pluginId}.action.${entry.enabled ? 'disable' : 'enable'}`,
                                     disabled: !props.canRunActions || props.isPluginActionInFlight(entry.pluginId),
                                     onPress: () => props.onRunAction(entry.enabled ? 'disable' : 'enable', entry.pluginId),
@@ -67,7 +67,7 @@ export function InstalledPluginsSection(props: Readonly<{
                     testID="settings.plugins.marketplace.installed.empty"
                     title={t('deps.ui.notInstalled')}
                     subtitle={t('settingsPlugins.emptySubtitle')}
-                    icon={<Ionicons name="archive-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="archive" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -91,9 +91,11 @@ export function RegistryDiagnosticsSection(props: Readonly<{
 export function DevelopmentPluginsSection(props: Readonly<{
     developmentPlugins: readonly DevelopmentPluginEntry[];
     createAvailable: boolean;
+    sourceInstallAvailable: boolean;
     canRunActions: boolean;
     isPluginActionInFlight: (pluginId: string) => boolean;
     onCreate: () => void;
+    onDevelopSourceRoot: () => void;
     onRunAction: (action: 'test' | 'pack', pluginId: string) => void;
 }>) {
     const { theme } = useUnistyles();
@@ -103,9 +105,19 @@ export function DevelopmentPluginsSection(props: Readonly<{
                 testID="settings.plugins.management.development.action.create"
                 title={t('settingsPlugins.developmentCreate')}
                 subtitle={t('settingsPlugins.developmentCreateSubtitle')}
-                icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="plus-circle" size={29} color={theme.colors.text.secondary} />}
                 onPress={props.onCreate}
                 disabled={!props.canRunActions || !props.createAvailable}
+                showChevron={false}
+            />
+            <Item
+                testID="settings.plugins.management.development.action.develop"
+                title={t('settingsPlugins.developmentSourceInstall')}
+                subtitle={t('settingsPlugins.developmentSourceInstallSubtitle')}
+                subtitleLines={0}
+                icon={<Icon name="folder" size={29} color={theme.colors.text.secondary} />}
+                onPress={props.onDevelopSourceRoot}
+                disabled={!props.canRunActions || !props.sourceInstallAvailable}
                 showChevron={false}
             />
             {props.developmentPlugins.length > 0 ? props.developmentPlugins.map((entry) => (
@@ -128,7 +140,7 @@ export function DevelopmentPluginsSection(props: Readonly<{
                             </Text>
                         )}
                         detail={entry.installed.version}
-                        icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="code" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -136,7 +148,7 @@ export function DevelopmentPluginsSection(props: Readonly<{
                         testID={`settings.plugins.management.development.${entry.installed.pluginId}.action.test`}
                         title={t('settingsPlugins.developmentTest')}
                         subtitle={t('settingsPlugins.developmentTestSubtitle')}
-                        icon={<Ionicons name="checkmark-done-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="checks" size={29} color={theme.colors.text.secondary} />}
                         onPress={() => props.onRunAction('test', entry.installed.pluginId)}
                         disabled={!props.canRunActions || !entry.actions.test || props.isPluginActionInFlight(entry.installed.pluginId)}
                         showChevron={false}
@@ -145,7 +157,7 @@ export function DevelopmentPluginsSection(props: Readonly<{
                         testID={`settings.plugins.management.development.${entry.installed.pluginId}.action.pack`}
                         title={t('settingsPlugins.developmentPack')}
                         subtitle={t('settingsPlugins.developmentPackSubtitle')}
-                        icon={<Ionicons name="cube-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="cube" size={29} color={theme.colors.text.secondary} />}
                         onPress={() => props.onRunAction('pack', entry.installed.pluginId)}
                         disabled={!props.canRunActions || !entry.actions.pack || props.isPluginActionInFlight(entry.installed.pluginId)}
                         showChevron={false}
@@ -156,7 +168,7 @@ export function DevelopmentPluginsSection(props: Readonly<{
                     testID="settings.plugins.management.development.empty"
                     title={t('settingsPlugins.developmentEmpty')}
                     subtitle={t('settingsPlugins.developmentEmptySubtitle')}
-                    icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="code" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -182,7 +194,7 @@ export function PluginDiagnosticsSnapshotSection(props: Readonly<{
                         testID="settings.plugins.management.diagnostics.empty"
                         title={t('settingsPlugins.diagnosticsSnapshotEmpty')}
                         subtitle={t('settingsPlugins.diagnosticsSnapshotEmptySubtitle')}
-                        icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="pulse" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -215,7 +227,7 @@ export function CatalogEntriesSection(props: Readonly<{
                     testID={`settings.plugins.marketplace.action.install.${catalogEntry.id}`}
                     title={t('settingsPlugins.installAndTrust')}
                     subtitle={catalogEntry.description ?? t('deps.ui.notInstalled')}
-                    icon={<Ionicons name="download-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="download" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction({
                         method: 'install',
                         pluginId: catalogEntry.id,
@@ -240,7 +252,7 @@ export function CatalogEntriesSection(props: Readonly<{
                         installedVersion: installed.version,
                         availableVersion: catalogEntry.version,
                     })}
-                    icon={<Ionicons name="arrow-up-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="arrow-circle-up" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction({
                         method: 'update',
                         pluginId: catalogEntry.id,
@@ -255,7 +267,7 @@ export function CatalogEntriesSection(props: Readonly<{
                 testID={`settings.plugins.marketplace.action.${installed.enabled ? 'disable' : 'enable'}.${catalogEntry.id}`}
                 title={installed.enabled ? t('common.disable') : t('common.enable')}
                 subtitle={installed.enabled ? t('common.enabled') : t('common.disabled')}
-                icon={<Ionicons name={installed.enabled ? 'close-circle-outline' : 'checkmark-circle-outline'} size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name={installed.enabled ? 'x-circle' : 'check-circle'} size={29} color={theme.colors.text.secondary} />}
                 onPress={() => props.onAction({
                     method: installed.enabled ? 'disable' : 'enable',
                     pluginId: catalogEntry.id,
@@ -281,7 +293,7 @@ export function CatalogEntriesSection(props: Readonly<{
                         testID="settings.plugins.marketplace.catalog.loading"
                         title={t('common.loading')}
                         subtitle={props.resolvedCatalogUrl || t('settingsPlugins.emptySubtitle')}
-                        icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
                 </View>
@@ -296,7 +308,7 @@ export function CatalogEntriesSection(props: Readonly<{
                                 title={entry.title}
                                 subtitle={formatCatalogSubtitle({ catalog: props.catalog as PluginMarketplaceCatalog, installed })}
                                 detail={formatCatalogEntryVersion(entry.version)}
-                                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="stack" size={29} color={theme.colors.text.secondary} />}
                                 showChevron={false}
                                 mode="info"
                             />
@@ -309,7 +321,7 @@ export function CatalogEntriesSection(props: Readonly<{
                                             ? t('settingsPlugins.marketplaceWithdrawnInstalledBody')
                                             : t('settingsPlugins.marketplaceWithdrawnBody')}
                                         subtitleLines={0}
-                                        icon={<Ionicons name="warning-outline" size={29} color={theme.colors.state.warning.foreground} />}
+                                        icon={<Icon name="warning" size={29} color={theme.colors.state.warning.foreground} />}
                                         showChevron={false}
                                         mode="info"
                                     />
@@ -322,7 +334,7 @@ export function CatalogEntriesSection(props: Readonly<{
                                         title={t('settingsPlugins.marketplaceCommunityUnreviewedTitle')}
                                         subtitle={t('settingsPlugins.marketplaceCommunityUnreviewedBody')}
                                         subtitleLines={0}
-                                        icon={<Ionicons name="shield-half-outline" size={29} color={theme.colors.state.warning.foreground} />}
+                                        icon={<Icon name="shield" size={29} color={theme.colors.state.warning.foreground} />}
                                         showChevron={false}
                                         mode="info"
                                     />
@@ -336,7 +348,7 @@ export function CatalogEntriesSection(props: Readonly<{
                         testID="settings.plugins.marketplace.catalog.empty"
                         title={t('settingsPlugins.emptySubtitle')}
                         subtitle={props.catalog.description ?? props.catalog.sourceUrl ?? null}
-                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="stack" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -346,7 +358,7 @@ export function CatalogEntriesSection(props: Readonly<{
                     testID="settings.plugins.marketplace.catalog.unavailable"
                     title={t('common.unavailable')}
                     subtitle={props.resolvedCatalogUrl || t('settingsPlugins.emptySubtitle')}
-                    icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="stack" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />

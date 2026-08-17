@@ -104,7 +104,7 @@ describe('sessionListSurfaceOwnership', () => {
         expect(resolveDataActive('/session/session-1')).toBe(false);
     });
 
-    it('keeps the sidebar interactive except while new-session routes cover it', () => {
+    it('keeps the sidebar interactive except while an overlay route covers it', () => {
         expect(exportsRecord.resolveSidebarSessionListSurfaceInteractive).toBeTypeOf('function');
         const resolveInteractive = exportsRecord.resolveSidebarSessionListSurfaceInteractive as (pathname: string) => boolean;
 
@@ -113,5 +113,8 @@ describe('sessionListSurfaceOwnership', () => {
         expect(resolveInteractive('/new')).toBe(false);
         expect(resolveInteractive('/new/pick/path')).toBe(false);
         expect(resolveInteractive('/new?mode=quick')).toBe(false);
+        expect(resolveInteractive('/external/browse')).toBe(false);
+        expect(resolveInteractive('/direct/browse')).toBe(false);
+        expect(resolveInteractive('/zen/new')).toBe(false);
     });
 });

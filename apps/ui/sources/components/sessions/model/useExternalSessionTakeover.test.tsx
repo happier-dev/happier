@@ -5,16 +5,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const machineExternalSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+type MachineExternalSessionTakeoverStart =
+  typeof import('@/sync/ops/machineExternalSessions').machineExternalSessionTakeoverStart;
+type MachineExternalSessionTakeoverResponse = Awaited<ReturnType<MachineExternalSessionTakeoverStart>>;
+type MachineExternalSessionTakeoverMockResponse =
+  | Pick<Extract<MachineExternalSessionTakeoverResponse, { ok: true }>, 'ok'>
+  | Extract<MachineExternalSessionTakeoverResponse, { ok: false }>;
+type MachineExternalSessionTakeoverMock = (
+  ...args: Parameters<MachineExternalSessionTakeoverStart>
+) => Promise<MachineExternalSessionTakeoverMockResponse>;
+
+const machineExternalSessionTakeoverSpy = vi.hoisted(() =>
+  vi.fn<MachineExternalSessionTakeoverMock>(async () => ({ ok: true })),
+);
 const machineExternalSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
 const refreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
 const refreshSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
+const randomUUIDSpy = vi.hoisted(() => vi.fn(() => 'takeover-idempotency-1'));
 const showExternalSessionTakeoverDialogSpy = vi.hoisted(() =>
-  vi.fn<() => Promise<{ action: 'direct' | 'persisted' | 'recheck' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
+  vi.fn<() => Promise<{
+    action: 'direct' | 'persisted' | 'recheck' | null;
+    targetDirectory?: string;
+  }>>(async () => ({ action: null })),
 );
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 
 let activeServerId = 'server-1';
+const TARGET_DIRECTORY = '/local/selected/workspace';
+const TARGET_HOME_DIRECTORY = '/Users/tester';
 
 vi.mock('@/components/sessions/external/takeover/showExternalSessionTakeoverDialog', () => ({
   showExternalSessionTakeoverDialog: showExternalSessionTakeoverDialogSpy,
@@ -48,7 +66,7 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 vi.mock('@/platform/randomUUID', () => ({
-  randomUUID: () => 'takeover-idempotency-1',
+  randomUUID: randomUUIDSpy,
 }));
 
 type HookValue = ReturnType<typeof import('./useExternalSessionTakeover')['useExternalSessionTakeover']>;
@@ -59,13 +77,21 @@ async function renderHarness(
 ): Promise<{
   getCurrent: () => HookValue;
   rerender: (runtime: ExternalSessionRuntimeLike) => Promise<void>;
+  rerenderWithoutPassiveEffects: (runtime: ExternalSessionRuntimeLike) => void;
   unmount: () => Promise<void>;
 }> {
   const { useExternalSessionTakeover } = await import('./useExternalSessionTakeover');
 
   const hook = await renderHook(
     (runtime: ExternalSessionRuntimeLike) =>
-      useExternalSessionTakeover({ sessionId: 's1', hasWriteAccess: true, externalSessionRuntime: runtime }),
+      useExternalSessionTakeover({
+        sessionId: 's1',
+        hasWriteAccess: true,
+        externalSessionRuntime: runtime,
+        targetMachineHomeDir: TARGET_HOME_DIRECTORY,
+        targetDirectorySuggestion: TARGET_DIRECTORY,
+        targetMachinePlatform: 'darwin',
+      }),
     {
       initialProps: externalSessionRuntime,
     },
@@ -74,6 +100,21 @@ async function renderHarness(
     getCurrent: hook.getCurrent,
     rerender: async (runtime) => {
       await hook.rerender(runtime);
+    },
+    rerenderWithoutPassiveEffects: (runtime) => {
+      const hookHarness = hook.tree.root;
+      if (typeof hookHarness.type !== 'function') {
+        throw new Error('Expected the testkit hook harness root');
+      }
+      const tree = hook.tree as typeof hook.tree & {
+        unstable_flushSync: (callback: () => void) => void;
+      };
+      tree.unstable_flushSync(() => {
+        tree.update(React.createElement(
+          hookHarness.type,
+          { hookProps: runtime },
+        ));
+      });
     },
     unmount: hook.unmount,
   };
@@ -113,8 +154,10 @@ describe('useExternalSessionTakeover', () => {
     refreshSessionMessagesSpy.mockResolvedValue(undefined);
     refreshSessionsSpy.mockReset();
     refreshSessionsSpy.mockResolvedValue(undefined);
+    randomUUIDSpy.mockReset();
+    randomUUIDSpy.mockReturnValue('takeover-idempotency-1');
     showExternalSessionTakeoverDialogSpy.mockReset();
-    showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: null, forceStop: false });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: null });
     modalAlertSpy.mockReset();
   });
 
@@ -128,7 +171,7 @@ describe('useExternalSessionTakeover', () => {
 
     activeServerId = 'server-2';
     await act(async () => {
-      await harness.getCurrent().requestTakeover('direct');
+      await harness.getCurrent().requestTakeover('direct', TARGET_DIRECTORY);
     });
 
     expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
@@ -137,6 +180,7 @@ describe('useExternalSessionTakeover', () => {
         request: expect.objectContaining({
           sessionId: 's1',
           targetStorageMode: 'external-linked',
+          targetDirectory: TARGET_DIRECTORY,
         }),
       },
       { serverId: 'server-owned' },
@@ -149,7 +193,7 @@ describe('useExternalSessionTakeover', () => {
     const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-runtime' });
 
     await act(async () => {
-      await harness.getCurrent().requestTakeover('direct');
+      await harness.getCurrent().requestTakeover('direct', TARGET_DIRECTORY);
     });
 
     expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
@@ -170,7 +214,7 @@ describe('useExternalSessionTakeover', () => {
     const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-runtime' });
 
     await act(async () => {
-      await harness.getCurrent().requestTakeover('direct');
+      await harness.getCurrent().requestTakeover('direct', TARGET_DIRECTORY);
     });
 
     expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
@@ -199,7 +243,7 @@ describe('useExternalSessionTakeover', () => {
 
     let ready = true;
     await act(async () => {
-      ready = await harness.getCurrent().requestTakeover('persisted');
+      ready = await harness.getCurrent().requestTakeover('persisted', TARGET_DIRECTORY);
     });
 
     expect(ready).toBe(true);
@@ -217,11 +261,84 @@ describe('useExternalSessionTakeover', () => {
         },
         plan: 'takeover',
         targetStorageMode: 'persisted',
+        targetDirectory: TARGET_DIRECTORY,
         targetRuntimeMode: 'terminal',
       },
     }, { serverId: 'server-runtime' });
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
     expect(modalAlertSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('keeps an idempotency key only for an outcome-uncertain retry of the exact takeover intent', async () => {
+    const refreshNow = vi.fn(async () => status);
+    const harness = await renderHarness({
+      externalSessionLink,
+      status,
+      refreshNow,
+      sessionServerId: 'server-runtime',
+    });
+    randomUUIDSpy
+      .mockReturnValueOnce('attempt-a')
+      .mockReturnValueOnce('attempt-b')
+      .mockReturnValueOnce('attempt-c')
+      .mockReturnValueOnce('attempt-d')
+      .mockReturnValueOnce('attempt-e');
+    machineExternalSessionTakeoverSpy
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'internal_error', message: 'typed failure' },
+      })
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error('transport outcome uncertain'))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true });
+
+    await act(async () => {
+      await harness.getCurrent().requestTakeover('direct', '/work/repo');
+      await harness.getCurrent().requestTakeover('direct', '/work/repo');
+      await harness.getCurrent().requestTakeover('direct', '/work/repo');
+      await harness.getCurrent().requestTakeover('direct', '/work/repo ');
+      await harness.getCurrent().requestTakeover('direct', '/work/repo ');
+      await harness.getCurrent().requestTakeover('direct', '/work/other-repo');
+    });
+
+    expect(machineExternalSessionTakeoverSpy.mock.calls.map(([input]) => ({
+      idempotencyKey: input.request.idempotencyKey,
+      targetDirectory: input.request.targetDirectory,
+    }))).toEqual([
+      { idempotencyKey: 'attempt-a', targetDirectory: '/work/repo' },
+      { idempotencyKey: 'attempt-b', targetDirectory: '/work/repo' },
+      { idempotencyKey: 'attempt-c', targetDirectory: '/work/repo' },
+      { idempotencyKey: 'attempt-d', targetDirectory: '/work/repo ' },
+      { idempotencyKey: 'attempt-d', targetDirectory: '/work/repo ' },
+      { idempotencyKey: 'attempt-e', targetDirectory: '/work/other-repo' },
+    ]);
+    await harness.unmount();
+  });
+
+  it('preserves selected target path bytes after home-directory expansion', async () => {
+    const refreshNow = vi.fn(async () => status);
+    const harness = await renderHarness({
+      externalSessionLink,
+      status,
+      refreshNow,
+      sessionServerId: 'server-runtime',
+    });
+
+    await act(async () => {
+      await harness.getCurrent().requestTakeover('direct', '~/repo ');
+    });
+
+    expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          targetDirectory: '/Users/tester/repo ',
+        }),
+      }),
+      { serverId: 'server-runtime' },
+    );
     await harness.unmount();
   });
 
@@ -239,7 +356,7 @@ describe('useExternalSessionTakeover', () => {
 
     let ready = true;
     await act(async () => {
-      ready = await harness.getCurrent().requestTakeover('persisted');
+      ready = await harness.getCurrent().requestTakeover('persisted', TARGET_DIRECTORY);
     });
 
     expect(ready).toBe(false);
@@ -261,7 +378,7 @@ describe('useExternalSessionTakeover', () => {
     activeServerId = 'server-2';
     let ready = true;
     await act(async () => {
-      ready = await harness.getCurrent().requestTakeover('direct');
+      ready = await harness.getCurrent().requestTakeover('direct', TARGET_DIRECTORY);
     });
 
     expect(ready).toBe(false);
@@ -273,7 +390,10 @@ describe('useExternalSessionTakeover', () => {
 
   it('uses the owning session server when send takeover is confirmed after an active-server switch', async () => {
     const refreshNow = vi.fn(async () => status);
-    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({
+      action: 'direct',
+      targetDirectory: TARGET_DIRECTORY,
+    });
     const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
@@ -286,7 +406,13 @@ describe('useExternalSessionTakeover', () => {
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: true,
       canTakeOverPersist: true,
-      canForceStop: false,
+      target: {
+        machineId: 'machine-1',
+        machineHomeDir: TARGET_HOME_DIRECTORY,
+        initialDirectory: TARGET_DIRECTORY,
+        machinePlatform: 'darwin',
+        serverId: 'server-owned',
+      },
     });
     expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
       {
@@ -307,7 +433,7 @@ describe('useExternalSessionTakeover', () => {
       canTakeOverDirect: false,
       canTakeOverPersist: true,
     }));
-    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null, forceStop: false });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null });
     const harness = await renderHarness({ externalSessionLink, status: null, refreshNow, sessionServerId: 'server-owned' });
 
     await act(async () => {
@@ -319,7 +445,13 @@ describe('useExternalSessionTakeover', () => {
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: false,
       canTakeOverPersist: true,
-      canForceStop: false,
+      target: {
+        machineId: 'machine-1',
+        machineHomeDir: TARGET_HOME_DIRECTORY,
+        initialDirectory: TARGET_DIRECTORY,
+        machinePlatform: 'darwin',
+        serverId: 'server-owned',
+      },
     });
     expect(modalAlertSpy).not.toHaveBeenCalled();
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
@@ -366,8 +498,8 @@ describe('useExternalSessionTakeover', () => {
         canTakeOverPersist: true,
       });
     showExternalSessionTakeoverDialogSpy
-      .mockResolvedValueOnce({ action: 'recheck', forceStop: false })
-      .mockResolvedValueOnce({ action: null, forceStop: false });
+      .mockResolvedValueOnce({ action: 'recheck' })
+      .mockResolvedValueOnce({ action: null });
     const harness = await renderHarness({
       externalSessionLink,
       status: null,
@@ -385,13 +517,18 @@ describe('useExternalSessionTakeover', () => {
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenNthCalledWith(1, {
       canTakeOverDirect: false,
       canTakeOverPersist: false,
-      canForceStop: false,
       runningProcessPid: 12_345,
     });
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenNthCalledWith(2, {
       canTakeOverDirect: false,
       canTakeOverPersist: true,
-      canForceStop: false,
+      target: {
+        machineId: 'machine-1',
+        machineHomeDir: TARGET_HOME_DIRECTORY,
+        initialDirectory: TARGET_DIRECTORY,
+        machinePlatform: 'darwin',
+        serverId: 'server-owned',
+      },
     });
     expect(modalAlertSpy).not.toHaveBeenCalledWith(
       'common.error',
@@ -498,6 +635,121 @@ describe('useExternalSessionTakeover', () => {
     await harness.unmount();
   });
 
+  it('does not admit send readiness when the exact external link changes before passive effects flush', async () => {
+    const firstRefresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const firstRuntime = {
+      externalSessionLink: {
+        ...externalSessionLink,
+        linkedAtMs: 1_000,
+        qualifiedIdentity: {
+          v: 1 as const,
+          agent: { pluginId: 'happier.codex', localId: 'codex' },
+          source: { kind: 'codexHome' as const, contractVersion: 1 as const },
+        },
+        linkData: { projectId: 'project-a' },
+      },
+      status: null,
+      refreshNow: vi.fn(async () => await firstRefresh.promise),
+      sessionServerId: 'server-owned',
+    };
+    const harness = await renderHarness(firstRuntime);
+    const readyForSend = harness.getCurrent().ensureReadyForSend();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // `act` flushes passive effects, which would miss the render-phase scope gap.
+    const actEnvironment = (globalThis as typeof globalThis & {
+      IS_REACT_ACT_ENVIRONMENT?: boolean;
+    }).IS_REACT_ACT_ENVIRONMENT;
+    (globalThis as typeof globalThis & {
+      IS_REACT_ACT_ENVIRONMENT?: boolean;
+    }).IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      harness.rerenderWithoutPassiveEffects({
+        ...firstRuntime,
+        externalSessionLink: {
+          ...firstRuntime.externalSessionLink,
+          linkData: { projectId: 'project-b' },
+        },
+        refreshNow: vi.fn(async () => status),
+      });
+    } finally {
+      (globalThis as typeof globalThis & {
+        IS_REACT_ACT_ENVIRONMENT?: boolean;
+      }).IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+    }
+
+    firstRefresh.resolve({ ...status, runnerActive: true });
+    await expect(readyForSend).resolves.toBe(false);
+
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(refreshSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(refreshSessionsSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('suppresses a late terminal-auth rejection from a stale explicit preflight', async () => {
+    const refresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const firstRuntime = {
+      externalSessionLink,
+      status: null,
+      refreshNow: vi.fn(async () => await refresh.promise),
+      sessionServerId: 'server-owned',
+    };
+    const harness = await renderHarness(firstRuntime);
+
+    let stalePreflight: Promise<boolean> | null = null;
+    await act(async () => {
+      stalePreflight = harness.getCurrent().requestTakeoverPreflight();
+      await Promise.resolve();
+    });
+    await harness.rerender({
+      ...firstRuntime,
+      externalSessionLink: {
+        ...externalSessionLink,
+        remoteSessionId: 'vendor-session-2',
+      },
+      refreshNow: vi.fn(async () => status),
+    });
+
+    await act(async () => {
+      refresh.reject({ kind: 'auth', canTryAgain: false });
+      await expect(stalePreflight).resolves.toBe(false);
+    });
+
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('propagates a terminal-auth rejection from a current explicit preflight', async () => {
+    const terminalAuthError = { kind: 'auth', canTryAgain: false };
+    const harness = await renderHarness({
+      externalSessionLink,
+      status: null,
+      refreshNow: vi.fn(async () => {
+        throw terminalAuthError;
+      }),
+      sessionServerId: 'server-owned',
+    });
+
+    await act(async () => {
+      await expect(harness.getCurrent().requestTakeoverPreflight()).rejects.toBe(terminalAuthError);
+    });
+
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
   it('does not present takeover UI after an explicit preflight unmounts', async () => {
     const refresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
     const harness = await renderHarness({
@@ -524,6 +776,213 @@ describe('useExternalSessionTakeover', () => {
     expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
   });
 
+  it('blocks a stale send-status failure without presenting an alert after unmount', async () => {
+    const refresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const harness = await renderHarness({
+      externalSessionLink,
+      status: null,
+      refreshNow: vi.fn(async () => await refresh.promise),
+      sessionServerId: 'server-owned',
+    });
+
+    const readyForSend = harness.getCurrent().ensureReadyForSend();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await harness.unmount();
+
+    let ready = true;
+    await act(async () => {
+      refresh.reject(new Error('Failed to fetch'));
+      ready = await readyForSend;
+    });
+
+    expect(ready).toBe(false);
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+  });
+
+  it('suppresses a late terminal-auth rejection after the external link is replaced', async () => {
+    const refresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const firstRuntime = {
+      externalSessionLink,
+      status: null,
+      refreshNow: vi.fn(async () => await refresh.promise),
+      sessionServerId: 'server-owned',
+    };
+    const harness = await renderHarness(firstRuntime);
+
+    const readyForSend = harness.getCurrent().ensureReadyForSend();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await harness.rerender({
+      ...firstRuntime,
+      externalSessionLink: {
+        ...externalSessionLink,
+        remoteSessionId: 'vendor-session-2',
+      },
+      refreshNow: vi.fn(async () => status),
+    });
+
+    await act(async () => {
+      refresh.reject({ kind: 'auth', canTryAgain: false });
+      await expect(readyForSend).resolves.toBe(false);
+    });
+
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('propagates a terminal-auth rejection while send scope is current', async () => {
+    const terminalAuthError = { kind: 'auth', canTryAgain: false };
+    const harness = await renderHarness({
+      externalSessionLink,
+      status: null,
+      refreshNow: vi.fn(async () => {
+        throw terminalAuthError;
+      }),
+      sessionServerId: 'server-owned',
+    });
+
+    await act(async () => {
+      await expect(harness.getCurrent().ensureReadyForSend()).rejects.toBe(terminalAuthError);
+    });
+
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('does not admit a late successful send status refresh after unmount', async () => {
+    const refresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const harness = await renderHarness({
+      externalSessionLink,
+      status: null,
+      refreshNow: vi.fn(async () => await refresh.promise),
+      sessionServerId: 'server-owned',
+    });
+
+    const readyForSend = harness.getCurrent().ensureReadyForSend();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await harness.unmount();
+
+    let ready = true;
+    await act(async () => {
+      refresh.resolve({ ...status, runnerActive: true });
+      ready = await readyForSend;
+    });
+
+    expect(ready).toBe(false);
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not present takeover UI when a successful send status refresh belongs to a replaced link', async () => {
+    const refresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const firstRuntime = {
+      externalSessionLink,
+      status: null,
+      refreshNow: vi.fn(async () => await refresh.promise),
+      sessionServerId: 'server-owned',
+    };
+    const harness = await renderHarness(firstRuntime);
+
+    const readyForSend = harness.getCurrent().ensureReadyForSend();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await harness.rerender({
+      ...firstRuntime,
+      externalSessionLink: {
+        ...externalSessionLink,
+        remoteSessionId: 'vendor-session-2',
+      },
+      refreshNow: vi.fn(async () => status),
+    });
+
+    let ready = true;
+    await act(async () => {
+      refresh.resolve(status);
+      ready = await readyForSend;
+    });
+
+    expect(ready).toBe(false);
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
+  it('does not start takeover when its confirmation refresh resolves for a replaced link', async () => {
+    const confirmationRefresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
+    const confirmationReadStarted = createDeferred<void>();
+    let refreshCount = 0;
+    const refreshNow = vi.fn(async () => {
+      refreshCount += 1;
+      if (refreshCount === 1) return status;
+      confirmationReadStarted.resolve();
+      return await confirmationRefresh.promise;
+    });
+    const firstRuntime = {
+      externalSessionLink,
+      status: null,
+      refreshNow,
+      sessionServerId: 'server-owned',
+    };
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({
+      action: 'direct',
+      targetDirectory: TARGET_DIRECTORY,
+    });
+    const harness = await renderHarness(firstRuntime);
+
+    let readyForSend: Promise<boolean> | null = null;
+    await act(async () => {
+      readyForSend = harness.getCurrent().ensureReadyForSend();
+      await confirmationReadStarted.promise;
+    });
+    await harness.rerender({
+      ...firstRuntime,
+      externalSessionLink: {
+        ...externalSessionLink,
+        remoteSessionId: 'vendor-session-2',
+      },
+      refreshNow: vi.fn(async () => status),
+    });
+
+    if (!readyForSend) {
+      throw new Error('The takeover confirmation refresh did not start');
+    }
+    const pendingReadyForSend = readyForSend;
+
+    let ready = true;
+    await act(async () => {
+      confirmationRefresh.resolve(status);
+      ready = await pendingReadyForSend;
+    });
+
+    expect(ready).toBe(false);
+    expect(refreshNow).toHaveBeenCalledTimes(2);
+    expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledTimes(1);
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(refreshSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(refreshSessionsSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
   it('re-checks direct-session status before prompting for send takeover after a server switch', async () => {
     const refreshNow = vi.fn(async () => ({
       ...status,
@@ -544,7 +1003,7 @@ describe('useExternalSessionTakeover', () => {
     await harness.unmount();
   });
 
-  it('does not block send when the direct-session status refresh has a transient connectivity failure', async () => {
+  it('blocks send without requesting takeover when the direct-session status refresh has a transient connectivity failure', async () => {
     const refreshNow = vi.fn(async () => {
       throw new Error('Failed to fetch');
     });
@@ -555,11 +1014,40 @@ describe('useExternalSessionTakeover', () => {
       ready = await harness.getCurrent().ensureReadyForSend();
     });
 
-    expect(ready).toBe(true);
+    expect(ready).toBe(false);
     expect(refreshNow).toHaveBeenCalledTimes(1);
     expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
-    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(refreshSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(refreshSessionsSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.error',
+      'chatFooter.externalSessionStatusUnavailable',
+    );
+    await harness.unmount();
+  });
+
+  it('blocks send without reusing a stale status when the direct-session status refresh returns no status', async () => {
+    const refreshNow = vi.fn(async () => null);
+    const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
+
+    let ready = true;
+    await act(async () => {
+      ready = await harness.getCurrent().ensureReadyForSend();
+    });
+
+    expect(ready).toBe(false);
+    expect(refreshNow).toHaveBeenCalledTimes(1);
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(refreshSessionMessagesSpy).not.toHaveBeenCalled();
+    expect(refreshSessionsSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.error',
+      'chatFooter.externalSessionStatusUnavailable',
+    );
     await harness.unmount();
   });
 });

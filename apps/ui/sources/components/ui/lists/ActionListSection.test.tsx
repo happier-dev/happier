@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import type { ActionListItem, ActionListItemContent } from './ActionListSection';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 installUiListsCommonModuleMocks();
@@ -69,5 +70,54 @@ describe('ActionListSection', () => {
         expect(selectableRowProps.left).toBeTruthy();
         expect((selectableRowProps.left.type as any)?.name ?? selectableRowProps.left.type).toBe('View');
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
+    });
+
+    it('lets a private render boundary update the incumbent row without taking over its SelectableRow chrome', async () => {
+        const { ActionListSection } = await import('./ActionListSection');
+        const receivedItems: ActionListItemContent[] = [];
+        const action: ActionListItem = {
+            id: 'dynamic',
+            label: 'Declaration fallback',
+            icon: '.',
+            renderItem: (item, renderDefaultItem) => {
+                receivedItems.push(item);
+                return renderDefaultItem({
+                    ...item,
+                    label: 'Live Resource label',
+                    disabled: true,
+                });
+            },
+        };
+
+        selectableRowProps = null;
+        await renderScreen(<ActionListSection actions={[action]} />);
+
+        expect(receivedItems).toEqual([{
+            id: 'dynamic',
+            label: 'Declaration fallback',
+            icon: '.',
+        }]);
+        expect(selectableRowProps).toEqual(expect.objectContaining({
+            title: 'Live Resource label',
+            disabled: true,
+            variant: 'slim',
+        }));
+    });
+
+    it('keeps an authored action accessibility label when it differs from the visible label', async () => {
+        const { ActionListSection } = await import('./ActionListSection');
+        const action: ActionListItem = {
+            id: 'accessible-action',
+            label: 'Visible label',
+            accessibilityLabel: 'Accessible action name',
+        };
+
+        selectableRowProps = null;
+        await renderScreen(<ActionListSection actions={[action]} />);
+
+        expect(selectableRowProps).toEqual(expect.objectContaining({
+            title: 'Visible label',
+            accessibilityLabel: 'Accessible action name',
+        }));
     });
 });

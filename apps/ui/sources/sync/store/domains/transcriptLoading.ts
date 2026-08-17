@@ -1,4 +1,20 @@
 import type { StoreGet, StoreSet } from './_shared';
+import type { ExternalSessionsRpcErrorCode } from '@happier-dev/protocol';
+
+import type { ExternalSessionTranscriptUnavailableReason } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
+
+export type SessionTranscriptLoadIssue =
+    | Readonly<{
+        kind: 'authority_unavailable';
+        reason: ExternalSessionTranscriptUnavailableReason;
+    }>
+    | Readonly<{
+        kind: 'read_failed';
+        errorCode: ExternalSessionsRpcErrorCode;
+    }>
+    | Readonly<{
+        kind: 'source_discontinuity';
+    }>;
 
 /**
  * Transient per-session transcript loading signals.
@@ -31,6 +47,8 @@ export type TranscriptLoadingDomain = {
      * discontinuity, the full loaded set is tail-contiguous.
      */
     sessionTailContiguousFloorSeq: Record<string, number>;
+    /** Last non-authoritative initial transcript outcome, absent after authoritative success. */
+    sessionTranscriptLoadIssues: Record<string, SessionTranscriptLoadIssue>;
     /** True while at least one newer catch-up flow is running for the session. */
     isSessionCatchingUpNewer: (sessionId: string) => boolean;
     /** Mark a newer catch-up flow as started for the session (ref-counted). */
@@ -41,6 +59,10 @@ export type TranscriptLoadingDomain = {
     getSessionTailContiguousFloorSeq: (sessionId: string) => number | null;
     /** Set (positive seq) or clear (null) the tail-contiguity floor for the session. */
     setSessionTailContiguousFloorSeq: (sessionId: string, floorSeq: number | null) => void;
+    /** Read the last non-authoritative initial transcript outcome for this session. */
+    getSessionTranscriptLoadIssue: (sessionId: string) => SessionTranscriptLoadIssue | null;
+    /** Replace or clear the last non-authoritative initial transcript outcome. */
+    setSessionTranscriptLoadIssue: (sessionId: string, issue: SessionTranscriptLoadIssue | null) => void;
 };
 
 export function createTranscriptLoadingDomain<S extends TranscriptLoadingDomain>({
@@ -53,6 +75,7 @@ export function createTranscriptLoadingDomain<S extends TranscriptLoadingDomain>
     return {
         sessionCatchUpNewerInFlight: {},
         sessionTailContiguousFloorSeq: {},
+        sessionTranscriptLoadIssues: {},
         isSessionCatchingUpNewer: (sessionId) => {
             if (!sessionId) return false;
             return (get().sessionCatchUpNewerInFlight[sessionId] ?? 0) > 0;
@@ -63,6 +86,38 @@ export function createTranscriptLoadingDomain<S extends TranscriptLoadingDomain>
             return typeof floorSeq === 'number' && Number.isFinite(floorSeq) && floorSeq > 0
                 ? floorSeq
                 : null;
+        },
+        getSessionTranscriptLoadIssue: (sessionId) => {
+            if (!sessionId) return null;
+            return get().sessionTranscriptLoadIssues[sessionId] ?? null;
+        },
+        setSessionTranscriptLoadIssue: (sessionId, issue) => {
+            if (!sessionId) return;
+            set((state) => {
+                if (issue === null) {
+                    if (!(sessionId in state.sessionTranscriptLoadIssues)) return state;
+                    const next = { ...state.sessionTranscriptLoadIssues };
+                    delete next[sessionId];
+                    return { ...state, sessionTranscriptLoadIssues: next };
+                }
+                const current = state.sessionTranscriptLoadIssues[sessionId];
+                if (
+                    current?.kind === issue.kind
+                    && (current.kind !== 'authority_unavailable'
+                        || (issue.kind === 'authority_unavailable' && current.reason === issue.reason))
+                    && (current.kind !== 'read_failed'
+                        || (issue.kind === 'read_failed' && current.errorCode === issue.errorCode))
+                ) {
+                    return state;
+                }
+                return {
+                    ...state,
+                    sessionTranscriptLoadIssues: {
+                        ...state.sessionTranscriptLoadIssues,
+                        [sessionId]: issue,
+                    },
+                };
+            });
         },
         setSessionTailContiguousFloorSeq: (sessionId, floorSeq) => {
             if (!sessionId) return;

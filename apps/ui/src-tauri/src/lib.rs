@@ -28,6 +28,9 @@ mod desktop_boot_credentials;
 #[cfg(any(desktop, test))]
 mod browser;
 
+#[cfg(any(desktop, test))]
+mod hosted_artifact_desktop;
+
 #[cfg(debug_assertions)]
 mod mcp_bridge;
 
@@ -64,6 +67,7 @@ pub fn run() {
             .manage(activity_overlay::ActivityOverlayState::default())
             .manage(pet_overlay::DesktopPetOverlayState::default())
             .manage(browser::DesktopBrowserState::default())
+            .manage(hosted_artifact_desktop::DesktopHostedArtifactState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
                 app_updates::desktop_install_update,
@@ -110,6 +114,18 @@ pub fn run() {
                 browser::desktop_browser_drain_diagnostics,
                 browser::desktop_browser_eval_script,
                 browser::desktop_browser_dispatch_navigation,
+                hosted_artifact_desktop::desktop_hosted_artifact_register,
+                hosted_artifact_desktop::desktop_hosted_artifact_unregister,
+                hosted_artifact_desktop::desktop_hosted_artifact_cache_read,
+                hosted_artifact_desktop::desktop_hosted_artifact_cache_write,
+                hosted_artifact_desktop::desktop_hosted_artifact_cache_describe,
+                hosted_artifact_desktop::desktop_hosted_artifact_cache_remove,
+                hosted_artifact_desktop::desktop_hosted_artifact_cache_remove_account,
+                hosted_artifact_desktop::desktop_hosted_artifact_open_view,
+                hosted_artifact_desktop::desktop_hosted_artifact_set_bounds,
+                hosted_artifact_desktop::desktop_hosted_artifact_post_message,
+                hosted_artifact_desktop::desktop_hosted_artifact_go_back,
+                hosted_artifact_desktop::desktop_hosted_artifact_close_view,
                 activity_overlay::desktop_activity_overlay_sync,
                 activity_overlay::desktop_activity_overlay_get_window_state,
                 activity_overlay::desktop_activity_overlay_set_expanded,

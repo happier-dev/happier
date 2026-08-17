@@ -18,7 +18,7 @@ const CanonicalFavoriteModelSelectionV1Schema = z.object({
     modelLabel: z.string().optional(),
     providerDisplaySnapshot: ProviderConnectionDisplaySnapshotV1Schema.optional(),
     addedAtMs: z.number().int().nonnegative().optional(),
-}).superRefine((value, context) => {
+}).strict().superRefine((value, context) => {
     const ref = value.selection.ref;
     if (ref.providerConnectionId === null && ref.modelId.trim() === 'default') {
         context.addIssue({
@@ -29,15 +29,61 @@ const CanonicalFavoriteModelSelectionV1Schema = z.object({
     }
 });
 
+const LegacyFavoriteModelSelectionV1Keys = new Set([
+    'backendTargetKey',
+    'modelId',
+    'catalogAgentId',
+    'providerAgentId',
+    'builtInAgentId',
+    'configuredBackendId',
+    'backendLabel',
+    'modelLabel',
+    'providerDisplaySnapshot',
+    'addedAtMs',
+]);
+
+function hasOnlyLegacyFavoriteModelSelectionKeys(record: Readonly<Record<string, unknown>>): boolean {
+    return Object.keys(record).every((key) => LegacyFavoriteModelSelectionV1Keys.has(key));
+}
+
+function copyLegacyFavoritePresentation(
+    record: Readonly<Record<string, unknown>>,
+): Record<string, unknown> | null {
+    if (!hasOnlyLegacyFavoriteModelSelectionKeys(record)) return null;
+
+    const catalogAgentId = record.catalogAgentId;
+    const providerAgentId = record.providerAgentId;
+    if (catalogAgentId !== undefined && providerAgentId !== undefined && catalogAgentId !== providerAgentId) {
+        return null;
+    }
+
+    return {
+        ...(catalogAgentId !== undefined || providerAgentId !== undefined
+            ? { catalogAgentId: catalogAgentId ?? providerAgentId }
+            : {}),
+        ...(record.builtInAgentId !== undefined ? { builtInAgentId: record.builtInAgentId } : {}),
+        ...(record.configuredBackendId !== undefined ? { configuredBackendId: record.configuredBackendId } : {}),
+        ...(record.backendLabel !== undefined ? { backendLabel: record.backendLabel } : {}),
+        ...(record.modelLabel !== undefined ? { modelLabel: record.modelLabel } : {}),
+        ...(record.providerDisplaySnapshot !== undefined
+            ? { providerDisplaySnapshot: record.providerDisplaySnapshot }
+            : {}),
+        ...(record.addedAtMs !== undefined ? { addedAtMs: record.addedAtMs } : {}),
+    };
+}
+
 export const FavoriteModelSelectionV1Schema = z.preprocess((value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
     const record = value as Record<string, unknown>;
     if (record.selection !== undefined) return value;
-    if (typeof record.backendTargetKey !== 'string' || typeof record.modelId !== 'string') return value;
+    const backendTargetKey = record.backendTargetKey;
+    const modelId = record.modelId;
+    if (typeof backendTargetKey !== 'string' || typeof modelId !== 'string') return value;
+    const presentation = copyLegacyFavoritePresentation(record);
+    if (!presentation) return value;
     const addedAtMs = typeof record.addedAtMs === 'number' && Number.isFinite(record.addedAtMs)
         ? Math.max(0, Math.trunc(record.addedAtMs))
         : 0;
-    const { backendTargetKey, modelId, ...presentation } = record;
     return {
         ...presentation,
         selection: {

@@ -23,11 +23,17 @@ import { shouldEnableExecutionRunPolling } from '@/sync/domains/session/particip
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useSessionMessages } from '@/sync/store/hooks';
+import { buildSessionTranscriptAgentAttributionIndex } from '@/components/sessions/transcript/attribution/sessionTranscriptAgentAttribution';
+import {
+    SessionTranscriptAgentAttributionProvider,
+    TranscriptRowSeqProvider,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { t } from '@/text';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { Typography } from '@/constants/Typography';
 import { ToolFullView } from '@/components/tools/shell/views/ToolFullView';
 import { useSessionRecipientState } from '@/components/sessions/agentInput/routing/useSessionRecipientState';
+import { participantRecipientsMatch } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
 
 type SessionMessageDetailsTheme = Readonly<{
     colors: Readonly<{
@@ -84,23 +90,7 @@ function ensureAutoRecipientTarget(
 ): readonly SessionParticipantTarget[] {
     if (!autoRecipient) return targets;
 
-    const alreadyPresent = targets.some((target) => {
-        const recipient = target.recipient;
-        if (autoRecipient.kind === 'execution_run') {
-            return recipient.kind === 'execution_run' && recipient.runId === autoRecipient.runId;
-        }
-        if (autoRecipient.kind === 'agent_team_broadcast') {
-            return recipient.kind === 'agent_team_broadcast' && recipient.teamId === autoRecipient.teamId;
-        }
-        if (autoRecipient.kind === 'agent_team_member') {
-            return (
-                recipient.kind === 'agent_team_member' &&
-                recipient.teamId === autoRecipient.teamId &&
-                recipient.memberId === autoRecipient.memberId
-            );
-        }
-        return false;
-    });
+    const alreadyPresent = targets.some((target) => participantRecipientsMatch(target.recipient, autoRecipient));
     if (alreadyPresent) return targets;
 
     if (autoRecipient.kind === 'execution_run') {
@@ -149,6 +139,13 @@ function ToolCallDetailsView(props: Readonly<{
     const styles = React.useMemo(() => createSessionMessageDetailsStyles(theme), [theme]);
     const ownerMetadata = readSessionOwnerMetadataView(props.session);
     const { messages: committedMessages } = useSessionMessages(props.sessionId);
+    // This screen shows one row from the transcript in isolation. Without the
+    // transcript's divider index it would fall back to the Session's current
+    // Agent, which is exactly the row a switched Session gets wrong.
+    const agentAttributionIndex = React.useMemo(
+        () => buildSessionTranscriptAgentAttributionIndex(committedMessages),
+        [committedMessages],
+    );
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const executionRunPollingEnabled = React.useMemo(() => {
         return shouldEnableExecutionRunPolling({
@@ -231,6 +228,8 @@ function ToolCallDetailsView(props: Readonly<{
     const forcePermissionFooterInTranscript = !shouldShowComposer;
 
     return (
+        <SessionTranscriptAgentAttributionProvider value={agentAttributionIndex}>
+        <TranscriptRowSeqProvider value={props.message.seq ?? null}>
         <View style={styles.toolCallFullViewContainer}>
             <ToolFullView
                 tool={props.message.tool}
@@ -254,6 +253,8 @@ function ToolCallDetailsView(props: Readonly<{
                 />
             ) : null}
         </View>
+        </TranscriptRowSeqProvider>
+        </SessionTranscriptAgentAttributionProvider>
     );
 }
 

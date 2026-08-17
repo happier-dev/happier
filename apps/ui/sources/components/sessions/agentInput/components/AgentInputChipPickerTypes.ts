@@ -1,3 +1,5 @@
+import { t } from '@/text';
+
 export type AgentInputChipPickerDetailSelectOption = Readonly<{
     id: string;
     label: string;
@@ -27,6 +29,13 @@ export type AgentInputChipPickerOption = Readonly<{
     icon?: React.ReactNode;
     subtitle?: string;
     /**
+     * Overrides the row's accessible name when the label alone would drop state a
+     * sighted reader gets from the row itself — a checkmark is a glyph, not an
+     * accessible state, and a row whose meaning is carried visually still owes a
+     * screen reader that meaning in words.
+     */
+    accessibilityLabel?: string;
+    /**
      * When true, the option is visually de-emphasized (e.g. CLI not detected),
      * but can still be focused/inspected in detailed pickers.
      */
@@ -53,7 +62,24 @@ export type AgentInputChipPickerOption = Readonly<{
     onDetailAction?: () => void;
     onSelectImmediate?: () => void;
     closeOnSelectImmediate?: boolean;
+    /**
+     * Label for this option's apply affordance. Options can carry different
+     * consequences in one picker, so a row may name its own outcome instead of
+     * inheriting the panel-wide label.
+     */
+    applyLabel?: string;
     preserveFocusOnExternalSelectionChange?: boolean;
+    /**
+     * A non-selection state mark for the row's indicator slot — drawn only when the
+     * row is NOT the selection, so it stands in the checkmark's place rather than
+     * beside it.
+     *
+     * It exists for the one fact a checkmark cannot carry: which option is the one
+     * in use right now, once the selection has moved somewhere else. The producer
+     * supplies the rendered glyph so this type keeps no opinion about which mark
+     * means what — the reported-model presentation owner does.
+     */
+    statusMarker?: React.ReactNode;
     railAction?: AgentInputChipPickerOptionRailAction;
     onApply?: () => void;
     disabled?: boolean;
@@ -79,6 +105,25 @@ export type AgentInputChipPickerOptionSection = Readonly<{
     label?: string;
     options: ReadonlyArray<AgentInputChipPickerOption>;
 }>;
+
+/**
+ * The accessible name for one picker row.
+ *
+ * A checkmark is a glyph, not an accessible state, and `accessibilityState.selected` maps to
+ * `aria-selected`, which is invalid on `role="button"` and never reaches the web accessibility
+ * tree — measured on the rendered rail, where every row exposed nothing but `aria-label`. The
+ * selection therefore travels in the name, which is the pattern the in-session rail already uses
+ * through `option.accessibilityLabel`. A row that supplies its own name keeps it: it is already
+ * saying something more precise than "selected".
+ */
+export function resolveAgentInputChipPickerOptionAccessibilityLabel(
+    option: AgentInputChipPickerOption,
+    selected: boolean,
+): string {
+    if (option.accessibilityLabel) return option.accessibilityLabel;
+    if (!selected) return option.label;
+    return t('agentInput.chipPicker.selectedOptionAccessibilityLabel', { option: option.label });
+}
 
 export function buildAgentInputChipPickerSections(
     options: ReadonlyArray<AgentInputChipPickerOption>,

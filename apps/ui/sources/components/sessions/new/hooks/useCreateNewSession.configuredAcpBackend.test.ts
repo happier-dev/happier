@@ -1,4 +1,5 @@
 import React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildNewSessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
@@ -42,6 +43,7 @@ type ConfiguredBackendStorageState = Readonly<{
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const prepareAccountSettingsForDaemonSpawnMock = vi.hoisted(() => vi.fn(async () => ({})));
+const executeSessionSpawnNewActionMock = vi.hoisted(() => vi.fn());
 const configuredBackendHarnessModuleState = vi.hoisted(() => ({
     captured: null as { value: SpawnPayloadCapture } | null,
     createdAutomationTemplate: null as { value: Record<string, unknown> | null } | null,
@@ -273,6 +275,11 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
                 : { type: 'error', errorCode: 'unexpected', errorMessage: 'stop' };
         }),
     }));
+    vi.doMock('@/sync/ops/actions/sessionSpawnNewAction', () => ({
+        executeSessionSpawnNewAction: executeSessionSpawnNewActionMock,
+        resolveSessionSpawnNewActionFailureMessageKey: () => 'newSession.failedToStart',
+        resolveSessionSpawnNewResultFailureMessageKey: () => 'newSession.failedToStart',
+    }));
     vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
         followUpSpawnedSessionWithServerScope: vi.fn(async () => configuredBackendHarnessModuleState.followUpPending),
     }));
@@ -296,6 +303,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         clearNewSessionDraftMock.mockClear();
         prepareAccountSettingsForDaemonSpawnMock.mockReset();
         prepareAccountSettingsForDaemonSpawnMock.mockResolvedValue({});
+        executeSessionSpawnNewActionMock.mockReset();
     });
 
     afterEach(() => {
@@ -303,7 +311,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         vi.clearAllMocks();
     });
 
-    it('passes a configured ACP backend backend target into machineSpawnNewSession', async () => {
+    it('fails closed without a private spawn when a configured backend target is unrepresentable', async () => {
         const { useCreateNewSession, captured } = await setupHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -342,7 +350,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -364,19 +372,15 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expect(handleCreateSession).toBeTruthy();
         await handleCreateSession!();
 
-        expect(captured.value).not.toBeNull();
+        expect(captured.value).toBeNull();
+        expect(executeSessionSpawnNewActionMock).not.toHaveBeenCalled();
         expect(applySettingsMock).toHaveBeenCalledWith({
             recentMachinePaths: [{ machineId: 'm1', path: '/tmp' }],
             lastUsedBackendTarget: { kind: 'backend', backendId: 'custom-kiro-preset', configuredBackendId: 'custom-kiro-preset', sourceKind: 'configured' },
         });
-        expect(captured.value?.backendTarget).toEqual({
-            kind: 'backend',
-            backendId: 'custom-kiro-preset',
-            configuredBackendId: 'custom-kiro-preset',
-        });
     });
 
-    it('delegates account settings preparation to the machine spawn boundary', async () => {
+    it('does not prepare account settings for an unrepresentable configured backend target', async () => {
         prepareAccountSettingsForDaemonSpawnMock.mockResolvedValue({ accountSettingsVersionHint: 14 });
         const { useCreateNewSession, captured } = await setupHarness();
 
@@ -416,7 +420,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -439,13 +443,15 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         await handleCreateSession!();
 
         expect(prepareAccountSettingsForDaemonSpawnMock).not.toHaveBeenCalled();
+        expect(captured.value).toBeNull();
+        expect(executeSessionSpawnNewActionMock).not.toHaveBeenCalled();
         expect(captured.value).not.toEqual(expect.objectContaining({
             accountSettingsVersionHint: expect.any(Number),
         }));
     });
 
-    it('moves the launched machine path to the front without dropping other paths for the same machine', async () => {
-        const { useCreateNewSession } = await setupHarness();
+    it('retains recent-path selection while fail-closing an unrepresentable configured backend target', async () => {
+        const { useCreateNewSession, captured } = await setupHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = {
@@ -487,7 +493,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -522,9 +528,11 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 sourceKind: 'configured',
             },
         });
+        expect(captured.value).toBeNull();
+        expect(executeSessionSpawnNewActionMock).not.toHaveBeenCalled();
     });
 
-    it('passes the canonical plugin backend target into machineSpawnNewSession without rewriting lastUsedAgent', async () => {
+    it('fails closed without private spawning for an unresolved plugin backend target', async () => {
         const { useCreateNewSession, captured } = await setupHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -565,7 +573,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -587,10 +595,8 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expect(handleCreateSession).toBeTruthy();
         await handleCreateSession!();
 
-        expect(captured.value?.backendTarget).toEqual({
-            kind: 'backend',
-            backendId: 'acme.review.backend',
-        });
+        expect(captured.value).toBeNull();
+        expect(executeSessionSpawnNewActionMock).not.toHaveBeenCalled();
         expect(applySettingsMock).toHaveBeenCalledWith({
             recentMachinePaths: [{ machineId: 'm1', path: '/tmp' }],
             lastUsedBackendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
@@ -636,7 +642,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -702,7 +708,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         }));
     });
 
-    it('falls back to the canonical default built-in agent when configured ACP creation only has legacy customAcp carriers', async () => {
+    it('retains the configured backend selection state when only legacy customAcp carriers remain', async () => {
         const { useCreateNewSession } = await setupHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -741,7 +747,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: '',
+                promptStore: createNewSessionPromptStore(''),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -769,7 +775,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         });
     });
 
-    it('waits for the canonical first-turn Pending follow-up before opening the created session', async () => {
+    it('does not enter the private first-turn follow-up path for an unrepresentable configured target', async () => {
         const {
             useCreateNewSession,
             routerReplaceSpy,
@@ -819,7 +825,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'launch the session',
+                promptStore: createNewSessionPromptStore('launch the session'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -845,7 +851,8 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
             await new Promise((resolve) => setTimeout(resolve, 25));
         }
 
-        expect(captured.value).not.toBeNull();
+        expect(captured.value).toBeNull();
+        expect(executeSessionSpawnNewActionMock).not.toHaveBeenCalled();
         expect(ensureSessionVisibleForMessageRouteSpy).not.toHaveBeenCalled();
         expect(routerReplaceSpy).not.toHaveBeenCalled();
         expect(storageState.upsertPendingMessage).not.toHaveBeenCalled();
@@ -855,24 +862,18 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         resolveFollowUp();
         await createPromise;
 
-        expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
-            'session-created',
-            expect.objectContaining({
-                text: 'launch the session',
-                displayText: 'launch the session',
-                deliveryStatus: 'queued',
-            }),
-        );
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
-        expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
-        expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
+        expect(storageState.upsertPendingMessage).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
+        expect(disableDraftPersistence).not.toHaveBeenCalled();
     });
 
-    it('waits to open a configured-backend session until route hydration can expose the first turn', async () => {
+    it('does not enter route hydration for an unrepresentable configured backend target', async () => {
         const {
             useCreateNewSession,
             routerReplaceSpy,
             resolveFollowUp,
+            captured,
             storageState,
             ensureSessionVisibleForMessageRouteSpy,
         } = await setupHarness({
@@ -929,7 +930,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'launch the session',
+                promptStore: createNewSessionPromptStore('launch the session'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -960,16 +961,11 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         resolveFollowUp();
         await createPromise;
 
-        expect(storageState.markSessionOptimisticThinking).toHaveBeenCalledWith('session-created');
-        expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
-            'session-created',
-            expect.objectContaining({
-                text: 'launch the session',
-                displayText: 'launch the session',
-                deliveryStatus: 'queued',
-            }),
-        );
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
+        expect(captured.value).toBeNull();
+        expect(executeSessionSpawnNewActionMock).not.toHaveBeenCalled();
+        expect(storageState.markSessionOptimisticThinking).not.toHaveBeenCalled();
+        expect(storageState.upsertPendingMessage).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
     it('writes codex backend mode into automation templates without the experimental shadow flag', async () => {
@@ -1009,7 +1005,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'default' as ModelMode,
-                sessionPrompt: 'Review the repo',
+                promptStore: createNewSessionPromptStore('Review the repo'),
                 resumeSessionId: '',
                 agentNewSessionOptions: { experimentalCodexAcp: false },
                 machineEnvPresence,

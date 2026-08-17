@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -8,6 +7,7 @@ import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/componen
 import { t } from '@/text';
 
 import { BrowserProfileStatus, type BrowserProfileStatusModel } from './BrowserProfileStatus';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     trigger: {
@@ -52,7 +52,7 @@ export function BrowserPrivacyPopover(props: Readonly<{
                 onPress={() => setOpen((value) => !value)}
                 style={stylesheet.trigger}
             >
-                <Ionicons name="shield-checkmark-outline" size={18} color={theme.colors.text.primary} />
+                <Icon name="shield-check" size={16} color={theme.colors.text.primary} />
             </Pressable>
             {open ? (
                 <Popover

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { act } from 'react-test-renderer';
 
+import type { AccountSettingsDefaults } from '@happier-dev/protocol';
 import { renderScreen, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -11,23 +12,11 @@ const featureGateState = vi.hoisted(() => ({
     managementEnabled: true,
     secretMaterialEnabled: false,
 }));
+type RemoteHostsRaw = AccountSettingsDefaults['remoteHostsV1'];
+
 const remoteHostsState = vi.hoisted(() => ({
-    value: [] as Array<{
-        id: string;
-        name: string;
-        ssh: {
-            target: string;
-            port: number | null;
-            authMode: 'agent' | 'password' | 'keyfile';
-            passwordEnc?: unknown;
-            identityPrivateKeyEnc?: unknown;
-        };
-        linkedMachineId: string | null;
-        linkedRelayProfileId: string | null;
-        createdAt: number;
-        updatedAt: number;
-        lastUsedAt: number | null;
-    }>,
+    value: [] as RemoteHostsRaw,
+    setValue: vi.fn(),
 }));
 const systemTaskState = vi.hoisted(() => ({
     mode: 'tauri' as 'tauri' | 'native' | 'dev' | 'unavailable',
@@ -285,7 +274,7 @@ installSettingsViewCommonModuleMocks({
             useSettings: () => ({} as any),
             useSettingMutable: (key: any) => {
                 if (key === 'remoteHostsV1') {
-                    return [remoteHostsState.value, vi.fn()] as any;
+                    return [remoteHostsState.value, remoteHostsState.setValue] as any;
                 }
                 return [undefined, vi.fn()] as any;
             },
@@ -435,6 +424,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
 	    featureGateState.managementEnabled = true;
 	    featureGateState.secretMaterialEnabled = false;
             remoteHostsState.value = [];
+            remoteHostsState.setValue.mockReset();
             systemTaskState.nextTaskNumber = 1;
             systemTaskState.mode = 'tauri';
             systemTaskState.nativeSshAvailable = false;
@@ -631,6 +621,58 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
                 savedRemoteHosts: remoteHostsState.value,
             }),
         }));
+    });
+
+    it('preserves opaque legacy rows when the settings form upserts or removes a current host', async () => {
+        setTauriDesktop(true);
+        featureGateState.managementEnabled = true;
+        const currentHost = {
+            id: 'host-a',
+            name: 'Dev box',
+            ssh: {
+                target: 'dev@10.0.0.1',
+                port: 2222,
+                authMode: 'agent' as const,
+            },
+            linkedMachineId: null,
+            linkedRelayProfileId: null,
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: null,
+        };
+        const opaqueFutureHost = {
+            v: 2,
+            id: 'future-host',
+            transport: 'future-transport',
+            futureData: { retained: true },
+        };
+        remoteHostsState.value = [currentHost, opaqueFutureHost];
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
+        screen.findByTestId('settings.remoteHosts.addHost')?.props.onPress();
+
+        const formProps = modalSpies.show.mock.calls.at(-1)?.[0]?.props;
+        if (!formProps) {
+            throw new Error('Expected remote-host form props');
+        }
+        const addedHost = {
+            ...currentHost,
+            id: 'host-b',
+            name: 'Build box',
+        };
+        formProps.onSave({ remoteHost: addedHost, localOverrides: null });
+
+        const afterUpsert = remoteHostsState.setValue.mock.calls.at(-1)?.[0];
+        expect(afterUpsert).toHaveLength(3);
+        expect(afterUpsert[1]).toBe(opaqueFutureHost);
+        expect(afterUpsert).toContainEqual(addedHost);
+
+        formProps.onDelete(currentHost.id);
+
+        const afterRemove = remoteHostsState.setValue.mock.calls.at(-1)?.[0];
+        expect(afterRemove).toHaveLength(1);
+        expect(afterRemove[0]).toBe(opaqueFutureHost);
     });
 
     it('pins outcome actions and keeps maintenance actions in overflow', async () => {

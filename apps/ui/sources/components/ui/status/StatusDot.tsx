@@ -1,149 +1,30 @@
+import { HappierStatusDot, type HappierStatusDotProps } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Animated, Platform, View, type ViewStyle } from 'react-native';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
-const WEB_PULSE_TIMING_FUNCTION = 'steps(6, end)';
+export type StatusDotProps = Omit<HappierStatusDotProps, 'reducedMotion'>;
 
-export interface StatusDotProps {
-    color: string;
-    isPulsing?: boolean;
-    size?: number;
-    style?: ViewStyle;
-    testID?: string;
-    accessibilityLabel?: string;
-    /** Keep pulsing state visible while disabling the web CSS animation. */
-    animationEnabled?: boolean;
-}
-
+/**
+ * Happier core's status-dot adapter.
+ *
+ * The implementation is the shared presentation owner (UI-T27); this adapter
+ * only supplies the app-wide reduced-motion preference (§3.10.2), and only on
+ * the pulsing path. Status dots mount by the hundred in virtualized lists, so a
+ * preference read on the static path would make every row subscribe to a value
+ * it cannot use.
+ */
 export const StatusDot = React.memo((props: StatusDotProps) => {
     if (!props.isPulsing || props.animationEnabled === false) {
-        return <StaticStatusDot {...props} />;
+        return <HappierStatusDot {...props} />;
     }
     return <MotionAwareStatusDot {...props} />;
 });
 
+StatusDot.displayName = 'StatusDot';
+
 function MotionAwareStatusDot(props: StatusDotProps) {
     const reducedMotion = useReducedMotionPreference();
-    if (reducedMotion) {
-        return <StaticStatusDot {...props} />;
-    }
 
-    if (Platform.OS === 'web') {
-        return <WebStatusDot {...props} />;
-    }
-    return <PulsingStatusDot {...props} />;
+    return <HappierStatusDot {...props} reducedMotion={reducedMotion} />;
 }
-
-function accessibilityProps(accessibilityLabel: string | undefined) {
-    return accessibilityLabel
-        ? {
-            accessibilityRole: 'image' as const,
-            accessibilityLabel,
-        }
-        : {
-            accessibilityElementsHidden: true,
-            importantForAccessibility: 'no-hide-descendants' as const,
-        };
-}
-
-function WebStatusDot({ color, isPulsing, size = 6, style, testID, animationEnabled = true, accessibilityLabel }: StatusDotProps) {
-    const baseStyle: ViewStyle = {
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: color,
-    };
-
-    return (
-        <View
-            testID={testID}
-            {...accessibilityProps(accessibilityLabel)}
-            style={[
-                baseStyle,
-                isPulsing && animationEnabled ? webPulseStyle : null,
-                style,
-            ]}
-        />
-    );
-}
-
-function StaticStatusDot({ color, size = 6, style, testID, accessibilityLabel }: StatusDotProps) {
-    const baseStyle: ViewStyle = {
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: color,
-    };
-
-    return (
-        <View
-            testID={testID}
-            {...accessibilityProps(accessibilityLabel)}
-            style={[
-                baseStyle,
-                style
-            ]}
-        />
-    );
-}
-
-function PulsingStatusDot({ color, size = 6, style, testID, accessibilityLabel }: StatusDotProps) {
-    const opacity = React.useRef(new Animated.Value(1)).current;
-
-    React.useEffect(() => {
-        const animation = Animated.loop(
-            Animated.sequence([
-                Animated.timing(opacity, {
-                    toValue: 0.3,
-                    duration: 1000,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(opacity, {
-                    toValue: 1,
-                    duration: 1000,
-                    useNativeDriver: true,
-                }),
-            ]),
-        );
-        animation.start();
-        return () => {
-            animation.stop();
-        };
-    }, [opacity]);
-
-    const baseStyle: ViewStyle = {
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: color,
-    };
-
-    return (
-        <Animated.View
-            testID={testID}
-            {...accessibilityProps(accessibilityLabel)}
-            style={[
-                baseStyle,
-                { opacity },
-                style
-            ]}
-        />
-    );
-}
-
-type WebPulseStyle = ViewStyle & {
-    animationDirection?: 'alternate';
-    animationDuration?: string;
-    animationIterationCount?: string;
-    animationName?: string;
-    animationTimingFunction?: string;
-};
-
-const webPulseStyle: WebPulseStyle = {
-    animationDirection: 'alternate',
-    animationDuration: '1000ms',
-    animationIterationCount: 'infinite',
-    animationName: 'happierStatusDotPulse',
-    animationTimingFunction: WEB_PULSE_TIMING_FUNCTION,
-};

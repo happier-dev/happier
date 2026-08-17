@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/catalog';
@@ -21,8 +20,6 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { OpenAiCompatCredentialItem } from '@/voice/local/openaiCompat/CredentialItem';
-import { OpenAiCompatEndpointItem } from '@/voice/local/openaiCompat/EndpointItem';
 import { parseLocalVoiceSttSettings, parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
@@ -41,6 +38,11 @@ import { useSetting, useSettings } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
 import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
+import { Icon } from '@/components/ui/icons/Icon';
+import {
+  completeLegacyVoiceOpenAiChatAgentSelection,
+  LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
+} from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
 
 
 export function LocalConversationSection(props: {
@@ -49,6 +51,7 @@ export function LocalConversationSection(props: {
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonModelCatalog?: DaemonVoiceModelCatalogController;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  showProcessingDisclosure?: boolean;
 }) {
   const { theme } = useUnistyles();
   const voiceAgentEnabled = useFeatureEnabled('voice.agent');
@@ -57,10 +60,10 @@ export function LocalConversationSection(props: {
   const [openMenu, setOpenMenu] = React.useState<
     | null
     | 'conversationMode'
-    | 'mediatorBackend'
     | 'mediatorRootSessionPolicy'
     | 'mediatorAgentSource'
     | 'mediatorAgentId'
+    | 'providerChatAgentSelection'
     | 'mediatorPermissionPolicy'
     | 'mediatorTranscriptPersistence'
     | 'mediatorResumabilityMode'
@@ -75,6 +78,7 @@ export function LocalConversationSection(props: {
 
   const voice = voiceSettingsParse(props.voice);
   const cfg = readLocalConversationVoiceSettings(voice);
+  const hasConfiguredProviderChat = cfg.agent.providerChat?.status === 'configured';
   const executionMachine = voice.executionMachine;
   const enabled = resolveVoiceProviderIdFromSettings(voice) === 'local_conversation';
   const machines = useAllMachines();
@@ -103,7 +107,7 @@ export function LocalConversationSection(props: {
         title: t('settingsVoice.local.modelCustomTitle'),
         subtitle: t('settingsVoice.local.conversation.customBackendIdSubtitle'),
         icon: renderDropdownItemIcon({
-          name: 'create-outline',
+          name: 'pencil-simple',
           color: theme.colors.text.secondary,
         }),
       },
@@ -116,6 +120,7 @@ export function LocalConversationSection(props: {
     if (!raw) return null;
     return isAgentId(raw as any) ? (raw as any) : null;
   }, [cfg.agent.agentId, cfg.agent.agentSource]);
+  const effectiveAgentIdForModelOptions = selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID;
 
   const preflightMachineId = React.useMemo(() => {
     if (executionMachine.mode === 'fixed') {
@@ -129,14 +134,15 @@ export function LocalConversationSection(props: {
     });
   }, [executionMachine.machineId, executionMachine.mode, machines, recentMachinePaths]);
 
-	  const preflightModels = useNewSessionPreflightModelsState({
-	    backendTarget: { kind: 'backend', backendId: selectedAgentIdForModelOptions ?? DEFAULT_AGENT_ID },
-	    selectedMachineId: preflightMachineId,
-	    capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
-	  });
+  const preflightModels = useNewSessionPreflightModelsState({
+    backendTarget: hasConfiguredProviderChat
+      ? null
+      : { kind: 'backend', backendId: effectiveAgentIdForModelOptions },
+    selectedMachineId: preflightMachineId,
+    capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
+  });
 
   const selectableModelMenuItems = React.useMemo(() => {
-    if (!selectedAgentIdForModelOptions) return [];
     return getModelDropdownMenuItems({
       modelOptions: preflightModels.modelOptions,
       iconColor: theme.colors.text.secondary,
@@ -145,7 +151,7 @@ export function LocalConversationSection(props: {
         onRefresh: preflightModels.probe.onRefresh,
       },
     });
-  }, [preflightModels.modelOptions, preflightModels.probe.onRefresh, preflightModels.probe.phase, selectedAgentIdForModelOptions, theme.colors.text.secondary]);
+  }, [preflightModels.modelOptions, preflightModels.probe.onRefresh, preflightModels.probe.phase, theme.colors.text.secondary]);
 
   const modelIdMenuItems = React.useMemo(() => {
     return [
@@ -155,7 +161,7 @@ export function LocalConversationSection(props: {
         title: t('settingsVoice.local.modelCustomTitle'),
         subtitle: t('settingsVoice.local.modelCustomSubtitle'),
         icon: renderDropdownItemIcon({
-          name: 'create-outline',
+          name: 'pencil-simple',
           color: theme.colors.text.secondary,
         }),
       },
@@ -168,13 +174,13 @@ export function LocalConversationSection(props: {
         id: 'single',
         title: t('settingsVoice.local.conversation.rootSessionPolicy.singleTitle'),
         subtitle: t('settingsVoice.local.conversation.rootSessionPolicy.singleSubtitle'),
-        icon: <Ionicons name="radio-button-on-outline" size={22} color={theme.colors.text.secondary} />,
+        icon: <Icon name="radio-button" size={20} color={theme.colors.text.secondary} />,
       },
       {
         id: 'keep_warm',
         title: t('settingsVoice.local.conversation.rootSessionPolicy.keepWarmTitle'),
         subtitle: t('settingsVoice.local.conversation.rootSessionPolicy.keepWarmSubtitle'),
-        icon: <Ionicons name="flame-outline" size={22} color={theme.colors.text.secondary} />,
+        icon: <Icon name="flame" size={20} color={theme.colors.text.secondary} />,
       },
     ] as const;
   }, [theme.colors.text.secondary]);
@@ -241,13 +247,13 @@ export function LocalConversationSection(props: {
               id: 'agent',
               title: t('settingsFeatures.expVoiceAgent'),
               subtitle: t('settingsVoice.local.conversation.mode.voiceAgentSubtitle'),
-              icon: <Ionicons name="chatbubble-ellipses-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="chat-circle-dots" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'direct_session',
               title: t('settingsVoice.local.conversation.mode.directTitle'),
               subtitle: t('settingsVoice.local.conversation.mode.directSubtitle'),
-              icon: <Ionicons name="paper-plane-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="paper-plane" size={20} color={theme.colors.text.secondary} />,
             },
           ]}
           onSelect={(id) => {
@@ -260,8 +266,11 @@ export function LocalConversationSection(props: {
       <LocalVoiceSttGroup
         cfgStt={cfg.stt}
         setStt={(next) => setCfg({ stt: next })}
+        voice={voice}
+        setVoice={props.setVoice}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        showProcessingDisclosure={props.showProcessingDisclosure}
       />
 
       {sttProvider === 'device' ? (
@@ -330,9 +339,12 @@ export function LocalConversationSection(props: {
       <LocalVoiceTtsGroup
         cfgTts={cfg.tts}
         setTts={(next) => setCfg({ tts: next })}
+        voice={voice}
+        setVoice={props.setVoice}
         networkTimeoutMs={cfg.networkTimeoutMs}
         popoverBoundaryRef={props.popoverBoundaryRef}
         daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        showProcessingDisclosure={props.showProcessingDisclosure}
       />
 
       <DaemonVoiceModelCatalogSection
@@ -364,13 +376,13 @@ export function LocalConversationSection(props: {
                   id: 'ephemeral',
                   title: t('settingsVoice.local.conversation.persistence.ephemeralTitle'),
                   subtitle: t('settingsVoice.local.conversation.persistence.ephemeralSubtitle'),
-                  icon: <Ionicons name="flash-outline" size={22} color={theme.colors.text.secondary} />,
+                  icon: <Icon name="lightning" size={20} color={theme.colors.text.secondary} />,
                 },
                 {
                   id: 'persistent',
                   title: t('settingsVoice.local.conversation.persistence.persistentTitle'),
                   subtitle: t('settingsVoice.local.conversation.persistence.persistentSubtitle'),
-                  icon: <Ionicons name="infinite-outline" size={22} color={theme.colors.text.secondary} />,
+                  icon: <Icon name="infinity" size={20} color={theme.colors.text.secondary} />,
                 },
               ]}
               onSelect={(id) => {
@@ -398,7 +410,6 @@ export function LocalConversationSection(props: {
                       const mode = cfg.agent.resumabilityMode ?? 'replay';
                       if (mode !== 'provider_resume') return t('settingsVoice.local.conversation.resumability.replaySubtitle');
                       if (!voiceAgentEnabled) return t('settingsVoice.local.conversation.resumability.disabledVoiceAgent');
-                      if (cfg.agent.backend !== 'daemon') return t('settingsVoice.local.conversation.resumability.disabledDaemonBackend');
                       if (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent) return t('settingsVoice.local.conversation.resumability.disabledAgentNoProviderResume');
                       return t('settingsVoice.local.conversation.resumability.providerResumeSubtitle');
                     },
@@ -411,20 +422,18 @@ export function LocalConversationSection(props: {
                       id: 'replay',
                       title: t('settingsVoice.local.conversation.resumability.replayTitle'),
                       subtitle: t('settingsVoice.local.conversation.resumability.replaySubtitle'),
-                      icon: <Ionicons name="time-outline" size={22} color={theme.colors.text.secondary} />,
+                      icon: <Icon name="clock" size={20} color={theme.colors.text.secondary} />,
                     },
                     {
                       id: 'provider_resume',
                       title: t('settingsVoice.local.conversation.resumability.providerResumeTitle'),
                       subtitle: !voiceAgentEnabled
                         ? t('settingsVoice.local.conversation.resumability.disabledVoiceAgent')
-                        : cfg.agent.backend !== 'daemon'
-                          ? t('settingsVoice.local.conversation.resumability.disabledDaemonBackend')
-                          : cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent
+                        : cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent
                             ? t('settingsVoice.local.conversation.resumability.disabledAgentNoProviderResume')
                             : t('settingsVoice.local.conversation.resumability.providerResumeSubtitle'),
-                      disabled: !voiceAgentEnabled || cfg.agent.backend !== 'daemon' || (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent),
-                      icon: <Ionicons name="refresh-outline" size={22} color={theme.colors.text.secondary} />,
+                      disabled: !voiceAgentEnabled || (cfg.agent.agentSource === 'agent' && !providerResumeSupportedByAgent),
+                      icon: <Icon name="arrow-clockwise" size={20} color={theme.colors.text.secondary} />,
                     },
                   ]}
                   onSelect={(id) => {
@@ -466,13 +475,13 @@ export function LocalConversationSection(props: {
                       id: 'recent_messages',
                       title: t('settingsSession.replayResume.strategy.recentTitle'),
                       subtitle: t('settingsSession.replayResume.strategy.recentSubtitle'),
-                      icon: <Ionicons name="chatbubbles-outline" size={22} color={theme.colors.text.secondary} />,
+                      icon: <Icon name="chats-circle" size={20} color={theme.colors.text.secondary} />,
                     },
                     {
                       id: 'summary_plus_recent',
                       title: t('settingsSession.replayResume.strategy.summaryRecentTitle'),
                       subtitle: t('settingsSession.replayResume.strategy.summaryRecentSubtitle'),
-                      icon: <Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />,
+                      icon: <Icon name="file-text" size={20} color={theme.colors.text.secondary} />,
                     },
                   ]}
                   onSelect={(id) => {
@@ -535,19 +544,19 @@ export function LocalConversationSection(props: {
                   id: 'off',
                   title: t('settingsVoice.local.conversation.welcome.offTitle'),
                   subtitle: t('settingsVoice.local.conversation.welcome.offSubtitle'),
-                  icon: <Ionicons name="close-outline" size={22} color={theme.colors.text.secondary} />,
+                  icon: <Icon name="x" size={20} color={theme.colors.text.secondary} />,
                 },
                 {
                   id: 'immediate',
                   title: t('settingsVoice.local.conversation.welcome.immediateTitle'),
                   subtitle: t('settingsVoice.local.conversation.welcome.immediateSubtitle'),
-                  icon: <Ionicons name="happy-outline" size={22} color={theme.colors.text.secondary} />,
+                  icon: <Icon name="smiley" size={20} color={theme.colors.text.secondary} />,
                 },
                 {
                   id: 'on_first_turn',
                   title: t('settingsVoice.local.conversation.welcome.onFirstTurnTitle'),
                   subtitle: t('settingsVoice.local.conversation.welcome.onFirstTurnSubtitle'),
-                  icon: <Ionicons name="chatbox-outline" size={22} color={theme.colors.text.secondary} />,
+                  icon: <Icon name="chat" size={20} color={theme.colors.text.secondary} />,
                 },
               ]}
               onSelect={(id) => {
@@ -580,52 +589,6 @@ export function LocalConversationSection(props: {
             </ItemGroup>
 
             <ItemGroup title={t('settingsVoice.local.conversation.agentSettings.title')}>
-              <DropdownMenu
-                open={openMenu === 'mediatorBackend'}
-                onOpenChange={(next) => setOpenMenu(next ? 'mediatorBackend' : null)}
-                variant="selectable"
-                search={false}
-                selectedId={cfg.agent.backend}
-                showCategoryTitles={false}
-              matchTriggerWidth={true}
-              connectToTrigger={true}
-              rowKind="item"
-              popoverBoundaryRef={props.popoverBoundaryRef}
-              itemTrigger={{
-                title: t('settingsVoice.local.mediatorBackend'),
-                subtitleFormatter: () => {
-                  if (cfg.agent.backend !== 'daemon') return t('settingsVoice.local.conversation.backend.openAiSubtitle');
-                  return voiceAgentEnabled
-                    ? t('settingsVoice.local.conversation.backend.daemonSubtitle')
-                    : t('settingsVoice.local.conversation.resumability.disabledVoiceAgent');
-                },
-                detailFormatter: () => (cfg.agent.backend === 'daemon'
-                  ? t('settingsVoice.local.mediatorBackendDaemon')
-                  : t('settingsVoice.local.mediatorBackendOpenAi')),
-              }}
-              items={[
-                {
-                  id: 'daemon',
-                  title: t('settingsVoice.local.mediatorBackendDaemon'),
-                    subtitle: voiceAgentEnabled
-                      ? t('settingsVoice.local.conversation.backend.daemonSubtitle')
-                      : t('settingsVoice.local.conversation.resumability.disabledVoiceAgent'),
-                    icon: <Ionicons name="server-outline" size={22} color={theme.colors.text.secondary} />,
-                    disabled: !voiceAgentEnabled,
-                  },
-                  {
-                    id: 'openai_compat',
-                    title: t('settingsVoice.local.mediatorBackendOpenAi'),
-                    subtitle: t('settingsVoice.local.conversation.backend.openAiSubtitle'),
-                    icon: <Ionicons name="cloud-outline" size={22} color={theme.colors.text.secondary} />,
-                  },
-                ]}
-                onSelect={(id) => {
-                  setAgent({ backend: id as any });
-                  setOpenMenu(null);
-                }}
-              />
-
               <Item
                 title={t('settingsVoice.local.conversation.agentMachine.stayInVoiceHomeTitle')}
                 subtitle={
@@ -709,6 +672,45 @@ export function LocalConversationSection(props: {
                   }}
                 />
               ) : null}
+        {cfg.agent.providerChat?.status === 'needs_selection' ? (
+          <DropdownMenu
+            open={openMenu === 'providerChatAgentSelection'}
+            onOpenChange={(next) => setOpenMenu(next ? 'providerChatAgentSelection' : null)}
+            variant="selectable"
+            search={false}
+            selectedId=""
+            showCategoryTitles={false}
+            matchTriggerWidth={true}
+            connectToTrigger={true}
+            rowKind="item"
+            popoverBoundaryRef={props.popoverBoundaryRef}
+            itemTrigger={{
+              title: t('settingsVoice.local.mediatorAgentId'),
+              subtitleFormatter: () => t('settingsVoice.local.mediatorAgentIdSubtitle'),
+            }}
+            items={[{
+              id: LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
+              title: t(getAgentCore(LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID).displayNameKey),
+              subtitle: t('settingsVoice.local.conversation.agentSource.fixedAgentSubtitle'),
+              icon: <Icon name="person" size={20} color={theme.colors.text.secondary} />,
+            }]}
+            onSelect={(id) => {
+              const providerChat = completeLegacyVoiceOpenAiChatAgentSelection(
+                cfg.agent.providerChat as Extract<NonNullable<typeof cfg.agent.providerChat>, { status: 'needs_selection' }>,
+                String(id),
+              );
+              if (!providerChat) return;
+              setAgent({
+                agentSource: 'agent',
+                agentId: LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
+                providerChat,
+              });
+              setOpenMenu(null);
+            }}
+          />
+        ) : null}
+        {!hasConfiguredProviderChat ? (
+          <>
         <DropdownMenu
           open={openMenu === 'mediatorAgentSource'}
           onOpenChange={(next) => setOpenMenu(next ? 'mediatorAgentSource' : null)}
@@ -731,13 +733,13 @@ export function LocalConversationSection(props: {
               id: 'session',
               title: t('settingsVoice.local.conversation.agentSource.followSessionTitle'),
               subtitle: t('settingsVoice.local.conversation.agentSource.followSessionSubtitle'),
-              icon: <Ionicons name="swap-horizontal-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="arrows-left-right" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'agent',
               title: t('settingsVoice.local.conversation.agentSource.fixedAgentTitle'),
               subtitle: t('settingsVoice.local.conversation.agentSource.fixedAgentSubtitle'),
-              icon: <Ionicons name="person-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="person" size={20} color={theme.colors.text.secondary} />,
             },
           ]}
           onSelect={(id) => {
@@ -788,6 +790,8 @@ export function LocalConversationSection(props: {
             }}
           />
         ) : null}
+          </>
+        ) : null}
         <DropdownMenu
           open={openMenu === 'mediatorPermissionPolicy'}
           onOpenChange={(next) => setOpenMenu(next ? 'mediatorPermissionPolicy' : null)}
@@ -807,25 +811,25 @@ export function LocalConversationSection(props: {
               id: 'default',
               title: t('agentInput.permissionMode.default'),
               subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.default.subtitle'),
-              icon: <Ionicons name="eye-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="eye" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'read-only',
               title: t('agentInput.permissionMode.readOnly'),
               subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.read-only.subtitle'),
-              icon: <Ionicons name="hand-left-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="hand" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'safe-yolo',
               title: t('agentInput.permissionMode.safeYolo'),
               subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.safe-yolo.subtitle'),
-              icon: <Ionicons name="shield-checkmark-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="shield-check" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'yolo',
               title: t('agentInput.permissionMode.yolo'),
               subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.yolo.subtitle'),
-              icon: <Ionicons name="flash-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="lightning" size={20} color={theme.colors.text.secondary} />,
             },
           ]}
           onSelect={(id) => {
@@ -834,6 +838,8 @@ export function LocalConversationSection(props: {
           }}
         />
 
+        {!hasConfiguredProviderChat ? (
+          <>
         <DropdownMenu
           open={openMenu === 'mediatorChatModelSource'}
           onOpenChange={(next) => setOpenMenu(next ? 'mediatorChatModelSource' : null)}
@@ -853,13 +859,13 @@ export function LocalConversationSection(props: {
               id: 'session',
               title: t('settingsVoice.local.mediatorChatModelSourceSession'),
               subtitle: t('settingsVoice.local.conversation.chatModelSource.sessionSubtitle'),
-              icon: <Ionicons name="layers-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="stack-simple" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'custom',
               title: t('settingsVoice.local.mediatorChatModelSourceCustom'),
               subtitle: t('settingsVoice.local.conversation.chatModelSource.customSubtitle'),
-              icon: <Ionicons name="options-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />,
             },
           ]}
           onSelect={(id) => {
@@ -940,19 +946,19 @@ export function LocalConversationSection(props: {
               id: 'chat',
               title: t('settingsVoice.local.mediatorCommitModelSourceChat'),
               subtitle: t('settingsVoice.local.conversation.commitModelSource.chatSubtitle'),
-              icon: <Ionicons name="chatbubble-ellipses-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="chat-circle-dots" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'session',
               title: t('settingsVoice.local.mediatorCommitModelSourceSession'),
               subtitle: t('settingsVoice.local.conversation.commitModelSource.sessionSubtitle'),
-              icon: <Ionicons name="layers-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="stack-simple" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'custom',
               title: t('settingsVoice.local.mediatorCommitModelSourceCustom'),
               subtitle: t('settingsVoice.local.conversation.commitModelSource.customSubtitle'),
-              icon: <Ionicons name="options-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />,
             },
           ]}
           onSelect={(id) => {
@@ -1014,7 +1020,9 @@ export function LocalConversationSection(props: {
             }}
           />
         ) : null}
-        {cfg.agent.backend === 'daemon' && voiceAgentEnabled ? (
+          </>
+        ) : null}
+        {voiceAgentEnabled ? (
           <Item
             title={t('settingsVoice.local.conversation.commitIsolation.title')}
             subtitle={t('settingsVoice.local.conversation.commitIsolation.subtitle')}
@@ -1068,13 +1076,13 @@ export function LocalConversationSection(props: {
               id: 'short',
               title: t('settingsVoice.local.mediatorVerbosityShort'),
               subtitle: t('settingsVoice.local.conversation.verbosity.shortSubtitle'),
-              icon: <Ionicons name="remove-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="minus" size={20} color={theme.colors.text.secondary} />,
             },
             {
               id: 'balanced',
               title: t('settingsVoice.local.mediatorVerbosityBalanced'),
               subtitle: t('settingsVoice.local.conversation.verbosity.balancedSubtitle'),
-              icon: <Ionicons name="reorder-two-outline" size={22} color={theme.colors.text.secondary} />,
+              icon: <Icon name="list" size={20} color={theme.colors.text.secondary} />,
             },
           ]}
           onSelect={(id) => {
@@ -1083,103 +1091,6 @@ export function LocalConversationSection(props: {
           }}
         />
       </ItemGroup>
-
-      {cfg.agent.backend === 'openai_compat' ? (
-        <ItemGroup title={t('settingsVoice.local.mediatorBackendOpenAi')}>
-          <OpenAiCompatEndpointItem
-            title={t('settingsVoice.local.chatBaseUrl')}
-            promptTitle={t('settingsVoice.local.chatBaseUrlTitle')}
-            promptDescription={t('settingsVoice.local.chatBaseUrlDescription')}
-            baseUrl={cfg.agent.openaiCompat.chatBaseUrl}
-            insecureLocalOriginConsent={cfg.agent.openaiCompat.insecureLocalOriginConsent}
-            insecureLocalConsentMachineId={cfg.agent.openaiCompat.insecureLocalConsentMachineId}
-            onChange={(patch) => setAgent({
-              openaiCompat: {
-                ...cfg.agent.openaiCompat,
-                chatBaseUrl: patch.baseUrl,
-                insecureLocalOriginConsent: patch.insecureLocalOriginConsent,
-                insecureLocalConsentMachineId: patch.insecureLocalConsentMachineId,
-              },
-            })}
-          />
-          <OpenAiCompatCredentialItem
-            title={t('settingsVoice.local.chatApiKey')}
-            promptTitle={t('settingsVoice.local.chatApiKeyTitle')}
-            promptDescription={t('settingsVoice.local.chatApiKeyDescription')}
-            credentialKind="chat_api_key"
-            legacySecretValue={cfg.agent.openaiCompat.chatApiKey}
-          />
-          <Item
-            title={t('settingsVoice.local.chatModel')}
-            detail={String(cfg.agent.openaiCompat.chatModel)}
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(t('settingsVoice.local.chatModelTitle'), t('settingsVoice.local.chatModelDescription'), {
-                  placeholder: String(cfg.agent.openaiCompat.chatModel),
-                });
-                if (raw === null) return;
-                const next = String(raw).trim();
-                if (!next) return;
-                setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, chatModel: next } });
-              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.chatModel' });
-            }}
-          />
-          <Item
-            title={t('settingsVoice.local.commitModel')}
-            detail={String(cfg.agent.openaiCompat.commitModel)}
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(t('settingsVoice.local.commitModelTitle'), t('settingsVoice.local.commitModelDescription'), {
-                  placeholder: String(cfg.agent.openaiCompat.commitModel),
-                });
-                if (raw === null) return;
-                const next = String(raw).trim();
-                if (!next) return;
-                setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, commitModel: next } });
-              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.commitModel' });
-            }}
-          />
-          <Item
-            title={t('settingsVoice.local.chatTemperature')}
-            detail={String(cfg.agent.openaiCompat.temperature)}
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(t('settingsVoice.local.chatTemperatureTitle'), t('settingsVoice.local.chatTemperatureDescription'), {
-                  placeholder: String(cfg.agent.openaiCompat.temperature),
-                });
-                if (raw === null) return;
-                const next = Number(String(raw).trim());
-                if (!Number.isFinite(next)) return;
-                setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, temperature: Math.max(0, Math.min(2, next)) } });
-              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.temperature' });
-            }}
-          />
-          <Item
-            title={t('settingsVoice.local.chatMaxTokens')}
-            detail={
-              cfg.agent.openaiCompat.maxTokens == null
-                ? t('settingsVoice.local.chatMaxTokensUnlimited')
-                : String(cfg.agent.openaiCompat.maxTokens)
-            }
-            onPress={() => {
-              fireAndForget((async () => {
-                const raw = await Modal.prompt(t('settingsVoice.local.chatMaxTokensTitle'), t('settingsVoice.local.chatMaxTokensDescription'), {
-                  placeholder: cfg.agent.openaiCompat.maxTokens == null ? '' : String(cfg.agent.openaiCompat.maxTokens),
-                });
-                if (raw === null) return;
-                const trimmed = String(raw).trim();
-                if (!trimmed) {
-                  setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, maxTokens: null } });
-                  return;
-                }
-                const next = Number(trimmed);
-                if (!Number.isFinite(next)) return;
-                setAgent({ openaiCompat: { ...cfg.agent.openaiCompat, maxTokens: Math.max(1, Math.floor(next)) } });
-              })(), { tag: 'LocalConversationSection.prompt.openaiCompat.maxTokens' });
-            }}
-          />
-        </ItemGroup>
-      ) : null}
 
       <ItemGroup title={t('settingsVoice.local.conversation.streaming.title')}>
         <Item

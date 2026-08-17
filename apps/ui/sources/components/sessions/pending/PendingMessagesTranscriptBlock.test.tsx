@@ -4,6 +4,11 @@ import { act } from 'react-test-renderer';
 import { createDeferred, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import {
+    getPendingMessageVisualState,
+    resolvePendingMessageHeightBearingChrome,
+    type PendingMessageHeightBearingChrome,
+} from './pendingMessageVisualState';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
 
 
@@ -44,6 +49,7 @@ const modalPrompt = vi.fn();
 const reorderPendingMessages = vi.fn();
 const executeDefaultAction = vi.fn();
 const resolvePreferredServerIdForSessionId = vi.fn();
+const setClipboardStringSafe = vi.hoisted(() => vi.fn(async (_value: string) => true));
 const serverFeaturesSnapshotState = vi.hoisted(() => ({
     current: { status: 'loading' } as any,
 }));
@@ -202,6 +208,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
     resolvePreferredServerIdForSessionId: (...args: unknown[]) => resolvePreferredServerIdForSessionId(...args),
 }));
 
+vi.mock('@/utils/ui/clipboard', () => ({
+    setClipboardStringSafe: (value: string) => setClipboardStringSafe(value),
+}));
+
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: 'MarkdownView',
 }));
@@ -233,7 +243,12 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
                 item.title,
             ))
             : null;
-        return React.createElement('DropdownMenu', { open: props.open }, trigger, items);
+        return React.createElement('DropdownMenu', {
+            open: props.open,
+            popoverAnchor: props.popoverAnchor,
+            placement: props.placement,
+            matchTriggerWidth: props.matchTriggerWidth,
+        }, trigger, items);
     },
 }));
 
@@ -258,6 +273,8 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800, headerMaxWidth: 800 },
+    useLayoutMaxWidth: () => 800,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 800 }),
 }));
 
 describe('PendingMessagesTranscriptBlock', () => {
@@ -279,6 +296,8 @@ describe('PendingMessagesTranscriptBlock', () => {
         executeDefaultAction.mockReset();
         executeDefaultAction.mockResolvedValue({ ok: true, result: { ok: true, status: 'cleared', sessionId: 's1' } });
         resolvePreferredServerIdForSessionId.mockReset();
+        setClipboardStringSafe.mockReset();
+        setClipboardStringSafe.mockResolvedValue(true);
         serverFeaturesSnapshotState.current = { status: 'loading' };
         sessionValue = null;
         settingValues = {};
@@ -511,7 +530,33 @@ describe('PendingMessagesTranscriptBlock', () => {
         const affordanceStyle = flattenStyle(affordance!.props.style);
         expect(affordanceStyle.position).toBe('absolute');
         expect(affordanceStyle.borderWidth).toBe(0);
-        expect(affordanceStyle.paddingVertical).toBe(1);
+    });
+
+    it('exposes pending and discarded rows by their message-specific accessible names', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [
+                { id: 'p1', text: 'first queued instruction', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
+                { id: 'p2', text: 'second queued instruction', displayText: undefined, createdAt: 1, updatedAt: 1, localId: 'p2', rawRecord: {} },
+            ],
+            discardedMessages: [
+                { id: 'd1', text: 'first discarded instruction', displayText: undefined, createdAt: 0, updatedAt: 0, discardedAt: 1, discardedReason: 'manual', localId: 'd1', rawRecord: {} },
+                { id: 'd2', text: 'second discarded instruction', displayText: undefined, createdAt: 1, updatedAt: 1, discardedAt: 2, discardedReason: 'manual', localId: 'd2', rawRecord: {} },
+            ],
+        }));
+
+        const pendingFirst = screen.findByTestId('pendingMessages.message:p1')?.props.accessibilityLabel;
+        const pendingSecond = screen.findByTestId('pendingMessages.message:p2')?.props.accessibilityLabel;
+        const discardedFirst = screen.findByTestId('pendingMessages.discarded.message:d1')?.props.accessibilityLabel;
+        const discardedSecond = screen.findByTestId('pendingMessages.discarded.message:d2')?.props.accessibilityLabel;
+
+        expect(pendingFirst).toContain('first queued instruction');
+        expect(pendingSecond).toContain('second queued instruction');
+        expect(discardedFirst).toContain('first discarded instruction');
+        expect(discardedSecond).toContain('second discarded instruction');
+        expect(pendingFirst).not.toBe(pendingSecond);
+        expect(discardedFirst).not.toBe(discardedSecond);
     });
 
     it('uses the transcript markdown typography for pending message markdown rows', async () => {
@@ -567,7 +612,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(reorderPendingMessages).toHaveBeenCalledWith('s1', ['p2', 'p1']);
     });
 
-    it('does not show per-message action icons until hover on web', async () => {
+    it('shows per-message action icons without hover on web', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -577,18 +622,8 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const overlay = screen.findByTestId('pendingMessages.actionsOverlay:p1');
         expect(overlay).toBeTruthy();
-        expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
-        expect(overlay!.props.pointerEvents).toBeUndefined();
-        expect(flattenStyle(overlay!.props.style).pointerEvents).toBe('none');
-
-        await hoverPendingMessageRow(screen, 'p1');
-
-        const overlayAfterHover = screen.findByTestId('pendingMessages.actionsOverlay:p1');
-        expect(overlayAfterHover).toBeTruthy();
-        expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
-        expect(flattenStyle(overlayAfterHover!.props.style).bottom).toBe(8);
-        expect(overlayAfterHover!.props.pointerEvents).toBeUndefined();
-        expect(flattenStyle(overlayAfterHover!.props.style).pointerEvents).toBe('auto');
+        expect(overlay!.props.pointerEvents).toBe('auto');
+        expect(screen.findByTestId('pendingMessages.copy:p1')).toBeTruthy();
 
         const remove = screen.findByTestId('pendingMessages.remove:p1');
         expect(remove).toBeTruthy();
@@ -596,6 +631,62 @@ describe('PendingMessagesTranscriptBlock', () => {
             ? remove!.props.style({ pressed: false })
             : remove!.props.style;
         expect(flattenStyle(removeStyle).pointerEvents).toBe('auto');
+    });
+
+    it('copies the visible pending-message text', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'raw text', displayText: 'visible text', createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        await screen.pressByTestIdAsync('pendingMessages.copy:p1');
+
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('visible text');
+    });
+
+    it('reports clipboard failures', async () => {
+        setClipboardStringSafe.mockResolvedValueOnce(false);
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        await screen.pressByTestIdAsync('pendingMessages.copy:p1');
+
+        expect(modalAlert).toHaveBeenCalledWith(t('common.error'), t('items.failedToCopyToClipboard'));
+    });
+
+    it('anchors a pending-message menu to the visible press point', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'x'.repeat(600), displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        await act(async () => {
+            invokeTestInstanceHandler(
+                screen.findByTestId('pendingMessages.message:p1')!,
+                'onPress',
+                { nativeEvent: { pageX: 120, pageY: 360 } },
+            );
+        });
+
+        const menu = screen.findByType('DropdownMenu' as any);
+        expect(menu?.props.open).toBe(true);
+        expect(menu?.props.popoverAnchor).toEqual({
+            kind: 'rect',
+            rect: { left: 120, top: 360, height: 1 },
+        });
+        expect(menu?.props.placement).toBe('auto-vertical');
+        expect(menu?.props.matchTriggerWidth).toBe(false);
+
+        await screen.pressByTestIdAsync('pendingMessages.menu.copy:p1');
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('x'.repeat(600));
     });
 
     it('sends steer-now directly while a steer-capable session is thinking and does not abort the turn', async () => {
@@ -778,7 +869,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it.each(['dismissed_uncertain', 'resent_as_new'] as const)(
-        'keeps %s uncertainty tombstones visible but non-executable',
+        'keeps %s uncertainty tombstones visible but non-mutating',
         async (discardedReason) => {
             const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
             sessionValue = createFreshSteerCapableSession();
@@ -793,10 +884,21 @@ describe('PendingMessagesTranscriptBlock', () => {
 
             expect(screen.findByTestId('pendingMessages.discarded.row:d1')).toBeTruthy();
             await hoverDiscardedMessageRow(screen, 'd1');
+            expect(screen.findByTestId('pendingMessages.discarded.copy:d1')).toBeTruthy();
             expect(screen.findByTestId('pendingMessages.discarded.requeue:d1')).toBeNull();
             expect(screen.findByTestId('pendingMessages.discarded.remove:d1')).toBeNull();
             expect(screen.findByTestId('pendingMessages.discarded.steerNow:d1')).toBeNull();
             expect(screen.findByTestId('pendingMessages.discarded.sendNow:d1')).toBeNull();
+
+            await act(async () => {
+                invokeTestInstanceHandler(
+                    screen.findByTestId('pendingMessages.discarded.message:d1')!,
+                    'onPress',
+                    { nativeEvent: { pageX: 180, pageY: 400 } },
+                );
+            });
+            await screen.pressByTestIdAsync('pendingMessages.discarded.menu.copy:d1');
+            expect(setClipboardStringSafe).toHaveBeenCalledWith('archived uncertainty');
         },
     );
 
@@ -897,6 +999,59 @@ describe('PendingMessagesTranscriptBlock', () => {
             expect(screen.findByTestId('pendingMessages.remove:p1')).toBeTruthy();
         } finally {
             nowSpy.mockRestore();
+        }
+    });
+
+
+    /**
+     * F-P2 (2026-08-10): `resolvePendingMessageHeightBearingChrome` is what the transcript
+     * measurement layer keys the pending row's SIZE VERSION on, and it is only sound while it names
+     * the same in-flow notice this block actually paints. Asserted from BOTH ends here: the
+     * descriptor's answer, and the notice that appears in the tree.
+     */
+    it('paints exactly the in-flow notice its height-bearing chrome descriptor names', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const row = (overrides: Partial<PendingMessage>): PendingMessage => ({
+            id: 'p1',
+            localId: 'p1',
+            text: 'hello',
+            displayText: undefined,
+            createdAt: 0,
+            updatedAt: 0,
+            rawRecord: {},
+            source: 'server_pending',
+            ...overrides,
+        } as PendingMessage);
+
+        const cases: readonly Readonly<{
+            chrome: PendingMessageHeightBearingChrome;
+            message: PendingMessage;
+        }>[] = [
+            { chrome: 'none', message: row({ pendingDeliveryStatus: 'server_queued' }) },
+            { chrome: 'none', message: row({ pendingDeliveryStatus: 'server_delivering' }) },
+            { chrome: 'none', message: row({ source: 'local_outbound' }) },
+            // The state the sibling repository paints a notice for, and this one does not.
+            { chrome: 'none', message: row({ source: 'local_outbound', sendState: 'failed' }) },
+            {
+                chrome: 'blocked-notice',
+                message: row({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'payload_too_large' }),
+            },
+        ];
+
+        for (const { chrome, message } of cases) {
+            expect(resolvePendingMessageHeightBearingChrome(getPendingMessageVisualState(message)), JSON.stringify(message.pendingDeliveryStatus ?? message.sendState ?? message.source))
+                .toBe(chrome);
+
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [message],
+                discardedMessages: [],
+            }));
+
+            expect(
+                screen.findByTestId('pendingMessages.blockedDeliveryNotice:p1') !== null,
+                `blocked notice painted for ${chrome}`,
+            ).toBe(chrome === 'blocked-notice');
         }
     });
 
@@ -1109,12 +1264,11 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(markPendingDeliveryHandled).toHaveBeenCalledWith('s1', 'p1');
     });
 
-    it.each([
-        'server_delivering',
-        'external_handoff',
-    ] as const)('keeps provider-effect-possible %s rows visible without mutation actions', async (pendingDeliveryStatus) => {
+    it('offers only duplicate-safe send-as-new recovery for a server-delivering row', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         sessionValue = createFreshSteerCapableSession();
+        sendPendingDeliveryAsNew.mockResolvedValueOnce(undefined);
+        modalConfirm.mockResolvedValueOnce(true);
 
         const pendingMessage: PendingMessage = {
             id: 'p-delivering',
@@ -1125,7 +1279,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             updatedAt: 0,
             rawRecord: {},
             source: 'server_pending',
-            pendingDeliveryStatus,
+            pendingDeliveryStatus: 'server_delivering',
         } as PendingMessage;
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
             sessionId: 's1',
@@ -1145,14 +1299,11 @@ describe('PendingMessagesTranscriptBlock', () => {
         await hoverPendingMessageRow(screen, 'p-delivering');
 
         expect(screen.findByTestId('pendingMessages.pendingAffordance:p-delivering')?.props.accessibilityLabel).toBe('Delivering');
-        if (pendingDeliveryStatus === 'server_delivering') {
-            expect(screen.findByTestId('pendingMessages.deliveringIndicator:p-delivering')).toBeTruthy();
-        } else {
-            expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:p-delivering')?.props.children).toBe('Delivering');
-        }
+        expect(screen.findByTestId('pendingMessages.deliveringIndicator:p-delivering')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.retryDelivery:p-delivering')).toBeNull();
         expect(screen.findByTestId('pendingMessages.markDeliveryHandled:p-delivering')).toBeNull();
         expect(screen.findByTestId('pendingMessages.discardDelivery:p-delivering')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.sendAsNew:p-delivering')).toBeTruthy();
         expect(screen.findByTestId('pendingMessages.edit:p-delivering')).toBeNull();
         expect(screen.findByTestId('pendingMessages.remove:p-delivering')).toBeNull();
         expect(screen.findByTestId('pendingMessages.steerNow:p-delivering')).toBeNull();
@@ -1163,6 +1314,27 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(discardPendingMessage).not.toHaveBeenCalled();
         expect(sendPendingMessageNow).not.toHaveBeenCalled();
         expect(sessionAbort).not.toHaveBeenCalled();
+
+        await screen.pressByTestIdAsync('pendingMessages.sendAsNew:p-delivering');
+        expect(sendPendingDeliveryAsNew).toHaveBeenCalledWith('s1', 'p-delivering');
+        expect(sendPendingMessageNow).not.toHaveBeenCalled();
+    });
+
+    it('keeps an external-handoff row visible without mutation actions', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        sessionValue = createFreshSteerCapableSession();
+        const pendingMessage = {
+            id: 'p-handoff', localId: 'p-handoff', text: 'external handoff', displayText: undefined,
+            createdAt: 0, updatedAt: 0, rawRecord: {}, source: 'server_pending',
+            pendingDeliveryStatus: 'external_handoff',
+        } as PendingMessage;
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1', pendingMessages: [pendingMessage], discardedMessages: [],
+        }));
+        await hoverPendingMessageRow(screen, 'p-handoff');
+        expect(screen.findByTestId('pendingMessages.sendAsNew:p-handoff')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.markDeliveryHandled:p-handoff')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.sendNow:p-handoff')).toBeNull();
     });
 
     it('labels exact Claude-native custody as Queued in Claude', async () => {
@@ -1171,6 +1343,9 @@ describe('PendingMessagesTranscriptBlock', () => {
             status: 'ready',
             features: {
                 capabilities: {
+                    session: {
+                        pendingInput: { protocolVersion: 1 },
+                    },
                     compatibility: {
                         pendingInput: { currentPendingInputProtocolVersion: 1 },
                     },
@@ -1635,11 +1810,73 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(modalAlert).toHaveBeenCalledTimes(0);
     });
 
+    describe('send crossover: one queued utterance paints like its committed bubble', () => {
+        const longText = 'x'.repeat(400);
+        const crossoverSettings = {
+            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueExpandedMaxHeightPx: 520,
+            transcriptPendingMessageCollapseThresholdChars: 160,
+            transcriptPendingMessageCollapsedLines: 2,
+        };
+
+        function longPendingMessage(id: string, createdAt: number) {
+            return { id, text: longText, displayText: undefined, createdAt, updatedAt: createdAt, localId: id, rawRecord: {} };
+        }
+
+        it('does not clip a single long queued utterance', async () => {
+            settingValues = crossoverSettings;
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [longPendingMessage('p1', 0)],
+                discardedMessages: [],
+            }));
+
+            const scroll = screen.findByTestId('pendingMessages.scroll');
+            expect(scroll!.props.style?.maxHeight).toBeUndefined();
+            expect(screen.findByType('MarkdownView' as any)).toBeTruthy();
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')).toBeNull();
+
+            await act(async () => {
+                scroll!.props.onContentSizeChange(0, 400);
+            });
+            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBeUndefined();
+            expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
+        });
+
+        it('still clips when a second queued row shares the block', async () => {
+            settingValues = crossoverSettings;
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [longPendingMessage('p1', 0), longPendingMessage('p2', 1)],
+                discardedMessages: [],
+            }));
+
+            expect(screen.findByTestId('pendingMessages.scroll')!.props.style?.maxHeight).toBe(80);
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityRole).toBe('button');
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityState).toEqual({ expanded: false });
+            expect(screen.findByTestId('pendingMessages.viewMore:p2')).toBeTruthy();
+
+            await screen.pressByTestIdAsync('pendingMessages.viewMore:p1');
+
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityRole).toBe('button');
+            expect(screen.findByTestId('pendingMessages.viewMore:p1')!.props.accessibilityState).toEqual({ expanded: true });
+        });
+    });
+
+    function queuedPendingMessages() {
+        return [
+            { id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} },
+            { id: 'p2', text: 'world', displayText: undefined, createdAt: 1, updatedAt: 1, localId: 'p2', rawRecord: {} },
+        ];
+    }
+
     it('uses an 80px default max-height for the pending queue block', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
-                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                pendingMessages: queuedPendingMessages(),
                 discardedMessages: [],
             }));
 
@@ -1653,11 +1890,12 @@ describe('PendingMessagesTranscriptBlock', () => {
         settingValues = {
             transcriptPendingQueueMaxHeightPx: 80,
             transcriptPendingQueueExpandedMaxHeightPx: 520,
+            transcriptPendingQueueReorderRowHeightPx: 24,
         };
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
-                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                pendingMessages: queuedPendingMessages(),
                 discardedMessages: [],
             }));
 
@@ -1674,16 +1912,19 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(headerToggleStyle.borderWidth).toBe(0);
         expect(headerToggleStyle.paddingHorizontal).toBe(0);
         expect(headerToggleStyle.paddingVertical).toBe(0);
-        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
     });
 
     it('does not show a header toggle when pending content fits the compact height', async () => {
-        settingValues = { transcriptPendingQueueMaxHeightPx: 80 };
+        settingValues = {
+            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueReorderRowHeightPx: 24,
+        };
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
-                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                pendingMessages: queuedPendingMessages(),
                 discardedMessages: [],
             }));
 
@@ -1698,13 +1939,13 @@ describe('PendingMessagesTranscriptBlock', () => {
 
     it('keeps the pending queue viewport above the row estimate when web content measurement underflows', async () => {
         settingValues = {
-            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueMaxHeightPx: 120,
             transcriptPendingQueueReorderRowHeightPx: 52,
         };
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
-                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                pendingMessages: queuedPendingMessages(),
                 discardedMessages: [],
             }));
 
@@ -1713,7 +1954,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             scroll!.props.onContentSizeChange(0, 6);
         });
 
-        expect(screen.findByType('ScrollView').props.style?.height).toBe(52);
+        expect(screen.findByType('ScrollView').props.style?.height).toBe(104);
         expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
     });
 
@@ -1725,7 +1966,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
-                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                pendingMessages: queuedPendingMessages(),
                 discardedMessages: [],
             }));
 
@@ -1736,7 +1977,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
 
-        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'caret-down' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(520);
     });
 
@@ -1748,7 +1989,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
-                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                pendingMessages: queuedPendingMessages(),
                 discardedMessages: [],
             }));
 
@@ -1759,7 +2000,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
 
-        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
     });
 
@@ -1769,11 +2010,14 @@ describe('PendingMessagesTranscriptBlock', () => {
             transcriptPendingQueueExpandedMaxHeightPx: 520,
         };
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
-        const firstPendingMessage = { id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} };
-        const secondPendingMessage = { id: 'p2', text: 'world', displayText: undefined, createdAt: 1, updatedAt: 1, localId: 'p2', rawRecord: {} };
+        const firstQueue = queuedPendingMessages();
+        const secondQueue = [
+            { id: 'p3', text: 'again', displayText: undefined, createdAt: 2, updatedAt: 2, localId: 'p3', rawRecord: {} },
+            { id: 'p4', text: 'and again', displayText: undefined, createdAt: 3, updatedAt: 3, localId: 'p4', rawRecord: {} },
+        ];
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
-                pendingMessages: [firstPendingMessage],
+                pendingMessages: firstQueue,
                 discardedMessages: [],
             }));
 
@@ -1792,7 +2036,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         await screen.update(React.createElement(PendingMessagesTranscriptBlock, {
             sessionId: 's1',
-            pendingMessages: [secondPendingMessage],
+            pendingMessages: secondQueue,
             discardedMessages: [],
         }));
         const nextScroll = screen.findByTestId('pendingMessages.scroll');
@@ -1800,7 +2044,7 @@ describe('PendingMessagesTranscriptBlock', () => {
             nextScroll!.props.onContentSizeChange(0, 160);
         });
 
-        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'caret-up' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
     });
 
@@ -1896,7 +2140,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
     });
 
-    it('does not show discarded action icons until hover on web', async () => {
+    it('shows discarded action icons without hover on web', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -1908,20 +2152,57 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const overlay = screen.findByTestId('pendingMessages.discarded.actionsOverlay:d1');
         expect(overlay).toBeTruthy();
-        expect(flattenStyle(overlay!.props.style).opacity).toBe(0);
-        expect(overlay!.props.pointerEvents).toBeUndefined();
-        expect(flattenStyle(overlay!.props.style).pointerEvents).toBe('none');
-
-        await hoverDiscardedMessageRow(screen, 'd1');
-
-        const overlayAfterHover = screen.findByTestId('pendingMessages.discarded.actionsOverlay:d1');
-        expect(overlayAfterHover).toBeTruthy();
-        expect(flattenStyle(overlayAfterHover!.props.style).opacity).toBe(1);
-        expect(overlayAfterHover!.props.pointerEvents).toBeUndefined();
-        expect(flattenStyle(overlayAfterHover!.props.style).pointerEvents).toBe('auto');
+        expect(overlay!.props.pointerEvents).toBe('auto');
+        expect(screen.findByTestId('pendingMessages.discarded.copy:d1')).toBeTruthy();
     });
 
-    it('hides the next pending chip while hovering a message on web', async () => {
+    it('copies discarded pending-message text', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [],
+            discardedMessages: [
+                { id: 'd1', text: 'discarded raw', displayText: 'discarded visible', createdAt: 0, updatedAt: 0, discardedAt: 1, discardedReason: 'manual', localId: 'd1', rawRecord: {} },
+            ],
+        }));
+
+        await screen.pressByTestIdAsync('pendingMessages.discarded.copy:d1');
+
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('discarded visible');
+    });
+
+    it('anchors a discarded-message menu to the visible press point', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [],
+            discardedMessages: [
+                { id: 'd1', text: 'x'.repeat(600), displayText: undefined, createdAt: 0, updatedAt: 0, discardedAt: 1, discardedReason: 'manual', localId: 'd1', rawRecord: {} },
+            ],
+        }));
+
+        await act(async () => {
+            invokeTestInstanceHandler(
+                screen.findByTestId('pendingMessages.discarded.message:d1')!,
+                'onPress',
+                { nativeEvent: { pageX: 200, pageY: 420 } },
+            );
+        });
+
+        const menu = screen.findByType('DropdownMenu' as any);
+        expect(menu?.props.open).toBe(true);
+        expect(menu?.props.popoverAnchor).toEqual({
+            kind: 'rect',
+            rect: { left: 200, top: 420, height: 1 },
+        });
+        expect(menu?.props.placement).toBe('auto-vertical');
+        expect(menu?.props.matchTriggerWidth).toBe(false);
+
+        await screen.pressByTestIdAsync('pendingMessages.discarded.menu.copy:d1');
+        expect(setClipboardStringSafe).toHaveBeenCalledWith('x'.repeat(600));
+    });
+
+    it('keeps pending status chips visible while hovering another message on web', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -1940,7 +2221,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const chipP2After = screen.findByTestId('pendingMessages.pendingAffordance:p2');
         expect(chipP2After).toBeTruthy();
-        expect(flattenStyle(chipP2After!.props.style).opacity).toBe(0);
+        expect(flattenStyle(chipP2After!.props.style).opacity).not.toBe(0);
     });
 
     it('does not render per-message up/down chevron actions', async () => {

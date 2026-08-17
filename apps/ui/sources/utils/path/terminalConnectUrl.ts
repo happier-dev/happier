@@ -3,6 +3,12 @@ import { isAcceptedHappierUrlProtocol, resolveAppUrlScheme } from '@/utils/url/a
 export type ParsedTerminalConnectUrl = Readonly<{
     publicKeyB64Url: string;
     serverUrl: string | null;
+    pairing?: Readonly<{
+        secretB64Url: string;
+        createdAtMs: number;
+        expiresAtMs: number;
+    }>;
+    supportsTokenOnly?: true;
 }>;
 
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
@@ -47,35 +53,82 @@ function parseTerminalConnectWebUrl(raw: string): ParsedTerminalConnectUrl | nul
         if (!key) return null;
 
         const serverUrl = normalizeServerUrl(params.get('server') ?? '');
-        return { publicKeyB64Url: key, serverUrl };
+        return withPairingContext({ publicKeyB64Url: key, serverUrl }, params);
     } catch {
         return null;
     }
 }
 
+function parsePairingContext(params: URLSearchParams): ParsedTerminalConnectUrl['pairing'] {
+    const secretB64Url = (params.get('pairingSecret') ?? '').trim();
+    const createdAtMs = Number(params.get('createdAt'));
+    const expiresAtMs = Number(params.get('expiresAt'));
+    if (
+        !secretB64Url
+        || !Number.isSafeInteger(createdAtMs)
+        || !Number.isSafeInteger(expiresAtMs)
+        || createdAtMs < 0
+        || expiresAtMs <= createdAtMs
+    ) {
+        return undefined;
+    }
+    return { secretB64Url, createdAtMs, expiresAtMs };
+}
+
+function withPairingContext(
+    base: Omit<ParsedTerminalConnectUrl, 'pairing' | 'supportsTokenOnly'>,
+    params: URLSearchParams,
+): ParsedTerminalConnectUrl {
+    const pairing = parsePairingContext(params);
+    if (!pairing) return base;
+    return {
+        ...base,
+        pairing,
+        ...(params.get('supportsTokenOnly') === '1' ? { supportsTokenOnly: true } : {}),
+    };
+}
+
+function buildPairingQuerySuffix(
+    pairing: ParsedTerminalConnectUrl['pairing'],
+    supportsTokenOnly: boolean,
+): string {
+    if (!pairing) return '';
+    return `&pairingSecret=${encodeURIComponent(pairing.secretB64Url)}`
+        + `&createdAt=${pairing.createdAtMs}`
+        + `&expiresAt=${pairing.expiresAtMs}`
+        + (supportsTokenOnly ? '&supportsTokenOnly=1' : '');
+}
+
 export function buildTerminalConnectDeepLink(params: Readonly<{
     publicKeyB64Url: string;
     serverUrl: string | null | undefined;
+    pairing?: ParsedTerminalConnectUrl['pairing'];
+    supportsTokenOnly?: boolean;
 }>): string {
     const terminalPrefix = `${resolveAppUrlScheme()}://terminal?`;
     const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
     const safeServerUrl = normalizeServerUrl(params.serverUrl ?? '');
-    if (!safeServerUrl) {
+    const pairingSuffix = buildPairingQuerySuffix(params.pairing, params.supportsTokenOnly === true);
+    if (!safeServerUrl && !pairingSuffix) {
         return `${terminalPrefix}${publicKeyB64Url}`;
     }
-    return `${terminalPrefix}key=${encodeURIComponent(publicKeyB64Url)}&server=${encodeURIComponent(safeServerUrl)}`;
+    const serverSuffix = safeServerUrl ? `&server=${encodeURIComponent(safeServerUrl)}` : '';
+    return `${terminalPrefix}key=${encodeURIComponent(publicKeyB64Url)}${serverSuffix}${pairingSuffix}`;
 }
 
 export function buildTerminalConnectWebHref(params: Readonly<{
     publicKeyB64Url: string;
     serverUrl: string | null | undefined;
+    pairing?: ParsedTerminalConnectUrl['pairing'];
+    supportsTokenOnly?: boolean;
 }>): string {
     const publicKeyB64Url = String(params.publicKeyB64Url ?? '').trim();
     const safeServerUrl = normalizeServerUrl(params.serverUrl ?? '');
 
-    const hash = safeServerUrl
-        ? `#key=${encodeURIComponent(publicKeyB64Url)}&server=${encodeURIComponent(safeServerUrl)}`
-        : `#key=${encodeURIComponent(publicKeyB64Url)}`;
+    const serverSuffix = safeServerUrl ? `&server=${encodeURIComponent(safeServerUrl)}` : '';
+    const hash =
+        `#key=${encodeURIComponent(publicKeyB64Url)}${serverSuffix}`
+        + `${buildPairingQuerySuffix(params.pairing, params.supportsTokenOnly === true)}`;
 
     return `${TERMINAL_CONNECT_WEB_PATH}${hash}`;
 }
@@ -116,5 +169,5 @@ export function parseTerminalConnectUrl(url: string): ParsedTerminalConnectUrl |
     if (!key) return null;
 
     const serverUrl = normalizeServerUrl(params.get('server') ?? '');
-    return { publicKeyB64Url: key, serverUrl };
+    return withPairingContext({ publicKeyB64Url: key, serverUrl }, params);
 }

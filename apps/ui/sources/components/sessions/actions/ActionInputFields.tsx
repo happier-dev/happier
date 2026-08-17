@@ -1,262 +1,212 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { ActionInputFieldHint } from '@happier-dev/protocol';
+import {
+    actionInputOptionValueKey,
+    isSameActionInputOptionValue,
+    readActionInputOptionValue,
+    type ActionInputFieldHint,
+    type ActionInputOptionValue,
+    type EffectiveActionInputField,
+} from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import {
+    HappierField,
+    HappierForm,
+    HappierSelect,
+    HappierTextField,
+    HappierToggle,
+    patchHappierActionInputPath,
+    readHappierActionInputPath,
+    resolveHappierActionFieldPresentation,
+    type HappierActionFieldPresentation,
+    type HappierSelectOption,
+} from '@happier-dev/plugin-ui/presentation';
 
-import { Text, TextInput } from '@/components/ui/text/Text';
-import { t } from '@/text';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 export type ActionFieldOption = Readonly<{
-    value: string;
+    value: ActionInputOptionValue;
     label: string;
+    /** Host-resolved account labels can include a bounded, safe subtitle. */
+    description?: string;
     disabled?: boolean;
 }>;
 
-export function getValueAtPath(input: Record<string, unknown>, path: string): unknown {
-    const parts = path.split('.').filter(Boolean);
-    let cur: any = input;
-    for (const part of parts) {
-        if (!cur || typeof cur !== 'object') return undefined;
-        cur = cur[part];
-    }
-    return cur;
+/** Compatibility names for existing core callers; algorithms live in plugin-ui presentation. */
+export const getValueAtPath = readHappierActionInputPath;
+export const setValueAtTopLevelPatch = patchHappierActionInputPath;
+
+function readActionInputSelectionForPresentation(
+    field: Pick<ActionInputFieldHint, 'widget'>,
+    value: unknown,
+): ActionInputOptionValue | readonly ActionInputOptionValue[] | undefined {
+    if (field.widget === 'select') return readActionInputOptionValue(value);
+    if (field.widget !== 'multiselect') return undefined;
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+        const optionValue = readActionInputOptionValue(item);
+        return optionValue === undefined ? [] : [optionValue];
+    });
 }
 
-export function setValueAtTopLevelPatch(input: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
-    const parts = path.split('.').filter(Boolean);
-    if (parts.length === 0) return {};
-    const top = parts[0]!;
-    if (parts.length === 1) return { [top]: value };
-
-    const rest = parts.slice(1);
-    const prevTop: any = (input as any)[top];
-    const nextTop = (() => {
-        const base = prevTop && typeof prevTop === 'object' ? { ...(prevTop as any) } : {};
-        let cur: any = base;
-        for (let i = 0; i < rest.length; i += 1) {
-            const key = rest[i]!;
-            if (i === rest.length - 1) {
-                cur[key] = value;
-            } else {
-                const existing = cur[key];
-                cur[key] = existing && typeof existing === 'object' ? { ...(existing as any) } : {};
-                cur = cur[key];
-            }
-        }
-        return base;
-    })();
-    return { [top]: nextTop };
-}
-
-function ActionFieldChip(props: Readonly<{
-    selected: boolean;
-    label: string;
-    onPress: () => void;
-    disabled?: boolean;
-    accessibilityLabel?: string;
-}>) {
-    const { theme } = useUnistyles();
-    return (
-        <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: props.selected, disabled: props.disabled === true }}
-            accessibilityLabel={props.accessibilityLabel}
-            disabled={props.disabled === true}
-            onPress={props.disabled ? undefined : props.onPress}
-            style={({ pressed }) => ({
-                paddingVertical: 8,
-                paddingHorizontal: 10,
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: theme.colors.border.default,
-                opacity: props.disabled ? 0.4 : pressed ? 0.7 : 1,
-                backgroundColor: props.selected ? (theme.colors.surface.elevated ?? theme.colors.surface.inset) : 'transparent',
-            })}
-        >
-            <Text style={{ color: theme.colors.text.primary }}>{props.label}</Text>
-        </Pressable>
+/**
+ * The presentation this file renders a field from, for a given input record.
+ *
+ * Exported so the transcript row's height-bearing descriptor
+ * (`resolveSessionActionDraftHeightBearingPaint`) reads the SAME resolution — including the exact
+ * `text` value a `HappierTextField` displays — instead of restating the widget/display rule in a
+ * second place where it can drift from the paint.
+ */
+export function resolveActionFieldPresentationForInput(
+    field: ActionInputFieldHint,
+    input: Record<string, unknown>,
+): HappierActionFieldPresentation<ActionInputOptionValue> | null {
+    const path = typeof field?.path === 'string' ? field.path : '';
+    const widget = typeof field?.widget === 'string' ? field.widget : '';
+    if (!path || !widget) return null;
+    const value = readHappierActionInputPath(input, path);
+    return resolveHappierActionFieldPresentation<ActionInputOptionValue>(
+        field,
+        value,
+        readActionInputSelectionForPresentation(field, value),
     );
 }
 
 export function ActionInputFields(props: Readonly<{
-    fields: readonly ActionInputFieldHint[];
+    /**
+     * Forms resolve visibility, requiredness, and disabled state at the Protocol
+     * input-hints owner before entering this shared presentation adapter.
+     */
+    fields: readonly EffectiveActionInputField[];
     input: Record<string, unknown>;
     editable: boolean;
-    resolveFieldOptions: (field: ActionInputFieldHint) => readonly ActionFieldOption[];
+    /** Submission state projected by the form lifecycle owner. */
+    busy?: boolean;
+    resolveFieldOptions: (field: EffectiveActionInputField) => readonly ActionFieldOption[];
     onPatch: (patch: Record<string, unknown>) => void;
-    resolveFieldTestID?: (field: ActionInputFieldHint) => string | undefined;
+    resolveFieldTestID?: (field: EffectiveActionInputField) => string | undefined;
     getChipAccessibilityLabel?: (args: Readonly<{
-        field: ActionInputFieldHint;
+        field: EffectiveActionInputField;
         option: ActionFieldOption;
         selected: boolean;
     }>) => string | undefined;
 }>) {
     const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
 
     return (
-        <>
+        <HappierForm busy={props.busy}>
             {props.fields.map((field) => {
                 const path = typeof field?.path === 'string' ? field.path : '';
                 const widget = typeof field?.widget === 'string' ? field.widget : '';
                 if (!path || !widget) return null;
 
                 const label = typeof field?.title === 'string' ? field.title : path;
-                const value = getValueAtPath(props.input, path);
-                const disabled = (field as any)?.disabled === true;
+                const presentation = resolveActionFieldPresentationForInput(field, props.input);
+                if (!presentation) return null;
+                const disabled = field.disabled === true;
                 const fieldTestID = props.resolveFieldTestID?.(field);
 
-                if (widget === 'multiselect') {
-                    const selected = Array.isArray(value) ? (value as unknown[]).map(String) : [];
-                    const options = props.resolveFieldOptions(field);
-                    const isRequired = field?.required === true;
+                if (presentation.kind === 'select') {
+                    const selected = presentation.value;
+                    const selectedValues = Array.isArray(selected)
+                        ? selected
+                        : (selected === undefined ? [] : [selected]);
+                    const options: readonly HappierSelectOption<ActionInputOptionValue>[] = props.resolveFieldOptions(field).map((option) => ({
+                        ...option,
+                        accessibilityLabel: props.getChipAccessibilityLabel?.({
+                            field,
+                            option,
+                            selected: selectedValues.some((value) => isSameActionInputOptionValue(value, option.value)),
+                        }),
+                    }));
                     return (
-                        <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                                {options.map((option) => {
-                                    const isSelected = selected.includes(option.value);
-                                    const blocksDeselection = isRequired && isSelected && selected.length <= 1;
-                                    return (
-                                        <ActionFieldChip
-                                            key={option.value}
-                                            label={option.label}
-                                            selected={isSelected}
-                                            disabled={!props.editable || disabled || option.disabled === true}
-                                            accessibilityLabel={props.getChipAccessibilityLabel?.({ field, option, selected: isSelected })}
-                                            onPress={() => {
-                                                if (!props.editable || disabled || option.disabled === true) return;
-                                                if (blocksDeselection) return;
-                                                const next = isSelected
-                                                    ? selected.filter((id) => id !== option.value)
-                                                    : [...selected, option.value];
-                                                props.onPatch(setValueAtTopLevelPatch(props.input, path, next));
-                                            }}
-                                        />
-                                    );
-                                })}
-                            </View>
-                        </View>
-                    );
-                }
-
-                if (widget === 'select') {
-                    const selected = typeof value === 'string' ? value : '';
-                    const options = props.resolveFieldOptions(field);
-                    return (
-                        <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                                {options.map((option) => (
-                                    <ActionFieldChip
-                                        key={option.value}
-                                        label={option.label}
-                                        selected={selected === option.value}
-                                        disabled={!props.editable || disabled || option.disabled === true}
-                                        accessibilityLabel={props.getChipAccessibilityLabel?.({ field, option, selected: selected === option.value })}
-                                        onPress={() => {
-                                            if (!props.editable || disabled || option.disabled === true) return;
-                                            props.onPatch(setValueAtTopLevelPatch(props.input, path, option.value));
-                                        }}
-                                    />
-                                ))}
-                            </View>
-                        </View>
-                    );
-                }
-
-                if (widget === 'toggle' || widget === 'checkbox') {
-                    const selected = value === true;
-                    return (
-                        <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                                <ActionFieldChip
-                                    label={t('common.on')}
-                                    selected={selected}
-                                    disabled={!props.editable || disabled}
-                                    accessibilityLabel={props.getChipAccessibilityLabel?.({ field, option: { value: 'true', label: t('common.on') }, selected })}
-                                    onPress={() => {
-                                        if (!props.editable || disabled) return;
-                                        props.onPatch(setValueAtTopLevelPatch(props.input, path, true));
-                                    }}
-                                />
-                                <ActionFieldChip
-                                    label={t('common.off')}
-                                    selected={!selected}
-                                    disabled={!props.editable || disabled}
-                                    accessibilityLabel={props.getChipAccessibilityLabel?.({ field, option: { value: 'false', label: t('common.off') }, selected: !selected })}
-                                    onPress={() => {
-                                        if (!props.editable || disabled) return;
-                                        props.onPatch(setValueAtTopLevelPatch(props.input, path, false));
-                                    }}
-                                />
-                            </View>
-                        </View>
-                    );
-                }
-
-                if (widget === 'text_list') {
-                    const separator = field?.listSeparator === 'newline' ? '\n' : ',';
-                    const items = Array.isArray(value)
-                        ? (value as unknown[]).map((item) => String(item ?? '').trim()).filter(Boolean)
-                        : [];
-                    const displayValue = separator === '\n' ? items.join('\n') : items.join(', ');
-                    return (
-                        <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
-                            <TextInput
-                                testID={fieldTestID}
-                                editable={props.editable && !disabled}
-                                value={displayValue}
-                                onChangeText={(text) => {
-                                    const parts = separator === '\n' ? String(text ?? '').split('\n') : String(text ?? '').split(',');
-                                    const next = parts.map((part) => part.trim()).filter((part) => part.length > 0);
-                                    props.onPatch(setValueAtTopLevelPatch(props.input, path, next));
-                                }}
-                                multiline={field?.listSeparator === 'newline'}
-                                placeholderTextColor={theme.colors.text.secondary}
-                                style={{
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.border.default,
-                                    borderRadius: 10,
-                                    padding: 10,
-                                    ...(field?.listSeparator === 'newline' ? { minHeight: 80 } : {}),
-                                    color: theme.colors.text.primary,
-                                }}
+                        <HappierField
+                            key={path}
+                            label={label}
+                            description={field.description}
+                            required={field.required}
+                            disabled={!props.editable || disabled}
+                            theme={presentationTheme}
+                            style={{ marginTop: 10 }}
+                        >
+                            <HappierSelect
+                                label={label}
+                                options={options}
+                                value={selected}
+                                multiple={presentation.multiple}
+                                maxSelections={field.maxSelections}
+                                minimumSelections={presentation.multiple && field.required ? 1 : undefined}
+                                disabled={!props.editable || disabled}
+                                theme={presentationTheme}
+                                isEqual={isSameActionInputOptionValue}
+                                keyForOption={(option) => actionInputOptionValueKey(option.value)}
+                                onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}
                             />
-                        </View>
+                        </HappierField>
                     );
                 }
 
-                if (widget === 'textarea' || widget === 'text') {
-                    const displayValue = typeof value === 'string' ? value : '';
-                    const multiline = widget === 'textarea';
+                if (presentation.kind === 'toggle') {
+                    const selected = presentation.value;
+                    const accessibilityLabel = props.getChipAccessibilityLabel?.({
+                        field,
+                        option: { value: String(selected), label },
+                        selected,
+                    }) ?? label;
                     return (
-                        <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
-                            <TextInput
-                                testID={fieldTestID}
-                                editable={props.editable && !disabled}
-                                value={displayValue}
-                                onChangeText={(text) => props.onPatch(setValueAtTopLevelPatch(props.input, path, text))}
-                                multiline={multiline}
-                                placeholderTextColor={theme.colors.text.secondary}
-                                style={{
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.border.default,
-                                    borderRadius: 10,
-                                    padding: 10,
-                                    ...(multiline ? { minHeight: 80 } : {}),
-                                    color: theme.colors.text.primary,
-                                }}
+                        <HappierField
+                            key={path}
+                            label={label}
+                            description={field.description}
+                            required={field.required}
+                            disabled={!props.editable || disabled}
+                            theme={presentationTheme}
+                            style={{ marginTop: 10 }}
+                        >
+                            <HappierToggle
+                                label={accessibilityLabel}
+                                value={selected}
+                                disabled={!props.editable || disabled}
+                                theme={presentationTheme}
+                                onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}
                             />
-                        </View>
+                        </HappierField>
+                    );
+                }
+
+                if (presentation.kind === 'text') {
+                    return (
+                        <HappierField
+                            key={path}
+                            label={label}
+                            description={field.description}
+                            required={field.required}
+                            disabled={!props.editable || disabled}
+                            theme={presentationTheme}
+                            style={{ marginTop: 10 }}
+                        >
+                            <HappierTextField
+                                label={label}
+                                testID={fieldTestID}
+                                placeholder={field.placeholder}
+                                required={field.required}
+                                disabled={!props.editable || disabled}
+                                value={presentation.value}
+                                secure={presentation.secure}
+                                keyboardType={presentation.keyboardType}
+                                onChangeText={(text) => props.onPatch(
+                                    patchHappierActionInputPath(props.input, path, presentation.parseText(text)),
+                                )}
+                                multiline={presentation.multiline}
+                                theme={presentationTheme}
+                            />
+                        </HappierField>
                     );
                 }
 
                 return null;
             })}
-        </>
+        </HappierForm>
     );
 }

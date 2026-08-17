@@ -252,6 +252,8 @@ describe('buildChatListItems', () => {
                     return item.toolMessageIds;
                 case 'external-session-operation':
                     return item.id;
+                case 'plugin-transcript-activity':
+                    return item.id;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
@@ -842,6 +844,8 @@ describe('buildChatListItemsCached', () => {
                     return item.toolMessageIds;
                 case 'external-session-operation':
                     return item.id;
+                case 'plugin-transcript-activity':
+                    return item.id;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
@@ -876,6 +880,8 @@ describe('buildChatListItemsCached', () => {
                 case 'tool-calls-group':
                     return item.toolMessageIds;
                 case 'external-session-operation':
+                    return item.id;
+                case 'plugin-transcript-activity':
                     return item.id;
                 default: {
                     const _exhaustive: never = item;

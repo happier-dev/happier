@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Linking, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -9,6 +8,9 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { HAPPIER_CLOUD_SERVER_URL } from '@/sync/domains/server/serverProfiles';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
+
+import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
 
 const DOCS_URL = 'https://docs.happier.dev';
 const GITHUB_URL = 'https://github.com/happier-dev/happier';
@@ -38,6 +40,7 @@ function derivePresentableRelayHost(serverUrl: string): string | null {
 
 export type WelcomeFooterLinksProps = Readonly<{
     variant: 'desktop' | 'mobile';
+    retentionSummary?: string | null;
     onOpenRelayCustomFlow: () => void;
 }>;
 
@@ -83,79 +86,87 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
             style={isMobile ? styles.containerMobile : styles.containerDesktop}
             testID="welcome-footer-links"
         >
-            <View style={relayGroupStyle} testID="welcome-footer-relay">
-                <Text style={[styles.label, labelColor]}>
-                    {isCustomRelay ? t('welcome.welcomeFooterRelayActiveLabel') : t('welcome.welcomeFooterRelay')}
-                </Text>
-                <Pressable
-                    onPress={props.onOpenRelayCustomFlow}
-                    accessibilityRole="link"
-                    accessibilityLabel={isCustomRelay ? t('welcome.welcomeFooterRelayEditAccessibility') : undefined}
-                    testID="welcome-footer-relay-action"
-                >
-                    {({ pressed }) => (
-                        isCustomRelay && customRelayHost ? (
-                            <View style={isMobile ? styles.relayHostRowMobile : styles.relayHostRowDesktop}>
-                                <Text
-                                    style={[styles.actionBold, actionColor, styles.relayHostText, pressed ? actionPressedStyle : null]}
-                                    numberOfLines={1}
-                                    ellipsizeMode="tail"
-                                    testID="welcome-footer-relay-host"
-                                >
-                                    {customRelayHost}
-                                </Text>
-                                <Ionicons
-                                    name="pencil-outline"
-                                    size={13}
-                                    color={iconColor}
-                                    style={pressed ? actionPressedStyle : undefined}
-                                />
-                            </View>
-                        ) : (
-                            <Text style={[styles.actionBold, actionColor, pressed ? actionPressedStyle : null]}>
-                                {t('welcome.welcomeFooterRelayAction')}
-                            </Text>
-                        )
-                    )}
-                </Pressable>
-            </View>
-
-            <View style={relayGroupStyle} testID="welcome-footer-docs">
-                <Text style={[styles.label, labelColor]}>
-                    {t('welcome.welcomeFooterDocs')}
-                </Text>
-                <View style={isMobile ? styles.actionsRowCenter : styles.actionsRowStart}>
+            {props.retentionSummary ? (
+                <RelayRetentionDisclosure
+                    testID="welcome-footer-retention"
+                    summary={props.retentionSummary}
+                />
+            ) : null}
+            <View style={isMobile ? styles.linksMobile : styles.linksDesktop}>
+                <View style={relayGroupStyle} testID="welcome-footer-relay">
+                    <Text style={[styles.label, labelColor]}>
+                        {isCustomRelay ? t('welcome.welcomeFooterRelayActiveLabel') : t('welcome.welcomeFooterRelay')}
+                    </Text>
                     <Pressable
-                        onPress={openGithub}
+                        onPress={props.onOpenRelayCustomFlow}
                         accessibilityRole="link"
-                        accessibilityLabel={t('welcome.welcomeFooterGithubLabel')}
-                        testID="welcome-footer-github-action"
-                        hitSlop={6}
-                        style={({ pressed }) => [styles.iconButton, pressed ? actionPressedStyle : null]}
-                    >
-                        <Ionicons name="logo-github" size={18} color={iconColor} />
-                    </Pressable>
-                    <Pressable
-                        onPress={openDiscord}
-                        accessibilityRole="link"
-                        accessibilityLabel={t('welcome.welcomeFooterDiscordLabel')}
-                        testID="welcome-footer-discord-action"
-                        hitSlop={6}
-                        style={({ pressed }) => [styles.iconButton, pressed ? actionPressedStyle : null]}
-                    >
-                        <Ionicons name="logo-discord" size={18} color={iconColor} />
-                    </Pressable>
-                    <Pressable
-                        onPress={openDocs}
-                        accessibilityRole="link"
-                        testID="welcome-footer-docs-action"
+                        accessibilityLabel={isCustomRelay ? t('welcome.welcomeFooterRelayEditAccessibility') : undefined}
+                        testID="welcome-footer-relay-action"
                     >
                         {({ pressed }) => (
-                            <Text style={[styles.action, actionColor, pressed ? actionPressedStyle : null]}>
-                                {t('welcome.welcomeFooterDocsAction')}
-                            </Text>
+                            isCustomRelay && customRelayHost ? (
+                                <View style={isMobile ? styles.relayHostRowMobile : styles.relayHostRowDesktop}>
+                                    <Text
+                                        style={[styles.actionBold, actionColor, styles.relayHostText, pressed ? actionPressedStyle : null]}
+                                        numberOfLines={1}
+                                        ellipsizeMode="tail"
+                                        testID="welcome-footer-relay-host"
+                                    >
+                                        {customRelayHost}
+                                    </Text>
+                                    <Icon
+                                        name="pencil"
+                                        size={14}
+                                        color={iconColor}
+                                        style={pressed ? actionPressedStyle : undefined}
+                                    />
+                                </View>
+                            ) : (
+                                <Text style={[styles.actionBold, actionColor, pressed ? actionPressedStyle : null]}>
+                                    {t('welcome.welcomeFooterRelayAction')}
+                                </Text>
+                            )
                         )}
                     </Pressable>
+                </View>
+
+                <View style={relayGroupStyle} testID="welcome-footer-docs">
+                    <Text style={[styles.label, labelColor]}>
+                        {t('welcome.welcomeFooterDocs')}
+                    </Text>
+                    <View style={isMobile ? styles.actionsRowCenter : styles.actionsRowStart}>
+                        <Pressable
+                            onPress={openGithub}
+                            accessibilityRole="link"
+                            accessibilityLabel={t('welcome.welcomeFooterGithubLabel')}
+                            testID="welcome-footer-github-action"
+                            hitSlop={6}
+                            style={({ pressed }) => [styles.iconButton, pressed ? actionPressedStyle : null]}
+                        >
+                            <Icon name="github-logo" size={16} color={iconColor} />
+                        </Pressable>
+                        <Pressable
+                            onPress={openDiscord}
+                            accessibilityRole="link"
+                            accessibilityLabel={t('welcome.welcomeFooterDiscordLabel')}
+                            testID="welcome-footer-discord-action"
+                            hitSlop={6}
+                            style={({ pressed }) => [styles.iconButton, pressed ? actionPressedStyle : null]}
+                        >
+                            <Icon name="discord-logo" size={16} color={iconColor} />
+                        </Pressable>
+                        <Pressable
+                            onPress={openDocs}
+                            accessibilityRole="link"
+                            testID="welcome-footer-docs-action"
+                        >
+                            {({ pressed }) => (
+                                <Text style={[styles.action, actionColor, pressed ? actionPressedStyle : null]}>
+                                    {t('welcome.welcomeFooterDocsAction')}
+                                </Text>
+                            )}
+                        </Pressable>
+                    </View>
                 </View>
             </View>
         </View>
@@ -164,18 +175,32 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
 
 const stylesheet = StyleSheet.create(() => ({
     containerDesktop: {
+        width: '100%',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        paddingTop: 20,
+        paddingBottom: 28,
+        gap: 14,
+    },
+    containerMobile: {
+        width: '100%',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: 14,
+        paddingTop: 18,
+    },
+    linksDesktop: {
+        width: '100%',
         flexDirection: 'row',
         alignItems: 'flex-start',
         justifyContent: 'space-between',
-        paddingTop: 20,
-        paddingBottom: 28,
         gap: 24,
     },
-    containerMobile: {
+    linksMobile: {
+        width: '100%',
         flexDirection: 'column',
         alignItems: 'center',
         gap: 18,
-        paddingTop: 18,
     },
     groupDesktop: {
         flexDirection: 'column',

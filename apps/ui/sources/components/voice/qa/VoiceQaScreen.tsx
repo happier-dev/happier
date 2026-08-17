@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { readServerEnabledBit } from '@happier-dev/protocol';
 
+import { useAuth } from '@/auth/context/AuthContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -32,6 +33,7 @@ import { selectVoiceTranscriptEntriesForConversationSession } from '@/voice/tran
 import {
   readLocalConversationVoiceSettings,
   readLocalDirectVoiceSettings,
+  readVoiceProviderSettingsConfig,
   voiceSettingsParse,
 } from '@/sync/domains/settings/voiceSettings';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
@@ -118,11 +120,13 @@ function normalizeVoiceQaRouteParam(value: unknown): string {
 }
 
 export function VoiceQaScreen() {
+  const { credentials } = useAuth();
   const { theme } = useUnistyles();
   const router = useRouter();
   const routeParams = useLocalSearchParams<{
     voiceQaSessionId?: string | string[];
     voiceQaMode?: string | string[];
+    voiceQaTransportRoute?: string | string[];
     voiceQaOutputCapture?: string | string[];
     voiceQaOutputFixtureUrl?: string | string[];
     voiceQaOutputCancelMs?: string | string[];
@@ -158,6 +162,10 @@ export function VoiceQaScreen() {
   const recordedAudioSettingsScopeOwnerId = React.useId();
   const routeSessionId = normalizeVoiceQaRouteParam(routeParams.voiceQaSessionId);
   const routeQaMode = normalizeVoiceQaRouteParam(routeParams.voiceQaMode) === 'media' ? 'media' : 'text';
+  const routeTransportRouteRequirement =
+    normalizeVoiceQaRouteParam(routeParams.voiceQaTransportRoute) === 'server_relay'
+      ? 'server_relay'
+      : null;
   const routeOutputCaptureEnabled = normalizeVoiceQaRouteParam(routeParams.voiceQaOutputCapture) === '1';
   const routeOutputFixtureUrl = normalizeVoiceQaRouteParam(routeParams.voiceQaOutputFixtureUrl);
   const routeOutputCancelMs = React.useMemo(() => {
@@ -330,7 +338,12 @@ export function VoiceQaScreen() {
       : null;
   const configuredLocalSttProvider = configuredLocalSettings?.stt.provider ?? null;
   const configuredLocalSttModelPackId = configuredLocalSettings?.stt.localNeural.assetId?.trim() || null;
-  const configuredLocalSttBaseUrl = configuredLocalSettings?.stt.openaiCompat.baseUrl?.trim() ?? '';
+  const configuredLocalSttProviderSettings = configuredLocalSttProvider
+    ? readVoiceProviderSettingsConfig(configuredVoiceSettings, configuredLocalSttProvider)
+    : null;
+  const configuredLocalSttBaseUrl = typeof configuredLocalSttProviderSettings?.baseUrl === 'string'
+    ? configuredLocalSttProviderSettings.baseUrl.trim()
+    : '';
   const executionMachineId = resolveVoiceExecutionMachineIdFromState(appState);
   const formatterPrefs = React.useMemo(
     () => createVoiceQaFormatterPrefs(appState.settings),
@@ -470,6 +483,7 @@ export function VoiceQaScreen() {
     machineId: executionMachineId,
     daemonHttpPort,
     directEndpoint,
+    credentials,
     accountProfileId: appState.profile?.id,
     socketStatus: appState.socketStatus,
     activeSocketId: apiSocket.getSocketId(),
@@ -609,6 +623,9 @@ export function VoiceQaScreen() {
                       sessionId: sessionIdRef.current,
                       initialContext: initialContextRef.current,
                       ...(routeQaMode === 'media' ? { mode: 'media' as const } : {}),
+                      ...(routeQaMode === 'media' && routeTransportRouteRequirement
+                        ? { transportRouteRequirement: routeTransportRouteRequirement }
+                        : {}),
                     });
                   })
                 }

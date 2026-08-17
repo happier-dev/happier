@@ -1,5 +1,5 @@
 import { encodeBase64 } from '@/encryption/base64';
-import { RawRecordSchema, type RawRecord } from '../typesRaw';
+import type { RawRecord } from '../typesRaw';
 import { ApiMessage } from '../api/types/apiTypes';
 import { DecryptedMessage, Metadata, MetadataSchema, AgentState, AgentStateSchema } from '../domains/state/storageTypes';
 import { EncryptionCache } from './encryptionCache';
@@ -52,28 +52,9 @@ export class SessionEncryption {
             return `enc:${computeCiphertextFingerprint(ciphertextB64)}`;
         };
 
-        const computePlainValueFingerprint = (value: unknown): string => {
-            try {
-                const json = JSON.stringify(value);
-                const len = json.length;
-                const start = json.slice(0, 48);
-                const end = json.slice(Math.max(0, len - 48));
-                return `plain:${len}:${start}:${end}`;
-            } catch {
-                return "plain:unserializable";
-            }
-        };
-
-        const computeMessageFingerprint = (message: ApiMessage): string => {
+        const computeMessageFingerprint = (message: EncryptedApiMessage): string => {
             const messageRole = typeof message.messageRole === 'string' ? message.messageRole : 'null';
-            const content: any = (message as any)?.content;
-            if (content && content.t === 'encrypted' && typeof content.c === 'string') {
-                return `${computeMessageCiphertextFingerprint(content.c)}:role:${messageRole}`;
-            }
-            if (content && content.t === 'plain') {
-                return `${computePlainValueFingerprint(content.v)}:role:${messageRole}`;
-            }
-            return `plain:unknown:role:${messageRole}`;
+            return `${computeMessageCiphertextFingerprint(message.content.c)}:role:${messageRole}`;
         };
 
         // Check cache for all messages first
@@ -91,40 +72,11 @@ export class SessionEncryption {
                 continue;
             }
 
-            // Check cache first
-            const fingerprint = computeMessageFingerprint(message);
-            const cached = this.cache.getCachedMessage(message.id, fingerprint);
-            if (cached) {
-                // Encrypted messages that previously failed to decrypt (content: null) must be
-                // re-tried, because the session key/encryptor may become available later.
-                if (cached.content !== null || message.content.t !== 'encrypted') {
-                    results[i] = cached;
-                    cachedCount++;
-                    continue;
-                }
-                if (isEncryptedApiMessage(message)) {
-                    toDecrypt.push({ index: i, message, fingerprint });
-                } else {
-                    results[i] = cached;
-                    cachedCount++;
-                }
-            } else if (isEncryptedApiMessage(message)) {
-                toDecrypt.push({ index: i, message, fingerprint });
-            } else if (message.content.t === 'plain') {
-                plainCount++;
-                const parsed = RawRecordSchema.safeParse((message.content as any).v);
-                const result: DecryptedMessage = {
-                    id: message.id,
-                    seq: message.seq,
-                    localId: message.localId ?? null,
-                    messageRole: message.messageRole ?? null,
-                    content: parsed.success ? parsed.data : null,
-                    createdAt: message.createdAt,
-                };
-                results[i] = result;
-                this.cache.setCachedMessage(message.id, result, fingerprint, this.sessionId);
-            } else {
-                // Invalid content
+            // This owner is instantiated only for E2EE Sessions. Validate the
+            // stored envelope before checking the cache or parsing any nested
+            // payload so a well-formed plaintext record cannot be disclosed
+            // under the wrong persisted Session mode.
+            if (!isEncryptedApiMessage(message)) {
                 invalidCount++;
                 results[i] = {
                     id: message.id,
@@ -134,7 +86,23 @@ export class SessionEncryption {
                     content: null,
                     createdAt: message.createdAt,
                 };
-                this.cache.setCachedMessage(message.id, results[i]!, fingerprint, this.sessionId);
+                continue;
+            }
+
+            // Check cache first
+            const fingerprint = computeMessageFingerprint(message);
+            const cached = this.cache.getCachedMessage(message.id, fingerprint);
+            if (cached) {
+                // Encrypted messages that previously failed to decrypt (content: null) must be
+                // re-tried, because the session key/encryptor may become available later.
+                if (cached.content !== null) {
+                    results[i] = cached;
+                    cachedCount++;
+                    continue;
+                }
+                toDecrypt.push({ index: i, message, fingerprint });
+            } else {
+                toDecrypt.push({ index: i, message, fingerprint });
             }
         }
 

@@ -5,6 +5,7 @@ import {
     buildGlassCastShadow,
     buildGlassInnerShadow,
     buildLightShadowLevels,
+    buildSeamCastShadow,
     buildShadowPopoverArrowBoxShadow,
 } from '../shadowElevation';
 import { createVerticalGradient } from './verticalGradient';
@@ -125,6 +126,10 @@ export const lightTheme = {
             surface: 'transparent',
             strong: Platform.select({ ios: '#d6d6d6', default: '#d6d6d6' }),
             modal: 'rgba(0, 0, 0, 0.1)',
+            // Half the weight of `default`, for seams and for controls whose border should imply an
+            // edge without competing with the content inside it. Introduced for the sidebar/content
+            // seam and shared by the quiet toolbar buttons rather than re-typed as a literal.
+            subtle: 'rgba(0, 0, 0, 0.062)',
         },
         effect: {
             surfaceHighlight: 'transparent',
@@ -160,6 +165,7 @@ export const lightTheme = {
         },
         shadowLevels: buildLightShadowLevels(),
         shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(false),
+        shadowSeamCastBoxShadow: buildSeamCastShadow(false),
         glass: {
             border: buildGlassBorderColor(false),
             innerShadow: buildGlassInnerShadow(false),
@@ -445,6 +451,7 @@ export const darkTheme = {
             surface: 'rgba(255,255,255,0.056)',
             strong: 'rgba(255,255,255,0.090)',
             modal: 'rgba(255,255,255,0.064)',
+            subtle: 'rgba(255,255,255,0.040)',
         },
         effect: {
             surfaceHighlight: 'transparent',
@@ -479,6 +486,7 @@ export const darkTheme = {
         },
         shadowLevels: buildDarkShadowLevels(),
         shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(true),
+        shadowSeamCastBoxShadow: buildSeamCastShadow(true),
         glass: {
             border: buildGlassBorderColor(true),
             innerShadow: buildGlassInnerShadow(true),

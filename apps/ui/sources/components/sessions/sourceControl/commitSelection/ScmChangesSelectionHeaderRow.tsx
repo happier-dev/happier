@@ -4,6 +4,7 @@ import { Platform, Pressable, View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 
 export type ScmChangesSelectionHeaderRowProps = Readonly<{
     theme: any;
@@ -24,24 +25,12 @@ export const ScmChangesSelectionHeaderRow = React.memo((props: ScmChangesSelecti
         disabled: boolean;
         onPress?: () => void;
     }) => (
-        <Pressable
-            accessibilityRole="button"
+        <ToolbarButton
+            label={p.label}
             disabled={p.disabled}
             onPress={p.onPress}
-            style={({ pressed }) => ({
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: props.theme.colors.border.default,
-                backgroundColor: props.theme.colors.surface.inset,
-                opacity: p.disabled ? 0.45 : pressed ? 0.78 : 1,
-            })}
-        >
-            <Text style={{ fontSize: 12, color: props.theme.colors.text.link, ...Typography.default('semiBold') }}>
-                {p.label}
-            </Text>
-        </Pressable>
+            labelColor={props.theme.colors.text.link}
+        />
     );
 
     return (

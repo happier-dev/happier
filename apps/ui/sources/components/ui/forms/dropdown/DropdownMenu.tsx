@@ -1,9 +1,8 @@
 import * as React from 'react';
-import { Platform, View, ViewStyle, StyleProp, TextStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Platform, View, ViewStyle, StyleProp, TextStyle, type AccessibilityState } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Popover, type PopoverPlacement } from '@/components/ui/popover';
+import { Popover, type PopoverAnchor, type PopoverPlacement } from '@/components/ui/popover';
 import { FloatingOverlay, type FloatingOverlayArrow } from '@/components/ui/overlays/FloatingOverlay';
 import { t } from '@/text';
 import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
@@ -18,6 +17,7 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export type DropdownMenuItem = Readonly<{
@@ -150,6 +150,11 @@ export type DropdownMenuProps = Readonly<{
      */
     popoverAnchorRef?: React.RefObject<any> | null;
     /**
+     * Optional measured anchor supplied directly to Popover. Rect anchors are useful for menus
+     * opened from a press inside a much larger or partially clipped trigger.
+     */
+    popoverAnchor?: PopoverAnchor;
+    /**
      * Web-only: controls where the popover portal is mounted.
      * Defaults to Popover's behavior (which prefers the modal portal target when inside a modal).
      * Set to 'body' to allow menus to escape overflow-clipped modals.
@@ -203,6 +208,27 @@ export type DropdownMenuProps = Readonly<{
     createItemDisplay?: ((query: string) => DropdownMenuCreateItemDisplay) | null;
 }>;
 
+type DropdownTriggerAccessibilityProps = Readonly<{
+    accessibilityState?: AccessibilityState;
+    'aria-expanded'?: boolean;
+}>;
+
+function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): React.ReactNode {
+    if (!React.isValidElement<DropdownTriggerAccessibilityProps>(trigger)) return trigger;
+
+    if (typeof trigger.type === 'string' && trigger.type === trigger.type.toLowerCase()) {
+        return React.cloneElement(trigger, { 'aria-expanded': open });
+    }
+
+    return React.cloneElement(trigger, {
+        accessibilityState: {
+            ...trigger.props.accessibilityState,
+            expanded: open,
+        },
+        'aria-expanded': open,
+    });
+}
+
 export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
@@ -252,7 +278,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 right: item.rightElement
                     ? item.rightElement
                     : hasSubmenu
-                        ? <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
+                        ? <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
                         : item.shortcut
                             ? <KeyHint label={item.shortcut} />
                             : null,
@@ -354,6 +380,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     showChevron={false}
                     selected={false}
                     {...(cfg.itemProps ?? {})}
+                    accessibilityExpanded={props.open}
                     webRole={cfg.itemProps?.webRole ?? 'button'}
                     density={resolvedTriggerDensity}
                 />
@@ -361,15 +388,15 @@ export function DropdownMenu(props: DropdownMenuProps) {
         }
 
         if (typeof props.trigger === 'function') {
-            return props.trigger({
+            return withExpandedTriggerState(props.trigger({
                 open: props.open,
                 toggle,
                 openMenu,
                 closeMenu,
                 selectedItem: selectedItemForTrigger,
-            });
+            }), props.open);
         }
-        return props.trigger;
+        return withExpandedTriggerState(props.trigger, props.open);
     }, [closeMenu, openMenu, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.text.secondary, toggle]);
 
     const {
@@ -383,9 +410,11 @@ export function DropdownMenu(props: DropdownMenuProps) {
     } = useSelectableMenu({
         items: selectableItems,
         onRequestClose,
+        open: props.open,
         initialSelectedId: props.selectedId ?? null,
         onCreateItem: props.onCreateItem ?? null,
         allowEmptySelection: props.allowEmptySelection ?? false,
+        enableTypeahead: props.search !== true,
         createItemFactory: createItemDisplay
             ? ((query) => {
                 const display = createItemDisplay(query);
@@ -424,10 +453,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
         if (Platform.OS !== 'web') return;
         const key = e?.nativeEvent?.key;
         if (typeof key !== 'string') return;
-        if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(key)) return;
-        e.preventDefault?.();
-        e.stopPropagation?.();
-        handleKeyPress(key, (item) => {
+        // Search fields own ordinary typed text. An unsearched dropdown instead
+        // delegates printable keys to the shared prefix-selection owner.
+        if (props.search && !['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', 'Escape'].includes(key)) return;
+        const handled = handleKeyPress(key, (item) => {
             if (item.id === CREATE_ITEM_ID) {
                 handleCreate();
                 return;
@@ -436,6 +465,9 @@ export function DropdownMenu(props: DropdownMenuProps) {
             if (closeOnSelect) props.onOpenChange(false);
             props.onSelect(item.id);
         });
+        if (!handled) return;
+        e.preventDefault?.();
+        e.stopPropagation?.();
     }, [closeOnSelect, handleCreate, handleKeyPress, props]);
     const handleOpenSubmenu = React.useCallback((itemId: string, itemAnchorRef: React.RefObject<unknown>) => {
         const item = props.items.find((candidate) => candidate.id === itemId);
@@ -498,6 +530,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 <Popover
                     open={props.open}
                     anchorRef={resolvedAnchorRef}
+                    anchor={props.popoverAnchor}
+                    autoFocusOnOpen
                     placement={requestedPlacement}
                     gap={props.gap ?? 0}
                     maxHeightCap={props.maxHeightCap ?? 320}
@@ -587,6 +621,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                     rowKind={props.rowKind}
                                     itemProps={props.itemRowProps}
                                     registerItemLayout={resultScroll.registerItemLayout}
+                                    onKeyDown={handleKeyDown}
                                 />
                             </View>
                         </FloatingOverlay>

@@ -54,13 +54,10 @@ const resolveSessionOrganizationMutationScopeOp = vi.hoisted(() => vi.fn(
 ));
 
 let pinnedSessionKeysV1: string[] = [];
-const setPinnedSessionKeysV1 = vi.fn();
 
 let sessionListGroupOrderV1: Record<string, string[]> = {};
-const setSessionListGroupOrderV1 = vi.fn();
 
 let sessionTagsV1: Record<string, string[]> = {};
-const setSessionTagsV1 = vi.fn();
 let workspaceRefsV1: any[] = [];
 const setWorkspaceRefsV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
@@ -216,9 +213,6 @@ installSessionShellCommonModuleMocks({
                     mockMachinesState.current.map((machine) => [machine.id, machine]),
                 ),
                 useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
-                    if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
-                    if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
                     if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     return [null, vi.fn()];
                 }),
@@ -556,9 +550,6 @@ describe('SessionsList pinning + per-group ordering', () => {
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
         workspaceRefsV1 = [];
-        setPinnedSessionKeysV1.mockClear();
-        setSessionListGroupOrderV1.mockClear();
-        setSessionTagsV1.mockClear();
         setWorkspaceRefsV1.mockClear();
         setSessionPinOp.mockClear();
         setSessionTagAssignmentsOp.mockClear();

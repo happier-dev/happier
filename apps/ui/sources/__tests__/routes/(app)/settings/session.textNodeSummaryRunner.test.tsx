@@ -60,6 +60,8 @@ vi.mock('expo-clipboard', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024, headerMaxWidth: 1024 },
+    useLayoutMaxWidth: () => 1024,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1024 }),
 }));
 
 vi.mock('@/components/ui/popover', () => ({

@@ -266,4 +266,63 @@ describe('AgentInputChipPickerPanel', () => {
 
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('favorites');
     });
+
+    it('inspects an option that owns an apply action without applying or closing', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+        const onApply = vi.fn();
+        const onSelect = vi.fn();
+        const onRequestClose = vi.fn();
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                { id: 'one', label: 'One', detailDescription: 'Running this Session' } as any,
+                {
+                    id: 'two',
+                    label: 'Two',
+                    detailDescription: 'Continue with Two',
+                    onApply,
+                } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={onSelect}
+            onRequestClose={onRequestClose}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
+
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('two');
+        expect(onApply).not.toHaveBeenCalled();
+        expect(onSelect).not.toHaveBeenCalled();
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(onRequestClose).not.toHaveBeenCalled();
+    });
+
+    it('lets a focused option name its own apply consequence', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                { id: 'one', label: 'One', detailDescription: 'Running this Session' } as any,
+                {
+                    id: 'two',
+                    label: 'Two',
+                    detailDescription: 'Continue with Two',
+                    applyLabel: 'Continue with Two',
+                    onApply: () => {},
+                } as any,
+            ]}
+            selectedOptionId="one"
+            applyLabel="Use"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.applyLabel).toBe('Use');
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.option:two');
+
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.applyLabel).toBe('Continue with Two');
+    });
 });

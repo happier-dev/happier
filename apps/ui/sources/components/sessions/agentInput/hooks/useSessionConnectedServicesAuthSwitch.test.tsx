@@ -174,7 +174,7 @@ vi.mock('@/text', async () => {
                 return `${String(params?.service ?? '')} auth not applied`;
             }
             if (key === 'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume') {
-                return `${key}:${String(params?.reason ?? '')}:${String(params?.agentId ?? '')}`;
+                return params ? `${key}:${JSON.stringify(params)}` : key;
             }
             return key;
         },
@@ -1261,7 +1261,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         }));
         expect(modalAlertMock).toHaveBeenCalledWith(
             'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
-            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume:no_resumable_session_file:codex',
+            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
             expect.any(Array),
         );
 
@@ -1314,7 +1314,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         hook.getCurrent().statusBadges[0]?.onPress?.();
         expect(modalAlertMock).toHaveBeenCalledWith(
             'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
-            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume:no_resumable_session_file:codex',
+            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
             expect.any(Array),
         );
 
@@ -1515,7 +1515,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
         expect(modalAlertMock).toHaveBeenCalledWith(
             'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
-            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume:opencode_restart_rematerialize_required:opencode',
+            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
             expect.any(Array),
         );
         expect(modalAlertMock).not.toHaveBeenCalledWith(

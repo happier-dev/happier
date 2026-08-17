@@ -56,7 +56,7 @@ vi.mock('@/updates/useAppUpdateStatus', () => ({
             visible: true,
             kind: 'ota',
             tone: updateStatusState.tone,
-            iconName: 'warning-outline',
+            iconName: 'warning',
             label: 'Update available',
             message: 'Install the update',
             actionLabel: 'Install',

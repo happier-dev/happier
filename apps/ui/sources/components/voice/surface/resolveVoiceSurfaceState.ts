@@ -11,6 +11,7 @@ export type VoiceSurfaceState =
   | 'idle'
   | 'connecting'
   | 'listening'
+  | 'transcribing'
   | 'thinking'
   | 'speaking'
   | 'reconnecting'
@@ -31,7 +32,11 @@ export function resolveVoiceSurfaceState(input: Readonly<{
   if (input.status === 'connecting') return 'connecting';
   if (input.status !== 'connected') return 'idle';
   if (input.mode === 'speaking') return 'speaking';
-  if (input.mode === 'thinking' || input.mode === 'transcribing') return 'thinking';
+  // `transcribing` is a canonical mode of its own (`VoiceSessionMode`); collapsing it into
+  // `thinking` made the surface report the assistant as reasoning while it was still turning the
+  // user's speech into text.
+  if (input.mode === 'transcribing') return 'transcribing';
+  if (input.mode === 'thinking') return 'thinking';
   if (input.mode === 'listening') return 'listening';
   return 'idle';
 }

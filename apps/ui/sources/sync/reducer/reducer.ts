@@ -132,13 +132,16 @@ import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultI
 import type { OrphanToolResultBucket } from "./helpers/orphanToolResults";
 import type { ReducerStoredPermission } from "./helpers/toolCallProjection";
 import { isDebugFlagEnabled } from "./helpers/debugFlags";
+import { readStreamSegmentMetaV1 } from './helpers/streamSegmentMeta';
 import { compareIncomingTranscriptRowsOldestFirst, normalizeTranscriptSeq } from "../domains/messages/transcriptOrdering";
 import {
     SessionContextUsageSnapshotV1Schema,
+    type MessageStructuredPresentationV1,
     type SessionContextUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import {
     applyTranscriptObservationMetadata,
+    isRecoveredHistoryTranscriptObservation,
     type TranscriptObservationMetadata,
 } from '../domains/messages/transcriptObservationProvenance';
 
@@ -149,6 +152,66 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function firstString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function areMessageActionReferencesEqual(
+    left: TranscriptObservationMetadata['messageActionReference'],
+    right: TranscriptObservationMetadata['messageActionReference'],
+): boolean {
+    return left === right || (
+        left !== undefined
+        && right !== undefined
+        && left.v === right.v
+        && left.sessionId === right.sessionId
+        && left.messageId === right.messageId
+        && left.observedRevision === right.observedRevision
+    );
+}
+
+function areTranscriptSemanticValuesEqual(left: unknown, right: unknown): boolean {
+    if (Object.is(left, right)) return true;
+    if (left === null || right === null || left === undefined || right === undefined) return false;
+    if (typeof left !== 'object' || typeof right !== 'object') return false;
+    if (Array.isArray(left) || Array.isArray(right)) {
+        if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+        return left.every((value, index) => areTranscriptSemanticValuesEqual(value, right[index]));
+    }
+
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every(
+        (key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
+            && areTranscriptSemanticValuesEqual(leftRecord[key], rightRecord[key]),
+    );
+}
+
+function readTranscriptObservationMetadata(message: TranscriptObservationMetadata): TranscriptObservationMetadata {
+    return {
+        ...(message.sourceCreatedAt !== undefined ? { sourceCreatedAt: message.sourceCreatedAt } : {}),
+        ...(message.sourceUpdatedAt !== undefined ? { sourceUpdatedAt: message.sourceUpdatedAt } : {}),
+        ...(message.transcriptObservationProvenance !== undefined
+            ? { transcriptObservationProvenance: message.transcriptObservationProvenance }
+            : {}),
+        ...(message.deliveryResolution !== undefined ? { deliveryResolution: message.deliveryResolution } : {}),
+        ...(message.messageActionReference !== undefined ? { messageActionReference: message.messageActionReference } : {}),
+    };
+}
+
+function areTranscriptObservationMetadataEqual(
+    left: TranscriptObservationMetadata,
+    right: TranscriptObservationMetadata,
+): boolean {
+    return left.sourceCreatedAt === right.sourceCreatedAt
+        && left.sourceUpdatedAt === right.sourceUpdatedAt
+        && areTranscriptSemanticValuesEqual(
+            left.transcriptObservationProvenance,
+            right.transcriptObservationProvenance,
+        )
+        && areTranscriptSemanticValuesEqual(left.deliveryResolution, right.deliveryResolution)
+        && areMessageActionReferencesEqual(left.messageActionReference, right.messageActionReference);
 }
 
 function extractPermissionRequestId(input: unknown): string | null {
@@ -196,6 +259,7 @@ export type ReducerMessage = {
     event: AgentEvent | null;
     tool: ToolCall | null;
     meta?: MessageMeta;
+    structuredPresentation?: MessageStructuredPresentationV1;
 } & TranscriptObservationMetadata;
 
 export type ReducerState = {
@@ -247,6 +311,126 @@ export type ReducerState = {
         timestamp: number;
     };
 };
+
+type AuthoritativeTranscriptTextTarget = Readonly<{
+    messageId: string;
+    message: ReducerMessage;
+    text: string;
+}>;
+
+function readAuthoritativeTranscriptTextTarget(
+    state: ReducerState,
+    source: NormalizedMessage,
+): AuthoritativeTranscriptTextTarget | null {
+    if (source.isAuthoritativeUpdate !== true || isRecoveredHistoryTranscriptObservation(source)) {
+        return null;
+    }
+
+    if (source.role === 'user') {
+        const messageId = state.messageIds.get(source.id);
+        if (!messageId) return null;
+        const message = state.messages.get(messageId);
+        if (!message || message.role !== 'user' || message.realID !== source.id) return null;
+        return { messageId, message, text: source.content.text };
+    }
+
+    if (source.role !== 'agent' || source.content.length !== 1 || source.content[0]?.type !== 'text') {
+        return null;
+    }
+
+    const isExactAgentTextTarget = (message: ReducerMessage | undefined): message is ReducerMessage => (
+        message?.role === 'agent'
+        && message.realID === source.id
+        && message.text !== null
+        && message.isThinking !== true
+        && message.tool === null
+        && message.event === null
+        && message.transcriptBlockIndex === 0
+    );
+    const directMessageId = state.messageIds.get(source.id);
+    const directMessage = directMessageId ? state.messages.get(directMessageId) : undefined;
+    if (directMessageId && isExactAgentTextTarget(directMessage)) {
+        return { messageId: directMessageId, message: directMessage, text: source.content[0].text };
+    }
+    for (const [messageId, message] of state.messages) {
+        if (isExactAgentTextTarget(message)) {
+            return { messageId, message, text: source.content[0].text };
+        }
+    }
+    return null;
+}
+
+function hasExplicitAgentStreamIdentity(source: Extract<NormalizedMessage, { role: 'agent' }>): boolean {
+    const meta = source.meta as Record<string, unknown> | undefined;
+    return typeof meta?.happierStreamKey === 'string' || readStreamSegmentMetaV1(source.meta) !== null;
+}
+
+function isUnmarkedDurableAgentTextDuplicate(
+    state: ReducerState,
+    source: NormalizedMessage,
+): boolean {
+    if (
+        source.role !== 'agent'
+        || source.isAuthoritativeUpdate === true
+        || isRecoveredHistoryTranscriptObservation(source)
+        || source.content.length !== 1
+        || source.content[0]?.type !== 'text'
+        || hasExplicitAgentStreamIdentity(source)
+    ) {
+        return false;
+    }
+    const sourceSeq = normalizeTranscriptSeq(source.seq);
+    if (sourceSeq === null) return false;
+
+    for (const message of state.messages.values()) {
+        if (
+            message.role === 'agent'
+            && message.realID === source.id
+            && message.text !== null
+            && message.isThinking !== true
+            && message.tool === null
+            && message.event === null
+            && message.transcriptBlockIndex === 0
+            && message.seq === sourceSeq
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function applyAuthoritativeTranscriptTextUpdate(
+    target: AuthoritativeTranscriptTextTarget,
+    source: NormalizedMessage,
+): boolean {
+    const { message } = target;
+    const didTextChange = message.text !== target.text;
+    const didMetaChange = !areTranscriptSemanticValuesEqual(message.meta, source.meta);
+    const didStructuredPresentationChange = !areTranscriptSemanticValuesEqual(
+        message.structuredPresentation,
+        source.structuredPresentation,
+    );
+    const observationBefore = readTranscriptObservationMetadata(message);
+    applyTranscriptObservationMetadata(message, source);
+    const didObservationChange = !areTranscriptObservationMetadataEqual(
+        observationBefore,
+        readTranscriptObservationMetadata(message),
+    );
+    if (!didTextChange && !didMetaChange && !didStructuredPresentationChange && !didObservationChange) {
+        return false;
+    }
+
+    // A server-declared update retains the durable row's id, local id, sequence,
+    // and creation time; only its renderable semantic fields can be replaced.
+    message.text = target.text;
+    message.meta = source.meta;
+    if (source.structuredPresentation !== undefined) {
+        message.structuredPresentation = source.structuredPresentation;
+    } else {
+        delete message.structuredPresentation;
+    }
+    return true;
+}
 
 export function createReducer(): ReducerState {
     return {
@@ -431,8 +615,36 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         return indexed.map((e) => e.msg);
     })();
 
+    // A server-declared correction for an existing durable transcript row is
+    // owned by that row, not by the live stream/event parser. Claim it before
+    // tracing or conversion: replacement text can legitimately look like an
+    // event payload, but it must never create a second rendered/event row.
+    const authoritativeTranscriptTargetsBySource = new Map<
+        NormalizedMessage,
+        AuthoritativeTranscriptTextTarget
+    >();
+    const durableAgentDuplicates = new Set<NormalizedMessage>();
+    for (const source of orderedIncomingMessages) {
+        const target = readAuthoritativeTranscriptTextTarget(state, source);
+        if (target) {
+            authoritativeTranscriptTargetsBySource.set(source, target);
+        } else if (isUnmarkedDurableAgentTextDuplicate(state, source)) {
+            // The same one-block durable row can be delivered by an ordinary
+            // page more than once. It is inert, including when its text happens
+            // to match an event parser pattern; genuine streamed rows carry an
+            // explicit stream identity and are intentionally excluded here.
+            durableAgentDuplicates.add(source);
+        }
+    }
+    const messagesForLivePhases = authoritativeTranscriptTargetsBySource.size === 0 && durableAgentDuplicates.size === 0
+        ? orderedIncomingMessages
+        : orderedIncomingMessages.filter((message) => (
+            !authoritativeTranscriptTargetsBySource.has(message)
+            && !durableAgentDuplicates.has(message)
+        ));
+
     // First, trace all messages to identify sidechains
-    const tracedMessages = traceMessages(state.tracerState, orderedIncomingMessages);
+    const tracedMessages = traceMessages(state.tracerState, messagesForLivePhases);
 
     // Separate sidechain and non-sidechain messages.
     // Important: sidechain messages must never appear in the main transcript, even if sidechainId
@@ -461,7 +673,9 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         allocateId,
         enableLogging: ENABLE_LOGGING,
     });
-	    nonSidechainMessages = conversion.nonSidechainMessages;
+    nonSidechainMessages = conversion.nonSidechainMessages.filter((message) => (
+        !isUnmarkedDurableAgentTextDuplicate(state, message)
+    ));
 	    const incomingToolIds = conversion.incomingToolIds;
 	    hasReadyEvent = hasReadyEvent || conversion.hasReadyEvent;
 	    const readyAt = conversion.readyAt;
@@ -540,14 +754,38 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             .filter((message): message is typeof message & { localId: string } => typeof message.localId === 'string')
             .map((message) => [message.localId, message] as const),
     );
-    const applyIncomingObservationMetadata = (message: ReducerMessage): void => {
+    for (const [source, target] of authoritativeTranscriptTargetsBySource) {
+        if (applyAuthoritativeTranscriptTextUpdate(target, source)) {
+            changed.add(target.messageId);
+        }
+    }
+    const hasIncomingMessageActionReference = orderedIncomingMessages.some(
+        (message) => message.messageActionReference !== undefined,
+    );
+    const hasIncomingReferenceRetraction = orderedIncomingMessages.some((message) => {
+        const knownMessageId = state.messageIds.get(message.id)
+            ?? (typeof message.localId === 'string' ? state.localIds.get(message.localId) : undefined);
+        return knownMessageId !== undefined
+            && state.messages.get(knownMessageId)?.messageActionReference !== undefined;
+    });
+    const shouldReconcileUnchangedMessageReferences = hasIncomingMessageActionReference
+        || hasIncomingReferenceRetraction;
+    const applyIncomingObservationMetadata = (message: ReducerMessage): boolean => {
         const source = (message.realID ? incomingObservationMetadataById.get(message.realID) : undefined)
             ?? (message.localId ? incomingObservationMetadataByLocalId.get(message.localId) : undefined);
+        if (!source) return false;
+        const previousReference = message.messageActionReference;
         applyTranscriptObservationMetadata(message, source);
+        return !areMessageActionReferencesEqual(previousReference, message.messageActionReference);
     };
-    for (const id of changed) {
-        const message = state.messages.get(id);
-        if (message) applyIncomingObservationMetadata(message);
+
+    // A server-issued reference can change or be revoked while the durable text
+    // stays byte-for-byte identical. Reconcile existing flattened rows only for
+    // those reference-bearing/retracting batches; normal streaming retains the
+    // previous changed-row-only work.
+    for (const [id, message] of state.messages) {
+        if (!changed.has(id) && !shouldReconcileUnchangedMessageReferences) continue;
+        if (applyIncomingObservationMetadata(message)) changed.add(id);
     }
 
     //
@@ -560,7 +798,10 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     for (const chain of state.sidechains.values()) {
         for (const m of chain) {
             sidechainChildIds.add(m.id);
-            if (changed.has(m.id)) applyIncomingObservationMetadata(m);
+            if ((changed.has(m.id) || shouldReconcileUnchangedMessageReferences)
+                && applyIncomingObservationMetadata(m)) {
+                changed.add(m.id);
+            }
         }
     }
 
@@ -731,6 +972,9 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
         ...(reducerMsg.deliveryResolution !== undefined
             ? { deliveryResolution: reducerMsg.deliveryResolution }
             : {}),
+            ...(reducerMsg.messageActionReference !== undefined
+            ? { messageActionReference: reducerMsg.messageActionReference }
+            : {}),
     };
     if (reducerMsg.role === 'user' && reducerMsg.text !== null) {
         const displayText = typeof reducerMsg.meta?.displayText === 'string' ? reducerMsg.meta.displayText : undefined;
@@ -745,6 +989,9 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
             text: reducerMsg.text,
             ...(displayText !== undefined ? { displayText } : {}),
             meta: reducerMsg.meta,
+            ...(reducerMsg.structuredPresentation !== undefined
+                ? { structuredPresentation: reducerMsg.structuredPresentation }
+                : {}),
             ...observationMetadata,
         };
     } else if (reducerMsg.role === 'agent' && reducerMsg.text !== null) {
@@ -759,6 +1006,9 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
             text: reducerMsg.text,
             ...(reducerMsg.isThinking && { isThinking: true }),
             meta: reducerMsg.meta,
+            ...(reducerMsg.structuredPresentation !== undefined
+                ? { structuredPresentation: reducerMsg.structuredPresentation }
+                : {}),
             ...observationMetadata,
         };
     } else if (reducerMsg.role === 'agent' && reducerMsg.tool !== null) {

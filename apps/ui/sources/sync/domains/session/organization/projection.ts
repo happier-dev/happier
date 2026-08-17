@@ -3,13 +3,16 @@ import {
     buildSessionOrganizationOrderScopeKey,
     readSessionOrganizationServerScopedId,
 } from './keys';
-import type { NormalizedSessionOrganizationState, SessionOrganizationProjection } from './types';
 import type {
-    SessionOrganizationFolder,
-    SessionOrganizationLabel,
+    NormalizedSessionOrganizationState,
+    SessionOrganizationProjection,
+    UiSessionOrganizationFolder,
+    UiSessionOrganizationLabel,
+    UiSessionOrganizationTag,
+} from './types';
+import type {
     SessionOrganizationOrderEntry,
     SessionOrganizationPin,
-    SessionOrganizationTag,
 } from '@happier-dev/protocol';
 
 function compareNullableSortKey(a: string | null, b: string | null): number {
@@ -24,12 +27,12 @@ export function buildSessionOrganizationProjection(
     serverId: string,
 ): SessionOrganizationProjection {
     const pinsBySessionId: Record<string, SessionOrganizationPin> = {};
-    const foldersById: Record<string, SessionOrganizationFolder> = {};
+    const foldersById: Record<string, UiSessionOrganizationFolder> = {};
     const folderAssignmentsBySessionId: Record<string, string | null> = {};
-    const tagsById: Record<string, SessionOrganizationTag> = {};
+    const tagsById: Record<string, UiSessionOrganizationTag> = {};
     const tagAssignmentsBySessionId: Record<string, readonly string[]> = {};
     const orderEntriesByScopeKey: Record<string, readonly SessionOrganizationOrderEntry[]> = {};
-    const labelsByLabelKey: Record<string, SessionOrganizationLabel> = {};
+    const labelsByLabelKey: Record<string, UiSessionOrganizationLabel> = {};
 
     for (const [key, pin] of Object.entries(state.pinsBySessionKey)) {
         if (readSessionOrganizationServerScopedId(key, serverId) === pin.sessionId) {

@@ -7,6 +7,7 @@ import {
     buildBackendTargetKey,
     buildBackendTargetKeyV2,
     convertBackendTargetRefV2ToV1,
+    type EffectiveActionInputField,
     getActionSpec,
     resolveEffectiveActionInputFields,
 } from '@happier-dev/protocol';
@@ -272,19 +273,11 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
         }));
     }, [backendChoices]);
 
-    const resolveFieldOptions = React.useCallback((field: any): readonly ActionFieldOption[] => {
+    const resolveFieldOptions = React.useCallback((field: EffectiveActionInputField): readonly ActionFieldOption[] => {
         const sourceId = typeof field?.optionsSourceId === 'string' ? field.optionsSourceId : '';
         if (sourceId === 'review.engines.available') return reviewEngineOptions;
         if (sourceId === 'execution.backends.enabled') return executionBackendOptions;
-        const options = Array.isArray(field?.options) ? field.options : [];
-        return options
-            .map((option: any) => {
-                const value = typeof option?.value === 'string' ? option.value : '';
-                const label = typeof option?.label === 'string' ? option.label : value;
-                if (!value) return null;
-                return { value, label };
-            })
-            .filter(Boolean) as readonly ActionFieldOption[];
+        return field.options ?? [];
     }, [executionBackendOptions, reviewEngineOptions]);
 
     const selectedBackendChoices = React.useMemo(() => {
@@ -658,10 +651,10 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
 
             <View style={styles.section}>
                 <ActionInputFields
-                    fields={fields as any}
+                    fields={fields}
                     input={actionInput}
                     editable={!isStarting}
-                    resolveFieldOptions={(field) => resolveFieldOptions(field as any)}
+                    resolveFieldOptions={resolveFieldOptions}
                     resolveFieldTestID={(field) => (field.path === 'instructions' ? 'execution-run-new-instructions-input' : undefined)}
                     getChipAccessibilityLabel={({ field, option }) => {
                         if (field.path === 'engineIds' || field.path === 'backendTargetKeys') {

@@ -31,7 +31,7 @@ export function ForkDividerRow(props: Readonly<{
   return (
     <TranscriptSeparatorRow
       testID={`transcript-fork-divider:${dividerId}`}
-      iconName="git-branch-outline"
+      iconName="git-branch"
       title={title}
       subtitle={t('session.forking.dividerSubtitle')}
       rightAccessory={(

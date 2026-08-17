@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { Image, Pressable, ScrollView, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
+import { Image, Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -8,10 +7,12 @@ import { Typography } from '@/constants/Typography';
 import { PinIcon, PinSlashIcon } from '@/components/sessions/shell/sessionPinIcons';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
 
@@ -53,14 +54,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        paddingRight: 52,
         borderRadius: 10,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,
         maxWidth: 220,
+        marginRight: 8,
+        flexShrink: 0,
+    },
+    tabContent: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
     },
     tabActive: {
         backgroundColor: theme.colors.surface.inset,
@@ -89,6 +98,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 6,
     },
+    tabAction: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     favicon: {
         width: 14,
         height: 14,
@@ -99,9 +112,19 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const interactiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+    const interactiveTargetStyle = React.useMemo(() => ({
+        minWidth: interactiveTargetSize,
+        minHeight: interactiveTargetSize,
+    }), [interactiveTargetSize]);
 
     return (
-        <ScrollView horizontal style={styles.tabsScroll} showsHorizontalScrollIndicator={false}>
+        <ScrollView
+            horizontal
+            style={styles.tabsScroll}
+            showsHorizontalScrollIndicator={false}
+            accessibilityRole="tablist"
+        >
             {props.group.tabs.map((tab) => {
                 const isActive = props.group.activeTabKey ? tab.key === props.group.activeTabKey : false;
                 const safeTabKey = toTestIdSafeValue(tab.key);
@@ -127,23 +150,19 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                 return (
                     <View
                         key={tab.key}
-                        style={{
-                            position: 'relative',
-                            marginRight: 8,
-                            maxWidth: 220,
-                            flexShrink: 0,
-                        }}
+                        style={[styles.tab, isActive ? styles.tabActive : null]}
                     >
                         <Pressable
                             onPress={() => props.pane.setActiveDetailsTab(tab.key)}
                             testID={props.testIds?.tab?.(safeTabKey) ?? undefined}
                             style={[
-                                styles.tab,
-                                isActive ? styles.tabActive : null,
-                                { paddingRight: tab.isPreview || tab.isPinned ? 52 : 34 },
+                                styles.tabContent,
+                                interactiveTargetStyle,
                             ]}
-                            accessibilityRole="button"
+                            accessibilityRole="tab"
                             accessibilityLabel={t('session.detailsPanel.openTabA11y', { title: tab.title })}
+                            accessibilityState={{ selected: isActive }}
+                            aria-selected={isActive}
                         >
                             {presentation?.isLoading ? (
                                 <ActivitySpinner
@@ -164,8 +183,8 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                     testID={`session-details-tab-file-icon-${safeTabKey}`}
                                 />
                             ) : (
-                                <Octicons
-                                    name={iconName as React.ComponentProps<typeof Octicons>['name']}
+                                <Icon
+                                    name={iconName as IconName}
                                     size={14}
                                     color={theme.colors.text.secondary}
                                 />
@@ -184,12 +203,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                 ) : null}
                             </View>
                         </Pressable>
-                        <View
-                            style={[
-                                styles.tabActions,
-                                { position: 'absolute', right: 10, top: 0, bottom: 0, zIndex: 1 },
-                            ]}
-                        >
+                        <View style={styles.tabActions}>
                             {tab.isPreview ? (
                                 <Pressable
                                     onPress={(event: unknown) => {
@@ -201,7 +215,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                     testID={props.testIds?.tabPin?.(safeTabKey) ?? undefined}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('session.detailsPanel.pinTabA11y')}
-                                    hitSlop={10}
+                                    style={[styles.tabAction, interactiveTargetStyle]}
                                 >
                                     <PinIcon size={14} color={theme.colors.text.secondary} />
                                 </Pressable>
@@ -216,7 +230,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                     testID={props.testIds?.tabUnpin?.(safeTabKey) ?? undefined}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('session.detailsPanel.unpinTabA11y')}
-                                    hitSlop={10}
+                                    style={[styles.tabAction, interactiveTargetStyle]}
                                 >
                                     <PinSlashIcon size={14} color={theme.colors.text.secondary} />
                                 </Pressable>
@@ -231,9 +245,9 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                 testID={props.testIds?.tabClose?.(safeTabKey) ?? undefined}
                                 accessibilityRole="button"
                                 accessibilityLabel={t('session.detailsPanel.closeTabA11y')}
-                                hitSlop={10}
+                                style={[styles.tabAction, interactiveTargetStyle]}
                             >
-                                <Octicons name="x" size={13} color={theme.colors.text.secondary} />
+                                <Icon name="x" size={14} color={theme.colors.text.secondary} />
                             </Pressable>
                         </View>
                     </View>

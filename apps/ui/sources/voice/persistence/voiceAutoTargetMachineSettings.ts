@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 
@@ -17,7 +18,7 @@ export function persistVoiceAutoTargetMachineId(machineId: string | null): void 
     if ((normalizeNonEmptyString(executionMachine.mode) ?? 'auto') !== 'auto') return;
     if (normalizeNonEmptyString(executionMachine.autoMachineId) === normalizedMachineId) return;
 
-    state.applySettingsLocal?.({
+    getSyncSingleton().applySettings({
         voice: {
             ...voiceSettings,
             executionMachine: {
@@ -25,5 +26,5 @@ export function persistVoiceAutoTargetMachineId(machineId: string | null): void 
                 autoMachineId: normalizedMachineId,
             },
         },
-    });
+    }, { source: 'ui' });
 }

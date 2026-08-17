@@ -20,10 +20,6 @@ export type ExecutionRunDaemonFallback = Readonly<{
     daemonProcessLine: string | null;
 }>;
 
-function readNonEmptyString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
 function buildDaemonProcessLine(entry: DaemonExecutionRunEntry | null): string | null {
     const processInfo = entry?.process;
     if (!processInfo || typeof processInfo !== 'object') return null;
@@ -45,8 +41,12 @@ function buildDaemonProcessLine(entry: DaemonExecutionRunEntry | null): string |
 function buildExecutionRunPublicStateFromDaemonEntry(params: Readonly<{
     entry: DaemonExecutionRunEntry;
     transcriptFallback?: ExecutionRunTranscriptFallback | null;
-}>): ExecutionRunPublicState {
+}>): ExecutionRunPublicState | null {
     const fallbackRun = params.transcriptFallback?.run ?? null;
+    // Marker persistence intentionally retains only bounded identity/status facts.
+    // Do not fabricate the run's configuration or resumability from that marker;
+    // a matching transcript state remains the canonical source for those fields.
+    if (!fallbackRun || fallbackRun.runId !== params.entry.runId) return null;
 
     return {
         runId: params.entry.runId,
@@ -54,19 +54,17 @@ function buildExecutionRunPublicStateFromDaemonEntry(params: Readonly<{
         sidechainId: params.entry.sidechainId,
         intent: params.entry.intent,
         backendTarget: convertBackendTargetRefV2ToV1(params.entry.backendTarget),
-        permissionMode: readNonEmptyString((params.entry as { permissionMode?: unknown }).permissionMode)
-            ?? fallbackRun?.permissionMode
-            ?? 'unknown',
-        retentionPolicy: params.entry.retentionPolicy,
-        runClass: params.entry.runClass,
-        ioMode: params.entry.ioMode,
+        permissionMode: fallbackRun.permissionMode,
+        retentionPolicy: fallbackRun.retentionPolicy,
+        runClass: fallbackRun.runClass,
+        ioMode: fallbackRun.ioMode,
         status: params.entry.status,
         startedAtMs: params.entry.startedAtMs,
         ...(typeof params.entry.finishedAtMs === 'number' ? { finishedAtMs: params.entry.finishedAtMs } : {}),
-        ...(params.entry.resumeHandle ? { resumeHandle: params.entry.resumeHandle } : {}),
-        ...(params.entry.display ? { display: params.entry.display } : fallbackRun?.display ? { display: fallbackRun.display } : {}),
-        ...(fallbackRun?.transcript ? { transcript: fallbackRun.transcript } : {}),
-        ...(fallbackRun?.error ? { error: fallbackRun.error } : {}),
+        ...(fallbackRun.resumeHandle ? { resumeHandle: fallbackRun.resumeHandle } : {}),
+        ...(fallbackRun.display ? { display: fallbackRun.display } : {}),
+        ...(fallbackRun.transcript ? { transcript: fallbackRun.transcript } : {}),
+        ...(fallbackRun.error ? { error: fallbackRun.error } : {}),
     };
 }
 
@@ -94,11 +92,14 @@ export async function resolveDaemonExecutionRunFallback(params: Readonly<{
     const match = listed.runs.find((run) => String(run?.runId ?? '') === params.runId) ?? null;
     if (!match) return null;
 
+    const run = buildExecutionRunPublicStateFromDaemonEntry({
+        entry: match,
+        transcriptFallback: params.transcriptFallback ?? null,
+    });
+    if (!run) return null;
+
     return {
-        run: buildExecutionRunPublicStateFromDaemonEntry({
-            entry: match,
-            transcriptFallback: params.transcriptFallback ?? null,
-        }),
+        run,
         daemonProcessLine: buildDaemonProcessLine(match),
     };
 }

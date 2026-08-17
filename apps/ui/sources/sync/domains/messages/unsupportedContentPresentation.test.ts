@@ -6,7 +6,6 @@ import { resolveUnsupportedContentPresentation } from './unsupportedContentPrese
 const AGENT_KINDS = [
     'unparsed-agent-message',
     'unsupported-agent-output',
-    'unsupported-transcript-record',
 ] as const satisfies ReadonlyArray<UnsupportedContentKind>;
 
 describe('resolveUnsupportedContentPresentation', () => {
@@ -21,6 +20,13 @@ describe('resolveUnsupportedContentPresentation', () => {
     it('keeps a labeled placeholder for the user own unparsed message when diagnostics are disabled', () => {
         expect(resolveUnsupportedContentPresentation({
             kind: 'unparsed-user-message',
+            debugInformationEnabled: false,
+        })).toBe('label');
+    });
+
+    it('keeps a structured transcript record mounted for its unavailable renderer when diagnostics are disabled', () => {
+        expect(resolveUnsupportedContentPresentation({
+            kind: 'unsupported-transcript-record',
             debugInformationEnabled: false,
         })).toBe('label');
     });

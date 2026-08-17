@@ -161,6 +161,12 @@ function matchesIdentity(
     ) {
         return false;
     }
+    if (
+        Object.prototype.hasOwnProperty.call(filters, 'subject')
+        && JSON.stringify(value.subject ?? null) !== JSON.stringify(filters.subject ?? null)
+    ) {
+        return false;
+    }
     return true;
 }
 

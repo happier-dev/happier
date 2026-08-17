@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -14,6 +13,7 @@ import {
     type ToolViewDetailLevel,
 } from '@/components/settings/session/toolRendering/toolRenderingSettingOptions';
 import { TOOL_RENDERING_OVERRIDE_ENTRIES } from '@/components/settings/session/toolRendering/toolRenderingOverrideEntries';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettingsView() {
     const { theme } = useUnistyles();
@@ -51,7 +51,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: toolKey.title,
-                                icon: <Ionicons name="construct-outline" size={29} color={theme.colors.text.secondary} />,
+                                icon: <Icon name="wrench" size={29} color={theme.colors.text.secondary} />,
                                 subtitle: (() => {
                                     const key = TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
                                     return key ? tToolDetail(key) : String(selected);
@@ -64,7 +64,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                                 subtitle: tToolDetail(opt.subtitleKey),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="list-outline" size={22} color={theme.colors.text.secondary} />
+                                        <Icon name="list" size={20} color={theme.colors.text.secondary} />
                                     </View>
                                 ),
                             }))}
@@ -109,7 +109,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: toolKey.title,
-                                icon: <Ionicons name="expand-outline" size={29} color={theme.colors.text.secondary} />,
+                                icon: <Icon name="arrows-out" size={29} color={theme.colors.text.secondary} />,
                                 subtitle: (() => {
                                     const key = TOOL_EXPANDED_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
                                     return key ? tToolDetail(key) : String(selected);
@@ -122,7 +122,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                                 subtitle: tToolDetail(opt.subtitleKey),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="expand-outline" size={22} color={theme.colors.text.secondary} />
+                                        <Icon name="arrows-out" size={20} color={theme.colors.text.secondary} />
                                     </View>
                                 ),
                             }))}

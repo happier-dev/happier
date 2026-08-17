@@ -1,4 +1,5 @@
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@/sync/runtime/rpcErrors';
@@ -6,7 +7,6 @@ import { createDeviceSttController } from '@/voice/input/DeviceSttController';
 import { createSherpaStreamingSttController } from '@/voice/input/SherpaStreamingSttController';
 import {
   MissingBundledSpeechCredentialError,
-  MissingSttBaseUrlError,
   recordedAudioTranscriptionController,
   resolveRecordedAudioTranscriptionFailureReason,
 } from '@/voice/runtime/input/recordedAudioTranscriptionController';
@@ -30,6 +30,7 @@ import {
 } from '@/voice/runtime/machine/voiceConversationRuntimeHelpers';
 import { getVoiceConversationRuntimeSnapshot } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
+import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 import {
   createLocalVoiceCaptureOwner,
   type LocalVoiceCaptureOwner,
@@ -54,6 +55,7 @@ import { markVoiceConversationAssistantTurnInterrupted } from '@/voice/transcrip
 import { createTtsPlaybackClock } from '@/voice/output/ttsPlaybackTiming';
 import { warmDaemonVoiceInferenceOnVoiceHomeAttach } from '@/voice/runtime/daemonInference/warmDaemonVoiceInferenceOnVoiceHomeAttach';
 import { readDaemonVoiceInferenceClientErrorCode } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
+import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
 import {
   isVoiceBargeInEnabled,
   isLocalVoiceProviderSelected,
@@ -71,6 +73,7 @@ let captureAdmission: Readonly<{
   controlSessionId: string;
   lease: VoiceCaptureAdmissionLease;
 }> | null = null;
+const localVoicePreparationAttemptGuard = createAttemptGuard();
 
 type EndpointDrivenCaptureProvider = Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>;
 
@@ -291,20 +294,50 @@ function resolveLocalNeuralSttExecutionPolicy(settings: any) {
     : null;
 }
 
-async function ensureLocalConversationBindingForSession(settings: any, sessionId: string): Promise<void> {
+async function ensureLocalConversationBindingForSession(settings: any, sessionId: string): Promise<boolean> {
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   if (adapterId !== 'local_conversation' || (config?.conversationMode ?? 'direct_session') !== 'agent') {
-    return;
+    return true;
   }
 
   const controlSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
   const requestedTargetSessionId =
     String(sessionId ?? '').trim() === VOICE_AGENT_GLOBAL_SESSION_ID ? null : String(sessionId ?? '').trim();
-  await voiceSessionBindingManager.ensureBound({
-    adapterId: 'local_conversation',
-    controlSessionId,
-    requestedTargetSessionId,
-  });
+  const attempt = localVoicePreparationAttemptGuard.next();
+  voiceConversationRuntimeMachine.transitionToConnecting({ controlSessionId });
+  try {
+    await voiceSessionBindingManager.ensureBound({
+      adapterId: 'local_conversation',
+      controlSessionId,
+      requestedTargetSessionId,
+    });
+  } catch (error) {
+    if (!localVoicePreparationAttemptGuard.isCurrent(attempt)) {
+      return false;
+    }
+    const current = voiceConversationRuntimeMachine.getSnapshot();
+    if (
+      current.adapterId !== null
+      || current.controlSessionId !== controlSessionId
+      || current.state !== 'connecting'
+    ) {
+      return false;
+    }
+    surfaceRecoverableVoiceCaptureError({
+      controlSessionId,
+      reason: readSafeVoiceRuntimeFailureCode(error) ?? 'voice_connection_failed',
+      kind: 'provider_error',
+    });
+    throw error;
+  }
+
+  if (!localVoicePreparationAttemptGuard.isCurrent(attempt)) {
+    return false;
+  }
+  const current = voiceConversationRuntimeMachine.getSnapshot();
+  return current.adapterId === null
+    && current.controlSessionId === controlSessionId
+    && current.state === 'connecting';
 }
 
 function isHandsFreeCaptureEnabled(settings: any, provider: LocalVoiceCaptureProvider, config: any): boolean {
@@ -498,6 +531,9 @@ async function runVoiceTurnWithSendFailureHandling(
       controlSessionId: sessionId,
       reason: 'send_failed',
     });
+    if (isVoiceTextTurnRejectedBeforeEffectError(error)) {
+      throw error;
+    }
     const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
     const shouldSwallowSendFailure = adapterId === 'local_conversation' && config?.conversationMode === 'agent';
     if (!shouldSwallowSendFailure) {
@@ -538,13 +574,6 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   try {
     text = await recordedAudioTranscriptionController.transcribe({ sessionId, uri, settings });
   } catch (error) {
-    if (error instanceof MissingSttBaseUrlError) {
-      transitionVoiceRuntimeToIdle({
-        controlSessionId: sessionId,
-        reason: 'missing_stt_base_url',
-      });
-      throw error;
-    }
     if (error instanceof MissingBundledSpeechCredentialError) {
       transitionVoiceRuntimeToIdle({
         controlSessionId: sessionId,
@@ -670,6 +699,7 @@ export async function sendLocalVoiceAgentTextTurn(
     localId: string;
     deliveryCommand: 'interrupt_and_send';
   }>,
+  onAccepted?: () => Promise<void>,
 ): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -688,6 +718,7 @@ export async function sendLocalVoiceAgentTextTurn(
       onTtsStopped: noteTtsStopped,
       signal,
       durableDispatch,
+      onUserTranscriptAccepted: onAccepted,
     }),
   );
 }
@@ -788,7 +819,12 @@ export async function setLocalVoiceMuted(sessionId: string, muted: boolean): Pro
 
   await localVoiceCaptureOwner.setMuted({ muted, sessionId: resolvedSessionId });
   if (muted) resetInputLevel();
-  voiceConversationRuntimeMachine.setMuted(muted);
+  voiceConversationRuntimeMachine.setMuted({
+    controlSessionId: resolvedSessionId,
+    adapterId: null,
+    attemptId: null,
+    micMuted: muted,
+  });
 }
 
 export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
@@ -943,7 +979,9 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
       await inFlight.catch(() => {});
     }
 
-    await ensureLocalConversationBindingForSession(settings, sessionId);
+    if (!await ensureLocalConversationBindingForSession(settings, sessionId)) {
+      return;
+    }
     prewarmLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
     inFlight = startLocalVoiceCapture({
@@ -961,7 +999,9 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
   if (current.status === 'idle') {
     const settings = storage.getState().settings as any;
     const { config } = resolveLocalVoiceAdapterSettings(settings);
-    await ensureLocalConversationBindingForSession(settings, sessionId);
+    if (!await ensureLocalConversationBindingForSession(settings, sessionId)) {
+      return;
+    }
     prewarmLocalVoiceAgentOnConnect({ settings, config });
     prewarmDaemonVoiceInferenceOnConnect({ settings });
     const provider = resolveLocalVoiceCaptureProvider(settings);
@@ -998,6 +1038,10 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
 }
 
 export async function stopLocalVoiceSession(): Promise<void> {
+  // A Voice Home carrier may still be resolving before capture starts. Fence
+  // that work before reading the machine so a late completion cannot revive
+  // the microphone after Stop (including a same-session retry).
+  localVoicePreparationAttemptGuard.cancel();
   const current = getCurrentLocalRuntimeCompatState();
   if (!current.sessionId) {
     releaseCaptureAdmission();
@@ -1020,7 +1064,12 @@ export async function stopLocalVoiceSession(): Promise<void> {
     }
 
     await localVoiceCaptureOwner.stopSession(activeSessionId);
-    voiceConversationRuntimeMachine.setMuted(false);
+    voiceConversationRuntimeMachine.setMuted({
+      controlSessionId: activeSessionId,
+      adapterId: null,
+      attemptId: null,
+      micMuted: false,
+    });
     // Invalidate the attempt-bound input writer so late mic frames cannot
     // revive the visual after teardown.
     closeInputLevel();

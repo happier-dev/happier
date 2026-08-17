@@ -135,11 +135,12 @@ describe('SessionDetailsPanel (mobile screen chrome)', () => {
             throw new Error('Expected close button to render');
         }
         expect(closeButton.props.accessibilityLabel).toBe('common.back');
-        expect(closeButton.props.hitSlop).toBe(15);
+        // The 34px shared IconButton plus 8px hit slop on each edge keeps a 50px touch target.
+        expect(closeButton.props.hitSlop).toBe(8);
         expect(getStyleValue(closeButton, 'borderWidth')).toBeUndefined();
         expect(getStyleValue(closeButton, 'backgroundColor')).toBeUndefined();
-        expect(findTestInstanceByTypeWithProps(closeButton, 'Ionicons', {
-            name: 'chevron-back',
+        expect(findTestInstanceByTypeWithProps(closeButton, 'Icon', {
+            name: 'caret-left',
             size: 24,
             color: '#18171C',
         })).toBeTruthy();

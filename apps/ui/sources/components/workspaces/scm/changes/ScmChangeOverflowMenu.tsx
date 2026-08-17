@@ -26,7 +26,7 @@ export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuPro
             {
                 id: 'copy_path',
                 title: t('common.path'),
-                icon: 'copy-outline',
+                icon: 'copy',
                 onPress: () => {
                     void (async () => {
                         const ok = await setClipboardStringSafe(props.filePath);
@@ -44,7 +44,7 @@ export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuPro
             out.push({
                 id: 'reveal_in_tree',
                 title: t('common.files'),
-                icon: 'folder-open-outline',
+                icon: 'folder-open',
                 onPress: props.onRevealInTree,
             });
         }
@@ -53,7 +53,7 @@ export const ScmChangeOverflowMenu = React.memo((props: ScmChangeOverflowMenuPro
             out.push({
                 id: 'discard',
                 title: t('common.discardChanges'),
-                icon: 'arrow-undo-outline',
+                icon: 'arrow-arc-left',
                 destructive: true,
                 disabled: props.discardDisabled,
                 onPress: props.onDiscard,

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
 
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
@@ -29,60 +30,64 @@ vi.mock('@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransfer
 }));
 
 function createAcmeSpeechContribution() {
-  const registry = createVoiceProviderRegistry({
-    bundled: [{
-      kind: 'voice.speech-engine.v1',
-      pluginId: 'acme.voice',
-      providerId: 'acme_speech',
-      role: 'tts',
-      roles: ['conversation_tts'],
-      requirements: [],
-      settingsSectionId: 'voice.tts.acme',
-      internal: {
-        createSettingsSpec: () => null,
-        speechTarget: { localId: 'speech-v2' },
-        schemas: {
-          transcribeResponse: {
-            safeParse: (value: unknown) => value !== null
-              && typeof value === 'object'
-              && 'ok' in value
-              && value.ok === true
-              && 'text' in value
-              && typeof value.text === 'string'
-              ? { success: true as const, data: { ok: true as const, requestId: 'fixture', text: value.text } }
-              : { success: false as const },
-          },
-          synthesizeResponse: {
-            safeParse: (value: unknown) => value !== null
-              && typeof value === 'object'
-              && 'ok' in value
-              && value.ok === true
-              && 'downloadId' in value
-              && typeof value.downloadId === 'string'
-              && 'chunkSizeBytes' in value
-              && typeof value.chunkSizeBytes === 'number'
-              && 'sizeBytes' in value
-              && typeof value.sizeBytes === 'number'
-              && 'mimeType' in value
-              && (value.mimeType === 'audio/mpeg' || value.mimeType === 'audio/wav')
-              ? {
-                  success: true as const,
-                  data: {
-                    ok: true as const,
-                    requestId: 'fixture',
-                    downloadId: value.downloadId,
-                    chunkSizeBytes: value.chunkSizeBytes,
-                    sizeBytes: value.sizeBytes,
-                    mimeType: value.mimeType,
-                  },
-                }
-              : { success: false as const },
-          },
+  const declaration = VoiceProviderContributionSchema.parse({
+    id: 'speech-v2',
+    title: 'Acme Speech',
+    kind: 'speech',
+    roles: ['dictation_stt', 'conversation_tts'],
+    platforms: ['web'],
+    catalogs: [
+      { kind: 'models', settingFieldId: 'model', allowCustom: true },
+      { kind: 'voices', settingFieldId: 'voiceName', allowCustom: true },
+    ],
+    credentials: {
+      slot: { id: 'api_key', purpose: 'voice.speech', title: 'API key' },
+      requirement: { kind: 'always' },
+      sources: [{
+        kind: 'savedSecret',
+        secretKinds: ['apiKey'],
+        rawGrants: [{
+          realm: 'daemon',
+          phase: 'speech',
+          request: { kind: 'environment', keys: ['ACME_VOICE_API_KEY'] },
+        }],
+      }],
+    },
+    settings: {
+      schemaVersion: 2,
+      fields: [
+        {
+          id: 'model',
+          title: 'Model',
+          schema: { type: 'string', minLength: 1, maxLength: 256 },
+          default: 'acme-stt',
+          presentation: { control: 'select' },
         },
-      },
+        {
+          id: 'voiceName',
+          title: 'Voice',
+          schema: { type: 'string', minLength: 1, maxLength: 256 },
+          default: 'acme-voice',
+          presentation: { control: 'select' },
+        },
+      ],
+    },
+  });
+  if (declaration.kind !== 'speech') throw new Error('expected speech declaration');
+  const providerId = 'acme.voice/speech-v2';
+  const registry = createVoiceProviderRegistry({
+    bundledContributions: [{
+      pluginId: 'acme.voice',
+      providerId,
+      declaration,
+    }],
+    bundledPresentations: [{
+      providerId,
+      settingsSectionId: 'voice.tts.acme',
+      createSettingsSpec: () => null,
     }],
   });
-  return registry.get('acme_speech')!;
+  return registry.get(providerId)!;
 }
 
 describe('bundled speech selected-daemon client', () => {
@@ -90,31 +95,36 @@ describe('bundled speech selected-daemon client', () => {
     const rpc = vi.fn(async (request: Readonly<{ method: string; payload: unknown }>) => {
       expect(request.method).toBe('daemon.voice.speech.catalog');
       expect(request.payload).toEqual({
-        target: { pluginId: 'happier.voice.google', localId: 'speech' },
-        providerId: 'google_gemini',
+        target: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },
         catalog: 'models',
       });
       return { ok: true, items: [{ id: 'gemini', name: 'Gemini', metadata: {} }] };
     });
     const client = new BundledSpeechDaemonClient({ resolveMachineId: () => 'machine-1', machineRpc: rpc as never });
-    const contribution = createDefaultVoiceProviderRegistry().get('google_gemini');
+    const contribution = createDefaultVoiceProviderRegistry().get('happier.voice.google/gemini-stt');
     expect(contribution).not.toBeNull();
     await expect(client.fetchCatalog(contribution!, 'models')).resolves.toEqual([
       { id: 'gemini', name: 'Gemini', metadata: {} },
     ]);
   });
 
-  it('routes a second bundled speech contribution from the supplied normalized registry entry', async () => {
+  it('routes an external speech contribution through its qualified daemon target', async () => {
     const rpc = vi.fn(async (request: Readonly<{ method: string; payload: unknown }>) => {
       expect(request.method).toBe('daemon.voice.speech.catalog');
       expect(request.payload).toEqual({
         target: { pluginId: 'acme.voice', localId: 'speech-v2' },
-        providerId: 'acme_speech',
         catalog: 'voices',
       });
       return { ok: true, items: [{ id: 'acme-voice', name: 'Acme Voice', metadata: {} }] };
     });
-    const contribution = createAcmeSpeechContribution();
+    const contribution = Object.freeze({
+      ...createAcmeSpeechContribution(),
+      source: Object.freeze({
+        kind: 'external' as const,
+        pluginId: 'acme.voice',
+        localId: 'speech-v2',
+      }),
+    });
 
     const client = new BundledSpeechDaemonClient({ resolveMachineId: () => 'machine-1', machineRpc: rpc as never });
     await expect(client.fetchCatalog(contribution, 'voices')).resolves.toEqual([
@@ -126,19 +136,18 @@ describe('bundled speech selected-daemon client', () => {
     const rpc = vi.fn(async (request: Readonly<{ method: string; payload: any }>) => {
       expect(request.payload).toEqual(expect.objectContaining({
         target: { pluginId: 'acme.voice', localId: 'speech-v2' },
-        providerId: 'acme_speech',
       }));
       if (request.method === 'daemon.voice.speech.transcribe') {
-        return { ok: true, text: 'acme transcript' };
+        return { ok: true, requestId: request.payload.requestId, text: 'acme transcript' };
       }
       if (request.method === 'daemon.voice.speech.synthesize') {
         return {
           ok: true,
+          requestId: request.payload.requestId,
           downloadId: 'download-1',
           sizeBytes: 3,
           mimeType: 'audio/wav',
           chunkSizeBytes: 3,
-          nonceBase64: 'nonce',
         };
       }
       throw new Error(`unexpected_method:${request.method}`);
@@ -157,6 +166,7 @@ describe('bundled speech selected-daemon client', () => {
     await expect(client.synthesize({
       entry: contribution,
       input: 'hello',
+      model: null,
       voiceName: 'acme-voice',
       languageCode: 'en',
       format: 'wav',

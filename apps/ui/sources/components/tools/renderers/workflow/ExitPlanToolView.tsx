@@ -9,9 +9,9 @@ import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
 import { sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -310,14 +310,14 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
         <ToolSectionView>
             <View style={styles.container}>
                 <View style={styles.planContainer}>
-                    <MarkdownView markdown={plan} />
+                    <MarkdownView markdown={plan} agentTexMath />
                 </View>
 
                 {isResponded || tool.state === 'completed' ? (
                     <View style={styles.respondedContainer}>
-                        <Ionicons
-                            name="checkmark-circle"
-                            size={18}
+                        <Icon
+                            name="check-circle"
+                            size={16}
                             color={theme.colors.text.secondary}
                         />
                         <Text style={styles.respondedText}>
@@ -389,7 +389,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                         <ActivitySpinner size="small" color={theme.colors.text.primary} />
                                     ) : (
                                         <>
-                                            <Ionicons name="close" size={18} color={theme.colors.text.primary} />
+                                            <Icon name="x" size={16} color={theme.colors.text.primary} />
                                             <Text style={styles.rejectButtonText}>
                                                 {t('tools.exitPlanMode.reject')}
                                             </Text>
@@ -424,7 +424,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                           <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
                                     ) : (
                                         <>
-                                            <Ionicons name="checkmark" size={18} color={theme.colors.button.primary.tint} />
+                                            <Icon name="check" size={16} color={theme.colors.button.primary.tint} />
                                               <Text style={styles.approveButtonText}>
                                                   {t('tools.exitPlanMode.approve')}
                                               </Text>
@@ -441,16 +441,16 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                       disabled={isApproving || isRejecting}
                                       activeOpacity={0.7}
                                   >
-                                      <Ionicons name="chevron-down" size={18} color={theme.colors.button.primary.tint} />
+                                      <Icon name="caret-down" size={16} color={theme.colors.button.primary.tint} />
                                   </TouchableOpacity>
                               </View>
                           )}
                       </>
                   ) : (isRunning && !canApprovePermissions ? (
                     <View style={styles.respondedContainer}>
-                        <Ionicons
-                            name="lock-closed-outline"
-                            size={18}
+                        <Icon
+                            name="lock"
+                            size={16}
                             color={theme.colors.text.secondary}
                         />
                         <Text style={styles.respondedText}>

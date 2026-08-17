@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAppShellPluginUiInvocationHost } from './pluginUiInvocationHost';
 
+const VOICE_ORIGIN = {
+    serverIdentityId: 'server-1',
+    materializationRef: {
+        pluginId: 'acme.voice',
+        machineId: 'machine-1',
+        materializationId: 'materialization-voice-current',
+    },
+} as const;
+
 describe('AppShell plugin UI invocation host', () => {
     it('qualifies a local action and delegates to the daemon invocation owner with generation, timeout, and caller signal', async () => {
         const signal = new AbortController().signal;
@@ -14,6 +23,7 @@ describe('AppShell plugin UI invocation host', () => {
             contributionId: 'conversation',
             generation: '12',
             machineId: 'machine-1',
+            executionOrigin: VOICE_ORIGIN,
             serverId: 'server-1',
             signal,
             timeoutMs: 5_000,
@@ -29,6 +39,17 @@ describe('AppShell plugin UI invocation host', () => {
             qualifiedActionId: 'acme.voice/mint-session',
             input: { voice: 'alloy' },
             executionSurface: 'ui',
+            invocation: {
+                kind: 'mountedPluginSurface',
+                mountedBinding: {
+                    contributionLocalId: 'conversation',
+                    materializationRef: {
+                        pluginId: 'acme.voice',
+                        machineId: 'machine-1',
+                        materializationId: 'materialization-voice-current',
+                    },
+                },
+            },
             timeoutMs: 5_000,
             signal,
         });
@@ -63,6 +84,7 @@ describe('AppShell plugin UI invocation host', () => {
         const cancelledAfterSettlement = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             generation: '12', machineId: 'machine-1', signal: new AbortController().signal,
+            executionOrigin: VOICE_ORIGIN,
             isCurrent: () => true,
             execute: async () => {
                 const settled = { supported: true as const, result: { ok: true as const, result: { token: 'known-success' } } };
@@ -79,6 +101,7 @@ describe('AppShell plugin UI invocation host', () => {
         const retiredInFlight = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             generation: '12', machineId: 'machine-1', signal: new AbortController().signal,
+            executionOrigin: VOICE_ORIGIN,
             isCurrent: () => current,
             execute: async () => {
                 const settled = { supported: true as const, result: { ok: true as const, result: { token: 'known-success' } } };
@@ -94,6 +117,7 @@ describe('AppShell plugin UI invocation host', () => {
         const unavailable = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             generation: '12', machineId: 'machine-1', signal: new AbortController().signal,
+            executionOrigin: VOICE_ORIGIN,
             isCurrent: () => true,
             execute: async () => ({ supported: false, reason: 'not-supported' }),
         });
@@ -104,11 +128,44 @@ describe('AppShell plugin UI invocation host', () => {
         const denied = createAppShellPluginUiInvocationHost({
             pluginId: 'acme.voice', contributionId: 'conversation',
             generation: '12', machineId: 'machine-1', signal: new AbortController().signal,
+            executionOrigin: VOICE_ORIGIN,
             isCurrent: () => true,
             execute: async () => ({ supported: true, result: { ok: false, code: 'plugin_action_grant_missing' } }),
         });
         await expect(denied.executeAction('mint-session', null)).rejects.toMatchObject({
             code: 'plugin_action_grant_missing',
         });
+    });
+
+    it('fails closed when a mounted Voice contribution has no exact current materialization', async () => {
+        const execute = vi.fn();
+        const ui = createAppShellPluginUiInvocationHost({
+            pluginId: 'acme.voice', contributionId: 'conversation',
+            generation: '12', machineId: 'machine-1', signal: new AbortController().signal,
+            isCurrent: () => true,
+            execute,
+        });
+
+        await expect(ui.executeAction('mint-session', null)).rejects.toMatchObject({
+            code: 'plugin_mounted_caller_unavailable',
+        });
+        expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('keeps the complete UI host API present while unsupported openable content fails closed', async () => {
+        const ui = createAppShellPluginUiInvocationHost({
+            pluginId: 'acme.voice', contributionId: 'conversation',
+            generation: '12', machineId: 'machine-1', signal: new AbortController().signal,
+            isCurrent: () => true,
+        });
+
+        await expect(ui.statOpenableContent({ kind: 'workspaceFile', handle: 'viewer-file-1' }))
+            .rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
+        await expect(ui.readOpenableContent({
+            ref: { kind: 'workspaceFile', handle: 'viewer-file-1' },
+            expectedRevision: 'revision-1',
+            maxBytes: 1_024,
+        })).rejects.toMatchObject({ code: 'plugin_ui_method_unavailable' });
+        expect(ui.version().methods).toEqual(['executeAction']);
     });
 });

@@ -2,7 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DetectedMcpServerV1, McpServersSettingsV1 } from '@happier-dev/protocol';
+import type {
+    AccountSettingsDefaults,
+    DetectedMcpServerV1,
+    McpServersSettingsV1,
+} from '@happier-dev/protocol';
 import { createMachineFixture, flushHookEffects } from '@/dev/testkit';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
@@ -44,9 +48,29 @@ const {
     setMcpSettingsSpy: vi.fn(),
 }));
 
-const settingsState: { value: McpServersSettingsV1 } = {
+type McpServersSettingsRaw = AccountSettingsDefaults['mcpServersSettingsV1'];
+
+const settingsState: { value: McpServersSettingsRaw } = {
     value: { v: 1, strictMode: false, servers: [], bindings: [] },
 };
+
+const administrationTargetState = vi.hoisted(() => ({
+    current: {
+        target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+        serverId: 'server-1',
+        machine: {
+            id: 'machine-1',
+            metadata: {
+                displayName: 'Machine 1',
+                host: 'machine-1.local',
+            },
+        },
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        serverId: string;
+        machine: { id: string; metadata: { displayName: string; host: string } };
+    } | null,
+}));
 
 async function selectHeaderTab(
     screen: { find: (predicate: (node: { props?: { testIDPrefix?: string; onSelectTab?: (tabId: string) => void } }) => boolean) => { props: { onSelectTab?: (tabId: string) => void } } },
@@ -73,6 +97,18 @@ vi.mock('@/components/settings/mcpServers/McpSegmentedHeader', () => ({
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (action: any) => [false, action],
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: any) => React.createElement('MachineAdministrationTargetSelector', props),
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.current?.target ?? null,
+        canExecute: administrationTargetState.current !== null,
+        resolveExecutionTarget: () => administrationTargetState.current,
+    }),
 }));
 
 vi.mock('@/sync/ops/machineMcpServers', async () => {
@@ -184,6 +220,17 @@ describe('McpServersSettingsScreen', () => {
                 updatedAt: 1,
             }],
         };
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+            serverId: 'server-1',
+            machine: {
+                id: 'machine-1',
+                metadata: {
+                    displayName: 'Machine 1',
+                    host: 'machine-1.local',
+                },
+            },
+        };
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.alert).mockReset();
         vi.mocked(Modal.show).mockReset();
@@ -241,7 +288,7 @@ describe('McpServersSettingsScreen', () => {
         expect(machineMcpServersDetectSpy).toHaveBeenCalledWith('machine-1', {
             providers: listDetectedMcpProviderIds(),
             directory: undefined,
-        });
+        }, { serverId: 'server-1' });
 
         await selectHeaderTab(screen, 'preview');
         expect(screen.findRow('settings.mcpServers.preview.refresh')).toBeTruthy();
@@ -269,6 +316,56 @@ describe('McpServersSettingsScreen', () => {
             servers: [],
             bindings: [],
         });
+    });
+
+    it.each([
+        ['a future settings version', {
+            v: 2,
+            strictMode: false,
+            servers: [],
+            bindings: [],
+        }],
+        ['a schema-invalid duplicate server id', {
+            v: 1,
+            strictMode: false,
+            servers: [
+                {
+                    id: 'duplicate',
+                    name: 'first',
+                    transport: 'stdio',
+                    stdio: { command: 'node', args: [] },
+                    env: {},
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+                {
+                    id: 'duplicate',
+                    name: 'second',
+                    transport: 'stdio',
+                    stdio: { command: 'node', args: [] },
+                    env: {},
+                    createdAt: 2,
+                    updatedAt: 2,
+                },
+            ],
+            bindings: [],
+        }],
+        ['an additive field from a newer writer', {
+            v: 1,
+            strictMode: false,
+            servers: [],
+            bindings: [],
+            futureV2: { retained: true },
+        }],
+    ] satisfies ReadonlyArray<readonly [string, McpServersSettingsRaw]>)('does not overwrite %s when toggling strict mode', async (_case, rawSettings) => {
+        settingsState.value = rawSettings;
+
+        const { McpServersSettingsScreen } = await import('./McpServersSettingsScreen');
+        const screen = await renderSettingsView(React.createElement(McpServersSettingsScreen));
+
+        await screen.pressRow('settings.mcpServers.strictMode');
+
+        expect(setMcpSettingsSpy).not.toHaveBeenCalled();
     });
 
     it('refreshes detected servers when the user requests a detect pass with the current context', async () => {
@@ -304,6 +401,38 @@ describe('McpServersSettingsScreen', () => {
         expect(machineMcpServersDetectSpy).toHaveBeenLastCalledWith('machine-1', {
             providers: listDetectedMcpProviderIds(),
             directory: '/repo/project',
+        }, { serverId: 'server-1' });
+    });
+
+    it('uses the fresh Administration target and fails closed after it becomes unavailable', async () => {
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-target', machineId: 'machine-target' },
+            serverId: 'server-target',
+            machine: {
+                id: 'machine-target',
+                metadata: {
+                    displayName: 'Target machine',
+                    host: 'target.local',
+                },
+            },
+        };
+
+        const { McpServersSettingsScreen } = await import('./McpServersSettingsScreen');
+        const screen = await renderSettingsView(React.createElement(McpServersSettingsScreen));
+
+        await selectHeaderTab(screen, 'detected');
+
+        expect(machineMcpServersDetectSpy).toHaveBeenCalledWith('machine-target', {
+            providers: listDetectedMcpProviderIds(),
+            directory: undefined,
+        }, { serverId: 'server-target' });
+
+        machineMcpServersDetectSpy.mockClear();
+        administrationTargetState.current = null;
+        await act(async () => {
+            await screen.pressRow('settings.mcpServers.detect.refresh');
         });
+
+        expect(machineMcpServersDetectSpy).not.toHaveBeenCalled();
     });
 });

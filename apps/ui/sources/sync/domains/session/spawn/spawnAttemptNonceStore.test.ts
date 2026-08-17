@@ -473,7 +473,13 @@ describe('spawnAttemptNonceStore persistence', () => {
         const originalNavigator = globalThis.navigator;
         let tail = Promise.resolve();
         const lockManager = {
-            request: async <T>(_name: string, callback: () => T | Promise<T>): Promise<T> => {
+            request: async <T>(
+                _name: string,
+                optionsOrCallback: LockOptions | (() => T | Promise<T>),
+                optionalCallback?: () => T | Promise<T>,
+            ): Promise<T> => {
+                const callback = optionalCallback
+                    ?? optionsOrCallback as () => T | Promise<T>;
                 const prior = tail;
                 let release!: () => void;
                 tail = new Promise<void>((resolve) => { release = resolve; });
@@ -561,6 +567,127 @@ describe('spawnAttemptNonceStore persistence', () => {
                 configurable: true,
                 value: originalNavigator,
             });
+        }
+    });
+
+    it('fails a blocked success mutation finitely and fences its late Web Lock callback', async () => {
+        const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+        const blockedCallback = {
+            invoke: undefined as (() => Promise<unknown>) | undefined,
+        };
+        const blockedLockManager = {
+            request: <T>(
+                _name: string,
+                optionsOrCallback: LockOptions | (() => T | Promise<T>),
+                optionalCallback?: () => T | Promise<T>,
+            ): Promise<T> => new Promise<T>((resolve, reject) => {
+                const callback = optionalCallback
+                    ?? optionsOrCallback as () => T | Promise<T>;
+                const signal = typeof optionsOrCallback === 'function'
+                    ? undefined
+                    : optionsOrCallback.signal;
+                signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+                blockedCallback.invoke = async () => {
+                    const value = await callback();
+                    resolve(value);
+                    return value;
+                };
+            }),
+        };
+        Object.defineProperties(globalThis, {
+            window: { configurable: true, value: {} },
+            document: { configurable: true, value: {} },
+            navigator: { configurable: true, value: { locks: blockedLockManager } },
+        });
+
+        try {
+            vi.useFakeTimers();
+            getPersistenceStorage().set(storageKey, JSON.stringify({
+                [compositeRecordId]: {
+                    v: 3,
+                    scope,
+                    machineId: attempt.machineId,
+                    targetFingerprint: attempt.targetFingerprint,
+                    userAttemptId: attempt.userAttemptId,
+                    nonce: 'resolved-spawn-nonce',
+                    submissionState: 'submitted',
+                    createdSessionId: null,
+                    firstTurnLocalId: 'spawn-first-turn:resolved-spawn-nonce',
+                    attachmentMessageLocalId: 'spawn-attachment:resolved-spawn-nonce',
+                },
+            }));
+            const store = await import('./spawnAttemptNonceStore');
+            const mutation = store.markSpawnAttemptCreated({
+                ...attempt,
+                nonce: 'resolved-spawn-nonce',
+                createdSessionId: 'resolved-session',
+            });
+            const finiteResult = Promise.race([
+                mutation,
+                new Promise<'test_timeout'>((resolve) => {
+                    setTimeout(() => resolve('test_timeout'), 60_000);
+                }),
+            ]);
+
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            await expect(finiteResult).resolves.toBeNull();
+            if (!blockedCallback.invoke) throw new Error('expected a blocked Web Lock callback');
+            await blockedCallback.invoke();
+            expect(store.readSpawnAttemptCustodyState(scope)).toMatchObject({
+                status: 'valid',
+                attempts: {
+                    [compositeRecordId]: {
+                        nonce: 'resolved-spawn-nonce',
+                        submissionState: 'submitted',
+                        createdSessionId: null,
+                    },
+                },
+            });
+
+            Object.defineProperty(globalThis, 'navigator', {
+                configurable: true,
+                value: {
+                    locks: {
+                        request: async <T>(
+                            _name: string,
+                            _options: LockOptions,
+                            callback: () => T | Promise<T>,
+                        ): Promise<T> => await callback(),
+                    },
+                },
+            });
+            await expect(store.markSpawnAttemptCreated({
+                ...attempt,
+                nonce: 'resolved-spawn-nonce',
+                createdSessionId: 'resolved-session',
+            })).resolves.toMatchObject({
+                nonce: 'resolved-spawn-nonce',
+                createdSessionId: 'resolved-session',
+            });
+            await expect(store.acquireSpawnAttemptCustody({
+                ...attempt,
+                seedNonce: 'must-not-duplicate',
+            })).resolves.toMatchObject({
+                status: 'acquired',
+                reused: true,
+                record: {
+                    nonce: 'resolved-spawn-nonce',
+                    createdSessionId: 'resolved-session',
+                },
+            });
+        } finally {
+            vi.useRealTimers();
+            for (const [key, descriptor] of [
+                ['window', originalWindow],
+                ['document', originalDocument],
+                ['navigator', originalNavigator],
+            ] as const) {
+                if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+                else delete (globalThis as Record<string, unknown>)[key];
+            }
         }
     });
 

@@ -47,29 +47,31 @@ const SEEDED_TRANSCRIPT = [
 
 export function buildJourneyVoiceStageModel(): VoiceSurfaceViewModel {
     return {
+        attemptControl: {
+            availability: 'ready', live: true, canStart: false, canStop: true, canMute: true,
+            muted: false, capturing: true, micStateLabel: t('voiceSurface.a11y.microphoneActive'),
+            captionLabel: t('voiceSurface.a11y.microphoneActive'), primaryAction: 'end', primaryActionLabel: t('voiceAssistant.endVoice'),
+            primaryActionHint: t('voiceSurface.orbEndHint'), recoveryAvailable: false, recoveryLabel: null,
+            surfaceState: 'listening', tone: 'active', stop: 'cool', sessionId: 'journey-voice',
+            onToggle: noop, onToggleMute: noop, onRecover: noop, onPrimaryAction: noop,
+            openConversationSessionId: null, onOpenConversation: noop,
+        },
         activityFeedEnabled: true,
         canBargeIn: true,
         canCancelTurn: false,
-        canMute: true,
         canOpenConversation: true,
-        canRecover: false,
         canTeleportToSessionRoot: true,
-        canStop: true,
-        controlsActive: true,
         controlsDisabled: false,
         controlsLoading: false,
-        diagnosticsSessionId: null,
+        delegatedWork: null,
         expanded: true,
-        hasProviderDataDisclosure: false,
         isMicCaptureActive: true,
-        isMuted: false,
-        isSpeaking: false,
         mode: 'listening',
-        surfaceState: 'listening',
+        // Unmuted and capturing, matching `isMicCaptureActive` above: the staged conversation is
+        // listening, so the transport must not draw a closed microphone.
+        micStateLabel: t('voiceSurface.a11y.microphoneActive'),
         muteLabel: t('voiceSurface.a11y.mute'),
-        openLabel: t('common.open'),
         providerLabel: t('settingsVoice.mode.local'),
-        recoveryLabel: t('voiceSurface.reviewCredentials'),
         startStopLabel: t('voiceAssistant.endVoice'),
         status: 'connected',
         subtitle: `${t('voiceSurface.targetSession')}: Dashboard auth`,
@@ -79,13 +81,9 @@ export function buildJourneyVoiceStageModel(): VoiceSurfaceViewModel {
         visibleTranscriptEntries: SEEDED_TRANSCRIPT,
         onBargeIn: noop,
         onCancelTurn: noop,
-        onOpenDataDisclosure: noop,
-        onToggleMute: noop,
         onOpenConversation: noop,
-        onRecover: noop,
         onTeleport: noop,
         onToggleExpanded: noop,
-        onTogglePress: noop,
     };
 }
 

@@ -155,6 +155,41 @@ describe('MachineSelector (disable offline)', () => {
         expect((captured.lastFavoriteItems as any[]).map((m) => m.id)).toEqual([]);
     });
 
+    it('keeps the selected replaced machine visible as an unavailable option when requested', async () => {
+        captured.reset();
+
+        const currentMachine: any = {
+            id: 'm-current',
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            metadata: { displayName: 'Current' },
+        };
+        const replacedMachine: any = {
+            id: 'm-replaced',
+            active: false,
+            activeAt: Date.now() - 1,
+            revokedAt: null,
+            replacedByMachineId: 'm-current',
+            replacedAt: Date.now(),
+            metadata: { displayName: 'Replaced' },
+        };
+
+        await renderScreen(React.createElement(MachineSelector as any, {
+            machines: [replacedMachine, currentMachine],
+            selectedMachine: replacedMachine,
+            onSelect: vi.fn(),
+            showCliGlyphs: false,
+            includeSelectedUnavailableMachine: true,
+        }));
+
+        expect((captured.lastItems as any[]).map((machine) => machine.id)).toEqual([
+            'm-current',
+            'm-replaced',
+        ]);
+        expect(captured.lastConfig.isItemDisabled(replacedMachine)).toBe(true);
+    });
+
     it('omits recent and favorite machines from the all-section items to avoid duplicates', async () => {
         captured.reset();
 

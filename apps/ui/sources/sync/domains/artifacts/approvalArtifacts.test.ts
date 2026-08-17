@@ -7,7 +7,7 @@ function artifact(
     id: string,
     header: NonNullable<DecryptedArtifact['header']>,
     body?: unknown,
-): DecryptedArtifact {
+): Extract<DecryptedArtifact, { isDecrypted: true }> {
     return {
         id,
         header,

@@ -5,6 +5,11 @@ import { t } from '@/text';
 
 type PluginSurfaceInteractionBoundaryProps = Readonly<{
     children: React.ReactNode;
+    /**
+     * Layout/route-owned presentation fact. This is intentionally separate
+     * from availability: an inactive retained surface is inert, not offline.
+     */
+    focusEligible?: boolean;
     enabled: boolean;
     snapshotTitle: string;
     surfaceId: string;
@@ -21,29 +26,45 @@ export function PluginSurfaceInteractionBoundary(
         ReturnType<typeof TextInput.State.currentlyFocusedInput> | null
     >(null);
     const focusReturnAccessibilityTargetRef = React.useRef<number | null>(null);
+    const interactionEnabled = props.enabled && props.focusEligible !== false;
     const wasEnabledRef = React.useRef(props.enabled);
+    const wasInteractionEnabledRef = React.useRef(interactionEnabled);
     const handleFocusCapture = React.useCallback((event: unknown) => {
-        if (!props.enabled) return;
+        if (!interactionEnabled) return;
         focusedTextInputRef.current = TextInput.State.currentlyFocusedInput();
         const target = (
             event as Readonly<{ nativeEvent?: Readonly<{ target?: unknown }> }>
         ).nativeEvent?.target;
         focusedAccessibilityTargetRef.current = typeof target === 'number' ? target : null;
-    }, [props.enabled]);
+    }, [interactionEnabled]);
     const handleBlurCapture = React.useCallback(() => {
-        if (!props.enabled) return;
+        if (!interactionEnabled) return;
         focusedTextInputRef.current = null;
         focusedAccessibilityTargetRef.current = null;
-    }, [props.enabled]);
+    }, [interactionEnabled]);
 
     React.useLayoutEffect(() => {
         const wasEnabled = wasEnabledRef.current;
+        const wasInteractionEnabled = wasInteractionEnabledRef.current;
         wasEnabledRef.current = props.enabled;
-        if (wasEnabled && !props.enabled) {
-            focusReturnTextInputRef.current = focusedTextInputRef.current;
-            focusReturnAccessibilityTargetRef.current = focusedAccessibilityTargetRef.current;
-            if (focusReturnTextInputRef.current) {
-                TextInput.State.blurTextInput(focusReturnTextInputRef.current);
+        wasInteractionEnabledRef.current = interactionEnabled;
+        if (wasInteractionEnabled && !interactionEnabled) {
+            const focusedTextInput = focusedTextInputRef.current;
+            const focusedAccessibilityTarget = focusedAccessibilityTargetRef.current;
+            // Availability owns the only focus-return path. A retained surface
+            // made ineligible by presentation must blur immediately, but its
+            // layout must never preserve a stale return target for itself.
+            if (wasEnabled && !props.enabled) {
+                focusReturnTextInputRef.current = focusedTextInput;
+                focusReturnAccessibilityTargetRef.current = focusedAccessibilityTarget;
+            } else {
+                focusReturnTextInputRef.current = null;
+                focusReturnAccessibilityTargetRef.current = null;
+            }
+            focusedTextInputRef.current = null;
+            focusedAccessibilityTargetRef.current = null;
+            if (focusedTextInput) {
+                TextInput.State.blurTextInput(focusedTextInput);
             }
             return;
         }
@@ -52,13 +73,14 @@ export function PluginSurfaceInteractionBoundary(
             const accessibilityTarget = focusReturnAccessibilityTargetRef.current;
             focusReturnTextInputRef.current = null;
             focusReturnAccessibilityTargetRef.current = null;
+            if (!interactionEnabled) return;
             if (textInput) {
                 TextInput.State.focusTextInput(textInput);
             } else if (accessibilityTarget !== null) {
                 AccessibilityInfo.setAccessibilityFocus(accessibilityTarget);
             }
         }
-    }, [props.enabled]);
+    }, [interactionEnabled, props.enabled]);
 
     const focusCaptureProps = {
         onFocusCapture: handleFocusCapture,
@@ -72,9 +94,9 @@ export function PluginSurfaceInteractionBoundary(
         >
             <View
                 testID={`plugin-surface-snapshot:${props.surfaceId}`}
-                pointerEvents={props.enabled ? 'auto' : 'none'}
-                accessibilityElementsHidden={!props.enabled}
-                importantForAccessibility={props.enabled ? 'auto' : 'no-hide-descendants'}
+                pointerEvents={interactionEnabled ? 'auto' : 'none'}
+                accessibilityElementsHidden={!interactionEnabled}
+                importantForAccessibility={interactionEnabled ? 'auto' : 'no-hide-descendants'}
                 style={styles.snapshot}
                 {...focusCaptureProps}
             >

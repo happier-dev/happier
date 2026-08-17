@@ -1,5 +1,4 @@
 import React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -9,6 +8,7 @@ import { t, getLanguageNativeName, SUPPORTED_LANGUAGES, SUPPORTED_LANGUAGE_CODES
 import { Modal } from '@/modal';
 import { useUpdates } from '@/hooks/inbox/useUpdates';
 import * as Localization from 'expo-localization';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type LanguageOption = 'auto' | SupportedLanguage;
 
@@ -82,16 +82,16 @@ export default function LanguageSettingsScreen() {
                         key={option.key}
                         title={option.title}
                         subtitle={option.subtitle}
-                        icon={<Ionicons 
-                            name="language-outline" 
-                            size={29} 
+                        icon={<Icon
+                            name="translate"
+                            size={29}
                             color={currentSelection === option.key ? theme.colors.text.primary : theme.colors.text.secondary}
                         />}
                         rightElement={
                             currentSelection === option.key ? (
-                                <Ionicons 
-                                    name="checkmark" 
-                                    size={20} 
+                                <Icon
+                                    name="check"
+                                    size={20}
                                     color={theme.colors.text.primary}
                                 />
                             ) : null

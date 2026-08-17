@@ -46,6 +46,24 @@ vi.mock('./bottom/SessionBottomPanel', () => ({
     SessionBottomPanel: () => React.createElement('SessionBottomPanel'),
 }));
 
+vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+    useSessionMachineTarget: () => ({ machineId: 'machine-s1', basePath: '/repo' }),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+    usePreferredServerIdForSession: () => 'server-s1',
+}));
+
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
+    useScopedPluginUiProjection: () => ({
+        pluginUiProjection: { generation: 7 },
+        pluginBrowserProjection: { generation: 8 },
+        phase: 'current',
+        interactionEnabled: true,
+        platform: 'web',
+    }),
+}));
+
 describe('useRegisterSessionPaneDriver (right pane loading)', () => {
     it('renders the right pane eagerly alongside the details and bottom panes', async () => {
         standardCleanup();
@@ -61,16 +79,40 @@ describe('useRegisterSessionPaneDriver (right pane loading)', () => {
 
         expect(probe.findAll((node) => String(node.type) === 'Probe')).toHaveLength(1);
         expect(capturedDriver).toBeTruthy();
-        expect(typeof capturedDriver.renderDetailsPane).toBe('function');
-        expect(typeof capturedDriver.renderBottomPane).toBe('function');
+        expect(capturedDriver.surfaceScope).toEqual({
+            targetKind: 'session',
+            sessionId: 's1',
+            machineId: 'machine-s1',
+            serverId: 'server-s1',
+            pluginUiProjection: { generation: 7 },
+            pluginBrowserProjection: { generation: 8 },
+            projectionPhase: 'current',
+            interactionEnabled: true,
+            platform: 'web',
+        });
+        expect(capturedDriver.rightPaneBuiltinAdapter).toBeTruthy();
+        expect(capturedDriver.detailsPaneBuiltinAdapter).toBeTruthy();
+        expect(capturedDriver.bottomPaneBuiltinAdapter).toBeTruthy();
 
-        const rightNode = capturedDriver.renderRightPane();
-        const detailsNode = capturedDriver.renderDetailsPane();
-        const bottomNode = capturedDriver.renderBottomPane();
+        const rightNode = capturedDriver.rightPaneBuiltinAdapter.render({ scopeId: 'session:s1', destinationId: 'files' });
+        const rightSidebarNode = capturedDriver.rightSidebarAdapter.render({ scopeId: 'session:s1' });
+        const detailsNode = capturedDriver.detailsPaneBuiltinAdapter.render({ scopeId: 'session:s1', destinationId: 'session-details' });
+        const bottomNode = capturedDriver.bottomPaneBuiltinAdapter.render({ scopeId: 'session:s1', destinationId: 'terminal' });
 
         expect(rightNode).toBeTruthy();
+        expect(rightSidebarNode).toBeTruthy();
         expect(detailsNode).toBeTruthy();
         expect(bottomNode).toBeTruthy();
+
+        // The details renderer consumes the exact scope produced by this
+        // registered driver. It must not reconstruct a second target from
+        // session state after AppPane has resolved the destination.
+        expect(detailsNode.props.paneSurfaceScope).toBe(capturedDriver.surfaceScope);
+        // The right pane is the same driver-owned AppPane surface. It must
+        // consume the exact target/projection object, rather than resolve a
+        // second Session target after AppPane selected its destination.
+        expect(rightNode.props.paneSurfaceScope).toBe(capturedDriver.surfaceScope);
+        expect(rightSidebarNode.props.paneSurfaceScope).toBe(capturedDriver.surfaceScope);
 
         const rightScreen = await renderScreen(rightNode);
         const detailsScreen = await renderScreen(detailsNode);

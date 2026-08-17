@@ -1,4 +1,4 @@
-import { VoiceProviderIdSchema } from '@happier-dev/protocol';
+import { VoiceProviderIdSchema } from '@happier-dev/protocol/voice/realtime';
 
 export type VoiceProviderConversationState = Readonly<{
   conversationId: string;

@@ -71,6 +71,11 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
+    machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({

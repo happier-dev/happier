@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import {
@@ -10,6 +9,7 @@ import { createSessionActionDropdownItem } from '@/components/sessions/actions/s
 import { t } from '@/text';
 
 import type { SessionRowMoreMenuBuildParams } from './sessionRowActionMenuTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildParams): DropdownMenuItem[] {
     const items: DropdownMenuItem[] = [...(params.leadingItems ?? [])];
@@ -24,7 +24,7 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
             items.push({
                 id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
                 title: t('sessionsList.moveToFolder'),
-                icon: <Ionicons name="folder-outline" size={16} color={params.iconColor} />,
+                icon: <Icon name="folder" size={16} color={params.iconColor} />,
                 disabled: params.canMoveToFolder === false
                     ? !folderMoveMenuItems.some((item) => item.disabled !== true)
                     : false,

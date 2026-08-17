@@ -5,7 +5,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 import type { SelectionListStep } from '@/components/ui/selectionList';
-import type { AgentInputExtraActionChip } from '../agentInputContracts';
+import type {
+    AgentInputExtraActionChip,
+    AgentInputExtraActionChipCollapsedPopoverRenderContext,
+} from '../agentInputContracts';
 import { buildOverlayLayerFixture } from './__tests__/buildOverlayLayerFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -267,6 +270,44 @@ describe('AgentInputOverlayLayer presentation routing', () => {
         expect(snap().chipPicker?.open).toBe(true);
         expect(snap().chipPicker?.boundaryRef).toBeUndefined();
         expect(snap().selectionList).toBeNull();
+    });
+
+    it('mounts a dynamic collapsed popover through the incumbent active-chip anchor and close owner', async () => {
+        resetCaptures();
+
+        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
+        const onRequestClose = vi.fn();
+        const renderContextCapture = {
+            current: null as AgentInputExtraActionChipCollapsedPopoverRenderContext | null,
+        };
+        const chip: AgentInputExtraActionChip = {
+            key: 'dynamic-control',
+            controlId: 'recipient',
+            renderCollapsedPopover: (context) => {
+                renderContextCapture.current = context;
+                return React.createElement('DynamicCollapsedPopover', {
+                    testID: 'dynamic-collapsed-popover',
+                });
+            },
+            render: () => null,
+        };
+
+        const screen = await renderScreen(
+            <AgentInputOverlayLayer
+                {...baseOverlayProps}
+                activeExtraCollapsedPopoverChip={chip}
+                onActiveExtraCollapsedPopoverChipClose={onRequestClose}
+            />,
+        );
+
+        const renderContext = renderContextCapture.current;
+        if (!renderContext) throw new Error('expected collapsed popover render context');
+        expect(renderContext.anchorRef).toBe(baseOverlayProps.actionMenuAnchorRef);
+        expect(screen.findByTestId('dynamic-collapsed-popover')).toBeTruthy();
+        renderContext.onRequestClose();
+        expect(onRequestClose).toHaveBeenCalledOnce();
+        expect(snap().selectionList).toBeNull();
+        expect(snap().chipPicker).toBeNull();
     });
 
     it("dev-warns and renders null when a 'list' descriptor is missing rootStep (R16d Fix 4 — runtime defense against type erasure)", async () => {

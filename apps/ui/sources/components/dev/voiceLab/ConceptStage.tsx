@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { useVoiceLabTokens } from './voiceLabTokens';
+import { useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceLabSurface } from './conceptTypes';
 
 /**
@@ -26,7 +26,7 @@ const ROWS: readonly Readonly<{ project: string; title: string; age: string; dot
 
 const SidebarChrome = React.memo(function SidebarChrome() {
     const { theme } = useUnistyles();
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     return (
         <View
             style={{
@@ -58,7 +58,7 @@ const SidebarChrome = React.memo(function SidebarChrome() {
 
 const SessionRows = React.memo(function SessionRows() {
     const { theme } = useUnistyles();
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     return (
         <View style={{ paddingTop: 12 }}>
             <Text
@@ -119,7 +119,7 @@ const SessionRows = React.memo(function SessionRows() {
 });
 
 const TranscriptChrome = React.memo(function TranscriptChrome() {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     const lines = [
         { who: 'You', text: 'Take the mic badge — it reads as muted at rest.' },
         { who: 'Codex', text: 'Replacing the slashed glyph with a resting state in VoiceSurfaceHeader.tsx.' },
@@ -147,7 +147,7 @@ export const ConceptStage = React.memo(function ConceptStage(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
 
     if (props.surface === 'mobile') {
         return (

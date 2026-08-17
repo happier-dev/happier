@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Platform, RefreshControl } from 'react-native';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { sessionListStyles } from './sessionListStyles';
 import { SessionListDropOverlay } from './drag/SessionListDropOverlay';
@@ -143,6 +144,11 @@ function VisibleSessionsListViewContent(
     }>,
 ) {
     const styles = sessionListStyles;
+    const maxWidthStyle = useLayoutMaxWidthStyle();
+    const contentContainerStyle = React.useMemo(
+        () => [styles.contentContainer, maxWidthStyle],
+        [maxWidthStyle, styles.contentContainer],
+    );
     const safeArea = useChromeSafeAreaInsets();
     const surfaceOwnership = props.surfaceOwnership;
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
@@ -221,7 +227,7 @@ function VisibleSessionsListViewContent(
             <View
                 ref={viewState.treeViewportRef as React.Ref<View>}
                 onLayout={handleTreeViewportLayout}
-                style={styles.contentContainer}
+                style={contentContainerStyle}
             >
                 <SyncPerformanceReactProfiler id="sessions.list.virtualized">
                     <SessionListVirtualizedContent

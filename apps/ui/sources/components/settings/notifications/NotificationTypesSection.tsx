@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
@@ -8,6 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type NotificationTypeEventId = 'ready' | 'permission_request' | 'user_action_request';
 
@@ -42,7 +42,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.ready.title')}
                 subtitle={t('settingsNotifications.types.ready.subtitle')}
-                icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
+                icon={<Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
                 rightElement={(
                     <Switch
                         value={readyEnabled}
@@ -55,7 +55,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.readyPreview.title')}
                 subtitle={t('settingsNotifications.types.readyPreview.subtitle')}
-                icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="chat-circle-dots" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={readyPreviewEnabled}
@@ -68,7 +68,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.permissionRequests.title')}
                 subtitle={t('settingsNotifications.types.permissionRequests.subtitle')}
-                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="hand" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={permissionRequestsEnabled}
@@ -81,7 +81,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.userActions.title')}
                 subtitle={t('settingsNotifications.types.userActions.subtitle')}
-                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="chat-dots" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={userActionsEnabled}

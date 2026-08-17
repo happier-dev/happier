@@ -324,6 +324,61 @@ describe('connectedServiceQuotaSnapshotStore', () => {
         );
     });
 
+    it('evicts released entries only once their credential scope is superseded', async () => {
+        const {
+            buildQuotaSnapshotScopeKey,
+            getQuotaSnapshotEntry,
+            retainQuotaSnapshotPolling,
+        } = await import('./connectedServiceQuotaSnapshotStore');
+        getConnectedServiceQuotaSnapshotPlainSpy.mockImplementation(
+            async (credentials: Readonly<{ token: string }>) =>
+                buildSnapshot(credentials.token === 'token-a' ? 1_001 : 2_001),
+        );
+        const createContext = (
+            credentialScope: string,
+            token: string,
+            serverId: string,
+        ) => ({
+            credentials: { token, secret: `${token}-secret` },
+            credentialScope,
+            serverBasis: {
+                serverId,
+                generation: 3,
+            },
+            serviceId: 'openai-codex' as const,
+            profileId: 'work',
+            resolveAccountMode: async () => 'plain' as const,
+            assertOperationAllowed: async () => {},
+        });
+        const first = createContext('server-a/account-a', 'token-a', 'server-a');
+        const second = createContext('server-b/account-b', 'token-b', 'server-b');
+        const firstKey = buildQuotaSnapshotScopeKey(
+            first.credentialScope,
+            first.serviceId,
+            first.profileId,
+        );
+        const secondKey = buildQuotaSnapshotScopeKey(
+            second.credentialScope,
+            second.serviceId,
+            second.profileId,
+        );
+
+        const releaseFirst = retainQuotaSnapshotPolling(firstKey, first);
+        await flushAsyncTurns();
+        releaseFirst();
+
+        // Unmounting the only reader keeps the cached snapshot: remounting under
+        // the same credential scope must not flash an empty gauge.
+        expect(getQuotaSnapshotEntry(firstKey).snapshot?.fetchedAt).toBe(1_001);
+
+        const releaseSecond = retainQuotaSnapshotPolling(secondKey, second);
+        await flushAsyncTurns();
+        releaseSecond();
+
+        expect(getQuotaSnapshotEntry(firstKey).snapshot).toBeNull();
+        expect(getQuotaSnapshotEntry(secondKey).snapshot?.fetchedAt).toBe(2_001);
+    });
+
     it('resolves the legacy quota route before the final peer admission and network effect', async () => {
         const {
             buildQuotaSnapshotScopeKey,

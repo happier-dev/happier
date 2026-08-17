@@ -1,19 +1,21 @@
+import {
+    SessionCreationKeyV1Schema,
+    type SessionCreationKeyV1,
+} from '@happier-dev/protocol';
+
 export type MachineDetailSpawnAttempt = Readonly<{
     signature: string;
-    userAttemptId: string;
-    spawnNonce: string;
+    userAttemptId: SessionCreationKeyV1;
 }>;
 
 export function resolveMachineDetailSpawnAttempt(params: Readonly<{
     current: MachineDetailSpawnAttempt | null;
     signature: string;
     createUserAttemptId: () => string;
-    createSpawnNonce: () => string;
 }>): MachineDetailSpawnAttempt {
     if (params.current?.signature === params.signature) return params.current;
     return {
         signature: params.signature,
-        userAttemptId: params.createUserAttemptId(),
-        spawnNonce: params.createSpawnNonce(),
+        userAttemptId: SessionCreationKeyV1Schema.parse(params.createUserAttemptId()),
     };
 }

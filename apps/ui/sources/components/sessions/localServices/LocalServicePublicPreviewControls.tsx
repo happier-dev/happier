@@ -108,13 +108,13 @@ function ExposureActions(props: Readonly<{
         <View style={styles.actionRow}>
             <IconButton
                 testID={`${props.testID}-copy`}
-                iconName="copy-outline"
+                iconName="copy"
                 accessibilityLabel={t('common.copy')}
                 onPress={() => props.actions.copyUrl(props.exposure)}
             />
             <IconButton
                 testID={`${props.testID}-revoke`}
-                iconName="close-circle-outline"
+                iconName="x-circle"
                 accessibilityLabel={t('localServices.publicPreview.revokeActionA11y')}
                 tone="danger"
                 onPress={confirmAndRevoke}
@@ -202,7 +202,7 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
                         rightElement={(
                             <IconButton
                                 testID={`${testID}-target:${target.previewId}-create`}
-                                iconName="link-outline"
+                                iconName="link"
                                 accessibilityLabel={t('localServices.publicPreview.createActionA11y')}
                                 onPress={() => confirmAndCreate(target)}
                             />

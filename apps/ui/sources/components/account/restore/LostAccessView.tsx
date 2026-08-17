@@ -21,6 +21,24 @@ import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperatio
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { layout } from '@/components/ui/layout/layout';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import type {
+    AuthCredentialLifecycleResult,
+} from '@/auth/context/AuthContext';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
+import {
+    guardAccountEncryptionFirstKeyCredentialMutation,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+
+async function guardOrdinaryAuthIngress(
+): Promise<AuthCredentialLifecycleResult> {
+    const result =
+        await guardAccountEncryptionFirstKeyCredentialMutation();
+    return result.kind === 'allowed'
+        ? { kind: 'completed' }
+        : result;
+}
 
 export type LostAccessViewProps = Readonly<{
     onBack: () => void;
@@ -127,6 +145,15 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
         if (!ok) return;
 
         try {
+            let mayStart = false;
+            await presentFirstKeyCredentialLifecycle({
+                run: guardOrdinaryAuthIngress,
+                onCompleted: () => {
+                    mayStart = true;
+                },
+            });
+            if (!mayStart) return;
+
             const secretBytes = await getRandomBytesAsync(32);
             const secret = encodeBase64(secretBytes, 'base64url');
             const signingKeyPair = sodium.crypto_sign_seed_keypair(secretBytes);
@@ -134,13 +161,27 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
 
             const snapshot = getActiveServerSnapshot();
             const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-            await TokenStorage.setPendingExternalAuth({
-                provider: providerId,
-                secret,
-                intent: 'reset',
-                returnTo: props.returnTo,
-                ...(serverUrl ? { serverUrl } : {}),
-            });
+            const stored =
+                await TokenStorage.setPendingExternalAuth({
+                    provider: providerId,
+                    secret,
+                    intent: 'reset',
+                    returnTo: props.returnTo,
+                    ...(serverUrl ? { serverUrl } : {}),
+                });
+            if (!stored) {
+                const guard =
+                    await guardAccountEncryptionFirstKeyCredentialMutation();
+                if (guard.kind !== 'allowed') {
+                    await presentFirstKeyCredentialLifecycle({
+                        run: guardOrdinaryAuthIngress,
+                    });
+                    return;
+                }
+                throw new Error(
+                    'Failed to persist pending external authentication',
+                );
+            }
 
             const url = await provider.getExternalAuthUrl({ mode: 'keyed', publicKey });
             if (!isSafeExternalAuthUrl(url)) {

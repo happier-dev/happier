@@ -1,13 +1,14 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, type View } from 'react-native';
 import { t } from '@/text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 
 
-export const RESUME_CHIP_ICON_NAME = 'refresh-outline' as const;
+export const RESUME_CHIP_ICON_NAME = 'arrow-clockwise' as const;
 export const RESUME_CHIP_ICON_SIZE = 16 as const;
 
 export function formatResumeChipLabel(params: {
@@ -61,11 +62,10 @@ export function ResumeChip(props: ResumeChipProps) {
                 />
             ) : (
                 normalizeNodeForView(
-                    <Ionicons
+                    <Icon
                         name={RESUME_CHIP_ICON_NAME}
-                        size={RESUME_CHIP_ICON_SIZE}
-                        color={props.iconColor}
-                    />,
+                        size={AGENT_INPUT_CHIP_ICON_SIZE_PX}
+                        color={props.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />,
                 )
             )}
             {label ? (

@@ -1,6 +1,5 @@
 import React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
@@ -9,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loadingContainer: {
@@ -59,7 +59,7 @@ export function AutomationsGate(props: { children: React.ReactNode }) {
                 <ItemList style={{ paddingTop: 0 }}>
                     <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
 	                        <View style={styles.disabledContainer}>
-	                            <Ionicons name="timer-outline" size={56} color={theme.colors.text.secondary} />
+	                            <Icon name="timer" size={56} color={theme.colors.text.secondary} />
 	                            <Text style={styles.disabledTitle}>{t('automations.gate.disabledTitle')}</Text>
 	                            <Text style={styles.disabledBody}>
 	                                {t('automations.gate.disabledBody')}

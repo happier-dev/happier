@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
@@ -11,6 +10,7 @@ import type { ScmProjectInFlightOperation } from '@/sync/runtime/orchestration/p
 import type { MarkdownEditMode } from '@/components/ui/markdown/editor/markdownEditorTypes';
 import type { MarkdownRichIneligibleReason } from '@/components/ui/markdown/editor/core/eligibility/markdownRichEligibility';
 import { resolveMarkdownRichDisabledReasonCopy } from '@/components/ui/markdown/editor/core/eligibility/markdownRichDisabledReasonCopy';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type FileDisplayMode = 'file' | 'diff' | 'markdown';
 export type FileDiffMode = 'included' | 'pending' | 'both';
@@ -211,7 +211,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             opacity: actionBusy ? 0.6 : 1,
         }) satisfies ViewStyle;
     const stageFileButtonContent = showCompactCommitSelectionEntry ? (
-        <Octicons name="plus" size={commandIconSize} color={theme.colors.text.secondary} />
+        <Icon name="plus" size={commandIconSize} color={theme.colors.text.secondary} />
     ) : (
         <Text
             pointerEvents="none"
@@ -257,21 +257,21 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             items.push({
                 id: 'diff',
                 title: t('files.diff'),
-                icon: <Octicons name="diff" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="git-diff" size={commandIconSize} color={theme.colors.text.secondary} />,
             });
         }
         if (shouldShowFileToggle) {
             items.push({
                 id: 'file',
                 title: t('files.file'),
-                icon: <Octicons name="file" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="file" size={commandIconSize} color={theme.colors.text.secondary} />,
             });
         }
         if (shouldShowMarkdownToggle) {
             items.push({
                 id: 'markdown',
                 title: t('files.markdown'),
-                icon: <Octicons name="markdown" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="markdown-logo" size={commandIconSize} color={theme.colors.text.secondary} />,
             });
         }
         return items;
@@ -285,12 +285,12 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             {
                 id: 'raw',
                 title: t('settingsSourceControl.markdownEditMode.options.raw.title'),
-                icon: <Octicons name="code" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="code" size={commandIconSize} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'rich',
                 title: t('settingsSourceControl.markdownEditMode.options.rich.title'),
-                icon: <Octicons name="markdown" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="markdown-logo" size={commandIconSize} color={theme.colors.text.secondary} />,
                 disabled: richDisabled,
                 subtitle: richDisabled ? resolveMarkdownRichDisabledReasonCopy(markdownRichDisabledReason) : undefined,
             },
@@ -303,21 +303,21 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             items.push({
                 id: 'pending',
                 title: t('files.diffModes.pending'),
-                icon: <Octicons name="clock" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="clock" size={commandIconSize} color={theme.colors.text.secondary} />,
             });
         }
         if (hasIncludedDelta) {
             items.push({
                 id: 'included',
                 title: t('files.diffModes.included'),
-                icon: <Octicons name="checklist" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="list-checks" size={commandIconSize} color={theme.colors.text.secondary} />,
             });
         }
         if (hasIncludedDelta && hasPendingDelta) {
             items.push({
                 id: 'both',
                 title: t('files.diffModes.combined'),
-                icon: <Octicons name="diff" size={commandIconSize} color={theme.colors.text.secondary} />,
+                icon: <Icon name="git-diff" size={commandIconSize} color={theme.colors.text.secondary} />,
             });
         }
         return items;
@@ -329,9 +329,9 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             ? t('files.markdown')
             : t('files.file');
     const selectedDisplayIconName = displayMode === 'diff'
-        ? 'diff'
+        ? 'git-diff'
         : displayMode === 'markdown'
-            ? 'markdown'
+            ? 'markdown-logo'
             : 'file';
     // Reflect the EFFECTIVE mode (what's actually rendered), not the stored
     // preference: a 'rich' preference on an INELIGIBLE file renders Raw, so the
@@ -341,7 +341,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
     const selectedMarkdownEditModeLabel = effectiveMarkdownEditMode === 'rich'
         ? t('settingsSourceControl.markdownEditMode.options.rich.title')
         : t('settingsSourceControl.markdownEditMode.options.raw.title');
-    const selectedMarkdownEditModeIconName = effectiveMarkdownEditMode === 'rich' ? 'markdown' : 'code';
+    const selectedMarkdownEditModeIconName = effectiveMarkdownEditMode === 'rich' ? 'markdown-logo' : 'code';
     const selectedDiffAreaLabel = diffAreaItems.find((item) => item.id === diffMode)?.title
         ?? (diffMode === 'included'
             ? t('files.diffModes.included')
@@ -375,7 +375,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 >
                     {input.label}
                 </Text>
-                <Octicons name="chevron-down" size={12} color={theme.colors.text.secondary} />
+                <Icon name="caret-down" size={14} color={theme.colors.text.secondary} />
             </View>
         </Pressable>
     ), [chipStyle, theme.colors.text.primary, theme.colors.text.secondary]);
@@ -432,7 +432,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     popoverAnchorAlign="start"
                     trigger={({ toggle }) => renderDropdownTrigger({
                         label: selectedMarkdownEditModeLabel,
-                        icon: <Octicons name={selectedMarkdownEditModeIconName} size={commandIconSize} color={theme.colors.text.secondary} />,
+                        icon: <Icon name={selectedMarkdownEditModeIconName} size={commandIconSize} color={theme.colors.text.secondary} />,
                         selected: true,
                         testID: 'markdown-edit-mode-menu',
                         toggle,
@@ -455,7 +455,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     popoverAnchorAlign="start"
                     trigger={({ toggle }) => renderDropdownTrigger({
                         label: selectedDisplayLabel,
-                        icon: <Octicons name={selectedDisplayIconName} size={commandIconSize} color={theme.colors.text.secondary} />,
+                        icon: <Icon name={selectedDisplayIconName} size={commandIconSize} color={theme.colors.text.secondary} />,
                         selected: true,
                         testID: 'file-details-view-mode-menu',
                         toggle,
@@ -474,7 +474,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     accessibilityRole="button"
                     accessibilityLabel={t('common.edit')}
                 >
-                    <Octicons name="pencil" size={commandIconSize} color={theme.colors.text.primary} />
+                    <Icon name="pencil" size={commandIconSize} color={theme.colors.text.primary} />
                 </Pressable>
             ) : null}
 
@@ -486,8 +486,8 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     accessibilityRole="button"
                     accessibilityLabel={t('files.reviewComments.addCommentA11y')}
                 >
-                    <Octicons
-                        name="comment-discussion"
+                    <Icon
+                        name="chats-circle"
                         size={commandIconSize}
                         color={isCommentModeActive ? theme.colors.text.primary : theme.colors.text.secondary}
                     />
@@ -539,7 +539,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     popoverAnchorAlign="start"
                     trigger={({ toggle }) => renderDropdownTrigger({
                         label: selectedDiffAreaLabel,
-                        icon: <Octicons name="clock" size={commandIconSize} color={theme.colors.text.secondary} />,
+                        icon: <Icon name="clock" size={commandIconSize} color={theme.colors.text.secondary} />,
                         selected: true,
                         testID: 'file-details-diff-area-menu',
                         toggle,
@@ -645,7 +645,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     accessibilityRole="button"
                     accessibilityLabel={t('common.edit')}
                 >
-                    <Octicons name="pencil" size={commandIconSize} color={theme.colors.text.primary} />
+                    <Icon name="pencil" size={commandIconSize} color={theme.colors.text.primary} />
                 </Pressable>
             ) : null}
 
@@ -693,7 +693,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                         accessibilityRole="button"
                         accessibilityLabel={t('files.fileActions.clearSelection')}
                     >
-                        <Octicons name="x" size={commandIconSize} color={theme.colors.text.secondary} />
+                        <Icon name="x" size={commandIconSize} color={theme.colors.text.secondary} />
                     </Pressable>
                 </>
             )}

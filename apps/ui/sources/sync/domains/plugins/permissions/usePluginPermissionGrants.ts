@@ -50,6 +50,7 @@ function listInputKey(input: PluginPermissionGrantListInput | null): string {
         pluginId: input.pluginId ?? null,
         capability: input.capability ?? null,
         targetScope: input.targetScope ? pluginPermissionGrantScopeKey(input.targetScope) : null,
+        subject: input.subject ?? null,
         includeRevoked: input.includeRevoked ?? false,
         includeResolvedRequests: input.includeResolvedRequests ?? false,
         limit: input.limit ?? 50,

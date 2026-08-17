@@ -1,9 +1,13 @@
 import type { AgentType } from '@/sync/domains/models/modelOptions';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { hasDynamicModelListForSession, getSelectableModelIdsForSession, supportsFreeformModelSelectionForSession } from '@/sync/domains/models/modelOptions';
 import { readSessionModelsState, readSessionModesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { SessionAppliedModelV1Schema } from '@happier-dev/protocol';
+import {
+    SessionAppliedModelV1Schema,
+    type ProviderBoundModelRef,
+} from '@happier-dev/protocol';
 
 export type ModelApplyScope = 'live' | 'next_prompt' | 'spawn_only';
 
@@ -22,6 +26,26 @@ function normalizeModelId(value: string | null | undefined): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+function readAppliedModelSelection(params: Readonly<{
+    agentId: string;
+    agentTargetKey: string;
+    metadata: Metadata | null | undefined;
+}>): ProviderBoundModelRef | null {
+    const parsed = SessionAppliedModelV1Schema.safeParse(params.metadata?.sessionAppliedModelV1);
+    if (!parsed.success || parsed.data.provider !== params.agentId) return null;
+    const structured = parsed.data.selection;
+    if (structured) {
+        return structured.agentTargetKey === params.agentTargetKey
+            ? structured
+            : null;
+    }
+    return {
+        agentTargetKey: params.agentTargetKey,
+        providerConnectionId: null,
+        modelId: parsed.data.modelId,
+    };
+}
+
 export function describeEffectiveModelMode(params: {
     agentType: AgentType;
     selectedModelId: string | null | undefined;
@@ -34,30 +58,22 @@ export function describeEffectiveModelMode(params: {
     const hasExplicitSelection = selectedModelId.length > 0;
     const defaultModelId = normalizeModelId(core.model.defaultMode) || 'default';
     const effectiveModelId = hasExplicitSelection ? selectedModelId : defaultModelId;
-    const appliedModel = SessionAppliedModelV1Schema.safeParse(params.metadata?.sessionAppliedModelV1);
-    const appliedModelId = appliedModel.success && appliedModel.data.provider === agentId
-        ? normalizeModelId(appliedModel.data.modelId) || null
-        : null;
+    const appliedModelId = readAppliedModelSelection({
+        agentId,
+        agentTargetKey: buildAgentUniverseBackendTargetKey(agentId),
+        metadata: params.metadata,
+    })?.modelId ?? null;
 
     const isAcpSession = Boolean(readSessionModesState(params.metadata) || readSessionModelsState(params.metadata));
 
     let applyScope: ModelApplyScope = isAcpSession ? 'live' : core.model.nonAcpApplyScope;
     const notes: string[] = [];
 
-    switch (applyScope) {
-        case 'spawn_only':
-            notes.push('Model changes apply when starting a new session.');
-            break;
-        case 'live':
-            notes.push('Model changes are applied to the running session (takes effect on your next message).');
-            if (core.model.acpApplyBehavior === 'restart_session') {
-                notes.push('This provider restarts the underlying session when switching models (context is preserved when possible).');
-            }
-            break;
-        case 'next_prompt':
-        default:
-            notes.push('Model changes take effect on your next message (and stay active for future messages).');
-            break;
+    // When a model change takes effect is `applyScope`, not prose: the surface
+    // renders that fact as one localized line. Only facts `applyScope` cannot
+    // express stay here, so a picker never has a paragraph to show.
+    if (applyScope === 'live' && core.model.acpApplyBehavior === 'restart_session') {
+        notes.push('This provider restarts the underlying session when switching models (context is preserved when possible).');
     }
 
     const hasDynamicList = hasDynamicModelListForSession(agentId, params.metadata);

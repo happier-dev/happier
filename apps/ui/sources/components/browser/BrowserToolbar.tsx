@@ -28,7 +28,7 @@ export function BrowserToolbar(props: Readonly<{
         <View testID={`${testIDPrefix}-toolbar`} style={stylesheet.root}>
             <IconButton
                 testID={`${testIDPrefix}-back`}
-                iconName="chevron-back"
+                iconName="caret-left"
                 accessibilityLabel={t('browserShell.toolbar.back')}
                 tooltip={t('browserShell.toolbar.back')}
                 size={34}
@@ -37,7 +37,7 @@ export function BrowserToolbar(props: Readonly<{
             />
             <IconButton
                 testID={`${testIDPrefix}-forward`}
-                iconName="chevron-forward"
+                iconName="caret-right"
                 accessibilityLabel={t('browserShell.toolbar.forward')}
                 tooltip={t('browserShell.toolbar.forward')}
                 size={34}
@@ -46,7 +46,7 @@ export function BrowserToolbar(props: Readonly<{
             />
             <IconButton
                 testID={`${testIDPrefix}-${loading ? 'stop' : 'reload'}`}
-                iconName={loading ? 'stop' : 'reload'}
+                iconName={loading ? 'stop' : 'arrow-clockwise'}
                 accessibilityLabel={loading ? t('browserShell.toolbar.stop') : t('browserShell.toolbar.reload')}
                 tooltip={loading ? t('browserShell.toolbar.stop') : t('browserShell.toolbar.reload')}
                 size={34}

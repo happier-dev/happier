@@ -1,4 +1,3 @@
-import { Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -7,6 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { DetailsSurfaceStatusV1 } from './types';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type DetailsSurfaceFallbackStatus = DetailsSurfaceStatusV1 | 'unsupported' | 'renderer-error';
 
@@ -38,7 +38,7 @@ export function DetailsSurfaceFallback(props: Readonly<{
                 padding: 24,
             }}
         >
-            <Octicons name="info" size={18} color={theme.colors.text.secondary} />
+            <Icon name="info" size={16} color={theme.colors.text.secondary} />
             <Text
                 style={{
                     marginTop: 10,

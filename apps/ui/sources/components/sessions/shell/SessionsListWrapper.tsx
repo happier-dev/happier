@@ -10,6 +10,10 @@ import {
     resolveSessionListSurfaceOwnership,
     SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
 } from '@/components/sessions/shell/surface/sessionListSurfaceOwnership';
+import {
+    isOverlaySurfaceRoutePathname,
+    useSurfaceAnchorPathname,
+} from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
 
 const stylesheet = StyleSheet.create(() => ({
     container: {
@@ -23,11 +27,16 @@ export function SessionsListWrapper(props: Readonly<{
     const { externalSessionsEnabled, storageKind } = useSessionListStorageKind();
     const isFocused = useIsFocused();
     const routePathname = usePathname();
+    const anchorPathname = useSurfaceAnchorPathname(routePathname);
+    // An overlay route (the new-session modal and friends) is presented *over* the root list, so the
+    // list is still on screen behind it: keep it painted with its last active snapshot instead of
+    // blanking, while `dataActive` stays false so it freezes rather than keeping subscriptions live.
+    const anchoredToPhoneRoot = resolvePhoneRootSessionListSurfaceDataActive(anchorPathname);
     const surfaceOwnership = resolveSessionListSurfaceOwnership({
         ownerKey: SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
         interactiveOwnerKey: SESSION_LIST_SURFACE_OWNER_PHONE_ROOT,
-        visible: isFocused,
-        dataActive: isFocused && resolvePhoneRootSessionListSurfaceDataActive(routePathname),
+        visible: isFocused || (anchoredToPhoneRoot && isOverlaySurfaceRoutePathname(routePathname)),
+        dataActive: isFocused && anchoredToPhoneRoot,
     });
     const styles = stylesheet;
 

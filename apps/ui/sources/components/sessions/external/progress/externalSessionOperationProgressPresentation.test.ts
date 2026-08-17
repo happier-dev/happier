@@ -451,6 +451,61 @@ describe('presentExternalSessionOperationProgress', () => {
         }).actions).toEqual([]);
     });
 
+    it('offers only Retry for exact external-linked admission acknowledgement reconciliation', () => {
+        const progress = createProgress({
+            request: {
+                plan: 'takeover',
+                targetStorageMode: 'external-linked',
+                targetRuntimeMode: 'terminal',
+            },
+            status: 'reconciliation_required',
+            phase: 'admitting',
+            retryTargetPhase: 'admitting',
+            error: {
+                code: 'reconciliation_required',
+                retryable: true,
+                occurredAtMs: 1_700_000_000_000,
+            },
+        });
+
+        expect(presentExternalSessionOperationProgress(progress, {
+            observationContext: 'hydrated',
+            originAvailability: 'online',
+        }).actions).toEqual([
+            expect.objectContaining({
+                kind: 'retry',
+                titleKey: 'common.retry',
+                enabled: true,
+            }),
+        ]);
+
+        const ordinaryRunningAdmission = createProgress({
+            request: progress.request,
+            status: 'running',
+            phase: 'admitting',
+        });
+        expect(presentExternalSessionOperationProgress(ordinaryRunningAdmission, {
+            observationContext: 'hydrated',
+            originAvailability: 'online',
+        }).actions).toEqual([]);
+
+        const genericReconciliation = createProgress({
+            request: progress.request,
+            status: 'reconciliation_required',
+            phase: 'admitting',
+            retryTargetPhase: 'admitting',
+            error: {
+                code: 'reconciliation_required',
+                retryable: false,
+                occurredAtMs: 1_700_000_000_000,
+            },
+        });
+        expect(presentExternalSessionOperationProgress(genericReconciliation, {
+            observationContext: 'hydrated',
+            originAvailability: 'online',
+        }).actions).toEqual([]);
+    });
+
     it('offers Cancel to finish an interrupted external-linked cancellation', () => {
         const progress = createProgress({
             request: {

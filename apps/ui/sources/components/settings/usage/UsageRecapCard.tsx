@@ -11,6 +11,7 @@ import type { UsageRecapCardModel } from './buildUsageRecapCardModels';
 import { usageSignatureAccent } from './usageAccent';
 import { formatIdentifierLabel } from './sections/shared';
 import { UsageActivitySquareMatrix, UsageProgressMeter, UsageRankBars } from './UsageMiniVisuals';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
     actionButton: {
@@ -42,7 +43,7 @@ export function UsageRecapCard(props: Readonly<{
                 style={styles.actionButton}
                 onPress={onShare}
             >
-                <SafeIonicons name="share-outline" size={14} color={theme.colors.text.secondary} />
+                <Icon name="share" size={14} color={theme.colors.text.secondary} />
             </Pressable>
         )
         : null;

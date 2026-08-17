@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -8,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import { useTauriNotificationPermissionDiagnostics } from './useTauriNotificationPermissionDiagnostics';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function NotificationDesktopPermissionSection(): React.ReactElement {
     const { theme } = useUnistyles();
@@ -42,7 +42,7 @@ export function NotificationDesktopPermissionSection(): React.ReactElement {
                 testID="settings-notifications-desktop-permission"
                 title={t('settingsNotifications.desktop.permission.title')}
                 subtitle={permissionSubtitle}
-                icon={<Ionicons name="desktop-outline" size={29} color={permissionIconColor} />}
+                icon={<Icon name="desktop" size={29} color={permissionIconColor} />}
                 onPress={permission.status === 'granted'
                     ? undefined
                     : () => { void permission.requestPermission(); }}

@@ -97,13 +97,35 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
             sessionId,
         })
     ), [messageIdsOldestFirst, messagesById, sessionId, transcriptNavigationLoadedMessagesCache]);
+    /**
+     * Cursor for the backfill: the oldest seq the loaded window already holds, so paging resumes
+     * below it instead of re-downloading it.
+     *
+     * A forked transcript deliberately starts from the newest page instead. Its loaded rows are a
+     * CONCATENATION of segments — read-only ancestor context plus this session's own turns — and
+     * each segment is numbered in its own session's seq space, which can sit far above or below
+     * this one (observed live: ancestor max seq 417_565 against a fork's 15_038). The minimum over
+     * that mixture is not a position in this session's history, so using it as a cursor pages from
+     * a meaningless offset. Starting at the newest page costs one overlapping page and is always
+     * a real position.
+     */
     const transcriptNavigationRemoteBeforeSeq = React.useMemo(
-        () => resolveTranscriptNavigationRemoteHistoryBeforeSeq(transcriptNavigationLoadedMessages),
-        [transcriptNavigationLoadedMessages],
+        () => (forkedTranscriptEnabled
+            ? null
+            : resolveTranscriptNavigationRemoteHistoryBeforeSeq(transcriptNavigationLoadedMessages)),
+        [forkedTranscriptEnabled, transcriptNavigationLoadedMessages],
     );
-    const remoteHistoryEnabled = !forkedTranscriptEnabled && transcriptNavigationRemoteBeforeSeq !== null;
+    // A missing cursor is not a reason to fetch nothing: it is the newest page, which is exactly
+    // what a surface with no transcript loaded needs. Gating enablement on it also detached this
+    // consumer from the shared history record, so it could not even read rows another consumer
+    // had already downloaded.
+    //
+    // Every session owns its own seq range, forked or not, so its own prior turns are always
+    // pageable — a fork that stood down entirely left the trail holding only whatever turns the
+    // window happened to have materialized (observed live: 3 markers, and 0 on a sibling, where
+    // the rail needs 2 to appear at all). Ancestor segments stay unpaged: they are read-only
+    // context rendered above the fork divider, not turns of this session.
     const transcriptNavigationRemoteHistory = useUserMessageHistoryRemoteEntries({
-        enabled: remoteHistoryEnabled,
         initialBeforeSeq: transcriptNavigationRemoteBeforeSeq,
         sessionId,
     });
@@ -125,13 +147,11 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
     // never until the whole session is downloaded. Re-running on `transcriptNavigationLoadedMessages`
     // is also what re-drives a page that could not decrypt yet, once session keys arrive.
     React.useEffect(() => {
-        if (!remoteHistoryEnabled) return;
         if (!remoteHistoryHasMore) return;
         if (remoteHistoryPagesLoaded >= TRANSCRIPT_NAVIGATION_REMOTE_HISTORY_MAX_PAGES) return;
         if (remoteUserRowCount >= TRANSCRIPT_NAVIGATION_REMOTE_HISTORY_USER_TURN_TARGET) return;
         requestRemoteHistoryNextPage();
     }, [
-        remoteHistoryEnabled,
         remoteHistoryHasMore,
         remoteHistoryPagesLoaded,
         remoteUserRowCount,

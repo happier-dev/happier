@@ -10,6 +10,28 @@ const reactActEnvironment = globalThis as typeof globalThis & {
 
 reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
+const nativeBackState = vi.hoisted(() => {
+    let hardwareBackPressHandler: (() => boolean) | null = null;
+
+    return {
+        addEventListener: vi.fn((eventName: string, handler: () => boolean) => {
+            if (eventName !== 'hardwareBackPress') {
+                return { remove: () => {} };
+            }
+
+            hardwareBackPressHandler = handler;
+            return {
+                remove: () => {
+                    if (hardwareBackPressHandler === handler) {
+                        hardwareBackPressHandler = null;
+                    }
+                },
+            };
+        }),
+        pressHardwareBack: () => hardwareBackPressHandler?.() ?? false,
+    };
+});
+
 function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
     const flattened = ReactNativeStyleSheet.flatten(styleProp as never);
     if (!flattened || typeof flattened !== 'object') return {};
@@ -20,9 +42,10 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
         Platform: {
-            OS: 'ios',
-            select: (options: Record<string, unknown>) => options?.ios ?? options?.native ?? options?.default,
+            OS: 'android',
+            select: (options: Record<string, unknown>) => options?.android ?? options?.native ?? options?.default,
         },
+        BackHandler: nativeBackState,
     });
 });
 vi.mock('react-native-safe-area-context', async () => {
@@ -114,5 +137,21 @@ describe('BaseModal (native)', () => {
         );
 
         expect(screen.findByTestId('inside-modal-popover')).toBeTruthy();
+    });
+
+    it('consumes Android hardware Back through the shared dismissal surface', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const onClose = vi.fn();
+
+        await renderScreen(
+            React.createElement(BaseModal, {
+                visible: true,
+                onClose,
+                children: React.createElement('Child'),
+            }),
+        );
+
+        expect(nativeBackState.pressHardwareBack()).toBe(true);
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

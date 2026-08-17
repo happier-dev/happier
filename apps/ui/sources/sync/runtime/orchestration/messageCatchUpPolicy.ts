@@ -34,9 +34,6 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     const sessionSeqHint = Math.max(0, Math.trunc(input.sessionSeqHint));
     const gapSeq = sessionSeqHint - materializedMaxSeq;
 
-    // Opening an already-loaded transcript is an explicit recovery boundary. The local
-    // sequence hint can be stale when a realtime append was missed, so make one bounded
-    // request from the materialized tail rather than treating an apparent zero gap as proof.
     if (gapSeq <= 0 && input.hasExplicitTailProbe === true) {
         return { kind: 'incremental_batched', maxPages: 1 };
     }

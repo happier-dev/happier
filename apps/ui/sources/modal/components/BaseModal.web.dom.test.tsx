@@ -44,6 +44,39 @@ vi.mock('react-native-keyboard-controller', () => ({
 }));
 
 describe('BaseModal (web focus)', () => {
+    it('returns focus to the pre-open trigger when its portal dialog unmounts', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const backgroundButton = document.createElement('button');
+        backgroundButton.textContent = 'Background';
+        document.body.appendChild(backgroundButton);
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+
+        try {
+            backgroundButton.focus();
+            await act(async () => {
+                root.render(
+                    <BaseModal visible closeOnBackdrop={false}>
+                        <button data-testid="dialog-action">Action</button>
+                    </BaseModal>,
+                );
+            });
+
+            expect(document.activeElement).toBe(document.querySelector('[role="dialog"]'));
+
+            await act(async () => {
+                root.unmount();
+            });
+
+            expect(document.activeElement).toBe(backgroundButton);
+        } finally {
+            container.remove();
+            backgroundButton.remove();
+        }
+    });
+
     it('keeps Tab and Shift+Tab focus traversal inside the active dialog', async () => {
         const { BaseModal } = await import('./BaseModal');
         const backgroundButton = document.createElement('button');

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View, Pressable, ScrollView } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';
@@ -30,6 +29,7 @@ import {
 } from '@/utils/sessions/favoriteDirectoriesToggle';
 
 import type { VoiceSessionSpawnPickerResult } from './openVoiceSessionSpawnPicker';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 type Props = CustomModalInjectedProps & Readonly<{
@@ -225,7 +225,7 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
               accessibilityRole="button"
               accessibilityLabel={t('common.back')}
             >
-              <Ionicons name="chevron-back" size={20} color={theme.colors.text.secondary} />
+              <Icon name="caret-left" size={20} color={theme.colors.text.secondary} />
             </Pressable>
             <Text style={styles.stepHeaderText}>{t('newSession.selectWorkingDirectoryTitle')}</Text>
           </View>

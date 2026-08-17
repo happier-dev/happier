@@ -4,6 +4,11 @@ import { t } from '@/text';
 
 type PluginSurfaceInteractionBoundaryProps = Readonly<{
     children: React.ReactNode;
+    /**
+     * Layout/route-owned presentation fact. This is intentionally separate
+     * from availability: an inactive retained surface is inert, not offline.
+     */
+    focusEligible?: boolean;
     enabled: boolean;
     snapshotTitle: string;
     surfaceId: string;
@@ -19,6 +24,10 @@ export function PluginSurfaceInteractionBoundary(
 ): React.ReactElement {
     const containerRef = React.useRef<HTMLDivElement>(null);
     const focusReturnRef = React.useRef<HTMLElement | null>(null);
+    // Availability remains the sole owner of offline/recovery semantics.
+    // Presentation eligibility only makes an otherwise available retained or
+    // covered snapshot inert; it must not create another focus-return owner.
+    const interactionEnabled = props.enabled && props.focusEligible !== false;
 
     React.useLayoutEffect(() => {
         const container = containerRef.current;
@@ -47,7 +56,7 @@ export function PluginSurfaceInteractionBoundary(
         }
     }, [props.enabled]);
 
-    const offlineCaptureProps = props.enabled
+    const blockedCaptureProps = interactionEnabled
         ? {}
         : {
             onClickCapture: blockOfflineInteraction,
@@ -68,13 +77,13 @@ export function PluginSurfaceInteractionBoundary(
             >
                 <div
                     data-testid={`plugin-surface-snapshot:${props.surfaceId}`}
-                    inert={!props.enabled}
-                    aria-hidden={!props.enabled}
+                    inert={!interactionEnabled}
+                    aria-hidden={!interactionEnabled}
                     style={{
                         display: 'contents',
-                        pointerEvents: props.enabled ? 'auto' : 'none',
+                        pointerEvents: interactionEnabled ? 'auto' : 'none',
                     }}
-                    {...offlineCaptureProps}
+                    {...blockedCaptureProps}
                 >
                     {props.children}
                 </div>

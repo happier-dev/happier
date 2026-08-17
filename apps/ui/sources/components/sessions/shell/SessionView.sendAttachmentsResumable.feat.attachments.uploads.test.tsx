@@ -1,6 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import {
     installSessionShellCommonModuleMocks,
@@ -40,6 +41,24 @@ const sessionState = vi.hoisted(() => ({
 const featureEnabledState = vi.hoisted(() => ({
     reviewComments: false,
 }));
+// The in-session Agent picker's armed intent, injected as a PRECONDITION. The
+// picker's own arming logic has its own owner test; what these tests exercise is
+// what `SessionView` does with an arm that already exists — specifically whether
+// the send destination is resolved before anything starts an Agent.
+const armedContinuationState = vi.hoisted(() => ({
+    intent: null as any,
+    localId: null as string | null,
+}));
+const clearArmedContinuationSpy = vi.hoisted(() => vi.fn());
+const useFeatureEnabledSpy = vi.hoisted(() => vi.fn());
+const runSessionAgentTransitionSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => ({
+    type: 'accepted' as const,
+    localId: 'agent-transition:armed-local-id',
+})));
+const daemonMergedProjectionState = vi.hoisted(() => ({
+    value: { phase: 'idle', inputs: null } as any,
+}));
+const machinePluginComposerAttachmentPrepareMock = vi.hoisted(() => vi.fn());
 const chooseSubmitModeState = vi.hoisted(() => ({
     mode: 'agent_queue',
 }));
@@ -82,6 +101,9 @@ const reactNativeRuntime = vi.hoisted(() => {
 });
 
 vi.mock('react-native-safe-area-context', () => ({
+    SafeAreaInsetsContext: React.createContext(null),
+    SafeAreaProvider: ({ children }: { children?: React.ReactNode }) => children ?? null,
+    initialWindowMetrics: null,
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
@@ -127,9 +149,11 @@ vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) =>
-        featureId === 'attachments.uploads'
-        || (featureId === 'files.reviewComments' && featureEnabledState.reviewComments),
+    useFeatureEnabled: (featureId: string, scope?: unknown) => {
+        useFeatureEnabledSpy(featureId, scope);
+        return featureId === 'attachments.uploads'
+            || (featureId === 'files.reviewComments' && featureEnabledState.reviewComments);
+    },
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -166,6 +190,18 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
     subscribeActiveServer: () => () => {},
 }));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.value,
+}));
+vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        machinePluginComposerAttachmentPrepare: (...args: unknown[]) => (
+            machinePluginComposerAttachmentPrepareMock(...args)
+        ),
+    };
+});
 vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
@@ -176,6 +212,57 @@ const enqueuePendingMessageSpy = vi.fn(async (..._args: any[]) => ({ localId: 'p
 const updatePendingMessageSpy = vi.fn(async (..._args: any[]) => {});
 const patchSessionMetadataWithRetrySpy = vi.fn(async (..._args: any[]) => {});
 
+function setCurrentComposerAttachmentProjection(input: Readonly<{
+    generation?: number;
+    immutableGenerationId?: string;
+}> = {}): void {
+    const generation = input.generation ?? 7;
+    const immutableGenerationId = input.immutableGenerationId ?? 'issue-generation-a';
+    daemonMergedProjectionState.value = {
+        phase: 'ready',
+        inputs: {
+            pluginProjectionById: {},
+            pluginProjectionV2: PluginProjectionV2Schema.parse({
+                v: 2,
+                generation,
+                installedPackagesById: {},
+                agentsById: {},
+                backendsById: {},
+                actionsById: {},
+                toolsById: {},
+                commandsById: {},
+                resourcesById: {},
+                settingsById: {},
+                familiesById: {
+                    composerAttachments: {
+                        family: 'composerAttachments',
+                        entriesById: {
+                            'acme.issues/issue': {
+                                id: 'acme.issues/issue',
+                                pluginId: 'acme.issues',
+                                identity: { pluginId: 'acme.issues', localId: 'issue' },
+                                immutableGenerationId,
+                                definition: {
+                                    id: 'issue',
+                                    title: 'Issue',
+                                    icon: 'warning',
+                                    cardinality: 'many',
+                                    valueSchema: { type: 'object' },
+                                    preparedValueSchema: { type: 'object' },
+                                    runtime: { prepareForSend: true },
+                                },
+                            },
+                        },
+                    },
+                },
+                diagnostics: [],
+            }),
+        },
+    };
+}
+
+const ensureSessionVisibleSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => ({ kind: 'available' })));
+const refreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 vi.mock('@/sync/sync', () => ({
     sync: {
         markSessionViewed: async () => {},
@@ -186,6 +273,12 @@ vi.mock('@/sync/sync', () => ({
         publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
         publishSessionModelOverrideToMetadata: async () => {},
         refreshSessions: async () => {},
+        // The canonical readers an indeterminate transition outcome reconciles
+        // against. Both are real sync methods; the spies let a test observe that
+        // reconciliation asks the canonical owners rather than inventing a status
+        // operation of its own.
+        ensureSessionVisibleForMessageRoute: (...args: any[]) => ensureSessionVisibleSpy(...args),
+        refreshSessionMessages: (...args: any[]) => refreshSessionMessagesSpy(...args),
         onSessionVisible: () => {},
         getAcceptedExternalSessionTailCursor: () => null,
         subscribeAcceptedExternalSessionTailCursor: () => () => {},
@@ -221,6 +314,20 @@ vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: () => ({ execute: vi.fn() }),
+}));
+
+vi.mock('@/components/sessions/agentPicker/useInSessionAgentPickerControls', () => ({
+    useInSessionAgentPickerControls: () => ({
+        composeAgentPickerOptions: (options: unknown) => options,
+        agentPickerSelectedOptionId: null,
+        armedContinuation: armedContinuationState.intent,
+        armedContinuationLocalId: armedContinuationState.localId,
+        clearArmedContinuation: clearArmedContinuationSpy,
+        onAgentPickerVisibilityChange: () => {},
+    }),
+}));
+vi.mock('@/sync/ops/sessionAgentTransition', () => ({
+    runSessionAgentTransitionOnMachine: (...args: any[]) => runSessionAgentTransitionSpy(...args),
 }));
 
 vi.mock('@/components/sessions/agentInput', () => ({
@@ -349,6 +456,8 @@ installSessionShellCommonModuleMocks({
                     deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
             }),
             useSession: () => sessionState.session,
+            // Keep the hook aligned with the same canonical session fixture used by useSession.
+            useSessionMachineId: () => sessionState.session.metadata.machineId ?? null,
             useIsDataReady: () => true,
             useRealtimeStatus: () => ({ status: 'connected' }),
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
@@ -445,7 +554,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
         const tag = typeof opts?.tag === 'string' ? opts.tag : '';
         // This test is validating the resumable attachment send flow; ignore unrelated
         // fire-and-forget work (analytics, mount-time prefetch, etc).
-        if (tag === 'SessionView.sendMessage.attachments' || tag === 'SessionView.pendingMessageEdit.save') {
+        if (tag === 'SessionView.composer.dispatch') {
             pendingFireAndForget.push(p);
         }
         return p;
@@ -493,6 +602,12 @@ vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
     countEnabledAutomationsLinkedToSession: () => 0,
 }));
 
+const {
+    applyComposerPresentationTransaction,
+    createComposerPresentationTransactionApplier,
+    createComposerPresentationHostHandlers,
+    readComposerPresentationSnapshot,
+} = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { getInactiveSessionUiState } = await import('@/components/sessions/model/inactiveSessionUi');
 const { SessionView } = await import('./SessionView');
@@ -505,6 +620,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         enqueuePendingMessageSpy.mockClear();
         updatePendingMessageSpy.mockClear();
         patchSessionMetadataWithRetrySpy.mockClear();
+        machinePluginComposerAttachmentPrepareMock.mockReset();
+        daemonMergedProjectionState.value = { phase: 'idle', inputs: null };
         resumeSessionSpy.mockClear();
         uploadSpy.mockClear();
         modalAlertSpy.mockClear();
@@ -513,6 +630,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         deleteWorkspaceReviewCommentDraftSpy.mockClear();
         reviewCommentDraftsState.current = [];
         sessionPendingMessagesState.current = [];
+        armedContinuationState.intent = null;
+        armedContinuationState.localId = null;
+        clearArmedContinuationSpy.mockClear();
+        runSessionAgentTransitionSpy.mockClear();
+        useFeatureEnabledSpy.mockClear();
         sessionState.session.seq = 0;
         resetSessionShellDraftStateForTest();
         clearSessionDraftValuesForSession(TEST_SERVER_ACCOUNT_SCOPE, 's1', { reason: 'composerClear' });
@@ -549,7 +671,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedFirstTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
             ]);
 
@@ -566,7 +688,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             if (!renderedSecondTree) throw new Error('SessionView test renderer did not remount');
 
             agentInput = findTestInstanceByTypeWithProps(renderedSecondTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
             ]);
         } finally {
@@ -617,7 +739,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
 
-            expect(agentInput.props.attachments).toEqual(expect.arrayContaining([
+            expect(agentInput.props.attachmentRowItems).toEqual(expect.arrayContaining([
                 expect.objectContaining({
                     key: 'draft-retry',
                     label: 'retry.txt',
@@ -785,9 +907,22 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 });
             });
 
+            expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: 's1' })).toMatchObject({
+                ref: { kind: 'session', sessionId: 's1' },
+                text: 'Existing draft',
+            });
+            expect(readComposerPresentationSnapshot({
+                kind: 'pendingMessage',
+                sessionId: 's1',
+                localId: 'p-edit',
+            })).toMatchObject({
+                ref: { kind: 'pendingMessage', sessionId: 's1', localId: 'p-edit' },
+                text: 'Queued edit text',
+            });
+
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Queued edit text');
-            expect(readSessionShellDraftTextForTest('s1')).toBe('Queued edit text');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
 
             act(() => {
                 tree?.unmount();
@@ -797,6 +932,194 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
         } finally {
             act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('routes active and focus to the current session or pending scope through its mounted input', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit',
+            localId: 'p-edit',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        const focus = vi.fn();
+        const sessionRef = { kind: 'session' as const, sessionId: 's1' };
+        const pendingRef = { kind: 'pendingMessage' as const, sessionId: 's1', localId: 'p-edit' };
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+        });
+        const request = (method: 'activeComposer' | 'focusComposer', payload?: unknown) => ({
+            version: 1,
+            requestId: `request:${method}`,
+            surface: {
+                pluginId: 'acme.fixture',
+                contributionId: 'composer-tools',
+                surfaceId: 'composer-tools:mounted',
+                placement: 'composerSurface',
+                platform: 'web',
+                channel: 'internal',
+                resourceScope: [],
+                diagnostics: [],
+            },
+            method,
+            ...(payload === undefined ? {} : { payload }),
+        }) as never;
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            if (!tree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(tree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.onComposerFocusChange).toEqual(expect.any(Function));
+            expect(agentInput.props.onComposerFocusRequestChange).toEqual(expect.any(Function));
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onComposerFocusRequestChange', focus, 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onComposerFocusChange', true, 'AgentInput');
+            });
+
+            expect(handlers.activeComposer!(request('activeComposer'))).toEqual(sessionRef);
+            expect(handlers.focusComposer!(request('focusComposer', { ref: sessionRef })))
+                .toEqual({ status: 'focused' });
+            expect(focus).toHaveBeenCalledTimes(1);
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-edit',
+                    text: 'Queued edit text',
+                    displayText: 'Queued edit text',
+                    message: queuedMessage,
+                });
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(tree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Queued edit text');
+            expect(handlers.activeComposer!(request('activeComposer'))).toEqual(pendingRef);
+            expect(handlers.focusComposer!(request('focusComposer', { ref: sessionRef })))
+                .toEqual({ status: 'notEditable' });
+            expect(handlers.focusComposer!(request('focusComposer', { ref: pendingRef })))
+                .toEqual({ status: 'focused' });
+            expect(focus).toHaveBeenCalledTimes(2);
+        } finally {
+            await act(async () => {
+                handlers.dispose();
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('projects decorations and edit locks only through the active pending-message input', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit',
+            localId: 'p-edit',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        const pendingRef = { kind: 'pendingMessage' as const, sessionId: 's1', localId: 'p-edit' };
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+        });
+        const request = (method: 'setComposerDecorations' | 'acquireComposerInputLock', payload: unknown) => ({
+            version: 1,
+            requestId: `request:${method}`,
+            surface: {
+                pluginId: 'acme.fixture',
+                contributionId: 'composer-tools',
+                surfaceId: 'composer-tools:mounted',
+                placement: 'composerSurface',
+                platform: 'web',
+                channel: 'internal',
+                resourceScope: [],
+                diagnostics: [],
+            },
+            method,
+            payload,
+        }) as never;
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            if (!tree) throw new Error('SessionView test renderer did not mount');
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-edit',
+                    text: 'Queued edit text',
+                    displayText: 'Queued edit text',
+                    message: queuedMessage,
+                });
+            });
+
+            const snapshot = readComposerPresentationSnapshot(pendingRef);
+            expect(snapshot).not.toBeNull();
+            if (!snapshot) throw new Error('expected mounted pending-message composer target');
+            await act(async () => {
+                expect(handlers.setComposerDecorations!(request('setComposerDecorations', {
+                    ref: pendingRef,
+                    key: 'pending-review',
+                    decorations: {
+                        revision: snapshot.revision,
+                        ranges: [{ range: { start: 0, end: 1 }, treatment: 'warning' }],
+                    },
+                }))).toEqual({ status: 'set' });
+            });
+            let agentInput = findTestInstanceByTypeWithProps(tree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.composerDecorations).toEqual([
+                expect.objectContaining({ key: 'pending-review' }),
+            ]);
+
+            await act(async () => {
+                expect(handlers.acquireComposerInputLock!(request('acquireComposerInputLock', {
+                    subscriptionId: 'lock-1',
+                    ref: pendingRef,
+                    request: { reason: 'Review required', mode: 'editAndSubmit' },
+                }))).toBeNull();
+            });
+            agentInput = findTestInstanceByTypeWithProps(tree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.composerInputLock).toEqual({
+                mode: 'editAndSubmit',
+                reasons: ['Review required'],
+            });
+            expect(agentInput.props.disabled).toBe(true);
+            expect(agentInput.props.isSendDisabled).toBe(true);
+            expect(readComposerPresentationSnapshot(pendingRef)?.state).toMatchObject({
+                editable: false,
+                submittable: false,
+                inputLock: { mode: 'editAndSubmit', reasons: ['Review required'] },
+            });
+        } finally {
+            act(() => {
+                handlers.dispose();
                 tree?.unmount();
             });
             pendingFireAndForget.length = 0;
@@ -822,11 +1145,14 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             'interrupt',
         );
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        try {
-            const element = <AppPaneProvider>
+        let refreshPendingMessages!: () => void;
+        const PendingMessageHarness = () => {
+            const [refresh, setRefresh] = React.useState(0);
+            refreshPendingMessages = () => setRefresh((current) => current + 1);
+            return <AppPaneProvider>
                 <SessionView
                     id="s1"
+                    jumpToSeq={refresh}
                     initialAttachmentDrafts={[{
                         id: 'draft-note',
                         source: {
@@ -840,14 +1166,17 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     }]}
                 />
             </AppPaneProvider>;
-            tree = (await renderScreen(element)).tree;
+        };
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<PendingMessageHarness />)).tree;
 
             const renderedTree = tree;
             expect(renderedTree).toBeDefined();
             if (!renderedTree) throw new Error('SessionView test renderer did not mount');
 
             let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
             ]);
 
@@ -865,28 +1194,34 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Queued edit text');
-            expect(agentInput.props.attachments).toEqual([]);
+            expect(agentInput.props.attachmentRowItems).toEqual([]);
             expect(readSessionDraftValue(
                 TEST_SERVER_ACCOUNT_SCOPE,
                 's1',
                 'routing.executionRunDelivery',
-            )).toBeUndefined();
+            )).toBe('interrupt');
 
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
             });
 
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Edited queued text');
+
             sessionPendingMessagesState.current = [];
             await act(async () => {
-                renderedTree.update(<AppPaneProvider>
-                    <SessionView id="s1" />
-                </AppPaneProvider>);
+                refreshPendingMessages();
                 await Promise.resolve();
             });
 
+            expect(readComposerPresentationSnapshot({
+                kind: 'pendingMessage',
+                sessionId: 's1',
+                localId: queuedMessage.localId!,
+            })).toBeNull();
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.value).toBe('Edited queued text');
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.value).toBe('');
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
             ]);
             expect(readSessionDraftValue(
@@ -895,6 +1230,161 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 'routing.executionRunDelivery',
             )).toBe('interrupt');
             expect(agentInput.props.statusBadges?.some((badge: any) => badge.key === 'pending-message-edit')).toBe(false);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('does not overwrite a later same-text revision when a pending edit row disappears', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-same-text-disappears',
+            localId: 'p-edit-same-text-disappears',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+
+        let refreshPendingMessages!: () => void;
+        const PendingMessageHarness = () => {
+            const [refresh, setRefresh] = React.useState(0);
+            refreshPendingMessages = () => setRefresh((current) => current + 1);
+            return <AppPaneProvider>
+                <SessionView id="s1" jumpToSeq={refresh} />
+            </AppPaneProvider>;
+        };
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<PendingMessageHarness />)).tree;
+
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Existing draft', 'AgentInput');
+            });
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Temporary edit', 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onChangeText', queuedMessage.text, 'AgentInput');
+            });
+
+            sessionPendingMessagesState.current = [];
+            await act(async () => {
+                refreshPendingMessages();
+                await Promise.resolve();
+            });
+            await act(async () => {
+                refreshPendingMessages();
+                await Promise.resolve();
+            });
+
+            expect(readComposerPresentationSnapshot({
+                kind: 'pendingMessage',
+                sessionId: 's1',
+                localId: queuedMessage.localId!,
+            })).toBeNull();
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Existing draft');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('restores unchanged prior semantic fields without overwriting a field changed during a pending edit', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-semantic-fields',
+            localId: 'p-edit-semantic-fields',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        const priorRecipient = { kind: 'execution_run' as const, runId: 'run-a' };
+        sessionPendingMessagesState.current = [queuedMessage];
+        writeSessionDraftValue(
+            TEST_SERVER_ACCOUNT_SCOPE,
+            's1',
+            'routing.recipient',
+            priorRecipient,
+        );
+        writeSessionDraftValue(
+            TEST_SERVER_ACCOUNT_SCOPE,
+            's1',
+            'routing.executionRunDelivery',
+            'interrupt',
+        );
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+
+            // This store write models the user selecting a new delivery mode while
+            // the queued row owns the text editor. The recipient remains empty.
+            writeSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.executionRunDelivery',
+                'prompt',
+            );
+            sessionPendingMessagesState.current = [];
+            await act(async () => {
+                renderedTree.update(<AppPaneProvider>
+                    <SessionView id="s1" />
+                </AppPaneProvider>);
+                await Promise.resolve();
+            });
+
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.recipient',
+            )).toEqual(priorRecipient);
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.executionRunDelivery',
+            )).toBe('prompt');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -947,7 +1437,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             if (!renderedFirstTree) throw new Error('SessionView test renderer did not mount');
 
             let agentInput = findTestInstanceByTypeWithProps(renderedFirstTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
             ]);
 
@@ -973,7 +1463,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
             firstTree = undefined;
 
-            expect(readSessionShellDraftTextForTest('s1')).toBe('Edited queued text');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('');
             expect(readSessionDraftValue(
                 TEST_SERVER_ACCOUNT_SCOPE,
                 's1',
@@ -988,7 +1478,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             if (!renderedSecondTree) throw new Error('SessionView test renderer did not remount');
 
             agentInput = findTestInstanceByTypeWithProps(renderedSecondTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
             ]);
         } finally {
@@ -1043,6 +1533,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Queued edit text');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+            expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: 's1' })?.text).toBe('Existing draft');
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
             });
@@ -1058,13 +1551,711 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             expect(updatePendingMessageSpy).toHaveBeenCalledTimes(1);
-            expect(updatePendingMessageSpy).toHaveBeenCalledWith('s1', 'p-edit', 'Edited queued text');
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith(
+                's1', 'p-edit', 'Edited queued text', { v: 1 }, undefined,
+            );
             expect(sendMessageSpy).not.toHaveBeenCalled();
             expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Existing draft');
             expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('does not overwrite text entered while a pending edit PATCH is deferred', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-deferred',
+            localId: 'p-edit-deferred',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        let releaseUpdate!: () => void;
+        const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
+        updatePendingMessageSpy.mockImplementationOnce(async () => {
+            await updateGate;
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Existing draft', 'AgentInput');
+            });
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            expect(updatePendingMessageSpy).toHaveBeenCalledTimes(1);
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith(
+                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, undefined,
+            );
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Intervening draft', 'AgentInput');
+            });
+            await act(async () => {
+                releaseUpdate();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Intervening draft');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('restores the prior text when a pending edit returns to its accepted text before PATCH settlement', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-deferred-same-text',
+            localId: 'p-edit-deferred-same-text',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        let releaseUpdate!: () => void;
+        const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
+        updatePendingMessageSpy.mockImplementationOnce(async () => {
+            await updateGate;
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Existing draft', 'AgentInput');
+            });
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith(
+                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, undefined,
+            );
+            expect(pendingFireAndForget).toHaveLength(1);
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Temporary edit', 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+            });
+            await act(async () => {
+                releaseUpdate();
+                await pendingFireAndForget[0];
+            });
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Edited queued text');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('restores prior text while retaining a newer attachment snapshot after a pending edit PATCH', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-deferred-attachment',
+            localId: 'p-edit-deferred-attachment',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        const newerAttachment = {
+            v: 1,
+            instanceId: 'issue-43',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '43',
+            value: { issueId: 43 },
+            presentation: { label: 'Issue #43', typeLabel: 'Issue' },
+        } as const;
+        sessionPendingMessagesState.current = [queuedMessage];
+        let releaseUpdate!: () => void;
+        const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
+        updatePendingMessageSpy.mockImplementationOnce(async () => {
+            await updateGate;
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Existing draft', 'AgentInput');
+            });
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith(
+                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, undefined,
+            );
+            expect(pendingFireAndForget).toHaveLength(1);
+
+            await act(async () => {
+                writeSessionDraftValue(
+                    TEST_SERVER_ACCOUNT_SCOPE,
+                    's1',
+                    'structuredInput.composerAttachments',
+                    [newerAttachment],
+                );
+            });
+            await act(async () => {
+                releaseUpdate();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Existing draft');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'structuredInput.composerAttachments',
+            )).toEqual([newerAttachment]);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('restores prior text while retaining a newer reference snapshot after a pending edit PATCH', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-deferred-reference',
+            localId: 'p-edit-deferred-reference',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        const newerReference = {
+            kind: 'partner.reference',
+            ref: 'partner:issue-99',
+            token: '@new.ts',
+            start: 7,
+            end: 14,
+            label: 'Issue #99',
+        } as const;
+        sessionPendingMessagesState.current = [queuedMessage];
+        let releaseUpdate!: () => void;
+        const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
+        updatePendingMessageSpy.mockImplementationOnce(async () => {
+            await updateGate;
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Before @new.ts draft', 'AgentInput');
+            });
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited @new.ts text', 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith(
+                's1', queuedMessage.id, 'Edited @new.ts text', { v: 1 }, undefined,
+            );
+            expect(pendingFireAndForget).toHaveLength(1);
+
+            const pendingRef = {
+                kind: 'pendingMessage' as const,
+                sessionId: 's1',
+                localId: queuedMessage.localId!,
+            };
+            await act(async () => {
+                const current = readComposerPresentationSnapshot(pendingRef);
+                if (!current) throw new Error('expected active pending Composer snapshot');
+                expect(applyComposerPresentationTransaction({
+                    ref: pendingRef,
+                    transaction: {
+                        expectedRevision: current.revision,
+                        operations: [{ kind: 'reference.insert', reference: newerReference }],
+                    },
+                }).status).toBe('applied');
+            });
+            expect(readComposerPresentationSnapshot(pendingRef)?.references).toEqual([
+                expect.objectContaining({
+                    kind: newerReference.kind,
+                    ref: newerReference.ref,
+                    token: newerReference.token,
+                }),
+            ]);
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'structuredInput.mentions',
+            )).toBeUndefined();
+            await act(async () => {
+                releaseUpdate();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Edited @new.ts text');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Before @new.ts draft');
+            expect(readComposerPresentationSnapshot(pendingRef)?.references).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    kind: newerReference.kind,
+                    ref: newerReference.ref,
+                    token: newerReference.token,
+                }),
+            ]));
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'structuredInput.mentions',
+            )).toBeUndefined();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('keeps an unchanged contentless attachment selection in the admitted pending envelope', async () => {
+        const mention = {
+            kind: 'happier.file',
+            ref: 'file:src/index.ts',
+            token: '@src/index.ts',
+        } as const;
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-with-composer-attachment',
+            localId: 'p-edit-with-composer-attachment',
+            text: '@src/index.ts',
+            displayText: '@src/index.ts',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: '@src/index.ts' },
+                meta: {
+                    happierStructuredInputV1: {
+                        v: 1,
+                        mentions: [mention],
+                        composerAttachments: [attachment],
+                    },
+                },
+            },
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        setCurrentComposerAttachmentProjection();
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(readComposerPresentationSnapshot({
+                kind: 'pendingMessage',
+                sessionId: 's1',
+                localId: queuedMessage.localId!,
+            })).toMatchObject({
+                text: queuedMessage.text,
+                attachments: [attachment],
+                references: [mention],
+            });
+            // The ordinary Session document stays independent while the
+            // Pending-message document owns the visible editor.
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'structuredInput.composerAttachments',
+            )).toBeUndefined();
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget).toHaveLength(1);
+            await act(async () => {
+                await pendingFireAndForget[0];
+            });
+
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith(
+                's1',
+                queuedMessage.id,
+                '@src/index.ts',
+                {
+                    v: 1,
+                    mentions: [mention],
+                    composerAttachments: [attachment],
+                },
+                undefined,
+            );
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('prepares a changed pending-edit attachment under one replacement localId before atomically saving it', async () => {
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const changedAttachment = {
+            ...attachment,
+            value: { issueId: 43 },
+            presentation: { label: 'Issue #43', typeLabel: 'Issue' },
+        } as const;
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-changed-composer-attachment',
+            localId: 'p-edit-changed-composer-attachment',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'Queued edit text' },
+                meta: { happierStructuredInputV1: { v: 1, composerAttachments: [attachment] } },
+            },
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        setCurrentComposerAttachmentProjection();
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>)).tree;
+            pendingFireAndForget.length = 0;
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+            const pendingRef = {
+                kind: 'pendingMessage' as const,
+                sessionId: 's1',
+                localId: queuedMessage.localId!,
+            };
+            const attachmentApplier = createComposerPresentationTransactionApplier({
+                composerAttachmentsById: {
+                    'acme.issues/issue': daemonMergedProjectionState.value.inputs.pluginProjectionV2
+                        .familiesById.composerAttachments.entriesById['acme.issues/issue'],
+                },
+            });
+            await act(async () => {
+                const current = readComposerPresentationSnapshot(pendingRef);
+                if (!current) throw new Error('expected active pending Composer snapshot');
+                expect(attachmentApplier.apply({
+                    ref: pendingRef,
+                    admittedContributor: {
+                        identity: { pluginId: 'acme.issues', localId: 'pending-editor' },
+                        immutableGenerationId: 'issue-generation-a',
+                    },
+                    transaction: {
+                        expectedRevision: current.revision,
+                        operations: [{
+                            kind: 'attachment.update',
+                            instanceId: attachment.instanceId,
+                            update: {
+                                value: changedAttachment.value,
+                                presentation: { label: 'Issue #43' },
+                            },
+                        }],
+                    },
+                }).status).toBe('applied');
+            });
+            machinePluginComposerAttachmentPrepareMock.mockResolvedValueOnce({
+                supported: true,
+                result: {
+                    ok: true,
+                    attachment: attachment.attachment,
+                    result: {
+                        attachments: [{
+                            instanceId: attachment.instanceId,
+                            status: 'ready',
+                            value: { issueId: 430 },
+                            presentation: { label: 'Prepared issue #430' },
+                        }],
+                    },
+                },
+            });
+
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget).toHaveLength(1);
+            await act(async () => {
+                await pendingFireAndForget[0];
+            });
+            expect(machinePluginComposerAttachmentPrepareMock).toHaveBeenCalledTimes(1);
+            const prepareRequest = machinePluginComposerAttachmentPrepareMock.mock.calls[0]?.[1];
+            expect(prepareRequest).toMatchObject({
+                serverId: 'server-1',
+                expectedGeneration: '7',
+                attachment: attachment.attachment,
+                request: {
+                    sessionId: 's1',
+                    localId: expect.any(String),
+                    attachments: [{
+                        instanceId: attachment.instanceId,
+                        key: attachment.key,
+                        value: changedAttachment.value,
+                    }],
+                },
+            });
+            const replacementLocalId = prepareRequest.request.localId;
+            expect(replacementLocalId).not.toBe(queuedMessage.localId);
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith('s1', queuedMessage.id, queuedMessage.text, {
+                v: 1,
+                composerAttachments: [{
+                    ...changedAttachment,
+                    value: { issueId: 430 },
+                    presentation: { label: 'Prepared issue #430', typeLabel: 'Issue' },
+                }],
+            }, { replacementLocalId });
+            expect(modalAlertSpy).not.toHaveBeenCalled();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('refuses malformed persisted semantic input without mutating the active composer', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit-with-malformed-semantic-input',
+            localId: 'p-edit-with-malformed-semantic-input',
+            text: 'Queued malformed semantic input edit text',
+            displayText: 'Queued malformed semantic input edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'Queued malformed semantic input edit text' },
+                meta: {
+                    happierStructuredInputV1: {
+                        v: 1,
+                        // This is intentionally not a valid Composer attachment. The raw
+                        // guard must fail closed for malformed persisted semantic input,
+                        // without reviving it into the text-only editor.
+                        unknownPersistedSemanticInput: [{ source: 'legacy-invalid' }],
+                    },
+                },
+            },
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        writeSessionDraftValue(
+            TEST_SERVER_ACCOUNT_SCOPE,
+            's1',
+            'routing.executionRunDelivery',
+            'interrupt',
+        );
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                <SessionView
+                    id="s1"
+                    initialAttachmentDrafts={[{
+                        id: 'draft-note',
+                        source: {
+                            kind: 'native',
+                            uri: 'file:///tmp/draft-note.txt',
+                            name: 'draft-note.txt',
+                            sizeBytes: 1,
+                            mimeType: 'text/plain',
+                        },
+                        status: 'pending',
+                    }]}
+                />
+            </AppPaneProvider>)).tree;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Existing draft', 'AgentInput');
+            });
+            expect(agentInput.props.attachmentRowItems).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+            patchSessionMetadataWithRetrySpy.mockClear();
+            modalAlertSpy.mockClear();
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: queuedMessage.id,
+                    text: queuedMessage.text,
+                    displayText: queuedMessage.displayText,
+                    message: queuedMessage,
+                });
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Existing draft');
+            expect(agentInput.props.attachmentRowItems).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.executionRunDelivery',
+            )).toBe('interrupt');
+            expect(patchSessionMetadataWithRetrySpy).not.toHaveBeenCalled();
+            expect(updatePendingMessageSpy).not.toHaveBeenCalled();
+            expect(modalAlertSpy).toHaveBeenCalledWith(
+                'common.error',
+                'session.pendingMessages.errors.editStructuredInputUnsupported',
+            );
         } finally {
             act(() => {
                 tree?.unmount();
@@ -1324,7 +2515,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Next draft');
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'next.txt' }),
             ]);
         } finally {
@@ -1423,7 +2614,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Next draft');
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'next.txt' }),
             ]);
         } finally {
@@ -1518,9 +2709,147 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('');
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'next.txt' }),
             ]);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('clears in-flight changed references when the accepted Main Session text clears', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        let resolveUpload: (() => void) | null = null;
+        const uploadStarted = new Promise<void>((resolveStarted) => {
+            uploadSpy.mockImplementationOnce(async () => {
+                resolveStarted();
+                return await new Promise((resolve) => {
+                    resolveUpload = () => resolve({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+                });
+            });
+        });
+        let acceptHandoff: (() => void) | null = null;
+        const sendStarted = new Promise<void>((resolveStarted) => {
+            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
+                const options = args[4] as
+                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+                    | undefined;
+                acceptHandoff = () => options?.onLocalPendingProjectionCreated?.({ localId: 'reference-local-id' });
+                resolveStarted();
+            });
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            const renderedTree = tree;
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Use @accepted.ts and @newer.ts', 'AgentInput');
+            });
+
+            const sessionRef = { kind: 'session' as const, sessionId: 's1' };
+            await act(async () => {
+                const current = readComposerPresentationSnapshot(sessionRef);
+                if (!current) throw new Error('expected active Session Composer snapshot');
+                expect(current).toMatchObject({
+                    text: 'Use @accepted.ts and @newer.ts',
+                    capabilities: { references: true },
+                });
+                expect(applyComposerPresentationTransaction({
+                    ref: sessionRef,
+                    transaction: {
+                        expectedRevision: current.revision,
+                        operations: [{
+                            kind: 'reference.insert',
+                            reference: {
+                                kind: 'partner.reference',
+                                ref: 'partner:accepted',
+                                token: '@accepted.ts',
+                                start: 4,
+                                end: 16,
+                                label: 'Accepted issue',
+                            },
+                        }],
+                    },
+                }).status).toBe('applied');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            expect(pendingFireAndForget).toHaveLength(1);
+            await act(async () => {
+                await uploadStarted;
+            });
+
+            const newerMention = {
+                kind: 'partner.reference',
+                ref: 'partner:newer',
+                tokenText: '@newer.ts',
+                label: 'Newer issue',
+            } as const;
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            const onStructuredInputMentionsChange = agentInput.props.onStructuredInputMentionsChange;
+            if (typeof onStructuredInputMentionsChange !== 'function') {
+                throw new Error('expected SessionView to expose the structured-mention owner');
+            }
+            await act(async () => {
+                onStructuredInputMentionsChange([newerMention]);
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Use @accepted.ts and @newer.ts');
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'structuredInput.mentions',
+            )).toEqual(expect.arrayContaining([
+                expect.objectContaining({ ref: newerMention.ref, tokenText: newerMention.tokenText }),
+            ]));
+
+            await act(async () => {
+                if (!resolveUpload) throw new Error('attachment upload did not start');
+                resolveUpload();
+                await sendStarted;
+            });
+
+            await act(async () => {
+                if (!acceptHandoff) throw new Error('local pending projection callback was not registered');
+                acceptHandoff();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'structuredInput.mentions',
+            )).toBeUndefined();
+            expect(agentInput.props.value).toBe('');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -1589,7 +2918,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('');
-            expect(agentInput.props.attachments).toEqual([]);
+            expect(agentInput.props.attachmentRowItems).toEqual([]);
 
             await act(async () => {
                 if (!rejectSend) throw new Error('send did not start');
@@ -1599,7 +2928,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Describe this image');
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'a.txt', status: 'uploaded' }),
             ]);
             expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'attachment handoff rejected');
@@ -1671,7 +3000,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('');
-            expect(agentInput.props.attachments).toEqual([]);
+            expect(agentInput.props.attachmentRowItems).toEqual([]);
 
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
@@ -1687,7 +3016,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('');
-            expect(agentInput.props.attachments).toEqual([
+            expect(agentInput.props.attachmentRowItems).toEqual([
                 expect.objectContaining({ label: 'next.txt' }),
             ]);
             expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'attachment handoff rejected');
@@ -1789,5 +3118,200 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
             pendingFireAndForget.length = 0;
         }
+    });
+
+    // The composer has two destinations, and starting an Agent is the one step
+    // that cannot be taken back. An inactive Session resumed on the way to an
+    // ARMED send starts the source Agent — the very Agent the reader chose to
+    // leave — which spends provider work and can make the transition fail
+    // non-idle. So the destination decision must happen before any Agent-runtime
+    // side effect, not after the upload.
+    describe('armed Agent continuation', () => {
+        const armSecondAgent = () => {
+            armedContinuationState.intent = {
+                v: 1,
+                mode: 'same_session',
+                sourceAgentId: 'codex',
+                selection: { v: 1, agentId: 'claude' },
+            };
+            armedContinuationState.localId = 'armed-local-id';
+        };
+
+        async function sendOneAttachment(tree: renderer.ReactTestRenderer) {
+            const agentInput = findTestInstanceByTypeWithProps(tree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            expect(pendingFireAndForget.length).toBe(1);
+            await pendingFireAndForget[0];
+        }
+
+        // The switch runs on THIS Session's server, and neither the daemon nor
+        // the server re-gates the transition, so the scope of this one decision
+        // IS the gate. Resolving it against whichever servers happen to be
+        // selected in the sidebar makes an unrelated server's setting decide
+        // whether this Session may switch Agent.
+        it('resolves the Agent-switching gate against this Session\'s server', async () => {
+            let tree: renderer.ReactTestRenderer | undefined;
+            try {
+                tree = (await renderScreen(<AppPaneProvider>
+                            <SessionView id="s1" />
+                        </AppPaneProvider>)).tree;
+                expect(useFeatureEnabledSpy).toHaveBeenCalledWith(
+                    'sessions.agentSwitching',
+                    expect.objectContaining({ scopeKind: 'spawn', serverId: 'server-1' }),
+                );
+            } finally {
+                act(() => {
+                    tree?.unmount();
+                });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('does not start the inactive source Agent when the send is armed for another Agent', async () => {
+            armSecondAgent();
+
+            let tree: renderer.ReactTestRenderer | undefined;
+            try {
+                tree = (await renderScreen(<AppPaneProvider>
+                            <SessionView id="s1" />
+                        </AppPaneProvider>)).tree;
+                pendingFireAndForget.length = 0;
+                const renderedTree = tree;
+                if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+                await sendOneAttachment(renderedTree);
+
+                expect(resumeSessionSpy).not.toHaveBeenCalled();
+                expect(sendMessageSpy).not.toHaveBeenCalled();
+                expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+                expect(runSessionAgentTransitionSpy).toHaveBeenCalledTimes(1);
+                const [transitionInput] = runSessionAgentTransitionSpy.mock.calls[0] ?? [];
+                expect(transitionInput).toMatchObject({
+                    machineId: 'm1',
+                    request: {
+                        sessionId: 's1',
+                        expectedCurrentAgentId: 'codex',
+                        selection: { agentId: 'claude' },
+                        input: { localId: 'armed-local-id' },
+                    },
+                });
+                expect(String((transitionInput as any)?.request?.input?.text ?? '')).toContain('a.txt');
+            } finally {
+                act(() => {
+                    tree?.unmount();
+                });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        async function sendArmedAndReadBanner(result: unknown) {
+            armSecondAgent();
+            runSessionAgentTransitionSpy.mockImplementationOnce(async () => result as any);
+            const screen = await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>);
+            pendingFireAndForget.length = 0;
+            if (!screen.tree) throw new Error('SessionView test renderer did not mount');
+            await sendOneAttachment(screen.tree);
+            return screen;
+        }
+
+        it('tells the reader through the composer banner instead of a modal they must dismiss', async () => {
+            // The switch happened and the message did not. A modal buries that
+            // under an OK button and leaves the composer looking ordinary; the
+            // banner sits above the composer the reader is about to use again.
+            const screen = await sendArmedAndReadBanner({
+                type: 'partially_applied',
+                localId: 'armed-local-id',
+                applied: 'current_view_committed',
+                code: 'target_start_failed',
+            });
+            try {
+                expect(modalAlertSpy).not.toHaveBeenCalled();
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.banner').length).toBeGreaterThan(0);
+                expect(screen.getTextContent())
+                    .toContain('session.agentContinuation.transition.switched');
+                // Collapsing must demote the signal to a badge, never destroy it,
+                // so the banner always publishes one into the composer action bar.
+                const agentInput = findTestInstanceByTypeWithProps(screen.tree, 'AgentInput' as any, {}) as any;
+                const badges = (agentInput?.props?.statusBadges ?? []) as ReadonlyArray<{ testID?: string }>;
+                expect(badges.some((badge) => badge.testID === 'session.agentTransitionOutcome.badge')).toBe(true);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('delegates the committed-but-inactive recovery to the Session resume owner', async () => {
+            // The Session already IS the target and has no live runtime, so the
+            // one factual recovery is to start it — through the same resume owner
+            // every other inactive-session affordance uses, not a second start
+            // path owned by the banner.
+            const screen = await sendArmedAndReadBanner({
+                type: 'partially_applied',
+                localId: 'armed-local-id',
+                applied: 'current_view_committed',
+                code: 'target_start_failed',
+            });
+            try {
+                resumeSessionSpy.mockClear();
+                await act(async () => {
+                    await screen.pressByTestIdAsync('session.agentTransitionOutcome.resume');
+                });
+                expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('offers no retry at all for an outcome nothing has established', async () => {
+            const screen = await sendArmedAndReadBanner({ type: 'outcome_unknown', localId: 'armed-local-id' });
+            try {
+                expect(modalAlertSpy).not.toHaveBeenCalled();
+                expect(screen.getTextContent())
+                    .toContain('session.agentContinuation.transition.unknown');
+                // A blind retry against an effect that may already have happened
+                // is the one action this state must never expose.
+                expect(screen.findAllByTestId('session.agentTransitionOutcome.resume')).toHaveLength(0);
+                // Reconciliation reads canonical Session/message truth through the
+                // owners that already publish it — no status operation of its own.
+                expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ forceRefresh: true }));
+                expect(refreshSessionMessagesSpy).toHaveBeenCalledWith('s1');
+            } finally {
+                act(() => { screen.tree?.unmount(); });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('still resumes the inactive source Agent for an ordinary unarmed attachment send', async () => {
+            let tree: renderer.ReactTestRenderer | undefined;
+            try {
+                tree = (await renderScreen(<AppPaneProvider>
+                            <SessionView id="s1" />
+                        </AppPaneProvider>)).tree;
+                pendingFireAndForget.length = 0;
+                const renderedTree = tree;
+                if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+                await sendOneAttachment(renderedTree);
+
+                expect(resumeSessionSpy).toHaveBeenCalled();
+                expect(runSessionAgentTransitionSpy).not.toHaveBeenCalled();
+                expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+            } finally {
+                act(() => {
+                    tree?.unmount();
+                });
+                pendingFireAndForget.length = 0;
+            }
+        });
     });
 });

@@ -6,13 +6,14 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { renameServerProfile, resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
+import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { retargetPendingTerminalConnectToServerUrl } from '@/sync/domains/pending/retargetPendingTerminalConnectToServerUrl';
 
 import type { ServerAuthStatus } from './useServerAuthStatusByServerId';
 
 export function useServerSettingsServerProfileActions(params: Readonly<{
     authStatusByServerId: Readonly<Record<string, ServerAuthStatus>>;
-    onSwitchServerById: (serverId: string) => Promise<void>;
+    onSwitchServerById: (serverId: string) => Promise<boolean>;
     onAfterSignedOutSwitch: () => void;
 
     setRevision: React.Dispatch<React.SetStateAction<number>>;
@@ -35,9 +36,10 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
             if (!shouldContinue) return;
         }
 
+        const switched =
+            await params.onSwitchServerById(scopeId);
+        if (!switched) return;
         retargetPendingTerminalConnectToServerUrl(profile.serverUrl);
-
-        await params.onSwitchServerById(scopeId);
         if (authStatus === 'signedOut') {
             params.onAfterSignedOutSwitch();
         }
@@ -67,13 +69,19 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
         );
         if (!confirmed) return;
         try {
-            await removeServerProfileUiAction({ profileId: profile.id, serverUrl: profile.serverUrl });
+            await presentFirstKeyCredentialLifecycle({
+                run: async () =>
+                    await removeServerProfileUiAction({
+                        profileId: profile.id,
+                        serverUrl: profile.serverUrl,
+                    }),
+                onCompleted: () => {
+                    params.setRevision((r) => r + 1);
+                },
+            });
         } catch (err) {
             Modal.alert(t('common.error'), String((err as any)?.message ?? err));
-            return;
         }
-
-        params.setRevision((r) => r + 1);
     }, [params]);
 
     return {

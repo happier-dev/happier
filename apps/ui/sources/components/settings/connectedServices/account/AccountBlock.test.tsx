@@ -6,7 +6,6 @@ import {
     ConnectedServiceQuotaSnapshotV1Schema,
     type ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
-import type { ItemAction } from '@/components/ui/lists/itemActions';
 import type { UseConnectedServiceQuotaSnapshotResult } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshot';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -100,6 +99,32 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => {
     };
 });
 
+/** Flatten an RN style prop (array or object) into one lookup for layout assertions. */
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>(
+            (accumulator, entry) => Object.assign(accumulator, flattenStyle(entry)),
+            {},
+        );
+    }
+    if (style && typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
+/**
+ * Style of the columned-section grid CELL a node sits in, or `{}` when the node
+ * is not inside one. Cells are the only ancestors that declare `flexBasis`.
+ */
+function resolveEnclosingGridCellStyle(node: { parent: unknown; props: Record<string, unknown> } | null): Record<string, unknown> {
+    let current = node as { parent: unknown; props?: Record<string, unknown> } | null;
+    while (current) {
+        const style = flattenStyle(current.props?.style);
+        if (style.flexBasis !== undefined) return style;
+        current = current.parent as { parent: unknown; props?: Record<string, unknown> } | null;
+    }
+    return {};
+}
+
 function buildSnapshot(overrides: Partial<ConnectedServiceQuotaSnapshotV1> = {}): ConnectedServiceQuotaSnapshotV1 {
     return ConnectedServiceQuotaSnapshotV1Schema.parse({
         v: 1,
@@ -129,7 +154,6 @@ function buildQuotaResult(overrides: Partial<UseConnectedServiceQuotaSnapshotRes
         snapshot: buildSnapshot(),
         loading: false,
         error: null,
-        isStale: false,
         nowMs: NOW_MS,
         recoveryCreditSummary: { availableCount: 1, nextExpiresAtMs: NOW_MS + 3 * DAY_MS, providerCreditId: 'pc-1' },
         recoveryCreditMachineId: 'machine-1',
@@ -159,12 +183,6 @@ beforeEach(() => {
 afterEach(() => {
     vi.clearAllMocks();
 });
-
-/** Build a pan reorder gesture via the gesture-handler mock to bind a handle. */
-async function makeReorderGesture() {
-    const { Gesture } = await import('react-native-gesture-handler');
-    return Gesture.Pan();
-}
 
 async function renderAccountBlock(props: Partial<React.ComponentProps<typeof import('./AccountBlock')['AccountBlock']>> = {}) {
     const { AccountBlock } = await import('./AccountBlock');
@@ -339,12 +357,28 @@ describe('AccountBlock', () => {
     it('disables the reset Use action when no target machine is resolved', async () => {
         // In dev every schema-valid credit carries an `id`, so a reset row is always
         // individually consumable; the reachable "disabled" path is a missing target
-        // machine (canConsume === false).
+        // machine (consumeUnavailableReason === 'machine'), which keeps the action
+        // visible-but-inert with the inline explanation.
         quotaHookState.value = buildQuotaResult({ recoveryCreditMachineId: null });
 
         const screen = await renderAccountBlock();
 
         expect(screen.findByTestId('acct:reset-use:pc-1')?.props.disabled).toBe(true);
+    });
+
+    it('lays the resets machine-unavailable hint out as a full-width grid cell', async () => {
+        // RESETS is a columned section, so every child must be exactly ONE grid
+        // cell. The hint explains the whole section, so its cell spans every
+        // column instead of taking a half-width slot beside the first reset row.
+        quotaHookState.value = buildQuotaResult({ recoveryCreditMachineId: null });
+
+        const screen = await renderAccountBlock();
+
+        const hint = screen.findByTestId('acct:resets-hint');
+        expect(hint).toBeTruthy();
+        // `flexBasis` is what a grid CELL declares (the grid container itself does
+        // not), so an unwrapped hint resolves to no cell at all.
+        expect(resolveEnclosingGridCellStyle(hint).flexBasis).toBe('100%');
     });
 
     it('persists collapse state to connectedServicesCollapsedItemKeysV1 (sparse deviation)', async () => {
@@ -364,6 +398,20 @@ describe('AccountBlock', () => {
         screen.findByTestId('acct:pin:weekly')?.props.onPress?.();
 
         expect(quota.togglePinnedMeter).toHaveBeenCalledWith('weekly');
+    });
+
+    it('tells a pinned meter from an unpinned one by glyph weight, not colour alone', async () => {
+        // The pin is an icon-only button: nothing else in it changes when a meter is pinned, so a
+        // primary-vs-secondary text colour was the entire signal — two greys apart in the dark
+        // theme, and invisible to anyone who cannot separate them. `DESIGN.md`: do not rely on
+        // colour alone.
+        quotaHookState.value = buildQuotaResult({ pinnedMeterIds: [] });
+        const unpinned = await renderAccountBlock();
+        expect(unpinned.findByTestId('acct:pin:weekly')?.props.children.props.weight).toBe('regular');
+
+        quotaHookState.value = buildQuotaResult({ pinnedMeterIds: ['weekly'] });
+        const pinned = await renderAccountBlock();
+        expect(pinned.findByTestId('acct:pin:weekly')?.props.children.props.weight).toBe('fill');
     });
 
     it('fails closed when the quotas feature is disabled (no fetch, no usage)', async () => {
@@ -426,95 +474,5 @@ describe('AccountBlock', () => {
         const screen = await renderAccountBlock();
 
         expect(screen.findByTestId('acct:header')?.props.role).toBe('group');
-    });
-
-    describe('poolMember variant', () => {
-        it('renders collapsed by default with an inline reorder handle, enable switch, and capacity', async () => {
-            const onToggleEnabled = vi.fn();
-            const screen = await renderAccountBlock({
-                variant: 'poolMember',
-                groupId: 'g1',
-                enabled: true,
-                onToggleEnabled,
-                reorderGesture: await makeReorderGesture(),
-            });
-
-            // Default-collapsed: body sections hidden.
-            expect(screen.getTextContent()).not.toContain('connectedServices.account.usageCaption');
-            // The handle is rendered INLINE inside the view (mirroring SessionItem),
-            // bound to the supplied pan gesture via a GestureDetector.
-            expect(screen.findByTestId('acct:reorder-handle')).toBeTruthy();
-            // Capacity now lives in the ring avatar (its centered value).
-            expect(screen.findByTestId('acct:avatar:capacity')).toBeTruthy();
-
-            const enableSwitch = screen.findByTestId('acct:enable-toggle');
-            expect(enableSwitch).toBeTruthy();
-            enableSwitch?.props.onValueChange?.(false);
-            expect(onToggleEnabled).toHaveBeenCalledWith(false);
-        });
-
-        it('shows the active-account radio and sets active from the list', async () => {
-            const onSetActive = vi.fn();
-            const screen = await renderAccountBlock({
-                variant: 'poolMember',
-                groupId: 'g1',
-                enabled: true,
-                isActive: false,
-                onSetActive,
-                reorderGesture: await makeReorderGesture(),
-            });
-            const radio = screen.findByTestId('acct:active-radio');
-            expect(radio).toBeTruthy();
-            expect(radio?.props.accessibilityState?.checked).toBe(false);
-            radio?.props.onPress?.({});
-            expect(onSetActive).toHaveBeenCalled();
-        });
-
-        it('marks the active member radio selected and non-interactive', async () => {
-            const screen = await renderAccountBlock({
-                variant: 'poolMember',
-                groupId: 'g1',
-                enabled: true,
-                isActive: true,
-                onSetActive: vi.fn(),
-                reorderGesture: await makeReorderGesture(),
-            });
-            const radio = screen.findByTestId('acct:active-radio');
-            expect(radio?.props.accessibilityState?.checked).toBe(true);
-            expect(radio?.props.accessibilityState?.disabled).toBe(true);
-        });
-
-        it('renders the inline reorder handle in the trailing cluster and collapses member actions into a single kebab', async () => {
-            const actions: ItemAction[] = [
-                { id: 'act:move-up', title: 'Move up', icon: 'arrow-up-outline', onPress: () => {} },
-                { id: 'act:move-down', title: 'Move down', icon: 'arrow-down-outline', onPress: () => {} },
-                { id: 'act:set-active', title: 'Set active', icon: 'radio-button-off-outline', onPress: () => {} },
-            ];
-            const screen = await renderAccountBlock({
-                variant: 'poolMember',
-                groupId: 'g1',
-                enabled: true,
-                onToggleEnabled: vi.fn(),
-                reorderGesture: await makeReorderGesture(),
-                actions,
-            });
-
-            // The handle now lives in the header's trailing cluster (rendered as
-            // the header `Item`'s rightElement), i.e. it is a descendant of the
-            // header row instead of a leading sibling in front of the row.
-            const header = screen.findByTestId('acct:header');
-            expect(header).toBeTruthy();
-            expect(header?.findAll((node) => node.props?.testID === 'acct:reorder-handle').length).toBe(1);
-
-            // Member actions collapse into one ⋮ overflow menu (kebab) rather
-            // than inline icons on the row.
-            expect(screen.findByTestId('acct:actions-menu')).toBeTruthy();
-
-            // Move up / Move down / Set active are no longer inline on the row —
-            // they live inside the (closed) kebab popover, so none are present.
-            expect(screen.findAllByTestId('act:move-up').length).toBe(0);
-            expect(screen.findAllByTestId('act:move-down').length).toBe(0);
-            expect(screen.findAllByTestId('act:set-active').length).toBe(0);
-        });
     });
 });

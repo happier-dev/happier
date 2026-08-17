@@ -283,6 +283,72 @@ describe('session history navigation', () => {
         expect(navigateToSessionSpy).toHaveBeenCalledWith('session-hidden-1', { serverId: 'server-hidden' });
     });
 
+    it('keeps the hidden Voice History carrier out of archived and hidden-inactive session lists', async () => {
+        hideInactiveSessions = true;
+        allSessions = [
+            {
+                id: 'session-ordinary-inactive',
+                serverId: 'server-normal',
+                updatedAt: 100,
+                archivedAt: null,
+                active: false,
+                metadata: { name: 'Ordinary inactive session' },
+            },
+            {
+                id: 'voice-history-hidden',
+                serverId: 'server-voice',
+                updatedAt: 90,
+                archivedAt: null,
+                active: false,
+                metadataLayoutVersion: 1,
+                metadataUnavailable: false,
+                metadata: {
+                    name: 'Voice History carrier',
+                    systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+                },
+            },
+            {
+                id: 'voice-history-archived',
+                serverId: 'server-voice',
+                updatedAt: 80,
+                archivedAt: 80,
+                active: false,
+                metadataLayoutVersion: 1,
+                metadataUnavailable: false,
+                metadata: {
+                    name: 'Archived Voice History carrier',
+                    systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+                },
+            },
+        ];
+        sessionListRowStateByServerId = {
+            'server-cache': {
+                'voice-history-archived-cache': {
+                    id: 'voice-history-archived-cache',
+                    archivedAt: 70,
+                    active: false,
+                    updatedAt: 70,
+                    accessLevel: 'admin',
+                    metadataLayoutVersion: 1,
+                    metadataUnavailable: false,
+                    metadata: {
+                        name: 'Cached Voice History carrier',
+                        systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+                    },
+                },
+            },
+        };
+
+        const ArchivedSessionsScreen = (await import('@/app/(app)/session/archived')).default;
+        const screen = await renderScreen(React.createElement(ArchivedSessionsScreen));
+        const content = screen.getTextContent();
+
+        expect(content).toContain('Ordinary inactive session');
+        expect(content).not.toContain('Voice History carrier');
+        expect(content).not.toContain('Archived Voice History carrier');
+        expect(content).not.toContain('Cached Voice History carrier');
+    });
+
     it('uses organization pins when filtering hidden inactive sessions on the archived screen', async () => {
         hideInactiveSessions = true;
         pinnedSessionKeysV1 = [];

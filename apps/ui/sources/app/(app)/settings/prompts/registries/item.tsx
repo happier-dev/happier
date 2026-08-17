@@ -10,7 +10,6 @@ function readParam(value: string | string[] | undefined): string {
 
 export default React.memo(function PromptRegistryItemDetailsRoute() {
   const params = useLocalSearchParams<{
-    machineId?: string | string[];
     sourceId?: string | string[];
     itemId?: string | string[];
     title?: string | string[];
@@ -21,7 +20,6 @@ export default React.memo(function PromptRegistryItemDetailsRoute() {
 
   return (
     <PromptRegistryItemDetailsScreen
-      machineId={readParam(params.machineId)}
       sourceId={readParam(params.sourceId)}
       itemId={readParam(params.itemId)}
       title={readParam(params.title)}

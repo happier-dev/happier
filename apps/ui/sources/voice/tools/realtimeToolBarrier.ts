@@ -4,7 +4,6 @@ import {
   VoiceRealtimeToolCallV1Schema,
   VoiceRealtimeToolResultV1Schema,
   type VoiceRealtimeJsonValue,
-  type VoiceRealtimeJsonArray,
   type VoiceRealtimeToolCallV1,
   type VoiceRealtimeToolResultV1,
 } from '@happier-dev/protocol';
@@ -83,7 +82,7 @@ function clampPositiveInteger(value: number | undefined, fallback: number): numb
   return Number.isFinite(value) && Number(value) > 0 ? Math.max(1, Math.floor(Number(value))) : fallback;
 }
 
-function isJsonArray(value: VoiceRealtimeJsonValue): value is VoiceRealtimeJsonArray {
+function isJsonArray(value: VoiceRealtimeJsonValue): value is readonly VoiceRealtimeJsonValue[] {
   return Array.isArray(value);
 }
 
@@ -98,7 +97,7 @@ function sortCalls(calls: readonly VoiceRealtimeToolCallV1[]): VoiceRealtimeTool
 }
 
 function responseFingerprint(calls: readonly VoiceRealtimeToolCallV1[]): string {
-  const value: VoiceRealtimeJsonArray = calls.map((call) => ({
+  const value: readonly VoiceRealtimeJsonValue[] = calls.map((call) => ({
     v: call.v,
     responseId: call.responseId,
     callId: call.callId,

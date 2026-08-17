@@ -26,6 +26,7 @@ describe('plugin permission grants HTTP action executor', () => {
             pluginId: 'review-coderabbit',
             authoritySource: { kind: 'bundled' },
             capability: 'reviews.comments.write.direct',
+            subject: { kind: 'general' },
             targetScope: { kind: 'project', projectId: 'project-1' },
             status: 'active',
             requestId: 'request-1',

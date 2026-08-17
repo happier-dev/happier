@@ -97,6 +97,37 @@ describe('resolveAgentInputControlLines', () => {
         expect(lines.secondary).toEqual(['machine', 'path']);
     });
 
+    it('keeps admitted plugin controls in supplied normalized contribution order after host controls', () => {
+        const lines = resolveAgentInputControlLines({
+            layout: 'wrap',
+            controlIds: ['plugin:fixture/second', 'engine', 'plugin:fixture/first', 'machine'],
+        });
+
+        expect(lines.primary).toEqual([
+            'engine',
+            'plugin:fixture/second',
+            'plugin:fixture/first',
+        ]);
+        expect(lines.secondary).toEqual(['machine']);
+        expect(lines.collapsed).toEqual([]);
+    });
+
+    it('keeps admitted plugin controls in the same canonical order when collapsed into overflow', () => {
+        const lines = resolveAgentInputControlLines({
+            layout: 'collapsed',
+            controlIds: ['plugin:fixture/second', 'engine', 'plugin:fixture/first', 'machine'],
+        });
+
+        expect(lines.primary).toEqual([]);
+        expect(lines.secondary).toEqual([]);
+        expect(lines.collapsed).toEqual([
+            'engine',
+            'machine',
+            'plugin:fixture/second',
+            'plugin:fixture/first',
+        ]);
+    });
+
     it('keeps stop pinned in the early primary order defined by the canonical registry', () => {
         expect(AGENT_INPUT_CONTROL_REGISTRY.map((control) => control.id)).toEqual([
             'engine',

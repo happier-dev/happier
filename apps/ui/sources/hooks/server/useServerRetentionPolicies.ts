@@ -1,35 +1,35 @@
 import * as React from 'react';
 
-import { useServerFeaturesMainSelectionSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { readServerRetentionPolicy, type ServerRetentionPolicy } from '@/sync/domains/server/retention/serverRetentionPolicy';
+import {
+    getCachedServerRetentionPolicy,
+    getServerRetentionPolicy,
+} from '@/sync/api/capabilities/serverRetentionPolicyClient';
+import type { ServerRetentionPolicyView } from '@/sync/domains/server/retention/serverRetentionPolicy';
 
 function normalizeServerIds(serverIds: ReadonlyArray<string>): string[] {
-    const seen = new Set<string>();
-    const normalized: string[] = [];
-
-    for (const value of serverIds) {
-        const serverId = String(value).trim();
-        if (!serverId || seen.has(serverId)) continue;
-        seen.add(serverId);
-        normalized.push(serverId);
-    }
-
-    return normalized;
+    return Array.from(new Set(serverIds.map((value) => String(value).trim()).filter(Boolean)));
 }
 
-export function useServerRetentionPolicies(serverIds: ReadonlyArray<string>): Readonly<Record<string, ServerRetentionPolicy | null>> {
+export function useServerRetentionPolicies(serverIds: ReadonlyArray<string>): Readonly<Record<string, ServerRetentionPolicyView | null>> {
     const normalizedServerIds = React.useMemo(
         () => normalizeServerIds(serverIds),
         [serverIds.join('\u0000')],
     );
-    const snapshot = useServerFeaturesMainSelectionSnapshot(normalizedServerIds, { enabled: normalizedServerIds.length > 0 });
+    const [policies, setPolicies] = React.useState<Readonly<Record<string, ServerRetentionPolicyView | null>>>(() =>
+        Object.fromEntries(normalizedServerIds.map((id) => [id, getCachedServerRetentionPolicy(id)])),
+    );
 
-    return React.useMemo(() => {
-        const policies: Record<string, ServerRetentionPolicy | null> = {};
-        for (const serverId of normalizedServerIds) {
-            const features = snapshot.snapshotsByServerId[serverId];
-            policies[serverId] = features?.status === 'ready' ? readServerRetentionPolicy(features.features) : null;
-        }
-        return policies;
-    }, [normalizedServerIds, snapshot]);
+    React.useEffect(() => {
+        let active = true;
+        setPolicies(Object.fromEntries(normalizedServerIds.map((id) => [id, getCachedServerRetentionPolicy(id)])));
+        void Promise.all(normalizedServerIds.map(async (id) => [id, await getServerRetentionPolicy({ serverId: id })] as const))
+            .then((entries) => {
+                if (active) setPolicies(Object.fromEntries(entries));
+            });
+        return () => {
+            active = false;
+        };
+    }, [normalizedServerIds]);
+
+    return policies;
 }

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View, Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
@@ -13,6 +12,7 @@ import { Text } from '@/components/ui/text/Text';
 import { collectSubAgentSummaryTools } from './collectSubAgentSummaryTools';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
@@ -216,10 +216,10 @@ export const SubAgentSummarySection = React.memo<{
                             <ActivitySpinner size={Platform.OS === 'ios' ? 'small' : 14} color={theme.colors.state.neutral.foreground} />
                         )}
                         {item.state === 'completed' && (
-                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.state.success.foreground} />
+                            <Icon name="check-circle" size={16} color={theme.colors.state.success.foreground} />
                         )}
                         {item.state === 'error' && (
-                            <Ionicons name="close-circle" size={16} color={theme.colors.state.danger.foreground} />
+                            <Icon name="x-circle" size={16} color={theme.colors.state.danger.foreground} />
                         )}
                     </View>
                 </View>

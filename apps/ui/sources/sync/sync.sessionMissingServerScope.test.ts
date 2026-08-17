@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
 const kvStore = vi.hoisted(() => new Map<string, string>());
 vi.mock('react-native-mmkv', () => {
@@ -11,6 +12,9 @@ vi.mock('react-native-mmkv', () => {
         }
         delete(key: string) {
             kvStore.delete(key);
+        }
+        getAllKeys() {
+            return [...kvStore.keys()];
         }
         clearAll() {
             kvStore.clear();
@@ -103,6 +107,7 @@ vi.mock('@/activity/notifications/runtime/activityLocalNotificationBus', async (
 });
 
 import { storage } from './domains/state/storage';
+import type { ApiUpdateContainer } from './api/types/apiTypes';
 import {
     clearTabActiveServerId,
     getActiveServerSnapshot,
@@ -121,13 +126,25 @@ import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import type { Machine, Session } from './domains/state/storageTypes';
 import type { SessionListRenderableSession } from './domains/session/listing/sessionListRenderable';
+import type { NormalizedMessage, RawRecord } from './typesRaw';
 import { enterDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
 import {
+    computeAccountEncryptionMigrateKeyFingerprintV1,
     projectSessionSharedMetadataV1,
     SessionOwnerMetadataV1Schema,
-    sealSessionOwnerMetadataV1,
+    sealSessionOwnerMetadataEnvelopeV1,
+    type AccountEncryptionCurrentnessResponse,
     type ExternalSessionTranscriptRawMessageV1,
 } from '@happier-dev/protocol';
+import { createVoiceHistoryConsumer } from '@/voice/history/voiceHistoryConsumer';
+import type { ServerAccountSessionRequestAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+import {
+    applyTranscriptStreamSegmentDelta,
+    isTranscriptStreamSegmentAssemblyReady,
+    noteTranscriptStreamSegmentSnapshot,
+    resetTranscriptStreamSegmentAssemblyForTests,
+} from './engine/sessions/transcriptStreamSegmentAssembly';
+import { handleUpdateContainer } from './engine/socket/socket';
 
 const initialStorageState = storage.getState();
 
@@ -135,19 +152,40 @@ function currentPendingInputFeaturesResponse(): Response {
     return Response.json({
         features: {},
         capabilities: {
-            compatibility: {
-                v: 1,
-                sessionSync: {
-                    v: 1,
-                    enforcement: 'observe',
-                    minimumSessionSyncProtocolVersion: 2,
-                    currentSessionSyncProtocolVersion: 2,
-                    declarationTransport: 'headers-v1',
-                },
-                pendingInput: { currentPendingInputProtocolVersion: 1 },
+            session: {
+                runtimeActivity: { protocolVersion: 2 },
+                pendingInput: { protocolVersion: 1 },
             },
         },
     });
+}
+
+const plainAccountEncryptionCurrentness = {
+    mode: 'plain',
+    version: 1,
+    signingKeyFingerprint: null,
+    contentKeyFingerprint: null,
+    updatedAt: 1,
+} satisfies AccountEncryptionCurrentnessResponse;
+
+function currentPlainAccountEncryptionCurrentnessResponse(): Response {
+    return Response.json(plainAccountEncryptionCurrentness);
+}
+
+function currentE2eeAccountEncryptionCurrentnessResponse(
+    contentPublicKey: Uint8Array,
+): Response {
+    const currentness = {
+        mode: 'e2ee',
+        version: 1,
+        signingKeyFingerprint: 'signing-1',
+        contentKeyFingerprint:
+            computeAccountEncryptionMigrateKeyFingerprintV1(
+                contentPublicKey,
+            ),
+        updatedAt: 1,
+    } satisfies AccountEncryptionCurrentnessResponse;
+    return Response.json(currentness);
 }
 
 function createSession(sessionId: string): Session {
@@ -167,6 +205,71 @@ function createSession(sessionId: string): Session {
         thinkingAt: 0,
         presence: 'online',
         optimisticThinkingAt: null,
+    };
+}
+
+function createStreamSegmentRecord(text: string): RawRecord {
+    return {
+        role: 'agent',
+        content: {
+            type: 'acp',
+            data: { type: 'message', message: text },
+        },
+    } as unknown as RawRecord;
+}
+
+function createPlainNewMessageUpdate(params: Readonly<{
+    sessionId: string;
+    messageId: string;
+    seq: number;
+}>): ApiUpdateContainer {
+    return {
+        id: `socket-new-message-${params.messageId}`,
+        seq: params.seq,
+        createdAt: params.seq,
+        body: {
+            t: 'new-message',
+            sid: params.sessionId,
+            message: {
+                id: params.messageId,
+                seq: params.seq,
+                localId: null,
+                createdAt: params.seq,
+                updatedAt: params.seq,
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'user',
+                        content: { type: 'text', text: 'queued before local retirement' },
+                    },
+                },
+            },
+        },
+    } as ApiUpdateContainer;
+}
+
+type SyncRetirementEncryptionTestAccess = {
+    encryption: {
+        getSessionEncryption: (sessionId: string) => null;
+        removeSessionEncryption: (sessionId: string) => void;
+    };
+};
+
+type SyncRetirementTestAccess = {
+    retireLocalSession: (sessionId: string) => void;
+    sessionReceivedMessages: Map<string, Map<string, number>>;
+    sessionMaterializedMaxSeqById: Record<string, number>;
+    sessionMessagesBeforeSeqByKey: Map<string, number>;
+    markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
+};
+
+// Sync's encryption service is an external boundary. Retirement invokes both
+// methods, so this minimal fixture mirrors the real surface it crosses.
+function installPlainRetirementEncryption(sync: unknown): void {
+    const syncWithEncryption = sync as SyncRetirementEncryptionTestAccess;
+    syncWithEncryption.encryption = {
+        getSessionEncryption: () => null,
+        removeSessionEncryption: () => {},
     };
 }
 
@@ -292,11 +395,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         notifyActivityReadyMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(undefined);
         resetSessionSurfaceVisibilityForTests();
+        resetTranscriptStreamSegmentAssemblyForTests();
     });
 
     afterEach(() => {
         resetDemoModeDepthForTests();
         resetSessionSurfaceVisibilityForTests();
+        resetTranscriptStreamSegmentAssemblyForTests();
+        vi.useRealTimers();
         vi.clearAllMocks();
     });
 
@@ -339,6 +445,256 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(storage.getState().sessions[sessionId]).not.toBeUndefined();
         // Ensure we don't get stuck in a perpetual loading state.
         expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+    });
+
+    it('does not recreate a transcript entry for a deleted session missing from the snapshot', async () => {
+        const sessionId = 'deleted_session_id';
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>();
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+    });
+
+    it('immediately retires a Voice History carrier through Sync before any socket echo', async () => {
+        const sessionId = 'voice-history-local-retirement';
+        storage.getState().applySessions([createSession(sessionId)]);
+        storage.getState().applyMessagesLoaded(sessionId);
+
+        const { sync } = await import('./sync');
+        installPlainRetirementEncryption(sync);
+        const syncWithTranscriptRetirement = sync as unknown as SyncRetirementTestAccess;
+        syncWithTranscriptRetirement.sessionReceivedMessages.set(
+            sessionId,
+            new Map([['voice-history-carrier', 2_000]]),
+        );
+
+        const consumer = createVoiceHistoryConsumer({
+            readScopeKey: () => 'server-a/account-a',
+            captureScope: async () => ({ key: 'server-a/account-a' }),
+            discoverHistorySession: async () => sessionId,
+            refreshSessionMessages: async () => undefined,
+            loadOlderMessages: async () => ({ loaded: 0, hasMore: false, status: 'no_more' as const }),
+            readMessages: () => [],
+            resolveProviderLabel: () => 'Voice provider',
+            deleteSession: async () => ({ success: true }),
+            canDeleteSession: () => true,
+            retireLocalSession: (targetSessionId) => syncWithTranscriptRetirement.retireLocalSession(targetSessionId),
+            runCarrierOperation: async (operation) => await operation(),
+            now: () => new Date('2026-08-10T00:00:00.000Z'),
+        });
+
+        await consumer.open();
+        await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+        expect(syncWithTranscriptRetirement.sessionReceivedMessages.get(sessionId)).toBeUndefined();
+    });
+
+    it('releases a retired Voice History carrier\'s assembled stream text', async () => {
+        const sessionId = 'voice-history-assembled-stream-retirement';
+        storage.getState().applySessions([createSession(sessionId)]);
+        noteTranscriptStreamSegmentSnapshot({
+            sessionId,
+            localId: 'stream-segment',
+            record: createStreamSegmentRecord('private partial transcript'),
+            tick: 1,
+        });
+        expect(isTranscriptStreamSegmentAssemblyReady(sessionId, 'stream-segment')).toBe(true);
+
+        const { sync } = await import('./sync');
+        installPlainRetirementEncryption(sync);
+        (sync as unknown as SyncRetirementTestAccess).retireLocalSession(sessionId);
+
+        expect(isTranscriptStreamSegmentAssemblyReady(sessionId, 'stream-segment')).toBe(false);
+        expect(applyTranscriptStreamSegmentDelta({
+            sessionId,
+            localId: 'stream-segment',
+            deltaText: ' late',
+            tick: 2,
+            baseLength: 'private partial transcript'.length,
+        })).toBeNull();
+    });
+
+    it('does not materialize a late outbound ACK after local retirement', async () => {
+        const sessionId = 'voice-history-late-outbound-ack';
+        storage.getState().applySessions([createSession(sessionId)]);
+
+        const { sync } = await import('./sync');
+        installPlainRetirementEncryption(sync);
+        const syncWithRetirement = sync as unknown as SyncRetirementTestAccess;
+        syncWithRetirement.retireLocalSession(sessionId);
+
+        sync.commitAckedOutboundUserMessage({
+            sessionId,
+            localId: 'late-ack-local-id',
+            createdAt: 1,
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'late ACK must not recreate history' },
+            } as unknown as RawRecord,
+            ack: { id: 'late-ack-message', seq: 2 },
+        });
+
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+        expect(syncWithRetirement.sessionMaterializedMaxSeqById[sessionId] ?? 0).toBe(0);
+    });
+
+    it('drops socket work already admitted before local retirement can flush it', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'voice-history-admitted-socket-work-retirement';
+        storage.getState().applySessions([{
+            ...createSession(sessionId),
+            encryptionMode: 'plain',
+        }]);
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                transcriptStreamingCoalesceEnabled: true,
+                transcriptStreamingCoalesceWindowMs: 50,
+                transcriptStreamingCoalesceMaxBatchSize: 1_000,
+            },
+        }));
+
+        const { sync } = await import('./sync');
+        installPlainRetirementEncryption(sync);
+        const syncWithSocketState = sync as unknown as SyncRetirementTestAccess;
+        syncWithSocketState.sessionReceivedMessages.set(sessionId, new Map([['pre-delete-row', 1]]));
+
+        const applyMessages = vi.fn((targetSessionId: string, messages: NormalizedMessage[]) => {
+            storage.getState().applyMessages(targetSessionId, messages);
+        });
+        const applySessions = vi.fn((sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => {
+            storage.getState().applySessions(sessions.map((session) => ({
+                ...session,
+                presence: session.presence ?? 'online',
+            })) as Session[]);
+        });
+
+        await handleUpdateContainer({
+            encryption: {
+                getSessionEncryption: () => null,
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey: async () => null,
+                initializeMachines: async () => {},
+            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            artifactDataKeys: new Map(),
+            applySessions,
+            fetchSessions: vi.fn(),
+            applyMessages,
+            sessionReceivedMessages: syncWithSocketState.sessionReceivedMessages,
+            onSessionVisible: vi.fn(),
+            isSessionMessagesLoaded: (targetSessionId) => storage.getState().sessionMessages[targetSessionId]?.isLoaded === true,
+            getSessionMaterializedMaxSeq: (targetSessionId) => syncWithSocketState.sessionMaterializedMaxSeqById[targetSessionId] ?? 0,
+            markSessionMaterializedMaxSeq: (targetSessionId, seq) => syncWithSocketState.markSessionMaterializedMaxSeq(targetSessionId, seq),
+            onMessageGapDetected: vi.fn(),
+            assumeUsers: vi.fn(async () => {}),
+            applyTodoSocketUpdates: vi.fn(async () => {}),
+            invalidateMachines: vi.fn(),
+            invalidateSessions: vi.fn(),
+            invalidateArtifacts: vi.fn(),
+            invalidateFriends: vi.fn(),
+            invalidateFriendRequests: vi.fn(),
+            invalidateFeed: vi.fn(),
+            invalidateAutomations: vi.fn(),
+            invalidateTodos: vi.fn(),
+            log: { log: vi.fn() },
+            updateData: createPlainNewMessageUpdate({ sessionId, messageId: 'queued-after-delete', seq: 2 }),
+        });
+        expect(applyMessages).not.toHaveBeenCalled();
+
+        syncWithSocketState.retireLocalSession(sessionId);
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+        expect(syncWithSocketState.sessionReceivedMessages.get(sessionId)).toBeUndefined();
+        expect(syncWithSocketState.sessionMaterializedMaxSeqById[sessionId] ?? 0).toBe(0);
+    });
+
+    it('does not revive a locally retired Voice History carrier from a held account-authority refresh', async () => {
+        const sessionId = 'voice-history-held-account-refresh';
+        const accountId = 'voice-history-account';
+        const server = upsertServerProfile({
+            serverUrl: 'https://voice-history-currentness.example',
+            name: 'Voice History currentness',
+        });
+        setActiveServerId(server.id, { scope: 'device' });
+        storage.getState().activateProfileScope({ serverId: server.id, accountId });
+        storage.getState().applySessions([{
+            ...createSession(sessionId),
+            encryptionMode: 'plain',
+        } as Session]);
+
+        let releasePage!: (response: Response) => void;
+        const heldPage = new Promise<Response>((resolve) => {
+            releasePage = resolve;
+        });
+        let markRequestStarted!: () => void;
+        const requestStarted = new Promise<void>((resolve) => {
+            markRequestStarted = resolve;
+        });
+        const authority = {
+            scope: { serverId: server.id, accountId },
+            context: {
+                scope: 'scoped' as const,
+                timeoutMs: 30_000,
+                targetServerId: server.id,
+                targetServerUrl: server.serverUrl,
+                targetAccountId: accountId,
+                token: buildTokenWithSub(accountId),
+                encryption: null,
+            },
+            request: async () => {
+                markRequestStarted();
+                return await heldPage;
+            },
+        } satisfies ServerAccountSessionRequestAuthority;
+
+        const { sync } = await import('./sync');
+        installPlainRetirementEncryption(sync);
+        const syncWithState = sync as unknown as SyncRetirementTestAccess;
+        const refresh = sync.refreshSessionMessages(sessionId, { authority });
+        await requestStarted;
+
+        syncWithState.retireLocalSession(sessionId);
+        releasePage(Response.json({
+            messages: [{
+                id: 'voice-history-late-row',
+                seq: 1,
+                localId: null,
+                sidechainId: null,
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'user',
+                        content: { type: 'text', text: 'late Voice History page' },
+                    },
+                },
+                createdAt: 1_000,
+                updatedAt: 1_000,
+            }],
+            hasMore: false,
+            nextBeforeSeq: null,
+        }));
+        await refresh;
+
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+        expect(syncWithState.sessionMessagesBeforeSeqByKey.get(`${sessionId}:main`)).toBeUndefined();
+        expect(syncWithState.sessionReceivedMessages.get(sessionId)).toBeUndefined();
     });
 
     it('clears only the active server session-list cache entry when runtime state resets', async () => {
@@ -392,6 +748,9 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         (sync as any).externalSessionHasMoreOlderBySessionId.set(activeSession.id, true);
         (sync as any).externalSessionTailCursorBySessionId.set(activeSession.id, 'stale-tail');
         (sync as any).transcriptAuthorityKeyBySessionId.set(activeSession.id, 'live_agent:stale-source');
+        storage.getState().setSessionTranscriptLoadIssue(activeSession.id, {
+            kind: 'source_discontinuity',
+        });
 
         (sync as any).resetServerScopedRuntimeState();
 
@@ -411,6 +770,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect((sync as any).externalSessionHasMoreOlderBySessionId.size).toBe(0);
         expect((sync as any).externalSessionTailCursorBySessionId.size).toBe(0);
         expect((sync as any).transcriptAuthorityKeyBySessionId.size).toBe(0);
+        expect(storage.getState().sessionTranscriptLoadIssues).toEqual({});
     });
 
     it('clears only the active server machine-list cache entry when runtime state resets', async () => {
@@ -768,6 +1128,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         session.acceptedThroughServerSeq = 4;
         session.metadata = {
             ...session.metadata!,
+            externalSessionOperationPresentationV1: {
+                v: 1,
+                operationId: 'operation-initial-partial',
+                revision: 4,
+                kind: 'materialize',
+                status: 'awaiting_user_resume',
+                phase: 'importing',
+            },
             externalSessionOperationV1: {
                 v: 1,
                 progress: {
@@ -806,6 +1174,16 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 },
             },
         };
+        const sharedOperationPresentation =
+            session.metadata.externalSessionOperationPresentationV1;
+        session.metadataLayoutVersion = 1;
+        session.ownerMetadataView = session.metadata;
+        session.metadata = projectSessionSharedMetadataV1({
+            metadata: {
+                externalSessionOperationPresentationV1:
+                    sharedOperationPresentation,
+            },
+        }) as unknown as Session['metadata'];
         const offlineMachine = createMachine('machine-1');
         offlineMachine.revokedAt = 1;
         storage.getState().applyMachines([offlineMachine], false);
@@ -875,6 +1253,34 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             (message) => message.realID === stagedLocalId
                 || ('localId' in message && message.localId === stagedLocalId),
         )).toBe(false);
+
+        const mismatchedPresentationSession = {
+            ...session,
+            metadata: {
+                ...session.metadata!,
+                externalSessionOperationPresentationV1: {
+                    ...session.metadata!.externalSessionOperationPresentationV1!,
+                    revision: 5,
+                },
+            },
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessions: {
+                ...state.sessions,
+                [sessionId]: mismatchedPresentationSession,
+            },
+        }));
+
+        await (sync as any).fetchMessages(sessionId);
+
+        expect(requestMock).toHaveBeenCalledTimes(1);
+        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toEqual(
+            messages?.messageIdsOldestFirst,
+        );
+        expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe(
+            'unavailable:initial_partial_not_permitted',
+        );
     });
 
     it('chooses authority before apply and replaces peer rows across live to accepted-prefix to live switches', async () => {
@@ -921,6 +1327,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         partial.acceptedThroughServerSeq = 4;
         partial.metadata = {
             ...partial.metadata!,
+            externalSessionOperationPresentationV1: {
+                v: 1,
+                operationId: 'operation-authority-switch',
+                revision: 4,
+                kind: 'materialize',
+                status: 'awaiting_user_resume',
+                phase: 'importing',
+            },
             externalSessionOperationV1: {
                 v: 1,
                 progress: {
@@ -1054,9 +1468,26 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             },
         }));
         requestMock.mockResolvedValueOnce(serverPage());
+        const serverReplacementSnapshots: Array<{ texts: string[]; isLoaded: boolean }> = [];
+        const unsubscribeServerReplacement = storage.subscribe((state, previousState) => {
+            if (state.sessionMessages[sessionId] === previousState.sessionMessages[sessionId]) return;
+            const transcript = state.sessionMessages[sessionId];
+            serverReplacementSnapshots.push({
+                texts: Object.values(transcript?.messagesById ?? {})
+                    .filter((message): message is NonNullable<typeof message> => Boolean(message))
+                    .filter((message) => message.kind === 'user-text')
+                    .map((message) => message.text),
+                isLoaded: transcript?.isLoaded === true,
+            });
+        });
         await (sync as any).fetchMessages(sessionId);
+        unsubscribeServerReplacement();
 
         expect(readTexts()).toEqual(['accepted server prefix']);
+        expect(serverReplacementSnapshots).toEqual([{
+            texts: ['accepted server prefix'],
+            isLoaded: true,
+        }]);
         expect(Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {}).some(
             (message) => message.realID === stagedLocalId
                 || ('localId' in message && message.localId === stagedLocalId),
@@ -1069,15 +1500,253 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 'machine-1': createMachine('machine-1'),
             },
         }));
+        const liveReplacementSnapshots: Array<{ texts: string[]; isLoaded: boolean }> = [];
+        const unsubscribeLiveReplacement = storage.subscribe((state, previousState) => {
+            if (state.sessionMessages[sessionId] === previousState.sessionMessages[sessionId]) return;
+            const transcript = state.sessionMessages[sessionId];
+            liveReplacementSnapshots.push({
+                texts: Object.values(transcript?.messagesById ?? {})
+                    .filter((message): message is NonNullable<typeof message> => Boolean(message))
+                    .filter((message) => message.kind === 'user-text')
+                    .map((message) => message.text),
+                isLoaded: transcript?.isLoaded === true,
+            });
+        });
         await (sync as any).fetchMessages(sessionId);
+        unsubscribeLiveReplacement();
 
         expect(readTexts()).toEqual(['live after switch']);
+        expect(liveReplacementSnapshots).toEqual([{
+            texts: ['live after switch'],
+            isLoaded: true,
+        }]);
         expect(Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {}).some(
             (message) => message.realID === acceptedLocalId
                 || ('localId' in message && message.localId === acceptedLocalId),
         )).toBe(false);
         expect(requestMock).toHaveBeenCalledTimes(2);
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('distinguishes unavailable and failed external transcript reads from an authoritative empty transcript', async () => {
+        const sessionId = 'external_session_typed_transcript_load_outcome';
+        const offlineMachine = createMachine('machine-1');
+        offlineMachine.revokedAt = 1;
+        storage.getState().applyMachines([offlineMachine], false);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).not.toBe(true);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'authority_unavailable',
+            reason: 'machine_offline',
+        });
+
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'Agent unavailable',
+        });
+
+        await expect((sync as any).fetchMessages(sessionId)).rejects.toThrow('Agent unavailable');
+
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).not.toBe(true);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
+
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: null,
+            tailCursor: null,
+            hasMore: false,
+            truncated: false,
+        });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: null,
+            truncated: false,
+        });
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toBeNull();
+
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'machine_offline',
+            error: 'Machine offline',
+        });
+
+        await expect((sync as any).fetchMessages(sessionId)).rejects.toThrow('Machine offline');
+
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'read_failed',
+            errorCode: 'machine_offline',
+        });
+
+        (sync as any).transcriptAuthorityKeyBySessionId.set(sessionId, 'live_agent:stale-before-reset');
+        (sync as any).resetSessionTranscriptState(sessionId);
+        expect((sync as any).transcriptAuthorityKeyBySessionId.has(sessionId)).toBe(false);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: null,
+            tailCursor: null,
+            hasMore: false,
+            truncated: true,
+        });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: null,
+            truncated: false,
+        });
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).not.toBe(true);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'source_discontinuity',
+        });
+    });
+
+    it('does not apply an initial page when its fallback tail read fails', async () => {
+        const sessionId = 'external_session_initial_page_tail_failure';
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'initial-page-row',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'must not publish' } },
+            }],
+            nextCursor: 'older-1',
+            tailCursor: null,
+            hasMore: true,
+            truncated: false,
+        });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'tail read failed',
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await expect((sync as any).fetchMessages(sessionId)).rejects.toThrow('tail read failed');
+
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBeNull();
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
+    });
+
+    it('does not apply a nonempty truncated initial result', async () => {
+        const sessionId = 'external_session_initial_truncated_result';
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'truncated-page-row',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'must not publish' } },
+            }],
+            nextCursor: 'older-1',
+            tailCursor: 'happier_external_cursor_v1:dHJ1bmNhdGVk',
+            hasMore: false,
+            truncated: true,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+
+        expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBeNull();
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'source_discontinuity',
+        });
+        expect(machineExternalSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves the last-known catch-up rows and cursor when truncated replacement fails', async () => {
+        const sessionId = 'external_session_catch_up_truncated_replacement_failure';
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'last-known-a',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'last-known A' } },
+                }],
+                nextCursor: null,
+                tailCursor: 'happier_external_cursor_v1:YzE',
+                hasMore: false,
+                truncated: false,
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                errorCode: 'agent_unavailable',
+                error: 'replacement failed',
+            });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'catch-up-b',
+                createdAtMs: 2,
+                raw: { role: 'user', content: { type: 'text', text: 'must not publish B' } },
+            }],
+            nextCursor: 'happier_external_cursor_v1:YzI',
+            truncated: true,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        await expect((sync as any).fetchMessages(sessionId)).rejects.toThrow('replacement failed');
+
+        const texts = Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(texts).toEqual(['last-known A']);
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(
+            'happier_external_cursor_v1:YzE',
+        );
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
     });
 
     it('retains hosted authority when an older linked transcript read resolves after link retirement', async () => {
@@ -1198,6 +1867,101 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(requestMock).toHaveBeenCalledTimes(1);
     });
 
+    it('preserves a typed issue when a stale server replacement is discarded without commit', async () => {
+        const sessionId = 'external_session_stale_server_replacement_issue';
+        const linked = createExternalSession(sessionId);
+        linked.encryptionMode = 'plain';
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        storage.getState().applySessions([linked]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'last-known-linked-row',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'last-known A' } },
+            }],
+            nextCursor: null,
+            tailCursor: 'happier_external_cursor_v1:YzE',
+            hasMore: false,
+            truncated: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        await (sync as any).fetchMessages(sessionId);
+
+        const hosted = createSession(sessionId);
+        hosted.encryptionMode = 'plain';
+        hosted.currentStorageState = 'hosted';
+        hosted.metadata = { path: '', host: '', machineId: 'machine-1' };
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: hosted },
+        }));
+        storage.getState().setSessionTranscriptLoadIssue(sessionId, {
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
+
+        let releaseServerReplacement!: (response: Response) => void;
+        let markServerReplacementStarted!: () => void;
+        const serverReplacement = new Promise<Response>((resolve) => {
+            releaseServerReplacement = resolve;
+        });
+        const serverReplacementStarted = new Promise<void>((resolve) => {
+            markServerReplacementStarted = resolve;
+        });
+        requestMock.mockImplementationOnce(async () => {
+            markServerReplacementStarted();
+            return await serverReplacement;
+        });
+
+        const staleReplacement = (sync as any).fetchMessages(sessionId);
+        await serverReplacementStarted;
+
+        const changedAuthority = {
+            ...hosted,
+            currentStorageState: 'snapshot_complete' as const,
+            publishedThroughServerSeq: 2,
+            acceptedThroughServerSeq: 2,
+            materializedThroughSourceAt: 2,
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessions: { ...state.sessions, [sessionId]: changedAuthority },
+        }));
+        releaseServerReplacement(Response.json({
+            messages: [{
+                id: 'stale-server-row',
+                seq: 2,
+                localId: 'stale-server-local',
+                sidechainId: null,
+                content: {
+                    t: 'plain',
+                    v: { role: 'user', content: { type: 'text', text: 'must not commit' } },
+                },
+                createdAt: 2,
+                updatedAt: 2,
+            }],
+            hasMore: false,
+            nextBeforeSeq: null,
+        }));
+        await staleReplacement;
+
+        const texts = Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(texts).toEqual(['last-known A']);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
+        expect(texts).not.toContain('must not commit');
+    });
+
     it('atomically replaces an accepted partial bound with a finalized snapshot and rejects the late old-bound response', async () => {
         const sessionId = 'external_session_partial_to_finalized_snapshot';
         const partialAcceptedLocalId = 'direct-import:v1:codex:111111111111111111111111';
@@ -1239,6 +2003,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         partial.acceptedThroughServerSeq = 4;
         partial.metadata = {
             ...partial.metadata!,
+            externalSessionOperationPresentationV1: {
+                v: 1,
+                operationId: 'operation-partial-to-finalized',
+                revision: 4,
+                kind: 'materialize',
+                status: 'awaiting_user_resume',
+                phase: 'importing',
+            },
             externalSessionOperationV1: {
                 v: 1,
                 progress: {
@@ -1314,7 +2086,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             .map((message) => message.text);
         expect(readTexts()).toEqual(['partial accepted through old bound']);
         expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe(
-            'server_partial:4',
+            'server_partial:4:[1,"operation-partial-to-finalized",4,"materialize","awaiting_user_resume","importing"]',
         );
 
         let releaseLatePartialPage!: (response: Response) => void;
@@ -1696,7 +2468,10 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         runtimeFetchMock.mockImplementation(async (input) =>
             String(input).endsWith('/v1/features')
                 ? currentPendingInputFeaturesResponse()
-                : Response.json({}));
+                : Response.json({
+                    pending: { localId: 'owner-local-id' },
+                    requestedAction: { v: 1, kind: 'send_now' },
+                }));
 
         const { sync } = await import('./sync');
         (sync as any).encryption = {
@@ -1849,6 +2624,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             });
             const ownerToken = buildTokenWithSub('owner-account');
             const crossedToken = buildTokenWithSub('crossed-account');
+            const replacementLocalId = 'server-owned-replacement';
             getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
             createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
             runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
@@ -1857,7 +2633,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     if (crossed) {
                         getCredentialsForServerUrlMock.mockResolvedValue({ token: crossedToken, secret: 'crossed-secret' });
                     }
-                    return new Response(null, { status: 204 });
+                    return Response.json({ newLocalId: replacementLocalId });
                 }
                 if (url.includes('/pending?includeDiscarded=1')) {
                     return Response.json({ pending: [{
@@ -1874,7 +2650,9 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             const pendingMutator = sync as unknown as Readonly<{
                 sendPendingDeliveryAsNew: (targetSessionId: string, targetPendingId: string) => Promise<string>;
             }>;
-            await pendingMutator.sendPendingDeliveryAsNew(sessionId, pendingId);
+            await expect(
+                pendingMutator.sendPendingDeliveryAsNew(sessionId, pendingId),
+            ).resolves.toBe(replacementLocalId);
 
             expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
                 expect.objectContaining({ localId: pendingId, text: crossed ? 'before refresh' : 'after refresh' }),
@@ -1915,7 +2693,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
     });
 
 
-    it('keeps a cached linked layout-0 owner on the scoped legacy writer', async () => {
+    it('migrates a cached linked layout-0 owner through the scoped tuple writer', async () => {
         const sessionId = 'plain_metadata_session';
         const sourceMetadata = {
             path: '/tmp/repo',
@@ -1937,8 +2715,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             metadataVersion: 2,
             metadata: sourceMetadata,
         } as Session]);
-        requestMock.mockResolvedValueOnce(Response.json({
-            session: {
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') {
+                return currentPlainAccountEncryptionCurrentnessResponse();
+            }
+            if (path !== `/v2/sessions/${sessionId}`) {
+                throw new Error(`Unexpected metadata request path: ${path}`);
+            }
+            return Response.json({ session: {
                 id: sessionId,
                 seq: 1,
                 createdAt: 1_000,
@@ -1953,16 +2737,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 agentStateVersion: 0,
                 agentState: null,
                 share: null,
-            },
-        }));
-        const updatedMetadata = {
-            ...sourceMetadata,
-            summary: { text: 'Renamed session', updatedAt: 123 },
-        };
+            } });
+        });
         emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
             result: 'success',
+            metadataLayoutVersion: 1,
             version: 3,
-            metadata: JSON.stringify(updatedMetadata),
+            agentStateVersion: 1,
         });
 
         const { sync } = await import('./sync');
@@ -1994,10 +2775,27 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
             sessionId,
-            expectedVersion: 2,
-            metadata: JSON.stringify(updatedMetadata),
+            patch: expect.objectContaining({
+                mode: 'owner_migration',
+                expectedAccountEncryptionMode: 'plain',
+                expectedAccountContentPublicKeyFingerprint: null,
+                source: expect.objectContaining({
+                    metadataLayoutVersion: 0,
+                    metadata: {
+                        version: 2,
+                        ciphertext: JSON.stringify(sourceMetadata),
+                    },
+                }),
+                target: expect.objectContaining({
+                    metadataLayoutVersion: 1,
+                    ownerMetadata: expect.objectContaining({ t: 'plain' }),
+                    sharedMetadata: expect.objectContaining({
+                        ciphertext: expect.stringContaining('Renamed session'),
+                    }),
+                }),
+            }),
         });
-        expect(storage.getState().sessions[sessionId]?.metadataLayoutVersion).toBe(0);
+        expect(storage.getState().sessions[sessionId]?.metadataLayoutVersion).toBe(1);
         expect(storage.getState().sessions[sessionId]?.metadataVersion).toBe(3);
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.summary?.text).toBe('Renamed session');
     });
@@ -2097,11 +2895,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
     it('hydrates and mutates a cold layout-1 owner with one authoritative by-id read', async () => {
         const sessionId = 'plain_cold_owner_metadata_session';
         const machineKey = new Uint8Array(32).fill(23);
+        const accountPublicKey = new Uint8Array(
+            tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
+        );
         const credentials = {
             token: 'active-token',
             encryption: {
                 publicKey: encodeBase64(
-                    new Uint8Array(32).fill(24),
+                    accountPublicKey,
                     'base64',
                 ),
                 machineKey: encodeBase64(machineKey, 'base64'),
@@ -2114,7 +2915,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 host: 'owner-host',
             },
         });
-        const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
+        const ownerMetadataEnvelope = sealSessionOwnerMetadataEnvelopeV1({
             material: { type: 'dataKey', machineKey },
             ownerMetadata,
             randomBytes: (length) =>
@@ -2128,8 +2929,16 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             },
             agentState: { requests: {} },
         });
-        requestMock.mockResolvedValueOnce(new Response(JSON.stringify({
-            session: {
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') {
+                return currentE2eeAccountEncryptionCurrentnessResponse(
+                    accountPublicKey,
+                );
+            }
+            if (path !== `/v2/sessions/${sessionId}`) {
+                throw new Error(`Unexpected metadata request path: ${path}`);
+            }
+            return Response.json({ session: {
                 id: sessionId,
                 seq: 1,
                 createdAt: 1_000,
@@ -2141,12 +2950,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 metadataLayoutVersion: 1,
                 metadataVersion: 2,
                 metadata: JSON.stringify(sharedMetadata),
-                ownerMetadata: ownerMetadataCiphertext,
+                ownerMetadata: ownerMetadataEnvelope,
                 agentStateVersion: 4,
                 agentState: JSON.stringify({ requests: {} }),
                 share: null,
-            },
-        }), { status: 200 }));
+            } });
+        });
         emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
             result: 'success',
             metadataLayoutVersion: 1,
@@ -2175,9 +2984,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             ),
         ).resolves.toBeUndefined();
 
-        expect(requestMock).toHaveBeenCalledTimes(1);
+        expect(requestMock).toHaveBeenCalledTimes(2);
         expect(requestMock).toHaveBeenCalledWith(
             `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(requestMock).toHaveBeenCalledWith(
+            '/v1/account/encryption/currentness',
             expect.objectContaining({ method: 'GET' }),
         );
         expect(
@@ -2187,8 +3000,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             patch: {
                 mode: 'owner',
                 metadataLayoutVersion: 1,
-                expectedOwnerMetadataCiphertext:
-                    ownerMetadataCiphertext,
+                expectedOwnerMetadata: ownerMetadataEnvelope,
                 sharedMetadata: {
                     ciphertext: JSON.stringify({
                         ...sharedMetadata,
@@ -2199,9 +3011,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     }),
                     expectedVersion: 2,
                 },
-                ownerMetadata: {
-                    ciphertext: ownerMetadataCiphertext,
-                },
+                ownerMetadata: ownerMetadataEnvelope,
                 agentState: {
                     ciphertext: JSON.stringify({ requests: {} }),
                     expectedVersion: 4,
@@ -2255,8 +3065,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             metadataVersion: 2,
             metadata: sourceMetadata,
         } as Session]);
-        requestMock.mockResolvedValueOnce(Response.json({
-            session: {
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') {
+                return currentPlainAccountEncryptionCurrentnessResponse();
+            }
+            if (path !== `/v2/sessions/${sessionId}`) {
+                throw new Error(`Unexpected metadata request path: ${path}`);
+            }
+            return Response.json({ session: {
                 id: sessionId,
                 seq: 1,
                 createdAt: 1_000,
@@ -2271,16 +3087,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 agentStateVersion: 0,
                 agentState: null,
                 share: null,
-            },
-        }));
-        const updatedMetadata = {
-            ...sourceMetadata,
-            summary: { text: 'Renamed session', updatedAt: 123 },
-        };
+            } });
+        });
         emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
             result: 'success',
+            metadataLayoutVersion: 1,
             version: 3,
-            metadata: JSON.stringify(updatedMetadata),
+            agentStateVersion: 1,
         });
 
         const { sync } = await import('./sync');
@@ -2316,9 +3129,23 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
             sessionId,
-            expectedVersion: 2,
-            metadata: JSON.stringify(updatedMetadata),
             serverId: activeServer.id,
+            patch: expect.objectContaining({
+                mode: 'owner_migration',
+                expectedAccountEncryptionMode: 'plain',
+                expectedAccountContentPublicKeyFingerprint: null,
+                source: expect.objectContaining({
+                    metadataLayoutVersion: 0,
+                    metadata: {
+                        version: 2,
+                        ciphertext: JSON.stringify(sourceMetadata),
+                    },
+                }),
+                target: expect.objectContaining({
+                    metadataLayoutVersion: 1,
+                    ownerMetadata: expect.objectContaining({ t: 'plain' }),
+                }),
+            }),
         });
     });
 
@@ -2338,10 +3165,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 },
             },
         };
-        requestMock.mockResolvedValueOnce(
-            new Response(
-                JSON.stringify({
-                    session: {
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') {
+                return currentPlainAccountEncryptionCurrentnessResponse();
+            }
+            if (path !== `/v2/sessions/${sessionId}`) {
+                throw new Error(`Unexpected metadata request path: ${path}`);
+            }
+            return Response.json({ session: {
                         id: sessionId,
                         seq: 1,
                         createdAt: 1_000,
@@ -2355,19 +3186,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                         agentStateVersion: 1,
                         agentState: JSON.stringify({ controlledByUser: true }),
                         share: null,
-                    },
-                }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
-        const updatedMetadata = {
-            ...sourceMetadata,
-            summary: { text: 'Renamed session', updatedAt: 123 },
-        };
+            } });
+        });
         emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
             result: 'success',
+            metadataLayoutVersion: 1,
             version: 3,
-            metadata: JSON.stringify(updatedMetadata),
+            agentStateVersion: 2,
         });
 
         const { sync } = await import('./sync');
@@ -2396,8 +3221,26 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         );
         expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
             sessionId,
-            expectedVersion: 2,
-            metadata: JSON.stringify(updatedMetadata),
+            patch: expect.objectContaining({
+                mode: 'owner_migration',
+                expectedAccountEncryptionMode: 'plain',
+                expectedAccountContentPublicKeyFingerprint: null,
+                source: expect.objectContaining({
+                    metadataLayoutVersion: 0,
+                    metadata: {
+                        version: 2,
+                        ciphertext: JSON.stringify(sourceMetadata),
+                    },
+                    agentState: {
+                        version: 1,
+                        ciphertext: JSON.stringify({ controlledByUser: true }),
+                    },
+                }),
+                target: expect.objectContaining({
+                    metadataLayoutVersion: 1,
+                    ownerMetadata: expect.objectContaining({ t: 'plain' }),
+                }),
+            }),
         });
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.summary?.text).toBe('Renamed session');
     });
@@ -2605,6 +3448,65 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(texts).toEqual(['new link']);
     });
 
+    it('redrives only an existing transcript owner after relink and machine reachability changes', async () => {
+        const openSessionId = 'direct_session_open_relink_redrive';
+        const unopenedSessionId = 'direct_session_unopened_relink_redrive';
+        const initial = createExternalSession(openSessionId);
+        storage.getState().applyMachines([createMachine('machine-1')], false);
+        storage.getState().applySessions([initial, createSession(unopenedSessionId)]);
+
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'relinked-b',
+                createdAtMs: 2,
+                raw: { role: 'user', content: { type: 'text', text: 'relinked B' } },
+            }],
+            nextCursor: null,
+            tailCursor: 'happier_external_cursor_v1:cmVsaW5rZWQtQg',
+            hasMore: false,
+            truncated: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+        (sync as any).messagesSync.clear();
+        let redrive!: Promise<void>;
+        const invalidateOpen = vi.fn(() => {
+            redrive = (sync as any).fetchMessages(openSessionId);
+        });
+        (sync as any).messagesSync.set(openSessionId, { invalidateCoalesced: invalidateOpen });
+
+        const relinked = createExternalSession(openSessionId);
+        const relinkedMetadata = relinked.metadata as NonNullable<Session['metadata']>;
+        relinked.metadata = {
+            ...relinkedMetadata,
+            externalSessionV1: {
+                ...relinkedMetadata.externalSessionV1!,
+                remoteSessionId: 'vendor-session-2',
+                linkedAtMs: 2,
+            },
+        };
+        (sync as any).applySessions([relinked]);
+        await redrive;
+
+        expect(invalidateOpen).toHaveBeenCalledTimes(1);
+        expect((sync as any).messagesSync.has(unopenedSessionId)).toBe(false);
+        const relinkedTexts = Object.values(storage.getState().sessionMessages[openSessionId]?.messagesById ?? {})
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(relinkedTexts).toEqual(['relinked B']);
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(1);
+
+        invalidateOpen.mockImplementation(() => undefined);
+        (sync as any).flushMachineActivityUpdates(new Map([
+            ['machine-1', { id: 'machine-1', active: false, activeAt: Date.now() - 120_000 }],
+        ]));
+        expect(invalidateOpen).toHaveBeenCalledTimes(2);
+        expect((sync as any).messagesSync.has(unopenedSessionId)).toBe(false);
+    });
+
     it('preserves the last accepted row when a canonical live source relink cannot load', async () => {
         const sessionId = 'direct_session_relink_failure';
         const initial = createExternalSession(sessionId);
@@ -2631,6 +3533,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             })
             .mockResolvedValueOnce({
                 ok: false,
+                errorCode: 'agent_unavailable',
                 error: 'replacement source unavailable',
             });
 
@@ -2666,6 +3569,10 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
         expect(machineExternalSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
         expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
         const texts = Object.values(storage.getState().sessionMessages[sessionId]?.messagesById ?? {})
             .filter((message): message is NonNullable<typeof message> => Boolean(message))
             .filter((message) => message.kind === 'user-text')
@@ -2673,7 +3580,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(texts).toEqual(['losing source row']);
     });
 
-    it('does not apply a later staged replacement page after relink during progress publication', async () => {
+    it('atomically commits all staged replacement pages before a relink during progress publication', async () => {
         const sessionId = 'direct_session_relink_between_staged_pages';
         storage.getState().applySessions([createExternalSession(sessionId)]);
         machineExternalSessionTranscriptPageMock
@@ -2785,12 +3692,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             .filter((message): message is NonNullable<typeof message> => Boolean(message))
             .filter((message) => message.kind === 'user-text')
             .map((message) => message.text);
-        expect(texts).toEqual(['replacement page one']);
+        expect(texts).toEqual(['replacement page one', 'replacement page two']);
         expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toEqual(
             acceptedReplacementPageIds,
         );
-        expect((sync as any).transcriptAuthorityKeyBySessionId.get(sessionId)).toBe(acceptedAuthorityKey);
-        expect((sync as any).getExternalSessionTailCursor(sessionId)).not.toBe(
+        const replacementAuthorityKey = (sync as any).transcriptAuthorityKeyBySessionId.get(sessionId);
+        expect(replacementAuthorityKey).not.toBe(acceptedAuthorityKey);
+        expect(replacementAuthorityKey).toContain('vendor-session-2');
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(
             'happier_external_cursor_v1:cmVwbGFjZW1lbnQ',
         );
     });
@@ -2861,7 +3770,10 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         };
         (sync as any).isForeground = true;
         (sync as any).resumeInFlight = null;
-        const resumeViaChangesSpy = vi.spyOn(sync as any, 'resumeViaChanges').mockResolvedValue('success');
+        const resumeViaChangesSpy = vi.spyOn(sync as any, 'resumeViaChanges').mockResolvedValue({
+            status: 'ok',
+            refreshedByCatchUp: { sessions: false, machines: false },
+        });
         const resumeUnits = [
             (sync as any).sessionsSync,
             (sync as any).machinesSync,
@@ -3740,83 +4652,176 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         }
     });
 
-    it('sends the current local cursor and applies zero items when the daemon rejects a stale cursor identity', async () => {
-        const sessionId = 'direct_session_push_delta_gap';
+    it('fences a replaced source before rehydrating and atomically replaces only after the new source succeeds', async () => {
+        const sessionId = 'direct_session_refresh_replaced_source';
         storage.getState().applySessions([{
             ...createExternalSession(sessionId),
             serverId: getActiveServerSnapshot().serverId,
         }]);
-        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
-            result: 'success',
-            version: Number(expectedVersion ?? 0) + 1,
-            metadata,
-        }));
-        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
-            ok: true,
-            items: [
-                {
-                    id: 'direct-msg-1',
+        const replacementSession = createExternalSession(sessionId);
+        const replacementMetadata = replacementSession.metadata as NonNullable<Session['metadata']>;
+        replacementSession.metadata = {
+            ...replacementMetadata,
+            externalSessionV1: {
+                ...replacementMetadata.externalSessionV1!,
+                remoteSessionId: 'vendor-session-2',
+                linkedAtMs: 2,
+            },
+        };
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'direct-msg-old',
                     createdAtMs: 1,
-                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
-                },
-            ],
-            nextCursor: 'older-cursor-1',
-            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
-            hasMore: false,
-        });
+                    raw: { role: 'user', content: { type: 'text', text: 'accepted old source' } },
+                }],
+                nextCursor: 'older-cursor-old',
+                tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+                hasMore: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [{
+                    id: 'direct-msg-new',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'accepted replacement source' } },
+                }],
+                nextCursor: 'older-cursor-new',
+                tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTM',
+                hasMore: false,
+            });
         machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
             ok: true,
-            items: [
-                {
-                    id: 'direct-msg-2',
-                    createdAtMs: 2,
-                    raw: { role: 'user', content: { type: 'text', text: 'missed direct' } },
-                },
-            ],
-            nextCursor: 'tail-cursor-2',
+            items: [{
+                id: 'direct-msg-old-leak',
+                createdAtMs: 2,
+                raw: { role: 'user', content: { type: 'text', text: 'must not read old source' } },
+            }],
+            nextCursor: 'old-tail-cursor-2',
             truncated: false,
         });
-        const staleInvalidation = createTranscriptInvalidation(
+        const invalidation = createTranscriptInvalidation(
             sessionId,
-            'happier_external_cursor_v1:c3RhbGU',
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
         );
         machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
             v: 1,
-            binding: staleInvalidation.binding,
+            binding: invalidation.binding,
             result: { outcome: 'source_replaced' },
         });
+        let resolveHydration!: (response: Response) => void;
+        requestMock.mockImplementationOnce(() => new Promise<Response>((resolve) => {
+            resolveHydration = resolve;
+        }));
 
         const { sync } = await import('./sync');
+        (sync as any).credentials = {
+            token: 'active-token',
+            secret: encodeBase64(new Uint8Array(32).fill(9), 'base64'),
+        };
         (sync as any).encryption = {
-            getSessionEncryption: () => null,
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
         };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
 
         await (sync as any).fetchMessages(sessionId);
-        await (sync as any).handleEphemeralUpdate(staleInvalidation);
+        const sourceReplacement = (sync as any).handleExternalSessionTranscriptEphemeralUpdate(invalidation);
+        await vi.waitFor(() => {
+            expect(requestMock).toHaveBeenCalledTimes(1);
+        });
 
-        await (sync as any).refreshSessionMessages(sessionId);
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBeNull();
+        await (sync as any).fetchMessages(sessionId);
+        expect(machineExternalSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual({
+            kind: 'source_discontinuity',
+        });
 
-        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
-        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+        resolveHydration(Response.json({
+            session: {
+                ...replacementSession,
+                encryptionMode: 'plain',
+                dataEncryptionKey: null,
+                metadataLayoutVersion: 0,
+                metadata: JSON.stringify(replacementSession.metadata),
+                agentState: null,
+                share: null,
+            },
+        }));
+        await sourceReplacement;
+
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenLastCalledWith(expect.objectContaining({
             machineId: 'machine-1',
-            remoteSessionId: 'vendor-session-1',
-            cursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+            remoteSessionId: 'vendor-session-2',
         }), expect.anything());
-
         const sessionMessages = storage.getState().sessionMessages[sessionId];
         const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
             .map((id) => sessionMessages?.messagesById[id])
             .filter((message): message is NonNullable<typeof message> => Boolean(message))
             .filter((message) => message.kind === 'user-text')
             .map((message) => message.text);
-        expect(orderedTexts).toEqual(['hello direct', 'missed direct']);
-        expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledWith({
+        expect(orderedTexts).toEqual(['accepted replacement source']);
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(
+            'happier_external_cursor_v1:Y3Vyc29yLTM',
+        );
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toBeNull();
+    });
+
+    it.each([
+        ['source_unavailable', { kind: 'read_failed', errorCode: 'agent_unavailable' }],
+        ['read_failed', { kind: 'read_failed', errorCode: 'internal_error' }],
+    ] as const)('retains the accepted transcript and cursor for a $0 secure-refresh outcome', async (
+        outcome,
+        expectedIssue,
+    ) => {
+        const sessionId = `direct_session_refresh_${outcome}`;
+        storage.getState().applySessions([{
+            ...createExternalSession(sessionId),
+            serverId: getActiveServerSnapshot().serverId,
+        }]);
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [{
+                id: 'direct-msg-1',
+                createdAtMs: 1,
+                raw: { role: 'user', content: { type: 'text', text: 'accepted before refresh failure' } },
+            }],
+            nextCursor: 'older-cursor-1',
+            tailCursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
+            hasMore: false,
+        });
+        const invalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
             v: 1,
-            binding: staleInvalidation.binding,
-            cursor: 'happier_external_cursor_v1:Y3Vyc29yLTE',
-        }, expect.anything());
+            binding: invalidation.binding,
+            result: { outcome },
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        await (sync as any).handleExternalSessionTranscriptEphemeralUpdate(invalidation);
+
+        expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(
+            'happier_external_cursor_v1:Y3Vyc29yLTE',
+        );
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toEqual(expectedIssue);
+        const messages = storage.getState().sessionMessages[sessionId];
+        expect(messages?.messageIdsOldestFirst).toHaveLength(1);
+        expect(messages?.messagesById[messages.messageIdsOldestFirst[0]!]).toMatchObject({
+            text: 'accepted before refresh failure',
+        });
     });
 
     it('applies zero secure-refresh items when a layout-v1 owner link changes in flight', async () => {

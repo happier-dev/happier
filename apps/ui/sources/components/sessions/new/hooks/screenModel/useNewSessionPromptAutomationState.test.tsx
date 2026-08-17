@@ -63,14 +63,14 @@ describe('useNewSessionPromptAutomationState', () => {
             hydratedPersistedAuthoringDraft,
         }));
 
-        expect(hook.getCurrent().sessionPrompt).toBe('restored draft text');
+        expect(hook.getCurrent().promptStore.getPrompt()).toBe('restored draft text');
 
         // User keeps typing on top of the restored draft.
         await act(async () => {
             hook.getCurrent().setSessionPrompt('restored draft text plus live typing');
         });
         await flushHookEffects({ cycles: 2, turns: 1 });
-        expect(hook.getCurrent().sessionPrompt).toBe('restored draft text plus live typing');
+        expect(hook.getCurrent().promptStore.getPrompt()).toBe('restored draft text plus live typing');
 
         // A stale persisted-draft snapshot (e.g. debounced auto-persist echo, focus reload,
         // or a second mounted new-session screen writing the shared scope key) re-hydrates.
@@ -82,7 +82,7 @@ describe('useNewSessionPromptAutomationState', () => {
 
         await hook.rerender();
         await flushHookEffects({ cycles: 2, turns: 1 });
-        expect(hook.getCurrent().sessionPrompt).toBe('restored draft text plus live typing');
+        expect(hook.getCurrent().promptStore.getPrompt()).toBe('restored draft text plus live typing');
     });
 
     it('still applies late async draft hydration when the user has not typed yet', async () => {
@@ -108,7 +108,7 @@ describe('useNewSessionPromptAutomationState', () => {
             hydratedPersistedAuthoringDraft,
         }));
 
-        expect(hook.getCurrent().sessionPrompt).toBe('');
+        expect(hook.getCurrent().promptStore.getPrompt()).toBe('');
 
         hydratedPersistedAuthoringDraft = {
             displayText: 'late loaded draft',
@@ -117,7 +117,7 @@ describe('useNewSessionPromptAutomationState', () => {
 
         await hook.rerender();
         await flushHookEffects({ cycles: 2, turns: 1 });
-        expect(hook.getCurrent().sessionPrompt).toBe('late loaded draft');
+        expect(hook.getCurrent().promptStore.getPrompt()).toBe('late loaded draft');
     });
 
     it('keeps a user-enabled automation draft when hydrated persisted draft state refreshes later', async () => {

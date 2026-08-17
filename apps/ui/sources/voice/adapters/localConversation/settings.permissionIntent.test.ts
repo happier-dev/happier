@@ -30,3 +30,28 @@ describe('local Voice PermissionIntent settings', () => {
     }
   });
 });
+
+describe('local Voice Provider-backed Chat configuration', () => {
+  it('rejects dev-only maxTokens from the canonical Provider Chat configuration', () => {
+    const parsed = VoiceLocalConversationSchema.safeParse({
+      agent: {
+        providerChat: {
+          status: 'configured',
+          chat: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: 'voice-openai-compatible-chat',
+            modelId: 'chat-model',
+          },
+          commit: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: 'voice-openai-compatible-chat',
+            modelId: 'commit-model',
+          },
+          configuration: { temperature: 0.73, maxTokens: 2048 },
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+});

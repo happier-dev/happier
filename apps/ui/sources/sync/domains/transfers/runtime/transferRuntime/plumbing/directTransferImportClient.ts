@@ -1,5 +1,6 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+    type ComposerContentHandleV1,
     DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER,
     isSafeDirectTransferEndpointCandidate,
     normalizeDirectPeerImportEndpointBaseUrl,
@@ -14,6 +15,13 @@ import {
     createDirectTransferRequestAbortSignal,
     resolveDirectTransferRequestTimeoutMs,
 } from './directTransferRequestDeadline';
+
+export type ComposerMediaStageUploadRequest = Readonly<{
+    t: 'composer_media_stage_upload_v1';
+}> & Pick<
+    ComposerContentHandleV1,
+    'executionTarget' | 'owner' | 'mediaKind' | 'mimeType' | 'name' | 'sizeBytes' | 'sha256'
+>;
 
 export type DirectTransferImportOpenRequest = Readonly<{
     workingDirectory: string;
@@ -42,6 +50,7 @@ export type DirectTransferImportOpenRequest = Readonly<{
         t: 'prompt_asset_upload_v1';
         sizeBytes: unknown;
     }>
+    | ComposerMediaStageUploadRequest
 );
 
 export type DirectTransferImportPrepareResponse =

@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { FeedItem } from '@/sync/domains/social/feedTypes';
-import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import { useRouter } from 'expo-router';
 import { useUser } from '@/sync/domains/state/storage';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
 import { useUnistyles } from 'react-native-unistyles';
+import { Icon } from '@/components/ui/icons/Icon';
 
 interface FeedItemCardProps {
     item: FeedItem;
@@ -46,7 +46,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
                     size={40}
                 />
             ) : (
-                <Ionicons name="person" size={20} color={theme.colors.text.secondary} />
+                <Icon name="person" size={20} color={theme.colors.text.secondary} />
             );
             
             return (
@@ -68,7 +68,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
                     size={40}
                 />
             ) : (
-                <Ionicons name="checkmark-circle" size={20} color={theme.colors.status.connected} />
+                <Icon name="check-circle" size={20} color={theme.colors.status.connected} />
             );
             
             return (
@@ -87,7 +87,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
                 <Item
                     title={item.body.text}
                     subtitle={getTimeAgo(item.createdAt)}
-                    icon={<Ionicons name="information-circle" size={20} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="info" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             );

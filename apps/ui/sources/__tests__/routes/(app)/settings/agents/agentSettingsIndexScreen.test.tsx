@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as agentCatalogProjection from '@/agents/backendCatalog/agentCatalogProjection';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { standardCleanup } from '@/dev/testkit';
@@ -18,6 +18,28 @@ import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
 const agentSetupFlowPropsSpy = vi.hoisted(() => vi.fn());
+const administrationTargetState = vi.hoisted(() => ({
+    selectedTarget: {
+        serverIdentityId: 'server-a',
+        machineId: 'machine-1',
+    } as { serverIdentityId: string; machineId: string } | null,
+    executionTarget: {
+        target: {
+            serverIdentityId: 'server-a',
+            machineId: 'machine-1',
+        },
+        serverId: 'server-a',
+        machine: {
+            id: 'machine-1',
+            metadata: null,
+            daemonStateVersion: 0,
+        },
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        serverId: string;
+        machine: { id: string; metadata: null; daemonStateVersion: number };
+    } | null,
+}));
 const activeServerSnapshotState = vi.hoisted(() => ({
     value: {
         serverId: 'server-a',
@@ -103,11 +125,27 @@ vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => activeServerSnapshotState.value,
 }));
 
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.selectedTarget,
+        resolveExecutionTarget: () => administrationTargetState.executionTarget,
+    }),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
+}));
+
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: unknown[]) =>
         machineContributionRegistryProjectionDescribeMock(...args),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -128,6 +166,26 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => undefined,
 }));
+
+beforeEach(() => {
+    administrationTargetState.selectedTarget = {
+        serverIdentityId: 'server-a',
+        machineId: 'machine-1',
+    };
+    administrationTargetState.executionTarget = {
+        target: {
+            serverIdentityId: 'server-a',
+            machineId: 'machine-1',
+        },
+        serverId: 'server-a',
+        machine: {
+            id: 'machine-1',
+            metadata: null,
+            daemonStateVersion: 0,
+        },
+    };
+    agentSetupFlowPropsSpy.mockReset();
+});
 
 afterEach(() => {
     clearDaemonMergedProjectionCacheForTests();
@@ -229,7 +287,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
         getResolvedAgentCatalogEntriesSpy.mockRestore();
     });
 
-    it('refetches daemon provider projection data when the active server changes for the same machine', async () => {
+    it('refetches daemon provider projection data when the canonical target changes for the same machine', async () => {
         const Screen = (await import('@/app/(app)/settings/agents')).default;
 
         allMachinesState.value = [{
@@ -272,10 +330,21 @@ describe('PluginAgentSettingsIndexScreen', () => {
                 revokedAt: null,
             }],
         };
-        activeServerSnapshotState.value = {
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-x',
+            machineId: 'machine-1',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-x',
+                machineId: 'machine-1',
+            },
             serverId: 'server-x',
-            serverUrl: 'http://localhost:3100',
-            generation: 1,
+            machine: {
+                id: 'machine-1',
+                metadata: null,
+                daemonStateVersion: 0,
+            },
         };
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -291,10 +360,21 @@ describe('PluginAgentSettingsIndexScreen', () => {
         }));
 
         machineContributionRegistryProjectionDescribeMock.mockClear();
-        activeServerSnapshotState.value = {
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-y',
+            machineId: 'machine-1',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-y',
+                machineId: 'machine-1',
+            },
             serverId: 'server-y',
-            serverUrl: 'http://localhost:4000',
-            generation: 2,
+            machine: {
+                id: 'machine-1',
+                metadata: null,
+                daemonStateVersion: 0,
+            },
         };
 
         await act(async () => {
@@ -307,7 +387,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
         }));
     });
 
-    it('keeps the previous projected provider rows visible while a new active-server projection loads', async () => {
+    it('keeps the previous projected provider rows visible while a new canonical-target projection loads', async () => {
         const Screen = (await import('@/app/(app)/settings/agents')).default;
 
         allMachinesState.value = [
@@ -364,10 +444,21 @@ describe('PluginAgentSettingsIndexScreen', () => {
                 revokedAt: null,
             }],
         };
-        activeServerSnapshotState.value = {
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-x',
+            machineId: 'machine-1',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-x',
+                machineId: 'machine-1',
+            },
             serverId: 'server-x',
-            serverUrl: 'http://localhost:3100',
-            generation: 1,
+            machine: {
+                id: 'machine-1',
+                metadata: null,
+                daemonStateVersion: 0,
+            },
         };
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValueOnce({
@@ -387,10 +478,21 @@ describe('PluginAgentSettingsIndexScreen', () => {
         machineContributionRegistryProjectionDescribeMock.mockImplementation(() => new Promise((resolve) => {
             resolveReload = resolve;
         }));
-        activeServerSnapshotState.value = {
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-y',
+            machineId: 'machine-2',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-y',
+                machineId: 'machine-2',
+            },
             serverId: 'server-y',
-            serverUrl: 'http://localhost:4000',
-            generation: 2,
+            machine: {
+                id: 'machine-2',
+                metadata: null,
+                daemonStateVersion: 0,
+            },
         };
 
         await act(async () => {
@@ -411,7 +513,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
         });
     });
 
-    it('uses a machine scoped to the active server instead of a globally active machine from another server', async () => {
+    it('uses the exact canonical Administration target instead of an active-server or global-machine fallback', async () => {
         const Screen = (await import('@/app/(app)/settings/agents')).default;
 
         allMachinesState.value = [
@@ -473,6 +575,22 @@ describe('PluginAgentSettingsIndexScreen', () => {
             serverUrl: 'http://localhost:3000',
             generation: 1,
         };
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-selected',
+            machineId: 'machine-selected',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-selected',
+                machineId: 'machine-selected',
+            },
+            serverId: 'server-selected',
+            machine: {
+                id: 'machine-selected',
+                metadata: null,
+                daemonStateVersion: 0,
+            },
+        };
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
             supported: true,
@@ -482,10 +600,14 @@ describe('PluginAgentSettingsIndexScreen', () => {
         await renderSettingsView(React.createElement(Screen));
         await act(async () => {});
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-server-a', expect.objectContaining({
-            serverId: 'server-a',
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-selected', expect.objectContaining({
+            serverId: 'server-selected',
         }));
         expect(machineContributionRegistryProjectionDescribeMock).not.toHaveBeenCalledWith('machine-other', expect.anything());
+        expect(agentSetupFlowPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-selected',
+            serverId: 'server-selected',
+        }));
     });
 
     it('forwards projected plugin providers into setup even when they do not expose a built-in runtime carrier', async () => {
@@ -494,7 +616,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
             agentId: 'acme.headless.provider',
             catalogAgentId: null,
             iconAgentId: 'claude',
-            iconName: 'layers-outline',
+            iconName: 'stack-simple',
             title: 'Acme Headless Provider',
             subtitle: 'Plugin provider',
             channel: 'plugin',
@@ -531,6 +653,8 @@ describe('PluginAgentSettingsIndexScreen', () => {
         };
         allMachinesState.value = [];
         machineListByServerIdState.value = {};
+        administrationTargetState.selectedTarget = null;
+        administrationTargetState.executionTarget = null;
 
         const Screen = (await import('@/app/(app)/settings/agents')).default;
         const screen = await renderSettingsView(React.createElement(Screen));

@@ -4,9 +4,11 @@
  * and the dynamic IN THIS FOLDER section).
  *
  * Behavior:
- *   - Filled `star` icon (theme `state.warning.foreground`) when the path is
- *     currently a favorite; outline `star-outline` icon (theme
- *     `text.tertiary`) when it is not.
+ *   - One `star` glyph, filled (`weight="fill"`, theme
+ *     `state.warning.foreground`) when the path is currently a favorite and
+ *     outline (`weight="regular"`, theme `text.tertiary`) when it is not.
+ *     Weight is the load-bearing channel: colour repeats the state rather than
+ *     carrying it, because `DESIGN.md` forbids signalling by colour alone.
  *   - Pressing the icon invokes `onToggle(path)` and STOPS propagation so the
  *     enclosing row's `onSelect` does NOT fire.
  *   - 20×20 visual hit; effective hit area extended via `hitSlop` per the
@@ -18,8 +20,8 @@
 
 import * as React from 'react';
 import { Pressable, type GestureResponderEvent } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Icon, type IconWeight } from '@/components/ui/icons/Icon';
 
 // F8 — Narrow boundary types: the cross-platform stop-propagation pattern
 // needs to call DOM-only `stopImmediatePropagation` on the underlying
@@ -38,8 +40,6 @@ type PathFavoritePressableState = Readonly<{
     pressed: boolean;
     hovered?: boolean;
 }>;
-
-type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 const stylesheet = StyleSheet.create(() => ({
     pressable: {
@@ -88,7 +88,7 @@ export function PathFavoriteToggleButton(
         props.onToggle(props.path);
     }, [props]);
     const accessibilityLabel = props.isFavorite ? props.removeLabel : props.addLabel;
-    const iconName: IoniconName = props.isFavorite ? 'star' : 'star-outline';
+    const iconWeight: IconWeight = props.isFavorite ? 'fill' : 'regular';
     const iconColor = props.isFavorite
         ? theme.colors.state.warning.foreground
         : theme.colors.text.tertiary;
@@ -110,7 +110,7 @@ export function PathFavoriteToggleButton(
                 state.pressed ? { opacity: 0.7 } : null,
             ]}
         >
-            <Ionicons name={iconName} size={16} color={iconColor} />
+            <Icon name="star" size={16} weight={iconWeight} color={iconColor} />
         </Pressable>
     );
 }

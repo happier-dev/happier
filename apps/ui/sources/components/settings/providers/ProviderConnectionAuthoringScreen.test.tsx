@@ -144,11 +144,29 @@ vi.mock('@/components/ui/forms/MachineSetupTextField', () => ({
         return React.createElement('MachineSetupTextField', props);
     }),
 }));
-vi.mock('@/components/ui/lists/Item', () => ({ Item: (props: any) => React.createElement('Item', props) }));
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: (props: { children?: React.ReactNode; rightElement?: React.ReactNode }) => React.createElement(
+        'Item',
+        props,
+        props.children,
+        props.rightElement,
+    ),
+}));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemGroup', props, props.children) }));
 vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemList', props, props.children) }));
 vi.mock('@/components/settings/providers/ProviderMachineSelector', () => ({ ProviderMachineSelector: () => null }));
 vi.mock('@/components/ui/icons/SafeIonicons', () => ({ SafeIonicons: () => null }));
+
+function findProviderExternalLink(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+    label: string,
+) {
+    return screen.findAll((node) => (
+        node.props.accessibilityRole === 'link'
+        && node.props.accessibilityLabel === label
+        && typeof node.props.onPress === 'function'
+    )).at(-1);
+}
 
 describe('ProviderConnectionAuthoringScreen', () => {
     afterEach(standardCleanup);
@@ -261,11 +279,12 @@ describe('ProviderConnectionAuthoringScreen', () => {
             <ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />,
         );
 
-        const getKey = screen.findAllByType('Item')
+        const getKeyRow = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.links.getApiKey');
-        expect(getKey?.props.accessibilityLabel).toBe('settingsProviders.links.getApiKey');
+        expect(getKeyRow?.props.accessibilityLabel).toBe('settingsProviders.links.getApiKey');
+        expect(getKeyRow?.props.onPress).toBeUndefined();
         await React.act(async () => {
-            getKey?.props.onPress?.();
+            await findProviderExternalLink(screen, 'settingsProviders.links.getApiKey')?.props.onPress?.();
             await Promise.resolve();
         });
 
@@ -280,13 +299,14 @@ describe('ProviderConnectionAuthoringScreen', () => {
             <ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />,
         );
         const titles = screen.findAllByType('Item').map((item) => item.props.title);
-        const website = screen.findAllByType('Item')
+        const websiteRow = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.links.providerWebsite');
 
-        expect(website?.props.accessibilityLabel).toBe('settingsProviders.links.providerWebsite');
+        expect(websiteRow?.props.accessibilityLabel).toBe('settingsProviders.links.providerWebsite');
+        expect(websiteRow?.props.onPress).toBeUndefined();
         expect(titles).not.toContain('settingsProviders.links.getApiKey');
         await React.act(async () => {
-            website?.props.onPress?.();
+            await findProviderExternalLink(screen, 'settingsProviders.links.providerWebsite')?.props.onPress?.();
             await Promise.resolve();
         });
 

@@ -11,6 +11,18 @@ import type { MemoryStatusV1 } from '@happier-dev/protocol';
 
 const machineRpcSpy = vi.fn();
 const modalPrompt = vi.fn();
+const administrationTargetState = vi.hoisted(() => {
+    const state = {
+        current: {
+            target: { serverIdentityId: 'identity-1', machineId: 'm1' },
+            serverId: 'srv_1',
+            machine: { id: 'm1' },
+        },
+    };
+    return Object.assign(state, {
+        resolveExecutionTarget: () => state.current,
+    });
+});
 const machinesState = [
     { id: 'm1', metadata: { displayName: 'Machine 1' } },
     { id: 'm2', metadata: { displayName: 'Machine 2' } },
@@ -161,6 +173,20 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcSpy,
 }));
 
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.current.target,
+        canExecute: true,
+        resolveExecutionTarget: administrationTargetState.resolveExecutionTarget,
+    }),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
+}));
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
@@ -168,6 +194,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 afterEach(() => {
     machineRpcSpy.mockReset();
     modalPrompt.mockReset();
+    administrationTargetState.current = {
+        target: { serverIdentityId: 'identity-1', machineId: 'm1' },
+        serverId: 'srv_1',
+        machine: { id: 'm1' },
+    };
     vi.resetModules();
 });
 
@@ -190,45 +221,39 @@ describe('MemorySettingsView', () => {
         expect(statusItem.props?.subtitle).toBe('memorySearchSettings.status.readyLight');
     });
 
-    it('clears stale status while loading settings for another machine', async () => {
-        let resolveSecondSettings: ((value: any) => void) | null = null;
+    it('uses the exact Administration target rather than the first listed machine for memory RPCs', async () => {
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-2', machineId: 'm2' },
+            serverId: 'srv_2',
+            machine: { id: 'm2' },
+        };
         installMemoryRpc({
-            settingsGet: (params: any) => {
-                if (params?.machineId === 'm1') {
-                    return Promise.resolve({ v: 1, enabled: true, indexMode: 'hints' });
-                }
-                if (params?.machineId === 'm2') {
-                    return new Promise((resolve) => {
-                        resolveSecondSettings = resolve;
-                    });
-                }
-                throw new Error('unexpected rpc');
-            },
-            status: (params: any) => {
-                if (params?.machineId === 'm1') {
-                    return Promise.resolve(createReadyMemoryStatus());
-                }
-                if (params?.machineId === 'm2') {
-                    return Promise.resolve(null);
-                }
-                throw new Error('unexpected rpc');
-            },
+            settingsGet: () => ({ v: 1, enabled: true, indexMode: 'hints', backfillPolicy: 'new_only' }),
+            settingsSet: (params: any) => params.payload,
+            status: () => createReadyMemoryStatus(),
         });
 
         const screen = await renderSettledMemorySettingsView();
-        const menu = findDropdownMenu(screen, (props) => props.selectedId === 'm1');
-        expect(menu).toBeTruthy();
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm2',
+            serverId: 'srv_2',
+            method: 'daemon.memory.settings.get',
+        }));
 
+        const backfillMenu = findDropdownMenu(
+            screen,
+            (props) => Array.isArray(props.items) && props.items.some((item: any) => item.id === 'all_history'),
+        );
+        expect(backfillMenu).toBeTruthy();
         await act(async () => {
-            menu!.props.onSelect?.('m2');
+            backfillMenu!.props.onSelect?.('all_history');
         });
 
-        const statusItem = screen.findByProps({ title: 'memorySearchSettings.status.title' });
-        expect(statusItem.props?.subtitle).toBe('common.loading');
-
-        await act(async () => {
-            resolveSecondSettings?.({ v: 1, enabled: false, indexMode: 'hints' });
-        });
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm2',
+            serverId: 'srv_2',
+            method: 'daemon.memory.settings.set',
+        }));
     });
 
     it('falls back to read-only mode when daemon.memory.settings.set becomes unavailable', async () => {

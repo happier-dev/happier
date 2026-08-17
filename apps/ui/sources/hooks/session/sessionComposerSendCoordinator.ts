@@ -32,61 +32,54 @@ export type OutboundHandoffComposerClearParams = Readonly<{
     snapshot: SessionDraftTextSnapshot;
     clearDraftForSessionIfCurrentValueMatches: (snapshot: SessionDraftTextSnapshot) => boolean;
     clearTransientInputState: () => void;
-    isSemanticSnapshotCurrent?: () => boolean;
-    clearSemanticDraftValues?: () => void;
+    /** The semantic-draft owner clears only fields still matching its capture. */
+    clearSemanticDraftValuesMatchingSnapshot?: () => boolean;
 }>;
 
 export type FailedOutboundHandoffRestoreParams = Readonly<{
     snapshot: SessionDraftTextSnapshot;
     wasClearedAtHandoff: boolean;
     isCanonicalOutboundHandoffPresent: () => boolean;
-    isSemanticRestoreSafe?: () => boolean;
     restoreDraftForSessionIfCurrentValueMatches: (
         snapshot: SessionDraftTextSnapshot,
         expectedCurrentValue: string,
     ) => boolean;
     restoreTransientInputState?: () => void;
-    restoreSemanticDraftValues?: () => void;
+    /** The semantic-draft owner restores only fields unchanged since its clear. */
+    restoreSemanticDraftValuesMatchingClearedSnapshot?: () => boolean;
 }>;
 
 export function clearComposerAfterOutboundHandoff({
     snapshot,
     clearDraftForSessionIfCurrentValueMatches,
     clearTransientInputState,
-    isSemanticSnapshotCurrent,
-    clearSemanticDraftValues,
+    clearSemanticDraftValuesMatchingSnapshot,
 }: OutboundHandoffComposerClearParams): boolean {
-    if (isSemanticSnapshotCurrent && !isSemanticSnapshotCurrent()) {
-        return false;
-    }
-
     const didClearDraft = clearDraftForSessionIfCurrentValueMatches(snapshot);
-    if (!didClearDraft) return false;
+    const didClearSemanticDraftValues = clearSemanticDraftValuesMatchingSnapshot?.() ?? false;
 
-    clearSemanticDraftValues?.();
-    clearTransientInputState();
-    return true;
+    if (didClearDraft) {
+        clearTransientInputState();
+    }
+    return didClearDraft || didClearSemanticDraftValues;
 }
 
 export function restoreComposerAfterFailedOutboundHandoff({
     snapshot,
     wasClearedAtHandoff,
     isCanonicalOutboundHandoffPresent,
-    isSemanticRestoreSafe,
     restoreDraftForSessionIfCurrentValueMatches,
     restoreTransientInputState,
-    restoreSemanticDraftValues,
+    restoreSemanticDraftValuesMatchingClearedSnapshot,
 }: FailedOutboundHandoffRestoreParams): boolean {
     if (!wasClearedAtHandoff) return false;
     if (isCanonicalOutboundHandoffPresent()) return false;
-    if (isSemanticRestoreSafe && !isSemanticRestoreSafe()) {
-        return false;
-    }
 
     const didRestoreDraft = restoreDraftForSessionIfCurrentValueMatches(snapshot, '');
-    if (!didRestoreDraft) return false;
+    const didRestoreSemanticDraftValues = restoreSemanticDraftValuesMatchingClearedSnapshot?.() ?? false;
 
-    restoreSemanticDraftValues?.();
-    restoreTransientInputState?.();
-    return true;
+    if (didRestoreDraft) {
+        restoreTransientInputState?.();
+    }
+    return didRestoreDraft || didRestoreSemanticDraftValues;
 }

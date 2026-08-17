@@ -1,4 +1,4 @@
-import type { SessionOrganizationTag } from '@happier-dev/protocol';
+import type { UiSessionOrganizationTag } from './types';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -21,21 +21,22 @@ export function normalizeSessionTagLabels(tags: readonly string[] | null | undef
     return out;
 }
 
-export function readSessionOrganizationTagLabel(tag: SessionOrganizationTag): string {
-    const display = readPlainDisplayRecord(tag.display);
+export function readSessionOrganizationTagLabel(tag: UiSessionOrganizationTag): string | null {
+    if (tag.displayState.status !== 'available') return null;
+    const display = isRecord(tag.displayState.value)
+        ? tag.displayState.value
+        : readPlainDisplayRecord(tag.display);
     const displayLabel = typeof display?.label === 'string' ? display.label.trim() : '';
-    if (displayLabel) return displayLabel;
-    const tagKey = typeof tag.tagKey === 'string' ? tag.tagKey.trim() : '';
-    if (tagKey) return tagKey;
-    return String(tag.tagId ?? '').trim();
+    return displayLabel || null;
 }
 
 export function buildSessionOrganizationTagLabelById(
-    tagsById: Readonly<Record<string, SessionOrganizationTag>>,
+    tagsById: Readonly<Record<string, UiSessionOrganizationTag>>,
 ): Record<string, string> {
     return Object.fromEntries(
         Object.values(tagsById)
             .filter((tag) => tag.archivedAt == null)
-            .map((tag) => [tag.tagId, readSessionOrganizationTagLabel(tag)] as const),
+            .map((tag) => [tag.tagId, readSessionOrganizationTagLabel(tag)] as const)
+            .filter((entry): entry is readonly [string, string] => entry[1] !== null),
     );
 }

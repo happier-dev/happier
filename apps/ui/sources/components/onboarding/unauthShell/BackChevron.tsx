@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type BackChevronProps = Readonly<{
     onPress: () => void;
@@ -27,7 +27,7 @@ export const BackChevron = React.memo(function BackChevron(props: BackChevronPro
             testID={props.testID ?? 'unauth-shell-back-chevron'}
             style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
         >
-            <Ionicons name="chevron-back" size={24} color={theme.colors.text.primary} />
+            <Icon name="caret-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
     );
 });

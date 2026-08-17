@@ -31,9 +31,8 @@ describe('local voice engine local neural STT (streaming)', () => {
             local_direct: { schemaVersion: 1, config: {
               ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
                 localNeural: { assetId: 'dummy-pack', language: 'en', execution: 'auto' },
               },
               tts: {
@@ -79,9 +78,8 @@ describe('local voice engine local neural STT (streaming)', () => {
             local_direct: { schemaVersion: 1, config: {
               ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
@@ -118,9 +116,8 @@ describe('local voice engine local neural STT (streaming)', () => {
             local_direct: { schemaVersion: 1, config: {
               ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
@@ -177,9 +174,8 @@ describe('local voice engine local neural STT (streaming)', () => {
             local_direct: { schemaVersion: 1, config: {
               ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
@@ -233,9 +229,8 @@ describe('local voice engine local neural STT (streaming)', () => {
             local_direct: { schemaVersion: 1, config: {
               ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {
@@ -292,9 +287,8 @@ describe('local voice engine local neural STT (streaming)', () => {
             local_direct: { schemaVersion: 1, config: {
               ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
                 localNeural: { assetId: null, language: 'en' },
               },
               tts: {
@@ -371,9 +365,8 @@ describe('local voice engine local neural STT (streaming)', () => {
             local_direct: { schemaVersion: 1, config: {
               ...storage.getState().settings.voice.providers.local_direct.config,
               stt: {
+                ...storage.getState().settings.voice.providers.local_direct.config.stt,
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
                 localNeural: { assetId: 'dummy-pack', language: 'en' },
               },
               tts: {

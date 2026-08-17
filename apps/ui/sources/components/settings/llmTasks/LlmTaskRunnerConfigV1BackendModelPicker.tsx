@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -22,6 +21,7 @@ import { useAllMachines } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -101,7 +101,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
         id: entry.backendTargetKey,
         title: entry.title,
         subtitle: entry.subtitle ?? undefined,
-        icon: <Ionicons name={iconName as any} size={22} color={theme.colors.text.secondary} />,
+        icon: <Icon name={iconName as any} size={20} color={theme.colors.text.secondary} />,
       };
     });
   }, [backendEntries, theme.colors.text.secondary]);
@@ -124,7 +124,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
         id: '__custom__',
         title: t('settingsSession.replayResume.summaryRunner.customTitle'),
         subtitle: t('settingsSession.replayResume.summaryRunner.customModelIdSubtitle'),
-        icon: <Ionicons name="create-outline" size={22} color={theme.colors.text.secondary} />,
+        icon: <Icon name="pencil-simple" size={20} color={theme.colors.text.secondary} />,
       },
     ];
   }, [selectableModelMenuItems, theme.colors.text.secondary]);

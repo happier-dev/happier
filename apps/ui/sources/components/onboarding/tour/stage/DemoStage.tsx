@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Image, type LayoutChangeEvent, Platform, StyleSheet, View } from 'react-native';
+import { type LayoutChangeEvent, Platform, StyleSheet, View } from 'react-native';
 import Animated, {
     useAnimatedStyle,
     useSharedValue,
@@ -13,14 +13,18 @@ import {
     resolveDeviceFrameViewportGeometry,
     STAGE_DEVICE_CANVASES,
 } from './DeviceFrame';
-import {
-    captureStageFrame,
-    releaseStageFrame,
-    type StageFrozenCapture,
-} from './captureStageFrame';
 import { Spotlight } from './Spotlight';
 import type { StageFrame } from './stageFrames';
-import { stageSurfaceById } from './stageSurfaces';
+import {
+    preloadStageSurfaces,
+    resetStageSurfaceComponent,
+    stageSurfaceById,
+    type StageSurfaceId,
+} from './stageSurfaces';
+import {
+    StageSurfaceSkeleton,
+    StageSurfaceUnavailable,
+} from './StageSurfaceFallbacks';
 import {
     useRegisteredSpotlightTargetRect,
     useReadVisualSpotlightTargetRect,
@@ -33,12 +37,29 @@ import { type StageTargetRect, useStageTransform } from './useStageTransform';
 import {
     type StageWebCameraNode,
     type StageWebHaloNode,
-    type StageWebVisibilityNode,
     useStageWebCamera,
 } from './useStageWebCamera';
 
+const WebInertAnimatedView = Animated.View as React.ComponentType<
+    React.ComponentProps<typeof Animated.View>
+    & Pick<React.HTMLAttributes<HTMLElement>, 'inert'>
+>;
+
 export const STAGE_SURFACE_MATERIALIZE_FADE_MS = reanimatedMotionTokens.durationMs.fast;
-const STAGE_FROZEN_CAPTURE_MAX_AGE_MS = 15_000;
+
+/**
+ * How many upcoming beats are pre-MOUNTED. Mounting a warm surface renders a
+ * complete real app screen, so only the beat the journey reaches next earns one;
+ * everything further ahead is warmed as a module import instead (`preloadStageSurfaces`).
+ */
+const STAGE_WARM_MOUNT_LIMIT = 1;
+
+const UPCOMING_SURFACE_KEY_SEPARATOR = '\u0000';
+
+// The web camera drives a promoted CSS layer and never freezes; the native story
+// layout mounts one DemoStage per beat, so a frozen frame could never be shown
+// either. The stage therefore has no frozen layer for these hooks to drive.
+function noopStageCameraCallback(): void {}
 
 function MaterializedStageSurface(props: React.PropsWithChildren<Readonly<{
     reducedMotion: boolean;
@@ -65,6 +86,19 @@ function MaterializedStageSurface(props: React.PropsWithChildren<Readonly<{
 export type DemoStageProps = Readonly<{
     frames: readonly StageFrame[];
     activeFrameId: string;
+    /**
+     * Frames the journey can reach from the active beat, nearest first. The HOST
+     * owns beat order — the frame table's array order is not the journey's path,
+     * so warming array neighbours warms surfaces the user never reaches. The
+     * stage owns only the cost policy over that list: it pre-mounts the nearest
+     * frame and preloads the remaining surface modules without mounting them.
+     *
+     * Ids the frame table does not contain, and ids whose surface the active
+     * frame already owns, are skipped. Omitting the prop (or passing an empty
+     * list) means the host has nothing to declare: the stage paints the active
+     * beat alone and warms nothing. It never guesses.
+     */
+    upcomingFrameIds?: readonly string[];
     reducedMotion?: boolean;
 }>;
 
@@ -76,17 +110,79 @@ type StageSize = Readonly<{
 export function resolveMountedStageFrames(
     frames: readonly StageFrame[],
     activeFrameId: string,
+    upcomingFrameIds: readonly string[] = [],
 ): readonly StageFrame[] {
-    if (frames.length === 0) return [];
-    const activeIndex = Math.max(0, frames.findIndex((frame) => frame.id === activeFrameId));
-    const startIndex = Math.max(0, activeIndex - 1);
-    const endIndex = Math.min(frames.length - 1, activeIndex + 1);
-    return frames.slice(startIndex, endIndex + 1);
+    const activeFrame = resolveActiveFrame(frames, activeFrameId);
+    if (!activeFrame) return [];
+    const frameById = new Map(frames.map((frame) => [frame.id, frame]));
+    const mountedSurfaces = new Set<StageSurfaceId>([activeFrame.surface]);
+    const warmFrames: StageFrame[] = [];
+
+    for (const frameId of upcomingFrameIds) {
+        if (warmFrames.length >= STAGE_WARM_MOUNT_LIMIT) break;
+        const frame = frameById.get(frameId);
+        if (!frame || mountedSurfaces.has(frame.surface)) continue;
+        mountedSurfaces.add(frame.surface);
+        warmFrames.push(frame);
+    }
+
+    return [activeFrame, ...warmFrames];
+}
+
+/**
+ * Surfaces the journey will need next that the active frame does not already
+ * own. Mounted warm frames are included: `preloadStageSurfaces` returns the same
+ * cached import, so the caller never has to know which upcoming frames the warm
+ * cache happened to mount.
+ */
+function resolveUpcomingStageSurfaceIds(
+    frames: readonly StageFrame[],
+    upcomingFrameIds: readonly string[] | undefined,
+    activeSurfaceId: StageSurfaceId,
+): readonly StageSurfaceId[] {
+    if (!upcomingFrameIds || upcomingFrameIds.length === 0) return [];
+    const frameById = new Map(frames.map((frame) => [frame.id, frame]));
+    const surfaceIds: StageSurfaceId[] = [];
+    const seen = new Set<StageSurfaceId>([activeSurfaceId]);
+
+    for (const frameId of upcomingFrameIds) {
+        const frame = frameById.get(frameId);
+        if (!frame || seen.has(frame.surface)) continue;
+        seen.add(frame.surface);
+        surfaceIds.push(frame.surface);
+    }
+
+    return surfaceIds;
 }
 
 function resolveActiveFrame(frames: readonly StageFrame[], activeFrameId: string): StageFrame | null {
     if (frames.length === 0) return null;
     return frames.find((frame) => frame.id === activeFrameId) ?? frames[0] ?? null;
+}
+
+/**
+ * A lazily imported surface that rejects used to take the whole stage down: the
+ * thrown chunk error escaped to the nearest boundary above the journey. It now
+ * degrades to an honest in-frame state, and drops the poisoned lazy component so
+ * returning to the beat re-attempts the import.
+ */
+class StageSurfaceErrorBoundary extends React.Component<
+    React.PropsWithChildren<Readonly<{ fallback: React.ReactNode; onError: () => void }>>,
+    Readonly<{ failed: boolean }>
+> {
+    state: Readonly<{ failed: boolean }> = { failed: false };
+
+    static getDerivedStateFromError(): Readonly<{ failed: boolean }> {
+        return { failed: true };
+    }
+
+    componentDidCatch(): void {
+        this.props.onError();
+    }
+
+    render(): React.ReactNode {
+        return this.state.failed ? this.props.fallback : this.props.children;
+    }
 }
 
 function StageSurfaceSlot(props: Readonly<{
@@ -95,60 +191,59 @@ function StageSurfaceSlot(props: Readonly<{
     spotlightTargetsActive?: boolean;
     style?: object;
     testID?: string;
-    surfaceRef?: React.Ref<View>;
     reducedMotion: boolean;
 }>): React.ReactElement | null {
-    const surface = stageSurfaceById.get(props.frame.surface);
+    const surfaceId = props.frame.surface;
+    const surface = stageSurfaceById.get(surfaceId);
+    const handleSurfaceError = React.useCallback(() => {
+        resetStageSurfaceComponent(surfaceId);
+    }, [surfaceId]);
     if (!surface) return null;
     const Surface = surface.component;
     const testID = props.testID ?? `demo-stage-frame-${props.frame.id}`;
     const content = (
         <SpotlightTargetScope active={props.spotlightTargetsActive === true}>
-            <React.Suspense fallback={(
-                <View testID={`${testID}-loading`} style={styles.surfaceSlot} />
-            )}>
-                <MaterializedStageSurface
-                    testID={`${testID}-content`}
-                    reducedMotion={props.reducedMotion}
-                >
-                    <Surface device={props.frame.device} />
-                </MaterializedStageSurface>
-            </React.Suspense>
+            <StageSurfaceErrorBoundary
+                key={surfaceId}
+                onError={handleSurfaceError}
+                fallback={<StageSurfaceUnavailable testID={`${testID}-error`} />}
+            >
+                <React.Suspense fallback={(
+                    <StageSurfaceSkeleton
+                        device={props.frame.device}
+                        testID={`${testID}-loading`}
+                    />
+                )}>
+                    <MaterializedStageSurface
+                        testID={`${testID}-content`}
+                        reducedMotion={props.reducedMotion}
+                    >
+                        <Surface device={props.frame.device} />
+                    </MaterializedStageSurface>
+                </React.Suspense>
+            </StageSurfaceErrorBoundary>
         </SpotlightTargetScope>
     );
 
     return (
-        <Animated.View
+        // DemoStage is a static guided visual. `visible` controls painting only:
+        // active, outgoing, and warm slots must all remain outside interaction
+        // and assistive-technology traversal while their real surfaces are mounted.
+        <WebInertAnimatedView
             testID={testID}
             pointerEvents="none"
+            inert={Platform.OS === 'web' ? true : undefined}
+            aria-hidden={Platform.OS === 'web' ? true : undefined}
+            accessibilityElementsHidden={Platform.OS === 'web' ? undefined : true}
+            importantForAccessibility={Platform.OS === 'web' ? undefined : 'no-hide-descendants'}
             style={[
                 styles.surfaceSlot,
                 props.visible ? styles.activeSlot : styles.warmSlot,
                 props.style,
             ]}
         >
-            {props.surfaceRef ? (
-                <View
-                    ref={props.surfaceRef}
-                    collapsable={false}
-                    testID={`demo-stage-surface-${props.frame.surface}-capture-source`}
-                    style={styles.surfaceSlot}
-                >
-                    {content}
-                </View>
-            ) : content}
-        </Animated.View>
-    );
-}
-
-function FrozenStageFrame(props: Readonly<{ capture: StageFrozenCapture }>): React.ReactElement {
-    return (
-        <Image
-            testID="demo-stage-camera-frozen-frame"
-            source={{ uri: props.capture.uri }}
-            resizeMode="stretch"
-            style={styles.frozenFrame}
-        />
+            {content}
+        </WebInertAnimatedView>
     );
 }
 
@@ -204,18 +299,6 @@ function DemoStageContent(props: DemoStageProps & Readonly<{
     const readVisualSpotlightTargetRect = useReadVisualSpotlightTargetRect(props.activeFrame.spotlight);
     const remeasureSpotlightTarget = useRemeasureSpotlightTarget(props.activeFrame.spotlight);
     const [settledSpotlightRect, setSettledSpotlightRect] = React.useState<StageTargetRect | null>(null);
-    const [cameraFrozen, setCameraFrozen] = React.useState(false);
-    const cameraFrozenRef = React.useRef(false);
-    const thawTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const handleCameraSettled = React.useCallback((frameId: string) => {
-        if (frameId !== props.activeFrame.id) return;
-        if (thawTimeoutRef.current) {
-            clearTimeout(thawTimeoutRef.current);
-            thawTimeoutRef.current = null;
-        }
-        cameraFrozenRef.current = false;
-        if (Platform.OS !== 'web') setCameraFrozen(false);
-    }, [props.activeFrame.id]);
     const transform = useStageTransform({
         frameId: props.activeFrame.id,
         containerWidth: cameraViewport.width,
@@ -226,40 +309,14 @@ function DemoStageContent(props: DemoStageProps & Readonly<{
             : props.activeFrame.zoom,
         reducedMotion: props.reducedMotion,
         externallyDriven: Platform.OS === 'web',
-        onCameraSettled: Platform.OS === 'web' ? undefined : handleCameraSettled,
     });
     const [outgoingFrame, setOutgoingFrame] = React.useState<StageFrame | null>(null);
     const previousActiveFrameRef = React.useRef(props.activeFrame);
     const previousCameraFrameRef = React.useRef(props.activeFrame);
     const webCameraOuterRef = React.useRef<StageWebCameraNode | null>(null);
     const webCameraInnerRef = React.useRef<StageWebCameraNode | null>(null);
-    const webFrozenCameraOuterRef = React.useRef<StageWebCameraNode | null>(null);
-    const webFrozenCameraInnerRef = React.useRef<StageWebCameraNode | null>(null);
     const webHaloRef = React.useRef<StageWebHaloNode | null>(null);
-    const webLiveLayerRef = React.useRef<StageWebVisibilityNode | null>(null);
-    const activeFrameRef = React.useRef(props.activeFrame);
-    activeFrameRef.current = props.activeFrame;
-    const liveSurfaceRef = React.useRef<View | null>(null);
-    const snapshotRef = React.useRef<Readonly<{
-        surfaceId: StageFrame['surface'];
-        revision: number;
-        capturedAtMs: number;
-        capture: StageFrozenCapture;
-    }> | null>(null);
-    const captureGenerationRef = React.useRef(0);
-    const captureInFlightRef = React.useRef(false);
-    const captureLiveSurfaceRef = React.useRef<(() => Promise<void>) | null>(null);
-    const mutationObserverActiveRef = React.useRef(false);
-    const quietCaptureReadyRef = React.useRef(false);
-    const surfaceMutationTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const surfaceRevisionRef = React.useRef(0);
-    const [renderedSnapshot, setRenderedSnapshot] = React.useState<StageFrozenCapture | null>(null);
     const webCameraEnabled = Platform.OS === 'web' && transform.mode === 'camera';
-    const snapshotFresh = Boolean(
-        renderedSnapshot
-        && snapshotRef.current
-        && Date.now() - snapshotRef.current.capturedAtMs <= STAGE_FROZEN_CAPTURE_MAX_AGE_MS
-    );
 
     useStageWebCamera({
         enabled: webCameraEnabled,
@@ -267,81 +324,16 @@ function DemoStageContent(props: DemoStageProps & Readonly<{
         target: transform.settledTransform,
         outerRef: webCameraOuterRef,
         innerRef: webCameraInnerRef,
-        additionalOuterRef: webFrozenCameraOuterRef,
-        additionalInnerRef: webFrozenCameraInnerRef,
         haloRef: webHaloRef,
         haloSourceRect: props.activeFrame.spotlight && spotlightTarget.found
             ? spotlightTarget.rect
             : null,
         transformBounds: cameraTransformBounds,
         cameraNodeTranslationScale: cameraViewport.scale > 0 ? 1 / cameraViewport.scale : 1,
-        freezeDuringMotion: snapshotFresh,
-        liveLayerRef: webLiveLayerRef,
-        frozenLayerRef: webFrozenCameraOuterRef,
-        onMotionChange: (moving) => {
-            cameraFrozenRef.current = moving;
-            if (!moving) {
-                queueMicrotask(() => {
-                    void captureLiveSurfaceRef.current?.();
-                });
-            }
-        },
-        onSettled: handleCameraSettled,
+        freezeDuringMotion: false,
+        onMotionChange: noopStageCameraCallback,
+        onSettled: noopStageCameraCallback,
     });
-
-    const releaseSnapshot = React.useCallback((capture: StageFrozenCapture) => {
-        releaseStageFrame(capture);
-    }, []);
-
-    const captureLiveSurface = React.useCallback(async () => {
-        if (captureInFlightRef.current || cameraFrozenRef.current) return;
-        const node = liveSurfaceRef.current;
-        const surfaceId = activeFrameRef.current.surface;
-        const revision = surfaceRevisionRef.current;
-        const captureSourceTestID = `demo-stage-surface-${surfaceId}-capture-source`;
-        const existingSnapshot = snapshotRef.current;
-        if (
-            existingSnapshot?.surfaceId === surfaceId
-            && existingSnapshot.revision === revision
-            && Date.now() - existingSnapshot.capturedAtMs <= STAGE_FROZEN_CAPTURE_MAX_AGE_MS
-        ) return;
-        const generation = captureGenerationRef.current + 1;
-        captureGenerationRef.current = generation;
-        captureInFlightRef.current = true;
-        try {
-            const capture = await captureStageFrame(node, captureSourceTestID);
-            if (
-                captureGenerationRef.current !== generation
-                || cameraFrozenRef.current
-                || activeFrameRef.current.surface !== surfaceId
-            ) {
-                releaseSnapshot(capture);
-                return;
-            }
-            const previousSnapshot = snapshotRef.current;
-            snapshotRef.current = {
-                surfaceId,
-                revision,
-                capturedAtMs: Date.now(),
-                capture,
-            };
-            setRenderedSnapshot(capture);
-            if (previousSnapshot && previousSnapshot.capture !== capture) {
-                releaseSnapshot(previousSnapshot.capture);
-            }
-        } catch {
-            // A failed system-boundary capture leaves the live camera path visible.
-        } finally {
-            captureInFlightRef.current = false;
-            if (!cameraFrozenRef.current && quietCaptureReadyRef.current) {
-                quietCaptureReadyRef.current = false;
-                queueMicrotask(() => {
-                    void captureLiveSurfaceRef.current?.();
-                });
-            }
-        }
-    }, [releaseSnapshot]);
-    captureLiveSurfaceRef.current = captureLiveSurface;
 
     const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
@@ -370,48 +362,15 @@ function DemoStageContent(props: DemoStageProps & Readonly<{
 
     React.useLayoutEffect(() => {
         const previousFrame = previousCameraFrameRef.current;
-        const frameChanged = previousFrame.id !== props.activeFrame.id;
         previousCameraFrameRef.current = props.activeFrame;
-
-        if (frameChanged) {
-            if (!mutationObserverActiveRef.current) {
-                surfaceRevisionRef.current += 1;
-                quietCaptureReadyRef.current = true;
-            }
-            setSettledSpotlightRect(null);
-        }
-
-        if (thawTimeoutRef.current) {
-            clearTimeout(thawTimeoutRef.current);
-            thawTimeoutRef.current = null;
-        }
-        if (Platform.OS === 'web') return;
-        if (!frameChanged || transform.mode !== 'camera') {
-            setCameraFrozen(false);
-            return;
-        }
-
-        const snapshot = snapshotRef.current;
-        if (
-            !snapshot
-            || snapshot.surfaceId !== previousFrame.surface
-        ) {
-            setCameraFrozen(false);
-            return;
-        }
-
-        setCameraFrozen(true);
-        thawTimeoutRef.current = setTimeout(() => {
-            thawTimeoutRef.current = null;
-            setCameraFrozen(false);
-        }, transform.motionDurationMs + 150);
-    }, [props.activeFrame, transform.mode, transform.motionDurationMs]);
+        // A new frame re-aims the camera, so the previously settled halo rect is
+        // stale until the next visual read lands.
+        if (previousFrame.id !== props.activeFrame.id) setSettledSpotlightRect(null);
+    }, [props.activeFrame]);
 
     React.useLayoutEffect(() => {
         if (
             Platform.OS === 'web'
-            || cameraFrozenRef.current
-            || cameraFrozen
             || !props.activeFrame.spotlight
             || !spotlightTarget.found
         ) return;
@@ -429,68 +388,12 @@ function DemoStageContent(props: DemoStageProps & Readonly<{
             ));
         });
     }, [
-        cameraFrozen,
         props.activeFrame.id,
         props.activeFrame.spotlight,
         readVisualSpotlightTargetRect,
         spotlightTarget.found,
         spotlightTarget.rect,
     ]);
-
-    React.useEffect(() => {
-        if (cameraFrozen || cameraFrozenRef.current) return;
-        if (mutationObserverActiveRef.current && !quietCaptureReadyRef.current) return;
-        quietCaptureReadyRef.current = false;
-        void captureLiveSurface();
-    }, [cameraFrozen, captureLiveSurface]);
-
-    React.useEffect(() => {
-        const node = liveSurfaceRef.current;
-        if (!node || typeof MutationObserver !== 'function') return undefined;
-        const observer = new MutationObserver(() => {
-            surfaceRevisionRef.current += 1;
-            quietCaptureReadyRef.current = false;
-            if (surfaceMutationTimeoutRef.current) clearTimeout(surfaceMutationTimeoutRef.current);
-            surfaceMutationTimeoutRef.current = setTimeout(() => {
-                surfaceMutationTimeoutRef.current = null;
-                quietCaptureReadyRef.current = true;
-                if (cameraFrozenRef.current || captureInFlightRef.current) return;
-                quietCaptureReadyRef.current = false;
-                void captureLiveSurfaceRef.current?.();
-            }, 3000);
-        });
-        try {
-            observer.observe(node as unknown as Node, {
-                attributes: true,
-                characterData: true,
-                childList: true,
-                subtree: true,
-            });
-            mutationObserverActiveRef.current = true;
-        } catch {
-            observer.disconnect();
-            return undefined;
-        }
-        return () => {
-            mutationObserverActiveRef.current = false;
-            if (surfaceMutationTimeoutRef.current) {
-                clearTimeout(surfaceMutationTimeoutRef.current);
-                surfaceMutationTimeoutRef.current = null;
-            }
-            observer.disconnect();
-        };
-    }, [props.activeFrame.surface]);
-
-    React.useEffect(() => () => {
-        captureGenerationRef.current += 1;
-        if (thawTimeoutRef.current) {
-            clearTimeout(thawTimeoutRef.current);
-            thawTimeoutRef.current = null;
-        }
-        const snapshot = snapshotRef.current;
-        snapshotRef.current = null;
-        if (snapshot) releaseSnapshot(snapshot.capture);
-    }, [releaseSnapshot]);
 
     React.useEffect(() => {
         if (!outgoingFrame) return undefined;
@@ -517,63 +420,34 @@ function DemoStageContent(props: DemoStageProps & Readonly<{
                 onViewportGeometryChange={remeasureSpotlightTarget}
                 testID="demo-stage-device-frame"
             >
-                <View
-                    ref={webLiveLayerRef as React.Ref<never>}
-                    testID="demo-stage-camera-live"
-                    style={[
-                        styles.cameraLayer,
-                        cameraFrozen ? styles.hiddenCamera : styles.visibleCamera,
-                    ]}
+                <Animated.View
+                    ref={webCameraOuterRef as React.Ref<never>}
+                    testID="demo-stage-camera-outer"
+                    style={[styles.cameraLayer, webCameraEnabled ? undefined : transform.outerAnimatedStyle]}
                 >
                     <Animated.View
-                        ref={webCameraOuterRef as React.Ref<never>}
-                        testID="demo-stage-camera-outer"
-                        style={[styles.cameraLayer, webCameraEnabled ? undefined : transform.outerAnimatedStyle]}
+                        ref={webCameraInnerRef as React.Ref<never>}
+                        testID="demo-stage-camera-inner"
+                        style={[styles.cameraLayer, webCameraEnabled ? undefined : transform.innerAnimatedStyle]}
                     >
-                        <Animated.View
-                            ref={webCameraInnerRef as React.Ref<never>}
-                            testID="demo-stage-camera-inner"
-                            style={[styles.cameraLayer, webCameraEnabled ? undefined : transform.innerAnimatedStyle]}
-                        >
-                            {visibleOutgoingFrame ? (
-                                <StageSurfaceSlot
-                                    frame={visibleOutgoingFrame}
-                                    visible
-                                    reducedMotion
-                                    testID={`demo-stage-crossfade-outgoing-${visibleOutgoingFrame.id}`}
-                                    style={transform.outgoingCrossfadeAnimatedStyle}
-                                />
-                            ) : null}
+                        {visibleOutgoingFrame ? (
                             <StageSurfaceSlot
-                                frame={props.activeFrame}
+                                frame={visibleOutgoingFrame}
                                 visible
-                                spotlightTargetsActive
-                                surfaceRef={liveSurfaceRef}
-                                reducedMotion={transform.mode === 'crossfade'}
-                                style={transform.mode === 'crossfade' ? transform.incomingCrossfadeAnimatedStyle : undefined}
+                                reducedMotion
+                                testID={`demo-stage-crossfade-outgoing-${visibleOutgoingFrame.id}`}
+                                style={transform.outgoingCrossfadeAnimatedStyle}
                             />
-                        </Animated.View>
+                        ) : null}
+                        <StageSurfaceSlot
+                            frame={props.activeFrame}
+                            visible
+                            spotlightTargetsActive
+                            reducedMotion={transform.mode === 'crossfade'}
+                            style={transform.mode === 'crossfade' ? transform.incomingCrossfadeAnimatedStyle : undefined}
+                        />
                     </Animated.View>
-                </View>
-                {renderedSnapshot ? (
-                    <Animated.View
-                        ref={webFrozenCameraOuterRef as React.Ref<never>}
-                        testID="demo-stage-camera-frozen-outer"
-                        style={[
-                            styles.cameraLayer,
-                            { opacity: webCameraEnabled ? 0 : cameraFrozen ? 1 : 0 },
-                            webCameraEnabled ? undefined : transform.outerAnimatedStyle,
-                        ]}
-                    >
-                        <Animated.View
-                            ref={webFrozenCameraInnerRef as React.Ref<never>}
-                            testID="demo-stage-camera-frozen-inner"
-                            style={[styles.cameraLayer, webCameraEnabled ? undefined : transform.innerAnimatedStyle]}
-                        >
-                            <FrozenStageFrame capture={renderedSnapshot} />
-                        </Animated.View>
-                    </Animated.View>
-                ) : null}
+                </Animated.View>
             </DeviceFrame>
             <Spotlight
                 targetId={props.activeFrame.spotlight}
@@ -605,8 +479,27 @@ export function DemoStage(props: DemoStageProps): React.ReactElement | null {
         stageRef.current = node;
     }, []);
     const activeFrame = resolveActiveFrame(props.frames, props.activeFrameId);
+    // Joining keeps the warm-up keyed by CONTENT: the host rebuilds the id array
+    // every render, and re-firing the import on each of those is pure churn.
+    const upcomingSurfaceKey = activeFrame
+        ? resolveUpcomingStageSurfaceIds(props.frames, props.upcomingFrameIds, activeFrame.surface).join(UPCOMING_SURFACE_KEY_SEPARATOR)
+        : '';
+    const upcomingSurfaceIds = React.useMemo<readonly StageSurfaceId[]>(() => (
+        upcomingSurfaceKey === ''
+            ? []
+            : upcomingSurfaceKey.split(UPCOMING_SURFACE_KEY_SEPARATOR) as StageSurfaceId[]
+    ), [upcomingSurfaceKey]);
+
+    React.useEffect(() => {
+        if (upcomingSurfaceIds.length === 0) return;
+        // Warming the module while the user reads the current beat is what removes
+        // the cold-chunk wait at the next one; a failed warm-up is not fatal here
+        // because the mount path has its own boundary.
+        void preloadStageSurfaces(upcomingSurfaceIds).catch(() => undefined);
+    }, [upcomingSurfaceIds]);
+
     if (!activeFrame) return null;
-    const mountedFrames = resolveMountedStageFrames(props.frames, props.activeFrameId);
+    const mountedFrames = resolveMountedStageFrames(props.frames, props.activeFrameId, props.upcomingFrameIds);
 
     return (
         <SpotlightProvider activeTargetId={activeFrame.spotlight ?? null} stageRef={stageRef}>
@@ -632,17 +525,6 @@ const styles = StyleSheet.create({
     },
     cameraLayer: {
         ...StyleSheet.absoluteFillObject,
-    },
-    visibleCamera: {
-        display: 'flex',
-    },
-    hiddenCamera: {
-        display: 'none',
-    },
-    frozenFrame: {
-        ...StyleSheet.absoluteFillObject,
-        height: '100%',
-        width: '100%',
     },
     surfaceSlot: {
         ...StyleSheet.absoluteFillObject,

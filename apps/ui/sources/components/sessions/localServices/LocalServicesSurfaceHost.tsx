@@ -24,6 +24,8 @@ import {
     type LocalServicePublicPreviewStatusClient,
     useLocalServicePublicPreviewStateController,
 } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
+import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
@@ -54,6 +56,10 @@ export type LocalServicesSurfaceHostProps = Readonly<{
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
     runtimeActionExecute?: RuntimeActionExecute;
     onOpenServiceInBrowser?: (target: LocalServiceLaunchTarget) => void | Promise<unknown>;
+    /** Exact AppPane-admitted projection when a driver-owned surface supplies it. */
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    projectionInteractionEnabled?: boolean;
+    platform?: LocalServicePreviewPlatform;
     testID: string;
 }>;
 
@@ -138,10 +144,23 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         serverId,
         sessionId,
     });
-    const pluginProjection = useScopedPluginUiProjection({
-        machineId,
-        serverId,
-    });
+    const hasAdmittedPluginProjection = props.pluginUiProjection !== undefined;
+    // AppPane has already admitted the exact projection for a driver-rendered
+    // surface. Keep this hook unconditional for React, but disable its
+    // ambient target lookup so an explicit unavailable projection cannot
+    // subscribe to or replace the driver-owned snapshot.
+    const pluginProjection = useScopedPluginUiProjection(hasAdmittedPluginProjection
+        ? { machineId: null, serverId: null, enabled: false }
+        : { machineId, serverId });
+    const pluginUiProjection = hasAdmittedPluginProjection
+        ? props.pluginUiProjection ?? null
+        : pluginProjection.pluginUiProjection;
+    const projectionInteractionEnabled = hasAdmittedPluginProjection
+        ? props.projectionInteractionEnabled === true
+        : pluginProjection.interactionEnabled;
+    const platform = hasAdmittedPluginProjection
+        ? props.platform ?? pluginProjection.platform
+        : pluginProjection.platform;
 
     return (
         <>
@@ -162,12 +181,13 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
                 testID={props.testID}
             />
             <PluginSurfacePlacementStack
-                placement="services.panel"
-                pluginUiProjection={pluginProjection.pluginUiProjection}
-                projectionInteractionEnabled={pluginProjection.interactionEnabled}
-                machineId={machineId ?? pluginProjection.machineId}
-                serverId={serverId ?? pluginProjection.serverId}
-                platform={pluginProjection.platform}
+                container="servicesPanel"
+                pluginUiProjection={pluginUiProjection}
+                projectionInteractionEnabled={projectionInteractionEnabled}
+                machineId={machineId}
+                serverId={serverId}
+                sessionId={sessionId}
+                platform={platform}
                 targetKind="services"
                 testID={`${props.testID}-plugin-stack`}
             />

@@ -1,23 +1,27 @@
 import {
-  VoiceProviderIdSchema,
   VoiceCredentialBindingV1Schema,
   VoiceProviderSettingsEnvelopeV1Schema,
-  VoiceProviderSettingsRecordV1Schema,
   VoiceSpeechDiagnosticsSettingsV1Schema,
   SecretStringV1Schema,
-  type VoiceProviderId,
+  normalizePredecessorVoiceProviderIdV1,
   type VoiceCredentialBindingV1,
   type VoiceProviderSettingsEnvelopeV1,
   type VoiceProviderSettingsJsonValueV1,
   type VoiceSpeechDiagnosticsSettingsV1,
 } from '@happier-dev/protocol';
+import {
+  VoiceProviderIdSchema as QualifiedVoiceProviderIdSchema,
+} from '@happier-dev/protocol/voice/realtime';
 import { z } from 'zod';
 import {
   LEGACY_BUILT_IN_VOICE_ADAPTER_IDS,
   readLegacyVoiceSettingsMigrationSource,
 } from '@/voice/settings/migrations/legacyAdapters';
 import { VoiceWelcomeSchema } from '@/voice/settings/welcome';
-import { BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES } from '@/voice/registry/generatedBundledVoiceEntries';
+import {
+  BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
+  BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
+} from '@/voice/registry/generatedBundledVoiceEntries';
 import {
   createVoiceProviderSettingsCatalog,
   resolveExternalVoiceProviderSettingsOwner,
@@ -38,19 +42,37 @@ import {
   VoiceDictationSettingsSchema,
   type VoiceDictationSettings,
 } from '@/voice/dictation/voiceDictationSettings';
+import {
+  migrateLegacySpeechProviderConfig,
+} from './migrations/speechProviders';
 
-export { VoiceProviderIdSchema, type VoiceProviderId };
+const HostOwnedVoiceProviderIdSchema = z.enum(['local_direct', 'local_conversation']);
+export const VoiceProviderIdSchema = z.union([
+  HostOwnedVoiceProviderIdSchema,
+  QualifiedVoiceProviderIdSchema,
+]);
+export type VoiceProviderId = z.infer<typeof VoiceProviderIdSchema>;
+
+const VoiceProviderSettingsRecordSchema = z.record(
+  VoiceProviderIdSchema,
+  VoiceProviderSettingsEnvelopeV1Schema,
+);
 
 export const VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER = 'happierLegacyCredentialRecoveryV1' as const;
 
 const VoiceCredentialBindingsSchema = z.array(VoiceCredentialBindingV1Schema).max(64)
   .superRefine((bindings, ctx) => {
-    const providers = new Set<string>();
+    const identities = new Set<string>();
     bindings.forEach((binding, index) => {
-      if (providers.has(binding.providerId)) {
-        ctx.addIssue({ code: 'custom', path: [index, 'providerId'], message: 'Duplicate Voice credential binding' });
+      const identity = `${binding.contribution.pluginId}\u0000${binding.contribution.localId}\u0000${binding.credentialSlotId}`;
+      if (identities.has(identity)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [index, 'credentialSlotId'],
+          message: 'Duplicate Voice credential binding',
+        });
       }
-      providers.add(binding.providerId);
+      identities.add(identity);
     });
   });
 
@@ -121,7 +143,8 @@ export {
 };
 
 const providerSettingsCatalog = createVoiceProviderSettingsCatalog({
-  bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES,
+  bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
+  bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
 });
 
 export function getCanonicalVoiceProviderSettingsOwner(providerId: string) {
@@ -142,7 +165,7 @@ const CanonicalVoiceSettingsSchema = z.object({
   privacy: VoicePrivacySchema.prefault({}),
   diagnostics: VoiceSpeechDiagnosticsSettingsV1Schema.prefault({}),
   credentialBindings: VoiceCredentialBindingsSchema.default([]),
-  providers: VoiceProviderSettingsRecordV1Schema.default(createDefaultProviderEnvelopes),
+  providers: VoiceProviderSettingsRecordSchema.default(createDefaultProviderEnvelopes),
 });
 
 type CanonicalVoiceSettings = z.infer<typeof CanonicalVoiceSettingsSchema>;
@@ -226,7 +249,8 @@ function preserveMalformedLegacyCredentialFields(
     ['local_direct', 'tts', 'googleCloud', 'apiKey'],
     ['local_direct', 'stt', 'openaiCompat', 'apiKey'],
     ['local_direct', 'tts', 'openaiCompat', 'apiKey'],
-    ['local_conversation', 'agent', 'openaiCompat', 'chatApiKey'],
+    ['local_conversation', 'stt', 'openaiCompat', 'apiKey'],
+    ['local_conversation', 'tts', 'openaiCompat', 'apiKey'],
   ] as const;
   let preserved: Record<string, unknown> = {};
   for (const path of paths) {
@@ -265,8 +289,12 @@ function parseKnownProviderConfig(providerId: string, config: unknown): unknown 
 function parseProviderEnvelopes(raw: unknown): Record<string, VoiceProviderSettingsEnvelopeV1> {
   const result = createDefaultProviderEnvelopes();
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
+  const rawRecord = raw as Record<string, unknown>;
   for (const [rawProviderId, candidate] of Object.entries(raw as Record<string, unknown>)) {
-    const providerId = VoiceProviderIdSchema.safeParse(rawProviderId);
+    const canonicalProviderId = normalizePredecessorVoiceProviderIdV1(rawProviderId);
+    if (canonicalProviderId !== rawProviderId
+      && Object.prototype.hasOwnProperty.call(rawRecord, canonicalProviderId)) continue;
+    const providerId = VoiceProviderIdSchema.safeParse(canonicalProviderId);
     if (!providerId.success) continue;
     const envelope = VoiceProviderSettingsEnvelopeV1Schema.safeParse(candidate);
     if (!envelope.success || !isBoundedJsonValue(envelope.data.config)) {
@@ -291,7 +319,16 @@ function parseProviderEnvelopes(raw: unknown): Record<string, VoiceProviderSetti
 }
 
 function readLegacyAdapters(raw: Record<string, unknown>): Record<string, unknown> | null {
-  return readLegacyVoiceSettingsMigrationSource(raw).adapters;
+  const adapters = readLegacyVoiceSettingsMigrationSource(raw).adapters;
+  if (!adapters) return null;
+  const normalized: Record<string, unknown> = {};
+  for (const [rawProviderId, config] of Object.entries(adapters)) {
+    const providerId = normalizePredecessorVoiceProviderIdV1(rawProviderId);
+    if (providerId !== rawProviderId
+      && Object.prototype.hasOwnProperty.call(adapters, providerId)) continue;
+    normalized[providerId] = config;
+  }
+  return normalized;
 }
 
 function migrateLegacyProviderEnvelopes(
@@ -306,7 +343,9 @@ function migrateLegacyProviderEnvelopes(
     ? raw.providers as Record<string, unknown>
     : null;
   const ownsCanonical = (providerId: string) => Boolean(
-    rawProviders && Object.prototype.hasOwnProperty.call(rawProviders, providerId),
+    rawProviders && Object.keys(rawProviders).some(
+      (rawProviderId) => normalizePredecessorVoiceProviderIdV1(rawProviderId) === providerId,
+    ),
   );
 
   for (const owner of providerSettingsCatalog.list()) {
@@ -364,6 +403,103 @@ function reclaimLegacyProviderEnvelopes(
   return rootMigrations;
 }
 
+/**
+ * Migrates released predecessor role settings into root-owned qualified
+ * speech settings. Unshipped nested provider maps are deliberately ignored.
+ */
+function migratePredecessorSpeechProviderSettings(
+  raw: Readonly<Record<string, unknown>>,
+  settings: VoiceSettings,
+): void {
+  const rawProviders = raw.providers && typeof raw.providers === 'object' && !Array.isArray(raw.providers)
+    ? raw.providers as Readonly<Record<string, unknown>>
+    : {};
+  const explicitRootProviderIds = new Set(
+    Object.keys(rawProviders).map(normalizePredecessorVoiceProviderIdV1),
+  );
+  const selectedAdapterId = settings.providerId === 'local_direct' || settings.providerId === 'local_conversation'
+    ? settings.providerId
+    : null;
+  const adapterIds = [
+    ...(selectedAdapterId ? [selectedAdapterId] : []),
+    ...(['local_direct', 'local_conversation'] as const).filter((id) => id !== selectedAdapterId),
+  ];
+  const predecessorConfigs: Array<Readonly<{ providerId: string; config: unknown }>> = [];
+  const rawAdapters = readLegacyAdapters(raw) ?? {};
+  for (const adapterId of adapterIds) {
+    const rawAdapter = rawAdapters[adapterId];
+    if (!rawAdapter || typeof rawAdapter !== 'object' || Array.isArray(rawAdapter)) continue;
+    const rawStt = (rawAdapter as Readonly<Record<string, unknown>>).stt;
+    if (rawStt && typeof rawStt === 'object' && !Array.isArray(rawStt)) {
+      const rawSttRecord = rawStt as Readonly<Record<string, unknown>>;
+      const googleGemini = rawSttRecord.googleGemini;
+      if (googleGemini && typeof googleGemini === 'object' && !Array.isArray(googleGemini)) {
+        predecessorConfigs.push({
+          providerId: 'happier.voice.google/gemini-stt',
+          config: googleGemini,
+        });
+      }
+      const openAiCompat = rawSttRecord.openaiCompat;
+      if (openAiCompat && typeof openAiCompat === 'object' && !Array.isArray(openAiCompat)) {
+        predecessorConfigs.push({
+          providerId: 'happier.voice.openai-compat/stt',
+          config: openAiCompat,
+        });
+      }
+    }
+    const rawTts = (rawAdapter as Readonly<Record<string, unknown>>).tts;
+    if (rawTts && typeof rawTts === 'object' && !Array.isArray(rawTts)) {
+      const rawTtsRecord = rawTts as Readonly<Record<string, unknown>>;
+      const googleCloud = rawTtsRecord.googleCloud;
+      if (googleCloud && typeof googleCloud === 'object' && !Array.isArray(googleCloud)) {
+        predecessorConfigs.push({
+          providerId: 'happier.voice.google/google-cloud-tts',
+          config: googleCloud,
+        });
+      }
+      const openAiCompat = rawTtsRecord.openaiCompat;
+      if (openAiCompat && typeof openAiCompat === 'object' && !Array.isArray(openAiCompat)) {
+        predecessorConfigs.push({
+          providerId: 'happier.voice.openai-compat/tts',
+          config: openAiCompat,
+        });
+      }
+    }
+  }
+  const migrated = new Set<string>();
+  const candidates = predecessorConfigs.map(({ providerId, config }) => ({
+    providerId,
+    envelope: { schemaVersion: 1, config },
+  }));
+  for (const candidate of candidates) {
+    const rawProviderId = candidate.providerId;
+    const providerId = normalizePredecessorVoiceProviderIdV1(rawProviderId);
+    const owner = providerSettingsCatalog.get(providerId)
+      ?? resolveExternalVoiceProviderSettingsOwner(providerId);
+    if (explicitRootProviderIds.has(providerId) || migrated.has(providerId) || !owner) continue;
+    const envelope = VoiceProviderSettingsEnvelopeV1Schema.safeParse(candidate.envelope);
+    if (!envelope.success) continue;
+    const legacyConfig = migrateLegacySpeechProviderConfig(providerId, envelope.data.config);
+    const supportedLegacyConfig = legacyConfig === null
+      ? null
+      : Object.fromEntries(Object.entries(legacyConfig).filter(([key]) => (
+          Object.prototype.hasOwnProperty.call(owner.defaultConfig, key)
+        )));
+    if (owner.defaultConfig === null
+      || typeof owner.defaultConfig !== 'object'
+      || Array.isArray(owner.defaultConfig)) continue;
+    const config = owner.parseConfig(supportedLegacyConfig === null
+      ? envelope.data.config
+      : { ...owner.defaultConfig, ...supportedLegacyConfig });
+    if (config === null) continue;
+    settings.providers[providerId] = {
+      schemaVersion: owner.currentSchemaVersion,
+      config: config as VoiceProviderSettingsJsonValueV1,
+    };
+    migrated.add(providerId);
+  }
+}
+
 function hasOnlyKnownDefaultKeys(raw: unknown, defaultValue: unknown): boolean {
   if (!raw || typeof raw !== 'object') return true;
   if (Array.isArray(raw)) {
@@ -380,15 +516,20 @@ function hasOnlyKnownDefaultKeys(raw: unknown, defaultValue: unknown): boolean {
 
 function isCompleteUntouchedHostedDefault(raw: Record<string, unknown>): boolean {
   if (typeof raw.providerId !== 'string') return false;
-  const selectedOwner = providerSettingsCatalog.get(raw.providerId);
+  const selectedOwner = providerSettingsCatalog.get(
+    normalizePredecessorVoiceProviderIdV1(raw.providerId),
+  );
   if (!selectedOwner?.legacyDefaultSelection) return false;
   const adapters = readLegacyAdapters(raw);
   if (!adapters || !raw.ui || !raw.privacy) return false;
   if (!readLegacyVoiceSettingsMigrationSource(raw).hasCompleteBuiltInAdapterBlock) return false;
-  if (Object.keys(adapters).some((providerId) => !LEGACY_BUILT_IN_VOICE_ADAPTER_IDS.includes(
-    providerId as (typeof LEGACY_BUILT_IN_VOICE_ADAPTER_IDS)[number],
-  ))) return false;
-  return LEGACY_BUILT_IN_VOICE_ADAPTER_IDS.every((providerId) => {
+  const canonicalLegacyProviderIds = LEGACY_BUILT_IN_VOICE_ADAPTER_IDS.map(
+    normalizePredecessorVoiceProviderIdV1,
+  );
+  if (Object.keys(adapters).some((providerId) => !canonicalLegacyProviderIds.includes(providerId))) {
+    return false;
+  }
+  return canonicalLegacyProviderIds.every((providerId) => {
     const owner = providerSettingsCatalog.get(providerId);
     if (!owner) return false;
     const candidate = adapters[owner.providerId];
@@ -406,12 +547,15 @@ export const VoiceSettingsSchema = CanonicalVoiceSettingsSchema;
 export function readVoiceProviderSettingsConfig(
   settings: Pick<CanonicalVoiceSettings, 'providers'>,
   providerId: string,
-): unknown | null {
+): Readonly<Record<string, unknown>> | null {
   const owner = providerSettingsCatalog.get(providerId)
     ?? resolveExternalVoiceProviderSettingsOwner(providerId);
   const envelope = settings.providers?.[providerId];
   if (!owner || envelope?.schemaVersion !== owner.currentSchemaVersion) return null;
-  return owner.parseConfig(envelope.config);
+  const parsed = owner.parseConfig(envelope.config);
+  return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed as Readonly<Record<string, unknown>>
+    : null;
 }
 
 export function readLocalDirectVoiceSettings(settings: Pick<CanonicalVoiceSettings, 'providers'>): VoiceLocalDirectSettings {
@@ -496,7 +640,9 @@ export function voiceSettingsParse(
 
   if (raw.providerId === 'off') base.providerId = null;
   else {
-    const legacyProviderId = typeof raw.providerId === 'string' ? raw.providerId.trim() : raw.providerId;
+    const legacyProviderId = typeof raw.providerId === 'string'
+      ? normalizePredecessorVoiceProviderIdV1(raw.providerId.trim())
+      : raw.providerId;
     const providerId = VoiceProviderIdSchema.safeParse(legacyProviderId);
     if (providerId.success) base.providerId = providerId.data;
   }
@@ -522,6 +668,10 @@ export function voiceSettingsParse(
   base.providers = parseProviderEnvelopes(raw.providers);
   const legacyRootMigrations = new Map(reclaimLegacyProviderEnvelopes(base.providers));
   for (const [providerId, migration] of migrateLegacyProviderEnvelopes(raw, base.providers, recoveryCarrier)) {
+    if (!legacyRootMigrations.has(providerId)) legacyRootMigrations.set(providerId, migration);
+  }
+  migratePredecessorSpeechProviderSettings(raw, base);
+  for (const [providerId, migration] of reclaimLegacyProviderEnvelopes(base.providers)) {
     if (!legacyRootMigrations.has(providerId)) legacyRootMigrations.set(providerId, migration);
   }
 
@@ -631,4 +781,110 @@ export function voiceSettingsParse(
     delete (result as VoiceSettings & Record<string, unknown>)[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER];
   }
   return result;
+}
+
+function hasVoiceAnalyticsString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function bucketVoiceAnalyticsCount(value: number, mediumMax: number, largeMax: number): 'small' | 'medium' | 'large' {
+  if (value <= mediumMax) return 'small';
+  if (value <= largeMax) return 'medium';
+  return 'large';
+}
+
+function bucketVoiceAnalyticsTimeout(value: number): 'small' | 'medium' | 'large' {
+  return bucketVoiceAnalyticsCount(value, 10_000, 20_000);
+}
+
+function bucketVoiceAnalyticsEndpointing(value: number): 'tight' | 'balanced' | 'loose' {
+  if (value <= 500) return 'tight';
+  if (value <= 2_000) return 'balanced';
+  return 'loose';
+}
+
+function bucketVoiceAnalyticsTurnStreamTimeout(value: number | null): 'none' | 'small' | 'medium' | 'large' {
+  if (value == null) return 'none';
+  return bucketVoiceAnalyticsCount(value, 120_000, 300_000);
+}
+
+/**
+ * Safe Voice analytics projection. Parsing and provider-owned analytics remain at the canonical
+ * Voice settings owner; callers receive only approved scalar summaries.
+ */
+export function projectVoiceSettingsAnalytics(rawValue: unknown): Record<string, boolean | string> {
+  const value = voiceSettingsParse(rawValue);
+  const localDirect = readLocalDirectVoiceSettings(value);
+  const localConversation = readLocalConversationVoiceSettings(value);
+  const localAgent = localConversation.agent;
+  const defaultLocalConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+
+  return {
+    providerId: value.providerId ?? 'off',
+    uiScopeDefault: value.ui.scopeDefault,
+    uiSurfaceLocation: value.ui.surfaceLocation,
+    uiActivityFeedEnabled: value.ui.activityFeedEnabled,
+    uiActivityFeedAutoExpandOnStart: value.ui.activityFeedAutoExpandOnStart,
+    uiUpdatesActiveSession: value.ui.updates.activeSession,
+    uiUpdatesOtherSessions: value.ui.updates.otherSessions,
+    uiUpdatesSnippetsMaxMessagesBucket: bucketVoiceAnalyticsCount(value.ui.updates.snippetsMaxMessages, 3, 6),
+    uiUpdatesIncludeUserMessagesInSnippets: value.ui.updates.includeUserMessagesInSnippets,
+    uiUpdatesOtherSessionsSnippetsMode: value.ui.updates.otherSessionsSnippetsMode,
+
+    privacyShareSessionSummary: value.privacy.shareSessionSummary,
+    privacyShareRecentMessages: value.privacy.shareRecentMessages,
+    privacyRecentMessagesCountBucket: bucketVoiceAnalyticsCount(value.privacy.recentMessagesCount, 5, 10),
+    privacyShareToolNames: value.privacy.shareToolNames,
+    privacySharePermissionRequests: value.privacy.sharePermissionRequests,
+    privacyShareDeviceInventory: value.privacy.shareDeviceInventory,
+
+    assistantLanguageConfigured: hasVoiceAnalyticsString(value.assistantLanguage),
+    welcomeEnabled: value.welcome.enabled,
+    welcomeMode: value.welcome.mode,
+    welcomeTemplateConfigured: hasVoiceAnalyticsString(value.welcome.templateId),
+
+    ...providerSettingsCatalog.projectAnalytics(value.providers),
+
+    localDirectNetworkTimeoutBucket: bucketVoiceAnalyticsTimeout(localDirect.networkTimeoutMs),
+    localDirectHandsFreeEnabled: localDirect.handsFree.enabled,
+    localDirectHandsFreeSilenceBucket: bucketVoiceAnalyticsEndpointing(localDirect.handsFree.endpointing.silenceMs),
+    localDirectHandsFreeMinSpeechBucket: bucketVoiceAnalyticsEndpointing(localDirect.handsFree.endpointing.minSpeechMs),
+
+    localConversationConversationMode: localConversation.conversationMode,
+    localConversationNetworkTimeoutBucket: bucketVoiceAnalyticsTimeout(localConversation.networkTimeoutMs),
+    localConversationHandsFreeEnabled: localConversation.handsFree.enabled,
+    localConversationHandsFreeSilenceBucket: bucketVoiceAnalyticsEndpointing(localConversation.handsFree.endpointing.silenceMs),
+    localConversationHandsFreeMinSpeechBucket: bucketVoiceAnalyticsEndpointing(localConversation.handsFree.endpointing.minSpeechMs),
+    localConversationAgentAgentSource: localAgent.agentSource,
+    localConversationAgentMachineTargetMode: value.executionMachine.mode,
+    localConversationAgentFixedMachineConfigured: hasVoiceAnalyticsString(value.executionMachine.machineId),
+    localConversationAgentStayInVoiceHome: localAgent.stayInVoiceHome,
+    localConversationAgentTeleportEnabled: localAgent.teleportEnabled,
+    localConversationAgentRootSessionPolicy: localAgent.rootSessionPolicy,
+    localConversationAgentMaxWarmRootsBucket: bucketVoiceAnalyticsCount(localAgent.maxWarmRoots, 3, 5),
+    localConversationAgentCustomVoiceHomeConfigured:
+      localAgent.voiceHomeSubdirName !== defaultLocalConversation.agent.voiceHomeSubdirName,
+    localConversationAgentPermissionPolicy: localAgent.permissionIntent,
+    localConversationAgentIdleTtlBucket: bucketVoiceAnalyticsCount(localAgent.idleTtlSeconds, 1_800, 7_200),
+    localConversationAgentPrewarmOnConnect: localAgent.prewarmOnConnect,
+    localConversationAgentResumabilityMode: localAgent.resumabilityMode,
+    localConversationAgentProviderResumeFallbackToReplay: localAgent.providerResume.fallbackToReplay,
+    localConversationAgentReplayStrategy: localAgent.replay.strategy,
+    localConversationAgentReplayRecentMessagesBucket: bucketVoiceAnalyticsCount(localAgent.replay.recentMessagesCount, 16, 32),
+    localConversationAgentCommitIsolation: localAgent.commitIsolation,
+    localConversationAgentTranscriptPersistenceMode: localAgent.transcript.persistenceMode,
+    localConversationAgentChatModelSource: localAgent.chatModelSource,
+    localConversationAgentCustomChatModelConfigured: localAgent.chatModelId !== 'default',
+    localConversationAgentCommitModelSource: localAgent.commitModelSource,
+    localConversationAgentCustomCommitModelConfigured: localAgent.commitModelId !== 'default',
+    localConversationAgentProviderChatStatus: localAgent.providerChat?.status ?? 'none',
+    localConversationAgentVerbosity: localAgent.verbosity,
+    localConversationStreamingEnabled: localConversation.streaming.enabled,
+    localConversationStreamingTtsEnabled: localConversation.streaming.ttsEnabled,
+    localConversationStreamingTtsChunkCharsBucket: bucketVoiceAnalyticsCount(localConversation.streaming.ttsChunkChars, 200, 500),
+    localConversationStreamingTurnReadPollIntervalBucket: bucketVoiceAnalyticsCount(localConversation.streaming.turnReadPollIntervalMs, 50, 150),
+    localConversationStreamingTurnReadMaxEventsBucket: bucketVoiceAnalyticsCount(localConversation.streaming.turnReadMaxEvents, 64, 96),
+    localConversationStreamingTurnStreamTimeoutBucket:
+      bucketVoiceAnalyticsTurnStreamTimeout(localConversation.streaming.turnStreamTimeoutMs),
+  };
 }

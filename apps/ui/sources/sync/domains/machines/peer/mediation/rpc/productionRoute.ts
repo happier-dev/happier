@@ -40,12 +40,8 @@ import { storage } from '@/sync/domains/state/storage';
 
 import { resolvePeerLoopbackRouteAvailability } from '../loopback/resolvePeerLoopbackRouteAvailability';
 import type { PeerLoopbackRouteAvailabilityResult } from '../loopback/resolvePeerLoopbackRouteAvailability';
-import {
-    resolvePeerRouteSigningReadiness,
-} from '../identity/signingReadiness';
-import { resolvePeerRouteCallerProofNegotiation } from '../identity/proofNegotiation';
 import type { MachineRpcDirectRouteResolution } from './client';
-import { resolveMachineRpcPeerRouteDecision } from './routeDecision';
+import { resolveMachineRpcDirectRoutePreflight } from './directRoutePreflight';
 
 const MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS = 5_000;
 const MACHINE_RPC_DIRECT_GRANT_MAX_CALLS = 2;
@@ -79,7 +75,7 @@ function normalizeId(raw: unknown): string {
 function fallback(
     reasonCode: string,
     details?: Readonly<{ requiredCapability: string }>,
-): MachineRpcDirectRouteResolution {
+): Extract<MachineRpcDirectRouteResolution, { kind: 'fallback' }> {
     return {
         kind: 'fallback',
         receipt: PEER_MEDIATION_RECEIPTS.routeFallback,
@@ -373,45 +369,40 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
         serverId: server.serverId,
         timeoutMs: input.timeoutMs ?? MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS,
     }).catch(() => null);
-    const policyDecision = resolveMachineRpcPeerRouteDecision({
+    const policyPreflight = resolveMachineRpcDirectRoutePreflight({
         method: input.method,
         serverFeatures,
-        topologyAvailable: true,
-        grantStatus: 'valid',
     });
-    if (policyDecision.kind !== 'direct_allowed') {
-        return {
-            kind: 'fallback',
-            receipt: PEER_MEDIATION_RECEIPTS.routeFallback,
-            reasonCode: policyDecision.reasonCode,
-        };
-    }
-
+    if (policyPreflight.kind === 'fallback') return policyPreflight;
+    if (policyPreflight.kind !== 'credentials_required') return fallback('grant_invalid');
     const credentials = await TokenStorage.getCredentialsForServerUrl(server.serverUrl, {
         serverId: server.serverId,
     });
     if (!credentials) return fallback('grant_missing');
-    const signingReadiness = resolvePeerRouteSigningReadiness(credentials);
-    if (signingReadiness.status === 'unavailable') {
-        const preflight = resolvePeerRouteCallerProofNegotiation({ credentials, serverFeatures });
-        if (preflight.kind === 'unavailable') {
-            return fallback(preflight.reasonCode, preflight.requiredCapability
-                ? { requiredCapability: preflight.requiredCapability }
-                : undefined);
-        }
-        if (preflight.kind !== 'ephemeral_v2_endpoint_required') return fallback('grant_invalid');
-        const endpoint = readEndpointFromMachineState({
+    const identityPreflight = resolveMachineRpcDirectRoutePreflight({
+        method: input.method,
+        serverFeatures,
+        credentials,
+    });
+    if (identityPreflight.kind === 'fallback') return identityPreflight;
+    if (identityPreflight.kind !== 'endpoint_required') return fallback('grant_invalid');
+    const routePreflight = resolveMachineRpcDirectRoutePreflight({
+        method: input.method,
+        serverFeatures,
+        credentials,
+        endpoint: readEndpointFromMachineState({
             serverId: server.serverId,
             machineId: input.machineId,
-        });
-        const negotiation = resolvePeerRouteCallerProofNegotiation({ credentials, serverFeatures, endpoint });
-        if (negotiation.kind === 'unavailable') {
-            return fallback(negotiation.reasonCode, negotiation.requiredCapability
-                ? { requiredCapability: negotiation.requiredCapability }
-                : undefined);
-        }
-        if (negotiation.kind !== 'ephemeral_v2' || !endpoint) return fallback('grant_invalid');
+        }),
+    });
+    if (routePreflight.kind !== 'direct_eligible') {
+        return routePreflight.kind === 'fallback'
+            ? routePreflight
+            : fallback('topology_unavailable');
+    }
+    const endpoint = routePreflight.endpoint;
 
+    if (routePreflight.proofKind === 'ephemeral_v2') {
         const proofHandle = createEphemeralPeerRouteProofHandleV2({ randomBytes: getRandomBytes });
         try {
             const grant = await requestMachineRpcRouteGrantV2({
@@ -441,12 +432,6 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
             proofHandle.dispose();
         }
     }
-
-    const endpoint = readEndpointFromMachineState({
-        serverId: server.serverId,
-        machineId: input.machineId,
-    });
-    if (!endpoint) return fallback('topology_unavailable');
 
     const requestGrant = async () => await requestMachineRpcRouteGrant({
         server,

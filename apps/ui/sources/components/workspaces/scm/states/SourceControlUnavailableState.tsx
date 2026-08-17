@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function sanitizeDetails(details: string | null): string | null {
     if (!details) return null;
@@ -59,7 +59,7 @@ export function SourceControlUnavailableState(props: {
             title={t('common.error')}
             reason={t(bodyKey)}
             detail={details ?? undefined}
-            icon={<Octicons name="alert" size={42} color={theme.colors.text.secondary} />}
+            icon={<Icon name="warning" size={42} color={theme.colors.text.secondary} />}
             action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
         />
     );

@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+} from '@happier-dev/protocol';
 
 afterEach(async () => {
     vi.unstubAllGlobals();
@@ -81,7 +85,10 @@ describe('runtimeFetchWithServerReachability', () => {
     it('returns the response once reachability is online', async () => {
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '50';
 
-        const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const runtimeFetchMock = vi.fn(async (
+            input: RequestInfo | URL,
+            _init?: RequestInit,
+        ) => {
             const url = typeof input === 'string' ? input : String(input);
             if (url.endsWith('/health')) {
                 return new Response(null, { status: 200, headers: new Headers() });
@@ -97,6 +104,21 @@ describe('runtimeFetchWithServerReachability', () => {
             setRuntimeFetch: () => {},
         }));
 
+        const {
+            recordAccountStoredContentServerRequirements,
+            withAccountStoredContentCompatibilityRequestDeclaration,
+        } = await import(
+            '@/sync/http/accountStoredContentCompatibility'
+        );
+        recordAccountStoredContentServerRequirements({
+            serverUrl: 'https://api.example.test',
+            requirements: {
+                v: 1,
+                minimumProtocolVersion: 2,
+                currentProtocolVersion: 3,
+                declarationTransport: 'http-header-and-socket-auth-v1',
+            },
+        });
         const { runtimeFetchWithServerReachability } = await import('./serverReachabilityRuntimeFetch');
         const response = await runtimeFetchWithServerReachability({
             serverUrl: 'https://api.example.test',
@@ -106,13 +128,34 @@ describe('runtimeFetchWithServerReachability', () => {
                 method: 'GET',
                 headers: {
                     Authorization: 'Bearer token-a',
+                    'x-happier-account-stored-content-protocol': '1',
                 },
             },
         });
 
         expect(response.ok).toBe(true);
-        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).endsWith('/health'))).toBe(true);
+        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).endsWith('/v1/auth/ping'))).toBe(true);
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).endsWith('/v1/account/profile'))).toBe(true);
+        const requestCall = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input).endsWith('/v1/account/profile'));
+        expect(new Headers(requestCall?.[1]?.headers).get(
+            'x-happier-account-stored-content-protocol',
+        )).toBe(String(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION.protocolVersion));
+
+        await expect(runtimeFetchWithServerReachability({
+            serverUrl: 'https://api.example.test',
+            token: 'token-a',
+            url: 'https://api.example.test/v1/plugins/data/ui-query',
+            init: withAccountStoredContentCompatibilityRequestDeclaration({
+                method: 'POST',
+                headers: { Authorization: 'Bearer token-a' },
+            }, PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+        })).resolves.toMatchObject({ ok: true });
+        const dataRequestCall = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input).endsWith('/v1/plugins/data/ui-query'));
+        expect(new Headers(dataRequestCall?.[1]?.headers).get(
+            'x-happier-account-stored-content-protocol',
+        )).toBe('3');
     });
 
     it('uses the Bearer token from Authorization header for reachability probing when token param is null', async () => {
@@ -151,8 +194,9 @@ describe('runtimeFetchWithServerReachability', () => {
         });
 
         expect(response.ok).toBe(true);
-        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).endsWith('/health'))).toBe(true);
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).endsWith('/v1/auth/ping'))).toBe(true);
+        // The authenticated ping subsumes /health; an authenticated client must not pay for both round trips.
+        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).endsWith('/health'))).toBe(false);
     });
 
     it('marks the server offline when the main request fails', async () => {

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View, Platform, Pressable, StyleProp, ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
@@ -8,6 +7,7 @@ import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { t } from '@/text';
 import { TextInput } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export interface SearchHeaderProps {
@@ -94,8 +94,8 @@ export function SearchHeader({
             <View style={[styles.content, { maxWidth }]}>
                 <View style={styles.inputWrapper}>
                     {normalizeNodeForView(
-                        <Ionicons
-                            name="search-outline"
+                        <Icon
+                            name="magnifying-glass"
                             size={20}
                             color={theme.colors.text.secondary}
                             style={{ marginRight: 8 }}
@@ -122,8 +122,8 @@ export function SearchHeader({
                             accessibilityLabel={t('common.clearSearch')}
                         >
                             {normalizeNodeForView(
-                                <Ionicons
-                                    name="close-circle"
+                                <Icon
+                                    name="x-circle"
                                     size={20}
                                     color={theme.colors.text.secondary}
                                     style={styles.clearIcon}

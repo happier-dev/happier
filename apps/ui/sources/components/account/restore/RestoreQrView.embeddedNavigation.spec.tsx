@@ -34,7 +34,7 @@ const expoRouterMock = createExpoRouterMock({
 vi.mock('expo-router', () => expoRouterMock.module);
 
 const restoreQrViewState = vi.hoisted(() => ({
-    loginSpy: vi.fn(async () => {}),
+    loginSpy: vi.fn(async () => ({ kind: 'completed' as const })),
     authQRWaitSpy: vi.fn<(keypair: QRAuthKeyPair, onProgress?: (dots: number) => void, shouldCancel?: () => boolean) => Promise<AuthCredentials | null>>(async (
         _keypair,
         _onProgress,

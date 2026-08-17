@@ -49,7 +49,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
   it('does not create a generic shadow session for direct-media realtime providers', async () => {
     const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationBindingResolution');
     const resolution = await ensureVoiceConversationBindingResolution({
-      providerId: 'realtime_elevenlabs',
+      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: '__voice_agent__',
       requestedTargetSessionId: 's1',
       settings: {},
@@ -222,7 +222,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
     });
   });
 
-  it('binds local openai-compatible agent sessions to the target session root when a target session exists', async () => {
+  it('keeps Provider-backed Chat on the daemon-owned native transcript binding', async () => {
     ensureVoiceConversationSessionForSessionRoot.mockResolvedValue('voice-root-s2');
 
     const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationBindingResolution');
@@ -235,14 +235,23 @@ describe('ensureVoiceConversationBindingResolution', () => {
           providers: {
             local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',
-              agent: { backend: 'openai_compat' },
+              agent: {
+                agentSource: 'agent',
+                agentId: 'opencode',
+                providerChat: {
+                  status: 'configured',
+                  chat: { agentTargetKey: 'backend:opencode', providerConnectionId: 'provider-chat', modelId: 'chat' },
+                  commit: { agentTargetKey: 'backend:opencode', providerConnectionId: 'provider-chat', modelId: 'commit' },
+                  configuration: { temperature: null },
+                },
+              },
             } },
           },
         },
       },
     });
 
-    expect(resolution?.transcriptMode).toBe('synthetic');
+    expect(resolution?.transcriptMode).toBe('native_session');
     expect(resolution?.conversationSessionId).toBe('voice-root-s2');
     expect(ensureVoiceConversationSessionForSessionRoot).toHaveBeenCalledWith({ sessionId: 's2' });
     expect(ensureVoiceConversationSessionForVoiceHome).not.toHaveBeenCalled();

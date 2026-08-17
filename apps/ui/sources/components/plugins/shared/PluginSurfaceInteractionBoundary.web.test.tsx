@@ -4,6 +4,31 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
 describe('PluginSurfaceInteractionBoundary.web', () => {
+    it('keeps an enabled but presentation-ineligible snapshot inert without an offline announcement', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.web');
+        const screen = await renderScreen(
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-web-presentation-ineligible"
+                snapshotTitle="Build summary"
+                enabled
+                focusEligible={false}
+            >
+                <button data-testid="plugin-web-presentation-ineligible-action">Run build</button>
+            </PluginSurfaceInteractionBoundary>,
+        );
+
+        expect(screen.findByTestId('plugin-web-presentation-ineligible-action')).toBeTruthy();
+        expect(screen.findByTestId('plugin-surface-interaction-boundary:surface-web-presentation-ineligible')?.props)
+            .toMatchObject({ 'data-plugin-interaction-state': 'enabled' });
+        expect(screen.findByTestId('plugin-surface-snapshot:surface-web-presentation-ineligible')?.props)
+            .toMatchObject({
+                inert: true,
+                'aria-hidden': true,
+                style: expect.objectContaining({ pointerEvents: 'none' }),
+            });
+        expect(screen.findByTestId('plugin-surface-offline-summary:surface-web-presentation-ineligible')).toBeNull();
+    });
+
     it('blurs a focused descendant offline and returns focus after the same snapshot is re-enabled', async () => {
         const previousDocument = (globalThis as { document?: unknown }).document;
         const previousHTMLElement = (globalThis as { HTMLElement?: unknown }).HTMLElement;

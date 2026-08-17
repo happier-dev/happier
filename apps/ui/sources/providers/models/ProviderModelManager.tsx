@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import {
     ProviderConnectionIdSchema,
     serializeModelVisibilityRefV1,
@@ -12,6 +12,7 @@ import type {
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import {
     SelectionListScreen,
     type SelectionListOption,
@@ -66,10 +67,11 @@ function ModelVisibilityAccessory(props: Readonly<{
             {props.onCancelLoad ? (
                 <IconButton
                     testID="provider-model-manager.cancel-load"
-                    iconName="close-circle-outline"
+                    iconName="x-circle"
                     accessibilityLabel={actionLabel(t('settingsProviders.models.cancelLoad'))}
                     tooltip={t('settingsProviders.models.cancelLoad')}
-                    size={44}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={6}
                     variant="plain"
                     onPress={props.onCancelLoad}
                 />
@@ -77,10 +79,11 @@ function ModelVisibilityAccessory(props: Readonly<{
             {props.onLoad ? (
                 <IconButton
                     testID="provider-model-manager.load"
-                    iconName="cloud-download-outline"
+                    iconName="cloud-arrow-down"
                     accessibilityLabel={actionLabel(t('settingsProviders.models.load'))}
                     tooltip={t('settingsProviders.models.load')}
-                    size={44}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={6}
                     variant="plain"
                     disabled={props.loading}
                     onPress={props.onLoad}
@@ -89,10 +92,11 @@ function ModelVisibilityAccessory(props: Readonly<{
             {props.onShowOnly ? (
                 <IconButton
                     testID="provider-model-manager.show-only"
-                    iconName="ellipsis-horizontal"
+                    iconName="dots-three"
                     accessibilityLabel={actionLabel(t('settingsProviders.models.showOnly'))}
                     tooltip={t('settingsProviders.models.showOnly')}
-                    size={44}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={6}
                     variant="plain"
                     onPress={props.onShowOnly}
                 />
@@ -100,10 +104,11 @@ function ModelVisibilityAccessory(props: Readonly<{
             {props.onRemove ? (
                 <IconButton
                     testID="provider-model-manager.remove"
-                    iconName="trash-outline"
+                    iconName="trash"
                     accessibilityLabel={actionLabel(t('settingsProviders.models.remove'))}
                     tooltip={t('settingsProviders.models.remove')}
-                    size={44}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={6}
                     variant="plain"
                     tone="danger"
                     onPress={props.onRemove}
@@ -150,10 +155,11 @@ function ProviderModelBulkActions(props: Readonly<{
             {props.onShowAll ? (
                 <IconButton
                     testID="provider-model-manager.show-all"
-                    iconName="eye-outline"
+                    iconName="eye"
                     accessibilityLabel={t('settingsProviders.models.showAll')}
                     tooltip={t('settingsProviders.models.showAll')}
-                    size={44}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={4}
                     variant="plain"
                     onPress={props.onShowAll}
                 />
@@ -161,10 +167,11 @@ function ProviderModelBulkActions(props: Readonly<{
             {props.onHideAll ? (
                 <IconButton
                     testID="provider-model-manager.hide-all"
-                    iconName="eye-off-outline"
+                    iconName="eye-slash"
                     accessibilityLabel={t('settingsProviders.models.hideAll')}
                     tooltip={t('settingsProviders.models.hideAll')}
-                    size={44}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={4}
                     variant="plain"
                     onPress={props.onHideAll}
                 />
@@ -172,10 +179,11 @@ function ProviderModelBulkActions(props: Readonly<{
             {props.onReset ? (
                 <IconButton
                     testID="provider-model-manager.reset"
-                    iconName="refresh-outline"
+                    iconName="arrow-clockwise"
                     accessibilityLabel={t('settingsProviders.models.resetVisibility')}
                     tooltip={t('settingsProviders.models.resetVisibility')}
-                    size={44}
+                    minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+                    interactiveTargetGapPx={4}
                     variant="plain"
                     onPress={props.onReset}
                 />

@@ -19,12 +19,16 @@ export function buildDemoServerFeatures(): FeaturesResponse {
                 usageLimitRecovery: { enabled: false },
             },
             // Connected accounts + pools power the A12 subscriptions/accounts dream
-            // beat. With zero connected profiles seeded this only surfaces the real
-            // service catalog (no quota badges leak into the session surfaces), so
-            // the blast radius stays inside the connected-services screen.
+            // beat: the seeded accounts and pools render the real screen instead of
+            // its empty state, and the blast radius stays inside it.
+            //
+            // Quota meters stay off. Their snapshots are fetched per credential
+            // scope, and the pre-auth journey has no credentials, so an enabled
+            // quota surface can only render an empty "no usage data" card directly
+            // under a headline about usage — worse than not showing it at all.
             connectedServices: {
                 enabled: true,
-                quotas: { enabled: true },
+                quotas: { enabled: false },
                 accountGroups: { enabled: true },
             },
         },

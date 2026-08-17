@@ -38,11 +38,19 @@ vi.mock('@/voice/modelPacks/formatBuildLabel', () => ({
 }));
 
 function createHarness(
-  useHook: (props: { packId: string; manifestUrl: string | null; networkTimeoutMs: number }) => { prepareModel: () => Promise<void> },
+  useHook: (props: { packId: string; manifestUrl: string | null; networkTimeoutMs: number }) => {
+    prepareModel: () => Promise<void>;
+    cancelPrepare: () => void;
+    modelStatus: string;
+  },
 ) {
   return function Harness(props: { packId: string; manifestUrl: string | null; networkTimeoutMs: number }) {
     const state = useHook(props);
-    return React.createElement('Harness', { onPrepare: state.prepareModel });
+    return React.createElement('Harness', {
+      onPrepare: state.prepareModel,
+      onCancel: state.cancelPrepare,
+      modelStatus: state.modelStatus,
+    });
   };
 }
 
@@ -71,5 +79,35 @@ describe('useLocalNeuralModelPackState (native)', () => {
 
     expect(modalAlertSpy).toHaveBeenCalled();
     expect(String(modalAlertSpy.mock.calls[0]?.[1] ?? '')).toContain('kokoro_native_module_unavailable');
+  });
+
+  it('settles a cancelled download back to idle instead of pinning downloading', async () => {
+    prepareKokoroTtsSpy.mockImplementationOnce(({ signal }: { signal: AbortSignal }) => (
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      })
+    ));
+
+    const { useLocalNeuralModelPackState } = await import('./useLocalNeuralModelPackState.native');
+    const Harness = createHarness(useLocalNeuralModelPackState);
+    const rendered = await renderScreen(React.createElement(Harness, {
+      packId: 'dummy-pack',
+      manifestUrl: null,
+      networkTimeoutMs: 1000,
+    }));
+    await act(async () => {});
+
+    await act(async () => {
+      void invokeTestInstanceHandler(rendered.tree.findByType('Harness'), 'onPrepare');
+    });
+    expect(rendered.tree.findByType('Harness').props.modelStatus).toBe('downloading');
+
+    await act(async () => {
+      invokeTestInstanceHandler(rendered.tree.findByType('Harness'), 'onCancel');
+      await Promise.resolve();
+    });
+
+    expect(rendered.tree.findByType('Harness').props.modelStatus).toBe('idle');
+    expect(modalAlertSpy).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
+import { HappierPressable, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Platform, Pressable, StyleProp, TextStyle, View, ViewStyle } from 'react-native';
+import { Platform, StyleProp, TextStyle, View } from 'react-native';
 import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -34,6 +35,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 8,
         borderRadius: 9999,
     },
+    // Applied only when a leading mark is present, so a title-only button keeps
+    // the exact single-child layout it has always had.
+    contentContainerWithLeading: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    leadingSlot: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     text: {
         ...Typography.default('semiBold'),
         fontWeight: '600',
@@ -45,7 +56,15 @@ export const RoundButton = React.memo((props: {
     size?: RoundButtonSize,
     display?: RoundButtonDisplay,
     title?: any,
-    style?: StyleProp<ViewStyle>,
+    /**
+     * A mark drawn before the title, inside the same fill.
+     *
+     * The button still hugs its content — the mark widens it rather than sitting in
+     * a fixed box — so a logo-and-label button is this primitive with one more
+     * child, not a second pill implementation beside it.
+     */
+    leading?: React.ReactNode,
+    style?: Exclude<HappierPressableProps['style'], (state: never) => unknown>,
     textStyle?: StyleProp<TextStyle>,
     disabled?: boolean,
     loading?: boolean,
@@ -56,23 +75,19 @@ export const RoundButton = React.memo((props: {
 }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const [loading, setLoading] = React.useState(false);
-    const doLoading = props.loading !== undefined ? props.loading : loading;
+    /**
+     * `onPress` wins and stays synchronous, exactly as before: only the `action`
+     * prop opts into the pending lifecycle. Returning the action's promise is
+     * what hands that lifecycle to the shared owner — this component used to run
+     * its own `setLoading` around the same await, with no guard against a second
+     * press landing in the same tick.
+     */
     const doAction = React.useCallback(() => {
         if (props.onPress) {
             props.onPress();
-            return;
+            return undefined;
         }
-        if (props.action) {
-            setLoading(true);
-            (async () => {
-                try {
-                    await props.action!();
-                } finally {
-                    setLoading(false);
-                }
-            })();
-        }
+        return props.action?.();
     }, [props.onPress, props.action]);
     const displays: { [key in RoundButtonDisplay]: {
         textColor: string,
@@ -97,59 +112,70 @@ export const RoundButton = React.memo((props: {
     const display = displays[props.display || 'default'];
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
-            accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
-            disabled={doLoading || props.disabled}
+            disabled={props.disabled}
+            busy={props.loading}
             hitSlop={size.hitSlop}
-            style={(p) => ([
+            style={(state) => ([
                 {
                     borderWidth: 1,
                     borderRadius: 10,
                     backgroundColor: display.backgroundColor,
                     borderColor: display.borderColor,
-                    opacity: props.disabled ? 0.35 : (p.pressed ? 0.9 : 1),
+                    // Declared-disabled dims; merely pending does not. A button
+                    // that fades the moment it is pressed reads as unavailable
+                    // rather than working.
+                    opacity: props.disabled ? 0.35 : (state.pressed ? 0.9 : 1),
                     overflow: 'hidden',
                 },
                 props.style])}
             onPress={doAction}
         >
-            <View 
-                style={[
-                    styles.contentContainer
-                ]}
-            >
-                {display.gradient ? (
-                    <GradientSurface
-                        fallbackColor={display.backgroundColor}
-                        gradient={display.gradient}
-                        borderRadius={10}
-                        style={StyleSheet.absoluteFillObject}
-                    />
-                ) : null}
-                {doLoading && (
-                    <View style={styles.loadingContainer}>
-                        <ActivitySpinner color={display.textColor} size='small' />
-                    </View>
-                )}
-                <Text 
+            {(state) => (
+                <View
                     style={[
-                        iOSUIKit.title3, 
-                        styles.text,
-                        { 
-                            marginTop: size.pad, 
-                            opacity: doLoading ? 0 : 1, 
-                            color: display.textColor, 
-                            fontSize: size.fontSize, 
-                        }, 
-                        props.textStyle
-                    ]} 
-                    numberOfLines={1}
+                        styles.contentContainer,
+                        props.leading ? styles.contentContainerWithLeading : null,
+                    ]}
                 >
-                    {props.title}
-                </Text>
-            </View>
-        </Pressable>
+                    {display.gradient ? (
+                        <GradientSurface
+                            fallbackColor={display.backgroundColor}
+                            gradient={display.gradient}
+                            borderRadius={10}
+                            style={StyleSheet.absoluteFillObject}
+                        />
+                    ) : null}
+                    {state.busy && (
+                        <View style={styles.loadingContainer}>
+                            <ActivitySpinner color={display.textColor} size='small' />
+                        </View>
+                    )}
+                    {props.leading ? (
+                        <View style={[styles.leadingSlot, { opacity: state.busy ? 0 : 1 }]}>
+                            {props.leading}
+                        </View>
+                    ) : null}
+                    <Text
+                        style={[
+                            iOSUIKit.title3,
+                            styles.text,
+                            {
+                                marginTop: size.pad,
+                                opacity: state.busy ? 0 : 1,
+                                color: display.textColor,
+                                fontSize: size.fontSize,
+                            },
+                            props.textStyle
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {props.title}
+                    </Text>
+                </View>
+            )}
+        </HappierPressable>
     )
 });

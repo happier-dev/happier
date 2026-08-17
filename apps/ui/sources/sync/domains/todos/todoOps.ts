@@ -1,18 +1,42 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
+import {
+    createAccountScopedCryptoMaterialSnapshotV1,
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+} from '@happier-dev/protocol';
+import { decodeBase64 } from '@/encryption/base64';
 import { storage } from '@/sync/domains/state/storage';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import {
     kvGet,
-    kvBulkGet,
     kvList,
     kvMutate,
     kvSet,
-    kvDelete,
-    KvItem,
-    KvMutation
+    type KvMutation,
 } from '@/sync/api/account/apiKv';
 import { randomUUID } from '@/platform/randomUUID';
 import { AsyncLock } from '@/utils/system/lock';
+import {
+    fetchAccountEncryptionCurrentness,
+} from '@/sync/api/account/apiAccountEncryptionMode';
+import {
+    requireCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
+import {
+    decodeTodoStoredContent,
+    encodeTodoStoredContent,
+    isTodoStoredContentUnavailableError,
+    TodoStoredContentUnavailableError,
+    TODO_INDEX_KEY,
+    TODO_PREFIX,
+    type TodoIndex,
+    type TodoItem,
+} from './todoStoredContent';
+import {
+    resolveAccountScopedCryptoMaterialFromCredentials,
+} from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+
+export type { TodoIndex, TodoItem } from './todoStoredContent';
 
 //
 // Lock Instance
@@ -23,26 +47,6 @@ const todoLock = new AsyncLock();
 //
 // Types
 //
-
-export interface TodoItem {
-    id: string;
-    title: string;
-    done: boolean;
-    createdAt: number;
-    updatedAt: number;
-    completedAt?: number;  // Timestamp when marked as done
-    linkedSessions?: {
-        [sessionId: string]: {
-            title: string;      // Display title (e.g., "Clarify: Task Name")
-            linkedAt: number;   // Unix timestamp when linked
-        }
-    };
-}
-
-export interface TodoIndex {
-    undoneOrder: string[];
-    completedOrder: string[];  // Ordered by completion time (newest first)
-}
 
 export interface TodoState {
     todos: Record<string, TodoItem>;
@@ -55,25 +59,171 @@ export interface TodoState {
 // Constants
 //
 
-const TODO_PREFIX = 'todo.';
-const TODO_INDEX_KEY = 'todo.index';
-
-//
-// Helper Functions
-//
-
 function getTodoKey(id: string): string {
     return `${TODO_PREFIX}${id}`;
 }
 
-async function encryptTodoData(data: any): Promise<string> {
-    const { encryption } = getSyncSingleton();
-    return await encryption.encryptRaw(data);
+type TodoRawDecryption = Readonly<{
+    decryptRaw: (value: string) => Promise<unknown>;
+}>;
+
+type TodoRawEncryption = TodoRawDecryption & Readonly<{
+    encryptRaw: (value: unknown) => Promise<string>;
+}>;
+
+export type TodoAccountStorageContext = Readonly<{
+    mode: 'plain' | 'e2ee';
+    encryption: TodoRawDecryption | null;
+}>;
+
+function readAccountEncryption(): TodoRawEncryption | null {
+    const sync = getSyncSingleton() as Readonly<{
+        encryption?: {
+            encryptRaw: (value: unknown) => Promise<string>;
+            decryptRaw: (value: string) => Promise<unknown>;
+        } | null;
+    }>;
+    return sync.encryption ?? null;
 }
 
-async function decryptTodoData(encrypted: string): Promise<any> {
-    const { encryption } = getSyncSingleton();
-    return await encryption.decryptRaw(encrypted);
+function isTodoRawEncryption(
+    value: TodoRawDecryption | null,
+): value is TodoRawEncryption {
+    return value !== null && 'encryptRaw' in value;
+}
+
+export async function resolveTodoAccountStorageContext(
+    credentials: AuthCredentials,
+    options: Readonly<{
+        encryption?: TodoAccountStorageContext['encryption'];
+    }> = {},
+): Promise<TodoAccountStorageContext> {
+    let currentness: Awaited<
+        ReturnType<typeof fetchAccountEncryptionCurrentness>
+    >;
+    try {
+        currentness = await fetchAccountEncryptionCurrentness(credentials);
+    } catch (error) {
+        throw new TodoStoredContentUnavailableError(
+            TODO_INDEX_KEY,
+            'account_currentness_unavailable',
+            error,
+        );
+    }
+    const encryption = options.encryption === undefined
+        ? readAccountEncryption()
+        : options.encryption;
+    if (currentness.mode === 'plain') {
+        return { mode: 'plain', encryption };
+    }
+
+    if (!encryption || !currentness.contentKeyFingerprint) {
+        throw new TodoStoredContentUnavailableError(
+            TODO_INDEX_KEY,
+            'account_currentness_unavailable',
+        );
+    }
+    try {
+        const material = resolveAccountScopedCryptoMaterialFromCredentials(
+            credentials,
+        );
+        const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
+            accountEncryptionMode: 'e2ee',
+            material,
+            ...(isDataKeyAuthCredentials(credentials)
+                ? {
+                    dataKeyPublicKey: decodeBase64(
+                        credentials.encryption.publicKey,
+                        'base64',
+                    ),
+                }
+                : {}),
+        });
+        if (
+            convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                snapshot.contentPublicKeyFingerprint,
+            )
+                !== currentness.contentKeyFingerprint
+        ) {
+            throw new Error('Account content-key fingerprint mismatch');
+        }
+    } catch (error) {
+        throw new TodoStoredContentUnavailableError(
+            TODO_INDEX_KEY,
+            'account_currentness_unavailable',
+            error,
+        );
+    }
+    return { mode: 'e2ee', encryption };
+}
+
+async function createTodoDataEncoder(
+    context: TodoAccountStorageContext,
+): Promise<(key: string, data: unknown) => Promise<string>> {
+    if (context.mode === 'plain') {
+        await requireCurrentAccountStoredContentServerCompatibility();
+    }
+    const encryption = isTodoRawEncryption(context.encryption)
+        ? context.encryption
+        : null;
+    return async (key, data) =>
+        await encodeTodoStoredContent({
+            key,
+            mode: context.mode,
+            value: data,
+            encryption,
+        });
+}
+
+async function decryptTodoIndex(
+    encoded: string,
+    context: TodoAccountStorageContext,
+): Promise<TodoIndex> {
+    const content = await decodeTodoStoredContent({
+        key: TODO_INDEX_KEY,
+        encoded,
+        expectedMode: context.mode,
+        encryption: context.encryption,
+    });
+    if (content.kind !== 'index') {
+        throw new Error('Todo index codec returned an item');
+    }
+    return content.value;
+}
+
+async function decryptTodoItem(
+    key: string,
+    encoded: string,
+    context: TodoAccountStorageContext,
+): Promise<TodoItem> {
+    const content = await decodeTodoStoredContent({
+        key,
+        encoded,
+        expectedMode: context.mode,
+        encryption: context.encryption,
+    });
+    if (content.kind !== 'item') {
+        throw new Error('Todo item codec returned an index');
+    }
+    return content.value;
+}
+
+function handleTodoMutationFailure(
+    error: unknown,
+    message: string,
+    priorState: TodoState,
+): void {
+    const code = error && typeof error === 'object'
+        ? (error as { code?: unknown }).code
+        : null;
+    if (
+        isTodoStoredContentUnavailableError(error)
+        || code === 'client-upgrade-required'
+    ) {
+        storage.getState().applyTodos(priorState);
+        throw error;
+    }
+    console.error(message, error);
 }
 
 //
@@ -87,6 +237,7 @@ export async function fetchTodos(
     credentials: AuthCredentials,
     opts: Readonly<{ retry?: 'default' | 'none' }> = {},
 ): Promise<TodoState> {
+    const context = await resolveTodoAccountStorageContext(credentials);
     // Fetch all KV items with todo prefix
     const response = await kvList(credentials, {
         prefix: TODO_PREFIX,
@@ -105,23 +256,17 @@ export async function fetchTodos(
     for (const item of response.items) {
         state.versions[item.key] = item.version;
 
-        try {
-            const decrypted = await decryptTodoData(item.value);
-
-            if (item.key === TODO_INDEX_KEY) {
-                // Handle index - map completedOrder to doneOrder for storage
-                const index = decrypted as TodoIndex;
-                state.undoneOrder = index.undoneOrder || [];
-                state.doneOrder = index.completedOrder || [];  // Map completedOrder to doneOrder
-            } else if (item.key.startsWith(TODO_PREFIX)) {
-                // Handle todo item
-                const todoId = item.key.substring(TODO_PREFIX.length);
-                if (todoId && todoId !== 'index') {
-                    state.todos[todoId] = decrypted as TodoItem;
-                }
-            }
-        } catch (error) {
-            console.error(`Failed to decrypt todo item ${item.key}:`, error);
+        const content = await decodeTodoStoredContent({
+            key: item.key,
+            encoded: item.value,
+            expectedMode: context.mode,
+            encryption: context.encryption,
+        });
+        if (content.kind === 'index') {
+            state.undoneOrder = content.value.undoneOrder;
+            state.doneOrder = content.value.completedOrder;
+        } else {
+            state.todos[content.todoId] = content.value;
         }
     }
 
@@ -153,6 +298,9 @@ export async function initializeTodoSync(credentials: AuthCredentials): Promise<
         const todoState = await fetchTodos(credentials);
         storage.getState().applyTodos(todoState);
     } catch (error) {
+        if (isTodoStoredContentUnavailableError(error)) {
+            throw error;
+        }
         console.error('Failed to initialize todo sync:', error);
         // Initialize with empty state on error
         storage.getState().applyTodos({
@@ -189,12 +337,13 @@ export async function addTodo(
 
     // Get current state
     const currentState = storage.getState();
-    const { todos, undoneOrder, doneOrder, versions } = currentState.todoState || {
+    const priorState = currentState.todoState || {
         todos: {},
         undoneOrder: [],
         doneOrder: [],
         versions: {}
     };
+    const { todos, undoneOrder, doneOrder, versions } = priorState;
 
     // Apply optimistic update immediately
     const optimisticUndoneOrder = [...undoneOrder, id];
@@ -208,6 +357,7 @@ export async function addTodo(
     // Sync to server inside lock
     await todoLock.inLock(async () => {
         try {
+            const context = await resolveTodoAccountStorageContext(credentials);
             // Fetch current index from backend
             const indexResponse = await kvGet(credentials, TODO_INDEX_KEY);
             let currentIndex: TodoIndex = { undoneOrder: [], completedOrder: [] };
@@ -215,11 +365,7 @@ export async function addTodo(
 
             if (indexResponse) {
                 indexVersion = indexResponse.version;
-                try {
-                    currentIndex = await decryptTodoData(indexResponse.value) as TodoIndex;
-                } catch (err) {
-                    console.error('Failed to decrypt server index', err);
-                }
+                currentIndex = await decryptTodoIndex(indexResponse.value, context);
             }
 
             // Merge our new todo into the server's index
@@ -231,15 +377,16 @@ export async function addTodo(
             };
 
             // Write both todo and updated index
+            const encodeTodoData = await createTodoDataEncoder(context);
             const mutations: KvMutation[] = [
                 {
                     key: getTodoKey(id),
-                    value: await encryptTodoData(newTodo),
+                    value: await encodeTodoData(getTodoKey(id), newTodo),
                     version: -1  // New key
                 },
                 {
                     key: TODO_INDEX_KEY,
-                    value: await encryptTodoData(mergedIndex),
+                    value: await encodeTodoData(TODO_INDEX_KEY, mergedIndex),
                     version: indexVersion
                 }
             ];
@@ -265,8 +412,7 @@ export async function addTodo(
                 await initializeTodoSync(credentials);
             }
         } catch (error) {
-            console.error('Failed to sync new todo:', error);
-            // Keep optimistic update even on error
+            handleTodoMutationFailure(error, 'Failed to sync new todo:', priorState);
         }
     });
 
@@ -282,12 +428,13 @@ export async function updateTodoTitle(
     title: string
 ): Promise<void> {
     const currentState = storage.getState();
-    const { todos, undoneOrder, doneOrder, versions } = currentState.todoState || {
+    const priorState = currentState.todoState || {
         todos: {},
         undoneOrder: [],
         doneOrder: [],
         versions: {}
     };
+    const { todos, undoneOrder, doneOrder, versions } = priorState;
 
     const todo = todos[id];
     if (!todo) {
@@ -312,13 +459,15 @@ export async function updateTodoTitle(
     // Sync to server inside lock
     await todoLock.inLock(async () => {
         try {
+            const context = await resolveTodoAccountStorageContext(credentials);
             // Fetch current todo from backend with version
             const todoKey = getTodoKey(id);
             const todoResponse = await kvGet(credentials, todoKey);
 
             if (!todoResponse) {
                 // Todo doesn't exist on backend, create it
-                const encrypted = await encryptTodoData(updatedTodo);
+                const encodeTodoData = await createTodoDataEncoder(context);
+                const encrypted = await encodeTodoData(todoKey, updatedTodo);
                 const newVersion = await kvSet(credentials, todoKey, encrypted, -1);
 
                 // Update version
@@ -333,13 +482,7 @@ export async function updateTodoTitle(
                 });
             } else {
                 // Merge with server version - only update if title actually changed
-                let serverTodo: TodoItem;
-                try {
-                    serverTodo = await decryptTodoData(todoResponse.value) as TodoItem;
-                } catch (err) {
-                    console.error('Failed to decrypt server todo', err);
-                    serverTodo = updatedTodo; // Use our version as fallback
-                }
+                const serverTodo = await decryptTodoItem(todoKey, todoResponse.value, context);
 
                 // Merge: keep server data but update title and timestamp
                 const mergedTodo: TodoItem = {
@@ -350,7 +493,8 @@ export async function updateTodoTitle(
 
                 // Only write if something changed
                 if (serverTodo.title !== title) {
-                    const encrypted = await encryptTodoData(mergedTodo);
+                    const encodeTodoData = await createTodoDataEncoder(context);
+                    const encrypted = await encodeTodoData(todoKey, mergedTodo);
                     const newVersion = await kvSet(credentials, todoKey, encrypted, todoResponse.version);
 
                     // Update version
@@ -377,8 +521,7 @@ export async function updateTodoTitle(
                 }
             }
         } catch (error) {
-            console.error('Failed to update todo title:', error);
-            // Keep optimistic update even on error
+            handleTodoMutationFailure(error, 'Failed to update todo title:', priorState);
         }
     });
 }
@@ -392,12 +535,13 @@ export async function toggleTodo(
     id: string
 ): Promise<void> {
     const currentState = storage.getState();
-    const { todos, undoneOrder, doneOrder, versions } = currentState.todoState || {
+    const priorState = currentState.todoState || {
         todos: {},
         undoneOrder: [],
         doneOrder: [],
         versions: {}
     };
+    const { todos, undoneOrder, doneOrder, versions } = priorState;
 
     const todo = todos[id];
     if (!todo) {
@@ -438,6 +582,7 @@ export async function toggleTodo(
     // Sync to server inside lock
     await todoLock.inLock(async () => {
         try {
+            const context = await resolveTodoAccountStorageContext(credentials);
             // Fetch current todo and index from backend
             const todoKey = getTodoKey(id);
             const [todoResponse, indexResponse] = await Promise.all([
@@ -451,18 +596,13 @@ export async function toggleTodo(
 
             if (todoResponse) {
                 todoVersion = todoResponse.version;
-                try {
-                    const existingTodo = await decryptTodoData(todoResponse.value) as TodoItem;
-                    // Merge: keep server data but update done status and timestamps
-                    serverTodo = {
-                        ...existingTodo,
-                        done: updatedTodo.done,
-                        updatedAt: now,
-                        completedAt: updatedTodo.done ? now : undefined
-                    };
-                } catch (err) {
-                    console.error('Failed to decrypt server todo', err);
-                }
+                const existingTodo = await decryptTodoItem(todoKey, todoResponse.value, context);
+                serverTodo = {
+                    ...existingTodo,
+                    done: updatedTodo.done,
+                    updatedAt: now,
+                    completedAt: updatedTodo.done ? now : undefined
+                };
             }
 
             // Prepare index for backend
@@ -471,11 +611,7 @@ export async function toggleTodo(
 
             if (indexResponse) {
                 indexVersion = indexResponse.version;
-                try {
-                    currentIndex = await decryptTodoData(indexResponse.value) as TodoIndex;
-                } catch (err) {
-                    console.error('Failed to decrypt server index', err);
-                }
+                currentIndex = await decryptTodoIndex(indexResponse.value, context);
             }
 
             // Update index based on new done status
@@ -496,15 +632,16 @@ export async function toggleTodo(
             };
 
             // Write both todo and index
+            const encodeTodoData = await createTodoDataEncoder(context);
             const mutations: KvMutation[] = [
                 {
                     key: todoKey,
-                    value: await encryptTodoData(serverTodo),
+                    value: await encodeTodoData(todoKey, serverTodo),
                     version: todoVersion
                 },
                 {
                     key: TODO_INDEX_KEY,
-                    value: await encryptTodoData(mergedIndex),
+                    value: await encodeTodoData(TODO_INDEX_KEY, mergedIndex),
                     version: indexVersion
                 }
             ];
@@ -530,8 +667,7 @@ export async function toggleTodo(
                 await initializeTodoSync(credentials);
             }
         } catch (error) {
-            console.error('Failed to toggle todo:', error);
-            // Keep optimistic update even on error
+            handleTodoMutationFailure(error, 'Failed to toggle todo:', priorState);
         }
     });
 }
@@ -550,12 +686,13 @@ export async function updateTodoLinkedSessions(
     }
 
     const currentState = storage.getState();
-    const { todos, undoneOrder, doneOrder, versions } = currentState.todoState || {
+    const priorState = currentState.todoState || {
         todos: {},
         undoneOrder: [],
         doneOrder: [],
         versions: {}
     };
+    const { todos, undoneOrder, doneOrder, versions } = priorState;
 
     const todo = todos[taskId];
     if (!todo) {
@@ -584,13 +721,22 @@ export async function updateTodoLinkedSessions(
                 console.error('No credentials available for sync');
                 return;
             }
+            const context = await resolveTodoAccountStorageContext(
+                auth.credentials,
+            );
 
             const todoKey = getTodoKey(taskId);
             const todoResponse = await kvGet(auth.credentials, todoKey);
 
             if (todoResponse) {
-                // Update existing todo
-                const encrypted = await encryptTodoData(updatedTodo);
+                const serverTodo = await decryptTodoItem(todoKey, todoResponse.value, context);
+                const mergedTodo: TodoItem = {
+                    ...serverTodo,
+                    linkedSessions,
+                    updatedAt: updatedTodo.updatedAt,
+                };
+                const encodeTodoData = await createTodoDataEncoder(context);
+                const encrypted = await encodeTodoData(todoKey, mergedTodo);
                 const newVersion = await kvSet(auth.credentials, todoKey, encrypted, todoResponse.version);
 
                 // Update version
@@ -598,14 +744,15 @@ export async function updateTodoLinkedSessions(
                 newVersions[todoKey] = newVersion;
 
                 storage.getState().applyTodos({
-                    todos: { ...todos, [taskId]: updatedTodo },
+                    todos: { ...todos, [taskId]: mergedTodo },
                     undoneOrder,
                     doneOrder,
                     versions: newVersions
                 });
             } else {
                 // Todo doesn't exist on backend, create it
-                const encrypted = await encryptTodoData(updatedTodo);
+                const encodeTodoData = await createTodoDataEncoder(context);
+                const encrypted = await encodeTodoData(todoKey, updatedTodo);
                 const newVersion = await kvSet(auth.credentials, todoKey, encrypted, -1);
 
                 // Update version
@@ -620,8 +767,7 @@ export async function updateTodoLinkedSessions(
                 });
             }
         } catch (error) {
-            console.error('Failed to sync linked sessions update:', error);
-            // Keep optimistic update even on error
+            handleTodoMutationFailure(error, 'Failed to sync linked sessions update:', priorState);
         }
     });
 }
@@ -634,12 +780,13 @@ export async function deleteTodo(
     id: string
 ): Promise<void> {
     const currentState = storage.getState();
-    const { todos, undoneOrder, doneOrder, versions } = currentState.todoState || {
+    const priorState = currentState.todoState || {
         todos: {},
         undoneOrder: [],
         doneOrder: [],
         versions: {}
     };
+    const { todos, undoneOrder, doneOrder, versions } = priorState;
 
     if (!(id in todos)) {
         console.error(`Todo ${id} not found`);
@@ -662,18 +809,22 @@ export async function deleteTodo(
     // Sync to server inside lock
     await todoLock.inLock(async () => {
         try {
+            const context = await resolveTodoAccountStorageContext(credentials);
             // Fetch current index from backend
-            const indexResponse = await kvGet(credentials, TODO_INDEX_KEY);
+            const todoKey = getTodoKey(id);
+            const [indexResponse, todoResponse] = await Promise.all([
+                kvGet(credentials, TODO_INDEX_KEY),
+                kvGet(credentials, todoKey),
+            ]);
             let currentIndex: TodoIndex = { undoneOrder: [], completedOrder: [] };
             let indexVersion = -1;
 
             if (indexResponse) {
                 indexVersion = indexResponse.version;
-                try {
-                    currentIndex = await decryptTodoData(indexResponse.value) as TodoIndex;
-                } catch (err) {
-                    console.error('Failed to decrypt server index', err);
-                }
+                currentIndex = await decryptTodoIndex(indexResponse.value, context);
+            }
+            if (todoResponse) {
+                await decryptTodoItem(todoKey, todoResponse.value, context);
             }
 
             // Remove todo from server's index
@@ -683,10 +834,10 @@ export async function deleteTodo(
             };
 
             // Get todo version for deletion
-            const todoKey = getTodoKey(id);
-            const todoVersion = versions[todoKey] || 0;
+            const todoVersion = todoResponse?.version ?? versions[todoKey] ?? 0;
 
             // Delete todo and update index
+            const encodeTodoData = await createTodoDataEncoder(context);
             const mutations: KvMutation[] = [
                 {
                     key: todoKey,
@@ -695,7 +846,7 @@ export async function deleteTodo(
                 },
                 {
                     key: TODO_INDEX_KEY,
-                    value: await encryptTodoData(mergedIndex),
+                    value: await encodeTodoData(TODO_INDEX_KEY, mergedIndex),
                     version: indexVersion
                 }
             ];
@@ -724,8 +875,7 @@ export async function deleteTodo(
                 await initializeTodoSync(credentials);
             }
         } catch (error) {
-            console.error('Failed to delete todo:', error);
-            // Keep optimistic update even on error
+            handleTodoMutationFailure(error, 'Failed to delete todo:', priorState);
         }
     });
 }
@@ -740,12 +890,13 @@ export async function reorderTodos(
     targetList: 'done' | 'undone'
 ): Promise<void> {
     const currentState = storage.getState();
-    const { todos, undoneOrder, doneOrder, versions } = currentState.todoState || {
+    const priorState = currentState.todoState || {
         todos: {},
         undoneOrder: [],
         doneOrder: [],
         versions: {}
     };
+    const { todos, undoneOrder, doneOrder, versions } = priorState;
 
     const todo = todos[todoId];
     if (!todo) {
@@ -785,6 +936,7 @@ export async function reorderTodos(
     // Sync to server inside lock
     await todoLock.inLock(async () => {
         try {
+            const context = await resolveTodoAccountStorageContext(credentials);
             // Fetch current index from backend
             const indexResponse = await kvGet(credentials, TODO_INDEX_KEY);
             let currentIndex: TodoIndex = { undoneOrder: [], completedOrder: [] };
@@ -792,11 +944,7 @@ export async function reorderTodos(
 
             if (indexResponse) {
                 indexVersion = indexResponse.version;
-                try {
-                    currentIndex = await decryptTodoData(indexResponse.value) as TodoIndex;
-                } catch (err) {
-                    console.error('Failed to decrypt server index', err);
-                }
+                currentIndex = await decryptTodoIndex(indexResponse.value, context);
             }
 
             // Apply reordering to server's index
@@ -820,6 +968,7 @@ export async function reorderTodos(
             };
 
             const mutations: KvMutation[] = [];
+            const encodeTodoData = await createTodoDataEncoder(context);
 
             // If todo status changed, fetch and update it
             if (updatedTodo.done !== todo.done) {
@@ -830,22 +979,17 @@ export async function reorderTodos(
 
                 if (todoResponse) {
                     todoVersion = todoResponse.version;
-                    try {
-                        const existingTodo = await decryptTodoData(todoResponse.value) as TodoItem;
-                        // Merge: keep server data but update done status
-                        serverTodo = {
-                            ...existingTodo,
-                            done: updatedTodo.done,
-                            updatedAt: Date.now()
-                        };
-                    } catch (err) {
-                        console.error('Failed to decrypt server todo', err);
-                    }
+                    const existingTodo = await decryptTodoItem(todoKey, todoResponse.value, context);
+                    serverTodo = {
+                        ...existingTodo,
+                        done: updatedTodo.done,
+                        updatedAt: Date.now()
+                    };
                 }
 
                 mutations.push({
                     key: todoKey,
-                    value: await encryptTodoData(serverTodo),
+                    value: await encodeTodoData(todoKey, serverTodo),
                     version: todoVersion
                 });
 
@@ -856,7 +1000,7 @@ export async function reorderTodos(
             // Always update index
             mutations.push({
                 key: TODO_INDEX_KEY,
-                value: await encryptTodoData(mergedIndex),
+                value: await encodeTodoData(TODO_INDEX_KEY, mergedIndex),
                 version: indexVersion
             });
 
@@ -881,8 +1025,7 @@ export async function reorderTodos(
                 await initializeTodoSync(credentials);
             }
         } catch (error) {
-            console.error('Failed to reorder todos:', error);
-            // Keep optimistic update even on error
+            handleTodoMutationFailure(error, 'Failed to reorder todos:', priorState);
         }
     });
 }

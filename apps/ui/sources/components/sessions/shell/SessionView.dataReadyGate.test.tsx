@@ -1,13 +1,30 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import {
+    resetSessionDraftValueCachesForTests,
+    writeSessionDraftValue,
+} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import {
+    applyComposerPresentationTransaction,
+    createComposerPresentationHostHandlers,
+    readComposerPresentationSnapshot,
+} from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import type {
+    PluginContributedActionController,
+    PluginContributedActionDescriptor,
+    PluginContributedActionOpenOutcome,
+} from '@/components/plugins/actions/pluginContributedActionController';
+import type { ComposerScopePluginPresentation } from '@/components/sessions/presentation/useComposerScopePluginPresentation';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
@@ -15,12 +32,81 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const daemonMergedProjectionState = vi.hoisted(() => ({
+    value: {
+        inputs: null as unknown,
+        phase: 'idle' as string,
+    },
+}));
+const composerChipFactorySpy = vi.hoisted(() => vi.fn());
+const currentSessionPresentationPropsSpy = vi.hoisted(() => vi.fn());
+const pluginSurfaceHostPropsSpy = vi.hoisted(() => vi.fn());
+const agentInputPropsSpy = vi.hoisted(() => vi.fn());
+const machinePluginStructuredMessageActionExecuteMock = vi.hoisted(() => vi.fn());
+const sessionSendMessageMock = vi.hoisted(() => vi.fn());
+const sessionEnqueuePendingMessageMock = vi.hoisted(() => vi.fn());
+const composerScopePluginPresentationSpy = vi.hoisted(() => vi.fn());
+const composerScopePluginPresentationState = vi.hoisted(() => ({ value: null as ComposerScopePluginPresentation | null }));
+
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
     getResolvedBackendCatalogEntries: () => [],
 }));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+    useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.value,
 }));
+vi.mock('@/components/plugins/actions/pluginContributedActionComposerChips', () => ({
+    createPluginContributedActionComposerChips: (input: unknown) => {
+        composerChipFactorySpy(input);
+        return [];
+    },
+}));
+vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
+    machinePluginStructuredMessageActionExecute: machinePluginStructuredMessageActionExecuteMock,
+}));
+vi.mock('@/components/sessions/presentation/CurrentSessionPresentationSurface', () => ({
+    CurrentSessionPresentationSurface: (props: Record<string, unknown>) => {
+        currentSessionPresentationPropsSpy(props);
+        const renderComposerRegion = props.renderComposerRegion;
+        const regions = Array.isArray(props.composerRegions)
+            ? props.composerRegions.filter((region): region is Record<string, unknown> => (
+                region !== null && typeof region === 'object'
+            ))
+            : [];
+        const mountedRegions = typeof renderComposerRegion === 'function'
+            ? regions
+                .filter((region) => region.definition
+                    && typeof region.definition === 'object'
+                    && (region.definition as Record<string, unknown>).placement === props.placement)
+                .map((region) => renderComposerRegion(region))
+            : [];
+        return React.createElement(
+            React.Fragment,
+            null,
+            ...mountedRegions,
+            React.createElement('CurrentSessionPresentationSurface', props),
+        );
+    },
+}));
+vi.mock('@/components/plugins/surfaces/PluginSurfaceHost', () => ({
+    PluginSurfaceHost: (props: Record<string, unknown>) => {
+        pluginSurfaceHostPropsSpy(props);
+        return React.createElement('PluginSurfaceHost', props);
+    },
+}));
+vi.mock('@/components/sessions/presentation/useComposerScopePluginPresentation', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/sessions/presentation/useComposerScopePluginPresentation')>();
+    return {
+        ...actual,
+        useComposerScopePluginPresentation: (
+            params: Parameters<typeof actual.useComposerScopePluginPresentation>[0],
+        ) => {
+            composerScopePluginPresentationSpy(params);
+            return composerScopePluginPresentationState.value
+                ?? actual.useComposerScopePluginPresentation(params);
+        },
+    };
+});
 
 // Some deps resolve `react-native-reanimated` into ESM entrypoints that use extensionless imports
 // (not Node-safe). Stub both the package id and its resolved module entrypoint.
@@ -239,6 +325,7 @@ installSessionShellCommonModuleMocks({
                 },
             ),
             useSession: () => sessionState,
+            useSessionMachineId: () => sessionState?.metadata?.machineId ?? null,
             useIsDataReady: () => isDataReadyState,
             useRealtimeStatus: () => 'connected',
             useEndpointStatus: () => endpointConnectivityStatus,
@@ -313,7 +400,10 @@ vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
-    AgentInput: () => React.createElement('View', { testID: 'session-composer-input' }),
+    AgentInput: (props: Record<string, unknown>) => {
+        agentInputPropsSpy(props);
+        return React.createElement('View', { testID: 'session-composer-input' });
+    },
 }));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
     SessionHeaderActionMenu: () => React.createElement('View', { testID: 'session-header-action-menu-trigger' }),
@@ -395,23 +485,27 @@ vi.mock('@/sync/domains/session/activeViewingSession', () => ({
     markSessionVisible: () => {},
     markSessionHidden: () => {},
 }));
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        markSessionViewed: async () => {},
-        fetchPendingMessages: async () => {},
-        publishSessionPermissionModeToMetadata: async () => {},
-        publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-        publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-        publishSessionModelOverrideToMetadata: async () => {},
-        refreshSessions: async () => {},
-        onSessionVisible: () => {},
-        onSessionViewportChange: () => {},
-        sendMessage: async () => {},
-        enqueuePendingMessage: async () => {},
-        wakeSessionAfterSend: async () => null,
-        submitMessage: async () => {},
-    },
-}));
+vi.mock('@/sync/sync', async () => {
+    const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
+    return {
+        sync: {
+            ...createAcceptedExternalSessionTailCursorSyncBoundary(),
+            markSessionViewed: async () => {},
+            fetchPendingMessages: async () => {},
+            publishSessionPermissionModeToMetadata: async () => {},
+            publishSessionAcpSessionModeOverrideToMetadata: async () => {},
+            publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
+            publishSessionModelOverrideToMetadata: async () => {},
+            refreshSessions: async () => {},
+            onSessionVisible: () => {},
+            onSessionViewportChange: () => {},
+            sendMessage: sessionSendMessageMock,
+            enqueuePendingMessage: sessionEnqueuePendingMessageMock,
+            wakeSessionAfterSend: async () => null,
+            submitMessage: async () => {},
+        },
+    };
+});
 
 const sessionViewModulePromise = import('./SessionView');
 
@@ -431,6 +525,7 @@ describe('SessionView (data ready gating)', () => {
         endpointConnectivityStatus = 'online';
         syncErrorState = null;
         isDataReadyState = false;
+        daemonMergedProjectionState.value = { inputs: null, phase: 'idle' };
         sessionState = {
             id: 's1',
             seq: 1,
@@ -444,8 +539,18 @@ describe('SessionView (data ready gating)', () => {
         gestureHandlerState.gestures = [];
         deviceTypeState.value = 'tablet';
         safeAreaState.bottom = 0;
+        resetSessionDraftValueCachesForTests();
         standardCleanup();
         chatListPropsSpy.mockReset();
+        composerChipFactorySpy.mockReset();
+        currentSessionPresentationPropsSpy.mockReset();
+        pluginSurfaceHostPropsSpy.mockReset();
+        agentInputPropsSpy.mockReset();
+        machinePluginStructuredMessageActionExecuteMock.mockReset();
+        sessionSendMessageMock.mockReset();
+        sessionEnqueuePendingMessageMock.mockReset();
+        composerScopePluginPresentationSpy.mockReset();
+        composerScopePluginPresentationState.value = null;
     });
 
     it('renders the session shell when the session exists even if global data readiness is false', async () => {
@@ -459,6 +564,978 @@ describe('SessionView (data ready gating)', () => {
 
         expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
         expect(screen.findAllByTestId('session-header-action-menu-trigger')).toHaveLength(1);
+    });
+
+    it('projects decorations and edit locks through the mounted session AgentInput', async () => {
+        const { SessionView } = await sessionViewModulePromise;
+
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        const ref = { kind: 'session' as const, sessionId: 's1' };
+        const snapshot = readComposerPresentationSnapshot(ref);
+        expect(snapshot).not.toBeNull();
+        if (!snapshot) throw new Error('expected mounted session composer target');
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+        });
+        const request = (method: 'setComposerDecorations' | 'acquireComposerInputLock', payload: unknown) => ({
+            version: 1,
+            requestId: `request:${method}`,
+            surface: {
+                pluginId: 'acme.fixture',
+                contributionId: 'composer-tools',
+                surfaceId: 'composer-tools:mounted',
+                placement: 'composerSurface',
+                platform: 'web',
+                channel: 'internal',
+                resourceScope: [],
+                diagnostics: [],
+            },
+            method,
+            payload,
+        }) as never;
+
+        await act(async () => {
+            expect(handlers.setComposerDecorations!(request('setComposerDecorations', {
+                ref,
+                key: 'analysis',
+                decorations: {
+                    revision: snapshot.revision,
+                    ranges: [{ range: { start: 0, end: 0 }, treatment: 'highlight' }],
+                },
+            }))).toEqual({ status: 'set' });
+        });
+        let agentInputProps = agentInputPropsSpy.mock.lastCall?.[0] as Readonly<{
+            composerDecorations?: readonly Readonly<{ key: string }>[];
+            composerInputLock?: unknown;
+            disabled?: boolean;
+            isSendDisabled?: boolean;
+        }>;
+        expect(agentInputProps.composerDecorations).toEqual([
+            expect.objectContaining({ key: 'analysis' }),
+        ]);
+
+        await act(async () => {
+            expect(handlers.acquireComposerInputLock!(request('acquireComposerInputLock', {
+                subscriptionId: 'lock-1',
+                ref,
+                request: { reason: 'Review required', mode: 'editAndSubmit' },
+            }))).toBeNull();
+        });
+        agentInputProps = agentInputPropsSpy.mock.lastCall?.[0] as typeof agentInputProps;
+        expect(agentInputProps.composerInputLock).toEqual({
+            mode: 'editAndSubmit',
+            reasons: ['Review required'],
+        });
+        expect(agentInputProps.disabled).toBe(true);
+        expect(agentInputProps.isSendDisabled).toBe(true);
+        expect(readComposerPresentationSnapshot(ref)?.state).toMatchObject({
+            editable: false,
+            submittable: false,
+            inputLock: { mode: 'editAndSubmit', reasons: ['Review required'] },
+        });
+
+        await act(async () => {
+            handlers.dispose();
+        });
+        agentInputProps = agentInputPropsSpy.mock.lastCall?.[0] as typeof agentInputProps;
+        expect(agentInputProps.composerDecorations).toEqual([]);
+        expect(agentInputProps.composerInputLock).toBeNull();
+    });
+
+    it('projects the mounted action-bar layout through the Session Composer snapshot', async () => {
+        const { SessionView } = await sessionViewModulePromise;
+
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        const composerRef = { kind: 'session' as const, sessionId: 's1' };
+        const inputProps = agentInputPropsSpy.mock.lastCall?.[0] as Readonly<{
+            onComposerActionBarLayoutChange?: (layout: 'wrap' | 'scroll' | 'collapsed') => void;
+        }>;
+        expect(readComposerPresentationSnapshot(composerRef)?.layout).toBe('wrap');
+        expect(inputProps.onComposerActionBarLayoutChange).toEqual(expect.any(Function));
+
+        inputProps.onComposerActionBarLayoutChange?.('scroll');
+        expect(readComposerPresentationSnapshot(composerRef)?.layout).toBe('scroll');
+
+        inputProps.onComposerActionBarLayoutChange?.('collapsed');
+        expect(readComposerPresentationSnapshot(composerRef)?.layout).toBe('collapsed');
+    });
+
+    it('consumes the shared Composer presentation for existing-Session controls and regions', async () => {
+        const sharedChip: ComposerScopePluginPresentation['extraActionChips'][number] = {
+            key: 'shared-composer-control',
+            render: () => null,
+        };
+        const sharedRegions: ComposerScopePluginPresentation['composerRegions'] = [{
+            id: 'acme.compose/before',
+            pluginId: 'acme.compose',
+            identity: { pluginId: 'acme.compose', localId: 'before' },
+            immutableGenerationId: 'compose-generation-a',
+            definition: {
+                id: 'before',
+                placement: 'beforeComposer',
+                renderer: { renderer: 'compose-region' },
+            },
+        }, {
+            id: 'acme.compose/after',
+            pluginId: 'acme.compose',
+            identity: { pluginId: 'acme.compose', localId: 'after' },
+            immutableGenerationId: 'compose-generation-a',
+            definition: {
+                id: 'after',
+                placement: 'afterComposer',
+                renderer: { renderer: 'compose-region' },
+            },
+        }];
+        const sharedPresentation: ComposerScopePluginPresentation = {
+            attachmentEntriesById: null,
+            actionController: {
+                list: () => [],
+                listSlashCommands: () => [],
+                open: async () => ({ kind: 'stale', reason: 'host_retired' }),
+                isReferenceAvailable: () => false,
+                isSessionReferenceAvailable: () => false,
+                invokeReference: async () => ({ kind: 'stale', reason: 'host_retired' }),
+                openSessionReference: async () => ({ kind: 'stale', reason: 'host_retired' }),
+            },
+            composerRegions: sharedRegions,
+            getCurrentActionSnapshot: () => null,
+            scopeSignal: new AbortController().signal,
+            renderComposerRegion: (region) => React.createElement('SharedComposerRegion', {
+                testID: `shared-composer-region:${region.id}`,
+            }),
+            extraActionChips: [sharedChip],
+            beforeComposer: null,
+            afterComposer: null,
+            renderAttachmentSurface: () => undefined,
+            resolveAttachmentInteraction: () => undefined,
+        };
+        composerScopePluginPresentationState.value = sharedPresentation;
+        const { SessionView } = await sessionViewModulePromise;
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        expect(composerScopePluginPresentationSpy).toHaveBeenCalledWith(expect.objectContaining({
+            composer: { kind: 'session', sessionId: 's1' },
+            physicalTarget: { kind: 'session', sessionId: 's1' },
+            resourceContext: { kind: 'session', sessionId: 's1' },
+            attachmentsEnabled: true,
+            includeSessionActions: true,
+            isScopeCurrent: expect.any(Function),
+        }));
+        expect(agentInputPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            extraActionChips: expect.arrayContaining([sharedChip]),
+        }));
+        expect(screen.findByTestId('shared-composer-region:acme.compose/before')).toBeTruthy();
+        expect(screen.findByTestId('shared-composer-region:acme.compose/after')).toBeTruthy();
+    });
+
+    it('projects admitted composer controls and before/after regions from the one current daemon snapshot', async () => {
+        daemonMergedProjectionState.value = {
+            phase: 'ready',
+            inputs: {
+                pluginProjectionById: {},
+                pluginProjectionV2: {
+                    v: 2,
+                    generation: 7,
+                    installedPackagesById: {},
+                    agentsById: {},
+                    backendsById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    familiesById: {
+                        composerControls: {
+                            family: 'composerControls',
+                            entriesById: {
+                                'acme.compose/launch': {
+                                    id: 'acme.compose/launch',
+                                    pluginId: 'acme.compose',
+                                    identity: { pluginId: 'acme.compose', localId: 'launch' },
+                                    immutableGenerationId: 'compose-generation-a',
+                                    definition: {
+                                        id: 'launch',
+                                        label: 'Launch compose helper',
+                                        icon: 'sparkles',
+                                        interaction: {
+                                            kind: 'action',
+                                            action: 'launch-action',
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        composerRegions: {
+                            family: 'composerRegions',
+                            entriesById: {
+                                'acme.compose/before': {
+                                    id: 'acme.compose/before',
+                                    pluginId: 'acme.compose',
+                                    identity: { pluginId: 'acme.compose', localId: 'before' },
+                                    immutableGenerationId: 'compose-generation-a',
+                                    definition: {
+                                        id: 'before',
+                                        placement: 'beforeComposer',
+                                        renderer: [{ pluginId: 'acme.compose', localId: 'before-renderer' }],
+                                    },
+                                },
+                                'acme.compose/after': {
+                                    id: 'acme.compose/after',
+                                    pluginId: 'acme.compose',
+                                    identity: { pluginId: 'acme.compose', localId: 'after' },
+                                    immutableGenerationId: 'compose-generation-a',
+                                    definition: {
+                                        id: 'after',
+                                        placement: 'afterComposer',
+                                        renderer: [{ pluginId: 'acme.compose', localId: 'after-renderer' }],
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    diagnostics: [],
+                },
+                composerSurfaceCatalog: [],
+            },
+        };
+        const { SessionView } = await sessionViewModulePromise;
+
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        expect(composerChipFactorySpy).toHaveBeenCalledWith(expect.objectContaining({
+            composerControls: [expect.objectContaining({ id: 'acme.compose/launch' })],
+            composerControlHost: expect.objectContaining({
+                scope: 'session',
+                isCurrent: expect.any(Function),
+            }),
+        }));
+        expect(currentSessionPresentationPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            placement: 'beforeComposer',
+            // SessionView forwards the single normalized region projection;
+            // CurrentSessionPresentationSurface remains the physical-slot owner.
+            composerRegions: [
+                expect.objectContaining({ id: 'acme.compose/before' }),
+                expect.objectContaining({ id: 'acme.compose/after' }),
+            ],
+            renderComposerRegion: expect.any(Function),
+        }));
+        expect(currentSessionPresentationPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            placement: 'afterComposer',
+            composerRegions: [
+                expect.objectContaining({ id: 'acme.compose/before' }),
+                expect.objectContaining({ id: 'acme.compose/after' }),
+            ],
+            renderComposerRegion: expect.any(Function),
+        }));
+        expect(agentInputPropsSpy).toHaveBeenCalled();
+        expect(pluginSurfaceHostPropsSpy).not.toHaveBeenCalled();
+    });
+
+    it('reads the current Composer presentation snapshot at semantic Action click time', async () => {
+        daemonMergedProjectionState.value = {
+            phase: 'ready',
+            inputs: {
+                pluginProjectionById: {
+                    'acme.compose': {
+                        pluginId: 'acme.compose',
+                        title: 'Compose',
+                        description: null,
+                        version: '1.0.0',
+                        enabled: true,
+                        generation: 7,
+                        generationLabel: '7',
+                        status: null,
+                        provenance: null,
+                        diagnostics: [],
+                        resources: [],
+                        editableSettingsGroups: [],
+                        actions: [{
+                            id: 'refresh-context',
+                            title: 'Refresh context',
+                            description: null,
+                            icon: null,
+                            scopes: ['session'],
+                            surfaces: ['ui'],
+                            placementBindings: ['composer.primary'],
+                            inputSchema: null,
+                            inputHints: { fields: [] },
+                            slash: null,
+                            priority: null,
+                            dangerLevel: 'safe',
+                            confirmation: null,
+                            available: true,
+                        }],
+                    },
+                },
+                pluginProjectionV2: {
+                    v: 2,
+                    generation: 7,
+                    installedPackagesById: {},
+                    agentsById: {},
+                    backendsById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    familiesById: {},
+                    diagnostics: [],
+                },
+                composerSurfaceCatalog: [],
+            },
+        };
+        machinePluginStructuredMessageActionExecuteMock.mockResolvedValue({
+            supported: true,
+            result: { ok: true, result: { refreshed: true } },
+        });
+        const { SessionView } = await sessionViewModulePromise;
+
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        const controller = composerChipFactorySpy.mock.calls
+            .map(([input]) => (input as { controller?: PluginContributedActionController }).controller)
+            .find((candidate): candidate is PluginContributedActionController => candidate !== undefined);
+        if (!controller) throw new Error('expected the Composer Action controller');
+        const [action] = controller.list({ placement: 'composer.primary', scope: 'session' });
+        if (!action) throw new Error('expected the semantic Composer Action');
+
+        const composerRef = { kind: 'session' as const, sessionId: 's1' };
+        const initial = readComposerPresentationSnapshot(composerRef);
+        if (!initial) throw new Error('expected the mounted Composer snapshot');
+        expect(applyComposerPresentationTransaction({
+            ref: composerRef,
+            transaction: {
+                expectedRevision: initial.revision,
+                operations: [{ kind: 'text.set', text: 'updated before action click' }],
+            },
+        })).toEqual({ status: 'applied', revision: initial.revision + 1 });
+
+        await controller.open(action);
+
+        expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledWith('m1', expect.objectContaining({
+            qualifiedActionId: 'acme.compose/refresh-context',
+            invocation: {
+                kind: 'hostPresentedComposer',
+                currentComposerIntent: {
+                    composer: composerRef,
+                    revision: initial.revision + 1,
+                },
+            },
+        }));
+    });
+
+    it('serializes direct contributed Actions and sends through the Session composer reservation', async () => {
+        sessionState = {
+            ...sessionState,
+            pendingVersion: 2,
+            agentStateVersion: 1,
+        };
+        daemonMergedProjectionState.value = {
+            phase: 'ready',
+            inputs: {
+                pluginProjectionById: {
+                    'acme.compose': {
+                        pluginId: 'acme.compose',
+                        title: 'Compose',
+                        description: null,
+                        version: '1.0.0',
+                        enabled: true,
+                        generation: 7,
+                        generationLabel: '7',
+                        status: null,
+                        provenance: null,
+                        diagnostics: [],
+                        resources: [],
+                        editableSettingsGroups: [],
+                        actions: [{
+                            id: 'refresh-context',
+                            title: 'Refresh context',
+                            description: null,
+                            icon: null,
+                            scopes: ['session'],
+                            surfaces: ['ui'],
+                            placementBindings: ['composer.primary'],
+                            inputSchema: null,
+                            inputHints: { fields: [] },
+                            slash: null,
+                            priority: null,
+                            dangerLevel: 'safe',
+                            confirmation: null,
+                            available: true,
+                        }],
+                    },
+                },
+                pluginProjectionV2: {
+                    v: 2,
+                    generation: 7,
+                    installedPackagesById: {},
+                    agentsById: {},
+                    backendsById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    familiesById: {},
+                    diagnostics: [],
+                },
+                composerSurfaceCatalog: [],
+            },
+        };
+        const firstActionDispatch = createDeferred<{
+            supported: true;
+            result: { ok: true; result: { refreshed: boolean } };
+        }>();
+        const secondActionDispatch = createDeferred<{
+            supported: true;
+            result: { ok: true; result: { refreshed: boolean } };
+        }>();
+        const secondSend = createDeferred<{ localId: string }>();
+        const successfulActionDispatch = {
+            supported: true as const,
+            result: { ok: true as const, result: { refreshed: true } },
+        };
+        machinePluginStructuredMessageActionExecuteMock
+            .mockImplementationOnce(() => firstActionDispatch.promise)
+            .mockImplementationOnce(() => secondActionDispatch.promise);
+        let outboundDispatchCount = 0;
+        const dispatchOutboundMessage = () => {
+            outboundDispatchCount += 1;
+            return outboundDispatchCount === 2
+                ? secondSend.promise
+                : Promise.resolve({ localId: `message-${outboundDispatchCount}` });
+        };
+        sessionSendMessageMock.mockImplementation(dispatchOutboundMessage);
+        sessionEnqueuePendingMessageMock.mockImplementation(dispatchOutboundMessage);
+
+        const { SessionView } = await sessionViewModulePromise;
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        const controller = composerChipFactorySpy.mock.calls
+            .map(([input]) => (input as { controller?: PluginContributedActionController }).controller)
+            .find((candidate): candidate is PluginContributedActionController => candidate !== undefined);
+        if (!controller) throw new Error('expected the Composer Action controller');
+        const [action] = controller.list({ placement: 'composer.primary', scope: 'session' });
+        if (!action || action.kind !== 'direct') throw new Error('expected a direct Composer Action');
+
+        const agentInputProps = agentInputPropsSpy.mock.lastCall?.[0] as Readonly<{
+            onContributedActionSuggestionSelect?: (
+                action: PluginContributedActionDescriptor,
+            ) => Promise<PluginContributedActionOpenOutcome> | PluginContributedActionOpenOutcome;
+            onSend?: (options?: Readonly<{ inputTextOverride?: string }>) => void;
+        }>;
+        if (!agentInputProps.onContributedActionSuggestionSelect || !agentInputProps.onSend) {
+            throw new Error('expected Session composer dispatch callbacks');
+        }
+
+        let openingWhileSendIsReserved: Promise<PluginContributedActionOpenOutcome> | null = null;
+        try {
+            const actionOpening = Promise.resolve(agentInputProps.onContributedActionSuggestionSelect(action));
+            await vi.waitFor(() => {
+                expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledOnce();
+            });
+
+            await act(async () => {
+                agentInputProps.onSend?.({ inputTextOverride: 'send while Action dispatch is pending' });
+                await Promise.resolve();
+            });
+            expect(outboundDispatchCount).toBe(0);
+
+            firstActionDispatch.resolve(successfulActionDispatch);
+            await expect(actionOpening).resolves.toMatchObject({ kind: 'direct', outcome: { ok: true } });
+
+            await act(async () => {
+                agentInputProps.onSend?.({ inputTextOverride: 'retry after Action dispatch settles' });
+            });
+            await vi.waitFor(() => {
+                expect(outboundDispatchCount).toBe(1);
+            });
+
+            await act(async () => {
+                agentInputProps.onSend?.({ inputTextOverride: 'send before Action dispatch' });
+            });
+            await vi.waitFor(() => {
+                expect(outboundDispatchCount).toBe(2);
+            });
+
+            openingWhileSendIsReserved = Promise.resolve(
+                agentInputProps.onContributedActionSuggestionSelect(action),
+            );
+            await expect(openingWhileSendIsReserved).resolves.toEqual({
+                kind: 'unavailable',
+                reason: 'submission_in_flight',
+            });
+            expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledOnce();
+
+            secondSend.resolve({ localId: 'message-2' });
+            await act(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            const actionRetry = Promise.resolve(agentInputProps.onContributedActionSuggestionSelect(action));
+            await vi.waitFor(() => {
+                expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledTimes(2);
+            });
+            secondActionDispatch.resolve(successfulActionDispatch);
+            await expect(actionRetry).resolves.toMatchObject({ kind: 'direct', outcome: { ok: true } });
+        } finally {
+            firstActionDispatch.resolve(successfulActionDispatch);
+            secondSend.resolve({ localId: 'message-2' });
+            secondActionDispatch.resolve(successfulActionDispatch);
+            if (openingWhileSendIsReserved) {
+                await openingWhileSendIsReserved.catch(() => {});
+            }
+        }
+    });
+
+    it('mounts an exact admitted control and both Composer regions through the one physical surface host', async () => {
+        const control = {
+            id: 'acme.compose/inline',
+            pluginId: 'acme.compose',
+            identity: { pluginId: 'acme.compose', localId: 'inline' },
+            immutableGenerationId: 'compose-generation-a',
+            definition: {
+                id: 'inline',
+                label: 'Inline compose helper',
+                icon: 'sparkles',
+                interaction: {
+                    kind: 'surface',
+                    renderer: [{ pluginId: 'acme.compose', localId: 'inline-renderer' }],
+                    presentation: 'popover',
+                    layout: 'content',
+                },
+            },
+        };
+        const beforeRegion = {
+            id: 'acme.compose/before',
+            pluginId: 'acme.compose',
+            identity: { pluginId: 'acme.compose', localId: 'before' },
+            immutableGenerationId: 'compose-generation-a',
+            definition: {
+                id: 'before',
+                placement: 'beforeComposer',
+                renderer: [{ pluginId: 'acme.compose', localId: 'before-renderer' }],
+            },
+        };
+        const afterRegion = {
+            id: 'acme.compose/after',
+            pluginId: 'acme.compose',
+            identity: { pluginId: 'acme.compose', localId: 'after' },
+            immutableGenerationId: 'compose-generation-a',
+            definition: {
+                id: 'after',
+                placement: 'afterComposer',
+                renderer: [{ pluginId: 'acme.compose', localId: 'after-renderer' }],
+            },
+        };
+        const catalogEntry = (contribution: Readonly<{ pluginId: string; localId: string }>, role: string, rendererId: string) => ({
+            contribution,
+            immutableGenerationId: 'compose-generation-a',
+            projectionGeneration: 7,
+            role,
+            rendererChain: [{ pluginId: contribution.pluginId, localId: rendererId }],
+            selectedRenderer: {
+                identity: { pluginId: contribution.pluginId, localId: rendererId },
+                renderer: {
+                    kind: 'declarative',
+                    contributionId: rendererId,
+                    model: { visible: true },
+                },
+                availability: { state: 'available', reason: 'available', diagnostics: [] },
+            },
+            executionOrigin: {
+                serverIdentityId: 'srv_acme',
+                materializationRef: {
+                    machineId: 'machine-compose',
+                    materializationId: 'compose-materialization-a',
+                    pluginId: contribution.pluginId,
+                },
+            },
+            resourceCapability: { readable: true, dynamic: true },
+            contributorTargetedContributions: {
+                target: {
+                    pluginId: contribution.pluginId,
+                    immutableGenerationId: 'compose-generation-a',
+                },
+                points: [],
+            },
+        });
+        daemonMergedProjectionState.value = {
+            phase: 'ready',
+            inputs: {
+                pluginProjectionById: {},
+                pluginProjectionV2: {
+                    v: 2,
+                    generation: 7,
+                    installedPackagesById: {},
+                    agentsById: {},
+                    backendsById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    familiesById: {
+                        composerControls: {
+                            family: 'composerControls',
+                            entriesById: { [control.id]: control },
+                        },
+                        composerRegions: {
+                            family: 'composerRegions',
+                            entriesById: {
+                                [beforeRegion.id]: beforeRegion,
+                                [afterRegion.id]: afterRegion,
+                            },
+                        },
+                    },
+                    diagnostics: [],
+                },
+                composerSurfaceCatalog: [
+                    catalogEntry(control.identity, 'controlCompact', 'inline-renderer'),
+                    catalogEntry(beforeRegion.identity, 'region', 'before-renderer'),
+                    catalogEntry(afterRegion.identity, 'region', 'after-renderer'),
+                ],
+            },
+        };
+        const { SessionView } = await sessionViewModulePromise;
+
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        const composerControlHost = composerChipFactorySpy.mock.calls
+            .map(([input]) => input as { composerControlHost?: { renderSurfaceContent?: (input: unknown) => React.ReactNode } })
+            .find((input) => input.composerControlHost !== undefined)
+            ?.composerControlHost;
+        const beforeProps = currentSessionPresentationPropsSpy.mock.calls
+            .map(([props]) => props as { placement?: unknown; renderComposerRegion?: (region: unknown) => React.ReactNode })
+            .find((props) => props.placement === 'beforeComposer');
+        const afterProps = currentSessionPresentationPropsSpy.mock.calls
+            .map(([props]) => props as { placement?: unknown; renderComposerRegion?: (region: unknown) => React.ReactNode })
+            .find((props) => props.placement === 'afterComposer');
+        if (!composerControlHost?.renderSurfaceContent || !beforeProps?.renderComposerRegion || !afterProps?.renderComposerRegion) {
+            throw new Error('expected SessionView to expose the admitted Composer physical-mount callbacks');
+        }
+
+        pluginSurfaceHostPropsSpy.mockClear();
+        const physicalMountScreen = await renderScreen(
+            <>
+                {composerControlHost.renderSurfaceContent({
+                    kind: 'control',
+                    role: 'compact',
+                    control,
+                    state: {},
+                })}
+                {beforeProps.renderComposerRegion(beforeRegion)}
+                {afterProps.renderComposerRegion(afterRegion)}
+            </>,
+        );
+
+        // The SessionView renderer remains mounted while this isolated physical
+        // slot tree is checked, so the module-level prop spy may also observe a
+        // re-render of the original region hosts. Count the physical nodes in
+        // this tree instead of treating component render calls as mount count.
+        expect(physicalMountScreen.findAllByType('PluginSurfaceHost')).toHaveLength(3);
+
+        const mounts = pluginSurfaceHostPropsSpy.mock.calls.map(([props]) => {
+            const composerMount = (props as { composerMount?: { mount?: { mount?: {
+                role?: unknown;
+                input?: unknown;
+                contribution?: unknown;
+            }; catalogEntry?: unknown; binding?: unknown; physicalTarget?: unknown } } }).composerMount;
+            return composerMount;
+        });
+        expect(mounts).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                mount: expect.objectContaining({
+                    mount: expect.objectContaining({
+                        role: 'controlCompact',
+                        contribution: control.identity,
+                        input: expect.objectContaining({ role: 'controlCompact', controlLocalId: 'inline' }),
+                    }),
+                    catalogEntry: expect.objectContaining({ role: 'controlCompact' }),
+                }),
+                physicalTarget: { kind: 'session', sessionId: 's1' },
+                binding: expect.objectContaining({
+                    mountedHostApiHandlers: expect.objectContaining({
+                        readComposer: expect.any(Function),
+                        applyComposer: expect.any(Function),
+                    }),
+                }),
+            }),
+            expect.objectContaining({
+                mount: expect.objectContaining({
+                    mount: expect.objectContaining({
+                        role: 'region',
+                        contribution: beforeRegion.identity,
+                        input: expect.objectContaining({ role: 'region', regionLocalId: 'before' }),
+                    }),
+                    catalogEntry: expect.objectContaining({ role: 'region' }),
+                }),
+                physicalTarget: { kind: 'session', sessionId: 's1' },
+            }),
+            expect.objectContaining({
+                mount: expect.objectContaining({
+                    mount: expect.objectContaining({
+                        role: 'region',
+                        contribution: afterRegion.identity,
+                        input: expect.objectContaining({ role: 'region', regionLocalId: 'after' }),
+                    }),
+                    catalogEntry: expect.objectContaining({ role: 'region' }),
+                }),
+                physicalTarget: { kind: 'session', sessionId: 's1' },
+            }),
+        ]));
+    });
+
+    it('mounts exact admitted attachment display and preview surfaces through the one physical host', async () => {
+        const attachment: ComposerAttachmentDraftV1 = {
+            v: 1 as const,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue', icon: 'file' },
+        };
+        writeSessionDraftValue(null, 's1', 'structuredInput.composerAttachments', [attachment]);
+        const attachmentEntry = {
+            id: 'acme.issues/issue',
+            pluginId: attachment.attachment.pluginId,
+            identity: attachment.attachment,
+            immutableGenerationId: 'issues-generation-a',
+            definition: {
+                id: attachment.attachment.localId,
+                title: 'Issue',
+                icon: 'file',
+                cardinality: 'many',
+                valueSchema: { type: 'object' },
+                display: {
+                    kind: 'surface',
+                    renderer: { renderer: 'issue-display' },
+                    sizing: 'content',
+                },
+                preview: {
+                    kind: 'surface',
+                    renderer: { renderer: 'issue-preview' },
+                    presentation: 'popover',
+                },
+            },
+        };
+        daemonMergedProjectionState.value = {
+            phase: 'ready',
+            inputs: {
+                pluginProjectionById: {},
+                pluginProjectionV2: {
+                    v: 2,
+                    generation: 7,
+                    installedPackagesById: {},
+                    agentsById: {},
+                    backendsById: {},
+                    actionsById: {},
+                    toolsById: {},
+                    commandsById: {},
+                    resourcesById: {},
+                    settingsById: {},
+                    familiesById: {
+                        composerAttachments: {
+                            family: 'composerAttachments',
+                            entriesById: { [attachmentEntry.id]: attachmentEntry },
+                        },
+                    },
+                    diagnostics: [],
+                },
+                composerSurfaceCatalog: [{
+                    contribution: attachment.attachment,
+                    immutableGenerationId: attachmentEntry.immutableGenerationId,
+                    projectionGeneration: 7,
+                    role: 'attachmentDisplay',
+                    rendererChain: [{ pluginId: attachment.attachment.pluginId, localId: 'issue-display' }],
+                    selectedRenderer: {
+                        identity: { pluginId: attachment.attachment.pluginId, localId: 'issue-display' },
+                        renderer: {
+                            kind: 'declarative',
+                            contributionId: 'issue-display',
+                            model: { visible: true },
+                        },
+                        availability: { state: 'available', reason: 'available', diagnostics: [] },
+                    },
+                    executionOrigin: {
+                        serverIdentityId: 'srv_acme',
+                        materializationRef: {
+                            machineId: 'machine-compose',
+                            materializationId: 'issues-materialization-a',
+                            pluginId: attachment.attachment.pluginId,
+                        },
+                    },
+                    resourceCapability: { readable: true, dynamic: true },
+                    contributorTargetedContributions: {
+                        target: {
+                            pluginId: attachment.attachment.pluginId,
+                            immutableGenerationId: attachmentEntry.immutableGenerationId,
+                        },
+                        points: [],
+                    },
+                }, {
+                    contribution: attachment.attachment,
+                    immutableGenerationId: attachmentEntry.immutableGenerationId,
+                    projectionGeneration: 7,
+                    role: 'attachmentPreview',
+                    rendererChain: [{ pluginId: attachment.attachment.pluginId, localId: 'issue-preview' }],
+                    selectedRenderer: {
+                        identity: { pluginId: attachment.attachment.pluginId, localId: 'issue-preview' },
+                        renderer: {
+                            kind: 'declarative',
+                            contributionId: 'issue-preview',
+                            model: { visible: true },
+                        },
+                        availability: { state: 'available', reason: 'available', diagnostics: [] },
+                    },
+                    executionOrigin: {
+                        serverIdentityId: 'srv_acme',
+                        materializationRef: {
+                            machineId: 'machine-compose',
+                            materializationId: 'issues-materialization-a',
+                            pluginId: attachment.attachment.pluginId,
+                        },
+                    },
+                    resourceCapability: { readable: true, dynamic: true },
+                    contributorTargetedContributions: {
+                        target: {
+                            pluginId: attachment.attachment.pluginId,
+                            immutableGenerationId: attachmentEntry.immutableGenerationId,
+                        },
+                        points: [],
+                    },
+                }],
+            },
+        };
+        const { SessionView } = await sessionViewModulePromise;
+
+        await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" />
+            </AppPaneProvider>,
+        );
+
+        const attachmentSurface = agentInputPropsSpy.mock.calls
+            .flatMap(([props]) => (
+                (props as { attachmentRowItems?: readonly unknown[] }).attachmentRowItems ?? []
+            ))
+            .find((item): item is Readonly<{
+                kind: 'surface';
+                key: string;
+                sizing: string;
+                renderedContent: React.ReactNode;
+                renderPreviewPopover?: (ctx: Readonly<{
+                    open: boolean;
+                    anchorRef: React.RefObject<any>;
+                    onRequestClose: () => void;
+                }>) => React.ReactNode;
+            }> => (
+                typeof item === 'object'
+                && item !== null
+                && (item as { kind?: unknown }).kind === 'surface'
+                && (item as { key?: unknown }).key === 'composer-attachment:issue-42'
+            ));
+        if (!attachmentSurface) throw new Error('expected the current attachment display surface row');
+        expect(attachmentSurface.sizing).toBe('content');
+
+        pluginSurfaceHostPropsSpy.mockClear();
+        await renderScreen(<>{attachmentSurface.renderedContent}</>);
+
+        expect(pluginSurfaceHostPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            composerMount: expect.objectContaining({
+                physicalTarget: { kind: 'session', sessionId: 's1' },
+                mount: expect.objectContaining({
+                    kind: 'composer',
+                    mount: expect.objectContaining({
+                        role: 'attachmentDisplay',
+                        contribution: attachment.attachment,
+                        input: expect.objectContaining({
+                            role: 'attachmentDisplay',
+                            attachmentLocalId: 'issue',
+                            instance: expect.objectContaining({ instanceId: 'issue-42' }),
+                        }),
+                    }),
+                    catalogEntry: expect.objectContaining({ role: 'attachmentDisplay' }),
+                }),
+            }),
+        }));
+
+        if (!attachmentSurface.renderPreviewPopover) {
+            throw new Error('expected the exact current attachment preview presentation');
+        }
+        const previewPopover = attachmentSurface.renderPreviewPopover({
+            open: true,
+            anchorRef: React.createRef(),
+            onRequestClose: vi.fn(),
+        });
+        if (!React.isValidElement(previewPopover)) {
+            throw new Error('expected the attachment preview to reuse the incumbent popover shell');
+        }
+        const previewContent = (previewPopover.props as { content?: unknown }).content;
+        if (typeof previewContent !== 'function') {
+            throw new Error('expected the popover to defer the physical preview mount until it opens');
+        }
+
+        pluginSurfaceHostPropsSpy.mockClear();
+        await renderScreen(<>{previewContent()}</>);
+
+        expect(pluginSurfaceHostPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm1',
+            composerMount: expect.objectContaining({
+                physicalTarget: { kind: 'session', sessionId: 's1' },
+                mount: expect.objectContaining({
+                    kind: 'composer',
+                    mount: expect.objectContaining({
+                        role: 'attachmentPreview',
+                        contribution: attachment.attachment,
+                        input: expect.objectContaining({
+                            role: 'attachmentPreview',
+                            attachmentLocalId: 'issue',
+                            instance: expect.objectContaining({ instanceId: 'issue-42' }),
+                        }),
+                    }),
+                    catalogEntry: expect.objectContaining({ role: 'attachmentPreview' }),
+                }),
+            }),
+        }));
     });
 
     it('does not pass route hydration blocking state into an already loaded same-server session', async () => {

@@ -7,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import { ExternalSessionsIntegrationSection } from './ExternalSessionsIntegrationSection';
+import { Icon } from '@/components/ui/icons/Icon';
 import type {
     ExternalSessionsAutoLinkSourceDescriptor,
     ExternalSessionsIntegrationDescriptor,
@@ -27,6 +28,9 @@ export const ExternalSessionsAgentSettingsSection = React.memo(function External
         operations?: ExternalSessionsIntegrationOperations | null;
         inventoryState?: ExternalSessionsIntegrationInventoryState;
         onRetryInventory?: (() => void | Promise<void>) | null;
+        hasMoreInventory?: boolean;
+        loadingMoreInventory?: boolean;
+        onLoadMoreInventory?: (() => void | Promise<void>) | null;
         onBrowse: (() => void) | null;
         onManageAll: () => void;
     }>,
@@ -43,13 +47,16 @@ export const ExternalSessionsAgentSettingsSection = React.memo(function External
                 operations={props.operations}
                 inventoryState={props.inventoryState}
                 onRetryInventory={props.onRetryInventory}
+                hasMoreInventory={props.hasMoreInventory}
+                loadingMoreInventory={props.loadingMoreInventory}
+                onLoadMoreInventory={props.onLoadMoreInventory}
             />
             <ItemGroup title={t('externalSessions.settingsAgentActionsGroupTitle')}>
                 {props.onBrowse ? (
                     <Item
                         testID="settings-external-sessions-agent-browse"
                         title={t('externalSessions.settingsAgentBrowseTitle', { agent: props.agentTitle })}
-                        icon={<SafeIonicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="folder-open" size={29} color={theme.colors.accent.blue} />}
                         onPress={props.onBrowse}
                     />
                 ) : null}
@@ -57,7 +64,7 @@ export const ExternalSessionsAgentSettingsSection = React.memo(function External
                     testID="settings-external-sessions-manage-all"
                     title={t('externalSessions.settingsManageAllTitle')}
                     subtitle={t('externalSessions.settingsManageAllSubtitle')}
-                    icon={<SafeIonicons name="settings-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.text.secondary} />}
                     onPress={props.onManageAll}
                 />
             </ItemGroup>

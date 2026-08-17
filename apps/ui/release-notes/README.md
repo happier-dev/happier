@@ -3,6 +3,48 @@
 Curated, slide-based release notes shown in the in-app **Story Deck** surface.
 Distinct from `CHANGELOG.md`, which remains the long-form history view.
 
+## Canonical public source and bounded channels
+
+Each release's exact public Markdown and bounded consumed-channel text are
+authored together in its matching `apps/ui/CHANGELOG.md` section. At the start
+of `## Release <project-release-id> - <date>`, add:
+
+```markdown
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "Approved Expo text." }
+}
+-->
+```
+
+The projector removes this comment from GitHub/rolling Markdown, validates that
+the section has visible public content, and publishes the bounded strings
+unchanged. Expo is required because the current release path consumes it.
+`appStore`, `playStore`, and `storyDeck` may be authored when a selected release
+surface consumes them; they are otherwise omitted rather than maintained as
+dormant required copy. It rejects unknown projection families or text over:
+Expo 1,024, App Store 4,000, Play 500, StoryDeck 280 characters. It never
+truncates or rewrites copy.
+
+`<project-release-id>` is a unique lowercase, version-independent project
+identifier such as `2026-08-09.1`. It is not a UI, CLI, server, or Stack
+version. Use the release date plus an ordinal, incrementing the ordinal when a
+second candidate starts on that date. Keep the same ID when a preview candidate
+is promoted to stable. The changelog heading is its only authored source;
+workflow input only selects and verifies that source. Project an immutable
+candidate with that identity, source SHA, and every released component version:
+
+```bash
+node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+  --release-id <project-release-id> \
+  --source-sha <40-lowercase-git-sha> \
+  --component-version ui=<ui-semver> \
+  --component-version cli=<cli-semver> \
+  --component-version stack=<stack-semver> \
+  --component-version server=<server-semver> \
+  --changelog apps/ui/CHANGELOG.md
+```
+
 ## Authoring a release
 
 1. Create a JSON file under `releases/<releaseId>.json`. The release id should
@@ -26,7 +68,7 @@ Distinct from `CHANGELOG.md`, which remains the long-form history view.
    needs different artwork or video per surface. Base media remains the fallback;
    tablet and desktop widths use the `desktop` override, phone-width sheets use
    `mobile`.
-7. Run `npx tsx sources/scripts/parseReleaseNotes.ts` to validate and regenerate
+7. Run `yarn tsx sources/scripts/parseReleaseNotes.ts` to validate and regenerate
    `sources/changelog/releaseNotes/manifest.generated.json`.
 
 ## Card kinds
@@ -92,7 +134,8 @@ The bundle contains:
 - `release-notes__assets-index.json`
 - `release-notes__<releaseId>__<logical-path>` media files
 
-Publishing is a separate, explicitly scoped step:
+Publishing is a separate, explicitly scoped step owned only by
+`.github/workflows/promote-ui.yml`:
 
 ```bash
 node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
@@ -102,4 +145,6 @@ node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
 
 Use `--dry-run` locally. Do not upload release-note media to product app release
 tags or `dist/release-assets/**`; the dedicated `happier-assets@release-notes`
-tag is the publication contract.
+tag is the publication contract. Other UI/mobile workflows may generate or
+validate release-note manifests for their own build, but must not write the
+shared rolling asset tag.

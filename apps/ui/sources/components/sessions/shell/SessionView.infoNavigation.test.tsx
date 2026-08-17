@@ -37,8 +37,6 @@ const resolveServerIdForSessionIdFromLocalCacheSpy = vi.hoisted(() =>
     ),
 );
 
-let workspaceLabelsV1: Record<string, string> = {};
-
 installSessionShellCommonModuleMocks({
     reactNative: async () =>
         createReactNativeWebMock({
@@ -123,7 +121,6 @@ installSessionShellCommonModuleMocks({
                 vi.fn<(value: LocalSettings[K]) => void>(),
             ],
             useSetting: <K extends keyof Settings>(key: K) => {
-                if (key === 'workspaceLabelsV1') return workspaceLabelsV1 as Settings[K];
                 return settingsDefaults[key];
             },
             useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
@@ -156,6 +153,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 vi.mock('react-native-safe-area-context', () => ({
+    initialWindowMetrics: {
+        frame: { x: 0, y: 0, width: 0, height: 0 },
+        insets: { top: 0, bottom: 0, left: 0, right: 0 },
+    },
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 vi.mock('@react-navigation/native', () => ({
@@ -259,20 +260,24 @@ vi.mock('@/sync/domains/session/activeViewingSession', () => ({
     markSessionVisible: () => {},
     markSessionHidden: () => {},
 }));
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        markSessionViewed: async () => {},
-        fetchPendingMessages: async () => {},
-        publishSessionPermissionModeToMetadata: async () => {},
-        refreshSessions: async () => {},
-        onSessionVisible: () => () => {},
-        ensureSidechainMessagesLoaded: async () => {},
-        sendMessage: async () => {},
-        enqueuePendingMessage: async () => {},
-        submitMessage: async () => {},
-        encryption: { getMachineEncryption: () => null },
-    },
-}));
+vi.mock('@/sync/sync', async () => {
+    const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
+    return {
+        sync: {
+            ...createAcceptedExternalSessionTailCursorSyncBoundary(),
+            markSessionViewed: async () => {},
+            fetchPendingMessages: async () => {},
+            publishSessionPermissionModeToMetadata: async () => {},
+            refreshSessions: async () => {},
+            onSessionVisible: () => () => {},
+            ensureSidechainMessagesLoaded: async () => {},
+            sendMessage: async () => {},
+            enqueuePendingMessage: async () => {},
+            submitMessage: async () => {},
+            encryption: { getMachineEncryption: () => null },
+        },
+    };
+});
 vi.mock('@/sync/ops', async (importOriginal) => {
     const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
     return createSyncOpsModuleMock({
@@ -349,7 +354,6 @@ describe('SessionView info navigation', () => {
         routerBackSpy.mockClear();
         chatHeaderPropsSpy.mockReset();
         capturedOpenSessionSpy.mockReset();
-        workspaceLabelsV1 = {};
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation((sessionId: string) =>
             sessionId === 's1' ? 'server-cache' : null
@@ -474,9 +478,6 @@ describe('SessionView info navigation', () => {
     });
 
     it('falls back to the session path subtitle when no matching workspace label key is available', async () => {
-        workspaceLabelsV1 = {
-            wl_07600b8c: 'Renamed Workspace',
-        };
         const { SessionView } = await import('./SessionView');
 
         await renderScreen(

@@ -113,7 +113,7 @@ describe('createHeader', () => {
 
         const screen = await renderScreen(header as React.ReactElement);
 
-        expect(screen.findByType('Ionicons' as any)).toBeTruthy();
+        expect(screen.findByType('Icon' as any)).toBeTruthy();
         expect(screen.getTextContent()).toContain('Connect Terminal');
     });
 

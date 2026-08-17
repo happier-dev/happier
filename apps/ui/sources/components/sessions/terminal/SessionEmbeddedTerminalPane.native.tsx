@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane.native';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -22,6 +21,7 @@ import { useSessionEmbeddedTerminalPty } from './useSessionEmbeddedTerminalPty';
 import { useSessionTerminalMode } from './sessionTerminalMode';
 
 import type { SessionEmbeddedTerminalPaneProps } from './SessionEmbeddedTerminalPane.web';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTerminalPaneNative(props: SessionEmbeddedTerminalPaneProps) {
     const { theme } = useUnistyles();
@@ -66,17 +66,17 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
             {
                 id: 'sidebar',
                 title: t('terminalEmbedded.location.sidebar'),
-                icon: <Ionicons name="albums-outline" size={18} color={theme.colors.text.secondary} />,
+                icon: <Icon name="stack" size={16} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'details',
                 title: t('terminalEmbedded.location.details'),
-                icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.secondary} />,
+                icon: <Icon name="info" size={16} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'bottom',
                 title: t('terminalEmbedded.location.bottom'),
-                icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.text.secondary} />,
+                icon: <Icon name="list" size={16} color={theme.colors.text.secondary} />,
             },
         ],
         [theme.colors.text.secondary],
@@ -104,7 +104,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
                 {props.onOpenNewTerminalTab ? (
                     <IconButton
                         testID={testId('new-tab')}
-                        iconName="add-outline"
+                        iconName="plus"
                         accessibilityLabel={t('terminalEmbedded.openNewTabA11y')}
                         tooltip={t('terminalEmbedded.openNewTabA11y')}
                         variant="plain"
@@ -131,7 +131,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
                                 accessibilityLabel={t('terminalEmbedded.dockMenuA11y')}
                                 onPress={toggle}
                             >
-                                <Ionicons name="move-outline" size={18} color={theme.colors.text.secondary} />
+                                <Icon name="arrows-out-cardinal" size={16} color={theme.colors.text.secondary} />
                             </Pressable>
                         )}
                         items={dockItems}

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, findTestInstanceByTypeWithProps, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,7 +52,7 @@ installToolShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: createUseSettingMock({ fallback: (key) => settings[key] }),
+                useSetting: createUseSettingMock({ fallback: (key) => settings[key] ?? settingsDefaults[key] }),
             },
         });
     },
@@ -113,7 +114,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
 
-let settings: Record<string, unknown> = {};
+let settings: Partial<Settings> = {};
 
 async function renderToolTimelineRow(overrides: Record<string, unknown> = {}) {
     const { ToolTimelineRow } = await import('./ToolTimelineRow');
@@ -216,7 +217,7 @@ describe('ToolTimelineRow (tap action)', () => {
     });
 
     it('prefers a stable server route when tap action is open and the message is already persisted', async () => {
-        settings.toolViewTapAction = 'open';
+        settings = { ...settings, toolViewTapAction: 'open' };
 
         const screen = await renderToolTimelineRow({
             tool: {
@@ -237,7 +238,7 @@ describe('ToolTimelineRow (tap action)', () => {
     });
 
     it('expands without routing or hydrating the sidechain when tool navigation is disabled', async () => {
-        settings.toolViewTapAction = 'open';
+        settings = { ...settings, toolViewTapAction: 'open' };
 
         const screen = await renderToolTimelineRow({
             tool: {
@@ -342,6 +343,98 @@ describe('ToolTimelineRow (tap action)', () => {
         });
 
         expect(screen.findByTestId('tool-timeline-row-error')).not.toBeNull();
+    });
+
+    it.each([
+        {
+            label: 'the top-level Happier tools envelope failed',
+            result: {
+                content: [{
+                    type: 'text',
+                    text: '{"v":1,"ok":false,"kind":"tools_call","error":{"code":"invalid_parameters","message":"invalid_parameters"}}\n\n\nCommand exited with code 1',
+                }],
+                details: {},
+            },
+        },
+        {
+            label: 'a delegate target inside the successful Happier tools envelope failed',
+            result: {
+                content: [{
+                    type: 'text',
+                    text: '{"v":1,"ok":true,"kind":"tools_call","data":{"source":"happier","tool":"subagents_delegate_start","isError":false,"output":{"intent":"delegate","sessionId":"cmst8oicm00xztmweb5hjqql6","results":[{"key":"agent:claude","ok":false,"error":"invalid_parameters","errorCode":"invalid_parameters"}]}}}\n',
+                }],
+                details: null,
+            },
+        },
+    ])('shows a header error indicator when a completed tool result reports that $label', async ({ result }) => {
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'Bash',
+                state: 'completed',
+                result,
+            },
+        });
+
+        expect(screen.findByTestId('tool-timeline-row-error')).not.toBeNull();
+    });
+
+    it('keeps a completed aggregate result successful when every delegate target succeeded', async () => {
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'Bash',
+                state: 'completed',
+                result: {
+                    content: [{
+                        type: 'text',
+                        text: '{"v":1,"ok":true,"kind":"tools_call","data":{"source":"happier","tool":"subagents_delegate_start","isError":false,"output":{"intent":"delegate","sessionId":"session-1","results":[{"key":"agent:claude","ok":true}]}}}\n',
+                    }],
+                    details: null,
+                },
+            },
+        });
+
+        expect(screen.findByTestId('tool-timeline-row-error')).toBeNull();
+    });
+
+    it('does not treat unrelated JSON written by a successful tool as a tool-call failure envelope', async () => {
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'Bash',
+                state: 'completed',
+                result: {
+                    content: [{ type: 'text', text: '{"ok":false,"reason":"domain payload"}\n' }],
+                    details: null,
+                },
+            },
+        });
+
+        expect(screen.findByTestId('tool-timeline-row-error')).toBeNull();
+    });
+
+    it('shows an error for an unavailable tool whose stdout contains a failed Happier tools envelope', async () => {
+        const screen = await renderToolTimelineRow({
+            tool: {
+                name: 'subagents.delegate.start',
+                state: 'unavailable',
+                result: {
+                    stdout: '{"v":1,"ok":false,"kind":"tools_call","error":{"code":"unknown_tool","message":"Unknown built-in Happier tool: subagents.delegate.start"}}\n',
+                },
+            },
+        });
+
+        expect(screen.findByTestId('tool-timeline-row-error')).not.toBeNull();
+
+        standardCleanup();
+
+        const neutralScreen = await renderToolTimelineRow({
+            tool: {
+                name: 'UnknownTool',
+                state: 'unavailable',
+                result: { stdout: '{"ok":false,"reason":"domain payload"}\n' },
+            },
+        });
+
+        expect(neutralScreen.findByTestId('tool-timeline-row-error')).toBeNull();
     });
 
     it('preloads sidechain messages when a Task tool is expanded', async () => {

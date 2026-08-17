@@ -51,6 +51,7 @@ const settingsState = vi.hoisted((): PetAppShellCompanionTestState => ({
     },
 }));
 const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
+const reducedMotionState = vi.hoisted(() => ({ enabled: false }));
 const useActivityAttentionSourceSpy = vi.hoisted(() => vi.fn());
 const activityState = vi.hoisted(() => ({
     sessions: [] as Session[],
@@ -130,6 +131,10 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => platformState.tauri,
+}));
+
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+    useReducedMotionPreference: () => reducedMotionState.enabled,
 }));
 
 vi.mock('@/activity/source/useActivityAttentionSource', () => ({
@@ -222,6 +227,7 @@ describe('PetAppShellCompanionMount', () => {
             petsDismissedCompanionTrayItemKeys: [],
         };
         applyLocalSettingsSpy.mockReset();
+        reducedMotionState.enabled = false;
         useActivityAttentionSourceSpy.mockClear();
         activityState.sessions = [];
         activitySourceState.source = createActivitySource([]);
@@ -386,6 +392,54 @@ describe('PetAppShellCompanionMount', () => {
         });
 
         expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
+        randomSpy.mockRestore();
+    });
+
+    it('holds the web companion still when the user prefers reduced motion', async () => {
+        enableAccountPetsForTest();
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        reducedMotionState.enabled = true;
+        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+        const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount');
+
+        const screen = await renderScreen(<PetAppShellCompanionMount />);
+
+        await act(async () => {
+            vi.advanceTimersByTime(20_000);
+        });
+
+        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
+        expect(spriteTransform(screen)).toEqual([
+            { translateX: -0 },
+            { translateY: -0 },
+        ]);
+        randomSpy.mockRestore();
+    });
+
+    it('stops the web companion frame loop while the document is hidden', async () => {
+        enableAccountPetsForTest();
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+        vi.stubGlobal('document', {
+            visibilityState: 'hidden',
+            addEventListener: () => {},
+            removeEventListener: () => {},
+        });
+        const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount');
+
+        const screen = await renderScreen(<PetAppShellCompanionMount />);
+
+        await act(async () => {
+            vi.advanceTimersByTime(20_000);
+        });
+
+        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
+        expect(spriteTransform(screen)).toEqual([
+            { translateX: -0 },
+            { translateY: -0 },
+        ]);
         randomSpy.mockRestore();
     });
 

@@ -88,6 +88,7 @@ export default function SessionGitScreenRoute() {
     usePersistSessionMobileSurface({
         sessionId,
         surface: cockpitEnabled ? 'git' : null,
+        serverId: routeScope.serverId,
     });
 
     const onRequestClose = React.useCallback(() => {

@@ -28,12 +28,6 @@ vi.mock('@/voice/runtime/voiceRuntimeConfigDefaults', () => ({
     },
 }));
 
-// This suite exercises daemon TTS. Keep the unrelated OpenAI-compatible daemon
-// client boundary out of the module graph pulled in by the shared queue owner.
-vi.mock('@/voice/local/openaiCompat/client', () => ({
-    OpenAiCompatDaemonClient: class {},
-}));
-
 vi.mock('./DaemonVoiceInferenceClient', () => ({
     DaemonVoiceInferenceClient: class {
         synthesizeText = vi.fn();

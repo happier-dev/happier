@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Happier uses your microphone for voice conversations and dictation.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Allow Happier to convert your speech to text to enable voice conversations and transcription.</string>
+</dict>
+</plist>

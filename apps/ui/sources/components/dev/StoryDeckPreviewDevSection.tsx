@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ReleaseNotesStorySurface } from '@/components/changelog/releaseNotes';
 import { Modal } from '@/modal';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     getActiveManifest,
     getReleaseNotesRuntimeVersion,
@@ -86,7 +86,7 @@ export function StoryDeckPreviewDevSection() {
                     testID="dev-story-deck-preview-empty"
                     title="No release notes available"
                     subtitle="Add authored release notes and run parseReleaseNotes to generate the manifest."
-                    icon={<Ionicons name="albums-outline" size={28} color={theme.colors.text.tertiary} />}
+                    icon={<Icon name="stack" size={29} color={theme.colors.text.tertiary} />}
                     mode="info"
                     showChevron={false}
                 />
@@ -97,7 +97,7 @@ export function StoryDeckPreviewDevSection() {
                     title={release.versionLabel || release.releaseId}
                     subtitle={`${release.cards.length} cards · ${release.releaseId}`}
                     detail={release.releaseId === latestReleaseId ? 'Latest' : undefined}
-                    icon={<Ionicons name="newspaper-outline" size={28} color={accentColor} />}
+                    icon={<Icon name="newspaper" size={29} color={accentColor} />}
                     onPress={() => openReleasePreview(release)}
                 />
             ))}

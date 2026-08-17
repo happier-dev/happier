@@ -3,7 +3,24 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 
-import { useSelectionListKeyboardNav } from '../useSelectionListKeyboardNav';
+import {
+    useSelectionListKeyboardNav as useSelectionListKeyboardDispatch,
+    useSelectionListRovingFocus,
+    type SelectionListKeyboardNavParams,
+    type SelectionListKeyboardNavApi,
+} from '../useSelectionListKeyboardNav';
+
+/**
+ * The production composition: the surface owns roving focus (so it can read the
+ * focused row BEFORE autocomplete) and hands it to the key dispatcher. These
+ * suites exercise the same pair, not a test-only arrangement of it.
+ */
+function useSelectionListKeyboardNav(
+    params: Omit<SelectionListKeyboardNavParams, 'focus'>,
+): SelectionListKeyboardNavApi {
+    const focus = useSelectionListRovingFocus(params);
+    return useSelectionListKeyboardDispatch({ ...params, focus });
+}
 
 type Params = Parameters<typeof useSelectionListKeyboardNav>[0];
 

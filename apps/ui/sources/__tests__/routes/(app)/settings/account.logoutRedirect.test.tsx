@@ -11,22 +11,43 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
 import {
-    getAccountSettingsRouteModalMockRef,
     getAccountSettingsRouteRouterMockRef,
     installAccountSettingsRouteModuleMocks,
 } from './accountSettingsRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+type LogoutOptions = Readonly<{
+    beforeMutation?: () => void;
+}>;
+type LogoutResult =
+    | Readonly<{ kind: 'completed' }>
+    | Readonly<{
+        kind: 'finish_encryption_setup';
+        recovery: never;
+    }>;
 
-const logoutMock = vi.hoisted(() => vi.fn(async () => {}));
+const teardownStartedMock = vi.hoisted(() => vi.fn());
+const modalMockRef = vi.hoisted(() => ({
+    current: null as ReturnType<
+        typeof import('@/dev/testkit/mocks/modal')['createModalModuleMock']
+    > | null,
+}));
+const logoutMock = vi.hoisted(() =>
+    vi.fn<
+        (options?: LogoutOptions) =>
+            Promise<LogoutResult>
+    >(async () => ({ kind: 'completed' })),
+);
 
 installAccountSettingsRouteModuleMocks({
     modalModule: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
+        const modalMock = createModalModuleMock({
             confirmResult: true,
-        }).module;
+        });
+        modalMockRef.current = modalMock;
+        return modalMock.module;
     },
 });
 
@@ -81,27 +102,32 @@ vi.mock('@/components/account/ProviderIdentityItems', () => ({
 }));
 
 const routerMockRef = getAccountSettingsRouteRouterMockRef();
-const modalMockRef = getAccountSettingsRouteModalMockRef();
 
 describe('Settings → Account logout redirect', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         logoutMock.mockClear();
+        teardownStartedMock.mockClear();
         routerMockRef.current?.spies.push.mockReset();
         routerMockRef.current?.spies.back.mockReset();
         routerMockRef.current?.spies.replace.mockReset();
         routerMockRef.current?.spies.setParams.mockReset();
-        modalMockRef.current = null;
+        modalMockRef.current?.spies.show.mockClear();
+        modalMockRef.current?.spies.confirm.mockClear();
         standardCleanup();
     });
 
-    it('routes to the unauthenticated welcome screen before tearing down auth state', async () => {
+    it('routes after custody authorization and before tearing down auth state', async () => {
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
         let resolveLogout!: () => void;
-        logoutMock.mockImplementationOnce(async () => new Promise<void>((resolve) => {
-            resolveLogout = resolve;
-        }));
+        logoutMock.mockImplementationOnce(async (options) => {
+            options?.beforeMutation?.();
+            teardownStartedMock();
+            return await new Promise<{ kind: 'completed' }>((resolve) => {
+                resolveLogout = () => resolve({ kind: 'completed' });
+            });
+        });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = getRequestUrl(input);
@@ -128,9 +154,69 @@ describe('Settings → Account logout redirect', () => {
         });
 
         expect(routerMockRef.current.spies.replace).toHaveBeenCalledWith('/');
-        expect(logoutMock).toHaveBeenCalledTimes(1);
+        expect(logoutMock).toHaveBeenCalledWith({
+            beforeMutation: expect.any(Function),
+        });
+        expect(
+            logoutMock.mock.invocationCallOrder[0],
+        ).toBeLessThan(
+            routerMockRef.current.spies.replace.mock.invocationCallOrder[0]!,
+        );
+        expect(
+            routerMockRef.current.spies.replace.mock.invocationCallOrder[0],
+        ).toBeLessThan(
+            teardownStartedMock.mock.invocationCallOrder[0]!,
+        );
 
         resolveLogout();
+        await act(async () => {
+            await pendingLogoutPress;
+        });
+    });
+
+    it('does not route when custody blocks logout for recovery', async () => {
+        storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
+        logoutMock.mockImplementationOnce(async () => ({
+            kind: 'finish_encryption_setup',
+            recovery: {} as never,
+        }));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = getRequestUrl(input);
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse(),
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const screen = await renderSettingsView(<AccountScreen />);
+        const logoutRow = screen.findRowByTitle('settingsAccount.logout');
+
+        let pendingLogoutPress: Promise<void> | undefined;
+        await act(async () => {
+            pendingLogoutPress = logoutRow?.props.onPress?.();
+            await Promise.resolve();
+        });
+
+        expect(logoutMock).toHaveBeenCalledWith({
+            beforeMutation: expect.any(Function),
+        });
+        expect(routerMockRef.current.spies.replace).not.toHaveBeenCalled();
+        const modalMock = modalMockRef.current;
+        if (!modalMock) {
+            throw new Error('Expected account logout modal mock');
+        }
+        expect(modalMock.spies.show).toHaveBeenCalledTimes(1);
+
+        const modalConfig =
+            modalMock.spies.show.mock.calls[0]?.[0] as
+                | Readonly<{ onRequestClose: () => void }>
+                | undefined;
+        modalConfig?.onRequestClose();
         await act(async () => {
             await pendingLogoutPress;
         });

@@ -134,7 +134,6 @@ export function resolveVoiceConnectRecoveryTarget(params: Readonly<{
         route: buildConnectedAccountSettingsRoute(
             resolved.service,
             resolved.focus,
-            params.runtimeTarget,
         ),
     };
 }

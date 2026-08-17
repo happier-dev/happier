@@ -155,8 +155,13 @@ vi.mock('@/utils/platform/tauri', () => ({
     listenTauriEvent: vi.fn(),
 }));
 
+vi.mock('@/desktop/window/isDesktopOverlayWindowContext', () => ({
+    isDesktopOverlayWindowContext: () => desktopOverlayWindowState.value,
+}));
+
 vi.mock('@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext', () => ({
-    isDesktopActivityOverlayWindowContext: () => desktopOverlayWindowState.value,
+    isDesktopActivityOverlayWindowContext: () =>
+        desktopOverlayWindowState.value && mockedPathname === '/desktop/activity-overlay',
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -531,6 +536,7 @@ describe('app/_layout init resilience', () => {
             node.props?.testID === 'sidebar-navigator-tabstate-probe' && node.props?.activeTab === 'sessions',
         );
         expect(probes).toHaveLength(1);
+        expect(screen.findAllByType('RealtimeProvider' as any)).toHaveLength(1);
     });
 
     it('configures separate Android notification channels for permission/action request pushes', async () => {
@@ -619,16 +625,32 @@ describe('app/_layout init resilience', () => {
         consoleErrorSpy.mockRestore();
     });
 
-    it('skips sync restore inside the dedicated desktop overlay window', async () => {
+    it('skips sync restore inside the dedicated desktop activity overlay window', async () => {
         mockedPlatformOS = 'web';
         mockedPathname = '/desktop/activity-overlay';
         shellChromeState.isTauriDesktop = true;
         desktopOverlayWindowState.value = true;
         bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
 
-        await renderSettledRootLayout();
+        const screen = await renderSettledRootLayout();
 
+        expect(screen.findAllByType('RealtimeProvider' as any)).toHaveLength(0);
         expect(syncRestoreMock).not.toHaveBeenCalled();
+    });
+
+    it('restores synced pet state while keeping the pet overlay free of realtime runtimes', async () => {
+        mockedPlatformOS = 'web';
+        mockedPathname = '/desktop/pet-overlay';
+        shellChromeState.isTauriDesktop = true;
+        desktopOverlayWindowState.value = true;
+        bootCredentialsState.value = { token: 'overlay-token', secret: 'overlay-secret' };
+
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findAllByType('RealtimeProvider' as any)).toHaveLength(0);
+        expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(1);
+        expect(syncRestoreMock).toHaveBeenCalledTimes(1);
+        expect(syncRestoreMock).toHaveBeenCalledWith(bootCredentialsState.value);
     });
 
     it('does not mount desktop fallback shell chrome inside the dedicated desktop overlay window', async () => {

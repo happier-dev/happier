@@ -68,9 +68,35 @@ export type BrowserAutomationEngineBridgeConfig = Readonly<{
     onRejectedMessage?: (reasonCode: string) => void;
 }>;
 
+/**
+ * The host->frame push direction (EU-8).
+ *
+ * The frame engine owns the delivery primitive — an exact-origin
+ * `postMessage` into the iframe's own window, or a `MessageEvent` dispatched
+ * into the native WebView — and nothing else. It hands that primitive to the
+ * bridge owner through `attachHostMessages` for the frame's lifetime and takes
+ * it back on unmount, so a retired frame can never be posted into and the
+ * engine never learns what a host message means.
+ */
+export type BrowserFrameHostMessageAttachment = Readonly<{
+    attachHostMessages: (send: (message: unknown) => void) => () => void;
+}>;
+
 export type BrowserWebFrameMessageBridgeConfig = Readonly<{
     onMessage: (event: MessageEvent) => unknown | Promise<unknown>;
-}>;
+    /**
+     * The exact origin every host->frame post is addressed to. Never `'*'`: a
+     * wildcard would hand the message to whatever document happens to occupy
+     * the frame after a navigation.
+     */
+    targetOrigin?: string;
+    /**
+     * Only an intentionally opaque sandboxed Artifact guest may require `*`:
+     * source-window, nonce, qualified destination, and bound-lifetime checks
+     * remain the caller authority before this delivery primitive is used.
+     */
+    allowWildcardTargetOrigin?: boolean;
+}> & Partial<BrowserFrameHostMessageAttachment>;
 
 export type BrowserNativeFrameMessageBridgeConfig = Readonly<{
     onMessage: (event: Readonly<{
@@ -79,7 +105,7 @@ export type BrowserNativeFrameMessageBridgeConfig = Readonly<{
             url?: string;
         }>;
     }>) => unknown | Promise<unknown>;
-}>;
+}> & Partial<BrowserFrameHostMessageAttachment>;
 
 export type BrowserFrameNavigationCommand = Readonly<{
     commandId: string;
@@ -105,6 +131,12 @@ export type WebIframeEngineConfig = Readonly<{
     csp?: string;
     onLoad?: () => void;
     onError?: () => void;
+    /**
+     * An opaque Artifact guest cannot expose its loaded URL to the host. Its
+     * first load is the declared entry; every later load retires the frame.
+     */
+    revokeOnUnexpectedNavigation?: boolean;
+    onUnexpectedNavigation?: () => void;
     diagnostics?: BrowserDiagnosticsEngineBridgeConfig;
     automation?: BrowserAutomationEngineBridgeConfig;
     webMessageBridge?: BrowserWebFrameMessageBridgeConfig;

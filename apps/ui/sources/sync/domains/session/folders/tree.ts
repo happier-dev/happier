@@ -1,7 +1,11 @@
-import type { SessionFolderV1, SessionFoldersV1, SessionFolderWorkspaceRefV1 } from './types';
+import type {
+    SessionFolderList,
+    SessionFolderListItem,
+    SessionFolderWorkspaceRefV1,
+} from './types';
 import { compareSessionFolderWorkspaceRefs } from './workspaceRefs';
 
-export type SessionFolderTreeNode = SessionFolderV1 & Readonly<{
+export type SessionFolderTreeNode = SessionFolderListItem & Readonly<{
     depth: number;
     children: readonly SessionFolderTreeNode[];
 }>;
@@ -11,19 +15,27 @@ export type SessionFolderTree = Readonly<{
     nodesById: ReadonlyMap<string, SessionFolderTreeNode>;
 }>;
 
-function compareFolders(a: SessionFolderV1, b: SessionFolderV1): number {
+function compareFolders(a: SessionFolderListItem, b: SessionFolderListItem): number {
     const sortA = a.sortKey ?? a.name.toLocaleLowerCase();
     const sortB = b.sortKey ?? b.name.toLocaleLowerCase();
     if (sortA !== sortB) return sortA.localeCompare(sortB);
     return a.id.localeCompare(b.id);
 }
 
-export function buildSessionFolderTree(folders: SessionFoldersV1, workspace: SessionFolderWorkspaceRefV1): SessionFolderTree {
+export function buildSessionFolderTree(
+    folders: SessionFolderList,
+    workspace: SessionFolderWorkspaceRefV1,
+    options: Readonly<{
+        includeLockedFolderIds?: ReadonlySet<string>;
+    }> = {},
+): SessionFolderTree {
     const workspaceFolders = folders.folders
-        .filter((folder) => compareSessionFolderWorkspaceRefs(folder.workspace, workspace))
+        .filter((folder) => folder.workspace
+            ? compareSessionFolderWorkspaceRefs(folder.workspace, workspace)
+            : options.includeLockedFolderIds?.has(folder.id) === true)
         .slice()
         .sort(compareFolders);
-    const childFoldersByParentId = new Map<string | null, SessionFolderV1[]>();
+    const childFoldersByParentId = new Map<string | null, SessionFolderListItem[]>();
     for (const folder of workspaceFolders) {
         const siblings = childFoldersByParentId.get(folder.parentId) ?? [];
         siblings.push(folder);
@@ -31,7 +43,7 @@ export function buildSessionFolderTree(folders: SessionFoldersV1, workspace: Ses
     }
 
     const nodesById = new Map<string, SessionFolderTreeNode>();
-    const buildNode = (folder: SessionFolderV1, depth: number): SessionFolderTreeNode => {
+    const buildNode = (folder: SessionFolderListItem, depth: number): SessionFolderTreeNode => {
         const children = (childFoldersByParentId.get(folder.id) ?? []).map((child) => buildNode(child, depth + 1));
         const node: SessionFolderTreeNode = { ...folder, depth, children };
         nodesById.set(folder.id, node);

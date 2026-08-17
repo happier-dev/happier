@@ -17,6 +17,11 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
   TokenStorage: {
     getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsSpy(...args),
   },
+  isTokenOnlyAuthCredentials: (credentials: unknown) => {
+    if (!credentials || typeof credentials !== 'object') return false;
+    const record = credentials as Record<string, unknown>;
+    return !('secret' in record) && !('encryption' in record);
+  },
 }));
 
 vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
@@ -116,6 +121,35 @@ describe('resolveServerScopedSessionContext', () => {
       credentials: { token, secret: 'secret-b' },
       encryption: fakeEncryption,
     });
+  });
+
+  it('returns a keyless scoped context for token-only plaintext accounts', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'server-a',
+      serverUrl: 'https://server-a.example.test',
+      generation: 1,
+    });
+    listServerProfilesSpy.mockReturnValue([
+      { id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' },
+    ]);
+    const token = tokenForSub('account-sub-b');
+    getCredentialsSpy.mockResolvedValue({ token });
+
+    const { resolveServerScopedSessionContext } = await import('./resolveServerScopedSessionContext');
+    await expect(resolveServerScopedSessionContext({
+      serverId: 'server-b',
+      timeoutMs: 5000,
+    })).resolves.toEqual({
+      scope: 'scoped',
+      timeoutMs: 5000,
+      targetServerId: 'server-b',
+      targetServerUrl: 'https://server-b.example.test',
+      targetAccountId: 'account-sub-b',
+      token,
+      credentials: { token },
+      encryption: null,
+    });
+    expect(createEncryptionSpy).not.toHaveBeenCalled();
   });
 
   it('builds a scoped context for a same-URL alternate profile when that exact profile has credentials', async () => {

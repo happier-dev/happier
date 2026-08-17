@@ -6,16 +6,29 @@ import { SelectableRow } from './SelectableRow';
 import { Text } from '@/components/ui/text/Text';
 
 
-export type ActionListItem = Readonly<{
+export type ActionListItemContent = Readonly<{
     id: string;
     testID?: string;
     label: string;
+    accessibilityLabel?: string;
     subtitle?: string;
     icon?: React.ReactNode;
     right?: React.ReactNode;
     selected?: boolean;
     onPress?: () => void;
     disabled?: boolean;
+}>;
+
+/**
+ * A private extension point for an incumbent action-menu row. The callback
+ * receives the generated row facts and must delegate visual chrome back to
+ * `renderDefaultItem`; it does not create a second menu/row owner.
+ */
+export type ActionListItem = ActionListItemContent & Readonly<{
+    renderItem?: (
+        item: ActionListItemContent,
+        renderDefaultItem: (item: ActionListItemContent) => React.ReactNode,
+    ) => React.ReactNode;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -62,6 +75,22 @@ export function ActionListSection(props: {
         return icon;
     }, []);
 
+    const renderDefaultItem = React.useCallback((action: ActionListItemContent): React.ReactNode => (
+        <SelectableRow
+            testID={action.testID}
+            disabled={action.disabled}
+            onPress={action.onPress}
+            left={action.icon ? <View>{renderActionIcon(action.icon)}</View> : null}
+            right={action.right ?? null}
+            title={action.label}
+            accessibilityLabel={action.accessibilityLabel}
+            subtitle={action.subtitle}
+            titleStyle={styles.label}
+            selected={action.selected}
+            variant="slim"
+        />
+    ), [renderActionIcon, styles.label]);
+
     return (
         <View style={[styles.section, props.style]}>
             {props.title ? (
@@ -70,21 +99,15 @@ export function ActionListSection(props: {
                 </Text>
             ) : null}
 
-            {actions.map((action) => (
-                <SelectableRow
-                    key={action.id}
-                    testID={action.testID}
-                    disabled={action.disabled}
-                    onPress={action.onPress}
-                    left={action.icon ? <View>{renderActionIcon(action.icon)}</View> : null}
-                    right={action.right ?? null}
-                    title={action.label}
-                    subtitle={action.subtitle}
-                    titleStyle={styles.label}
-                    selected={action.selected}
-                    variant="slim"
-                />
-            ))}
+            {actions.map((action) => {
+                const { renderItem, ...item } = action;
+                const content: ActionListItemContent = item;
+                return (
+                    <React.Fragment key={content.id}>
+                        {renderItem ? renderItem(content, renderDefaultItem) : renderDefaultItem(content)}
+                    </React.Fragment>
+                );
+            })}
         </View>
     );
 }

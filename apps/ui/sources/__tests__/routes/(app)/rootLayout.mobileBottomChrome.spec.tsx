@@ -8,6 +8,7 @@ import { installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHe
 
 const hoistedState = vi.hoisted(() => ({
     journeyActive: false,
+    desktopOverlayWindow: false,
 }));
 
 installRootLayoutRouteCommonModuleMocks({
@@ -62,6 +63,10 @@ vi.mock('@/components/appShell/runtime/AuthenticatedAppRuntimeMounts', () => ({
     AuthenticatedAppRuntimeMounts: () => React.createElement('AuthenticatedAppRuntimeMounts'),
 }));
 
+vi.mock('@/desktop/window/isDesktopOverlayWindowContext', () => ({
+    isDesktopOverlayWindowContext: () => hoistedState.desktopOverlayWindow,
+}));
+
 vi.mock('@/components/onboarding/tour/state/journeySession', () => ({
     doesOnboardingJourneyOwnTransientDemoServer: (active: boolean) => active,
     useOnboardingJourneySessionActive: () => hoistedState.journeyActive,
@@ -73,6 +78,7 @@ vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => (
 
 afterEach(() => {
     hoistedState.journeyActive = false;
+    hoistedState.desktopOverlayWindow = false;
     vi.resetModules();
 });
 
@@ -108,5 +114,14 @@ describe('RootLayout mobile bottom chrome wiring', () => {
 
         expect(screen.tree.findAllByType('MobileBottomChromeHost' as never)).toHaveLength(0);
         expect(screen.tree.findAllByType('AuthenticatedAppRuntimeMounts' as never)).toHaveLength(0);
+    });
+
+    it('keeps app-owned runtimes out of dedicated desktop overlay presenters', async () => {
+        hoistedState.desktopOverlayWindow = true;
+        const RootLayout = (await import('@/app/(app)/_layout')).default;
+        const screen = await renderScreen(<RootLayout />);
+
+        expect(screen.tree.findAllByType('AuthenticatedAppRuntimeMounts' as never)).toHaveLength(0);
+        expect(screen.tree.findAllByType('Stack' as never)).toHaveLength(1);
     });
 });

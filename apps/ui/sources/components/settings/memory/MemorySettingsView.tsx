@@ -1,26 +1,28 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { fetchDaemonMemorySettings, writeDaemonMemorySettings } from '@/sync/domains/memory/fetchDaemonMemorySettings';
-import { useAllMachines } from '@/sync/domains/state/storage';
 import { fetchDaemonMemoryStatus } from '@/sync/domains/memory/fetchDaemonMemoryStatus';
 import { getDaemonMemoryStatusStateTranslationKey } from '@/sync/domains/memory/getDaemonMemoryStatusStateTranslationKey';
 import { getDaemonMemoryEmbeddingsStatusTranslationKey } from '@/sync/domains/memory/getDaemonMemoryEmbeddingsStatusTranslationKey';
 import { presentDaemonMemoryStatus } from '@/sync/domains/memory/presentDaemonMemoryStatus';
 import { presentDaemonMemoryEmbeddingsStatus } from '@/sync/domains/memory/presentDaemonMemoryEmbeddingsStatus';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import {
+    useMachineAdministrationTargetSelection,
+    type FreshMachineAdministrationExecutionTargetV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import {
@@ -34,89 +36,100 @@ import { MemorySettingsCoverageSection } from './MemorySettingsCoverageSection';
 import { MemorySettingsEmbeddingsSection } from './MemorySettingsEmbeddingsSection';
 import { MemorySettingsIndexTelemetrySection } from './MemorySettingsIndexTelemetrySection';
 import { MemorySettingsPrivacySection } from './MemorySettingsPrivacySection';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type IndexMode = MemorySettingsV1['indexMode'];
 
 export const MemorySettingsView = React.memo(function MemorySettingsView() {
     const { theme } = useUnistyles();
     const memorySearchEnabled = useFeatureEnabled('memory.search');
-    const machines = useAllMachines();
-    const activeServerSnapshot = getActiveServerSnapshot();
-    const serverId = activeServerSnapshot.serverId;
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.memory,
+    );
+    const executionTarget = administrationTargetSelection.resolveExecutionTarget();
+    const executionTargetKey = executionTarget
+        ? [
+            executionTarget.target.serverIdentityId,
+            executionTarget.target.machineId,
+            executionTarget.serverId,
+        ].join('\u0000')
+        : null;
+    const hasExecutionTarget = executionTarget !== null;
+    const isExecutionTargetCurrent = React.useCallback((
+        target: FreshMachineAdministrationExecutionTargetV1,
+    ) => {
+        const current = administrationTargetSelection.resolveExecutionTarget();
+        return current !== null && machineAdministrationTargetsEqual(current.target, target.target);
+    }, [administrationTargetSelection.resolveExecutionTarget]);
 
-    const [selectedMachineId, setSelectedMachineId] = React.useState<string>(() => machines[0]?.id ?? '');
     const [settings, setSettings] = React.useState<MemorySettingsV1>(() => DEFAULT_MEMORY_SETTINGS);
     const [settingsRpcSupported, setSettingsRpcSupported] = React.useState(true);
     const [memoryStatus, setMemoryStatus] = React.useState<MemoryStatusV1 | null>(null);
     const [loading, setLoading] = React.useState(false);
-    const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
     const [indexModeMenuOpen, setIndexModeMenuOpen] = React.useState(false);
     const [backfillMenuOpen, setBackfillMenuOpen] = React.useState(false);
     const [summarizerPermissionMenuOpen, setSummarizerPermissionMenuOpen] = React.useState(false);
 
-    React.useEffect(() => {
-        if (!machines.find((m) => m.id === selectedMachineId)) {
-            setSelectedMachineId(machines[0]?.id ?? '');
-        }
-    }, [machines, selectedMachineId]);
-
     const fetchSettings = React.useCallback(async () => {
         if (!memorySearchEnabled) return;
-        if (!serverId || !selectedMachineId) return;
+        const target = administrationTargetSelection.resolveExecutionTarget();
+        if (!target) return;
         setLoading(true);
         setMemoryStatus(null);
         try {
             const [settingsResult, status] = await Promise.all([
                 fetchDaemonMemorySettings({
-                    machineId: selectedMachineId,
-                    serverId,
+                    machineId: target.machine.id,
+                    serverId: target.serverId,
                 }),
                 fetchDaemonMemoryStatus({
-                    machineId: selectedMachineId,
-                    serverId,
+                    machineId: target.machine.id,
+                    serverId: target.serverId,
                 }).catch(() => null),
             ]);
+            if (!isExecutionTargetCurrent(target)) return;
             setSettings(settingsResult.settings);
             setSettingsRpcSupported(settingsResult.supported);
             setMemoryStatus(status);
         } finally {
-            setLoading(false);
+            if (isExecutionTargetCurrent(target)) setLoading(false);
         }
-    }, [memorySearchEnabled, selectedMachineId, serverId]);
+    }, [administrationTargetSelection.resolveExecutionTarget, isExecutionTargetCurrent, memorySearchEnabled]);
 
     React.useEffect(() => {
         if (!memorySearchEnabled) return;
+        if (!hasExecutionTarget) {
+            setSettings(DEFAULT_MEMORY_SETTINGS);
+            setSettingsRpcSupported(false);
+            setMemoryStatus(null);
+            setLoading(false);
+            return;
+        }
         void fetchSettings();
-    }, [fetchSettings, memorySearchEnabled]);
+    }, [executionTargetKey, fetchSettings, hasExecutionTarget, memorySearchEnabled]);
 
     const writeSettings = React.useCallback(async (next: MemorySettingsV1) => {
         if (!memorySearchEnabled) return;
-        if (!serverId || !selectedMachineId) return;
+        const target = administrationTargetSelection.resolveExecutionTarget();
+        if (!target) return;
         const result = await writeDaemonMemorySettings({
-            machineId: selectedMachineId,
-            serverId,
+            machineId: target.machine.id,
+            serverId: target.serverId,
             settings: next,
         });
+        if (!isExecutionTargetCurrent(target)) return;
         setSettings(result.settings);
         setSettingsRpcSupported(result.supported);
         if (!result.supported) {
             return;
         }
         const status = await fetchDaemonMemoryStatus({
-            machineId: selectedMachineId,
-            serverId,
+            machineId: target.machine.id,
+            serverId: target.serverId,
         }).catch(() => null);
+        if (!isExecutionTargetCurrent(target)) return;
         setMemoryStatus(status);
-    }, [memorySearchEnabled, selectedMachineId, serverId]);
-
-    const machineItems = React.useMemo(() => {
-        return machines.map((m) => ({
-            id: m.id,
-            title: m.metadata?.displayName || m.metadata?.host || m.id,
-            subtitle: m.metadata?.host || undefined,
-            icon: <Ionicons name="desktop-outline" size={20} color={theme.colors.text.secondary} />,
-        }));
-    }, [machines, theme.colors.text.secondary]);
+    }, [administrationTargetSelection.resolveExecutionTarget, isExecutionTargetCurrent, memorySearchEnabled]);
 
     const indexModeItems = [
         { id: 'hints', title: t('memorySearchSettings.indexMode.options.lightTitle'), subtitle: t('memorySearchSettings.indexMode.options.lightSubtitle') },
@@ -133,12 +146,6 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         { id: 'no_tools', title: t('memorySearchSettings.hints.permissions.options.noToolsTitle'), subtitle: t('memorySearchSettings.hints.permissions.options.noToolsSubtitle') },
         { id: 'read_only', title: t('memorySearchSettings.hints.permissions.options.readOnlyTitle'), subtitle: t('memorySearchSettings.hints.permissions.options.readOnlySubtitle') },
     ] as const;
-
-    const selectedMachineTitle = React.useMemo(() => {
-        const machine = machines.find((m) => m.id === selectedMachineId);
-        const label = machine?.metadata?.displayName || machine?.metadata?.host || selectedMachineId;
-        return label && label.trim().length > 0 ? label : t('memorySearchSettings.machine.noMachine');
-    }, [machines, selectedMachineId]);
 
     const statusPresentation = React.useMemo(() => presentDaemonMemoryStatus(memoryStatus), [memoryStatus]);
     const embeddingsStatusPresentation = React.useMemo(
@@ -174,7 +181,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
     const embeddingsModelSubtitle = React.useMemo(() => {
         return embeddingsStatusPresentation?.modelId ?? t('common.unavailable');
     }, [embeddingsStatusPresentation?.modelId]);
-    const showReadOnlySettings = settingsRpcSupported !== true;
+    const showReadOnlySettings = settingsRpcSupported !== true || !hasExecutionTarget;
 
     if (!memorySearchEnabled) {
         return (
@@ -186,7 +193,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     <Item
                         title={t('memorySearchSettings.disabled.title')}
                         subtitle={t('memorySearchSettings.disabled.subtitle')}
-                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.state.success.foreground} />}
+                        icon={<Icon name="magnifying-glass" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => { void Modal.alert(t('memorySearchSettings.disabled.alertTitle'), t('memorySearchSettings.disabled.alertBody')); }}
                     />
                 </ItemGroup>
@@ -196,38 +203,18 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
+            <MachineAdministrationTargetSelector
+                selection={administrationTargetSelection}
+                testIDPrefix="memory-settings-target"
+            />
             <ItemGroup
                 title={t('settings.memorySearch')}
                 footer={showReadOnlySettings ? t('common.unavailable') : t('memorySearchSettings.enabled.footer')}
             >
                 <Item
-                    title={t('memorySearchSettings.machine.title')}
-                    subtitle={selectedMachineTitle}
-                    icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={loading ? <Text>{t('common.loading')}</Text> : null}
-                    showChevron={false}
-                />
-                <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-                    <DropdownMenu
-                        open={machineMenuOpen}
-                        onOpenChange={setMachineMenuOpen}
-                        selectedId={selectedMachineId}
-                        search={true}
-                        items={machineItems}
-                        onSelect={(id) => {
-                            setSelectedMachineId(id);
-                            setMachineMenuOpen(false);
-                        }}
-                        itemTrigger={{
-                            title: t('memorySearchSettings.machine.changeTitle'),
-                            icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.indigo} />,
-                        }}
-                    />
-                </View>
-                <Item
                     title={t('memorySearchSettings.enabled.title')}
                     subtitle={showReadOnlySettings ? t('common.unavailable') : t('memorySearchSettings.enabled.subtitle')}
-                    icon={<Ionicons name="search-outline" size={29} color={theme.colors.state.success.foreground} />}
+                    icon={<Icon name="magnifying-glass" size={29} color={theme.colors.state.success.foreground} />}
                     rightElement={showReadOnlySettings ? null : (
                         <Switch
                             value={settings.enabled}
@@ -241,13 +228,13 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                 <Item
                     title={t('memorySearchSettings.status.title')}
                     subtitle={statusSubtitle}
-                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.orange} />}
+                    icon={<Icon name="chart-line" size={29} color={theme.colors.accent.orange} />}
                     showChevron={false}
                 />
                 <Item
                     title={t('memorySearchSettings.status.diskUsageTitle')}
                     subtitle={diskUsageSubtitle}
-                    icon={<Ionicons name="hardware-chip-outline" size={29} color={theme.colors.accent.purple} />}
+                    icon={<Icon name="cpu" size={29} color={theme.colors.accent.purple} />}
                     showChevron={false}
                 />
                 {showEmbeddingsStatus ? (
@@ -255,19 +242,19 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         <Item
                             title={t('memorySearchSettings.status.embeddingsTitle')}
                             subtitle={embeddingsStatusSubtitle}
-                            icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
+                            icon={<Icon name="sparkle" size={29} color={theme.colors.accent.indigo} />}
                             showChevron={false}
                         />
                         <Item
                             title={t('memorySearchSettings.status.embeddingsProviderTitle')}
                             subtitle={embeddingsProviderSubtitle}
-                            icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="cloud" size={29} color={theme.colors.accent.blue} />}
                             showChevron={false}
                         />
                         <Item
                             title={t('memorySearchSettings.status.embeddingsModelTitle')}
                             subtitle={embeddingsModelSubtitle}
-                            icon={<Ionicons name="cube-outline" size={29} color={theme.colors.accent.purple} />}
+                            icon={<Icon name="cube" size={29} color={theme.colors.accent.purple} />}
                             showChevron={false}
                         />
                     </>
@@ -294,7 +281,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     }}
                     itemTrigger={{
                         title: t('memorySearchSettings.indexMode.triggerTitle'),
-                        icon: <Ionicons name="options-outline" size={29} color={theme.colors.accent.orange} />,
+                        icon: <Icon name="sliders-horizontal" size={29} color={theme.colors.accent.orange} />,
                     }}
                 />
             </ItemGroup>
@@ -320,7 +307,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     }}
                     itemTrigger={{
                         title: t('memorySearchSettings.backfill.triggerTitle'),
-                        icon: <Ionicons name="time-outline" size={29} color={theme.colors.accent.purple} />,
+                        icon: <Icon name="clock" size={29} color={theme.colors.accent.purple} />,
                     }}
                 />
             </ItemGroup>
@@ -339,7 +326,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     testID="memory-settings-summarizer-backend"
                     title={t('memorySearchSettings.hints.backend.title')}
                     subtitle={settings.hints.summarizerBackendId}
-                    icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="hard-drives" size={29} color={theme.colors.accent.blue} />}
                     onPress={async () => {
                         const next = await Modal.prompt(
                             t('memorySearchSettings.hints.backend.promptTitle'),
@@ -364,7 +351,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     testID="memory-settings-summarizer-model"
                     title={t('memorySearchSettings.hints.model.title')}
                     subtitle={settings.hints.summarizerModelId}
-                    icon={<Ionicons name="cube-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="cube" size={29} color={theme.colors.accent.indigo} />}
                     onPress={async () => {
                         const next = await Modal.prompt(
                             t('memorySearchSettings.hints.model.promptTitle'),
@@ -400,7 +387,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     }}
                     itemTrigger={{
                         title: t('memorySearchSettings.hints.permissions.triggerTitle'),
-                        icon: <Ionicons name="lock-closed-outline" size={29} color={theme.colors.state.danger.foreground} />,
+                        icon: <Icon name="lock" size={29} color={theme.colors.state.danger.foreground} />,
                     }}
                 />
             </ItemGroup>

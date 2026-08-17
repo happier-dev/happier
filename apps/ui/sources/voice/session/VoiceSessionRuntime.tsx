@@ -8,10 +8,9 @@ import {
 
 import { useActiveServerAccountScope, useProfile, useSetting } from '@/sync/domains/state/storage';
 import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
-import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoiceProviderIdForBindingScope } from '@/voice/settings/resolveVoiceProviderId';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
-import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 import {
@@ -25,40 +24,15 @@ import {
 import { setVoiceSessionSnapshot } from './voiceSessionStore';
 import { createNativeAudioSessionLifecycleBridge } from '@/voice/runtime/nativeAudioSessionLifecycleBridge';
 import { useVoiceDiagnosticsRuntimeSync } from '@/voice/diagnostics/useVoiceDiagnosticsRuntimeSync';
+import {
+  createVoiceCredentialRuntimeAuthoritySnapshot,
+  hasVoiceCredentialRuntimeAuthorityChanged,
+  readVoiceCredentialAuthorityRefs,
+  type VoiceCredentialRuntimeAuthoritySnapshot,
+} from './voiceCredentialAuthorityRefs';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
-function readVoiceCredentialAuthorityRefs(
-  rawVoice: unknown,
-  providerId: string | 'off' | null,
-): Readonly<{
-  credentialBinding: unknown;
-  providerEnvelope: unknown;
-}> {
-  if (!rawVoice || typeof rawVoice !== 'object' || Array.isArray(rawVoice)) {
-    return { credentialBinding: null, providerEnvelope: null };
-  }
-  const voiceRecord = rawVoice as Readonly<{
-    credentialBindings?: unknown;
-    providers?: unknown;
-  }>;
-  const credentialBinding = providerId && providerId !== 'off'
-    && Array.isArray(voiceRecord.credentialBindings)
-      ? voiceRecord.credentialBindings.find((candidate) => (
-          candidate
-          && typeof candidate === 'object'
-          && !Array.isArray(candidate)
-          && (candidate as Readonly<{ providerId?: unknown }>).providerId === providerId
-        )) ?? null
-      : null;
-  const providers = voiceRecord.providers;
-  const providerEnvelope = providerId && providerId !== 'off'
-    && providers && typeof providers === 'object' && !Array.isArray(providers)
-      ? (providers as Readonly<Record<string, unknown>>)[providerId] ?? null
-      : null;
-  return {
-    credentialBinding,
-    providerEnvelope,
-  };
-}
+const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -136,37 +110,33 @@ function readAgentConnectedServiceBindingAuthority(
   return stableJsonStringify(authority);
 }
 
-function readAccountScopeIdentity(
-  accountScope: Readonly<{ serverId: string; accountId: string }> | null,
-): string | null {
-  return accountScope
-    ? `${accountScope.serverId}\u0000${accountScope.accountId}`
-    : null;
-}
-
 export function VoiceSessionRuntime(): React.ReactElement | null {
   const voice = useSetting('voice') as any;
+  const canonicalVoice = useSetting('voiceSettingsV1');
   const secrets = useSetting('secrets');
   const profile = useProfile();
   const accountScope = useActiveServerAccountScope();
   const connectedServices = profile?.connectedServicesV2 ?? null;
   const connectedServiceCredentialRevisions = profile?.connectedServiceCredentialRevisionsV1 ?? null;
   useVoiceDiagnosticsRuntimeSync(voice);
-  const providerId = resolveVoiceProviderIdFromSettings(voiceSettingsParse(voice));
+  const canonicalVoiceSettings = voiceSettingsParse(canonicalVoice);
+  const providerId = resolveVoiceProviderIdForBindingScope(
+    canonicalVoiceSettings,
+    'session',
+  );
+  const selectedProviderEntry = providerId ? voiceProviderRegistry.get(providerId) : null;
+  const credentialSlotId = selectedProviderEntry?.kind === 'voice.conversation-provider.v1'
+    ? selectedProviderEntry.declaration?.credentials?.slot.id ?? null
+    : null;
   const exactSessionCredentialAuthority = providerId !== null
     && resolveVoiceAdapterSurfaceCapabilities(providerId, voice)?.agentRuntime !== undefined;
-  const voiceCredentialAuthority = readVoiceCredentialAuthorityRefs(voice, providerId);
+  const voiceCredentialAuthority = readVoiceCredentialAuthorityRefs(
+    canonicalVoice,
+    providerId,
+    credentialSlotId,
+  );
   const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
-  const credentialAuthorityRef = React.useRef<Readonly<{
-    accountScope: typeof accountScope;
-    accountScopeIdentity: string | null;
-    agentConnectedServiceBindingAuthority: string;
-    connectedServiceCredentialRevisions: typeof connectedServiceCredentialRevisions;
-    connectedServices: typeof connectedServices;
-    credentialBinding: typeof voiceCredentialAuthority.credentialBinding;
-    providerEnvelope: typeof voiceCredentialAuthority.providerEnvelope;
-    secrets: typeof secrets;
-  }> | null>(null);
+  const credentialAuthorityRef = React.useRef<VoiceCredentialRuntimeAuthoritySnapshot | null>(null);
 
   // Ensure adapters are registered before the user can interact with voice controls.
   React.useLayoutEffect(() => {
@@ -215,9 +185,8 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   }, [providerId]);
 
   React.useEffect(() => {
-    const nextAuthority = {
+    const nextAuthority = createVoiceCredentialRuntimeAuthoritySnapshot({
       accountScope,
-      accountScopeIdentity: readAccountScopeIdentity(accountScope),
       agentConnectedServiceBindingAuthority:
         readAgentConnectedServiceBindingAuthority(
           voiceCredentialAuthority.providerEnvelope,
@@ -228,31 +197,27 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       credentialBinding: voiceCredentialAuthority.credentialBinding,
       providerEnvelope: voiceCredentialAuthority.providerEnvelope,
       secrets,
-    };
+    });
     const previousAuthority = credentialAuthorityRef.current;
     credentialAuthorityRef.current = nextAuthority;
     if (!previousAuthority) {
       return;
     }
-    if (
-      previousAuthority.accountScope !== nextAuthority.accountScope
-      || previousAuthority.connectedServiceCredentialRevisions !== nextAuthority.connectedServiceCredentialRevisions
-      || previousAuthority.connectedServices !== nextAuthority.connectedServices
-      || previousAuthority.credentialBinding !== nextAuthority.credentialBinding
-      || previousAuthority.providerEnvelope !== nextAuthority.providerEnvelope
-      || previousAuthority.secrets !== nextAuthority.secrets
-    ) {
+    if (hasVoiceCredentialRuntimeAuthorityChanged(previousAuthority, nextAuthority)) {
       const accountScopeChanged =
-        previousAuthority.accountScopeIdentity !== nextAuthority.accountScopeIdentity;
-      const globalBindingAuthorityChanged = (
-        controllerRef.current?.getSnapshot().sessionId === VOICE_AGENT_GLOBAL_SESSION_ID
+        previousAuthority.accountScopeAuthority !== nextAuthority.accountScopeAuthority;
+      const exactSessionAccountScopeChanged = exactSessionCredentialAuthority && accountScopeChanged;
+      const globalBindingAuthorityChanged = exactSessionCredentialAuthority
         && previousAuthority.agentConnectedServiceBindingAuthority
-          !== nextAuthority.agentConnectedServiceBindingAuthority
-      );
-      const fenceActive = exactSessionCredentialAuthority
-        && (accountScopeChanged || globalBindingAuthorityChanged);
+          !== nextAuthority.agentConnectedServiceBindingAuthority;
+      // This aggregate snapshot decides only whether a terminal auth failure
+      // can be rearmed for a new Start. It is not ordinary-provider attempt
+      // currentness: the account operation service owns that exact pre-mint
+      // lease, and a minted OpenAI authority remains attempt-local. The
+      // lifecycle owner maps a global binding change to its live session id.
       controllerRef.current?.rearmAfterCredentialAuthorityChange({
-        fenceActive,
+        exactSessionAccountScopeChanged,
+        globalBindingAuthorityChanged,
       });
     }
   }, [

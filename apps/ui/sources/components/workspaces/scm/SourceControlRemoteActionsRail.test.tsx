@@ -27,7 +27,7 @@ describe('SourceControlRemoteActionsRail', () => {
         const screen = await renderScreen(<SourceControlRemoteActionsRail
                     theme={theme}
                     actions={[
-                        { key: 'fetch', iconName: 'sync', label: 'Fetch', disabled: false, onPress: onFetch },
+                        { key: 'fetch', iconName: 'arrows-clockwise', label: 'Fetch', disabled: false, onPress: onFetch },
                         { key: 'pull', iconName: 'arrow-down', label: 'Pull', disabled: false, onPress: onPull },
                     ]}
                 />);
@@ -46,7 +46,7 @@ describe('SourceControlRemoteActionsRail', () => {
         const screen = await renderScreen(<SourceControlRemoteActionsRail
                     theme={theme}
                     actions={[
-                        { key: 'fetch', iconName: 'sync', label: 'Fetch', disabled: false, onPress: vi.fn(), testID: 'scm-update-remote-action-fetch' },
+                        { key: 'fetch', iconName: 'arrows-clockwise', label: 'Fetch', disabled: false, onPress: vi.fn(), testID: 'scm-update-remote-action-fetch' },
                     ]}
                 />);
 
@@ -63,7 +63,7 @@ describe('SourceControlRemoteActionsRail', () => {
                     ]}
                 />);
 
-        const octicon = screen.findByType('Octicons' as any);
+        const octicon = screen.findByType('Icon' as any);
         expect(octicon.props.name).toBe('upload');
     });
 });

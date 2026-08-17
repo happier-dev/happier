@@ -77,17 +77,53 @@ test('apps/ui fast test lane is read-only and leaves patch/vendor mutation to in
 
   const packageJson = await readJson(join(packageRoot, 'package.json'));
   const testScript = packageJson?.scripts?.test;
+  const localTestScript = packageJson?.scripts?.['test:local'];
   const unitTestScript = packageJson?.scripts?.['test:unit'];
+  const localUnitTestScript = packageJson?.scripts?.['test:unit:local'];
   const installScript = packageJson?.scripts?.['postinstall:real'];
 
   assert.equal(typeof testScript, 'string');
-  assert.match(testScript, /\btest:unit\b/);
-  assert.match(testScript, /navigationPackageContract\.test\.mjs/);
+  assert.match(testScript, /--script=test:local/);
+  assert.equal(typeof localTestScript, 'string');
+  assert.match(localTestScript, /\btest:unit:local\b/);
+  assert.match(localTestScript, /navigationPackageContract\.test\.mjs/);
+  assert.match(
+    localTestScript,
+    /verifyReactNativeEnrichedMarkdownWebStreamingPatch\.test\.mjs/,
+    'the full UI test lane should verify the patched enriched-markdown web streaming artifacts',
+  );
   assert.equal(packageJson?.scripts?.['postinstall:patches'], undefined);
   assert.match(installScript, /tools\/postinstall\.mjs/);
   assert.equal(typeof unitTestScript, 'string');
-  assert.doesNotMatch(unitTestScript, /\bpostinstall(?::patches)?\b/);
-  assert.match(unitTestScript, /runVitestShards\.mjs/);
+  assert.match(unitTestScript, /--script=test:unit:local/);
+  assert.equal(typeof localUnitTestScript, 'string');
+  assert.doesNotMatch(localUnitTestScript, /\bpostinstall(?::patches)?\b/);
+  assert.match(localUnitTestScript, /runVitestShards\.mjs/);
+});
+
+test('apps/ui source validation does not prepare workspace runtime packages', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const packageJson = await readJson(join(packageRoot, 'package.json'));
+  const scripts = packageJson?.scripts ?? {};
+
+  for (const scriptName of [
+    'test:unit:local',
+    'test:integration:local',
+    'test:integration:legend-native:local',
+    'test:integration:legend-fabric:local',
+    'test:activity-surfaces:local',
+    'typecheck:local',
+    'typecheck:activity-surfaces:local',
+  ]) {
+    const command = scripts[scriptName];
+    assert.equal(typeof command, 'string', `${scriptName} must have a local source-validation command`);
+    assert.doesNotMatch(command, /ensure:workspace:built|ensureWorkspacePackagesBuilt|syncSharedDepsForSourceDev|buildSharedDeps/);
+  }
+
+  assert.match(scripts.start, /ensure:workspace:built/);
+  assert.match(scripts['tauri:dev'], /ensure:workspace:built/);
+  assert.match(scripts['test:native-e2e:activity-surfaces'], /ensure:workspace:built/);
 });
 
 test('apps/ui declares patch and vendor sources as install freshness inputs', async () => {
@@ -400,14 +436,25 @@ test('apps/ui postinstall verifies every current expo-router patch target', asyn
 test('apps/ui postinstall verifies enriched-markdown web WASM streaming patch targets', async () => {
   const packageRoot = dirname(fileURLToPath(import.meta.url));
   const postinstallPath = join(packageRoot, '..', 'tools', 'postinstall.mjs');
-  const postinstallContents = await readFile(postinstallPath, 'utf-8');
+  const verifierPath = join(
+    packageRoot,
+    '..',
+    'tools',
+    'postinstall',
+    'verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs',
+  );
+  const [postinstallContents, verifierContents] = await Promise.all([
+    readFile(postinstallPath, 'utf-8'),
+    readFile(verifierPath, 'utf-8'),
+  ]);
 
   assert.match(postinstallContents, /install-react-native-enriched-markdown-web-wasm/);
   assert.match(postinstallContents, /md4c\.esm\.single-file\.js/);
-  assert.match(postinstallContents, /src['"], ['"]web['"], ['"]parseMarkdown\.ts/);
-  assert.match(postinstallContents, /lengthBytesUTF8\(markdown\)/);
-  assert.match(postinstallContents, /SINGLE_FILE_BINARY_ENCODE=0/);
-  assert.match(postinstallContents, /export default createMd4cModule/);
+  assert.match(postinstallContents, /verifyReactNativeEnrichedMarkdownWebStreamingPatch/);
+  assert.match(verifierContents, /src\/web\/parseMarkdown\.ts/);
+  assert.match(verifierContents, /lengthBytesUTF8\(markdown\)/);
+  assert.match(verifierContents, /SINGLE_FILE_BINARY_ENCODE=0/);
+  assert.match(verifierContents, /export default createMd4cModule/);
 });
 
 test('apps/ui patched expo-router native stack treats unavailable liquid glass as disabled', async () => {

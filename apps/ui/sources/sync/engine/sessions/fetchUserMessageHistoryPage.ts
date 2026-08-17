@@ -134,7 +134,13 @@ function classifyHistoryPageFailure(status: number | null): 'unsupported' | 'err
     if (status === null) return 'error';
     // Old servers reject the role/roles filter outright; a 2xx body this client cannot parse is
     // an equally unsupported response shape. Everything else is transient.
-    if (status === 400 || status === 404 || status === 405 || status === 501) return 'unsupported';
+    //
+    // 404 is deliberately NOT unsupported: this page is only ever requested against a server that
+    // advertises `capabilities.session.messages.role`, so the route exists and a 404 can only mean
+    // the session is not visible to the scope that issued the request (`checkSessionAccess`).
+    // Classifying it as unsupported permanently latched `hasMore: false` on the process-global
+    // history record, silently killing navigation and composer history for that session.
+    if (status === 400 || status === 405 || status === 501) return 'unsupported';
     return status >= 200 && status < 300 ? 'unsupported' : 'error';
 }
 

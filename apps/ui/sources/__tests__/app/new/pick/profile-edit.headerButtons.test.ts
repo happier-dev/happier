@@ -110,6 +110,8 @@ vi.mock('@/components/profiles/edit', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
+    useLayoutMaxWidth: () => 1024,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1024 }),
 }));
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({

@@ -9,7 +9,6 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 
 import { buildAccountSettingsSnapshot } from './buildAccountSettingsSnapshot';
-import { buildSecretValue } from './settingsAnalytics.testkit';
 
 describe('buildAccountSettingsSnapshot', () => {
     it('tracks voice settings through canonical structured analytics serializers', () => {
@@ -57,7 +56,7 @@ describe('buildAccountSettingsSnapshot', () => {
                 },
                 providers: {
                     ...voiceSettingsDefaults.providers,
-                    realtime_elevenlabs: { schemaVersion: 2, config: {
+                    'happier.voice.elevenlabs/realtime-elevenlabs': { schemaVersion: 2, config: {
                         billingMode: 'byo',
                         tts: {
                             voiceId: 'custom-voice',
@@ -98,7 +97,6 @@ describe('buildAccountSettingsSnapshot', () => {
                         },
                         agent: {
                             ...localConversationDefaults.agent,
-                            backend: 'openai_compat',
                             agentSource: 'agent',
                             stayInVoiceHome: true,
                             teleportEnabled: false,
@@ -125,13 +123,19 @@ describe('buildAccountSettingsSnapshot', () => {
                             chatModelId: 'gpt-4o-mini',
                             commitModelSource: 'custom',
                             commitModelId: 'gpt-4.1',
-                            openaiCompat: {
-                                chatBaseUrl: 'https://api.example.com',
-                                chatApiKey: buildSecretValue('secret-value'),
-                                chatModel: 'custom-chat',
-                                commitModel: 'custom-commit',
-                                temperature: 1.4,
-                                maxTokens: 4_096,
+                            providerChat: {
+                                status: 'configured',
+                                chat: {
+                                    agentTargetKey: 'backend:opencode',
+                                    providerConnectionId: 'voice-openai-compatible-chat',
+                                    modelId: 'custom-chat',
+                                },
+                                commit: {
+                                    agentTargetKey: 'backend:opencode',
+                                    providerConnectionId: 'voice-openai-compatible-chat',
+                                    modelId: 'custom-commit',
+                                },
+                                configuration: { temperature: 1.4 },
                             },
                             verbosity: 'balanced',
                         },
@@ -156,24 +160,19 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__voice__uiUpdatesSnippetsMaxMessagesBucket).toBe('large');
         expect(snapshot.properties.acct_setting__voice__privacyShareDeviceInventory).toBe(false);
         expect(snapshot.properties.acct_setting__voice__privacyRecentMessagesCountBucket).toBe('large');
-        expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsBillingMode).toBe('byo');
         expect(snapshot.properties.acct_setting__voice__assistantLanguageConfigured).toBe(true);
         expect(snapshot.properties.acct_setting__voice__welcomeEnabled).toBe(true);
         expect(snapshot.properties.acct_setting__voice__welcomeMode).toBe('on_first_turn');
         expect(snapshot.properties.acct_setting__voice__welcomeTemplateConfigured).toBe(true);
         expect(snapshot.properties).not.toHaveProperty('acct_setting__voice__realtimeElevenLabsWelcomeEnabled');
         expect(snapshot.properties).not.toHaveProperty('acct_setting__voice__localConversationAgentWelcomeEnabled');
-        expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsTtsVoiceIdKind).toBe('custom');
-        expect(snapshot.properties.acct_setting__voice__realtimeElevenLabsByoAgentConfigured).toBe(true);
         expect(snapshot.properties.acct_setting__voice__localDirectHandsFreeEnabled).toBe(true);
         expect(snapshot.properties.acct_setting__voice__localDirectNetworkTimeoutBucket).toBe('large');
         expect(snapshot.properties.acct_setting__voice__localConversationConversationMode).toBe('agent');
-        expect(snapshot.properties.acct_setting__voice__localConversationAgentBackend).toBe('openai_compat');
+        expect(snapshot.properties.acct_setting__voice__localConversationAgentProviderChatStatus).toBe('configured');
         expect(snapshot.properties.acct_setting__voice__localConversationAgentFixedMachineConfigured).toBe(true);
         expect(snapshot.properties.acct_setting__voice__localConversationAgentCustomVoiceHomeConfigured).toBe(true);
         expect(snapshot.properties.acct_setting__voice__localConversationAgentResumabilityMode).toBe('provider_resume');
-        expect(snapshot.properties.acct_setting__voice__localConversationAgentOpenaiCompatChatBaseUrlConfigured).toBe(true);
-        expect(snapshot.properties.acct_setting__voice__localConversationAgentOpenaiCompatTemperatureBucket).toBe('high');
         expect(snapshot.properties.acct_setting__voice__localConversationStreamingTurnStreamTimeoutBucket).toBe('large');
     });
 
@@ -182,9 +181,9 @@ describe('buildAccountSettingsSnapshot', () => {
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
             voice: voiceSettingsParse({
-                providerId: 'future_vendor',
+                providerId: 'acme.voice/future-vendor',
                 providers: {
-                    future_vendor: {
+                    'acme.voice/future-vendor': {
                         schemaVersion: 9,
                         config: { nested: { secretSentinel } },
                     },
@@ -192,7 +191,7 @@ describe('buildAccountSettingsSnapshot', () => {
             }),
         });
 
-        expect(snapshot.properties.acct_setting__voice__providerId).toBe('future_vendor');
+        expect(snapshot.properties.acct_setting__voice__providerId).toBe('acme.voice/future-vendor');
         expect(JSON.stringify(snapshot.properties)).not.toContain(secretSentinel);
     });
 });

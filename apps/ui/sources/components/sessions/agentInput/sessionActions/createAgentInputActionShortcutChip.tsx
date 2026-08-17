@@ -1,10 +1,11 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '../definitions/agentInputChipIconMetrics';
 
 type ShortcutChipLayout = 'inline' | 'row';
 
@@ -29,7 +30,7 @@ export function createAgentInputActionShortcutChip(params: Readonly<{
             },
         }),
         render: ({ chipStyle, iconColor, showLabel, textStyle }) => {
-            const iconNode = normalizeNodeForView(<Ionicons name="flash-outline" size={16} color={iconColor} />);
+            const iconNode = normalizeNodeForView(<Icon name="lightning" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />);
             const labelNode = showLabel ? (
                 <Text numberOfLines={1} style={textStyle}>
                     {params.label}

@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Opens the session details page.
@@ -36,8 +36,8 @@ export const SessionHeaderInfoButton = React.memo((props: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={t('sessionInfo.title')}
         >
-            <Ionicons
-                name="information-circle-outline"
+            <Icon
+                name="info"
                 size={SESSION_HEADER_ICON_SIZE_PX}
                 color={theme.colors.chrome.header.foreground}
             />

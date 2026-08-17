@@ -1,10 +1,18 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { log } from '@/log';
 import { storage } from '@/sync/domains/state/storage';
-import { fetchTodos as fetchTodosDomain } from '@/sync/domains/todos/todoOps';
+import {
+    fetchTodos as fetchTodosDomain,
+    resolveTodoAccountStorageContext,
+} from '@/sync/domains/todos/todoOps';
+import {
+    decodeTodoStoredContent,
+    TODO_INDEX_KEY,
+    TODO_PREFIX,
+} from '@/sync/domains/todos/todoStoredContent';
 
 type RawEncryption = {
-    decryptRaw: (value: string) => Promise<any>;
+    decryptRaw: (value: string) => Promise<unknown>;
 };
 
 export async function fetchTodos(params: { credentials: AuthCredentials; shouldContinue?: () => boolean }): Promise<void> {
@@ -21,10 +29,15 @@ export async function fetchTodos(params: { credentials: AuthCredentials; shouldC
 
 export async function applyTodoSocketUpdates(params: {
     changes: any[];
-    encryption: RawEncryption;
+    credentials: AuthCredentials;
+    encryption: RawEncryption | null;
     invalidateTodosSync: () => void;
 }): Promise<void> {
     const { changes, encryption, invalidateTodosSync } = params;
+    const context = await resolveTodoAccountStorageContext(
+        params.credentials,
+        { encryption },
+    );
 
     const currentState = storage.getState();
     const todoState = currentState.todoState;
@@ -40,42 +53,32 @@ export async function applyTodoSocketUpdates(params: {
     let newUndoneOrder = undoneOrder;
     let newDoneOrder = doneOrder;
 
-    // Process each change
+    // Build the complete next snapshot before publishing any part of the batch.
     for (const change of changes) {
-        try {
-            const key = change.key;
-            const version = change.version;
+        const key = change.key;
+        updatedVersions[key] = change.version;
 
-            // Update version tracking
-            updatedVersions[key] = version;
-
-            if (change.value === null) {
-                // Item was deleted
-                if (key.startsWith('todo.') && key !== 'todo.index') {
-                    const todoId = key.substring(5); // Remove 'todo.' prefix
-                    delete updatedTodos[todoId];
-                    newUndoneOrder = newUndoneOrder.filter((id) => id !== todoId);
-                    newDoneOrder = newDoneOrder.filter((id) => id !== todoId);
-                }
-            } else {
-                // Item was added or updated
-                const decrypted = await encryption.decryptRaw(change.value);
-
-                if (key === 'todo.index') {
-                    // Update the index
-                    const index = decrypted as any;
-                    newUndoneOrder = index.undoneOrder || [];
-                    newDoneOrder = index.completedOrder || []; // Map completedOrder to doneOrder
-                } else if (key.startsWith('todo.')) {
-                    // Update a todo item
-                    const todoId = key.substring(5);
-                    if (todoId && todoId !== 'index') {
-                        updatedTodos[todoId] = decrypted as any;
-                    }
-                }
+        if (change.value === null) {
+            if (key.startsWith(TODO_PREFIX) && key !== TODO_INDEX_KEY) {
+                const todoId = key.slice(TODO_PREFIX.length);
+                delete updatedTodos[todoId];
+                newUndoneOrder = newUndoneOrder.filter((id) => id !== todoId);
+                newDoneOrder = newDoneOrder.filter((id) => id !== todoId);
             }
-        } catch (error) {
-            console.error(`Failed to process todo change for key ${change.key}:`, error);
+            continue;
+        }
+
+        const content = await decodeTodoStoredContent({
+            key,
+            encoded: change.value,
+            expectedMode: context.mode,
+            encryption: context.encryption ?? encryption,
+        });
+        if (content.kind === 'index') {
+            newUndoneOrder = content.value.undoneOrder;
+            newDoneOrder = content.value.completedOrder;
+        } else {
+            updatedTodos[content.todoId] = content.value;
         }
     }
 

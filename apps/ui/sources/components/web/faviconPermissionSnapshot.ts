@@ -13,20 +13,15 @@ import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSes
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
 
+import {
+    createSessionRuntimeFreshnessLedger,
+    createSessionSignatureLedger,
+    isBeforeFreshnessBoundary,
+} from '@/activity/attention/sessionAttentionSignatureLedger';
+
 export type FaviconPermissionSnapshot = Readonly<{
     hasFreshPermission: boolean;
     nextRefreshDelayMs: number | null;
-}>;
-
-type SignatureCacheEntry<T> = Readonly<{
-    signature: string;
-    value: T;
-}>;
-
-type PendingRequestObservedAtCacheEntry = Readonly<{
-    sessionSignature: string;
-    sessionMessagesSignature: string;
-    value: number | null;
 }>;
 
 function collectRecordIds<T>(record: Readonly<Record<string, T>> | null | undefined): string[] {
@@ -68,8 +63,8 @@ function buildSessionPermissionSignature(session: Session): string {
         readNumber(session.pendingPermissionRequestCount) ?? '',
         readNumber(session.pendingUserActionRequestCount) ?? '',
         readNumber(session.pendingRequestObservedAt) ?? '',
-        readPendingAgentStateRequestSignature(agentState?.requests),
-        readPendingAgentStateCompletedRequestSignature(agentState?.completedRequests),
+        readPendingAgentStateRequestSignature(agentState),
+        readPendingAgentStateCompletedRequestSignature(agentState),
     ].join('\u001f');
 }
 
@@ -152,129 +147,79 @@ function deriveFaviconPermissionSnapshotFromSessions(
     };
 }
 
-function buildRecordSignature<T>(
-    record: Readonly<Record<string, T>>,
-    cache: Map<string, SignatureCacheEntry<T>>,
-    buildValueSignature: (value: T, id: string) => string,
-): string {
-    const ids = collectRecordIds(record).sort();
-    for (const cachedId of cache.keys()) {
-        if (!Object.prototype.hasOwnProperty.call(record, cachedId)) {
-            cache.delete(cachedId);
-        }
-    }
-    return ids.map((id) => {
-        const value = record[id];
-        const cached = cache.get(id);
-        const signature = cached !== undefined && cached.value === value
-            ? cached.signature
-            : buildValueSignature(value, id);
-        if (cached?.value !== value) {
-            cache.set(id, { signature, value });
-        }
-        return `${id}\u001e${signature}`;
-    }).join('\u001d');
-}
+type SessionMessagesValue = StorageState['sessionMessages'][string] | undefined;
 
-function buildSessionMessagesRecordSignature(
-    sessionIds: readonly string[],
-    sessionMessages: StorageState['sessionMessages'] | undefined,
-    cache: Map<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>,
-): string {
-    for (const cachedId of cache.keys()) {
-        if (!sessionIds.includes(cachedId)) {
-            cache.delete(cachedId);
-        }
-    }
-    return sessionIds.map((id) => {
-        const value = sessionMessages?.[id];
-        const cached = cache.get(id);
-        const signature = cached !== undefined && cached.value === value
-            ? cached.signature
-            : buildSessionMessagesPermissionSignature(value);
-        if (value) {
-            cache.set(id, { signature, value });
-        } else {
-            cache.delete(id);
-        }
-        return `${id}\u001e${signature}`;
-    }).join('\u001d');
-}
-
-function buildRuntimeFreshnessRecordSignature(
-    state: StorageState,
-    sessionIds: readonly string[],
-    nowMs: number,
-    pendingRequestObservedAtCache: Map<string, PendingRequestObservedAtCacheEntry>,
-    sessionSignatureCache: ReadonlyMap<string, SignatureCacheEntry<Session>>,
-    sessionMessagesSignatureCache: ReadonlyMap<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>,
-): string {
-    const activeIds = new Set(sessionIds);
-    for (const cachedId of pendingRequestObservedAtCache.keys()) {
-        if (!activeIds.has(cachedId)) {
-            pendingRequestObservedAtCache.delete(cachedId);
-        }
-    }
-
-    return sessionIds.map((id) => {
-        const session = state.sessions[id];
-        const sessionSignature = sessionSignatureCache.get(id)?.signature
-            ?? buildSessionPermissionSignature(session);
-        const sessionMessagesSignature = sessionMessagesSignatureCache.get(id)?.signature
-            ?? buildSessionMessagesPermissionSignature(state.sessionMessages?.[id]);
-        const cachedPendingRequestObservedAt = pendingRequestObservedAtCache.get(id);
-        const pendingRequestObservedAt = cachedPendingRequestObservedAt?.sessionSignature === sessionSignature
-            && cachedPendingRequestObservedAt.sessionMessagesSignature === sessionMessagesSignature
-            ? cachedPendingRequestObservedAt.value
-            : (() => {
-                const messages = readStoredSessionMessages(state, id);
-                const value = deriveLatestPendingRequestObservedAtFromSession(session, messages);
-                pendingRequestObservedAtCache.set(id, {
-                    sessionSignature,
-                    sessionMessagesSignature,
-                    value,
-                });
-                return value;
-            })();
-        return [
-            id,
-            readFreshnessRefreshDelayMs(session.activeAt, nowMs) === null ? 0 : 1,
-            readFreshnessRefreshDelayMs(session.thinkingAt, nowMs) === null ? 0 : 1,
-            readFreshnessRefreshDelayMs(session.latestTurnStatusObservedAt, nowMs) === null ? 0 : 1,
-            readFreshnessRefreshDelayMs(pendingRequestObservedAt, nowMs) === null ? 0 : 1,
-        ].join(':');
-    }).join('\u001d');
-}
-
+/**
+ * The favicon indicator is mounted at the web app root, so this selector runs on
+ * every store notification for the whole account.
+ *
+ * It used to answer "did anything that could move the favicon change?" by
+ * rebuilding sorted, joined signature strings over every session — a sort plus
+ * three account-sized joins per evaluation, allocating a string per session.
+ * `sessionAttentionSignatureLedger` answers the same question with a revision
+ * counter, where an unchanged session costs one identity comparison and
+ * allocates nothing.
+ *
+ * Runtime freshness is the one input that moves without the store moving, so the
+ * freshness ledger's recorded boundary — not a `Date.now()` read inside a
+ * signature — decides when a time-only re-derivation is due.
+ */
 export function createFaviconPermissionSnapshotSelector(): (state: StorageState) => FaviconPermissionSnapshot {
-    const sessionSignatureCache = new Map<string, SignatureCacheEntry<Session>>();
-    const sessionMessagesSignatureCache = new Map<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>();
-    const pendingRequestObservedAtCache = new Map<string, PendingRequestObservedAtCacheEntry>();
-    let previousSignature: string | null = null;
+    const sessionLedger = createSessionSignatureLedger<Session>(buildSessionPermissionSignature);
+    const sessionMessagesLedger = createSessionSignatureLedger<SessionMessagesValue>(
+        buildSessionMessagesPermissionSignature,
+    );
+    const freshnessLedger = createSessionRuntimeFreshnessLedger();
+    let previousRevisions: string | null = null;
     let previousSnapshot: FaviconPermissionSnapshot | null = null;
+    let previousSessions: StorageState['sessions'] | null = null;
+    let previousSessionMessages: StorageState['sessionMessages'] | null = null;
 
     return (state) => {
         const nowMs = Date.now();
-        const sessionIds = collectRecordIds(state.sessions).sort();
-        const signature = [
-            buildRecordSignature(state.sessions, sessionSignatureCache, buildSessionPermissionSignature),
-            buildSessionMessagesRecordSignature(sessionIds, state.sessionMessages, sessionMessagesSignatureCache),
-            buildRuntimeFreshnessRecordSignature(
-                state,
-                sessionIds,
+        const isFreshnessStable = isBeforeFreshnessBoundary(nowMs, [
+            freshnessLedger.readNextBoundaryAtMs(),
+        ]);
+        // A store notification that moved neither record cannot move this
+        // snapshot, so it must cost O(1) rather than an account-sized pass. The
+        // reuse only holds inside the earliest freshness boundary the ledger
+        // recorded, because freshness expiry moves the value with no store write.
+        if (
+            previousSnapshot !== null
+            && previousSessions === state.sessions
+            && previousSessionMessages === state.sessionMessages
+            && isFreshnessStable
+        ) {
+            return previousSnapshot;
+        }
+        previousSessions = state.sessions;
+        previousSessionMessages = state.sessionMessages;
+
+        // The favicon selector is evaluated against partial states in tests and
+        // during early hydration, where the messages record may not exist yet.
+        const sessionMessages = state.sessionMessages ?? {};
+        const revisions = [
+            sessionLedger.sync(state.sessions, (id) => state.sessions[id]),
+            sessionMessagesLedger.sync(state.sessions, (id) => sessionMessages[id]),
+            freshnessLedger.sync({
+                sessions: state.sessions,
+                sessionMessages,
                 nowMs,
-                pendingRequestObservedAtCache,
-                sessionSignatureCache,
-                sessionMessagesSignatureCache,
-            ),
+                readSessionSignature: sessionLedger.readSignature,
+                readSessionMessagesSignature: sessionMessagesLedger.readSignature,
+            }),
         ].join('\u001c');
 
-        if (signature === previousSignature && previousSnapshot) {
+        if (revisions === previousRevisions && previousSnapshot) {
             return previousSnapshot;
         }
 
-        previousSignature = signature;
-        previousSnapshot = deriveFaviconPermissionSnapshotFromSessions(state, sessionIds, nowMs);
+        previousRevisions = revisions;
+        previousSnapshot = deriveFaviconPermissionSnapshotFromSessions(
+            state,
+            collectRecordIds(state.sessions),
+            nowMs,
+        );
         return previousSnapshot;
     };
 }

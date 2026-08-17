@@ -776,17 +776,21 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
-    it('applies decrypted messages when projection routing is disabled and the session is not yet hydrated', async () => {
+    it('does not materialize a new-message without a shell when a realtime transcript consumer remains mounted', async () => {
+        const requestSessionShellRefresh = vi.fn();
         const { params, applyMessages, fetchSessions, markSessionMaterializedMaxSeq, applySessions } = buildHarness({
             getSession: () => undefined,
+            realtimeProjectionMode: 'enabled',
+            isSessionFullContentConsumerActive: () => true,
+            requestSessionShellRefresh,
         });
 
         await handleNewMessageSocketUpdate(params);
 
-        expect(fetchSessions).toHaveBeenCalledTimes(1);
-        expect(applyMessages).toHaveBeenCalledTimes(1);
-        expect(applyMessages.mock.calls[0]?.[0]).toBe('s1');
-        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
+        expect(requestSessionShellRefresh).toHaveBeenCalledWith('s1');
+        expect(fetchSessions).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
         expect(applySessions).not.toHaveBeenCalled();
     });
 

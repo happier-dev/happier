@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type {
@@ -9,49 +9,62 @@ import type {
     QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 
-import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
+import {
+    compareAccountHealthSeverity,
+    deriveAccountHealth,
+} from '@/sync/domains/connectedServices/deriveAccountHealth';
+import { AccountBlock } from './AccountBlock';
+import {
+    buildConnectedServiceAccountRowActions,
+    type ConnectedServiceAccountKind,
+} from './buildConnectedServiceAccountRowActions';
+import { QualifiedAccountBlock } from './QualifiedAccountBlock';
+import { QualifiedAccountDetailView } from './QualifiedAccountDetailView';
+import {
+    presentQualifiedConnectedAccountTarget,
+    type QualifiedConnectedAccountTargetPresentation,
+} from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import {
     ConnectedServiceSegmentedShell,
     type ConnectedServiceDetailSegment,
 } from '@/components/settings/connectedServices/detail/ConnectedServiceSegmentedShell';
-import { useConnectedServiceQuotaSnapshot } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshot';
-import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
+import {
+    QualifiedPoolDetailView,
+    type QualifiedPoolDetailMutations,
+} from '../pools/QualifiedPoolDetailView';
+import { QualifiedPoolsList } from '../pools/QualifiedPoolsList';
 import type {
     UseQualifiedConnectedAccountGroupsResult,
 } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
 import { Modal } from '@/modal';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { deriveConnectedServiceAuthGroupIdFromName } from '@/sync/domains/connectedServices/deriveConnectedServiceAuthGroupIdFromName';
-import type {
-    ConnectedAccountSettingsRouteFocus,
+import {
+    isConnectedAccountConfigurationBlocked,
+    isConnectedAccountServiceConfigurationBlocked,
+    type ConnectedAccountServiceConfigurationStatusByModeId,
+} from '@/sync/domains/connectedServices/configurationReadiness';
+import {
+    buildConnectedAccountSettingsRoute,
+    type ConnectedAccountSettingsRouteFocus,
 } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     isConnectedServiceRuntimeCooldownError,
     resolveConnectedServiceRuntimeCooldownOverrideBody,
 } from '../connectedServiceSettingsErrors';
 import {
     isQualifiedConnectedAccountLegacyOperationSupported,
+    type QualifiedConnectedAccountUiLegacyPeerClass,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 
-export type ConnectedAccountServiceProfile =
-    Omit<QualifiedConnectedAccountProfileV4, 'credentialRevision'>
-    & Readonly<{ credentialRevision?: string | null }>;
-
-type ServiceConfigurationStatusByModeId = Readonly<
-    Record<
-        string,
-        'ready' | 'configurationRequired' | undefined
-    >
->;
-
-function isServiceConfigurationBlocked(
-    statusByModeId: ServiceConfigurationStatusByModeId | undefined,
-    modeId: string,
-): boolean {
-    return statusByModeId?.[modeId] !== 'ready';
-}
+export type ConnectedAccountServiceProfile = QualifiedConnectedAccountProfileV4;
 
 function localizedText(
     value: string | Readonly<{ fallback: string }> | undefined,
@@ -59,117 +72,21 @@ function localizedText(
     return typeof value === 'string' ? value : value?.fallback ?? '';
 }
 
-function accountStatusLabel(
-    status: QualifiedConnectedAccountProfileV4['status'],
-): string {
-    switch (status) {
-        case 'connected':
-            return t('connectedServices.detail.profiles.connected');
-        case 'refreshing':
-            return t('connectedServices.detail.profiles.refreshing');
-        case 'needs_reauth':
-            return t('connectedServices.detail.profiles.needsReauth');
-        case 'refresh_failed_retryable':
-            return t('connectedServices.detail.profiles.refreshFailedRetryable');
-    }
-}
+/** Stable empty fallback so an absent `accountLabels` prop does not churn memos. */
+const EMPTY_ACCOUNT_LABELS: Readonly<Record<string, string>> = Object.freeze({});
 
-function quotaSubtitle(snapshot: Readonly<{
-    planLabel: string | null;
-    meters: readonly Readonly<{
-        remainingPct?: number | null;
-        usedPct?: number | null;
-    }>[];
-}>): string {
-    const percentages = snapshot.meters
-        .map((meter) => meter.remainingPct
-            ?? (meter.usedPct === null || meter.usedPct === undefined
-                ? null
-                : 100 - meter.usedPct))
-        .filter((value): value is number => value !== null);
-    const remaining = percentages.length > 0
-        ? Math.min(...percentages)
-        : null;
-    return [
-        snapshot.planLabel,
-        remaining === null ? null : `${Math.round(remaining)}%`,
-    ].filter((value): value is string => Boolean(value)).join(' · ');
-}
-
-const QualifiedQuotaRow = React.memo(function QualifiedQuotaRow(props: Readonly<{
-    account: QualifiedConnectedAccountRef;
-}>) {
-    const quota = useQualifiedConnectedAccountQuota(props.account);
-    if (quota.supported === false) return null;
-    if (
-        quota.supported === null
-        && !quota.loading
-        && !quota.error
-    ) {
-        return null;
-    }
-    return (
-        <Item
-            testID={`qualified-connected-account-quota:${props.account.accountId}`}
-            title={t('connectedServices.account.usageCaption')}
-            subtitle={quota.snapshot
-                ? quotaSubtitle(quota.snapshot)
-                : quota.error ?? t('connectedServices.deviceAuth.preparing')}
-            icon={<Ionicons name="speedometer-outline" size={22} />}
-            disabled={quota.refreshing}
-            onPress={quota.supported === true ? () => {
-                void quota.refresh();
-            } : undefined}
-            showChevron={quota.supported === true}
-        />
-    );
-});
-
-const LegacyQuotaRow = React.memo(function LegacyQuotaRow(props: Readonly<{
-    serviceId: ConnectedServiceId;
-    accountId: string;
-    credentialHealthStatus: unknown;
-}>) {
-    const quota = useConnectedServiceQuotaSnapshot({
-        serviceId: props.serviceId,
-        profileId: props.accountId,
-        credentialHealthStatus: props.credentialHealthStatus,
-    });
-    if (!quota.loading && !quota.snapshot && !quota.error) return null;
-    return (
-        <Item
-            testID={`qualified-connected-account-quota:${props.accountId}`}
-            title={t('connectedServices.account.usageCaption')}
-            subtitle={quota.snapshot
-                ? quotaSubtitle(quota.snapshot)
-                : quota.error ?? t('connectedServices.deviceAuth.preparing')}
-            icon={<Ionicons name="speedometer-outline" size={22} />}
-            disabled={quota.isRefreshing}
-            onPress={quota.canRefresh ? () => {
-                void quota.refresh();
-            } : undefined}
-            showChevron={quota.canRefresh}
-        />
-    );
-});
-
-function groupStrategyTitle(
-    strategy: 'priority' | 'least_limited' | 'manual',
-): string {
-    switch (strategy) {
-        case 'priority':
-            return t('connectedServices.detail.groupDetail.strategyPriorityTitle');
-        case 'least_limited':
-            return t('connectedServices.detail.groupDetail.strategyLeastLimitedTitle');
-        case 'manual':
-            return t('connectedServices.detail.groupDetail.strategyManualTitle');
-    }
-}
-
-function parsePromptNumber(raw: string): number | null {
-    const value = Number(raw.trim().replace(/%$/, ''));
-    return Number.isFinite(value) ? value : null;
-}
+/**
+ * Kebab actions that start or destroy a credential operation. This screen runs
+ * ONE authentication/revocation attempt at a time and has no re-entrancy guard
+ * of its own, so they stay disabled while one is in flight — the read-only
+ * drill-in and the purely local label edit do not. The ids are the canonical
+ * row-action builder's; the coupling is pinned by this screen's own test.
+ */
+const BUSY_GATED_ACCOUNT_ACTION_IDS: ReadonlySet<string> = new Set([
+    'replace-token',
+    'reconnect',
+    'disconnect',
+]);
 
 const EMPTY_GROUPS: UseQualifiedConnectedAccountGroupsResult = {
     status: 'unsupported',
@@ -187,14 +104,54 @@ const EMPTY_GROUPS: UseQualifiedConnectedAccountGroupsResult = {
     setActiveAccount: async () => null,
 };
 
+/** Single-row screen for a focus that no longer resolves to a live entity. */
+function FocusedScreenNotice(props: Readonly<{
+    testID: string;
+    title: string;
+    subtitle?: string;
+}>) {
+    return (
+        <ItemList testID={props.testID}>
+            <ItemGroup>
+                <Item
+                    testID={`${props.testID}:row`}
+                    title={props.title}
+                    {...(props.subtitle ? { subtitle: props.subtitle } : {})}
+                    mode="info"
+                    showChevron={false}
+                />
+            </ItemGroup>
+        </ItemList>
+    );
+}
+
+/**
+ * The three screens the single `connected-services/account` route renders,
+ * selected by its route focus:
+ *
+ * - no focus: the service detail (Accounts | Pools segmented shell);
+ * - `account`: that account's own detail screen;
+ * - `group`: that pool's own detail screen.
+ *
+ * Drilling in NAVIGATES (a real stack entry with back), so selection lives in
+ * the URL rather than in local state. The two focused screens own their own
+ * `ItemList`; the unfocused service detail renders into the route's list.
+ */
 export const ConnectedAccountServiceContent = React.memo(function ConnectedAccountServiceContent(props: Readonly<{
     title: string;
     service: QualifiedConnectedAccountRef['service'];
     legacyServiceId?: ConnectedServiceId | null;
+    /**
+     * Peer class of the resolved legacy transport, projected ONCE by the route
+     * owner. Absent for a v4 peer (or before the peer resolves); this screen must
+     * not re-derive it, because guessing one is how a legacy capability answer
+     * silently becomes wrong for the other peer class.
+    */
+    legacyPeerClass?: QualifiedConnectedAccountUiLegacyPeerClass | null;
     focus?: ConnectedAccountSettingsRouteFocus | null;
     modes: readonly PluginConnectedAccountAuthenticationModeV2[];
     accounts: readonly ConnectedAccountServiceProfile[];
-    serviceConfigurationStatusByModeId?: ServiceConfigurationStatusByModeId;
+    serviceConfigurationStatusByModeId?: ConnectedAccountServiceConfigurationStatusByModeId;
     accountLabels?: Readonly<Record<string, string | undefined>>;
     defaultAccountId?: string | null;
     groups?: UseQualifiedConnectedAccountGroupsResult;
@@ -209,11 +166,20 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     }>): void;
     canReconnectAccount?(account: ConnectedAccountServiceProfile): boolean;
     onBeginReconnect?(account: QualifiedConnectedAccountRef): void;
+    /** Service-list disconnect affordance; its caller owns the confirmation. */
     onRevoke?(account: QualifiedConnectedAccountRef): void;
+    /**
+     * Disconnect for the account detail screen, which owns (and has already
+     * shown) the confirmation. Resolves to whether the account was revoked.
+     */
+    onDisconnectAccount?(account: QualifiedConnectedAccountRef): Promise<boolean>;
 }>) {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const groups = props.groups ?? EMPTY_GROUPS;
-    const accountLabels = props.accountLabels ?? {};
+    const accountLabels = props.accountLabels ?? EMPTY_ACCOUNT_LABELS;
+    const service = props.service;
+    const focus = props.focus ?? null;
     const accounts = React.useMemo(
         () => props.accounts.filter((account) => (
             account.ref.service.pluginId === props.service.pluginId
@@ -225,36 +191,58 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
             props.service.pluginId,
         ],
     );
-    const [activeSegment, setActiveSegment] =
-        React.useState<ConnectedServiceDetailSegment>(
-            props.focus?.kind === 'group' ? 'pools' : 'accounts',
+    /**
+     * Presentation order for the accounts LIST only: worst health first, then a
+     * stable id order inside a health band. Pool membership and the focused
+     * account lookup keep the source order they were given.
+     */
+    const sortedAccounts = React.useMemo(() => [...accounts].sort((a, b) => {
+        const rank = compareAccountHealthSeverity(
+            deriveAccountHealth({ status: a.status, capacityPct: null }),
+            deriveAccountHealth({ status: b.status, capacityPct: null }),
         );
-    const [selectedGroupId, setSelectedGroupId] = React.useState<string | null>(
-        props.focus?.kind === 'group' ? props.focus.groupId : null,
-    );
-    const selectedGroup = groups.groups.find(
-        (group) => group.ref.groupId === selectedGroupId,
-    ) ?? null;
-    const poolsAvailable = groups.source !== null;
+        return rank !== 0 ? rank : a.ref.accountId.localeCompare(b.ref.accountId);
+    }), [accounts]);
+    const [activeSegment, setActiveSegment] =
+        React.useState<ConnectedServiceDetailSegment>('accounts');
+    // Pools are an optional server capability: a live transport is not permission
+    // to show them. The server bit decides here exactly as it does on every other
+    // connected-services surface, and every pool affordance below reads this flag.
+    const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
+    const poolsAvailable = accountGroupsEnabled && groups.source !== null;
+    // Automatic fallback is its OWN server capability, gated independently of
+    // pools: a server can serve pools and still refuse to run fallback. The gate
+    // is registered fail-closed, so a missing or malformed bit disables the
+    // controls rather than offering a switch the server will not honor.
+    const accountFallbackEnabled = useFeatureEnabled('connectedServices.accountFallback');
     const legacyQuotaSupported = groups.source?.protocol === 'legacy-v3'
         && props.legacyServiceId
+        && props.legacyPeerClass
         ? isQualifiedConnectedAccountLegacyOperationSupported({
             service: props.service,
             legacyServiceId: props.legacyServiceId,
-            peerClass: 'revisioned-v2-v3',
+            peerClass: props.legacyPeerClass,
             operation: 'quota_read',
         })
         : false;
 
-    React.useEffect(() => {
-        if (props.focus?.kind === 'group') {
-            setActiveSegment('pools');
-            setSelectedGroupId(props.focus.groupId);
+    /** Drill into an account or a pool as a real stack entry. */
+    const openFocus = React.useCallback((next: ConnectedAccountSettingsRouteFocus) => {
+        router.push(buildConnectedAccountSettingsRoute(service, next));
+    }, [router, service]);
+
+    /**
+     * Leave a focused screen whose entity no longer exists (deleted pool,
+     * disconnected account). A deep link may have no stack entry to pop, so the
+     * service detail is the deterministic fallback destination.
+     */
+    const leaveFocusedScreen = React.useCallback(() => {
+        if (router.canGoBack()) {
+            router.back();
             return;
         }
-        setActiveSegment('accounts');
-        setSelectedGroupId(null);
-    }, [props.focus]);
+        router.replace(buildConnectedAccountSettingsRoute(service));
+    }, [router, service]);
 
     const createGroup = React.useCallback(async () => {
         const displayNameResult = await Modal.prompt(
@@ -287,284 +275,364 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
             groupId,
             displayName,
         });
-        if (created) setSelectedGroupId(created.ref.groupId);
-    }, [groups]);
+        if (created) openFocus({ kind: 'group', groupId: created.ref.groupId });
+    }, [groups, openFocus]);
 
-    const editSelectedGroupName = React.useCallback(async () => {
-        if (!selectedGroup) return;
-        const result = await Modal.prompt(
-            t('connectedServices.detail.groupDetail.nameTitle'),
-            t('connectedServices.detail.groupDetail.namePromptBody'),
-            {
-                defaultValue:
-                    selectedGroup.displayName ?? selectedGroup.ref.groupId,
-                confirmText: t('common.save'),
-                cancelText: t('common.cancel'),
-            },
-        );
-        if (typeof result !== 'string') return;
-        await groups.patch({
-            group: selectedGroup,
-            displayName: result.trim() || null,
-        });
-    }, [groups, selectedGroup]);
+    /**
+     * The pool detail's mutation surface. Two decisions stay with this owner
+     * rather than the presentational view: the runtime-cooldown override prompt
+     * (`setActiveAccount` rethrows so exactly ONE caller decides whether to
+     * retry) and leaving a pool screen whose pool was just deleted.
+     */
+    const poolMutations = React.useMemo<QualifiedPoolDetailMutations>(() => ({
+        mutating: groups.mutating,
+        patch: groups.patch,
+        patchMember: groups.patchMember,
+        addMember: groups.addMember,
+        removeMember: groups.removeMember,
+        setActiveAccount: async (input) => {
+            try {
+                return await groups.setActiveAccount(input);
+            } catch (error) {
+                // A non-cooldown failure already surfaced through the groups
+                // error state; null tells the view the mutation did not apply.
+                if (!isConnectedServiceRuntimeCooldownError(error)) return null;
+                const confirmed = await Modal.confirm(
+                    t('connectedServices.errors.runtimeCooldownOverrideTitle'),
+                    resolveConnectedServiceRuntimeCooldownOverrideBody(error),
+                    {
+                        confirmText:
+                            t('connectedServices.errors.runtimeCooldownOverrideConfirm'),
+                        cancelText: t('common.cancel'),
+                    },
+                );
+                if (!confirmed) return null;
+                return await groups.setActiveAccount({
+                    ...input,
+                    overrideRuntimeCooldown: true,
+                }).catch(() => null);
+            }
+        },
+        delete: async (group) => {
+            const deleted = await groups.delete(group);
+            if (deleted) leaveFocusedScreen();
+            return deleted;
+        },
+    }), [groups, leaveFocusedScreen]);
 
-    const editPolicyNumber = React.useCallback(async (params: Readonly<{
-        field:
-            | 'softSwitchRemainingPercent'
-            | 'probeIfSnapshotOlderThanMs'
-            | 'cooldownMs'
-            | 'maxSwitchesPerTurn'
-            | 'maxSwitchesPerSessionHour';
-        title:
-            | 'connectedServices.detail.groupDetail.softSwitchThresholdTitle'
-            | 'connectedServices.detail.groupDetail.staleProbeTitle'
-            | 'connectedServices.detail.groupDetail.switchBudgetTitle';
-        current: number;
-        minimum: number;
-        maximum?: number;
-        scale?: number;
-    }>) => {
-        if (!selectedGroup) return;
-        const scale = params.scale ?? 1;
-        const result = await Modal.prompt(
-            t(params.title),
-            t(params.title),
-            {
-                defaultValue: String(params.current / scale),
-                confirmText: t('common.save'),
-                cancelText: t('common.cancel'),
-            },
-        );
-        if (typeof result !== 'string') return;
-        const parsed = parsePromptNumber(result);
-        if (
-            parsed === null
-            || parsed < params.minimum
-            || (params.maximum !== undefined && parsed > params.maximum)
-        ) {
-            await Modal.alert(
-                t('common.error'),
-                t('connectedServices.errors.generic'),
-            );
-            return;
-        }
-        await groups.patch({
-            group: selectedGroup,
-            policy: {
-                [params.field]: Math.round(parsed * scale),
-            },
-        });
-    }, [groups, selectedGroup]);
-
-    const setActiveAccount = React.useCallback(async (
-        account: QualifiedConnectedAccountRef,
-    ) => {
-        if (!selectedGroup) return;
-        try {
-            await groups.setActiveAccount({
-                group: selectedGroup,
-                account,
-            });
-        } catch (error) {
-            if (!isConnectedServiceRuntimeCooldownError(error)) return;
-            const confirmed = await Modal.confirm(
-                t('connectedServices.errors.runtimeCooldownOverrideTitle'),
-                resolveConnectedServiceRuntimeCooldownOverrideBody(error),
-                {
-                    confirmText:
-                        t('connectedServices.errors.runtimeCooldownOverrideConfirm'),
-                    cancelText: t('common.cancel'),
+    /**
+     * Pool membership chips per account, so an account row shows which pools it
+     * belongs to without opening the Pools segment. They are part of the pools
+     * feature: a transport that still answers with groups must not leak them onto
+     * the accounts list once pools are unavailable here.
+     */
+    const poolLabelsByAccountId = React.useMemo(() => {
+        const byAccountId: Record<string, string[]> = {};
+        for (const group of poolsAvailable ? groups.groups : []) {
+            const groupLabel = presentQualifiedConnectedAccountTarget({
+                target: {
+                    kind: 'group',
+                    service: group.ref.service,
+                    groupId: group.ref.groupId,
                 },
-            );
-            if (!confirmed) return;
-            await groups.setActiveAccount({
-                group: selectedGroup,
-                account,
-                overrideRuntimeCooldown: true,
-            }).catch(() => null);
+                accounts,
+                groups: groups.groups,
+                labelsByKey: EMPTY_ACCOUNT_LABELS,
+                serviceTitle: props.title,
+            }).primaryLabel;
+            for (const member of group.members) {
+                (byAccountId[member.ref.accountId] ??= []).push(groupLabel);
+            }
         }
-    }, [groups, selectedGroup]);
+        return byAccountId;
+    }, [accounts, groups.groups, poolsAvailable, props.title]);
 
-    const moveMember = React.useCallback(async (
-        accountId: string,
-        direction: -1 | 1,
-    ) => {
-        if (!selectedGroup) return;
-        const ordered = [...selectedGroup.members].sort(
-            (left, right) => left.priority - right.priority,
+    /**
+     * Human identity for an account, through the canonical qualified-target
+     * presenter shared with pool, Provider and Voice surfaces.
+     */
+    const resolveAccountIdentity = (
+        account: ConnectedAccountServiceProfile,
+    ): QualifiedConnectedAccountTargetPresentation => presentQualifiedConnectedAccountTarget({
+        target: {
+            kind: 'account',
+            account: account.ref,
+        },
+        accounts,
+        groups: groups.groups,
+        labelsByKey: EMPTY_ACCOUNT_LABELS,
+        accountLabel: accountLabels[account.ref.accountId] ?? null,
+        legacyServiceId: props.legacyServiceId ?? null,
+        serviceTitle: props.title,
+    });
+
+    /**
+     * Which credential-replacement affordance the row builder should offer.
+     *
+     * dev's projection leaves `kind` optional, so it is derived from the
+     * account's authentication mode when this descriptor snapshot knows it: a
+     * manual (credential-entry) mode replaces a stored token, an authorization
+     * flow re-runs a sign-in. An account bound to a mode id this snapshot does
+     * not carry still re-runs its flow — reachability is decided by
+     * `canReconnect`, not by the descriptor — so it reads as an authorization
+     * account.
+     */
+    const resolveAccountCredentialKind = (
+        account: ConnectedAccountServiceProfile,
+    ): ConnectedServiceAccountKind => {
+        if (account.kind) return account.kind;
+        const mode = props.modes.find(
+            (candidate) => candidate.id === account.authenticationModeId,
         );
-        const from = ordered.findIndex(
-            (member) => member.ref.accountId === accountId,
-        );
-        const to = from + direction;
-        if (from < 0 || to < 0 || to >= ordered.length) return;
-        [ordered[from], ordered[to]] = [ordered[to]!, ordered[from]!];
-        let current = selectedGroup;
-        for (const [index, member] of ordered.entries()) {
-            const priority = (index + 1) * 100;
-            const currentMember = current.members.find(
-                (candidate) => candidate.ref.accountId === member.ref.accountId,
+        return mode?.kind === 'manual' ? 'token' : 'oauth';
+    };
+
+    /**
+     * Reconnect is unreachable for an account whose public authentication mode
+     * is gone (nothing left to re-run) or when the peer cannot accept it.
+     */
+    const canReconnect = (account: ConnectedAccountServiceProfile): boolean => Boolean(
+        props.onBeginReconnect
+        && account.revisionSemantics === 'revisioned'
+        && !(account.status === 'needs_reauth' && account.authenticationModeId === null)
+        && (
+            !props.canReconnectAccount
+            || props.canReconnectAccount(account)
+        ),
+    );
+
+    if (focus?.kind === 'group') {
+        const group = groups.groups.find(
+            (candidate) => candidate.ref.groupId === focus.groupId,
+        ) ?? null;
+        if (!group) {
+            return groups.status === 'loading' ? (
+                <FocusedScreenNotice
+                    testID="connected-services-pool-detail:loading"
+                    title={t('common.loading')}
+                />
+            ) : (
+                <FocusedScreenNotice
+                    testID="connected-services-pool-detail:missing"
+                    title={t('connectedServices.detail.groupDetail.missingTitle')}
+                    subtitle={t('connectedServices.detail.groupDetail.missingBody', {
+                        service: props.title,
+                        groupId: focus.groupId,
+                    })}
+                />
             );
-            if (!currentMember || currentMember.priority === priority) continue;
-            const next = await groups.patchMember({
-                group: current,
-                account: currentMember.ref,
-                priority,
-            });
-            if (!next) return;
-            current = next;
         }
-    }, [groups, selectedGroup]);
-
-    const deleteSelectedGroup = React.useCallback(async () => {
-        if (!selectedGroup) return;
-        const confirmed = await Modal.confirm(
-            t('connectedServices.pools.delete.confirmTitle'),
-            t('connectedServices.pools.delete.confirmMessage', {
-                name: selectedGroup.displayName ?? selectedGroup.ref.groupId,
-            }),
-            {
-                confirmText: t('connectedServices.pools.delete.title'),
-                cancelText: t('common.cancel'),
-                destructive: true,
-            },
+        return (
+            <QualifiedPoolDetailView
+                group={group}
+                accounts={accounts}
+                accountLabels={accountLabels}
+                serviceLabel={props.title}
+                mutations={poolMutations}
+                fallbackControlsEnabled={accountFallbackEnabled}
+                fallbackDisabledSubtitle={
+                    t('connectedServices.detail.groupActions.accountFallbackDisabled')
+                }
+                // Mutations here report failure by returning null and setting this;
+                // without it a rejected change just reconciles away silently.
+                error={groups.error}
+            />
         );
-        if (!confirmed) return;
-        if (await groups.delete(selectedGroup)) setSelectedGroupId(null);
-    }, [groups, selectedGroup]);
+    }
+
+    if (focus?.kind === 'account') {
+        const account = accounts.find(
+            (candidate) => candidate.ref.accountId === focus.accountId,
+        ) ?? null;
+        if (!account) {
+            return (
+                <FocusedScreenNotice
+                    testID="qualified-account-detail:missing"
+                    title={t('connectedServices.detail.alerts.unknownProfileTitle')}
+                    subtitle={t('connectedServices.detail.alerts.unknownProfileBody', {
+                        profileId: focus.accountId,
+                        service: props.title,
+                    })}
+                />
+            );
+        }
+        const accountIsRevisioned =
+            account.revisionSemantics === 'revisioned';
+        return (
+            <QualifiedAccountDetailView
+                account={account.ref}
+                serviceLabel={props.title}
+                presentation={resolveAccountIdentity(account)}
+                providerEmail={account.providerIdentity?.email ?? null}
+                providerAccountId={account.providerIdentity?.accountId ?? null}
+                // RAW status: the view owns the recognized-status gate.
+                status={account.status}
+                isDefault={props.defaultAccountId === account.ref.accountId}
+                // Pools apply only when this service has a pool source at all;
+                // an empty array still renders the section with its empty state.
+                {...(poolsAvailable ? {
+                    groups: groups.groups,
+                    onOpenPool: (groupId: string) => openFocus({ kind: 'group', groupId }),
+                } : {})}
+                {...(accountIsRevisioned && props.onToggleDefault ? {
+                    onToggleDefault: () => props.onToggleDefault?.(account.ref),
+                } : {})}
+                {...(accountIsRevisioned && props.onEditLabel ? {
+                    onEditLabel: () => props.onEditLabel?.(account.ref),
+                } : {})}
+                {...(canReconnect(account) ? {
+                    onReconnect: () => props.onBeginReconnect?.(account.ref),
+                } : {})}
+                {...(accountIsRevisioned && props.onDisconnectAccount ? {
+                    onDisconnect: async () => {
+                        // The account is gone once revoked; its detail screen is not.
+                        if (await props.onDisconnectAccount?.(account.ref)) {
+                            leaveFocusedScreen();
+                        }
+                    },
+                } : {})}
+            />
+        );
+    }
+
+    /**
+     * Legacy service id to bind account blocks to, when this service's accounts
+     * are still served by the legacy-v3 quota surface. `null` selects the
+     * qualified (v4) block instead.
+     */
+    const legacyBlockServiceId = groups.source?.protocol !== 'v4'
+        && legacyQuotaSupported
+        && props.legacyServiceId
+        ? props.legacyServiceId
+        : null;
 
     const accountsContent = (
         <>
-            <ItemGroup title={props.title}>
-                {accounts.length === 0 ? (
-                    <Item
+            <ItemGroup title={props.title} columns={2}>
+                {sortedAccounts.length === 0 ? (
+                    <EmptyState
                         testID="connected-accounts:empty"
+                        icon={<Icon
+                            name="key"
+                            size={29}
+                            color={theme.colors.text.secondary}
+                        />}
                         title={t('connectedServices.detail.profiles.empty')}
-                        mode="info"
-                        showChevron={false}
                     />
-                ) : accounts.map((account) => {
-                    const requiresSupportedSetup = account.status === 'needs_reauth'
-                        && account.authenticationModeId === null;
+                ) : sortedAccounts.map((account) => {
                     const authenticationMode = props.modes.find(
                         (mode) => mode.id === account.authenticationModeId,
                     );
-                    const configurationBlocked = authenticationMode === undefined
-                        ? !account.configurationReady
-                        : authenticationMode.configuration?.scope === 'service'
-                            ? isServiceConfigurationBlocked(
-                                props.serviceConfigurationStatusByModeId,
-                                authenticationMode.id,
-                            )
-                            : authenticationMode.configuration?.scope
-                                === 'account'
-                                && !account.configurationReady;
-                    const reconnectAllowed = Boolean(
-                        props.onBeginReconnect
-                        && (
-                            !props.canReconnectAccount
-                            || props.canReconnectAccount(account)
-                        ),
+                    const configurationBlocked = isConnectedAccountConfigurationBlocked({
+                        account,
+                        authenticationMode: authenticationMode ?? null,
+                        serviceConfigurationStatusByModeId:
+                            props.serviceConfigurationStatusByModeId,
+                    });
+                    const identity = resolveAccountIdentity(account);
+                    const reconnectable = canReconnect(account);
+                    const accountIsRevisioned =
+                        account.revisionSemantics === 'revisioned';
+                    const configurationSupported = Boolean(
+                        accountIsRevisioned
+                        && props.onConfigureAccount
+                        && account.authenticationModeId
+                        && props.modes.some((mode) => (
+                            mode.id === account.authenticationModeId
+                            && mode.configuration?.scope === 'account'
+                        )),
                     );
-                    const label = accountLabels[account.ref.accountId]
-                        ?? account.displayName
-                        ?? account.ref.accountId;
-                    return (
-                        <React.Fragment key={account.ref.accountId}>
-                            <Item
-                                testID={`connected-account:${account.ref.accountId}`}
-                                title={label}
-                                subtitle={[
-                                    accountStatusLabel(account.status),
-                                    props.defaultAccountId === account.ref.accountId
-                                        ? t('connectedServices.detail.actions.unsetDefault')
-                                        : null,
-                                    configurationBlocked
-                                        ? t('common.blocked')
-                                        : null,
-                                ].filter((value): value is string => Boolean(value)).join(' · ')}
-                                icon={<Ionicons
-                                    name="person-circle-outline"
-                                    size={22}
-                                    color={theme.colors.accent.blue}
-                                />}
-                                selected={props.focus?.kind === 'account'
-                                    && props.focus.accountId
-                                        === account.ref.accountId}
-                                disabled={
-                                    props.busy
-                                    || requiresSupportedSetup
-                                    || !reconnectAllowed
-                                }
-                                onPress={requiresSupportedSetup
-                                    || !reconnectAllowed
-                                    ? undefined
-                                    : () => props.onBeginReconnect?.(account.ref)}
-                            />
-                            {props.onEditLabel ? (
-                                <Item
-                                    testID={`connected-account-label:${account.ref.accountId}`}
-                                    title={t('connectedServices.detail.actions.editLabel')}
-                                    detail={accountLabels[account.ref.accountId]}
-                                    onPress={() => props.onEditLabel?.(account.ref)}
-                                />
-                            ) : null}
-                            {props.onToggleDefault ? (
-                                <Item
-                                    testID={`connected-account-default:${account.ref.accountId}`}
-                                    title={props.defaultAccountId === account.ref.accountId
-                                        ? t('connectedServices.detail.actions.unsetDefault')
-                                        : t('connectedServices.detail.actions.setDefault')}
-                                    icon={<Ionicons
-                                        name={props.defaultAccountId === account.ref.accountId
-                                            ? 'star'
-                                            : 'star-outline'}
-                                        size={22}
-                                        color={theme.colors.accent.blue}
-                                    />}
-                                    onPress={() => props.onToggleDefault?.(account.ref)}
-                                />
-                            ) : null}
-                            {props.onConfigureAccount
-                                && account.authenticationModeId
-                                && props.modes.some((mode) => (
-                                    mode.id === account.authenticationModeId
-                                    && mode.configuration?.scope === 'account'
-                                )) ? (
-                                    <Item
-                                        testID={`connected-account-configuration-settings:${account.ref.accountId}`}
-                                        title={t('connectedServices.account.configurationTitle')}
-                                        icon={<Ionicons
-                                            name="settings-outline"
-                                            size={22}
-                                            color={theme.colors.accent.blue}
-                                        />}
-                                        disabled={props.busy}
-                                        onPress={() =>
-                                            props.onConfigureAccount?.(
-                                                account.ref,
-                                            )}
-                                    />
-                                ) : null}
-                            {groups.source?.protocol === 'v4' ? (
-                                <QualifiedQuotaRow account={account.ref} />
-                            ) : legacyQuotaSupported
-                                && props.legacyServiceId ? (
-                                    <LegacyQuotaRow
-                                        serviceId={props.legacyServiceId}
-                                        accountId={account.ref.accountId}
-                                        credentialHealthStatus={account.status}
-                                    />
-                                ) : null}
-                        </React.Fragment>
+                    // Row-level affordances live in the block's kebab menu — ONE
+                    // child per account. They used to be sibling `Item` rows,
+                    // which broke the 1:1 child/entity assumption the grid
+                    // layout relies on and buried the account under its actions.
+                    //
+                    // The set, order, icons, and status gating come from the
+                    // canonical row-action builder; this screen only supplies the
+                    // handlers it is permitted to run, so an action the peer or
+                    // the controller does not allow is ABSENT rather than
+                    // disabled. dev's single reconnect handler re-runs whichever
+                    // flow the account's mode owns, so it fills both the token
+                    // and authorization slots the builder gates by kind.
+                    const actions: ItemAction[] = buildConnectedServiceAccountRowActions({
+                        kind: resolveAccountCredentialKind(account),
+                        onOpen: () => openFocus({
+                            kind: 'account',
+                            accountId: account.ref.accountId,
+                        }),
+                        ...(accountIsRevisioned && props.onEditLabel ? {
+                            onEditLabel: () => props.onEditLabel?.(account.ref),
+                        } : {}),
+                        ...(reconnectable ? {
+                            onReplaceToken: () => props.onBeginReconnect?.(account.ref),
+                            onReconnect: () => props.onBeginReconnect?.(account.ref),
+                        } : {}),
+                        ...(accountIsRevisioned && props.onRevoke ? {
+                            onDisconnect: () => props.onRevoke?.(account.ref),
+                        } : {}),
+                    }).map((action) => (
+                        props.busy && BUSY_GATED_ACCOUNT_ACTION_IDS.has(action.id)
+                            ? { ...action, disabled: true }
+                            : action
+                    ));
+                    if (configurationSupported) {
+                        // Account-scoped plugin configuration has no slot in the
+                        // shared builder (it exists only in dev's plugin-driven
+                        // auth model), so it is appended to the same kebab.
+                        actions.push({
+                            id: 'configure',
+                            title: t('connectedServices.account.configurationTitle'),
+                            icon: 'sliders-horizontal',
+                            disabled: props.busy,
+                            onPress: () => props.onConfigureAccount?.(account.ref),
+                        });
+                    }
+                    const identityLabel = [
+                        identity.secondaryLabel,
+                        configurationBlocked ? t('common.blocked') : null,
+                    ].filter((value): value is string => Boolean(value)).join(' · ') || null;
+                    const blockProps = {
+                        testID: `connected-account:${account.ref.accountId}`,
+                        title: identity.primaryLabel,
+                        identityLabel,
+                        // RAW status: the block owns the fail-open usage gate.
+                        status: account.status,
+                        isDefault: props.defaultAccountId === account.ref.accountId,
+                        onToggleDefault: accountIsRevisioned
+                            && props.onToggleDefault
+                            ? () => props.onToggleDefault?.(account.ref)
+                            : undefined,
+                        poolLabels: poolLabelsByAccountId[account.ref.accountId],
+                        actions,
+                    } as const;
+                    // Quota binding follows the account source's protocol, exactly
+                    // as the superseded quota ROWS did: v4 accounts read the
+                    // qualified snapshot, legacy-v3 accounts the legacy one. Two
+                    // containers (not a conditional hook) around ONE shared view.
+                    return legacyBlockServiceId ? (
+                        <AccountBlock
+                            key={account.ref.accountId}
+                            serviceId={legacyBlockServiceId}
+                            profileId={account.ref.accountId}
+                            {...blockProps}
+                        />
+                    ) : (
+                        <QualifiedAccountBlock
+                            key={account.ref.accountId}
+                            account={account.ref}
+                            {...blockProps}
+                        />
                     );
                 })}
             </ItemGroup>
+            {/*
+              * SERVICE-level actions only: connect a new account through each
+              * public mode, and configure the service. Per-account actions live
+              * in that account's own kebab, never as rows down here.
+              */}
             {(
                 props.onBeginConnect
                 || props.onConfigureService
-                || props.onRevoke
             ) ? (
                 <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
                 {props.onBeginConnect ? props.modes.map((mode) => (
@@ -572,9 +640,9 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                         key={mode.id}
                         testID={`connected-account-mode:${mode.id}`}
                         title={localizedText(mode.title) || mode.id}
-                        icon={<Ionicons
-                            name="add-circle-outline"
-                            size={22}
+                        icon={<Icon
+                            name="plus-circle"
+                            size={20}
                             color={theme.colors.accent.blue}
                         />}
                         disabled={props.busy}
@@ -594,16 +662,16 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                             title={t('connectedServices.account.configurationTitle')}
                             detail={[
                                 localizedText(mode.title) || mode.id,
-                                isServiceConfigurationBlocked(
+                                isConnectedAccountServiceConfigurationBlocked(
                                     props.serviceConfigurationStatusByModeId,
                                     mode.id,
                                 ) ? t('common.blocked') : null,
                             ].filter(
                                 (value): value is string => Boolean(value),
                             ).join(' · ')}
-                            icon={<Ionicons
-                                name="settings-outline"
-                                size={22}
+                            icon={<Icon
+                                name="sliders-horizontal"
+                                size={20}
                                 color={theme.colors.accent.blue}
                             />}
                             disabled={props.busy}
@@ -611,420 +679,27 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                                 props.onConfigureService?.(mode.id)}
                         />
                     )) : null}
-                {props.onRevoke ? accounts.map((account) => (
-                    <Item
-                        key={`revoke:${account.ref.accountId}`}
-                        testID={`connected-account-revoke:${account.ref.accountId}`}
-                        title={`${t('modals.disconnect')}: ${
-                            accountLabels[account.ref.accountId]
-                            ?? account.displayName
-                            ?? account.ref.accountId
-                        }`}
-                        icon={<Ionicons
-                            name="trash-outline"
-                            size={22}
-                            color={theme.colors.accent.blue}
-                        />}
-                        destructive
-                        disabled={props.busy}
-                        onPress={() => props.onRevoke?.(account.ref)}
-                    />
-                )) : null}
                 </ItemGroup>
             ) : null}
         </>
     );
 
-    const poolsContent = selectedGroup ? (
-        <>
-            <ItemGroup title={selectedGroup.displayName ?? selectedGroup.ref.groupId}>
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}`}
-                    title={selectedGroup.displayName ?? selectedGroup.ref.groupId}
-                    subtitle={groupStrategyTitle(selectedGroup.policy.strategy)}
-                    onPress={() => setSelectedGroupId(null)}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:edit-name`}
-                    title={t('connectedServices.detail.groupDetail.nameTitle')}
-                    onPress={() => {
-                        void editSelectedGroupName();
-                    }}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:auto-switch`}
-                    title={t('connectedServices.detail.groupDetail.autoSwitchTitle')}
-                    rightElement={<Switch
-                        value={selectedGroup.policy.autoSwitch}
-                        disabled={groups.mutating}
-                        onValueChange={(autoSwitch) => {
-                            void groups.patch({
-                                group: selectedGroup,
-                                policy: { autoSwitch },
-                            });
-                        }}
-                    />}
-                    showChevron={false}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:strategy`}
-                    title={t('connectedServices.detail.groupDetail.strategyTitle')}
-                    detail={groupStrategyTitle(selectedGroup.policy.strategy)}
-                    onPress={() => {
-                        const next = selectedGroup.policy.strategy === 'priority'
-                            ? 'least_limited'
-                            : selectedGroup.policy.strategy === 'least_limited'
-                                ? 'manual'
-                                : 'priority';
-                        void groups.patch({
-                            group: selectedGroup,
-                            policy: { strategy: next },
-                        });
-                    }}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:recovery-mode`}
-                    title={t('connectedServices.detail.groupDetail.recoveryModeTitle')}
-                    detail={t(
-                        selectedGroup.policy.recoveryMode === 'off'
-                            ? 'connectedServices.detail.groupDetail.recoveryModeOffSubtitle'
-                            : selectedGroup.policy.recoveryMode === 'wait_until_reset'
-                                ? 'connectedServices.detail.groupDetail.recoveryModeWaitUntilResetSubtitle'
-                                : selectedGroup.policy.recoveryMode === 'switch_then_resume'
-                                    ? 'connectedServices.detail.groupDetail.recoveryModeSwitchThenResumeSubtitle'
-                                    : 'connectedServices.detail.groupDetail.recoveryModeSwitchOrWaitSubtitle',
-                    )}
-                    onPress={() => {
-                        const next = selectedGroup.policy.recoveryMode === 'off'
-                            ? 'wait_until_reset'
-                            : selectedGroup.policy.recoveryMode === 'wait_until_reset'
-                                ? 'switch_then_resume'
-                                : selectedGroup.policy.recoveryMode === 'switch_then_resume'
-                                    ? 'switch_or_wait'
-                                    : 'off';
-                        void groups.patch({
-                            group: selectedGroup,
-                            policy: { recoveryMode: next },
-                        });
-                    }}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:auto-restore-primary`}
-                    title={t('connectedServices.pools.behavior.autoRestorePrimaryTitle')}
-                    rightElement={<Switch
-                        value={selectedGroup.policy.autoRestorePrimaryWhenReset}
-                        disabled={groups.mutating}
-                        onValueChange={(autoRestorePrimaryWhenReset) => {
-                            void groups.patch({
-                                group: selectedGroup,
-                                policy: { autoRestorePrimaryWhenReset },
-                            });
-                        }}
-                    />}
-                    showChevron={false}
-                />
-                {([
-                    ['usageLimit', 'connectedServices.pools.behavior.switchOn.usageLimit'],
-                    ['authExpired', 'connectedServices.pools.behavior.switchOn.authExpired'],
-                    ['accountChanged', 'connectedServices.pools.behavior.switchOn.accountChanged'],
-                    ['refreshFailure', 'connectedServices.pools.behavior.switchOn.refreshFailure'],
-                ] as const).map(([field, titleKey]) => (
-                    <Item
-                        key={field}
-                        testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:switch-on:${field}`}
-                        title={t(titleKey)}
-                        subtitle={t('connectedServices.pools.behavior.switchOnGroupSubtitle')}
-                        rightElement={<Switch
-                            value={selectedGroup.policy.switchOn[field]}
-                            disabled={groups.mutating}
-                            onValueChange={(value) => {
-                                void groups.patch({
-                                    group: selectedGroup,
-                                    policy: {
-                                        switchOn: {
-                                            ...selectedGroup.policy.switchOn,
-                                            [field]: value,
-                                        },
-                                    },
-                                });
-                            }}
-                        />}
-                        showChevron={false}
-                    />
-                ))}
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:soft-switch-percent`}
-                    title={t('connectedServices.detail.groupDetail.softSwitchThresholdTitle')}
-                    detail={`${selectedGroup.policy.softSwitchRemainingPercent}%`}
-                    onPress={() => {
-                        void editPolicyNumber({
-                            field: 'softSwitchRemainingPercent',
-                            title: 'connectedServices.detail.groupDetail.softSwitchThresholdTitle',
-                            current: selectedGroup.policy.softSwitchRemainingPercent,
-                            minimum: 0,
-                            maximum: 100,
-                        });
-                    }}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:stale-probe`}
-                    title={t('connectedServices.detail.groupDetail.staleProbeTitle')}
-                    detail={String(Math.round(
-                        selectedGroup.policy.probeIfSnapshotOlderThanMs / 60_000,
-                    ))}
-                    onPress={() => {
-                        void editPolicyNumber({
-                            field: 'probeIfSnapshotOlderThanMs',
-                            title: 'connectedServices.detail.groupDetail.staleProbeTitle',
-                            current:
-                                selectedGroup.policy.probeIfSnapshotOlderThanMs,
-                            minimum: 1,
-                            scale: 60_000,
-                        });
-                    }}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:cooldown`}
-                    title={t('connectedServices.detail.groupDetail.switchBudgetTitle')}
-                    detail={String(Math.round(selectedGroup.policy.cooldownMs / 1_000))}
-                    onPress={() => {
-                        void editPolicyNumber({
-                            field: 'cooldownMs',
-                            title: 'connectedServices.detail.groupDetail.switchBudgetTitle',
-                            current: selectedGroup.policy.cooldownMs,
-                            minimum: 0,
-                            scale: 1_000,
-                        });
-                    }}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:max-switches-turn`}
-                    title={t('connectedServices.detail.groupDetail.switchBudgetTitle')}
-                    detail={String(selectedGroup.policy.maxSwitchesPerTurn)}
-                    onPress={() => {
-                        void editPolicyNumber({
-                            field: 'maxSwitchesPerTurn',
-                            title: 'connectedServices.detail.groupDetail.switchBudgetTitle',
-                            current: selectedGroup.policy.maxSwitchesPerTurn,
-                            minimum: 0,
-                        });
-                    }}
-                />
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:max-switches-hour`}
-                    title={t('connectedServices.detail.groupDetail.switchBudgetTitle')}
-                    detail={String(selectedGroup.policy.maxSwitchesPerSessionHour)}
-                    onPress={() => {
-                        void editPolicyNumber({
-                            field: 'maxSwitchesPerSessionHour',
-                            title: 'connectedServices.detail.groupDetail.switchBudgetTitle',
-                            current:
-                                selectedGroup.policy.maxSwitchesPerSessionHour,
-                            minimum: 0,
-                        });
-                    }}
-                />
-            </ItemGroup>
-            <ItemGroup title={t('connectedServices.pools.detail.membersTitle')}>
-                {selectedGroup.members.map((member) => {
-                    const account = accounts.find(
-                        (candidate) => candidate.ref.accountId === member.ref.accountId,
-                    );
-                    const title = accountLabels[member.ref.accountId]
-                        ?? account?.displayName
-                        ?? member.ref.accountId;
-                    return (
-                        <React.Fragment key={member.ref.accountId}>
-                            <Item
-                                testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:member:${member.ref.accountId}`}
-                                title={title}
-                                subtitle={selectedGroup.activeAccountId === member.ref.accountId
-                                    ? t('connectedServices.detail.groups.memberActive')
-                                    : member.enabled
-                                        ? t('connectedServices.detail.groups.memberEnabled')
-                                        : t('connectedServices.detail.groups.memberDisabled')}
-                                rightElement={<Switch
-                                    value={member.enabled}
-                                    disabled={groups.mutating}
-                                    onValueChange={(enabled) => {
-                                        void groups.patchMember({
-                                            group: selectedGroup,
-                                            account: member.ref,
-                                            enabled,
-                                        });
-                                    }}
-                                />}
-                                onPress={selectedGroup.activeAccountId === member.ref.accountId
-                                    ? undefined
-                                    : () => {
-                                        void setActiveAccount(member.ref);
-                                    }}
-                            />
-                            <Item
-                                testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:move-up:${member.ref.accountId}`}
-                                title={t('connectedServices.pools.detail.moveUp')}
-                                disabled={
-                                    [...selectedGroup.members]
-                                        .sort((left, right) => left.priority - right.priority)[0]
-                                        ?.ref.accountId === member.ref.accountId
-                                }
-                                onPress={() => {
-                                    void moveMember(member.ref.accountId, -1);
-                                }}
-                            />
-                            <Item
-                                testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:move-down:${member.ref.accountId}`}
-                                title={t('connectedServices.pools.detail.moveDown')}
-                                disabled={
-                                    [...selectedGroup.members]
-                                        .sort((left, right) => left.priority - right.priority)
-                                        .at(-1)?.ref.accountId === member.ref.accountId
-                                }
-                                onPress={() => {
-                                    void moveMember(member.ref.accountId, 1);
-                                }}
-                            />
-                            <Item
-                                testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:remove:${member.ref.accountId}`}
-                                title={t('connectedServices.detail.groupActions.removeMember')}
-                                destructive
-                                onPress={() => {
-                                    void (async () => {
-                                        const confirmed = await Modal.confirm(
-                                            t('connectedServices.detail.groupActions.removeMemberConfirmTitle'),
-                                            t('connectedServices.detail.groupActions.removeMemberConfirmBody', {
-                                                profileId: member.ref.accountId,
-                                            }),
-                                            {
-                                                confirmText: t('connectedServices.detail.groupActions.removeMember'),
-                                                cancelText: t('common.cancel'),
-                                                destructive: true,
-                                            },
-                                        );
-                                        if (!confirmed) return;
-                                        await groups.removeMember({
-                                            group: selectedGroup,
-                                            account: member.ref,
-                                        });
-                                    })();
-                                }}
-                            />
-                        </React.Fragment>
-                    );
-                })}
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:add-member`}
-                    title={t('connectedServices.detail.groupActions.addMember')}
-                    disabled={
-                        groups.mutating
-                        || accounts.every((account) => selectedGroup.members.some(
-                            (member) => member.ref.accountId === account.ref.accountId,
-                        ))
-                    }
-                    onPress={() => {
-                        const candidates = accounts.filter((account) => (
-                            !selectedGroup.members.some(
-                                (member) => member.ref.accountId === account.ref.accountId,
-                            )
-                        ));
-                        Modal.alert(
-                            t('connectedServices.detail.groupActions.addMember'),
-                            t('connectedServices.detail.groupActions.addMemberSubtitle'),
-                            [
-                                ...candidates.map((account) => ({
-                                    text: accountLabels[account.ref.accountId]
-                                        ?? account.displayName
-                                        ?? account.ref.accountId,
-                                    onPress: () => {
-                                        void groups.addMember({
-                                            group: selectedGroup,
-                                            account: account.ref,
-                                        });
-                                    },
-                                })),
-                                { text: t('common.cancel'), style: 'cancel' as const },
-                            ],
-                        );
-                    }}
-                />
-            </ItemGroup>
-            <ItemGroup>
-                <Item
-                    testID={`qualified-connected-account-group:${selectedGroup.ref.groupId}:delete`}
-                    title={t('connectedServices.pools.delete.title')}
-                    subtitle={t('connectedServices.pools.delete.subtitle')}
-                    destructive
-                    onPress={() => {
-                        void deleteSelectedGroup();
-                    }}
-                />
-            </ItemGroup>
-            {groups.error ? (
-                <ItemGroup>
-                    <Item
-                        testID="qualified-connected-account-groups:error"
-                        title={groups.error}
-                        mode="info"
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            ) : null}
-        </>
-    ) : (
-        <>
-            <ItemGroup title={t('connectedServices.pools.title')}>
-                {groups.groups.map((group) => (
-                    <Item
-                        key={group.ref.groupId}
-                        testID={`qualified-connected-account-group:${group.ref.groupId}`}
-                        title={group.displayName ?? group.ref.groupId}
-                        subtitle={[
-                            groupStrategyTitle(group.policy.strategy),
-                            group.activeAccountId,
-                        ].filter((value): value is string => Boolean(value)).join(' · ')}
-                        onPress={() => setSelectedGroupId(group.ref.groupId)}
-                    />
-                ))}
-                {groups.status === 'loading' ? (
-                    <Item
-                        testID="qualified-connected-account-groups:loading"
-                        title={t('connectedServices.deviceAuth.preparing')}
-                        mode="info"
-                        showChevron={false}
-                    />
-                ) : null}
-                {groups.status === 'error' ? (
-                    <Item
-                        testID="qualified-connected-account-groups:error"
-                        title={groups.error ?? t('connectedServices.errors.generic')}
-                        onPress={() => {
-                            void groups.refresh();
-                        }}
-                    />
-                ) : null}
-                {groups.status === 'loaded'
-                    && groups.groups.length === 0 ? (
-                        <Item
-                            testID="qualified-connected-account-groups:empty"
-                            title={t('connectedServices.pools.empty.title')}
-                            subtitle={t('connectedServices.pools.empty.subtitle')}
-                            mode="info"
-                            showChevron={false}
-                        />
-                    ) : null}
-            </ItemGroup>
-            <ItemGroup>
-                <Item
-                    testID="qualified-connected-account-group:create"
-                    title={t('connectedServices.pools.create.title')}
-                    subtitle={t('connectedServices.pools.create.subtitle')}
-                    disabled={groups.status !== 'loaded' || groups.mutating}
-                    onPress={() => {
-                        void createGroup();
-                    }}
-                />
-            </ItemGroup>
-        </>
+    const poolsContent = (
+        <QualifiedPoolsList
+            groups={groups.groups}
+            accounts={accounts}
+            serviceLabel={props.title}
+            accountLabels={accountLabels}
+            status={groups.status}
+            poolConfigurationSupported={poolsAvailable}
+            onOpenPool={(groupId) => openFocus({ kind: 'group', groupId })}
+            onCreatePool={() => {
+                void createGroup();
+            }}
+            onRetryLoad={() => {
+                void groups.refresh();
+            }}
+        />
     );
 
     return (

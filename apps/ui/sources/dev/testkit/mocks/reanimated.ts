@@ -12,6 +12,49 @@ type ReanimatedTimingConfig = Readonly<{
     easing?: ReanimatedEasingFunction | ReanimatedEasingFactory;
 }>;
 
+/** The frame payload real Reanimated hands a frame callback on the UI thread. */
+export type ReanimatedFrameInfo = Readonly<{
+    timestamp: number;
+    timeSincePreviousFrame: number | null;
+    timeSinceFirstFrame: number;
+}>;
+
+export type ReanimatedFrameCallbackHandle = {
+    setActive(active: boolean): void;
+    isActive: boolean;
+    callbackId: number;
+};
+
+export type ReanimatedFrameCallbackRecord = Readonly<{
+    handle: ReanimatedFrameCallbackHandle;
+    /** Every `setActive` argument in order — activation is otherwise unobservable. */
+    setActiveCalls: boolean[];
+    /**
+     * Drives one frame through the registered worklet, and only while the
+     * callback is active — real Reanimated does not tick a stopped callback, and
+     * a test that forgets to activate should see nothing move.
+     */
+    run(frameInfo: ReanimatedFrameInfo): void;
+}>;
+
+const frameCallbackRecords: ReanimatedFrameCallbackRecord[] = [];
+
+/**
+ * Frame callbacks registered since the last reset, oldest first.
+ *
+ * Tests never tick the timeline, so activation and per-frame worklet output are
+ * invisible without this. It is deliberately a module-level registry: the
+ * reanimated stub instantiates the mock once for the whole module graph, so a
+ * test reads the same records the component under test registered.
+ */
+export function readReanimatedFrameCallbacks(): readonly ReanimatedFrameCallbackRecord[] {
+    return frameCallbackRecords;
+}
+
+export function resetReanimatedFrameCallbacks(): void {
+    frameCallbackRecords.length = 0;
+}
+
 function createWorkletEasing(fn: (t: number) => number): ReanimatedEasingFunction {
     const easing = fn as ReanimatedEasingFunction;
     easing.__workletHash = 1;
@@ -123,15 +166,42 @@ export function createReanimatedModuleMock() {
             }
         },
         useAnimatedStyle: <T,>(factory: () => T): T => factory(),
-        // Reanimated drives this off the UI-thread render loop; tests never tick
-        // the timeline, so we just register the worklet without running it. This
-        // keeps the level conduit off React: pushing to the SharedValue never
-        // schedules a frame callback in unit tests.
-        useFrameCallback: (_callback: (frameInfo: unknown) => void, _autostart?: boolean) => ({
-            setActive: (_active: boolean) => {},
-            isActive: false,
-            callbackId: 0,
-        }),
+        // Reanimated drives this off the UI-thread render loop; nothing ticks it
+        // here, so the worklet is registered rather than run. This keeps the
+        // level conduit off React: pushing to a SharedValue never schedules a
+        // frame in unit tests.
+        //
+        // The handle is stable per hook instance, like the real one, because
+        // production code puts `frame.setActive` in an effect dependency list —
+        // a fresh object every render would re-run that effect forever and hide
+        // the very activation bug the tests are written to catch.
+        useFrameCallback: (callback: (frameInfo: ReanimatedFrameInfo) => void, autostart?: boolean) => {
+            const latest = React.useRef(callback);
+            latest.current = callback;
+            const ref = React.useRef<ReanimatedFrameCallbackRecord | null>(null);
+            if (!ref.current) {
+                const setActiveCalls: boolean[] = [];
+                const handle: ReanimatedFrameCallbackHandle = {
+                    setActive: (active: boolean) => {
+                        setActiveCalls.push(active);
+                        handle.isActive = active;
+                    },
+                    isActive: autostart ?? false,
+                    callbackId: frameCallbackRecords.length,
+                };
+                const record: ReanimatedFrameCallbackRecord = {
+                    handle,
+                    setActiveCalls,
+                    run: (frameInfo) => {
+                        if (!handle.isActive) return;
+                        latest.current(frameInfo);
+                    },
+                };
+                ref.current = record;
+                frameCallbackRecords.push(record);
+            }
+            return ref.current.handle;
+        },
         useDerivedValue,
         useSharedValue,
         withRepeat: <T,>(value: T): T => value,

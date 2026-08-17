@@ -161,11 +161,12 @@ function createProgress(overrides: Readonly<{
     });
 }
 
+const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
+
 describe('ExternalImportProgressCard', () => {
     it('exposes one polite atomic web status region for semantic operation progress', async () => {
         accessibilityPlatform.os = 'web';
         announceForAccessibilityMock.mockClear();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
 
         const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
             progress: createProgress(),
@@ -192,7 +193,6 @@ describe('ExternalImportProgressCard', () => {
     it('announces iOS semantic transitions without repeating count and revision ticks', async () => {
         accessibilityPlatform.os = 'ios';
         announceForAccessibilityMock.mockClear();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
         const commonProps = {
             observationContext: 'live' as const,
             originAvailability: 'online' as const,
@@ -292,7 +292,6 @@ describe('ExternalImportProgressCard', () => {
     it('uses the Android polite live region without an imperative duplicate', async () => {
         accessibilityPlatform.os = 'android';
         announceForAccessibilityMock.mockClear();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
 
         const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
             progress: createProgress(),
@@ -310,7 +309,6 @@ describe('ExternalImportProgressCard', () => {
     it('announces an iOS semantic summary change when availability changes without another state transition', async () => {
         accessibilityPlatform.os = 'ios';
         announceForAccessibilityMock.mockClear();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
         const progress = createProgress({
             status: 'failed',
             retryTargetPhase: 'importing',
@@ -350,7 +348,6 @@ describe('ExternalImportProgressCard', () => {
         checklistMock.mockClear();
         const onResume = vi.fn();
         const onCancel = vi.fn();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
 
         const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
             progress: createProgress({
@@ -383,7 +380,6 @@ describe('ExternalImportProgressCard', () => {
     });
 
     it('keeps offline recovery actions visible but disabled when no owner handler is available', async () => {
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
         const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
             progress: createProgress({
                 status: 'awaiting_user_resume',
@@ -415,7 +411,6 @@ describe('ExternalImportProgressCard', () => {
         confirmMock.mockReset();
         confirmMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
         const onDiscard = vi.fn();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
         const progress = createProgress({
             status: 'awaiting_user_resume',
             retryTargetPhase: 'importing',
@@ -464,7 +459,6 @@ describe('ExternalImportProgressCard', () => {
     it('emits materialize validating Retry through the Retry handler rather than Resume', async () => {
         const onResume = vi.fn();
         const onRetry = vi.fn();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
         const progress = createProgress({
             status: 'awaiting_user_resume',
             phase: 'validating',
@@ -490,7 +484,6 @@ describe('ExternalImportProgressCard', () => {
 
     it('emits persisted takeover Retry start with the exact durable operation revision', async () => {
         const onRetry = vi.fn();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
         const progress = createProgress({
             request: {
                 plan: 'takeover',
@@ -529,7 +522,6 @@ describe('ExternalImportProgressCard', () => {
             resolveResume = resolve;
         }));
         const onCancel = vi.fn();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
 
         const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
             progress: createProgress({
@@ -567,7 +559,6 @@ describe('ExternalImportProgressCard', () => {
 
     it('delegates terminal dismissal with the exact revision without owning its lifetime', async () => {
         const onDismiss = vi.fn();
-        const { ExternalImportProgressCard } = await import('./ExternalImportProgressCard');
         const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
             progress: createProgress({
                 status: 'cancelled',

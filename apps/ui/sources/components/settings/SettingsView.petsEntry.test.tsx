@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -116,6 +117,8 @@ vi.mock('@/hooks/ui/useMultiClick', () => ({
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
+    useLayoutMaxWidth: () => 1000,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
@@ -159,7 +162,14 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'pets.companion' && shared.petsCompanionEnabled,
+    useFeatureEnabled: (featureId: string) => {
+        if (featureId === 'pets.companion') return shared.petsCompanionEnabled;
+        return false;
+    },
+}));
+
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+    useAppShellPluginUiProjection: () => ({ pluginUiProjection: null }),
 }));
 
 vi.mock('@/hooks/auth/useScannedAuthUrlProcessor', () => ({
@@ -206,9 +216,27 @@ describe('SettingsView pets entry', () => {
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(<SettingsView />);
 
-        screen.pressRow('settings-pets-row');
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await act(async () => {
+            screen.pressRow('settings-pets-row');
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
 
         expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/pets');
     });
+
+    it('projects General rows from the resolved Settings catalog rather than a hand-written overview list', async () => {
+        const { SettingsView } = await import('./SettingsView');
+        const screen = await renderSettingsView(<SettingsView />);
+
+        const keyboard = screen.findRow('settings-catalog-page-item.keyboard');
+        expect(keyboard).toBeTruthy();
+
+        await act(async () => {
+            keyboard?.props.onPress?.();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/keyboard');
+    });
+
 });

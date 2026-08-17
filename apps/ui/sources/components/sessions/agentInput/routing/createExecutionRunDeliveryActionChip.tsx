@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
@@ -10,6 +9,7 @@ import { t } from '@/text';
 import { ExecutionRunDeliveryChip } from './ExecutionRunDeliveryChip';
 import { buildExecutionRunDeliveryPickerOptions, resolveExecutionRunDeliveryLabel } from './executionRunDeliveryOptions';
 import type { ExecutionRunDeliveryMode } from './useSessionRecipientState';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Shared root-step builder used by BOTH the chip-definition factory (action-menu
@@ -62,7 +62,7 @@ export function createExecutionRunDeliveryActionChip(params: Readonly<{
             label: t('runs.delivery.cardDelivery', {
                 label: resolveExecutionRunDeliveryLabel(params.delivery),
             }),
-            icon: (tint) => <Ionicons name="options-outline" size={16} color={tint} />,
+            icon: (tint) => <Icon name="sliders-horizontal" size={16} color={tint} />,
             rootStep,
             selectedOptionId: params.delivery,
             onSelect: () => {

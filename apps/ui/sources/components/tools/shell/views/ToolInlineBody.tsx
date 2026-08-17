@@ -28,6 +28,7 @@ import {
 import { t } from '@/text';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 type ToolInlineBodyMode = 'card' | 'timeline';
 type DisplayCode = Readonly<{
@@ -100,6 +101,9 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     setHeaderActions: (node: React.ReactNode | null) => void;
 }) {
     const { tool, normalizedToolName } = props;
+    // A Session can change Agent without changing identity, so the row's own
+    // Agent — not the Session's current one — owns how this body renders.
+    const historicalAgentId = useHistoricalTranscriptAgentId();
     const sectionSpacing = props.sectionSpacing ?? 'default';
     const displayMaxBytesSetting = useSetting('filesDiffTokenizationMaxBytes');
     const displayMaxChars = typeof displayMaxBytesSetting === 'number' && Number.isFinite(displayMaxBytesSetting) && displayMaxBytesSetting > 0
@@ -142,7 +146,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         hideDefaultError = true;
     }
 
-    const agentId = resolveAgentIdFromSessionMetadata(props.metadata);
+    const agentId = historicalAgentId ?? resolveAgentIdFromSessionMetadata(props.metadata);
     const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
     if (!knownTool && hideUnknownToolsByDefault) {
         minimal = true;
@@ -165,6 +169,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         tool,
         metadata: props.metadata ?? null,
         permissionDisabledReason: props.interaction?.permissionDisabledReason,
+        historicalAgentId,
     });
     if (permissionTerminalErrorMessage) {
         // When a permission is denied/canceled, the tool body often has no result payload.

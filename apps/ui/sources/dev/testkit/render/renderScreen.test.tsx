@@ -371,4 +371,17 @@ describe('UI testkit render helpers', () => {
             { parent: 'View', value: 'bad' },
         ]);
     });
+
+    it('collects empty raw text nodes because React Native Web warns for them too', async () => {
+        const { collectUnexpectedRawTextNodes } = await import('./renderScreen');
+        const tree = {
+            type: 'View',
+            props: {},
+            children: [''],
+        } as any;
+
+        expect(collectUnexpectedRawTextNodes(tree)).toEqual([
+            { parent: 'View', value: '' },
+        ]);
+    });
 });

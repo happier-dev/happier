@@ -1,11 +1,11 @@
 import {
-  createVoiceProviderRecipientContractV1,
-  type PluginVoiceProviderContributionV1,
+  createVoiceProviderRecipientContractFromCredentialsV1,
   type RecipientContractV1,
+  type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 
 type ConversationDeclaration = Extract<
-  PluginVoiceProviderContributionV1,
+  VoiceProviderContribution,
   Readonly<{ kind: 'conversation' }>
 >;
 
@@ -17,9 +17,9 @@ export function createBundledVoiceRecipientContract(input: Readonly<{
   pluginId: string;
   declaration: ConversationDeclaration;
 }>): RecipientContractV1 | null {
-  const mediation = input.declaration.accountMediation;
-  if (!mediation) return null;
-  return createVoiceProviderRecipientContractV1({
+  const credentials = input.declaration.credentials;
+  if (!credentials?.hostMediated) return null;
+  return createVoiceProviderRecipientContractFromCredentialsV1({
     package: {
       pluginId: input.pluginId,
       source: { kind: 'bundled', locator: input.pluginId },
@@ -32,7 +32,10 @@ export function createBundledVoiceRecipientContract(input: Readonly<{
       pluginId: input.pluginId,
       localId: input.declaration.id,
     },
-    accountMediation: mediation,
+    credentials: {
+      slot: credentials.slot,
+      hostMediated: credentials.hostMediated,
+    },
     presentation: { title: input.declaration.title },
   });
 }

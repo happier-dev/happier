@@ -4,8 +4,10 @@ import { stageFrameById } from '../stage/stageFrames';
 import {
     JOURNEY_SURFACES,
     JOURNEY_SKIP_TO_SETUP_TARGET,
+    JOURNEY_STORY_SURFACE,
     getJourneyBeatsForSurface,
     journeyBeats,
+    resolveNearestVisibleBeatId,
 } from './journeyBeats';
 
 const expectedBeatIds = [
@@ -30,11 +32,14 @@ const expectedBeatIds = [
     'S5',
 ] as const;
 
-// Desktop/web run the whole 19-beat script; native shows the curated dream
+// Curation is keyed by the PRESENTATION the journey resolved, not by the
+// platform it happens to run on: the wide (split) cut runs the whole 19-beat
+// script, and the phone story cut — native, and every window at or below the
+// mobile breakpoint, including a narrow browser — shows the curated dream
 // subset whose seeded surface reads well at phone size plus every setup beat.
-const expectedDesktopBeatIds = expectedBeatIds;
+const expectedWideCutBeatIds = expectedBeatIds;
 
-const expectedNativeBeatIds = [
+const expectedStoryCutBeatIds = [
     'A1',
     'A2',
     'A4',
@@ -49,7 +54,7 @@ const expectedNativeBeatIds = [
     'S5',
 ] as const;
 
-const expectedHiddenOnNativeBeatIds = ['A3', 'A5', 'A8', 'A9', 'A10', 'A11', 'A13'] as const;
+const expectedHiddenInStoryCutBeatIds = ['A3', 'A5', 'A8', 'A9', 'A10', 'A11', 'A13'] as const;
 
 const expectedRealFrameIdsByBeat = new Map<string, string>([
     ['A1', 'session-view.hero'],
@@ -102,18 +107,40 @@ describe('journeyBeats', () => {
             .map((beat) => beat.id)).toEqual(expectedPlanetHeroBeatIds);
     });
 
-    it('runs the full script on desktop/web and a curated dream subset on native', () => {
-        expect(getJourneyBeatsForSurface('desktop').map((beat) => beat.id)).toEqual(expectedDesktopBeatIds);
-        expect(getJourneyBeatsForSurface('web').map((beat) => beat.id)).toEqual(expectedDesktopBeatIds);
-        expect(getJourneyBeatsForSurface('native').map((beat) => beat.id)).toEqual(expectedNativeBeatIds);
+    it('runs the full script in the wide cut and a curated dream subset in the phone story cut', () => {
+        // The story cut is a named surface key so the presentation owner
+        // (`resolveJourneyLayoutMode`) can map its decision onto curation instead
+        // of a second, platform-keyed detector deciding it again.
+        expect(JOURNEY_SURFACES).toContain(JOURNEY_STORY_SURFACE);
+        expect(getJourneyBeatsForSurface(JOURNEY_STORY_SURFACE).map((beat) => beat.id)).toEqual(expectedStoryCutBeatIds);
+        expect(getJourneyBeatsForSurface('desktop').map((beat) => beat.id)).toEqual(expectedWideCutBeatIds);
+        expect(getJourneyBeatsForSurface('web').map((beat) => beat.id)).toEqual(expectedWideCutBeatIds);
 
         for (const beat of journeyBeats) {
             expect(beat.surfaces.desktop).toBe(true);
             expect(beat.surfaces.web).toBe(true);
         }
 
-        const hiddenOnNative = journeyBeats.filter((beat) => !beat.surfaces.native).map((beat) => beat.id);
-        expect(hiddenOnNative).toEqual([...expectedHiddenOnNativeBeatIds]);
+        const hiddenInStoryCut = journeyBeats
+            .filter((beat) => !beat.surfaces[JOURNEY_STORY_SURFACE])
+            .map((beat) => beat.id);
+        expect(hiddenInStoryCut).toEqual([...expectedHiddenInStoryCutBeatIds]);
+    });
+
+    it('lands a beat the target cut drops on the nearest beat that cut kept', () => {
+        // The cut a journey plays can change mid-journey (a window crossing the
+        // mobile breakpoint, a phone rotating), so "this beat is not in the new
+        // cut" must not read as "start over".
+        const storyCut = getJourneyBeatsForSurface(JOURNEY_STORY_SURFACE);
+        expect(resolveNearestVisibleBeatId(storyCut, 'A2')).toBe('A2');
+        expect(resolveNearestVisibleBeatId(storyCut, 'A5')).toBe('A4');
+        expect(resolveNearestVisibleBeatId(storyCut, 'A11')).toBe('A7');
+        expect(resolveNearestVisibleBeatId(storyCut, 'A13')).toBe('A12');
+
+        // Only a beat the cut keeps nothing before lands forward.
+        const withoutOpening = storyCut.filter((beat) => beat.id !== 'A1');
+        expect(resolveNearestVisibleBeatId(withoutOpening, 'A1')).toBe('A2');
+        expect(resolveNearestVisibleBeatId([], 'A1')).toBeNull();
     });
 
     it('keeps skip-to-setup and config ownership on the beat data', () => {

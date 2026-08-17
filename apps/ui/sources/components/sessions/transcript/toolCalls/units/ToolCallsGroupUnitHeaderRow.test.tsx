@@ -95,6 +95,62 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         });
     });
 
+    it('renders a failed aggregate when a completed delegate tool has a failed target result', async () => {
+        const screen = await renderHeaderRow({
+            toolMessages: [
+                createToolCallMessageFixture({
+                    id: 'm1',
+                    createdAt: 1,
+                    tool: {
+                        name: 'Bash',
+                        state: 'completed',
+                        result: {
+                            content: [{
+                                type: 'text',
+                                text: '{"v":1,"ok":true,"kind":"tools_call","data":{"source":"happier","tool":"subagents_delegate_start","isError":false,"output":{"intent":"delegate","sessionId":"cmst8oicm00xztmweb5hjqql6","results":[{"key":"agent:claude","ok":false,"error":"invalid_parameters","errorCode":"invalid_parameters"}]}}}\n',
+                            }],
+                            details: null,
+                        },
+                    } as any,
+                }),
+            ],
+        });
+
+        expect(screen.findByTestId('tool-calls-group-status:error')).toMatchObject({
+            props: {
+                accessible: true,
+                accessibilityLabel: 'common.error',
+            },
+        });
+        expect(screen.findByTestId('tool-calls-group-status:completed')).toBeNull();
+    });
+
+    it('renders a failed aggregate for an unavailable tool with a failed Happier envelope in stdout', async () => {
+        const screen = await renderHeaderRow({
+            toolMessages: [
+                createToolCallMessageFixture({
+                    id: 'm1',
+                    createdAt: 1,
+                    tool: {
+                        name: 'subagents.delegate.start',
+                        state: 'unavailable',
+                        result: {
+                            stdout: '{"v":1,"ok":false,"kind":"tools_call","error":{"code":"unknown_tool","message":"Unknown built-in Happier tool: subagents.delegate.start"}}\n',
+                        },
+                    } as any,
+                }),
+            ],
+        });
+
+        expect(screen.findByTestId('tool-calls-group-status:error')).toMatchObject({
+            props: {
+                accessible: true,
+                accessibilityLabel: 'common.error',
+            },
+        });
+        expect(screen.findByTestId('tool-calls-group-status:completed')).toBeNull();
+    });
+
     it('reports a blocked aggregate when any settled tool was denied instead of showing success', async () => {
         const screen = await renderHeaderRow({
             toolMessages: [

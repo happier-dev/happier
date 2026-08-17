@@ -1,10 +1,11 @@
-import type { SettingArtifacts, SettingDefinitionMap, SettingValueKind } from '@happier-dev/protocol';
+import type { SettingDefinitionMap, SettingValueKind } from '@happier-dev/protocol';
 
+import type { AnalyticsSettingArtifacts } from './analyticsSettingArtifacts';
 import { serializeDerivedSettingEntries } from './serializeDerivedSettingEntries';
 import { serializeTrackedSettingEntries } from './serializeTrackedSettingEntries';
 
 export function buildSettingPropertyValueKindMapFromArtifacts<TDefinitions extends SettingDefinitionMap>(params: {
-    artifacts: SettingArtifacts<TDefinitions>;
+    artifacts: AnalyticsSettingArtifacts<TDefinitions>;
     record: Record<string, unknown>;
     currentPrefix: string;
     derivedPrefix: string;

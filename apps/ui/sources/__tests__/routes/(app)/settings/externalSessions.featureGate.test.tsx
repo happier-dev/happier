@@ -64,12 +64,12 @@ describe('External Sessions settings route feature gate', () => {
 
         const settingsView = tree.findByType('ExternalSessionsSettingsView' as never);
         expect(settingsView.props.integrationInventoryEnabled).toBe(true);
-        expect(settingsView.props.initialMachineId).toBeNull();
+        expect(settingsView.props.initialMachineId).toBeUndefined();
         expect(settingsView.props.autoLinkSources).toBeUndefined();
         expect(useFeatureEnabledMock).toHaveBeenCalledWith('sessions.direct');
     });
 
-    it('passes the normalized machine query context into the global settings view', async () => {
+    it('does not give a machine query execution authority over the Administration settings view', async () => {
         useFeatureEnabledMock.mockReturnValue(true);
         routeParams.machineId = [' machine-2 ', 'ignored-machine'];
         const { default: ExternalSessionsSettingsRoute } = await import(
@@ -81,6 +81,6 @@ describe('External Sessions settings route feature gate', () => {
         )).tree;
 
         const settingsView = tree.findByType('ExternalSessionsSettingsView' as never);
-        expect(settingsView.props.initialMachineId).toBe('machine-2');
+        expect(settingsView.props.initialMachineId).toBeUndefined();
     });
 });

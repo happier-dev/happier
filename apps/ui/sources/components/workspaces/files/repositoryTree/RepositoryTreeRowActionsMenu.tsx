@@ -28,14 +28,14 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
         const renameItem: RepositoryTreeRowActionItem = {
             id: 'repository-tree-menuitem-rename',
             title: t('common.rename'),
-            icon: 'pencil-outline',
+            icon: 'pencil',
             color: theme.colors.text.secondary,
             disabled: props.disableWriteActions,
         };
         const deleteItem: RepositoryTreeRowActionItem = {
             id: 'repository-tree-menuitem-delete',
             title: t('common.delete'),
-            icon: 'trash-outline',
+            icon: 'trash',
             color: theme.colors.text.secondary,
             disabled: props.disableWriteActions,
         };
@@ -43,7 +43,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
         const copyPathItem: RepositoryTreeRowActionItem = {
             id: 'repository-tree-menuitem-copy-path',
             title: t('files.repositoryTree.actions.copyPath'),
-            icon: 'copy-outline',
+            icon: 'copy',
             color: theme.colors.text.secondary,
         };
 
@@ -56,13 +56,13 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
                         {
                             id: 'repository-tree-menuitem-download',
                             title: t('files.repositoryTree.actions.download'),
-                            icon: 'download-outline',
+                            icon: 'download',
                             color: theme.colors.text.secondary,
                         },
                         {
                             id: 'repository-tree-menuitem-zip',
                             title: t('files.repositoryTree.actions.downloadAsZip'),
-                            icon: 'archive-outline',
+                            icon: 'archive',
                             color: theme.colors.text.secondary,
                         },
                     ] satisfies RepositoryTreeRowActionItem[])
@@ -79,7 +79,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
                     {
                         id: 'repository-tree-menuitem-zip',
                         title: t('files.repositoryTree.actions.downloadAsZip'),
-                        icon: 'archive-outline',
+                        icon: 'archive',
                         color: theme.colors.text.secondary,
                     },
                 ] satisfies RepositoryTreeRowActionItem[])

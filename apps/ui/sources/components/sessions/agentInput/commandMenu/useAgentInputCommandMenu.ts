@@ -7,6 +7,8 @@ import { buildAgentInputCommandMenuItems } from './buildAgentInputCommandMenuIte
 export function useAgentInputCommandMenu(input: Readonly<{
     suggestions: readonly AutocompleteSuggestion[];
     selected: number;
+    /** A user-pinned row is absent from an incomplete current-query snapshot. */
+    selectionPending?: boolean;
     activeWord: string | null;
     activeWordRange: Readonly<{ start: number; end: number }> | null;
     inputTextLength: number;
@@ -26,6 +28,7 @@ export function useAgentInputCommandMenu(input: Readonly<{
     const {
         suggestions,
         selected,
+        selectionPending = false,
         activeWord,
         activeWordRange,
         inputTextLength,
@@ -56,8 +59,9 @@ export function useAgentInputCommandMenu(input: Readonly<{
     );
 
     const onSelectFromMenu = React.useCallback(() => {
+        if (selectionPending) return;
         handleSuggestionSelect(selected >= 0 ? selected : 0);
-    }, [handleSuggestionSelect, selected]);
+    }, [handleSuggestionSelect, selected, selectionPending]);
 
     const onCloseMenu = React.useCallback(() => {
         if (activeTriggerKey !== null) {
@@ -76,4 +80,3 @@ export function useAgentInputCommandMenu(input: Readonly<{
         moveDown,
     };
 }
-

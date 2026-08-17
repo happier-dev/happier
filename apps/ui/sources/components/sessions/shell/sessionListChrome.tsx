@@ -9,7 +9,6 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
@@ -24,6 +23,7 @@ import { resolveSessionsListHeaderMenuItems } from './resolveSessionsListHeaderM
 import type { RegisterSessionFolderDropTarget } from './useSessionListViewState';
 import { useWorkspaceFavicon } from './useWorkspaceFavicon';
 import { resolveWorkspaceRootTreeRowId } from './drop-resolution/treeRowId';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const ORDERING_MENU_IDS = {
     custom: 'custom',
@@ -294,7 +294,7 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
                     hitSlop={8}
                 >
                     <View>
-                        <Ionicons name="filter-outline" size={16} color={actionIconColor} />
+                        <Icon name="funnel-simple" size={16} color={actionIconColor} />
                         {hasActiveStorageFilter ? (
                             <TabBadge
                                 variant="dot"
@@ -411,9 +411,9 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
         return {
             id: `${TAG_FILTER_ITEM_PREFIX}${tag}`,
             title: tag,
-            icon: <Ionicons name="pricetag-outline" size={15} color={selected ? activeIconColor : iconColor} />,
+            icon: <Icon name="tag" size={14} color={selected ? activeIconColor : iconColor} />,
             rightElement: selected
-                ? <Ionicons name="checkmark" size={15} color={activeIconColor} />
+                ? <Icon name="check" size={14} color={activeIconColor} />
                 : null,
         };
     }), [activeIconColor, allKnownTags, iconColor, selectedTagSet]);
@@ -450,8 +450,8 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
                     pointerEvents="none"
                     style={[styles.headerSearchShellBorder, animatedSearchChromeStyle]}
                 />
-                <Ionicons
-                    name="search"
+                <Icon
+                    name="magnifying-glass"
                     size={16}
                     color={searchIsOpen ? activeIconColor : iconColor}
                     style={styles.headerSearchIcon}
@@ -517,8 +517,8 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
                             accessibilityLabel={t('sessionsList.filterByTags')}
                             hitSlop={8}
                         >
-                            <Ionicons
-                                name="pricetag-outline"
+                            <Icon
+                                name="tag"
                                 size={16}
                                 color={selectedTags.length > 0 ? activeIconColor : iconColor}
                             />
@@ -568,7 +568,7 @@ export const SessionFolderFocusBreadcrumbs = React.memo(function SessionFolderFo
                 </Pressable>
                 {props.breadcrumbs.map((breadcrumb) => (
                     <React.Fragment key={breadcrumb.id}>
-                        <Ionicons name="chevron-forward" size={12} color={theme.colors.text.tertiary} />
+                        <Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />
                         <Pressable
                             testID={`session-folder-breadcrumb-folder-${breadcrumb.id}`}
                             onPress={() => props.onSelectFolder(breadcrumb.id)}
@@ -689,9 +689,9 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                                     isWeb && !showChevron ? styles.webHoverHiddenChevron : styles.webHoverVisibleChevron,
                                 ]}
                             >
-                                <Ionicons
-                                    name={collapsed ? 'chevron-forward' : 'chevron-down'}
-                                    size={12}
+                                <Icon
+                                    name={collapsed ? 'caret-right' : 'caret-down'}
+                                    size={14}
                                     color={chevronColor}
                                 />
                             </View>
@@ -714,8 +714,8 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                             accessible={false}
                             hitSlop={8}
                         >
-                            <Ionicons
-                                name="reorder-three-outline"
+                            <Icon
+                                name="list"
                                 size={14}
                                 color={actionIconColor}
                                 style={[
@@ -761,7 +761,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                                     accessibilityLabel={t('common.moreActions')}
                                     hitSlop={8}
                                 >
-                                    <Octicons name="kebab-horizontal" size={12} color={actionIconColor} />
+                                    <Icon name="dots-three" size={14} color={actionIconColor} />
                                 </Pressable>
                             )}
                         />
@@ -777,7 +777,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                             accessibilityLabel={t('machine.launchNewSessionInDirectory')}
                             hitSlop={8}
                         >
-                            <Ionicons name="add" size={14} color={actionIconColor} />
+                            <Icon name="plus" size={14} color={actionIconColor} />
                         </Pressable>
                     ) : null}
                 </View>
@@ -832,9 +832,9 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
                             isWeb && !showChevron ? styles.webHoverHiddenChevron : styles.webHoverVisibleChevron,
                         ]}
                     >
-                        <Ionicons
-                            name={props.collapsed ? 'chevron-forward' : 'chevron-down'}
-                            size={12}
+                        <Icon
+                            name={props.collapsed ? 'caret-right' : 'caret-down'}
+                            size={14}
                             color={headerChevronColor}
                         />
                     </View>
@@ -878,7 +878,10 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
     const isWeb = Platform.OS === 'web';
     const normalizedDepth = Math.min(Math.max(Math.trunc(props.depth), 0), 3);
     const indentation = 20 + normalizedDepth * 12;
-    const iconColor = props.disabled ? theme.colors.text.tertiary : theme.colors.text.secondary;
+    const displayLocked = props.item.displayState?.status === 'locked';
+    const displayTitle = displayLocked ? t('common.unavailable') : props.title;
+    const actionsDisabled = props.disabled || displayLocked;
+    const iconColor = actionsDisabled ? theme.colors.text.tertiary : theme.colors.text.secondary;
     const showActions = !isWeb || isHovered || isActionsHovered || menuOpen;
     const dropTarget = React.useMemo(() => {
         if (!props.item.workspace || !props.item.folderId) return null;
@@ -898,39 +901,39 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
         const items: DropdownMenuItem[] = [{
             id: 'new-session',
             title: t('sessionsList.newSessionInFolder'),
-            icon: <Ionicons name="add-circle-outline" size={16} color={iconColor} />,
-            disabled: props.disabled,
+            icon: <Icon name="plus-circle" size={16} color={iconColor} />,
+            disabled: actionsDisabled,
         },
         {
             id: 'add-subfolder',
             title: t('sessionsList.addSubfolder'),
-            icon: <Ionicons name="folder-open-outline" size={16} color={iconColor} />,
-            disabled: props.disabled,
+            icon: <Icon name="folder-open" size={16} color={iconColor} />,
+            disabled: actionsDisabled,
         }];
         if (typeof props.onMove === 'function') {
             items.push({
                 id: 'move',
                 title: t('sessionsList.moveToFolder'),
-                icon: <Ionicons name="move-outline" size={16} color={iconColor} />,
-                disabled: props.disabled,
+                icon: <Icon name="arrows-out-cardinal" size={16} color={iconColor} />,
+                disabled: actionsDisabled,
             });
         }
         items.push({
             id: 'rename',
             title: t('sessionsList.renameFolder'),
-            icon: <Ionicons name="pencil-outline" size={16} color={iconColor} />,
-            disabled: props.disabled,
+            icon: <Icon name="pencil" size={16} color={iconColor} />,
+            disabled: actionsDisabled,
         },
         {
             id: 'delete',
             title: t('sessionsList.deleteFolder'),
-            icon: <Ionicons name="trash-outline" size={16} color={iconColor} />,
-            disabled: props.disabled,
+            icon: <Icon name="trash" size={16} color={iconColor} />,
+            disabled: actionsDisabled,
         });
         return items;
-    }, [iconColor, props.disabled, props.onMove]);
+    }, [actionsDisabled, iconColor, props.onMove]);
     const handleMenuSelect = React.useCallback(async (itemId: string) => {
-        if (props.disabled) return;
+        if (actionsDisabled) return;
         if (itemId === 'new-session') {
             props.onNewSession();
         } else if (itemId === 'add-subfolder') {
@@ -942,7 +945,7 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
         } else if (itemId === 'delete') {
             await props.onDelete();
         }
-    }, [props]);
+    }, [actionsDisabled, props]);
     const folderAccessibilityActions = React.useMemo(() => {
         const actions: Array<{ name: string; label: string }> = [];
         if (typeof props.onMoveUp === 'function') {
@@ -960,7 +963,7 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
         return actions;
     }, [props.onMove, props.onMoveDown, props.onMoveToWorkspaceRoot, props.onMoveUp]);
     const handleFolderAccessibilityAction = React.useCallback((event: { nativeEvent?: { actionName?: string } }) => {
-        if (props.disabled) return;
+        if (actionsDisabled) return;
         switch (event.nativeEvent?.actionName) {
             case 'moveUp':
                 props.onMoveUp?.();
@@ -977,7 +980,7 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
             default:
                 break;
         }
-    }, [props]);
+    }, [actionsDisabled, props]);
     const headerTestId = `session-folder-header-${props.item.folderId ?? props.title}`;
     return (
         <View
@@ -1005,24 +1008,24 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
                     accessibilityLabel={props.collapsed ? t('common.expand') : t('common.collapse')}
                     hitSlop={8}
                 >
-                    <Ionicons
-                        name={props.collapsed ? 'chevron-forward' : 'chevron-down'}
-                        size={12}
+                    <Icon
+                        name={props.collapsed ? 'caret-right' : 'caret-down'}
+                        size={14}
                         color={iconColor}
                     />
                 </Pressable>
                 <Pressable
                     testID={`${headerTestId}-focus`}
                     style={styles.headerLabelRow}
-                    onPress={props.disabled ? undefined : props.onPress}
+                    onPress={actionsDisabled ? undefined : props.onPress}
                     accessibilityRole="button"
-                    accessibilityLabel={props.title}
+                    accessibilityLabel={displayTitle}
                     accessibilityActions={folderAccessibilityActions}
                     onAccessibilityAction={folderAccessibilityActions.length > 0 ? handleFolderAccessibilityAction : undefined}
-                    disabled={props.disabled}
+                    disabled={actionsDisabled}
                 >
-                    <Ionicons name="folder-outline" size={14} color={iconColor} />
-                    <Eyebrow style={styles.groupHeaderTitle} numberOfLines={1}>{props.title}</Eyebrow>
+                    <Icon name="folder" size={14} color={iconColor} />
+                    <Eyebrow style={styles.groupHeaderTitle} numberOfLines={1}>{displayTitle}</Eyebrow>
                 </Pressable>
                 <View
                     testID={`session-folder-reorder-handle-${props.item.folderId ?? props.title}`}
@@ -1032,8 +1035,8 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
                     ]}
                     pointerEvents="none"
                 >
-                    <Ionicons
-                        name="reorder-three-outline"
+                    <Icon
+                        name="list"
                         size={14}
                         color={iconColor}
                         style={[
@@ -1074,7 +1077,7 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
                                 accessibilityLabel={t('common.moreActions')}
                                 hitSlop={8}
                             >
-                                <Octicons name="kebab-horizontal" size={12} color={iconColor} />
+                                <Icon name="dots-three" size={14} color={iconColor} />
                             </Pressable>
                         )}
                     />

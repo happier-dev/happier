@@ -49,7 +49,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'session_header',
         titleKey: 'settingsActions.targets.session_header.title',
         subtitleKey: 'settingsActions.targets.session_header.subtitle',
-        icon: 'albums-outline',
+        icon: 'stack',
         category: 'app',
     },
     {
@@ -58,7 +58,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'session_action_menu',
         titleKey: 'settingsActions.targets.session_action_menu.title',
         subtitleKey: 'settingsActions.targets.session_action_menu.subtitle',
-        icon: 'ellipsis-horizontal',
+        icon: 'dots-three',
         category: 'app',
     },
     {
@@ -67,7 +67,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'session_info',
         titleKey: 'settingsActions.targets.session_info.title',
         subtitleKey: 'settingsActions.targets.session_info.subtitle',
-        icon: 'information-circle-outline',
+        icon: 'info',
         category: 'app',
     },
     {
@@ -76,7 +76,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'pending_messages',
         titleKey: 'settingsActions.targets.pending_messages.title',
         subtitleKey: 'settingsActions.targets.pending_messages.subtitle',
-        icon: 'chatbubble-ellipses-outline',
+        icon: 'chat-circle-dots',
         category: 'app',
     },
     {
@@ -85,7 +85,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'command_palette',
         titleKey: 'settingsActions.targets.command_palette.title',
         subtitleKey: 'settingsActions.targets.command_palette.subtitle',
-        icon: 'search-outline',
+        icon: 'magnifying-glass',
         category: 'app',
     },
     {
@@ -94,7 +94,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'slash_command',
         titleKey: 'settingsActions.targets.slash_command.title',
         subtitleKey: 'settingsActions.targets.slash_command.subtitle',
-        icon: 'code-slash-outline',
+        icon: 'code',
         category: 'app',
     },
     {
@@ -103,7 +103,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'agent_input_chips',
         titleKey: 'settingsActions.targets.agent_input_chips.title',
         subtitleKey: 'settingsActions.targets.agent_input_chips.subtitle',
-        icon: 'add-circle-outline',
+        icon: 'plus-circle',
         category: 'app',
     },
     {
@@ -112,7 +112,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'voice_panel',
         titleKey: 'settingsActions.targets.voice_panel.title',
         subtitleKey: 'settingsActions.targets.voice_panel.subtitle',
-        icon: 'mic-outline',
+        icon: 'microphone',
         category: 'voice',
     },
     {
@@ -121,7 +121,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'run_list',
         titleKey: 'settingsActions.targets.run_list.title',
         subtitleKey: 'settingsActions.targets.run_list.subtitle',
-        icon: 'list-outline',
+        icon: 'list',
         category: 'app',
     },
     {
@@ -130,7 +130,7 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
         placement: 'run_card',
         titleKey: 'settingsActions.targets.run_card.title',
         subtitleKey: 'settingsActions.targets.run_card.subtitle',
-        icon: 'document-text-outline',
+        icon: 'file-text',
         category: 'app',
     },
 ] as const;
@@ -142,7 +142,7 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         surface: 'voice',
         titleKey: 'settingsActions.targets.voice.title',
         subtitleKey: 'settingsActions.targets.voice.subtitle',
-        icon: 'mic-circle-outline',
+        icon: 'microphone',
         category: 'voice',
     },
     {
@@ -151,7 +151,7 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         surface: 'agent',
         titleKey: 'settingsActions.targets.agent.title',
         subtitleKey: 'settingsActions.targets.agent.subtitle',
-        icon: 'sparkles-outline',
+        icon: 'sparkle',
         category: 'integrations',
     },
     {
@@ -160,7 +160,7 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         surface: 'mcp',
         titleKey: 'settingsActions.targets.mcp.title',
         subtitleKey: 'settingsActions.targets.mcp.subtitle',
-        icon: 'cube-outline',
+        icon: 'cube',
         category: 'integrations',
     },
     {
@@ -169,7 +169,7 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         surface: 'cli',
         titleKey: 'settingsActions.targets.cli.title',
         subtitleKey: 'settingsActions.targets.cli.subtitle',
-        icon: 'terminal-outline',
+        icon: 'terminal',
         category: 'integrations',
     },
     {
@@ -178,7 +178,7 @@ const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
         surface: 'ui',
         titleKey: 'settingsActions.targets.contextual_ui.title',
         subtitleKey: 'settingsActions.targets.contextual_ui.subtitle',
-        icon: 'flash-outline',
+        icon: 'lightning',
         category: 'app',
     },
 ] as const;
@@ -208,7 +208,7 @@ function buildSyntheticSlashCommandTarget(spec: ActionSpec): ActionSettingsTarge
         surface: 'ui',
         titleKey: 'settingsActions.targets.slash_command.title',
         subtitleKey: 'settingsActions.targets.slash_command.subtitle',
-        icon: 'code-slash-outline',
+        icon: 'code',
         category: 'app',
     };
 }

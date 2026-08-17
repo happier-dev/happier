@@ -37,7 +37,7 @@ const useEnvironmentVariablesMock = vi.fn(
     (
         _machineId: string | null,
         _refs: string[],
-        _options?: { extraEnv?: Record<string, string>; sensitiveKeys?: string[] },
+        _options?: { extraEnv?: Record<string, string>; sensitiveKeys?: string[]; serverId?: string | null },
     ): EnvironmentVariablesHookResult => ({
         variables: {},
         meta: {},
@@ -74,12 +74,13 @@ vi.mock('./EnvironmentVariableCard', () => ({
 type UseEnvironmentVariablesArgs = [
     string | null,
     string[],
-    { extraEnv?: Record<string, string>; sensitiveKeys?: string[] } | undefined,
+    { extraEnv?: Record<string, string>; sensitiveKeys?: string[]; serverId?: string | null } | undefined,
 ];
 
 async function renderList(params: {
     environmentVariables: Array<{ name: string; value: string; isSecret?: boolean }>;
     profileDocs?: ProfileDocumentation | null;
+    serverId?: string | null;
     onChange?: ReturnType<typeof vi.fn<(next: Array<{ name: string; value: string; isSecret?: boolean }>) => void>>;
     allowSourceRequirements?: boolean;
 }) {
@@ -90,6 +91,7 @@ async function renderList(params: {
         React.createElement(EnvironmentVariablesList, {
             environmentVariables: params.environmentVariables,
             machineId: 'machine-1',
+            serverId: params.serverId,
             profileDocs: params.profileDocs ?? null,
             onChange,
             sourceRequirementsByName: {},
@@ -120,6 +122,17 @@ describe('EnvironmentVariablesList', () => {
             allowSourceRequirements: false,
         });
         expect(environmentVariableCardProps[0]?.showSourceRequirements).toBe(false);
+    });
+
+    it('keeps an Administration-selected server context for environment previews', async () => {
+        await renderList({
+            environmentVariables: [{ name: 'SAFE_FLAG', value: '1' }],
+            serverId: 'server-profile-b',
+        });
+
+        const [machineId, _keys, options] = getLastUseEnvironmentVariablesCall();
+        expect(machineId).toBe('machine-1');
+        expect(options?.serverId).toBe('server-profile-b');
     });
 
     describe('inline add interaction', () => {

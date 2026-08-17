@@ -292,7 +292,7 @@ describe('connected-account daemon machine RPC', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             status: 'revoked',
             account: {
-                service: { pluginId: 'happier.scm.hosting.github', localId: 'github-account' },
+                service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
                 accountId: 'work',
             },
             remoteStatus: 'remoteUnsupported',
@@ -305,7 +305,7 @@ describe('connected-account daemon machine RPC', () => {
             command: {
                 operation: 'revokeAccount',
                 account: {
-                    service: { pluginId: 'happier.scm.hosting.github', localId: 'github-account' },
+                    service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
                     accountId: 'work',
                 },
                 cleanupGroupReferences: false,
@@ -313,7 +313,7 @@ describe('connected-account daemon machine RPC', () => {
         })).resolves.toEqual({
             status: 'revoked',
             account: {
-                service: { pluginId: 'happier.scm.hosting.github', localId: 'github-account' },
+                service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
                 accountId: 'work',
             },
             remoteStatus: 'remoteUnsupported',
@@ -328,7 +328,7 @@ describe('connected-account daemon machine RPC', () => {
                 command: {
                     operation: 'revokeAccount',
                     account: {
-                        service: { pluginId: 'happier.scm.hosting.github', localId: 'github-account' },
+                        service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
                         accountId: 'work',
                     },
                     cleanupGroupReferences: false,
@@ -339,7 +339,7 @@ describe('connected-account daemon machine RPC', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             status: 'outcomeUnknown',
             account: {
-                service: { pluginId: 'happier.scm.hosting.github', localId: 'github-account' },
+                service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
                 accountId: 'work',
             },
             diagnostic: 'must-not-pass',
@@ -350,7 +350,7 @@ describe('connected-account daemon machine RPC', () => {
             command: {
                 operation: 'revokeAccount',
                 account: {
-                    service: { pluginId: 'happier.scm.hosting.github', localId: 'github-account' },
+                    service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
                     accountId: 'work',
                 },
                 cleanupGroupReferences: true,

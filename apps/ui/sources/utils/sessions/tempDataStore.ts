@@ -1,11 +1,12 @@
 import { randomUUID } from '@/platform/randomUUID';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, SessionMcpSelectionV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, SessionMcpSelectionV1, SessionModelSelectionV1, SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/protocol';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
+import type { PluginEventAutomationEditSeed } from '@/components/automations/editor/pluginEventAutomationEditSeed';
 
 export interface TempDataEntry {
     data: any;
@@ -32,11 +33,35 @@ export interface NewSessionData {
     codexBackendMode?: CodexBackendMode | null;
     mcpSelection?: SessionMcpSelectionV1 | null;
     automationDraft?: NewSessionAutomationDraft | null;
+    /** One-shot direct-detail handoff; never persisted or indexed by this store. */
+    eventAutomationEditSeed?: PluginEventAutomationEditSeed;
+    /** UI-only server scope for an Event existing-session target. */
+    eventAutomationExistingSessionServerId?: string | null;
+    /** One-shot Session → Event authoring handoff; never persisted by this store. */
+    eventAutomationInitialTarget?: Readonly<{
+        kind: 'existingSession';
+        sessionId: string;
+        serverId: string;
+    }>;
     backendNewSessionOptionStateByTargetKey?: BackendNewSessionOptionStateByTargetKey;
     agentNewSessionOptionStateByAgentId?: BackendNewSessionOptionStateByTargetKey;
     resumeSessionId?: string;
     taskId?: string;
     taskTitle?: string;
+    /**
+     * One-shot continuation recipe for a configurable Replay-seeded child.
+     *
+     * This is required semantics for the created Session, not an ignorable hint:
+     * the daemon resolves the source transcript before creating the child. It is
+     * semantically distinct from a Session mention — a mention says "this Session
+     * is available to inspect", this says "create this Session as a continuation".
+     */
+    sourceContext?: SessionSpawnSourceContextV1;
+    /**
+     * The server the source Session lives on. V1 requires source and target to
+     * match, and authoring must say so rather than silently dropping the recipe.
+     */
+    sourceContextServerId?: string | null;
 }
 
 // In-memory store for temporary data

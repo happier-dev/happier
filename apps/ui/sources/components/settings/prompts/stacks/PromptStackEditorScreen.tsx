@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import type { PromptStackEntryV1, PromptStacksV1 } from '@happier-dev/protocol';
@@ -13,6 +12,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -142,7 +142,7 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
                 testID={`promptStack.entry.${entry.id}`}
                 title={title}
                 subtitle={subtitle}
-                icon={<Ionicons name={entry.ref.kind === 'bundle' ? 'sparkles-outline' : 'document-text-outline'} size={22} color={theme.colors.text.secondary} />}
+                icon={<Icon name={entry.ref.kind === 'bundle' ? 'sparkle' : 'file-text'} size={20} color={theme.colors.text.secondary} />}
                 onPress={() => openArtifactEditor(entry)}
                 rightElement={(
                   <View style={styles.rightControls}>
@@ -153,27 +153,27 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
                         {
                           id: 'edit',
                           title: t('common.edit'),
-                          icon: 'pencil-outline',
+                          icon: 'pencil',
                           onPress: () => openArtifactEditor(entry),
                         },
                         {
                           id: 'moveUp',
                           title: t('common.moveUp'),
-                          icon: 'chevron-up',
+                          icon: 'caret-up',
                           disabled: index === 0,
                           onPress: () => setEntries(moveEntry(entries, entry.id, -1)),
                         },
                         {
                           id: 'moveDown',
                           title: t('common.moveDown'),
-                          icon: 'chevron-down',
+                          icon: 'caret-down',
                           disabled: index === entries.length - 1,
                           onPress: () => setEntries(moveEntry(entries, entry.id, 1)),
                         },
                         {
                           id: 'delete',
                           title: t('common.delete'),
-                          icon: 'trash-outline',
+                          icon: 'trash',
                           destructive: true,
                           onPress: () => remove(entry.id),
                         },
@@ -195,7 +195,7 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
               testID="promptStack.empty"
               title={t('promptLibrary.stackEmptyTitle')}
               subtitle={t('promptLibrary.stackEmptySubtitle')}
-              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />}
+              icon={<Icon name="info" size={20} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           ) : null}
@@ -206,7 +206,7 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
             testID="promptStack.add"
             title={t('promptLibrary.addToStack')}
             subtitle={t('promptLibrary.addToStackSubtitle')}
-            icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
+            icon={<Icon name="plus-circle" size={20} color={theme.colors.accent.blue} />}
             onPress={onAdd}
           />
         </ItemGroup>

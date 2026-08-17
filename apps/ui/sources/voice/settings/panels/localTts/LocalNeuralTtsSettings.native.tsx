@@ -1,7 +1,6 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -29,10 +28,13 @@ import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voicePro
 
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
 import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
+const ACCESSORY_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 const ACCESSORY_BUTTON_STYLE = {
-  width: 44,
-  height: 44,
+  width: ACCESSORY_TARGET_SIZE,
+  height: ACCESSORY_TARGET_SIZE,
   alignItems: 'center',
   justifyContent: 'center',
 } as const;
@@ -239,10 +241,10 @@ export function LocalNeuralTtsSettings(props: {
                     cancelPrepare();
                   }}
                 >
-                  <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
+                  <Icon name="x" size={20} color={theme.colors.text.secondary} />
                 </Pressable>
               ) : (
-                <Ionicons name="download-outline" size={20} color={theme.colors.text.secondary} />
+                <Icon name="download" size={20} color={theme.colors.text.secondary} />
               )
             }
             rightElementOutsidePressable={modelStatus === 'downloading'}
@@ -303,9 +305,9 @@ export function LocalNeuralTtsSettings(props: {
                   void playPreview(v.id);
                 }}
               >
-                <Ionicons
-                  name={previewingVoiceId === v.id ? 'pause' : 'play'}
-                  size={18}
+                <Icon
+                  name={previewingVoiceId === v.id ? 'pause-circle' : 'play'}
+                  size={16}
                   color={theme.colors.text.secondary}
                 />
               </Pressable>

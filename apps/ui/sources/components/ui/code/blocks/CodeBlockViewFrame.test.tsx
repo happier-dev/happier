@@ -171,7 +171,7 @@ describe('CodeBlockViewFrame', () => {
                     <React.Fragment>child</React.Fragment>
                 </CodeBlockViewFrame>)).tree;
 
-        const iconBefore = tree.findByType('Ionicons') as any;
+        const iconBefore = tree.findByType('Icon') as any;
         expect(iconBefore.props.name).toBe('copy-outline');
 
         const pressable = tree.findByProps({ accessibilityLabel: 'common.copy' });
@@ -180,7 +180,7 @@ describe('CodeBlockViewFrame', () => {
         expect(setStringAsyncSpy).toHaveBeenCalledWith('hello');
         expect(alertSpy).toHaveBeenCalledTimes(0);
 
-        const iconAfter = tree.findByType('Ionicons') as any;
+        const iconAfter = tree.findByType('Icon') as any;
         expect(iconAfter.props.name).toBe('checkmark-outline');
     });
 

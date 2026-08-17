@@ -87,6 +87,12 @@ interface MultiTextInputProps {
     onFilesPasted?: (files: readonly File[]) => void;
     onFilesDropped?: (files: readonly File[]) => void;
     onFileDragActiveChange?: (active: boolean) => void;
+    accessibilityRole?: 'combobox';
+    accessibilityState?: Readonly<{ expanded?: boolean }>;
+    'aria-haspopup'?: 'listbox';
+    'aria-autocomplete'?: 'list';
+    'aria-controls'?: string;
+    'aria-activedescendant'?: string;
 }
 
 const DEFAULT_TEXT_STYLE: TextStyle = { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE };
@@ -639,6 +645,12 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         autoCapitalize: 'sentences',
         autoCorrect: 'on',
         autoComplete: 'off',
+        role: props.accessibilityRole,
+        'aria-expanded': props.accessibilityState?.expanded,
+        'aria-haspopup': props['aria-haspopup'],
+        'aria-autocomplete': props['aria-autocomplete'],
+        'aria-controls': props['aria-controls'],
+        'aria-activedescendant': props['aria-activedescendant'],
     } satisfies React.TextareaHTMLAttributes<HTMLTextAreaElement> & {
         ref: React.Ref<HTMLTextAreaElement>;
         'data-testid'?: string;

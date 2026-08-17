@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -19,6 +18,7 @@ import { MotionPreviewDevSection } from '@/components/dev/MotionPreviewDevSectio
 import { StoryDeckPreviewDevSection } from '@/components/dev/StoryDeckPreviewDevSection';
 import { WebHmrDevSettingsSection } from '@/components/dev/WebHmrDevSettingsSection';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export default function DevScreen() {
     const router = useRouter();
@@ -102,15 +102,15 @@ export default function DevScreen() {
     const SocketStatusIndicator = () => {
         switch (socketStatus.status) {
             case 'connected':
-                return <Ionicons name="checkmark-circle" size={22} color="#34C759" />;
+                return <Icon name="check-circle" size={20} color="#34C759" />;
             case 'connecting':
                 return <ActivitySpinner size="small" color={theme.colors.text.secondary} />;
             case 'error':
-                return <Ionicons name="close-circle" size={22} color="#FF3B30" />;
+                return <Icon name="x-circle" size={20} color="#FF3B30" />;
             case 'disconnected':
-                return <Ionicons name="close-circle" size={22} color="#FF9500" />;
+                return <Icon name="x-circle" size={20} color="#FF9500" />;
             default:
-                return <Ionicons name="help-circle" size={22} color="#8E8E93" />;
+                return <Icon name="question" size={20} color="#8E8E93" />;
         }
     };
 
@@ -165,7 +165,7 @@ export default function DevScreen() {
                 />
                 <Item
                     title="View Logs"
-                    icon={<Ionicons name="document-text-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="file-text" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/logs')}
                 />
             </ItemGroup>
@@ -175,103 +175,109 @@ export default function DevScreen() {
                 <Item
                     title="Device Info"
                     subtitle="Safe area insets and device parameters"
-                    icon={<Ionicons name="phone-portrait-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="device-mobile" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/device-info')}
                 />
                 <Item
                     title="List Components"
                     subtitle="Demo of Item, ItemGroup, and ItemList"
-                    icon={<Ionicons name="list-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="list" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/list-demo')}
                 />
                 <Item
                     title="Typography"
                     subtitle="All typography styles"
-                    icon={<Ionicons name="text-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="text-aa" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/typography')}
+                />
+                <Item
+                    title="Shared Presentation"
+                    subtitle="Graduated plugin-ui families through both adapters"
+                    icon={<Icon name="text-aa" size={29} color="#007AFF" />}
+                    onPress={() => router.push('/dev/plugin-ui')}
                 />
                 <Item
                     title="Colors"
                     subtitle="Color palette and themes"
-                    icon={<Ionicons name="color-palette-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="palette" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/colors')}
                 />
                 <Item
                     title="Message Demos"
                     subtitle="Various message types and components"
-                    icon={<Ionicons name="chatbubbles-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="chats-circle" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/messages-demo')}
                 />
                 <Item
                     title="Inverted List Test"
                     subtitle="Test inverted FlatList with keyboard"
-                    icon={<Ionicons name="swap-vertical-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="arrows-down-up" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/inverted-list')}
                 />
                 <Item
                     title="Tool Views"
                     subtitle="Tool call visualization components"
-                    icon={<Ionicons name="construct-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="wrench" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/tools2')}
                 />
                 <Item
                     title="Shimmer View"
                     subtitle="Shimmer loading effects with masks"
-                    icon={<Ionicons name="sparkles-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="sparkle" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/shimmer-demo')}
                 />
                 <Item
                     title="Multi Text Input"
                     subtitle="Auto-growing multiline text input"
-                    icon={<Ionicons name="create-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="pencil-simple" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/multi-text-input')}
                 />
                 <Item
                     title="Input Styles"
                     subtitle="10+ different input field style variants"
-                    icon={<Ionicons name="color-palette-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="palette" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/input-styles')}
                 />
                 <Item
                     title="Modal System"
                     subtitle="Alert, confirm, and custom modals"
-                    icon={<Ionicons name="albums-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="stack" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/modal-demo')}
                 />
                 <Item
                     title="Unit Tests"
                     subtitle="Run tests in the app environment"
-                    icon={<Ionicons name="flask-outline" size={28} color="#34C759" />}
+                    icon={<Icon name="flask" size={29} color="#34C759" />}
                     onPress={() => router.push('/dev/tests')}
                 />
                 <Item
                     title={t('devVoiceQa.menuTitle')}
                     subtitle={t('devVoiceQa.menuSubtitle')}
-                    icon={<Ionicons name="mic-outline" size={28} color="#AF52DE" />}
+                    icon={<Icon name="microphone" size={29} color="#AF52DE" />}
                     onPress={() => router.push('/dev/voice-qa')}
                 />
                 <Item
                     title="Voice Concepts"
                     subtitle="Design lab — five structurally different Voice directions, side by side"
-                    icon={<Ionicons name="color-wand-outline" size={28} color="#6D94FF" />}
+                    icon={<Icon name="magic-wand" size={29} color="#6D94FF" />}
                     onPress={() => router.push('/dev/voice-lab')}
                 />
                 <Item
                     title="Unistyles Demo"
                     subtitle="React Native Unistyles features and capabilities"
-                    icon={<Ionicons name="brush-outline" size={28} color="#FF6B6B" />}
+                    icon={<Icon name="paint-brush" size={29} color="#FF6B6B" />}
                     onPress={() => router.push('/dev/unistyles-demo')}
                 />
                 <Item
                     title="QR Code Test"
                     subtitle="Test QR code generation with different parameters"
-                    icon={<Ionicons name="qr-code-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="qr-code" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/qr-test')}
                 />
                 <Item
                     title="Todo Demo"
                     subtitle="Wunderlist-style todo list with inline editing and reordering"
-                    icon={<Ionicons name="checkbox-outline" size={28} color="#34C759" />}
+                    icon={<Icon name="check-square" size={29} color="#34C759" />}
                     onPress={() => router.push('/dev/todo-demo')}
                 />
             </ItemGroup>
@@ -285,14 +291,14 @@ export default function DevScreen() {
                 <Item
                     title="Claude OAuth Test"
                     subtitle="Test Claude authentication flow"
-                    icon={<Ionicons name="key-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="key" size={29} color="#007AFF" />}
                     onPress={() => router.push('/settings/connect/claude')}
                 />
                 <Item
                     title="Test Crash"
                     subtitle="Trigger a test crash"
                     destructive={true}
-                    icon={<Ionicons name="warning-outline" size={28} color="#FF3B30" />}
+                    icon={<Icon name="warning" size={29} color="#FF3B30" />}
                     onPress={async () => {
                         const confirmed = await Modal.confirm(
                             'Test Crash',
@@ -307,13 +313,13 @@ export default function DevScreen() {
                 <Item
                     title="Clear Cache"
                     subtitle="Remove all cached data"
-                    icon={<Ionicons name="trash-outline" size={28} color="#FF9500" />}
+                    icon={<Icon name="trash" size={29} color="#FF9500" />}
                     onPress={handleClearCache}
                 />
                 <Item
                     title="Reset Changelog"
                     subtitle="Show 'What's New' banner again"
-                    icon={<Ionicons name="sparkles-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="sparkle" size={29} color="#007AFF" />}
                     onPress={() => {
                         if (getLatestReleaseId()) {
                             setLastViewedReleaseId('');
@@ -325,7 +331,7 @@ export default function DevScreen() {
                     title="Reset App State"
                     subtitle="Clear all user data and preferences"
                     destructive={true}
-                    icon={<Ionicons name="refresh-outline" size={28} color="#FF3B30" />}
+                    icon={<Icon name="arrow-clockwise" size={29} color="#FF3B30" />}
                     onPress={async () => {
                         const confirmed = await Modal.confirm(
                             'Reset App',
@@ -344,13 +350,13 @@ export default function DevScreen() {
                 <Item
                     title="Purchases"
                     subtitle="View subscriptions and entitlements"
-                    icon={<Ionicons name="card-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="credit-card" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/purchases')}
                 />
                 <Item
                     title="Expo Constants"
                     subtitle="View expoConfig, manifests, and system constants"
-                    icon={<Ionicons name="information-circle-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="info" size={29} color="#007AFF" />}
                     onPress={() => router.push('/dev/expo-constants')}
                 />
             </ItemGroup>

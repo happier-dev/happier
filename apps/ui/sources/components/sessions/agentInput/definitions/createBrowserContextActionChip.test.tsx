@@ -102,27 +102,30 @@ async function loadModule() {
             onRemoveAttachment?: (attachmentId: string) => void;
             disabledReason?: string | null;
         }>) => {
-            key: string;
-            controlId?: string;
-            composerAttachmentBadge?: {
+            actionChip: {
+                key: string;
+                controlId?: string;
+                collapsedAction?: (ctx: Readonly<{
+                    tint: string;
+                    dismiss: () => void;
+                    blurInput: () => void;
+                }>) => ActionListItem | readonly ActionListItem[];
+                render: (ctx: Readonly<{
+                    chipStyle: (pressed: boolean) => unknown;
+                    showLabel: boolean;
+                    iconColor: string;
+                    textStyle: unknown;
+                    countTextStyle: unknown;
+                    popoverAnchorRef: React.RefObject<unknown>;
+                }>) => React.ReactElement<{ onPress?: () => void; disabled?: boolean }>;
+            };
+            attachmentRowItem?: {
                 key: string;
                 label: string;
                 testID?: string;
+                kind: 'badge';
                 onRemove?: () => void;
             };
-            collapsedAction?: (ctx: Readonly<{
-                tint: string;
-                dismiss: () => void;
-                blurInput: () => void;
-            }>) => ActionListItem | readonly ActionListItem[];
-            render: (ctx: Readonly<{
-                chipStyle: (pressed: boolean) => unknown;
-                showLabel: boolean;
-                iconColor: string;
-                textStyle: unknown;
-                countTextStyle: unknown;
-                popoverAnchorRef: React.RefObject<unknown>;
-            }>) => React.ReactElement<{ onPress?: () => void; disabled?: boolean }>;
         };
     }>;
 }
@@ -166,10 +169,11 @@ describe('createBrowserContextActionChip', () => {
         const { createBrowserContextActionChip } = await loadModule();
         const onAttachPageReference = vi.fn();
         const dismiss = vi.fn();
-        const chip = createBrowserContextActionChip({
+        const presentation = createBrowserContextActionChip({
             state: createBrowserContextState(),
             onAttachPageReference,
         });
+        const chip = presentation.actionChip;
 
         expect(chip.key).toBe('browser-context');
         expect(chip.controlId).toBe('shortcuts');
@@ -198,22 +202,25 @@ describe('createBrowserContextActionChip', () => {
         expect(onAttachPageReference).toHaveBeenCalledTimes(2);
     });
 
-    it('projects an attached page reference as a visible removable composer badge', async () => {
+    it('projects an attached page reference as an independently removable row item', async () => {
         const { createBrowserContextActionChip } = await loadModule();
         const onRemoveAttachment = vi.fn();
-        const chip = createBrowserContextActionChip({
+        const presentation = createBrowserContextActionChip({
             state: createAttachedState(),
             onAttachPageReference: vi.fn(),
             onRemoveAttachment,
         });
+        const chip = presentation.actionChip;
 
-        expect(chip.composerAttachmentBadge).toMatchObject({
+        expect('composerAttachmentBadge' in chip).toBe(false);
+        expect(presentation.attachmentRowItem).toMatchObject({
+            kind: 'badge',
             key: 'browser-context',
             label: 'browserContext.composer.attachedPage:Dashboard',
             testID: 'agent-input-browser-context-attachment-badge',
         });
 
-        chip.composerAttachmentBadge?.onRemove?.();
+        presentation.attachmentRowItem?.onRemove?.();
         expect(onRemoveAttachment).toHaveBeenCalledWith('attachment_1');
     });
 
@@ -223,22 +230,23 @@ describe('createBrowserContextActionChip', () => {
             viewId: 'view_1',
             navigationGeneration: 3,
         });
-        const chip = createBrowserContextActionChip({
+        const presentation = createBrowserContextActionChip({
             state: staleState,
             onAttachPageReference: vi.fn(),
         });
 
-        expect(chip.composerAttachmentBadge?.label).toBe('browserContext.composer.attachedPageStale:Dashboard');
+        expect(presentation.attachmentRowItem?.label).toBe('browserContext.composer.attachedPageStale:Dashboard');
     });
 
     it('keeps the action visible but disabled when browser context is policy unavailable', async () => {
         const { createBrowserContextActionChip } = await loadModule();
         const onAttachPageReference = vi.fn();
-        const chip = createBrowserContextActionChip({
+        const presentation = createBrowserContextActionChip({
             state: createBrowserContextState(),
             onAttachPageReference,
             disabledReason: 'policyDenied',
         });
+        const chip = presentation.actionChip;
 
         const collapsedAction = expectSingleAction(chip.collapsedAction?.({
             tint: '#000',

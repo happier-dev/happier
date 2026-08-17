@@ -34,7 +34,7 @@ export function UsageExportActions(props: UsageExportActionsProps): React.ReactE
             <UsageActionChip
                 testID="usage-export-copy-summary"
                 label={t('common.copyWithLabel', { label: t('usage.summary.title') })}
-                iconName="copy-outline"
+                iconName="copy"
                 accessory={<CopiedPill visible={copyFeedback.isCopied('summary')} testID="usage-export-copy-summary-feedback" />}
                 onPress={() => {
                     void (async () => {
@@ -50,7 +50,7 @@ export function UsageExportActions(props: UsageExportActionsProps): React.ReactE
             <UsageActionChip
                 testID="usage-export-json"
                 label={t('files.repositoryTree.actions.download')}
-                iconName="download-outline"
+                iconName="download"
                 onPress={() => {
                     void exportUsageAnalyticsJson(input);
                 }}
@@ -58,7 +58,7 @@ export function UsageExportActions(props: UsageExportActionsProps): React.ReactE
             <UsageActionChip
                 testID="usage-export-csv"
                 label={t('usage.exportCsv')}
-                iconName="grid-outline"
+                iconName="grid-four"
                 onPress={() => {
                     void exportUsagePivotCsv(input);
                 }}
@@ -66,7 +66,7 @@ export function UsageExportActions(props: UsageExportActionsProps): React.ReactE
             <UsageActionChip
                 testID="usage-export-share-summary"
                 label={t('common.share')}
-                iconName="share-outline"
+                iconName="share"
                 onPress={() => {
                     void shareUsageAnalyticsSummary(input);
                 }}

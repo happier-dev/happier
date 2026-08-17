@@ -19,6 +19,11 @@ const sessionStopWithServerScope = vi.fn(async () => ({ success: true as const }
 const updateArtifactWithHeader = vi.fn(async () => {});
 const sessionExecutionRunStart = vi.fn(async () => ({}));
 const reviewCommentExecute = vi.fn(async () => ({ items: [], cursor: null }));
+const executeAccountPluginDataEraseAction = vi.fn(async () => ({
+    status: 'completed' as const,
+    settings: { status: 'completed' as const, changed: true },
+    data: { status: 'completed' as const, changed: false },
+}));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStart,
@@ -68,14 +73,6 @@ vi.mock('@/voice/tools/actionImpl/openSession', () => ({
     openSessionForVoiceTool: vi.fn(),
 }));
 
-vi.mock('@/voice/tools/actionImpl/spawnSession', () => ({
-    spawnSessionForVoiceTool: vi.fn(),
-}));
-
-vi.mock('@/voice/tools/actionImpl/spawnSessionPicker', () => ({
-    spawnSessionWithPickerForVoiceTool: vi.fn(),
-}));
-
 vi.mock('@/voice/tools/actionImpl/sessionTargets', () => ({
     setPrimaryActionSessionId: vi.fn(),
     setTrackedSessionIds: vi.fn(),
@@ -91,6 +88,7 @@ vi.mock('@/voice/tools/actionImpl/sessionActivity', () => ({
 
 vi.mock('@/voice/tools/actionImpl/sessionRecentMessages', () => ({
     getSessionRecentMessagesForVoiceTool: vi.fn(async () => ({})),
+    getSessionTranscriptForVoiceTool: vi.fn(async () => ({})),
 }));
 
 vi.mock('@/voice/tools/actionImpl/pathsListRecent', () => ({
@@ -167,6 +165,10 @@ vi.mock('@/sync/domains/reviews/comments/api', () => ({
     createReviewCommentsHttpActionExecutor: vi.fn(() => reviewCommentExecute),
 }));
 
+vi.mock('@/sync/domains/plugins/settings/accountPluginDataEraseAction', () => ({
+    executeAccountPluginDataEraseAction,
+}));
+
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Object.freeze({}),
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Object.freeze({}),
@@ -220,6 +222,7 @@ describe('createDefaultActionExecutor approvals', () => {
         patchSessionMetadataWithRetry.mockClear();
         updateArtifactWithHeader.mockClear();
         reviewCommentExecute.mockClear();
+        executeAccountPluginDataEraseAction.mockClear();
     });
 
     it('routes durable review-comment actions through the shared HTTP action executor', async () => {
@@ -236,6 +239,37 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(reviewCommentExecute).toHaveBeenCalledWith(
             'reviews.comments.list',
             { projectId: 'project-1', states: ['open'], includeHistory: false, limit: 50 },
+        );
+    });
+
+    it('routes the host-present Account plugin erase action without forwarding generic retry identity metadata', async () => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const controller = new AbortController();
+
+        await expect(executor.execute(
+            'account.plugins.data.erase' as any,
+            { pluginId: 'example.orphaned-plugin' },
+            {
+                surface: 'ui',
+                actionCaller: { kind: 'host' },
+                actionRequestId: 'plugin-data-erase-operation-1',
+                signal: controller.signal,
+            },
+        )).resolves.toEqual({
+            ok: true,
+            result: {
+                status: 'completed',
+                settings: { status: 'completed', changed: true },
+                data: { status: 'completed', changed: false },
+            },
+        });
+
+        expect(executeAccountPluginDataEraseAction).toHaveBeenCalledExactlyOnceWith(
+            { pluginId: 'example.orphaned-plugin' },
+            {
+                signal: controller.signal,
+            },
         );
     });
 
@@ -265,6 +299,40 @@ describe('createDefaultActionExecutor approvals', () => {
             serverId: 'srv-main',
             method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
             payload: { id: 'req-1', approved: false },
+        });
+    });
+
+    it('routes owner remote grant management through the canonical session Action transport', async () => {
+        const sessionRpcWithServerScope = await getSessionRpcWithServerScopeMock();
+        sessionRpcWithServerScope.mockReset();
+        sessionRpcWithServerScope.mockResolvedValueOnce({
+            grants: [],
+            nextCursor: null,
+        });
+
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor({
+            resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'srv-main' : null,
+        });
+
+        const res = await executor.execute(
+            'session.permission.remote.grants.list' as any,
+            { sessionId: 's1' },
+            { surface: 'ui' },
+        );
+
+        expect(res).toEqual({
+            ok: true,
+            result: {
+                grants: [],
+                nextCursor: null,
+            },
+        });
+        expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
+            sessionId: 's1',
+            serverId: 'srv-main',
+            method: 'session.permission.remote.grants.list',
+            payload: { sessionId: 's1', limit: 50 },
         });
     });
 
@@ -332,6 +400,7 @@ describe('createDefaultActionExecutor approvals', () => {
             sessionId: 's1',
             message: 'Hello from action',
             serverId: 'srv-main',
+            requestedAction: { v: 1, kind: 'steer_if_active' },
         });
     });
 

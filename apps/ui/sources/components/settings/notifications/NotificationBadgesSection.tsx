@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -8,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type NotificationBadgesSectionProps = Readonly<{
     localSettings: LocalSettings;
@@ -43,7 +43,7 @@ export function NotificationBadgesSection({
                 testID="settings-notifications-badges-enabled"
                 title={t('settingsNotifications.badges.enabledTitle')}
                 subtitle={t('settingsNotifications.badges.enabledSubtitle')}
-                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="stack" size={29} color={theme.colors.accent.blue} />}
                 rightElement={(
                     <Switch
                         value={!disabled}
@@ -55,7 +55,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.unreadTitle')}
                 subtitle={t('settingsNotifications.badges.unreadSubtitle')}
-                icon={<Ionicons name="mail-unread-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="envelope-simple-open" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeUnread !== false}
@@ -68,7 +68,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.permissionRequestsTitle')}
                 subtitle={t('settingsNotifications.badges.permissionRequestsSubtitle')}
-                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="hand" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includePendingPermissionRequests !== false}
@@ -81,7 +81,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.userActionsTitle')}
                 subtitle={t('settingsNotifications.badges.userActionsSubtitle')}
-                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="chat-dots" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includePendingUserActionRequests !== false}
@@ -94,7 +94,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.queuedTitle')}
                 subtitle={t('settingsNotifications.badges.queuedSubtitle')}
-                icon={<Ionicons name="hourglass-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="hourglass" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeQueuedUserInput !== false}
@@ -107,7 +107,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.friendRequestsTitle')}
                 subtitle={t('settingsNotifications.badges.friendRequestsSubtitle')}
-                icon={<Ionicons name="people-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="users" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeFriendRequestsInboxCount !== false}
@@ -120,7 +120,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.desktopDotTitle')}
                 subtitle={t('settingsNotifications.badges.desktopDotSubtitle')}
-                icon={<Ionicons name="ellipse-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="circle" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeDesktopNonNumericDot !== false}

@@ -100,9 +100,9 @@ vi.mock('@/voice/settings/panels/realtime/VoiceGlobalConnectedServicesBindingFie
 
 beforeEach(() => {
   routeState.voice = voiceSettingsParse({
-    providerId: 'realtime_codex',
+    providerId: 'happier.agent.codex/realtime-codex',
     providers: {
-      realtime_codex: {
+      'happier.agent.codex/realtime-codex': {
         schemaVersion: 2,
         config: { globalConnectedServices: null },
       },
@@ -117,7 +117,7 @@ afterEach(() => {
 
 describe('VoiceSettingsScreen Codex settings composition', () => {
   it('renders the public Codex settings once without an empty legacy bundled group', async () => {
-    const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
+    const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
     const screen = await renderSettingsView(<VoiceSettingsScreen />);
 
     const accountFields = screen.tree.findAllByType(
@@ -132,6 +132,8 @@ describe('VoiceSettingsScreen Codex settings composition', () => {
       },
       serviceIds: ['openai-codex'],
     });
-    expect(screen.tree.findAllByType('ItemGroup' as never)).toHaveLength(3);
+    // Mode, readiness, declarative Codex account settings, and language. The
+    // public account field appears once; no empty legacy bundled group is added.
+    expect(screen.tree.findAllByType('ItemGroup' as never)).toHaveLength(4);
   });
 });

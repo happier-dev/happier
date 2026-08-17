@@ -1,6 +1,8 @@
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import {
+    DESKTOP_SIDEBAR_CHROME_ACTION_CONTROL_SIZE_PX,
     DESKTOP_SIDEBAR_CHROME_BRAND_LOGO_SIZE_PX,
     DESKTOP_SIDEBAR_CHROME_BRAND_ROW_MIN_HEIGHT_PX,
     DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
@@ -9,7 +11,6 @@ import {
     DESKTOP_SIDEBAR_CHROME_TOP_ICON_GAP_PX,
     DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX,
     DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_DISABLED_OPACITY,
-    DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX,
     DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_OPACITY,
     DESKTOP_SIDEBAR_CHROME_TOP_NOTIFICATION_DOT_RIGHT_PX,
     DESKTOP_SIDEBAR_CHROME_TOP_NOTIFICATION_DOT_SIZE_PX,
@@ -78,7 +79,7 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         gap: DESKTOP_SIDEBAR_CHROME_CONTROL_GAP_PX,
     },
     brandButton: {
-        width: 32,
+        width: DESKTOP_SIDEBAR_CHROME_ACTION_CONTROL_SIZE_PX,
         minHeight: DESKTOP_SIDEBAR_CHROME_BRAND_ROW_MIN_HEIGHT_PX,
         alignItems: 'center',
         justifyContent: 'center',
@@ -162,17 +163,15 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         flexDirection: 'row',
         gap: 4,
+        // Optical inset, not a stray negative margin: the last control is a centred box, so its ink
+        // stops half the box/glyph difference short of the header's padding line. Pull the cluster
+        // out by exactly that much so the trailing glyph sits flush with the right margin.
+        marginRight: -(DESKTOP_SIDEBAR_CHROME_ACTION_CONTROL_SIZE_PX - ICON_SIZE.md) / 2,
     },
     iconButton: {
-        width: 32,
-        height: 32,
+        width: DESKTOP_SIDEBAR_CHROME_ACTION_CONTROL_SIZE_PX,
+        height: DESKTOP_SIDEBAR_CHROME_ACTION_CONTROL_SIZE_PX,
         alignItems: 'center',
-        justifyContent: 'center',
-    },
-    trailingIconButton: {
-        width: 24,
-        height: 32,
-        alignItems: 'flex-end',
         justifyContent: 'center',
     },
     topIconButton: {
@@ -192,15 +191,14 @@ export const desktopSidebarChromeStyles = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         opacity: DESKTOP_SIDEBAR_CHROME_TOP_SETTINGS_ICON_OPACITY,
     },
-    leftSidebarCollapseIcon: {
-        transform: [{ translateY: 1 }, { scaleX: -1 }],
-    },
     notificationButton: {
         position: 'relative',
     },
     topNotificationButton: {
-        width: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX,
-        height: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_GLYPH_SIZE_PX,
+        // The BUTTON box, not the glyph: sizing a container off the glyph constant clipped the icon
+        // the moment the glyph grew.
+        width: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX,
+        height: DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX,
         alignItems: 'center',
         justifyContent: 'center',
         position: 'relative',

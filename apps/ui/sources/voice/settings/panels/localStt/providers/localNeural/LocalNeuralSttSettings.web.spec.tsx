@@ -26,8 +26,6 @@ describe('LocalNeuralSttSettings (web)', () => {
             <LocalNeuralSttSettings
                 cfg={{
                     provider: 'local_neural',
-                    openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'whisper-1' },
-                    providers: {},
                     localNeural: {
                         assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
                         language: 'en',
@@ -54,8 +52,6 @@ describe('LocalNeuralSttSettings (web)', () => {
             <LocalNeuralSttSettings
                 cfg={{
                     provider: 'local_neural',
-                    openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'whisper-1' },
-                    providers: {},
                     localNeural: {
                         assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
                         language: 'en',

@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/agents';
 
 import {
+    SessionOptionOverrideRuleSchema,
     parseSessionConfigOptionsState,
     parseSessionConfigOptionOverridesState,
     parseSessionModelsState,
@@ -52,6 +53,17 @@ export type SessionConfigOptionSelectGroup = Readonly<{
     options: readonly SessionConfigOptionSelectOption[];
 }>;
 
+/**
+ * Producer-declared rule carried on a boolean option: while that option is effectively on,
+ * `optionIds` are not user-controllable and — when `forcedValue` is present — the agent
+ * actually runs them at that value. The agent owns this fact (Claude's `ultracode` runs
+ * `reasoning_effort` at `xhigh`); the UI only renders it.
+ */
+export type SessionConfigOptionOverrideRule = Readonly<{
+    optionIds: readonly string[];
+    forcedValue?: SessionConfigOptionValueId;
+}>;
+
 export type SessionConfigOption = Readonly<{
     id: string;
     name: string;
@@ -60,43 +72,83 @@ export type SessionConfigOption = Readonly<{
     currentValue: SessionConfigOptionValueId;
     options?: readonly SessionConfigOptionSelectOption[];
     groups?: readonly SessionConfigOptionSelectGroup[];
+    overridesWhenOn?: SessionConfigOptionOverrideRule;
 }>;
 
 export type SessionConfigOptionControl = Readonly<{
     option: SessionConfigOption;
     requestedValue?: SessionConfigOptionValueId;
+    /** The user's stored intent. Never coerced by an override — it is what resumes when the override lifts. */
     effectiveValue: SessionConfigOptionValueId;
     isPending: boolean;
     /** Set when another effectively-on boolean option overrides this one (e.g. ultracode). */
     disabled?: boolean;
     disabledByOptionName?: string;
+    /**
+     * The value the agent is ACTUALLY running while `disabled` — a separate display channel so
+     * the control can show the truth without overwriting `effectiveValue`. Only set when the
+     * forced value is one of this option's own choices; otherwise the control dims with nothing
+     * highlighted rather than pointing at a segment that does not exist.
+     */
+    overriddenEffectiveValue?: SessionConfigOptionValueId;
 }>;
 
-// Generic overriding-boolean rule: while the keyed boolean option is effectively ON, the
-// listed target option ids are rendered disabled ("Overridden by …"). Ultracode overrides
-// the Thinking effort level while enabled.
-const OVERRIDING_BOOLEAN_OPTION_TARGETS: Readonly<Record<string, readonly string[]>> = {
-    ultracode: ['reasoning_effort', 'effort'],
-};
+/**
+ * The single validator for an override rule anywhere in the UI.
+ *
+ * The metadata path already parses the rule through `SessionOptionOverrideRuleSchema`, but the
+ * free-form paths — `normalizeAcpConfigOptionsArray` and the provider control builder — have no
+ * other validator, so a hand-rolled restatement of the contract here meant the same rule could be
+ * accepted on one path and rejected on the other. Delegating keeps the UI from ever holding a rule
+ * the strict owner-metadata envelope would refuse to persist.
+ */
+function normalizeOverrideRule(raw: unknown): SessionConfigOptionOverrideRule | undefined {
+    const parsed = SessionOptionOverrideRuleSchema.safeParse(raw);
+    return parsed.success ? parsed.data : undefined;
+}
 
+function resolveOptionChoices(option: SessionConfigOption): readonly SessionConfigOptionSelectOption[] {
+    return option.options ?? option.groups?.flatMap((group) => group.options) ?? [];
+}
+
+/**
+ * While an overriding boolean option is effectively on, its declared targets become
+ * non-interactive and — when the producer declared a forced value — advertise the value the
+ * agent is really running. Keyed by a `Map` because option ids are agent-supplied: a plain
+ * object literal would resolve `toString`/`constructor` off `Object.prototype` and disable
+ * (or crash on) an option that declared no rule at all.
+ */
 function applyOverridingBooleanOptionDimming(
     controls: SessionConfigOptionControl[],
 ): SessionConfigOptionControl[] {
-    const overriddenBy = new Map<string, string>();
+    const overriddenBy = new Map<string, Readonly<{
+        name: string;
+        forcedValue?: SessionConfigOptionValueId;
+    }>>();
     for (const control of controls) {
-        const targets = OVERRIDING_BOOLEAN_OPTION_TARGETS[control.option.id];
-        if (!targets || !isBooleanConfigOptionType(control.option.type)) continue;
+        const rule = control.option.overridesWhenOn;
+        if (!rule || !isBooleanConfigOptionType(control.option.type)) continue;
         if (!resolveBooleanConfigOptionValue(control.option, control.effectiveValue)) continue;
-        for (const target of targets) {
-            overriddenBy.set(target, control.option.name);
+        for (const target of rule.optionIds) {
+            overriddenBy.set(target, {
+                name: control.option.name,
+                ...(rule.forcedValue ? { forcedValue: rule.forcedValue } : {}),
+            });
         }
     }
     if (overriddenBy.size === 0) return controls;
     return controls.map((control) => {
-        const byName = overriddenBy.get(control.option.id);
-        return byName
-            ? { ...control, disabled: true, disabledByOptionName: byName }
-            : control;
+        const applied = overriddenBy.get(control.option.id);
+        if (!applied) return control;
+        const forcedValue = applied.forcedValue;
+        const forcedIsRenderable = forcedValue !== undefined
+            && resolveOptionChoices(control.option).some((choice) => choice.value === forcedValue);
+        return {
+            ...control,
+            disabled: true,
+            disabledByOptionName: applied.name,
+            ...(forcedIsRenderable ? { overriddenEffectiveValue: forcedValue } : {}),
+        };
     });
 }
 
@@ -171,6 +223,7 @@ export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOptio
             : undefined;
 
         const description = typeof rec.description === 'string' ? rec.description.trim() : '';
+        const overridesWhenOn = normalizeOverrideRule(rec.overridesWhenOn);
         parsed.push({
             id,
             name,
@@ -179,6 +232,7 @@ export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOptio
             ...(description ? { description } : {}),
             ...(options && options.length > 0 ? { options } : {}),
             ...(groups && groups.length > 0 ? { groups } : {}),
+            ...(overridesWhenOn ? { overridesWhenOn } : {}),
         } satisfies SessionConfigOption);
     }
 
@@ -222,30 +276,39 @@ export function resolveBooleanConfigOptionNextValue(option: SessionConfigOption,
     return enabled ? onValue : offValue;
 }
 
-function buildSessionConfigOptionControls(params: Readonly<{
-    agentId: string;
-    stateAgentId: string | null;
-    configOptions: ReadonlyArray<{
-        id: string;
+/**
+ * Un-normalized input accepted by the control builder: a `SessionConfigOption` already
+ * satisfies it, and so does a freshly schema-parsed published shape whose values are still
+ * `string | number | boolean | null`. The builder is the single normalizer for both.
+ */
+export type SessionConfigOptionInput = Readonly<{
+    id: string;
+    name: string;
+    description?: string;
+    type: string;
+    currentValue: unknown;
+    options?: ReadonlyArray<{
+        value: unknown;
         name: string;
         description?: string;
-        type: string;
-        currentValue: unknown;
-        options?: ReadonlyArray<{
+    }>;
+    groups?: ReadonlyArray<{
+        id: string;
+        name: string;
+        options: ReadonlyArray<{
             value: unknown;
             name: string;
             description?: string;
         }>;
-        groups?: ReadonlyArray<{
-            id: string;
-            name: string;
-            options: ReadonlyArray<{
-                value: unknown;
-                name: string;
-                description?: string;
-            }>;
-        }>;
     }>;
+    /** Producer-declared; normalized here so a zod-parsed shape and a typed one both work. */
+    overridesWhenOn?: unknown;
+}>;
+
+function buildSessionConfigOptionControls(params: Readonly<{
+    agentId: string;
+    stateAgentId: string | null;
+    configOptions: ReadonlyArray<SessionConfigOptionInput>;
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
     hideModeOption: boolean;
     hideModelOption: boolean;
@@ -310,6 +373,7 @@ function buildSessionConfigOptionControls(params: Readonly<{
         if (hasDuplicateConfigOptionValues(choices)) continue;
 
         const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+        const overridesWhenOn = normalizeOverrideRule(entry.overridesWhenOn);
         const option: SessionConfigOption = {
             id,
             name,
@@ -318,6 +382,7 @@ function buildSessionConfigOptionControls(params: Readonly<{
             ...(description ? { description } : {}),
             ...(options.length > 0 ? { options } : {}),
             ...(groups.length > 0 ? { groups } : {}),
+            ...(overridesWhenOn ? { overridesWhenOn } : {}),
         };
 
         const requestedValue = resolveRequestedValue(option, params.overrides?.[id]?.value);
@@ -333,6 +398,33 @@ function buildSessionConfigOptionControls(params: Readonly<{
     }
 
     return controls.length > 0 ? applyOverridingBooleanOptionDimming(controls) : null;
+}
+
+/**
+ * Sole reader of a session's published config-option override state.
+ *
+ * Both the agent-wide config-option controls and the model-scoped controls rendered in-session
+ * (Thinking / Ultracode) resolve their effective value from this one map — a second reader would
+ * let the same session disagree with itself about whether an option is on.
+ */
+export function resolveSessionConfigOptionOverridesFromMetadata(params: Readonly<{
+    metadata: Metadata | null | undefined;
+    configOptions: ReadonlyArray<Readonly<{ id?: unknown }>> | null | undefined;
+}>): Record<string, Readonly<{ value: unknown }>> {
+    const metadataRecord = (params.metadata as any) ?? {};
+    const parsedOverrides = parseSessionConfigOptionOverridesState(
+        readMetadataAliasValue(metadataRecord, SESSION_CONFIG_OPTION_OVERRIDES_KEY, LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY),
+    );
+    const overrides: Record<string, Readonly<{ value: unknown }>> = { ...(parsedOverrides?.overrides ?? {}) };
+    for (const option of params.configOptions ?? []) {
+        const optionId = typeof option.id === 'string' && option.id.trim().length > 0 ? option.id : '';
+        if (!optionId) continue;
+        const intent = readAcpConfigOptionIntentFromMetadata(metadataRecord, optionId);
+        if (intent) {
+            overrides[optionId] = { value: intent.value };
+        }
+    }
+    return overrides;
 }
 
 export function computeSessionConfigOptionControls(params: {
@@ -357,19 +449,10 @@ export function computeSessionConfigOptionControls(params: {
     const hasDedicatedModelControl =
         sessionModels?.agentId === params.agentId && sessionModels.availableModels.length > 0;
 
-    const metadataRecord = (params.metadata as any) ?? {};
-    const parsedOverrides = parseSessionConfigOptionOverridesState(
-        readMetadataAliasValue(metadataRecord, SESSION_CONFIG_OPTION_OVERRIDES_KEY, LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY),
-    );
-    const overrides: Record<string, Readonly<{ value: unknown }>> = { ...(parsedOverrides?.overrides ?? {}) };
-    for (const option of state.configOptions) {
-        const optionId = typeof option.id === 'string' && option.id.trim().length > 0 ? option.id : '';
-        if (!optionId) continue;
-        const intent = readAcpConfigOptionIntentFromMetadata(metadataRecord, optionId);
-        if (intent) {
-            overrides[optionId] = { value: intent.value };
-        }
-    }
+    const overrides = resolveSessionConfigOptionOverridesFromMetadata({
+        metadata: params.metadata,
+        configOptions: state.configOptions,
+    });
     return buildSessionConfigOptionControls({
         agentId: params.agentId,
         stateAgentId: state.agentId,
@@ -382,7 +465,7 @@ export function computeSessionConfigOptionControls(params: {
 
 export function computeSessionConfigOptionControlsForProvider(params: Readonly<{
     providerId: string;
-    configOptions: ReadonlyArray<SessionConfigOption> | null | undefined;
+    configOptions: ReadonlyArray<SessionConfigOptionInput> | null | undefined;
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
     hideModeOption?: boolean;
     hideModelOption?: boolean;
@@ -400,7 +483,7 @@ export function computeSessionConfigOptionControlsForProvider(params: Readonly<{
 
 export function computeSessionConfigOptionControlsFromOverride(params: Readonly<{
     agentId: AgentId;
-    configOptions: ReadonlyArray<SessionConfigOption> | null | undefined;
+    configOptions: ReadonlyArray<SessionConfigOptionInput> | null | undefined;
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
 }>): SessionConfigOptionControl[] | null {
     return computeSessionConfigOptionControlsForProvider({

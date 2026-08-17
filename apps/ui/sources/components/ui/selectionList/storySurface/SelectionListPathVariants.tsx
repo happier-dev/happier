@@ -8,9 +8,9 @@
  */
 
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
 import { DrillDownChevron } from '../accessories/DrillDownChevron';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     FAVORITES_OPTIONS,
     RECENT_OPTIONS,
@@ -32,7 +32,7 @@ function buildPathRootStep(args: Readonly<{
             id: 'in-folder:Documents',
             label: 'Documents',
             subtitle: '~/Documents',
-            icon: <Ionicons name="folder-outline" size={16} />,
+            icon: <Icon name="folder" size={16} />,
             autocompleteValue: '~/Documents/',
             rightAccessory: (
                 <DrillDownChevron
@@ -46,7 +46,7 @@ function buildPathRootStep(args: Readonly<{
             id: 'in-folder:Downloads',
             label: 'Downloads',
             subtitle: '~/Downloads',
-            icon: <Ionicons name="folder-outline" size={16} />,
+            icon: <Icon name="folder" size={16} />,
             autocompleteValue: '~/Downloads/',
             rightAccessory: (
                 <DrillDownChevron
@@ -60,7 +60,7 @@ function buildPathRootStep(args: Readonly<{
             id: 'in-folder:Development',
             label: 'Development',
             subtitle: '~/Development',
-            icon: <Ionicons name="folder-outline" size={16} />,
+            icon: <Icon name="folder" size={16} />,
             autocompleteValue: '~/Development/',
             rightAccessory: (
                 <DrillDownChevron
@@ -130,7 +130,7 @@ function PathRealCompositionHost(props: Readonly<{
             {...makeVariantProps(rootStep, props.testID)}
             inputMode="value"
             inputBehavior={makeStoryPathInputBehavior()}
-            inputPrefix={<Ionicons name="folder-outline" size={16} />}
+            inputPrefix={<Icon name="folder" size={16} />}
             inputValue={inputValue}
             onChangeInputValue={setInputValue}
         />

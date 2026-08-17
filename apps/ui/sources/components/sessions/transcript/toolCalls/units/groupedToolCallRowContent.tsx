@@ -10,8 +10,6 @@ import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow'
 import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
 import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
-import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
-import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import type {
     TranscriptForkCommon,
     TranscriptMessageDisplayCommon,
@@ -19,49 +17,10 @@ import type {
     TranscriptToolRouteCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
 
-export type GroupedToolCallChromeMode = 'activity_feed' | 'cards';
-
-export function shouldRenderGroupedToolCallWithMessageView(
-    message: ToolCallMessage,
-    chromeMode: GroupedToolCallChromeMode,
-    groupExpanded: boolean,
-): boolean {
-    if (chromeMode === 'cards') {
-        return true;
-    }
-    const hasStructuredMeta = Boolean(message.meta?.happier);
-    if (hasStructuredMeta) return true;
-
-    // Avoid switching the renderer for subagent tool calls based on streaming children.
-    // Otherwise the row remounts (ToolTimelineRow → MessageView) and the user's expanded/collapsed state resets.
-    if (isSubAgentTranscriptToolName(message.tool?.name ?? '')) {
-        return groupExpanded;
-    }
-
-    return false;
-}
-
-export function resolveGroupedPreviewSidechainIds(params: Readonly<{
-    chromeMode: GroupedToolCallChromeMode;
-    previewMessages: readonly ToolCallMessage[];
-}>): readonly string[] {
-    if (params.chromeMode !== 'activity_feed') {
-        return [];
-    }
-
-    const sidechainIds = new Set<string>();
-    for (const message of params.previewMessages) {
-        const toolName = typeof message.tool?.name === 'string' ? message.tool.name : '';
-        if (!isSubAgentTranscriptToolName(toolName)) continue;
-        const sidechainId = resolveToolTranscriptSidechainId({
-            tool: message.tool,
-            normalizedToolName: toolName,
-        });
-        if (!sidechainId) continue;
-        sidechainIds.add(sidechainId);
-    }
-    return [...sidechainIds];
-}
+import {
+    type GroupedToolCallChromeMode,
+    shouldRenderGroupedToolCallWithMessageView,
+} from './groupedToolCallRowRenderDecision';
 
 export function renderGroupedToolCallRowContent(params: Readonly<{
     message: ToolCallMessage;

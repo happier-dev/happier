@@ -81,7 +81,7 @@ const baseInstallerProps = {
     groupTitle: 'Dependencies',
     depId: CODEX_ACP_DEP_ID,
     depTitle: 'Codex ACP',
-    depIconName: 'construct-outline',
+    depIconName: 'wrench',
     depStatus: null,
     capabilitiesStatus: 'loaded',
     installLabels,

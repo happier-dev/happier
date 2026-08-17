@@ -266,12 +266,10 @@ export async function loadPluginReactNativeDevServerModule(params: Readonly<{
         }
         return devServerError(loaded.code, loaded.diagnostics);
     }
-    const acknowledgeHostRuntime = loaded.exported.acknowledgeHostRuntime;
     return Object.freeze({
         ok: true,
         module: Object.freeze({
             renderSurface: loaded.exported as PluginReactNativeSurfaceModule['renderSurface'],
-            ...(acknowledgeHostRuntime ? { acknowledgeHostRuntime } : {}),
         }),
     });
 }

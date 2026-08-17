@@ -10,6 +10,10 @@ import { makeSettings } from './registryUiBehavior.testHelpers';
 import { createAgentUiBehaviorFromDescriptor } from './agentUiBehaviorDescriptors';
 import { BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS } from './generatedBundledPluginEntries.uiBehaviorOverrides';
 
+function readObjectField(value: unknown, key: string): unknown {
+    return value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;
+}
+
 describe('createAgentUiBehaviorFromDescriptor', () => {
     it('materializes declarative context-window behavior without a provider adapter branch', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
@@ -108,6 +112,9 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                         runtimeDescriptorFromCandidate: {
                             providerId: 'codex',
                             legacyModeOutputKey: 'codexBackendMode',
+                            backendMode: {
+                                values: ['acp', 'appServer'],
+                            },
                         },
                     },
                 },
@@ -121,6 +128,22 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 },
             },
         });
+        const externalSessions = readObjectField(generated, 'externalSessions');
+        const browse = readObjectField(externalSessions, 'browse');
+        const linkEnsureRequestExtras = readObjectField(browse, 'linkEnsureRequestExtras');
+        const runtimeDescriptorFromCandidate = readObjectField(linkEnsureRequestExtras, 'runtimeDescriptorFromCandidate');
+        const backendMode = readObjectField(runtimeDescriptorFromCandidate, 'backendMode');
+        const workState = readObjectField(generated, 'workState');
+        const editableGoals = readObjectField(workState, 'editableGoals');
+        const payload = readObjectField(generated, 'payload');
+        const sessionExtras = readObjectField(payload, 'sessionExtras');
+        expect(runtimeDescriptorFromCandidate).not.toHaveProperty('providerSessionIdPaths');
+        expect(backendMode).not.toHaveProperty('candidatePaths');
+        expect(editableGoals).not.toHaveProperty('modeCandidates');
+        expect(sessionExtras).not.toHaveProperty('settingsCandidates');
+        expect(sessionExtras).not.toHaveProperty('metadataCandidates');
+        expect(JSON.stringify(generated)).not.toContain('agentRuntimeDescriptorV1');
+        expect(JSON.stringify(generated)).not.toContain('providerExtra');
 
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated);
 
@@ -532,7 +555,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(generated).toMatchObject({
             mcpServers: { supportsDetectedConfigScan: true },
             externalSessions: {
-                supportsBackgroundFollow: true,
+                supportsBackgroundFollow: false,
                 browse: {
                     order: 25,
                     sourceOptions: [
@@ -557,7 +580,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
 
         expect(diagnostics).toEqual([]);
         expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
-        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(true);
+        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(false);
         expect(behavior.externalSessions?.browse?.order).toBe(25);
         expect(behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'ohMyPi',
@@ -725,7 +748,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                         slot: 'sessionSubagents.teammateDetailsTab',
                         componentId: 'firstParty.claude.teammateDetailsTab',
                         resourceKind: 'claudeSubagentLauncher',
-                        iconName: 'people',
+                        iconName: 'users',
                         tab: {
                             keyPrefix: 'claude-subagent-launcher',
                             titleKey: 'session.subagents.panel.launchTeammateAction',
@@ -762,7 +785,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         })).toBeTruthy();
         expect(behavior.sessionSubagents?.getDetailsTabIconName?.({
             tab: iconTab,
-        })).toBe('people');
+        })).toBe('users');
     });
 
     it('fails closed for unsupported descriptor kinds and payload adapter ids', () => {
@@ -849,7 +872,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             guidance: { includeInSessionGettingStartedCliExamples: true },
             mcpServers: { supportsDetectedConfigScan: true },
             externalSessions: {
-                supportsBackgroundFollow: false,
+                supportsBackgroundFollow: true,
                 browse: {
                     order: 30,
                     sourceOptions: [
@@ -894,7 +917,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                         runtimeDescriptorExplicitField: 'serverBaseUrlExplicit',
                         allowedProtocols: ['http:', 'https:'],
                         rejectCredentials: true,
-                        httpLoopbackOnly: true,
                         originOnly: true,
                     },
                 },
@@ -921,7 +943,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(generated.behavior.payload?.buildSpawnEnvironmentVariables).toBeTypeOf('function');
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
         expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
-        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(false);
+        expect(behavior.externalSessions?.supportsBackgroundFollow).toBe(true);
         expect(behavior.externalSessions?.browse?.order).toBe(30);
         const sourceOptions = behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'opencode' as any,
@@ -1029,6 +1051,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(diagnostics).toEqual([]);
         expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
             agentId: 'claude',
+            agentTargetKey: 'backend:claude',
             session: {
                 metadata: {
                     flavor: 'claude',
@@ -1055,17 +1078,61 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 },
             } as any,
             metaOverrides: {},
+            currentRunnerProcessIdentity: null,
         })).toBe('provider_config_change_refused');
         expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
             agentId: 'claude',
+            agentTargetKey: 'backend:claude',
             session: {
                 metadata: { flavor: 'claude' },
             } as any,
             metaOverrides: { reasoningEffort: 'high' },
+            currentRunnerProcessIdentity: null,
         })).toBe('provider_config_change_refused');
         expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
             agentId: 'claude',
+            agentTargetKey: 'backend:claude',
             session: {
+                active: true,
+                modelMode: 'opus',
+                modelModeUpdatedAt: 30,
+                metadata: {
+                    flavor: 'claude',
+                    sessionModelsV1: {
+                        v: 1,
+                        agentId: 'claude',
+                        updatedAt: 10,
+                        currentModelId: 'sonnet',
+                        activeSelectionV1: {
+                            v: 1,
+                            selection: {
+                                agentTargetKey: 'backend:claude',
+                                providerConnectionId: null,
+                                modelId: 'sonnet',
+                            },
+                            source: 'runtime_readback',
+                            runner: {
+                                pid: 123,
+                                processStartTimeMs: 1_000,
+                            },
+                        },
+                        availableModels: [
+                            { id: 'sonnet', name: 'Sonnet' },
+                        ],
+                    },
+                },
+            } as any,
+            metaOverrides: {},
+            currentRunnerProcessIdentity: {
+                pid: 123,
+                processStartTimeMs: 1_000,
+            },
+        })).toBe('provider_config_change_refused');
+        expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
+            agentId: 'claude',
+            agentTargetKey: 'backend:claude',
+            session: {
+                active: true,
                 modelMode: 'opus',
                 modelModeUpdatedAt: 30,
                 metadata: {
@@ -1080,6 +1147,35 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 },
             } as any,
             metaOverrides: {},
+            currentRunnerProcessIdentity: null,
+        })).toBeNull();
+        expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
+            agentId: 'claude',
+            agentTargetKey: 'backend:claude',
+            session: {
+                active: true,
+                metadata: {
+                    flavor: 'claude',
+                    modelSelectionIntentV1: {
+                        v: 1,
+                        updatedAt: 20,
+                        selection: {
+                            agentTargetKey: 'backend:claude',
+                            providerConnectionId: null,
+                            modelId: 'opus',
+                        },
+                    },
+                    sessionModelsV1: {
+                        v: 1,
+                        agentId: 'claude',
+                        updatedAt: 10,
+                        currentModelId: 'sonnet',
+                        availableModels: [],
+                    },
+                },
+            } as any,
+            metaOverrides: {},
+            currentRunnerProcessIdentity: null,
         })).toBe('provider_config_change_refused');
         const sharedPrivateLookalike = {
             flavor: 'claude',
@@ -1101,16 +1197,20 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         };
         expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
             agentId: 'claude',
+            agentTargetKey: 'backend:claude',
             session: layoutV1Session as any,
             metaOverrides: {},
+            currentRunnerProcessIdentity: null,
         })).toBeNull();
         expect(behavior.sessionComposer?.classifyNonSteerablePayload?.({
             agentId: 'claude',
+            agentTargetKey: 'backend:claude',
             session: {
                 ...layoutV1Session,
                 ownerMetadataView: sharedPrivateLookalike,
             } as any,
             metaOverrides: {},
+            currentRunnerProcessIdentity: null,
         })).toBe('provider_config_change_refused');
     });
 });

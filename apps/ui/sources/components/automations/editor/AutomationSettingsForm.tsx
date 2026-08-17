@@ -1,6 +1,5 @@
 import React from 'react';
 import { Platform, type ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -14,6 +13,7 @@ import { usePopoverBoundaryRef } from '@/components/ui/popover';
 import { TextInput } from '@/components/ui/text/Text';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type AutomationSettingsValue = NewSessionAutomationDraft;
 
@@ -76,18 +76,18 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
             id: 'interval',
             title: t('automations.form.schedule.intervalTitle'),
             subtitle: t('automations.form.schedule.intervalSubtitle'),
-            icon: <Ionicons name="repeat-outline" size={18} color={theme.colors.text.secondary} />,
+            icon: <Icon name="repeat" size={16} color={theme.colors.text.secondary} />,
         },
         {
             id: 'cron',
             title: t('automations.form.schedule.cronTitle'),
             subtitle: t('automations.form.schedule.cronSubtitle'),
-            icon: <Ionicons name="calendar-outline" size={18} color={theme.colors.text.secondary} />,
+            icon: <Icon name="calendar" size={16} color={theme.colors.text.secondary} />,
         },
     ]), [theme.colors.text.secondary]);
     const selectedScheduleIcon = props.value.scheduleKind === 'cron'
-        ? <Ionicons name="calendar-outline" size={18} color={theme.colors.text.secondary} />
-        : <Ionicons name="repeat-outline" size={18} color={theme.colors.text.secondary} />;
+        ? <Icon name="calendar" size={16} color={theme.colors.text.secondary} />
+        : <Icon name="repeat" size={16} color={theme.colors.text.secondary} />;
 
     const compactHeaderStyle = React.useMemo<ViewStyle | undefined>(() => {
         if ((props.groupHeaderDensity ?? 'default') !== 'compact') return undefined;
@@ -110,6 +110,8 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                             <Switch
                                 value={props.value.enabled}
                                 onValueChange={(value) => update({ enabled: value })}
+                                accessibilityLabel={enableTitle}
+                                accessibilityHint={enableSubtitle}
                             />
                         )}
                         showChevron={false}

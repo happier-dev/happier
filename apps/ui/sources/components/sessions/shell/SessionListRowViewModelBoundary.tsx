@@ -15,8 +15,10 @@ import {
     type SessionReachableDisplay,
     type SessionListRowViewModel,
 } from './sessionListRowViewModels';
-import { useSessionListRelativeNowMs } from './sessionListRowClocks';
-import { useSessionListRuntimeNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import {
+    useSessionListRelativeNowMs,
+    useSessionListRuntimeNowMs,
+} from '@/hooks/session/sessionListRuntimeClock';
 import type {
     UseSessionInlineDragCancelEvent,
     UseSessionInlineDragDropResultEvent,

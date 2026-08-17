@@ -21,13 +21,15 @@ export async function upsertSessionLabel(params: Readonly<{
             envelope: params.request.display,
         }),
     };
+    const openedDisplay = await openSessionOrganizationDisplayEnvelope({
+        credentials: params.credentials,
+        envelope: request.display,
+    });
     const recordId = getStorage().getState().upsertSessionOrganizationLabelOptimistic(params.serverId, {
         labelKind: request.labelKind,
         scopeKey: request.scopeKey,
-        display: await openSessionOrganizationDisplayEnvelope({
-            credentials: params.credentials,
-            envelope: request.display,
-        }),
+        display: openedDisplay.envelope,
+        displayState: openedDisplay.displayState,
         archivedAt: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { AgentId } from '@/agents/catalog/catalog';
@@ -14,6 +13,7 @@ import type { SessionTranscriptStorageMode } from '@/sync/domains/session/transc
 import { t } from '@/text';
 
 import { resolveProfileBackendTargetKeyForEntry } from '../profileBackendEntryStorage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function LegacyProfileDefaultsSections(props: Readonly<{
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
@@ -78,10 +78,10 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                             : t('profiles.defaultPermissions.accountDefaultSubtitle', {
                                 label: getPermissionModeLabelForAgentType(agentId, accountDefault),
                             })}
-                        icon={<Ionicons name={props.getDisplayAgentIconName(entry) as never} size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name={props.getDisplayAgentIconName(entry) as never} size={29} color={theme.colors.text.secondary} />}
                         rightElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Ionicons name={props.getPermissionIconName(agentId, effectiveMode) as never} size={22} color={theme.colors.text.secondary} />
-                            <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.text.secondary} />
+                            <Icon name={props.getPermissionIconName(agentId, effectiveMode) as never} size={20} color={theme.colors.text.secondary} />
+                            <Icon name={open ? 'caret-up' : 'caret-down'} size={20} color={theme.colors.text.secondary} />
                         </View>}
                         showChevron={false}
                         onPress={toggle}
@@ -95,7 +95,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                                 label: getPermissionModeLabelForAgentType(agentId, accountDefault),
                             }),
                             icon: <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+                                <Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />
                             </View>,
                         },
                         ...getPermissionModeOptionsForAgentType(agentId).map((option) => ({
@@ -103,7 +103,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                             title: option.label,
                             subtitle: option.description,
                             icon: <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name={option.icon as never} size={22} color={theme.colors.text.secondary} />
+                                <Icon name={option.icon as never} size={20} color={theme.colors.text.secondary} />
                             </View>,
                         })),
                     ]}
@@ -145,10 +145,10 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                             : t('profiles.defaultStorage.accountDefaultSubtitle', {
                                 label: t(`sessionsList.storage${accountDefault === 'direct' ? 'Direct' : 'Persisted'}Tab`),
                             })}
-                        icon={<Ionicons name={props.getDisplayAgentIconName(entry) as never} size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name={props.getDisplayAgentIconName(entry) as never} size={29} color={theme.colors.text.secondary} />}
                         rightElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Ionicons name={effectiveMode === 'direct' ? 'radio-outline' : 'save-outline'} size={22} color={theme.colors.text.secondary} />
-                            <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.text.secondary} />
+                            <Icon name={effectiveMode === 'direct' ? 'radio' : 'floppy-disk'} size={20} color={theme.colors.text.secondary} />
+                            <Icon name={open ? 'caret-up' : 'caret-down'} size={20} color={theme.colors.text.secondary} />
                         </View>}
                         showChevron={false}
                         onPress={toggle}
@@ -162,7 +162,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                                 label: t(`sessionsList.storage${accountDefault === 'direct' ? 'Direct' : 'Persisted'}Tab`),
                             }),
                             icon: <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+                                <Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />
                             </View>,
                         },
                         {
@@ -170,7 +170,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                             title: t('sessionsList.storagePersistedTab'),
                             subtitle: t('settingsSession.defaultStorage.persistedSubtitle'),
                             icon: <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="save-outline" size={22} color={theme.colors.text.secondary} />
+                                <Icon name="floppy-disk" size={20} color={theme.colors.text.secondary} />
                             </View>,
                         },
                         {
@@ -178,7 +178,7 @@ export function LegacyProfileDefaultsSections(props: Readonly<{
                             title: t('sessionsList.storageDirectTab'),
                             subtitle: t('settingsSession.defaultStorage.directSubtitle'),
                             icon: <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="radio-outline" size={22} color={theme.colors.text.secondary} />
+                                <Icon name="radio" size={20} color={theme.colors.text.secondary} />
                             </View>,
                         },
                     ]}

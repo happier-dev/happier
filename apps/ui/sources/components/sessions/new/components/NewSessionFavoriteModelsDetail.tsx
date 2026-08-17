@@ -240,13 +240,16 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         { providersFeatureEnabled },
     ), [props.settings, providersFeatureEnabled]);
     const selectableModelAvailability = React.useMemo(() => {
+        const baseNativeModelIds = new Set(modelOptions.map((option) => option.value));
         const sections = buildSessionModelPickerSections({
             agentTargetKey: props.entry.backendTargetKey,
-            nativeModels: Array.from(rawAvailabilityById.values()).map((model) => ({
-                value: model.modelId,
-                label: model.modelLabel,
-                description: model.modelDescription,
-            })),
+            nativeModels: Array.from(rawAvailabilityById.values())
+                .filter((model) => baseNativeModelIds.has(model.modelId))
+                .map((model) => ({
+                    value: model.modelId,
+                    label: model.modelLabel,
+                    description: model.modelDescription,
+                })),
             providerGroups: providersFeatureEnabled
                 ? (providerProjection.data?.groups ?? [])
                 : [],
@@ -291,6 +294,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         providerProjection.status,
         providersFeatureEnabled,
         rawAvailabilityById,
+        modelOptions,
     ]);
     const availabilityById = selectableModelAvailability.native;
     const providerAvailabilityByRefKey = selectableModelAvailability.provider;
@@ -414,7 +418,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         },
     ] as const)), [props.entry, selectableFavorites]);
     const modelOptionByValue = React.useMemo(() => new Map(selectableFavorites.flatMap((model) => {
-        const option = modelOptions.find((candidate) => candidate.value === model.modelId) ?? null;
+        const option = findModelOptionForEffectiveModelId(modelOptions, model.modelId);
         return option ? [[buildFavoriteOptionValue(model.modelSelection), option] as const] : [];
     })), [modelOptions, props.entry, selectableFavorites]);
 
@@ -437,21 +441,28 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         ? buildFavoriteOptionValue(selectedModelSelection)
         : '';
     const selectedOption = options.find((option) => option.value === selectedValue) ?? null;
+    const selectedModelOption = modelOptionByValue.get(selectedValue) ?? null;
     const selectedOptionControls = React.useMemo(() => {
-        const selectedModelOption = modelOptionByValue.get(selectedValue) ?? null;
-        if (!selectedModelOption?.modelOptions?.length) return null;
-        return computeAcpConfigOptionControlsForProvider({
-            providerId: props.entry.backendTarget.configuredBackendId ?? props.entry.backendTarget.backendId,
-            configOptions: selectedModelOption.modelOptions,
-            overrides: Object.fromEntries(
-                Object.entries(props.selectedConfigOverrides ?? {}).map(([optionId, value]) => [optionId, { value }]),
-            ),
-        }) ?? null;
+        const baseControls = selectedModelOption?.modelOptions?.length
+            ? [...(computeAcpConfigOptionControlsForProvider({
+                providerId: props.entry.backendTarget.configuredBackendId ?? props.entry.backendTarget.backendId,
+                configOptions: selectedModelOption.modelOptions,
+                overrides: Object.fromEntries(
+                    Object.entries(props.selectedConfigOverrides ?? {}).map(([optionId, value]) => [optionId, { value }]),
+                ),
+            }) ?? [])]
+            : [];
+        const extendedContextControl = buildExtendedContextModelControl({
+            model: selectedModelOption,
+            effectiveModelId: selectedModelSelection?.ref.modelId,
+        });
+        if (extendedContextControl) baseControls.push(extendedContextControl);
+        return baseControls.length > 0 ? baseControls : null;
     }, [
-        modelOptionByValue,
         props.entry.backendTarget,
         props.selectedConfigOverrides,
-        selectedValue,
+        selectedModelOption,
+        selectedModelSelection?.ref.modelId,
     ]);
     const unifiedProbe = React.useMemo(() => mergeOptionPickerProbes([
         props.refreshProbe ?? null,

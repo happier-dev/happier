@@ -3,10 +3,10 @@ import { View, TouchableOpacity } from 'react-native';
 import { RoundButton } from './RoundButton';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import { trackConnectAttempt } from '@/track';
-import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export const ConnectButton = React.memo(() => {
@@ -42,9 +42,9 @@ export const ConnectButton = React.memo(() => {
                 onPress={() => setShowManualEntry(!showManualEntry)}
                 style={styles.manualToggle}
             >
-                <Ionicons 
-                    name="link-outline" 
-                    size={16} 
+                <Icon
+                    name="link"
+                    size={16}
                     color={theme.colors.text.secondary}
                     style={styles.manualToggleIcon}
                 />
@@ -77,9 +77,9 @@ export const ConnectButton = React.memo(() => {
                                 manualUrl.trim() ? null : styles.manualSubmitButtonDisabled,
                             ]}
                         >
-                            <Ionicons 
-                                name="checkmark-circle" 
-                                size={24} 
+                            <Icon
+                                name="check-circle"
+                                size={24}
                                 color={theme.colors.accent.blue}
                             />
                         </TouchableOpacity>

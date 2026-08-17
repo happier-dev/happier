@@ -15,6 +15,26 @@ type ScopedServerSessionRpcContext = Extract<
     { scope: 'scoped' }
 >;
 
+export function createSessionRequestForExplicitServerScope(params: Readonly<{
+    serverUrl: string;
+    token: string;
+}>): (path: string, init?: RequestInit) => Promise<Response> {
+    return async (path: string, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        headers.set('Authorization', `Bearer ${params.token}`);
+        return await runtimeFetchWithServerReachability({
+            serverUrl: params.serverUrl,
+            token: params.token,
+            url: `${params.serverUrl}${path}`,
+            init: {
+                ...init,
+                method: init?.method ?? 'GET',
+                headers,
+            },
+        });
+    };
+}
+
 export type ServerAccountSessionRequestAuthority = Readonly<{
     scope: ServerAccountScope;
     context: ScopedServerSessionRpcContext;
@@ -30,18 +50,10 @@ export function createSessionRequestForResolvedServerScope(params: Readonly<{
             return await params.activeRequest(path, init);
         }
 
-        const headers = new Headers(init?.headers);
-        headers.set('Authorization', `Bearer ${params.context.token}`);
-        return await runtimeFetchWithServerReachability({
+        return await createSessionRequestForExplicitServerScope({
             serverUrl: params.context.targetServerUrl,
             token: params.context.token,
-            url: `${params.context.targetServerUrl}${path}`,
-            init: {
-                ...init,
-                method: init?.method ?? 'GET',
-                headers,
-            },
-        });
+        })(path, init);
     };
 }
 

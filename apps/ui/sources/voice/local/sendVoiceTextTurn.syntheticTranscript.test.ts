@@ -4,20 +4,31 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 const appendUser = vi.fn();
 const appendAssistant = vi.fn();
 const appendNote = vi.fn();
-const bindingTranscriptModeState: { current: 'synthetic' | 'native_session' } = { current: 'synthetic' };
-const conversationModeState: { current: 'synthetic_agent' | 'direct_session' } = { current: 'synthetic_agent' };
-const sendSessionMessageHandler = vi.fn<(args: unknown) => Promise<unknown>>(
-  async () => ({ ok: true, status: 'sent' }),
-);
+const conversationModeState: { current: 'agent' | 'direct_session' } = { current: 'agent' };
 const sendMessage = vi.fn();
 const submitMessage = vi.fn();
 const enqueuePendingMessage = vi.fn();
 const markPendingDeliveryHandled = vi.fn();
 
+type AcceptedTurnOptions = Readonly<{
+  onUserTranscriptAccepted?: () => void | Promise<void>;
+}>;
+
 vi.mock('@/voice/transcript/voiceConversationTranscript', () => ({
   appendVoiceConversationUserText: (params: any) => appendUser(params),
   appendVoiceConversationAssistantText: (params: any) => appendAssistant(params),
   appendVoiceConversationNoteText: (params: any) => appendNote(params),
+  buildRealtimeConversationTurnMeta: () => ({
+    happier: {
+      kind: 'conversation_turn.v1',
+      payload: { v: 1 },
+      conversationTurnOriginV1: {
+        v: 1,
+        channel: 'realtime_conversation',
+        modality: 'voice',
+      },
+    },
+  }),
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -66,10 +77,6 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({
-  sendSessionMessageWithServerScope: (args: unknown) => sendSessionMessageHandler(args),
-}));
-
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
   subscribeActiveServer: () => () => {},
@@ -83,10 +90,7 @@ function buildAccountSettings() {
         local_conversation: {
           schemaVersion: 1,
           config: {
-            conversationMode: conversationModeState.current === 'synthetic_agent' ? 'agent' : 'direct_session',
-            agent: {
-              backend: bindingTranscriptModeState.current === 'native_session' ? 'daemon' : 'openai_compat',
-            },
+            conversationMode: conversationModeState.current,
             tts: { autoSpeakReplies: false },
             streaming: { enabled: false, ttsEnabled: false, ttsChunkChars: 120 },
           },
@@ -125,23 +129,20 @@ async function loadSendVoiceTextTurnWithProductionBinding() {
     adapterId: 'local_conversation',
     controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
     conversationSessionId: 'carrier-s1',
-    transcriptMode: bindingTranscriptModeState.current,
+    transcriptMode: 'native_session',
     targetSessionId: 's1',
   });
   return localVoiceTextTurn;
 }
 
-describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
+describe('sendVoiceTextTurn native-session transcript ownership', () => {
   beforeEach(async () => {
     const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
     voiceConversationRuntimeMachine.reset();
     appendUser.mockReset();
     appendAssistant.mockReset();
     appendNote.mockReset();
-    bindingTranscriptModeState.current = 'synthetic';
-    conversationModeState.current = 'synthetic_agent';
-    sendSessionMessageHandler.mockReset();
-    sendSessionMessageHandler.mockResolvedValue({ ok: true, status: 'sent' });
+    conversationModeState.current = 'agent';
     sendMessage.mockReset();
     sendMessage.mockResolvedValue(undefined);
     submitMessage.mockReset();
@@ -171,18 +172,47 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
         isEpochCurrent: () => true,
       },
       voiceAgentSessions: {
-        sendTurn: async () => ({ assistantText: '', actions: [] }),
+        sendTurn: async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+          await opts?.onUserTranscriptAccepted?.();
+          return { assistantText: '', actions: [] };
+        },
       },
     });
 
     expect(submitMessage).toHaveBeenCalledWith('s1', 'send this directly', undefined, undefined, {
       callerSurface: 'voice_turn',
       forceImmediate: true,
+      hostAdmissionOrigin: 'voice',
     });
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('mirrors local agent user and assistant turns into the hidden conversation session without writing legacy activity events', async () => {
+  it('does not admit a direct coding-session voice turn after cancellation', async () => {
+    conversationModeState.current = 'direct_session';
+    const controller = new AbortController();
+    controller.abort();
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+
+    await expect(sendVoiceTextTurn({
+      sessionId: 's1',
+      settings: buildAccountSettings(),
+      userText: 'cancelled before admission',
+      signal: controller.signal,
+      playbackController: {
+        registerStopper: () => () => {},
+        interrupt: () => {},
+        captureEpoch: () => 1,
+        isEpochCurrent: () => true,
+      },
+      voiceAgentSessions: {
+        sendTurn: async () => ({ assistantText: '', actions: [] }),
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(submitMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate daemon-owned local agent turns in the UI transcript projector', async () => {
     const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
 
     await sendVoiceTextTurn({
@@ -196,30 +226,31 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
         isEpochCurrent: () => true,
       },
       voiceAgentSessions: {
-        sendTurn: async () => ({ assistantText: 'I found Claude and Codex.', actions: [] }),
+        sendTurn: async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+          await opts?.onUserTranscriptAccepted?.();
+          return { assistantText: 'I found Claude and Codex.', actions: [] };
+        },
       },
     });
 
-    expect(appendUser).toHaveBeenCalledWith({
-      conversationSessionId: 'carrier-s1',
-      text: 'list the backends',
-    });
-    expect(appendAssistant).toHaveBeenCalledWith({
-      conversationSessionId: 'carrier-s1',
-      text: 'I found Claude and Codex.',
-    });
+    expect(appendUser).not.toHaveBeenCalled();
+    expect(appendAssistant).not.toHaveBeenCalled();
     expect(appendNote).not.toHaveBeenCalled();
   });
 
-  it('durably enqueues synthetic speech input before one local-agent dispatch', async () => {
+  it('durably enqueues speech input before one local-agent dispatch', async () => {
     const events: string[] = [];
     enqueuePendingMessage.mockImplementationOnce(async (_sessionId, _text, _displayText, _meta, options) => {
       events.push(`enqueue:${options.localId}`);
       return { localId: options.localId, accepted: true, externalHandoffClaimed: true };
     });
-    const sendTurn = vi.fn(async () => {
+    markPendingDeliveryHandled.mockImplementationOnce(async (_sessionId, localId) => {
+      events.push(`settle:${localId}`);
+    });
+    const sendTurn = vi.fn(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
       const localId = enqueuePendingMessage.mock.calls[0]?.[4]?.localId;
       events.push(`dispatch:${localId}`);
+      await opts?.onUserTranscriptAccepted?.();
       return { assistantText: 'done', actions: [] };
     });
     const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
@@ -239,12 +270,12 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
 
     const localId = enqueuePendingMessage.mock.calls[0]?.[4]?.localId;
     expect(localId).toEqual(expect.any(String));
-    expect(markPendingDeliveryHandled).not.toHaveBeenCalled();
+    expect(markPendingDeliveryHandled).toHaveBeenCalledExactlyOnceWith('carrier-s1', localId);
     expect(sendTurn).toHaveBeenCalledTimes(1);
-    expect(events).toEqual([`enqueue:${localId}`, `dispatch:${localId}`]);
+    expect(events).toEqual([`enqueue:${localId}`, `dispatch:${localId}`, `settle:${localId}`]);
   });
 
-  it('trims the control session id before mirroring synthetic transcript turns', async () => {
+  it('trims the control session id while preserving daemon transcript ownership', async () => {
     const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
 
     await sendVoiceTextTurn({
@@ -258,55 +289,33 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
         isEpochCurrent: () => true,
       },
       voiceAgentSessions: {
-        sendTurn: async () => ({ assistantText: 'I found Claude and Codex.', actions: [] }),
-      },
-    });
-
-    expect(appendUser).toHaveBeenCalledWith({
-      conversationSessionId: 'carrier-s1',
-      text: 'list the backends',
-    });
-    expect(appendAssistant).toHaveBeenCalledWith({
-      conversationSessionId: 'carrier-s1',
-      text: 'I found Claude and Codex.',
-    });
-  });
-
-  it('does not duplicate daemon-owned transcript projection for native-session bindings', async () => {
-    bindingTranscriptModeState.current = 'native_session';
-    const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
-
-    await sendVoiceTextTurn({
-      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      settings: buildAccountSettings(),
-      userText: 'project me immediately',
-      playbackController: {
-        registerStopper: () => () => {},
-        interrupt: () => {},
-        captureEpoch: () => 1,
-        isEpochCurrent: () => true,
-      },
-      voiceAgentSessions: {
-        sendTurn: async () => ({ assistantText: 'Projected.', actions: [] }),
+        sendTurn: async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+          await opts?.onUserTranscriptAccepted?.();
+          return { assistantText: 'I found Claude and Codex.', actions: [] };
+        },
       },
     });
 
     expect(appendUser).not.toHaveBeenCalled();
     expect(appendAssistant).not.toHaveBeenCalled();
+    expect(appendNote).not.toHaveBeenCalled();
   });
 
-  it('normalizes sendSessionMessage preambles and appends concise tool execution notes into the hidden conversation session', async () => {
+  it('normalizes sendSessionMessage preambles without creating synthetic tool transcript rows', async () => {
     const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
 
     const sendTurn = vi
       .fn()
-      .mockResolvedValueOnce({
-        assistantText: 'I will send that now.',
-        actions: [{ t: 'sendSessionMessage', args: { message: 'hello' } }],
+      .mockImplementationOnce(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+        await opts?.onUserTranscriptAccepted?.();
+        return {
+          assistantText: 'I will send that now.',
+          actions: [{ t: 'sendSessionMessage', args: { message: 'hello' } }],
+        };
       })
-      .mockResolvedValueOnce({
-        assistantText: 'Done.',
-        actions: [],
+      .mockImplementationOnce(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+        await opts?.onUserTranscriptAccepted?.();
+        return { assistantText: 'Done.', actions: [] };
       });
 
     await sendVoiceTextTurn({
@@ -324,14 +333,13 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       },
     });
 
-    expect(appendAssistant).toHaveBeenNthCalledWith(1, {
-      conversationSessionId: 'carrier-s1',
-      text: 'I sent that to the coding assistant and am waiting for its update.',
+    expect(submitMessage).toHaveBeenCalledWith('s1', 'hello', undefined, undefined, {
+      callerSurface: 'voice_turn',
+      forceImmediate: true,
+      hostAdmissionOrigin: 'voice',
     });
-    expect(appendNote).toHaveBeenCalledWith({
-      conversationSessionId: 'carrier-s1',
-      text: 'Tool result: sendSessionMessage succeeded',
-    });
+    expect(appendAssistant).not.toHaveBeenCalled();
+    expect(appendNote).not.toHaveBeenCalled();
   });
 
   it('resolves implicit tool session ids from the bound target session', async () => {
@@ -339,13 +347,16 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
 
     const sendTurn = vi
       .fn()
-      .mockResolvedValueOnce({
-        assistantText: 'I will send that now.',
-        actions: [{ t: 'sendSessionMessage', args: { message: 'hello' } }],
+      .mockImplementationOnce(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+        await opts?.onUserTranscriptAccepted?.();
+        return {
+          assistantText: 'I will send that now.',
+          actions: [{ t: 'sendSessionMessage', args: { message: 'hello' } }],
+        };
       })
-      .mockResolvedValueOnce({
-        assistantText: 'Done.',
-        actions: [],
+      .mockImplementationOnce(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+        await opts?.onUserTranscriptAccepted?.();
+        return { assistantText: 'Done.', actions: [] };
       });
 
     await sendVoiceTextTurn({
@@ -363,11 +374,11 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       },
     });
 
-    expect(sendSessionMessageHandler).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-      }),
-    );
+    expect(submitMessage).toHaveBeenCalledWith('s1', 'hello', undefined, undefined, {
+      callerSurface: 'voice_turn',
+      forceImmediate: true,
+      hostAdmissionOrigin: 'voice',
+    });
   });
 
   it('rethrows agent-mode send failures after recording the error state', async () => {

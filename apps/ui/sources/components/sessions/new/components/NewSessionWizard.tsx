@@ -1,10 +1,12 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Platform, ScrollView, View, useWindowDimensions, type View as RNView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
 import { Typography } from '@/constants/Typography';
 import { AgentInput } from '@/components/sessions/agentInput';
+import { projectAgentInputAttachmentRowItems } from '@/components/sessions/agentInput/agentInputContracts';
+import type { AgentInputExtraActionPresentation } from '@/components/sessions/agentInput/agentInputContracts';
+import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { Item } from '@/components/ui/lists/Item';
@@ -74,6 +76,13 @@ import {
 } from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
 import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import {
+    useNewSessionPromptValue,
+    type NewSessionPromptStore,
+} from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
+import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -181,7 +190,8 @@ export interface NewSessionWizardMachineProps {
 }
 
 export interface NewSessionWizardFooterProps {
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
+    composerDocument?: NewSessionComposerDocument;
     setSessionPrompt: (v: string) => void;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     canCreate: boolean;
@@ -190,9 +200,8 @@ export interface NewSessionWizardFooterProps {
     providerLaunchError?: ProviderErrorV1 | null;
     retryProviderLaunch?: () => void;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
-    emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
+    emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
-    onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
@@ -202,6 +211,8 @@ export interface NewSessionWizardFooterProps {
     resumeIsChecking?: boolean;
     inputMaxHeight?: number;
     agentInputExtraActionChips?: React.ComponentProps<typeof AgentInput>['extraActionChips'];
+    /** Removable "continue from this Session" chip and its attachment row. */
+    sourceContextPresentation?: AgentInputExtraActionPresentation | null;
     attachmentFlowId?: string | null;
 }
 
@@ -325,27 +336,42 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         agentInputAttachments,
         addWebFiles,
         addPickedAttachments,
-        extraActionChips,
+        actionChips,
+        attachmentRowItems,
         handleSend,
     } = useNewSessionAttachmentsController({
         flowId: props.footer.attachmentFlowId,
         isCreating: props.footer.isCreating,
-        sessionPrompt: props.footer.sessionPrompt,
+        promptStore: props.footer.promptStore,
         handleCreateSession: props.footer.handleCreateSession,
         selectedProfileId: props.profiles.selectedProfileId,
         targetServerId: props.machine.serverId,
         selectedMachineId: props.machine.selectedMachine?.id ?? null,
         selectedMachineHomeDir: props.machine.selectedMachine?.metadata?.homeDir ?? null,
         selectedPath: props.machine.selectedPath,
-        baseActionChips: props.footer.agentInputExtraActionChips,
+        baseActionChips: [
+            ...(props.footer.agentInputExtraActionChips ?? []),
+            ...(props.footer.composerDocument?.extraActionChips ?? []),
+        ],
+        sourceContextPresentation: props.footer.sourceContextPresentation ?? null,
+        composerDocument: props.footer.composerDocument,
     });
+    const projectedAttachmentRowItems = React.useMemo(() => (
+        projectAgentInputAttachmentRowItems({
+            items: [
+                ...(props.footer.composerDocument?.attachmentRowItems ?? []),
+                ...attachmentRowItems,
+            ],
+            transferAttachments: agentInputAttachments,
+        })
+    ), [agentInputAttachments, attachmentRowItems, props.footer.composerDocument?.attachmentRowItems]);
     const renderIconNode = React.useCallback(
         (
-            name: React.ComponentProps<typeof Ionicons>['name'],
+            name: IconName,
             size: number,
             color: string,
-            style?: React.ComponentProps<typeof Ionicons>['style'],
-        ) => normalizeNodeForView(<Ionicons name={name} size={size} color={color} style={style} />),
+            style?: StyleProp<ViewStyle>,
+        ) => normalizeNodeForView(<Icon name={name} size={size} color={color} style={style} />),
         [],
     );
 
@@ -442,17 +468,20 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     ), [favoriteDirectories, selectedMachineHomeDir]);
 
       const {
-          sessionPrompt,
+          promptStore,
           setSessionPrompt,
           canCreate,
           isCreating,
-        emptyAutocompletePrefixes,
+        emptyAutocompleteKinds,
         emptyAutocompleteSuggestions,
         connectionStatus,
         resumeSessionId,
         resumeIsChecking,
         inputMaxHeight,
     } = props.footer;
+
+    // Typing re-renders this wizard and the composer below it — not the screen model above.
+    const sessionPrompt = useNewSessionPromptValue(promptStore);
 
     const machineDisplayName = selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host;
     const { sharedProfilesListProps, profilePopover } = React.useMemo(() => {
@@ -622,22 +651,32 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             <NewSessionLaunchPendingPreview launchAttempt={props.footer.pendingLaunchAttempt} />
                                         </View>
                                     ) : null}
-                                    <NewSessionWizardComposerInput
+                                    <PluginContextualResourceStoreProvider>
+                                        {props.footer.composerDocument?.beforeComposer}
+                                        <NewSessionWizardComposerInput
                                         composerReservedHeight={12 + newSessionBottomPadding}
                                         value={sessionPrompt}
                                         onChangeText={setSessionPrompt}
+                                        structuredInputMentions={props.footer.composerDocument?.structuredInputMentions}
+                                        onStructuredInputMentionsChange={props.footer.composerDocument?.onStructuredInputMentionsChange}
+                                        onComposerFocusChange={props.footer.composerDocument?.onComposerFocusChange}
+                                        onComposerFocusRequestChange={props.footer.composerDocument?.onComposerFocusRequestChange}
+                                        onComposerActionBarLayoutChange={props.footer.composerDocument?.onComposerActionBarLayoutChange}
+                                        composerDecorations={props.footer.composerDocument?.composerDecorations ?? []}
+                                        composerInputLock={props.footer.composerDocument?.composerInputLock ?? null}
                                         onSend={handleSend}
-                                        isSendDisabled={!canCreate}
+                                        isSendDisabled={!canCreate || props.footer.composerDocument?.composerInputLock !== null}
+                                        disabled={props.footer.composerDocument?.composerInputLock?.mode === 'editAndSubmit'}
                                         isSending={isCreating}
                                         submitAccessibilityLabel={props.footer.submitAccessibilityLabel}
                                         placeholder={t('session.inputPlaceholder')}
-                                        autocompletePrefixes={emptyAutocompletePrefixes}
+                                        autocompleteKinds={emptyAutocompleteKinds}
                                         autocompleteSuggestions={emptyAutocompleteSuggestions}
-                                        onAutocompleteSuggestionSelect={props.footer.onAutocompleteSuggestionSelect}
-                                        extraActionChips={extraActionChips}
-                                        attachments={agentInputAttachments}
+                                        extraActionChips={actionChips}
+                                        attachmentRowItems={projectedAttachmentRowItems}
                                         onAttachmentsAdded={attachmentsUploadsEnabled ? addWebFiles : undefined}
-                                        hasSendableAttachments={hasSendableAttachments}
+                                        hasSendableAttachments={hasSendableAttachments
+                                            || props.footer.composerDocument?.hasSendableAttachments === true}
                                         inputMaxHeight={inputMaxHeight}
                                         agentType={agentType}
                                         agentLabel={props.agent.agentLabel}
@@ -688,7 +727,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             envVarsPopover: undefined,
                                             onEnvVarsClick: undefined,
                                         } : {})}
-                                    />
+                                        />
+                                        {props.footer.composerDocument?.afterComposer}
+                                    </PluginContextualResourceStoreProvider>
                                 </View>
                             </View>
                         </View>
@@ -714,7 +755,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 {useProfiles && (
                                     <>
                                         <View style={styles.wizardSectionHeaderRow}>
-                                            {renderIconNode('person-outline', 18, theme.colors.text.primary)}
+                                            {renderIconNode('person', 18, theme.colors.text.primary)}
                                             <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>
                                                 {t('newSession.selectAiProfileTitle')}
                                             </Text>
@@ -746,7 +787,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                             ? (resolvedProfileMap.get(selectedProfileId)?.name ?? getBuiltInProfile(selectedProfileId)?.name ?? selectedProfileId)
                                                             : t('profiles.noProfile')
                                                     }
-                                                    icon={renderIconNode('person-outline', 24, theme.colors.text.secondary)}
+                                                    icon={renderIconNode('person', 24, theme.colors.text.secondary)}
                                                     popover={profilePopover}
                                                     boundaryRef={props.popoverBoundaryRef}
                                                 />
@@ -762,7 +803,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         {/* Section: AI Backend */}
                                         <View onLayout={registerWizardSectionOffset('agent')}>
                                             <View style={styles.wizardSectionHeaderRow}>
-                                                {renderIconNode('hardware-chip-outline', 18, theme.colors.text.primary)}
+                                                {renderIconNode('cpu', 18, theme.colors.text.primary)}
                                                 <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>
                                                     {t('newSession.selectAiBackendTitle')}
                                                 </Text>
@@ -847,8 +888,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     testID: `new-session-agent:${builtInAgentId ?? option.id}`,
                                                     title: option.label,
                                                     subtitle: option.subtitle ?? null,
-                                                    leftElement: option.icon ?? renderIconNode('hardware-chip-outline', 24, theme.colors.text.secondary),
-                                                    dropdownIcon: option.icon ?? renderIconNode('hardware-chip-outline', 20, theme.colors.text.secondary),
+                                                    leftElement: option.icon ?? renderIconNode('cpu', 24, theme.colors.text.secondary),
+                                                    dropdownIcon: option.icon ?? renderIconNode('cpu', 20, theme.colors.text.secondary),
                                                     compatible: true,
                                                     disabled: Boolean(option.disabled),
                                                     disabledReason,
@@ -933,7 +974,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                                     rightElement={(
                                                                         <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
                                                                             {renderIconNode(
-                                                                                'checkmark-circle',
+                                                                                'check-circle',
                                                                                 24,
                                                                                 selectedIndicatorColor,
                                                                                 { opacity: row.isSelected ? 1 : 0 },
@@ -951,7 +992,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                             testID="new-session-agent-dropdown-trigger"
                                                             title={t('newSession.selectAiBackendTitle')}
                                                             subtitle={agentLabel ?? dropdownItems.find((item) => item.id === selectedBackendRowId)?.title ?? t('newSession.aiBackendSelectWhichAiRuns')}
-                                                            icon={renderIconNode('hardware-chip-outline', 24, theme.colors.text.secondary)}
+                                                            icon={renderIconNode('cpu', 24, theme.colors.text.secondary)}
                                                             items={dropdownItems}
                                                             selectedId={selectedBackendRowId}
                                                             onSelect={(id) => {
@@ -981,13 +1022,13 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         <View onLayout={registerWizardSectionOffset('model')}>
                                             <WizardSectionHeaderRow
                                                 rowStyle={styles.wizardSectionHeaderRow}
-                                                iconName="sparkles-outline"
+                                                iconName="sparkle"
                                                 iconColor={theme.colors.text.primary}
                                                 title={t('newSession.selectModelTitle')}
                                                 titleStyle={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}
                                                 action={hasModelOptionsProbeAffordance ? {
                                                     accessibilityLabel: modelOptionsProbe?.refreshAccessibilityLabel ?? t('common.refresh'),
-                                                    iconName: 'refresh-outline',
+                                                    iconName: 'arrow-clockwise',
                                                     iconColor: theme.colors.text.secondary,
                                                     loading: modelOptionsProbeIsBusy,
                                                     loadingAccessibilityLabel: modelOptionsProbePhase === 'loading'
@@ -1039,13 +1080,13 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         <View onLayout={registerWizardSectionOffset('machine')}>
                                             <WizardSectionHeaderRow
                                                 rowStyle={styles.wizardSectionHeaderRow}
-                                                iconName="desktop-outline"
+                                                iconName="desktop"
                                                 iconColor={theme.colors.text.primary}
                                                 title={t('newSession.selectMachineTitle')}
                                                 titleStyle={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}
                                                 action={onRefreshMachines ? {
                                                     accessibilityLabel: t('common.refresh'),
-                                                    iconName: 'refresh-outline',
+                                                    iconName: 'arrow-clockwise',
                                                     iconColor: theme.colors.text.secondary,
                                                     onPress: onRefreshMachines,
                                                 } : undefined}
@@ -1113,7 +1154,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                 >
                                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                                                         {renderIconNode(
-                                                            'warning-outline',
+                                                            'warning',
                                                             16,
                                                             neutralForegroundColor ?? dangerForegroundColor,
                                                         )}
@@ -1135,7 +1176,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         {/* Section 3: Working Directory */}
                                         <View onLayout={registerWizardSectionOffset('path')}>
                                             <View style={styles.wizardSectionHeaderRow}>
-                                                {renderIconNode('folder-outline', 18, theme.colors.text.primary)}
+                                                {renderIconNode('folder', 18, theme.colors.text.primary)}
                                                 <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>{t('newSession.selectWorkingDirectoryTitle')}</Text>
                                             </View>
                                         </View>
@@ -1177,7 +1218,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 {/* Section 4: Permission Mode */}
                                 <View onLayout={registerWizardSectionOffset('permission')}>
                                     <View style={styles.wizardSectionHeaderRow}>
-                                        {renderIconNode('shield-outline', 18, theme.colors.text.primary)}
+                                        {renderIconNode('shield', 18, theme.colors.text.primary)}
                                         <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>{t('newSession.selectPermissionModeTitle')}</Text>
                                     </View>
                                 </View>
@@ -1195,7 +1236,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     subtitle={option.description}
                                                     leftElement={renderIconNode(option.icon as any, 24, theme.colors.text.secondary)}
                                                     rightElement={permissionMode === option.value
-                                                        ? renderIconNode('checkmark-circle', 24, selectedIndicatorColor)
+                                                        ? renderIconNode('check-circle', 24, selectedIndicatorColor)
                                                         : null}
                                                     onPress={() => handlePermissionModeChange(option.value)}
                                                     showChevron={false}
@@ -1210,7 +1251,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             testID="new-session-permission-dropdown-trigger"
                                             title={t('newSession.selectPermissionModeTitle')}
                                             subtitle={permissionOptions.find((option) => option.value === permissionMode)?.label ?? t('newSession.selectPermissionModeDescription')}
-                                            icon={renderIconNode('shield-outline', 24, theme.colors.text.secondary)}
+                                            icon={renderIconNode('shield', 24, theme.colors.text.secondary)}
                                             items={permissionOptions.map((option) => ({
                                                 id: option.value,
                                                 title: option.label,

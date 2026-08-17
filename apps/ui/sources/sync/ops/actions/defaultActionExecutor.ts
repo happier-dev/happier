@@ -5,7 +5,6 @@ import {
   createActionExecutor,
   isActionEnabledByActionsSettings,
   isApprovalRequiredByActionsSettings,
-  normalizeSpawnSessionErrorDetail,
   readSessionProviderBindingMetadataV1,
   SessionModelTransitionRequestV1Schema,
   SessionModelTransitionResultV1Schema,
@@ -14,6 +13,8 @@ import {
   type ApprovalRequestV1,
   type SessionModelTransitionRequestV1,
   type SessionModelTransitionResultV1,
+  type SessionSpawnNewInputV2,
+  type SessionSpawnNewResultV1,
 } from '@happier-dev/protocol';
 import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
 import {
@@ -23,14 +24,7 @@ import {
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
-import {
-    sessionExecutionRunAction,
-    sessionExecutionRunGet,
-    sessionExecutionRunList,
-  sessionExecutionRunSend,
-    sessionExecutionRunStart,
-    sessionExecutionRunStop,
-} from '@/sync/ops/sessionExecutionRuns';
+import { createUiExecutionRunActionDeps } from './executionRunActionDeps';
 import {
     forkSession as forkSessionOp,
     rollbackSessionCheckpointCode as rollbackSessionCheckpointCodeOp,
@@ -45,15 +39,18 @@ import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { storage } from '@/sync/domains/state/storage';
+import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { openSessionForVoiceTool } from '@/voice/tools/actionImpl/openSession';
-import { spawnSessionForVoiceTool } from '@/voice/tools/actionImpl/spawnSession';
-import { spawnSessionWithPickerForVoiceTool } from '@/voice/tools/actionImpl/spawnSessionPicker';
 import { setPrimaryActionSessionId, setTrackedSessionIds } from '@/voice/tools/actionImpl/sessionTargets';
 import { listSessionsForVoiceTool } from '@/voice/tools/actionImpl/sessionList';
 import { getSessionActivityForVoiceTool } from '@/voice/tools/actionImpl/sessionActivity';
-import { getSessionRecentMessagesForVoiceTool } from '@/voice/tools/actionImpl/sessionRecentMessages';
+import {
+  getSessionRecentMessagesForVoiceTool,
+  getSessionTranscriptForVoiceTool,
+} from '@/voice/tools/actionImpl/sessionRecentMessages';
 import { listRecentPathsForVoiceTool } from '@/voice/tools/actionImpl/pathsListRecent';
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
@@ -83,18 +80,7 @@ import {
   type CreateDefaultRuntimeActionExecutorInput,
 } from './defaultRuntimeActionExecutor';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-
-function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
-  const record = result as Record<string, unknown>;
-  const errorDetail = normalizeSpawnSessionErrorDetail(record.errorDetail);
-  if (!errorDetail) return result;
-
-  return {
-    ...record,
-    details: { errorDetail },
-  };
-}
+import { executeAccountPluginDataEraseAction } from '@/sync/domains/plugins/settings/accountPluginDataEraseAction';
 
   type OpenSessionOptions = Readonly<{ serverId?: string | null }>;
 
@@ -148,14 +134,12 @@ function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
       isApprovalRequiredByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
         surface: ctx.surface ?? null,
       }),
-    executionRunStart: sessionExecutionRunStart,
-    executionRunList: sessionExecutionRunList,
-    executionRunGet: sessionExecutionRunGet,
-    executionRunSend: sessionExecutionRunSend,
-    executionRunStop: sessionExecutionRunStop,
-    executionRunAction: sessionExecutionRunAction,
-    executionRunWait: async () => ({ ok: false, error: 'unsupported_action:execution.run.wait', errorCode: 'unsupported_action' }),
+    ...createUiExecutionRunActionDeps(),
     runtimeActionExecute: createDefaultRuntimeActionExecutor(opts?.runtimeActions),
+    accountPluginDataEraseAction: async ({ input, signal }) => await executeAccountPluginDataEraseAction(
+      input,
+      signal ? { signal } : undefined,
+    ),
 
     sessionOpen: async ({ sessionId, serverId }) =>
       opts?.openSession
@@ -187,7 +171,12 @@ function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
         settings?.sessionReplayStrategy === 'summary_plus_recent'
           ? (settings?.sessionReplaySummaryRunnerV1 ?? null)
           : null;
-      const replayMaxSeedChars = typeof settings?.sessionReplayMaxSeedChars === 'number' ? settings.sessionReplayMaxSeedChars : undefined;
+      // Clamp through the canonical replay-config owner. The stored account setting allows a
+      // wider range than the fork wire schema accepts, so forwarding it raw makes an otherwise
+      // valid preference fail validation instead of being bounded.
+      const replayMaxSeedChars = typeof settings?.sessionReplayMaxSeedChars === 'number'
+        ? resolveHappierReplayConfig(settings as Settings).maxSeedChars
+        : undefined;
 
       const result = await forkSessionOp({
         ...(machineId ? { machineId } : {}),
@@ -307,31 +296,24 @@ function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
       });
     },
 
-    sessionSpawnNew: async ({ tag, agentId, modelId, providerConnectionId, backendTargetKey, machineId, serverId, path, host, initialMessage }) => {
-      return preserveSpawnErrorDetailForActionResult(await spawnSessionForVoiceTool({
-        tag,
-        agentId,
-        modelId,
-        providerConnectionId,
-        backendTargetKey,
-        machineId,
-        serverId,
-        path,
-        host,
-        initialMessage,
-      }));
-    },
-
-    sessionSpawnPicker: async ({ tag, agentId, modelId, providerConnectionId, backendTargetKey, initialMessage }) => {
-      return preserveSpawnErrorDetailForActionResult(await spawnSessionWithPickerForVoiceTool({
-        tag,
-        agentId,
-        modelId,
-        providerConnectionId,
-        backendTargetKey,
-        initialMessage,
-      }));
-    },
+    sessionSpawnNew: async ({
+      sessionCreationTag: _sessionCreationTag,
+      legacyMetadataLabel: _legacyMetadataLabel,
+      actionCaller: _actionCaller,
+      callerSurface: _callerSurface,
+      callerPermissionMode: _callerPermissionMode,
+      sessionAgentSpawnPolicyV1: _sessionAgentSpawnPolicyV1,
+      actionRequestId: _actionRequestId,
+      resumeActionRequest: _resumeActionRequest,
+      signal,
+      ...input
+    }) => await machineRpcWithServerScope<SessionSpawnNewResultV1, SessionSpawnNewInputV2>({
+      serverId: input.executionTarget.serverId,
+      machineId: input.executionTarget.machineId,
+      method: RPC_METHODS.SESSION_SPAWN_NEW,
+      payload: input,
+      signal,
+    }),
 
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
@@ -347,8 +329,8 @@ function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
       return await listAgentModelsForVoiceTool({ agentId, machineId, limit, backendTargetKey });
     },
 
-    sessionSendMessage: async ({ sessionId, message, serverId }) =>
-      await sendSessionMessageWithServerScope({ sessionId, message, serverId }),
+    sessionSendMessage: async ({ sessionId, message, serverId, requestedAction }) =>
+      await sendSessionMessageWithServerScope({ sessionId, message, serverId, requestedAction }),
 
     sessionTitleSet: async ({ sessionId, title, serverId }) => {
       const sid = String(sessionId ?? '').trim();
@@ -394,6 +376,31 @@ function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
         method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: request,
       });
+    },
+    sessionPermissionRemoteAction: async (args) => {
+      const rejectUnavailable = (
+        code: 'canceled' | 'mediationStateUnavailable' | 'ownerMachineUnavailable',
+      ) => args.actionId === 'session.permission.remote.pending.list'
+        || args.actionId === 'session.permission.remote.grants.list'
+        ? { ok: false as const, errorCode: code, error: code }
+        : { status: 'rejected' as const, code };
+      if (args.signal?.aborted) {
+        return rejectUnavailable('canceled');
+      }
+      try {
+        const result = await sessionRpcWithServerScope({
+          sessionId: args.input.sessionId,
+          serverId: args.serverId,
+          method: args.actionId,
+          payload: args.input,
+        });
+        return args.signal?.aborted ? rejectUnavailable('canceled') : result;
+      } catch (error) {
+        if (args.signal?.aborted) {
+          return rejectUnavailable('canceled');
+        }
+        throw error;
+      }
     },
     sessionUserActionAnswer: async ({ sessionId, requestId, answers, decision, reason, updatedPermissions, serverId }) => {
       const reqId = String(requestId ?? '').trim();
@@ -647,31 +654,15 @@ function preserveSpawnErrorDetailForActionResult(result: unknown): unknown {
     sessionTargetTrackedSet: async ({ sessionIds }) => await setTrackedSessionIds({ sessionIds }),
     sessionList: async ({ limit, cursor, includeLastMessagePreview }) => await listSessionsForVoiceTool({ limit, cursor, includeLastMessagePreview }),
     sessionActivityGet: async ({ sessionId, windowSeconds }) => await getSessionActivityForVoiceTool({ sessionId, windowSeconds }),
-    sessionTranscriptGet: async ({ sessionId, limit, cursor, roles, maxCharsPerMessage }) => {
-      const roleSet = Array.isArray(roles) ? new Set(roles) : null;
-      const res = await getSessionRecentMessagesForVoiceTool({
+    sessionTranscriptGet: async ({ sessionId, projection, limit, cursor, roles, maxCharsPerMessage }) =>
+      await getSessionTranscriptForVoiceTool({
         sessionId,
-        limit,
-        cursor,
-        includeUser: roleSet ? roleSet.has('user') : true,
-        includeAssistant: roleSet ? roleSet.has('assistant') : true,
-        maxCharsPerMessage,
-      });
-      if (!res.ok) return res;
-      return {
-        ok: true,
-        sessionId: res.sessionId,
-        items: res.messages.map((message) => ({
-          id: String(message.id ?? ''),
-          createdAt: Number(message.createdAt ?? 0),
-          role: message.role === 'assistant' ? 'assistant' : message.role === 'tool' ? 'tool' : 'user',
-          kind: message.role === 'tool' ? 'tool_call' : 'message',
-          text: String(message.text ?? ''),
-        })),
-        nextCursor: res.nextCursor,
-        hasMore: Boolean(res.nextCursor),
-      };
-    },
+        ...(projection ? { projection } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+        ...(roles ? { roles } : {}),
+        ...(maxCharsPerMessage !== undefined ? { maxCharsPerMessage } : {}),
+      }),
     sessionRecentMessagesGet: async ({ sessionId, defaultSessionId, limit, cursor, includeUser, includeAssistant, maxCharsPerMessage }) =>
       await getSessionRecentMessagesForVoiceTool({ sessionId, defaultSessionId, limit, cursor, includeUser, includeAssistant, maxCharsPerMessage }),
 

@@ -57,11 +57,8 @@ export async function warmRepositoryDirectoryCache(input: {
         return { ok: false, error: 'unknown_error' };
     }
     return await warmWorkspaceRepositoryDirectoryCache({
-        workspaceCacheKey: target.workspaceCacheKey,
-        machineId: target.machineId,
-        rootPath: target.rootPath,
+        scope: { serverId: target.serverId, machineId: target.machineId, rootPath: target.rootPath },
         directoryPath: input.directoryPath,
-        serverId: target.serverId,
     });
 }
 
@@ -74,11 +71,8 @@ export async function listRepositoryDirectoryEntries(input: {
         return { ok: false, error: 'unknown_error' };
     }
     return await listWorkspaceRepositoryDirectoryEntries({
-        workspaceCacheKey: target.workspaceCacheKey,
-        machineId: target.machineId,
-        rootPath: target.rootPath,
+        scope: { serverId: target.serverId, machineId: target.machineId, rootPath: target.rootPath },
         directoryPath: input.directoryPath,
-        serverId: target.serverId,
     });
 }
 

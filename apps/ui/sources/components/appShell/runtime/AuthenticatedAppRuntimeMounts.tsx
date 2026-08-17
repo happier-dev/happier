@@ -8,8 +8,10 @@ import { DesktopActivityOverlayRuntime } from '@/activity/adapters/desktop/runti
 import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
+import { CompanionNoDragRegionProvider } from '@/components/companion/interaction/CompanionNoDragRegion';
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
+import { VoiceOrbAppShellMount } from '@/components/voice/orb/VoiceOrbAppShellMount';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { DesktopBrowserRecordingReverseCaptureRuntime } from '@/sync/domains/browser/recording/DesktopBrowserRecordingReverseCaptureRuntime';
@@ -89,7 +91,15 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
             {props.isAuthenticated ? <PushNotificationPermissionPrimingRuntime /> : null}
             {props.isAuthenticated ? <CurrentSessionPresentationRuntime /> : null}
             <DesktopPetOverlayRuntimeMount />
-            <PetAppShellCompanionMount />
+            {/*
+              * One no-drag registry for every floating companion in the app shell. The pet and the
+              * Voice orb both start drags from measured rects, and a provider per companion would
+              * mean each one only sees its own subtree's regions.
+              */}
+            <CompanionNoDragRegionProvider>
+                <PetAppShellCompanionMount />
+                <VoiceOrbAppShellMount />
+            </CompanionNoDragRegionProvider>
             {props.isAuthenticated ? <ReleaseNotesAutoShowMount /> : null}
             {props.isAuthenticated && props.isTauriDesktopHost ? (
                 <DesktopBrowserRecordingReverseCaptureRuntimeMount />

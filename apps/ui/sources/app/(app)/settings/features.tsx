@@ -1,6 +1,5 @@
 import React from 'react';
 import { Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import {
     FEATURE_IDS,
@@ -26,6 +25,7 @@ import {
 } from '@/sync/domains/features/featureRegistry';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import {
     useServerFeaturesMainSelectionSnapshot,
     useServerFeaturesRuntimeSnapshot,
@@ -316,21 +316,21 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.environmentBadge')}
                     subtitle={t('settingsFeatures.environmentBadgeSubtitle')}
-                    icon={<Ionicons name="pricetag-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="tag" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={showEnvironmentBadge} onValueChange={setShowEnvironmentBadge} />}
                     showChevron={false}
                 />
                 <Item
                     title={t('settingsFeatures.machinePickerSearch')}
                     subtitle={t('settingsFeatures.machinePickerSearchSubtitle')}
-                    icon={<Ionicons name="search-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="magnifying-glass" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={useMachinePickerSearch} onValueChange={setUseMachinePickerSearch} />}
                     showChevron={false}
                 />
                 <Item
                     title={t('settingsFeatures.pathPickerSearch')}
                     subtitle={t('settingsFeatures.pathPickerSearchSubtitle')}
-                    icon={<Ionicons name="folder-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="folder" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={usePathPickerSearch} onValueChange={setUsePathPickerSearch} />}
                     showChevron={false}
                 />
@@ -339,7 +339,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                     subtitle={useProfiles
                         ? t('settingsFeatures.profilesEnabled')
                         : t('settingsFeatures.profilesDisabled')}
-                    icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.purple} />}
+                    icon={<Icon name="person" size={29} color={theme.colors.accent.purple} />}
                     rightElement={<Switch value={useProfiles} onValueChange={setUseProfiles} />}
                     showChevron={false}
                 />
@@ -354,7 +354,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                     <Item
                         title={t('settingsFeatures.commandPalette')}
                         subtitle={commandPaletteEnabled ? t('settingsFeatures.commandPaletteEnabled') : t('settingsFeatures.commandPaletteDisabled')}
-                        icon={<Ionicons name="keypad-outline" size={29} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="squares-four" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={commandPaletteEnabled} onValueChange={setCommandPaletteEnabled} />}
                         showChevron={false}
                     />
@@ -369,7 +369,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 <Item
                     title={t('settingsFeatures.experimentalFeatures')}
                     subtitle={experiments ? t('settingsFeatures.experimentalFeaturesEnabled') : t('settingsFeatures.experimentalFeaturesDisabled')}
-                    icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.indigo} />}
+                    icon={<Icon name="flask" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
                             testID="settings-feature-experiments-toggle"
@@ -401,7 +401,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 key={d.featureId}
                                 title={t(d.titleKey)}
                                 subtitle={t(d.subtitleKey)}
-                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
+                                icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch
                                         testID={`settings-feature-toggle-${d.featureId}`}
@@ -436,13 +436,13 @@ export default React.memo(function FeaturesSettingsScreen() {
                             itemTrigger={{
                                 title: t('terminalEmbedded.settings.locationTitle'),
                                 subtitle: embeddedTerminalDockLocationLabel,
-                                icon: <Ionicons name="terminal-outline" size={29} color={theme.colors.accent.blue} />,
+                                icon: <Icon name="terminal" size={29} color={theme.colors.accent.blue} />,
                                 itemProps: { testID: 'settings-embedded-terminal-dock-location' },
                             }}
                             items={[
-                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Ionicons name="albums-outline" size={18} color={theme.colors.text.secondary} /> },
-                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.secondary} /> },
-                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.text.secondary} /> },
+                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Icon name="stack" size={16} color={theme.colors.text.secondary} /> },
+                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Icon name="info" size={16} color={theme.colors.text.secondary} /> },
+                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
                             ]}
                             onSelect={(id) => {
                                 if (id === 'sidebar' || id === 'details' || id === 'bottom') {
@@ -467,7 +467,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                             itemTrigger={{
                                 title: t('terminalEmbedded.settings.rendererTitle'),
                                 subtitle: terminalRendererPreferenceLabel,
-                                icon: <Ionicons name="hardware-chip-outline" size={29} color={theme.colors.accent.indigo} />,
+                                icon: <Icon name="cpu" size={29} color={theme.colors.accent.indigo} />,
                                 itemProps: { testID: 'settings-terminal-renderer-preference' },
                             }}
                             items={[
@@ -475,19 +475,19 @@ export default React.memo(function FeaturesSettingsScreen() {
                                     id: 'auto',
                                     title: t('terminalEmbedded.settings.rendererAuto'),
                                     subtitle: t('terminalEmbedded.settings.rendererAutoDescription'),
-                                    icon: <Ionicons name="sparkles-outline" size={18} color={theme.colors.text.secondary} />,
+                                    icon: <Icon name="sparkle" size={16} color={theme.colors.text.secondary} />,
                                 },
                                 {
                                     id: 'xterm-webview',
                                     title: t('terminalEmbedded.settings.rendererXtermWebView'),
                                     subtitle: t('terminalEmbedded.settings.rendererXtermWebViewDescription'),
-                                    icon: <Ionicons name="accessibility-outline" size={18} color={theme.colors.text.secondary} />,
+                                    icon: <Icon name="wheelchair" size={16} color={theme.colors.text.secondary} />,
                                 },
                                 {
                                     id: 'native-experimental',
                                     title: t('terminalEmbedded.settings.rendererNativeExperimental'),
                                     subtitle: t('terminalEmbedded.settings.rendererNativeExperimentalDescription'),
-                                    icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
+                                    icon: <Icon name="cpu" size={16} color={theme.colors.text.secondary} />,
                                 },
                             ]}
                             onSelect={(id) => {
@@ -508,7 +508,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 key={d.featureId}
                                 title={t(d.titleKey)}
                                 subtitle={t(d.subtitleKey)}
-                                icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
+                                icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch
                                         testID={`settings-feature-toggle-${d.featureId}`}

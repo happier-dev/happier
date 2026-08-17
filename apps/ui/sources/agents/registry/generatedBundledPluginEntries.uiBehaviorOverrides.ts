@@ -17,7 +17,6 @@ import type { AgentUiBehavior } from './registryUiBehavior';
 import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@happier-dev/plugins-auggie/ui/behavior';
 import { CLAUDE_UI_BEHAVIOR_OVERRIDE } from '@happier-dev/plugins-claude/ui/behavior';
 import { CODEX_UI_BEHAVIOR_OVERRIDE } from '@happier-dev/plugins-codex/ui/behavior';
-import { PI_UI_BEHAVIOR_OVERRIDE } from '@happier-dev/plugins-pi/ui/behavior';
 
 export type BundledAgentUiBehaviorDescriptor = Readonly<{
     agentId: CanonicalAgentId;
@@ -32,6 +31,9 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         descriptor: Object.freeze({
   "components": {
     "slots": []
+  },
+  "externalSessions": {
+    "supportsBackgroundFollow": true
   }
 } as const),
     }),
@@ -268,51 +270,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
             "v": 1
           },
           "backendMode": {
-            "aliases": {
-              "mcp": "appServer",
-              "mcp_resume": "acp"
-            },
-            "candidatePaths": [
-              [
-                "runtimeDescriptorV1",
-                "agent",
-                "agentExtra",
-                "runtimeHandle",
-                "backendMode"
-              ],
-              [
-                "runtimeDescriptorV1",
-                "agent",
-                "backendMode"
-              ],
-              [
-                "agentRuntimeDescriptorV1",
-                "provider",
-                "providerExtra",
-                "runtimeHandle",
-                "backendMode"
-              ],
-              [
-                "agentRuntimeDescriptorV1",
-                "provider",
-                "backendMode"
-              ],
-              [
-                "runtimeDescriptorV1",
-                "provider",
-                "providerExtra",
-                "runtimeHandle",
-                "backendMode"
-              ],
-              [
-                "runtimeDescriptorV1",
-                "provider",
-                "backendMode"
-              ],
-              [
-                "codexBackendMode"
-              ]
-            ],
             "values": [
               "acp",
               "appServer"
@@ -320,50 +277,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           },
           "legacyModeOutputKey": "codexBackendMode",
           "providerId": "codex",
-          "providerSessionIdPaths": [
-            [
-              "runtimeDescriptorV1",
-              "agent",
-              "agentExtra",
-              "runtimeHandle",
-              "providerSessionId"
-            ],
-            [
-              "runtimeDescriptorV1",
-              "agent",
-              "providerSessionId"
-            ],
-            [
-              "agentRuntimeDescriptorV1",
-              "provider",
-              "providerExtra",
-              "runtimeHandle",
-              "providerSessionId"
-            ],
-            [
-              "agentRuntimeDescriptorV1",
-              "provider",
-              "providerSessionId"
-            ],
-            [
-              "runtimeDescriptorV1",
-              "provider",
-              "providerExtra",
-              "runtimeHandle",
-              "providerSessionId"
-            ],
-            [
-              "runtimeDescriptorV1",
-              "provider",
-              "providerSessionId"
-            ],
-            [
-              "codexSessionId"
-            ],
-            [
-              "vendorSessionId"
-            ]
-          ],
           "runtimeDescriptorOutputKey": "runtimeDescriptorV1",
           "sourceFields": [
             "home",
@@ -450,130 +363,8 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
   },
   "payload": {
     "sessionExtras": {
-      "aliases": {
-        "mcp": "appServer",
-        "mcp_resume": "acp"
-      },
-      "metadataCandidates": [
-        {
-          "path": [
-            "runtimeDescriptorV1",
-            "provider",
-            "providerExtra",
-            "runtimeHandle",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "runtimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "runtimeDescriptorV1",
-            "provider",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "runtimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "agentRuntimeDescriptorV1",
-            "provider",
-            "providerExtra",
-            "runtimeHandle",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "agentRuntimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "agentRuntimeDescriptorV1",
-            "provider",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "agentRuntimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "codexRuntimeDescriptorV1",
-            "backendMode"
-          ]
-        },
-        {
-          "path": [
-            "affinity",
-            "backendMode"
-          ]
-        },
-        {
-          "path": [
-            "codexBackendMode"
-          ]
-        },
-        {
-          "path": [
-            "directSessionV1",
-            "codexBackendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "directSessionV1",
-              "providerId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "externalSessionV1",
-            "codexBackendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "externalSessionV1",
-              "agentId"
-            ]
-          }
-        }
-      ],
       "outputKey": "codexBackendMode",
       "providerId": "codex",
-      "settingsCandidates": [
-        {
-          "path": [
-            "codexBackendMode"
-          ]
-        },
-        {
-          "path": [
-            "experimentalCodexAcp"
-          ],
-          "valueWhenTrue": "acp"
-        }
-      ],
       "values": [
         "acp",
         "appServer"
@@ -610,145 +401,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "appServer"
       ],
       "activeWhenNoPersistedMode": true,
-      "aliases": {
-        "mcp": "appServer",
-        "mcp_resume": "acp"
-      },
-      "modeCandidates": [
-        {
-          "path": [
-            "runtimeDescriptorV1",
-            "agent",
-            "agentExtra",
-            "runtimeHandle",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "runtimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "runtimeDescriptorV1",
-            "agent",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "runtimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "runtimeDescriptorV1",
-            "provider",
-            "providerExtra",
-            "runtimeHandle",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "runtimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "runtimeDescriptorV1",
-            "provider",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "runtimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "agentRuntimeDescriptorV1",
-            "provider",
-            "providerExtra",
-            "runtimeHandle",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "agentRuntimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "agentRuntimeDescriptorV1",
-            "provider",
-            "backendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "agentRuntimeDescriptorV1",
-              "agentId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "codexRuntimeDescriptorV1",
-            "backendMode"
-          ]
-        },
-        {
-          "path": [
-            "affinity",
-            "backendMode"
-          ]
-        },
-        {
-          "path": [
-            "codexBackendMode"
-          ]
-        },
-        {
-          "path": [
-            "directSessionV1",
-            "codexBackendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "directSessionV1",
-              "providerId"
-            ]
-          }
-        },
-        {
-          "path": [
-            "externalSessionV1",
-            "codexBackendMode"
-          ],
-          "required": {
-            "equals": "codex",
-            "path": [
-              "externalSessionV1",
-              "agentId"
-            ]
-          }
-        }
-      ],
       "modeValues": [
         "acp",
         "appServer"
@@ -858,7 +510,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         }
       ]
     },
-    "supportsBackgroundFollow": true
+    "supportsBackgroundFollow": false
   },
   "mcpServers": {
     "supportsDetectedConfigScan": true
@@ -894,7 +546,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     },
     "browseDescriptorId": "opencode.externalSessions.browse.v1",
     "sessionHandoffDescriptorId": "opencode.sessionHandoff.v1",
-    "supportsBackgroundFollow": false
+    "supportsBackgroundFollow": true
   },
   "guidance": {
     "includeInSessionGettingStartedCliExamples": true
@@ -946,7 +598,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "byServerIdSettingKey": "opencodeServerBaseUrlByServerIdV1",
         "envKey": "HAPPIER_OPENCODE_SERVER_URL",
         "explicitEnvKey": "HAPPIER_OPENCODE_SERVER_URL_EXPLICIT",
-        "httpLoopbackOnly": true,
         "legacyExplicitMetadataKey": "opencodeServerBaseUrlExplicit",
         "legacyMetadataKey": "opencodeServerBaseUrl",
         "originOnly": true,
@@ -992,5 +643,4 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Readonly<
     auggie: AUGGIE_UI_BEHAVIOR_OVERRIDE,
     claude: CLAUDE_UI_BEHAVIOR_OVERRIDE,
     codex: CODEX_UI_BEHAVIOR_OVERRIDE,
-    pi: PI_UI_BEHAVIOR_OVERRIDE,
 });

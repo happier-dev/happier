@@ -34,13 +34,15 @@ function createPort() {
     const enqueuePendingMessage = vi.fn(async () => ({ localId: 'pending-1', accepted: true }));
     const updatePendingRequestedAction = vi.fn(async () => undefined);
     const resumeSession = vi.fn(async () => ({ type: 'success' as const }));
+    const sendMessage = vi.fn(async () => ({ localId: 'direct-1', seq: 2 }));
     const port: SessionSubmitPort = {
         enqueuePendingMessage,
         updatePendingRequestedAction,
         resumeSession,
-        sendMessage: vi.fn(async () => ({ localId: 'direct-1', seq: 2 })),
+        sendMessage,
+        isSessionTargetRemoteToActiveServer: () => false,
     };
-    return { port, enqueuePendingMessage, updatePendingRequestedAction, resumeSession };
+    return { port, enqueuePendingMessage, updatePendingRequestedAction, resumeSession, sendMessage };
 }
 
 function submitOptions(session: Session) {
@@ -66,6 +68,92 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             's1', 'hello', undefined, expect.any(Object),
             expect.objectContaining({ requestedAction: { v: 1, kind: 'enqueue' } }),
         );
+    });
+
+    it('forwards host Voice admission to the durable Pending owner', async () => {
+        const session = createSession();
+        const { port, enqueuePendingMessage } = createPort();
+
+        await submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
+        });
+
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(
+            's1',
+            'hello',
+            undefined,
+            expect.any(Object),
+            expect.objectContaining({
+                hostAdmissionOrigin: 'voice',
+                requestedAction: { v: 1, kind: 'send_now' },
+            }),
+        );
+    });
+
+    it('forwards host Voice admission to the direct owner when Pending is unavailable', async () => {
+        const session = createSession({
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'unknown-agent',
+                version: '0.0.1',
+            },
+        });
+        const { port, sendMessage } = createPort();
+        Object.assign(port, {
+            isSessionTargetRemoteToActiveServer: () => false,
+        });
+
+        await submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
+        });
+
+        expect(sendMessage).toHaveBeenCalledWith(
+            's1',
+            'hello',
+            undefined,
+            undefined,
+            expect.objectContaining({
+                hostAdmissionOrigin: 'voice',
+                bypassPendingQueueReason: 'force_immediate',
+            }),
+        );
+    });
+
+    it('rejects an unsupported remote Voice target before the active direct transport', async () => {
+        const session = createSession({
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'unknown-agent',
+                version: '0.0.1',
+            },
+        });
+        const { port, enqueuePendingMessage, sendMessage } = createPort();
+        Object.assign(port, {
+            isSessionTargetRemoteToActiveServer: () => true,
+        });
+
+        await expect(submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            explicitMode: 'server_pending',
+            forceImmediate: true,
+            hostAdmissionOrigin: 'voice',
+        })).resolves.toEqual({
+            type: 'rejected',
+            persistence: 'none',
+            wake: { attempted: false, state: 'not_needed' },
+            errorCode: 'session_input_target_update_required',
+            errorMessage: 'The selected remote session requires an updated agent runtime before Voice can send a message.',
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(enqueuePendingMessage).not.toHaveBeenCalled();
     });
 
     it('keeps ambiguous enqueue custody pending after the local outbound handoff', async () => {
@@ -105,6 +193,227 @@ describe('submitSessionUserMessage Pending action ownership', () => {
         expect(enqueuePendingMessage).toHaveBeenCalledWith(
             's1', 'hello', undefined, expect.any(Object),
             expect.objectContaining({ requestedAction: { v: 1, kind: 'steer_if_active' } }),
+        );
+    });
+
+    it('queues busy input when fallback catalog state lacks exact transition authority', async () => {
+        const session = createSession({
+            thinking: true,
+            thinkingAt: 1_000,
+            agentState: { capabilities: { inFlightSteerSupported: true, inFlightSteerAvailable: true } },
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'claude',
+                version: '999.0.0',
+                modelSelectionIntentV1: {
+                    v: 1,
+                    updatedAt: 10,
+                    selection: {
+                        agentTargetKey: 'backend:claude',
+                        providerConnectionId: null,
+                        modelId: 'claude-opus-4-7',
+                    },
+                },
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    updatedAt: 20,
+                    currentModelId: 'claude-opus-4-7',
+                    availableModels: [
+                        { id: 'claude-opus-4-7', name: 'Fallback Opus 4.7' },
+                    ],
+                },
+            },
+        });
+        const { port, enqueuePendingMessage } = createPort();
+
+        await submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            currentRunnerProcessIdentity: null,
+        });
+
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.any(Object),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'enqueue' } }),
+        );
+    });
+
+    it('permits busy steer when exact active selection matches on the current process', async () => {
+        const currentRunnerProcessIdentity = {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        };
+        const session = createSession({
+            thinking: true,
+            thinkingAt: 1_000,
+            agentState: { capabilities: { inFlightSteerSupported: true, inFlightSteerAvailable: true } },
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'claude',
+                version: '999.0.0',
+                modelSelectionIntentV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    selection: {
+                        agentTargetKey: 'backend:claude',
+                        providerConnectionId: null,
+                        modelId: 'claude-opus-4-7',
+                    },
+                },
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    updatedAt: 10,
+                    currentModelId: 'claude-opus-4-7',
+                    activeSelectionV1: {
+                        v: 1,
+                        selection: {
+                            agentTargetKey: 'backend:claude',
+                            providerConnectionId: null,
+                            modelId: 'claude-opus-4-7',
+                        },
+                        source: 'runtime_apply',
+                        runner: currentRunnerProcessIdentity,
+                    },
+                    availableModels: [
+                        { id: 'claude-opus-4-7', name: 'Opus 4.7' },
+                    ],
+                },
+            },
+        });
+        const { port, enqueuePendingMessage } = createPort();
+
+        await submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            currentRunnerProcessIdentity,
+        });
+
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.any(Object),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'steer_if_active' } }),
+        );
+    });
+
+    it('permits busy steer when exact active selection matches a configured backend target', async () => {
+        const agentTargetKey = 'backend:claude:configured:claude';
+        const currentRunnerProcessIdentity = {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        };
+        const session = createSession({
+            thinking: true,
+            thinkingAt: 1_000,
+            agentState: { capabilities: { inFlightSteerSupported: true, inFlightSteerAvailable: true } },
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'claude',
+                version: '999.0.0',
+                modelSelectionIntentV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    selection: {
+                        agentTargetKey,
+                        providerConnectionId: null,
+                        modelId: 'claude-opus-4-7',
+                    },
+                },
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    updatedAt: 10,
+                    currentModelId: 'claude-opus-4-7',
+                    activeSelectionV1: {
+                        v: 1,
+                        selection: {
+                            agentTargetKey,
+                            providerConnectionId: null,
+                            modelId: 'claude-opus-4-7',
+                        },
+                        source: 'runtime_apply',
+                        runner: currentRunnerProcessIdentity,
+                    },
+                    availableModels: [
+                        { id: 'claude-opus-4-7', name: 'Opus 4.7' },
+                    ],
+                },
+            },
+        });
+        const { port, enqueuePendingMessage } = createPort();
+
+        await submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            currentRunnerProcessIdentity,
+        });
+
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.any(Object),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'steer_if_active' } }),
+        );
+    });
+
+    it('queues a configured-target model transition when exact active selection differs', async () => {
+        const agentTargetKey = 'backend:claude:configured:claude';
+        const currentRunnerProcessIdentity = {
+            pid: 123,
+            processStartTimeMs: 1_000,
+        };
+        const session = createSession({
+            thinking: true,
+            thinkingAt: 1_000,
+            agentState: { capabilities: { inFlightSteerSupported: true, inFlightSteerAvailable: true } },
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'claude',
+                version: '999.0.0',
+                modelSelectionIntentV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    selection: {
+                        agentTargetKey,
+                        providerConnectionId: null,
+                        modelId: 'claude-opus-4-7',
+                    },
+                },
+                sessionModelsV1: {
+                    v: 1,
+                    agentId: 'claude',
+                    updatedAt: 10,
+                    currentModelId: 'claude-sonnet-4-6',
+                    activeSelectionV1: {
+                        v: 1,
+                        selection: {
+                            agentTargetKey,
+                            providerConnectionId: null,
+                            modelId: 'claude-sonnet-4-6',
+                        },
+                        source: 'runtime_readback',
+                        runner: currentRunnerProcessIdentity,
+                    },
+                    availableModels: [
+                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' },
+                        { id: 'claude-opus-4-7', name: 'Opus 4.7' },
+                    ],
+                },
+            },
+        });
+        const { port, enqueuePendingMessage } = createPort();
+
+        await submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            currentRunnerProcessIdentity,
+        });
+
+        expect(enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.any(Object),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'enqueue' } }),
         );
     });
 
@@ -158,7 +467,10 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             },
         });
         const actionFailure = createPort();
-        actionFailure.updatePendingRequestedAction.mockRejectedValueOnce(new Error('action not persisted'));
+        actionFailure.updatePendingRequestedAction.mockRejectedValueOnce(Object.assign(
+            new Error('action not persisted'),
+            { code: 'action-conflict' },
+        ));
 
         await expect(submitSessionUserMessage(actionFailure.port, {
             ...submitOptions(session),
@@ -170,6 +482,7 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             type: 'wake_failed',
             persistence: 'pending',
             localId: 'durable-action-failed',
+            errorCode: 'action-conflict',
             errorMessage: 'action not persisted',
         });
         expect(actionFailure.resumeSession).not.toHaveBeenCalled();

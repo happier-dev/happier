@@ -1,7 +1,19 @@
-import { V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import {
+    SESSION_METADATA_LAYOUT_VERSION_V1,
+    V2SessionByIdResponseSchema,
+    createPlainSessionOwnerMetadataEnvelopeV1,
+    createSessionOwnerMetadataV1,
+    projectSessionSharedMetadataV1,
+    sealSessionOwnerMetadataEnvelopeV1,
+    type SessionOwnerMetadataEnvelopeV1,
+} from '@happier-dev/protocol';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
+import {
+    requireCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
 import type { Encryptor } from '@/sync/encryption/encryptor';
 import type {
@@ -16,7 +28,7 @@ type HostedSystemSessionEncryption = Readonly<{
 export type EnsureHostedSystemSessionInput = Readonly<{
     scopeKey: string;
     credentials: AuthCredentials;
-    encryption: HostedSystemSessionEncryption;
+    encryption: HostedSystemSessionEncryption | null;
     serverBasis: Readonly<{
         serverId: string;
         generation: number;
@@ -27,8 +39,9 @@ export type EnsureHostedSystemSessionInput = Readonly<{
 }>;
 
 type HostedSystemSessionEnsurerDeps = Readonly<{
-    fetchAccountEncryptionMode(
+    fetchAccountEncryptionCurrentness(
         credentials: AuthCredentials,
+        request: ServerAccountSessionRequestAuthority['request'],
     ): Promise<Readonly<{ mode: 'plain' | 'e2ee' }>>;
     randomBytes(length: number): Uint8Array;
     request(
@@ -49,33 +62,94 @@ export type HostedSystemSessionEnsureResult = Readonly<{
     sessionId: string;
 }>;
 
+type HostedSystemSessionCreateBody = Readonly<{
+    tag: string;
+    metadataLayoutVersion: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
+    sharedMetadata: Readonly<{ ciphertext: string }>;
+    ownerMetadata: SessionOwnerMetadataEnvelopeV1;
+    agentState: null;
+    dataEncryptionKey: string | null;
+    encryptionMode: 'plain' | 'e2ee';
+}>;
+
+function createMetadataPrivacyUpgradeRequiredError(
+    unsupportedFields: readonly string[],
+): Error & {
+    code: 'metadata_privacy_upgrade_required';
+    retryable: false;
+    unsupportedFields: readonly string[];
+} {
+    return Object.assign(
+        new Error('Hosted system session metadata is not supported by layout 1'),
+        {
+            code: 'metadata_privacy_upgrade_required' as const,
+            retryable: false as const,
+            unsupportedFields,
+        },
+    );
+}
+
 async function buildCreateBody(
     deps: HostedSystemSessionEnsurerDeps,
     input: EnsureHostedSystemSessionInput,
-): Promise<Record<string, unknown>> {
-    const accountMode = await deps.fetchAccountEncryptionMode(input.credentials);
+): Promise<HostedSystemSessionCreateBody> {
+    const accountMode = await deps.fetchAccountEncryptionCurrentness(
+        input.credentials,
+        input.authority.request,
+    );
+    const sharedMetadata = projectSessionSharedMetadataV1({
+        metadata: input.metadata,
+        agentState: null,
+    });
+    const ownerMetadata = createSessionOwnerMetadataV1({
+        metadata: input.metadata,
+    });
+    if (!ownerMetadata.ok) {
+        throw createMetadataPrivacyUpgradeRequiredError(
+            ownerMetadata.unsupportedFields,
+        );
+    }
     if (accountMode.mode === 'plain') {
         return {
             tag: input.tag,
-            metadata: JSON.stringify(input.metadata),
+            metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
+            sharedMetadata: {
+                ciphertext: JSON.stringify(sharedMetadata),
+            },
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(
+                ownerMetadata.ownerMetadata,
+            ),
             agentState: null,
             dataEncryptionKey: null,
             encryptionMode: 'plain',
         };
     }
 
+    if (!input.encryption) {
+        throw new Error('Account encryption material is required to create an E2EE hosted system session');
+    }
     const dataEncryptionKey = 'encryption' in input.credentials
         ? deps.randomBytes(32)
         : null;
     const encryptor = await input.encryption.openEncryption(dataEncryptionKey);
-    const [encryptedMetadata] = await encryptor.encrypt([input.metadata]);
-    if (!encryptedMetadata) {
+    const [encryptedSharedMetadata] = await encryptor.encrypt([sharedMetadata]);
+    if (!encryptedSharedMetadata) {
         throw new Error('Hosted system session metadata encryption failed');
     }
 
     return {
         tag: input.tag,
-        metadata: encodeBase64(encryptedMetadata, 'base64'),
+        metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
+        sharedMetadata: {
+            ciphertext: encodeBase64(encryptedSharedMetadata, 'base64'),
+        },
+        ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
+            material: resolveAccountScopedCryptoMaterialFromCredentials(
+                input.credentials,
+            ),
+            ownerMetadata: ownerMetadata.ownerMetadata,
+            randomBytes: deps.randomBytes,
+        }),
         agentState: null,
         dataEncryptionKey: dataEncryptionKey
             ? encodeBase64(
@@ -98,6 +172,12 @@ export function createHostedSystemSessionEnsurer(deps: HostedSystemSessionEnsure
         if (!deps.isScopeCurrent(input.scopeKey)) {
             throw new Error('Hosted system session account scope changed');
         }
+        await requireCurrentAccountStoredContentServerCompatibility({
+            serverId: input.serverBasis.serverId,
+        });
+        if (!deps.isScopeCurrent(input.scopeKey)) {
+            throw new Error('Hosted system session account scope changed');
+        }
         const body = await buildCreateBody(deps, input);
         if (!deps.isScopeCurrent(input.scopeKey)) {
             throw new Error('Hosted system session account scope changed');
@@ -112,11 +192,20 @@ export function createHostedSystemSessionEnsurer(deps: HostedSystemSessionEnsure
         }, {
             expectedActiveServer: input.serverBasis,
         });
+        const responsePayload = await response.json().catch(() => null);
         if (!response.ok) {
             throw new Error(`Hosted system session create/load failed (${response.status})`);
         }
-        const parsed = V2SessionByIdResponseSchema.safeParse(await response.json());
+        const parsed = V2SessionByIdResponseSchema.safeParse(responsePayload);
         if (!parsed.success) {
+            throw new Error('Invalid hosted system session create/load response');
+        }
+        if (
+            parsed.data.session.metadataLayoutVersion
+                !== SESSION_METADATA_LAYOUT_VERSION_V1
+            || parsed.data.session.ownerMetadata == null
+            || !Object.hasOwn(parsed.data.session, 'agentState')
+        ) {
             throw new Error('Invalid hosted system session create/load response');
         }
         if (!deps.isScopeCurrent(input.scopeKey)) {

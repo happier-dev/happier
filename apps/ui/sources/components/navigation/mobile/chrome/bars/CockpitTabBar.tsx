@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -10,6 +9,7 @@ import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
     innerContainer: {
@@ -61,7 +61,7 @@ export type CockpitTabBadge =
 export type CockpitTabBarTabDefinition<TSurface extends string> = Readonly<{
     id: TSurface;
     label: string;
-    icon: keyof typeof Ionicons.glyphMap | Readonly<{
+    icon: IconName | Readonly<{
         render: (params: Readonly<{
             active: boolean;
             size: number;
@@ -77,6 +77,7 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
     tabs: readonly CockpitTabBarTabDefinition<TSurface>[];
     tabTestIdPrefix: string;
     onSurfacePress: (surface: TSurface) => void;
+    trailing?: React.ReactNode;
 }>;
 
 export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps<TSurface>) {
@@ -104,7 +105,7 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                             {active ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
                             <View style={styles.iconContainer}>
                                 {typeof tab.icon === 'string' ? (
-                                    <Ionicons name={tab.icon} size={metrics.iconSize} color={tintColor} />
+                                    <Icon name={tab.icon} size={metrics.iconSize} color={tintColor} />
                                 ) : (
                                     tab.icon.render({ active, size: metrics.iconSize, tintColor })
                                 )}
@@ -118,10 +119,42 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                         </Pressable>
                     );
                 })}
+                {props.trailing}
             </View>
         </FloatingTabBarSurface>
     );
 }
+
+export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
+    testID: string;
+    label: string;
+    icon: IconName;
+    expanded?: boolean;
+    onPress: () => void;
+}>>((props, ref) => {
+    const { theme } = useUnistyles();
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    return (
+        <Pressable
+            ref={ref as React.Ref<never>}
+            testID={props.testID}
+            onPress={props.onPress}
+            hitSlop={8}
+            style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
+            accessibilityRole="button"
+            accessibilityLabel={props.label}
+            accessibilityState={{ expanded: props.expanded }}
+        >
+            <View style={styles.iconContainer}>
+                <Icon name={props.icon} size={metrics.iconSize} color={theme.colors.text.secondary} />
+            </View>
+            {metrics.showLabels ? (
+                <Text style={[styles.label, styles.labelInactive]}>{props.label}</Text>
+            ) : null}
+        </Pressable>
+    );
+});
+CockpitTabBarAction.displayName = 'CockpitTabBarAction';
 
 function renderTabBadge(badge: CockpitTabBadge | undefined, testID: string): React.ReactNode {
     if (!badge) {

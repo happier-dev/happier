@@ -20,6 +20,7 @@ import { useSlimProfileAgentEntries } from './useSlimProfileAgentEntries';
 export type SlimProfileEditFormProps = Readonly<{
     profile: LaunchProfileV2;
     machineId: string | null;
+    serverId?: string | null;
     onSave: (profile: LaunchProfileV2) => boolean;
     onCancel: () => void;
     onDirtyChange?: (isDirty: boolean) => void;
@@ -51,7 +52,10 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         preferredAgentTargetKey: props.profile.preferredAgentTargetKey,
         preferredModelSelection: props.profile.preferredModelSelection,
     }));
-    const { entries, projection: daemonProjection, serverId } = useSlimProfileAgentEntries(props.machineId);
+    const { entries, projection: daemonProjection, serverId } = useSlimProfileAgentEntries(
+        props.machineId,
+        props.serverId,
+    );
     const reservedEnvironmentVariableNames = React.useMemo(
         () => getAllAgentProviderOwnedEnvironmentKeys(
             daemonProjection.inputs?.pluginProjectionV2?.agentsById,
@@ -158,6 +162,7 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
             <EnvironmentVariablesList
                 environmentVariables={extraEnvironmentVariables}
                 machineId={props.machineId}
+                serverId={serverId}
                 profileDocs={null}
                 onChange={setExtraEnvironmentVariables}
                 sourceRequirementsByName={{}}

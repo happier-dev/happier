@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -9,6 +8,7 @@ import {
     type ConnectedServiceBindingsV1,
     type ConnectedServiceId,
     type ConnectedServicesDefaultAuthByAgentIdV1,
+    type AccountProfile,
 } from '@happier-dev/protocol';
 import type { AgentCore, ConnectedServicesAccountGroupOption } from '@happier-dev/agents';
 
@@ -29,6 +29,7 @@ import {
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     resolveConnectedServicesAuthLabel,
     type ConnectedServicesAuthWarningCode,
@@ -40,7 +41,7 @@ export type ConnectedServicesDefaultAuthRowProps = Readonly<{
     agentTitle: string;
     agentCore: Pick<AgentCore, 'connectedServices'>;
     accountGroupsEnabled: boolean;
-    accountProfileConnectedServicesV2: ReadonlyArray<{ serviceId: ConnectedServiceId; profiles?: ReadonlyArray<any>; groups?: unknown }>;
+    accountProfileConnectedServicesV2: ReadonlyArray<AccountProfile['connectedServicesV2'][number]>;
     settings: {
         connectedServicesProfileLabelByKey: Record<string, string | undefined>;
         connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
@@ -317,7 +318,7 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
             <Item
                 testID={`settings-connected-services-default-auth-${props.agentId}`}
                 title={props.agentTitle}
-                icon={<Ionicons name="key-outline" size={22} color={theme.colors.accent.blue} />}
+                icon={<Icon name="key" size={20} color={theme.colors.accent.blue} />}
                 // On a compact (mobile) layout the selected auth value is too long to sit in
                 // the row's right detail next to the title, so surface it in the subtitle and
                 // drop the detail. The wide layout keeps it on the right.

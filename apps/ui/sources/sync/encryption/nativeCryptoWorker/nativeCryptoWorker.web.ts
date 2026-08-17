@@ -13,7 +13,7 @@ function unavailableResult<T>(request: CryptoWorkerBatchRequest<unknown>): Nativ
     if (request.signal?.aborted === true) {
         return { status: 'cancelled', source: 'cancelled', items: [] };
     }
-    throw new NativeCryptoWorkerUnavailableError(NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing);
+    throw new NativeCryptoWorkerUnavailableError(NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.unsupportedPlatform);
 }
 
 export function createNativeCryptoWorker(): NativeCryptoWorker {
@@ -21,7 +21,7 @@ export function createNativeCryptoWorker(): NativeCryptoWorker {
         async probe() {
             return {
                 available: false,
-                failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing,
+                failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.unsupportedPlatform,
             };
         },
         async decryptDataKeyEnvelopeV1(

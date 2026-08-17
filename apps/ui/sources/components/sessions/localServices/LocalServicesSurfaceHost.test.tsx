@@ -41,6 +41,7 @@ const pluginProjectionState = vi.hoisted(() => ({
         serverId: 'server-a' as string | null,
         platform: 'web' as const,
     },
+    scopedInputs: [] as unknown[],
     stackProps: [] as Record<string, unknown>[],
 }));
 
@@ -53,7 +54,10 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
 }));
 
 vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
-    useScopedPluginUiProjection: () => pluginProjectionState.scoped,
+    useScopedPluginUiProjection: (params: unknown) => {
+        pluginProjectionState.scopedInputs.push(params);
+        return pluginProjectionState.scoped;
+    },
 }));
 
 vi.mock('@/components/plugins/surfaces', () => ({
@@ -117,10 +121,11 @@ describe('LocalServicesSurfaceHost', () => {
             serverId: 'server-a',
             platform: 'web',
         };
+        pluginProjectionState.scopedInputs = [];
         pluginProjectionState.stackProps = [];
     });
 
-    it('renders the detected services pane and the services.panel plugin stack under the testID prefix', async () => {
+    it('renders the detected services pane and the Services-bound plugin stack under the testID prefix', async () => {
         const screen = await renderScreen(
             <LocalServicesSurfaceHost
                 machineId="machine-a"
@@ -135,6 +140,10 @@ describe('LocalServicesSurfaceHost', () => {
 
         expect(screen.findByTestId('surface-host-services-row:preview:host-feed')).toBeTruthy();
         expect(screen.findByTestId('surface-host-services-plugin-stack')).toBeTruthy();
+        expect(pluginProjectionState.stackProps.at(-1)).toMatchObject({
+            container: 'servicesPanel',
+            targetKind: 'services',
+        });
     });
 
     it('threads the explicit sessionId into the pane so this-session grouping uses it (§5.6)', async () => {
@@ -192,15 +201,15 @@ describe('LocalServicesSurfaceHost', () => {
         expect(screen.findAllByTestId('surface-host-services-row:preview:host-feed-open')).toHaveLength(0);
     });
 
-    it('passes the scoped services machine projection into plugin services surfaces', async () => {
+    it('passes the host-selected Services origin and session to plugin services surfaces', async () => {
         pluginProjectionState.appShell = {
-            pluginUiProjection: { generation: 1, surfacePlacementsByPlacement: {} },
+            pluginUiProjection: { generation: 1, surfacePlacementsById: {} },
             machineId: 'machine-global',
             serverId: 'server-global',
             platform: 'web',
         };
         pluginProjectionState.scoped = {
-            pluginUiProjection: { generation: 2, surfacePlacementsByPlacement: {} },
+            pluginUiProjection: { generation: 2, surfacePlacementsById: {} },
             machineId: 'machine-a',
             serverId: 'server-a',
             platform: 'web',
@@ -219,9 +228,69 @@ describe('LocalServicesSurfaceHost', () => {
         );
 
         const stackProps = pluginProjectionState.stackProps.at(-1);
-        expect(stackProps?.pluginUiProjection).toEqual({ generation: 2, surfacePlacementsByPlacement: {} });
+        expect(stackProps?.pluginUiProjection).toEqual({ generation: 2, surfacePlacementsById: {} });
         expect(stackProps?.machineId).toBe('machine-a');
         expect(stackProps?.serverId).toBe('server-a');
+        expect(stackProps?.sessionId).toBe('session-a');
+    });
+
+    it('does not substitute a scoped projection machine for a missing Services host origin', async () => {
+        pluginProjectionState.scoped = {
+            pluginUiProjection: { generation: 2, surfacePlacementsById: {} },
+            machineId: 'machine-arbitrary-current',
+            serverId: 'server-arbitrary-current',
+            platform: 'web',
+        };
+
+        await renderScreen(
+            <LocalServicesSurfaceHost
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                managedState={buildManagedLocalServicesState({ rows: [] })}
+                launcherState={buildLauncherState()}
+                testID="surface-host-services"
+            />,
+        );
+
+        const stackProps = pluginProjectionState.stackProps.at(-1);
+        expect(stackProps?.machineId).toBeNull();
+        expect(stackProps?.serverId).toBeNull();
+        expect(stackProps?.sessionId).toBeUndefined();
+        expect(stackProps).not.toHaveProperty('runtimeActionExecute');
+    });
+
+    it('keeps an admitted unavailable Services projection unavailable instead of self-resolving ambient state', async () => {
+        pluginProjectionState.scoped = {
+            pluginUiProjection: { generation: 2, surfacePlacementsById: {} },
+            machineId: 'machine-ambient',
+            serverId: 'server-ambient',
+            platform: 'web',
+        };
+
+        await renderScreen(
+            <LocalServicesSurfaceHost
+                machineId="machine-pane-driver"
+                serverId="server-pane-driver"
+                sessionId="session-a"
+                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+                managedState={buildManagedLocalServicesState({ rows: [] })}
+                launcherState={buildLauncherState()}
+                pluginUiProjection={null}
+                projectionInteractionEnabled={false}
+                platform="web"
+                testID="surface-host-services"
+            />,
+        );
+
+        const stackProps = pluginProjectionState.stackProps.at(-1);
+        expect(stackProps?.pluginUiProjection).toBeNull();
+        expect(stackProps?.projectionInteractionEnabled).toBe(false);
+        expect(stackProps?.machineId).toBe('machine-pane-driver');
+        expect(stackProps?.serverId).toBe('server-pane-driver');
+        expect(pluginProjectionState.scopedInputs).toContainEqual({
+            machineId: null,
+            serverId: null,
+            enabled: false,
+        });
     });
 
     it('is the single fix-point: the three Services views delegate to it instead of re-declaring the wiring', () => {

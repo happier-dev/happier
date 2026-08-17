@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ChangeEntrySchema, ChangesResponseSchema } from '@happier-dev/protocol/changes';
 import {
+    MessageActionReferenceV1Schema,
     SessionMessageAttentionImpactSchema,
     SessionMessageDeliveryResolutionV1Schema,
     SessionMessageRoleSchema,
@@ -27,6 +28,7 @@ export const ApiMessageSchema = z.object({
     sourceUpdatedAt: z.number().int().min(0).optional(),
     transcriptObservationProvenance: SessionTranscriptObservationProvenanceV1Schema.optional(),
     deliveryResolution: SessionMessageDeliveryResolutionV1Schema.optional(),
+    messageActionReference: MessageActionReferenceV1Schema.optional(),
 });
 
 export type ApiMessage = z.infer<typeof ApiMessageSchema>;

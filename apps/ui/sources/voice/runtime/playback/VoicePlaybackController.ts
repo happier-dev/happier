@@ -1,14 +1,12 @@
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
+import type { VoiceRealtimeConnection } from '@happier-dev/plugin-sdk/voice/client';
 
-import type {
-    VoicePlaybackInterruptionMode,
-    VoicePlaybackInterruptionResolution,
-} from '@happier-dev/bundled-voice-runtime-contract';
-
-export type {
-    VoicePlaybackInterruptionMode,
-    VoicePlaybackInterruptionResolution,
-} from '@happier-dev/bundled-voice-runtime-contract';
+export type VoicePlaybackInterruptionMode = ReturnType<
+    VoiceRealtimeConnection['beginOutputInterruptionCandidate']
+>;
+export type VoicePlaybackInterruptionResolution = Parameters<
+    VoiceRealtimeConnection['resolveOutputInterruptionCandidate']
+>[0];
 
 export type VoicePlaybackTarget = Readonly<{
     stop: () => void;

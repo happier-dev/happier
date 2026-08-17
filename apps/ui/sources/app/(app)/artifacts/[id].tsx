@@ -6,13 +6,13 @@ import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
-import { Ionicons } from '@expo/vector-icons';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { deleteArtifact } from '@/sync/api/artifacts/apiArtifacts';
 import { storage } from '@/sync/domains/state/storage';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -79,13 +79,15 @@ export default function ArtifactDetailScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();
     const router = useRouter();
     const artifact = useArtifact(id);
-    const [isLoading, setIsLoading] = React.useState(!artifact?.body);
+    const [isLoading, setIsLoading] = React.useState(
+        artifact?.isDecrypted !== false && !artifact?.body,
+    );
     const [isDeleting, setIsDeleting] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
 
     // Load full artifact with body if not already loaded
     React.useEffect(() => {
-        if (!artifact || artifact.body !== undefined) return;
+        if (!artifact || artifact.isDecrypted === false || artifact.body !== undefined) return;
         
         let cancelled = false;
         
@@ -200,16 +202,16 @@ export default function ArtifactDetailScreen() {
                     style={{ padding: 8, marginRight: 8 }}
                     disabled={isDeleting}
                 >
-                    <Ionicons name="create-outline" size={22} color={styles.title.color} />
+                    <Icon name="pencil-simple" size={20} color={styles.title.color} />
                 </Pressable>
                 <Pressable
                     onPress={handleDelete}
                     style={{ padding: 8 }}
                     disabled={isDeleting}
                 >
-                    <Ionicons
-                        name="trash-outline"
-                        size={22}
+                    <Icon
+                        name="trash"
+                        size={20}
                         color={isDeleting ? styles.meta.color : styles.errorIcon.color}
                     />
                 </Pressable>
@@ -245,14 +247,34 @@ export default function ArtifactDetailScreen() {
                     options={errorScreenOptions}
                 />
                 <View style={styles.errorContainer}>
-                        <Ionicons 
-                            name="alert-circle-outline" 
-                            size={64} 
+                        <Icon
+                            name="warning-circle"
+                            size={64}
                             style={styles.errorIcon}
                         />
                         <Text style={styles.errorText}>
                             {error || t('artifacts.error')}
                         </Text>
+                </View>
+            </View>
+        );
+    }
+
+    if (artifact.isDecrypted === false) {
+        const lockedMessage = artifact.availability.reason === 'encryption_material_unavailable'
+            ? t('settingsAccount.secretKeyMissing')
+            : t('artifacts.error');
+
+        return (
+            <View style={styles.container}>
+                <Stack.Screen options={errorScreenOptions} />
+                <View style={styles.errorContainer}>
+                    <Icon
+                        name="lock"
+                        size={64}
+                        style={styles.errorIcon}
+                    />
+                    <Text style={styles.errorText}>{lockedMessage}</Text>
                 </View>
             </View>
         );

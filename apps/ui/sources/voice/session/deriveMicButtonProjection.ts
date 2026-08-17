@@ -1,4 +1,7 @@
-import { VoiceProviderIdSchema, type VoiceProviderId } from '@happier-dev/protocol';
+import {
+  VoiceProviderIdSchema,
+  type VoiceProviderId,
+} from '@/sync/domains/settings/voiceSettings';
 
 import type { VoiceSessionSnapshot, VoiceSessionStatus } from './types';
 

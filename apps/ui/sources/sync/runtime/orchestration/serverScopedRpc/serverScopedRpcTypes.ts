@@ -31,7 +31,7 @@ export type ScopedServerRpcContext = Readonly<{
     targetServerId: string;
     targetServerUrl: string;
     token: string;
-    encryption: ScopedRpcEncryptionContext;
+    encryption: ScopedRpcEncryptionContext | null;
 }>;
 
 export type ResolvedServerRpcContext = ActiveServerRpcContext | ScopedServerRpcContext;
@@ -66,6 +66,7 @@ export type ScopedSocketConnectParams = Readonly<{
 }>;
 
 export type ScopedSocketClient = Readonly<{
+    emitWithAck?: (event: string, payload: any) => Promise<unknown>;
     timeout: (ms: number) => { emitWithAck: (event: string, payload: any) => Promise<unknown> };
     emit: (event: string, payload: any) => void;
     on: (event: string, listener: (...args: any[]) => void) => void;

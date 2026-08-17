@@ -9,6 +9,18 @@ export type ProviderModelLoadUiResult = DaemonProviderModelLoadResponseV1
     | Readonly<{ status: 'loaded'; source: 'reconciled' }>
     | Readonly<{ status: 'busy' }>;
 
+type ProviderModelExecutionTarget = Readonly<{
+    machineId: string;
+    serverId: string | null;
+}>;
+
+function executionTargetsEqual(
+    left: ProviderModelExecutionTarget,
+    right: ProviderModelExecutionTarget,
+): boolean {
+    return left.machineId === right.machineId && left.serverId === right.serverId;
+}
+
 function waitForProviderModelLoadOrLocalCancellation(
     request: Promise<DaemonProviderModelLoadResponseV1>,
     signal: AbortSignal,
@@ -30,6 +42,8 @@ export function useProviderModelLoadAction(input: Readonly<{
     machineId: string | null;
     serverId: string | null;
     refresh: (connectionId: string, modelId: string) => Promise<boolean>;
+    /** Re-checks an owner-scoped target immediately before dispatching a model load. */
+    resolveExecutionTarget?: () => ProviderModelExecutionTarget | null;
 }>) {
     const [loadingModelKey, setLoadingModelKey] = React.useState<string | null>(null);
     const [cancelledProviderMayContinue, setCancelledProviderMayContinue] = React.useState(false);
@@ -37,6 +51,7 @@ export function useProviderModelLoadAction(input: Readonly<{
     const active = React.useRef<Readonly<{
         connectionId: string;
         modelId: string;
+        executionTarget: ProviderModelExecutionTarget;
         controller: AbortController;
     }> | null>(null);
     const mounted = React.useRef(true);
@@ -56,10 +71,31 @@ export function useProviderModelLoadAction(input: Readonly<{
                 error: createProviderErrorV1('provider_endpoint_unavailable', { connectionId }),
             };
         }
+        const initialExecutionTarget: ProviderModelExecutionTarget = {
+            machineId: input.machineId,
+            serverId: input.serverId,
+        };
+        const executionTarget = input.resolveExecutionTarget
+            ? input.resolveExecutionTarget()
+            : initialExecutionTarget;
+        if (!executionTarget || !executionTargetsEqual(initialExecutionTarget, executionTarget)) {
+            return {
+                status: 'error',
+                error: createProviderErrorV1('provider_endpoint_unavailable', {
+                    connectionId,
+                    machineId: initialExecutionTarget.machineId,
+                }),
+            };
+        }
         if (inFlight.current) return { status: 'busy' };
         inFlight.current = true;
         if (mounted.current) setCancelledProviderMayContinue(false);
-        const operation = { connectionId, modelId, controller: new AbortController() };
+        const operation = {
+            connectionId,
+            modelId,
+            executionTarget,
+            controller: new AbortController(),
+        };
         active.current = operation;
         if (mounted.current) setLoadingModelKey(providerModelRowKey(connectionId, modelId));
         try {
@@ -67,8 +103,8 @@ export function useProviderModelLoadAction(input: Readonly<{
             try {
                 result = await waitForProviderModelLoadOrLocalCancellation(
                     loadProviderModel({
-                        machineId: input.machineId,
-                        serverId: input.serverId,
+                        machineId: executionTarget.machineId,
+                        serverId: executionTarget.serverId,
                         connectionId,
                         modelId,
                         signal: operation.controller.signal,
@@ -82,7 +118,7 @@ export function useProviderModelLoadAction(input: Readonly<{
                 };
                 const error = providerErrorFromRpcFailure(caught, {
                     connectionId,
-                    machineId: input.machineId,
+                    machineId: executionTarget.machineId,
                 });
                 if (error.code === 'provider_rpc_mutation_outcome_unknown') {
                     try {
@@ -113,14 +149,14 @@ export function useProviderModelLoadAction(input: Readonly<{
             if (active.current === operation) active.current = null;
             if (mounted.current) setLoadingModelKey(null);
         }
-    }, [input.machineId, input.refresh, input.serverId]);
+    }, [input.machineId, input.refresh, input.resolveExecutionTarget, input.serverId]);
 
     const cancel = React.useCallback(async (): Promise<ProviderModelLoadUiResult | null> => {
         const operation = active.current;
-        if (!operation || !input.machineId) return null;
+        if (!operation) return null;
         const pendingCancellation = cancelProviderModelLoad({
-            machineId: input.machineId,
-            serverId: input.serverId,
+            machineId: operation.executionTarget.machineId,
+            serverId: operation.executionTarget.serverId,
             connectionId: operation.connectionId,
             modelId: operation.modelId,
         });
@@ -134,7 +170,7 @@ export function useProviderModelLoadAction(input: Readonly<{
         } catch {
             return { status: 'cancelled', providerMayContinue: true };
         }
-    }, [input.machineId, input.serverId]);
+    }, []);
 
     return { loadingModelKey, cancelledProviderMayContinue, load, cancel };
 }

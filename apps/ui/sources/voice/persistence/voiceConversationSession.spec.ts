@@ -19,6 +19,10 @@ import { installVoiceStorageModuleMocks } from './installVoiceStorageModuleMocks
 
 type MachineContributionRegistryProjectionDescribeFn =
   typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
+type MachinePluginSettingsGetFn =
+  typeof import('@/sync/ops/machineContributionRegistryProjection').machinePluginSettingsGet;
+type MachinePluginSettingsSetFn =
+  typeof import('@/sync/ops/machineContributionRegistryProjection').machinePluginSettingsSet;
 type MachineSpawnTrustedHiddenSystemSessionFn =
   typeof import('@/sync/ops/machines').machineSpawnTrustedHiddenSystemSession;
 type CompleteMachineSpawnAttemptCustodyFn =
@@ -28,8 +32,16 @@ type CompletePendingMachineSpawnAttemptCustodyForSessionFn =
 
 const {
   machineContributionRegistryProjectionDescribe,
+  machinePluginSettingsGet,
+  machinePluginSettingsSet,
 } = vi.hoisted(() => ({
   machineContributionRegistryProjectionDescribe: vi.fn<MachineContributionRegistryProjectionDescribeFn>(
+    async () => ({ supported: false, reason: 'not-supported' }),
+  ),
+  machinePluginSettingsGet: vi.fn<MachinePluginSettingsGetFn>(
+    async () => ({ supported: false, reason: 'not-supported' }),
+  ),
+  machinePluginSettingsSet: vi.fn<MachinePluginSettingsSetFn>(
     async () => ({ supported: false, reason: 'not-supported' }),
   ),
 }));
@@ -177,21 +189,26 @@ function rejectNextMetadataCommitForSession(sessionId: string, error: Error): vo
 
 function installCustodyBackedSpawn(params: Readonly<{
   spawnMock: ReturnType<typeof vi.fn>;
-  sessionId: string;
+  sessionId: string | ((rpcInvocation: number) => string);
   targetFingerprint: string;
-  spawnNonce: string;
-  materialize(options: any): void;
+  materialize(options: any, sessionId: string): void;
 }>) {
   const scope = { serverId: 'server-1', accountId: 'account-1' };
   let initialized = false;
+  let rpcInvocation = 0;
   const underlyingMachineRpc = vi.fn(async (options: any) => {
-    params.materialize(options);
-    return { type: 'success' as const, sessionId: params.sessionId };
+    rpcInvocation += 1;
+    const sessionId = typeof params.sessionId === 'function'
+      ? params.sessionId(rpcInvocation)
+      : params.sessionId;
+    params.materialize(options, sessionId);
+    return { type: 'success' as const, sessionId };
   });
 
   params.spawnMock.mockImplementation(async (options: any) => {
     const userAttemptId = options.userAttemptId as string;
-    if (!initialized) {
+    const isFirstInvocation = !initialized;
+    if (isFirstInvocation) {
       initialized = true;
       await clearSpawnAttemptCustody({
         scope,
@@ -205,7 +222,7 @@ function installCustodyBackedSpawn(params: Readonly<{
       machineId: options.machineId,
       targetFingerprint: params.targetFingerprint,
       userAttemptId,
-      seedNonce: params.spawnNonce,
+      seedNonce: options.spawnNonce,
     });
     if (acquired.status !== 'acquired') {
       throw new Error(`unexpected test custody state: ${acquired.status}`);
@@ -221,14 +238,14 @@ function installCustodyBackedSpawn(params: Readonly<{
         nonce: record.nonce,
       });
       if (!submitted) throw new Error('test custody submission failed');
-      await underlyingMachineRpc(options);
+      const result = await underlyingMachineRpc({ ...options, spawnNonce: record.nonce });
       const created = await markSpawnAttemptCreated({
         scope,
         machineId: options.machineId,
         targetFingerprint: params.targetFingerprint,
         userAttemptId,
         nonce: record.nonce,
-        createdSessionId: params.sessionId,
+        createdSessionId: result.sessionId,
       });
       if (!created) throw new Error('test custody creation failed');
       record = created;
@@ -291,8 +308,17 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+  getMachineContributionRegistryProjectionRevision: () => 0,
+  subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
   machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
     machineContributionRegistryProjectionDescribe(...args),
+  machinePluginSettingsGet: (...args: Parameters<MachinePluginSettingsGetFn>) =>
+    machinePluginSettingsGet(...args),
+  machinePluginSettingsSet: (...args: Parameters<MachinePluginSettingsSetFn>) =>
+    machinePluginSettingsSet(...args),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
@@ -365,6 +391,10 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     sessionRpcBoundary.sessionRpcWithServerScope.mockReset();
     machineContributionRegistryProjectionDescribe.mockReset();
     machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+    machinePluginSettingsGet.mockReset();
+    machinePluginSettingsGet.mockResolvedValue({ supported: false, reason: 'not-supported' });
+    machinePluginSettingsSet.mockReset();
+    machinePluginSettingsSet.mockResolvedValue({ supported: false, reason: 'not-supported' });
 
     state = {
       settings: {
@@ -481,7 +511,9 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     const hostLease = createBundledConversationRuntimeHostLease();
 
     try {
-      await expect(hostLease.host.resolveAgentRealtimeVoiceConversationBinding({
+      const resolveBinding = hostLease.host.resolveAgentRealtimeVoiceConversationBinding;
+      if (!resolveBinding) throw new Error('Agent realtime binding resolver is unavailable');
+      await expect(resolveBinding({
         provider: {
           pluginId: 'acme.voice.codex',
           localId: 'realtime-codex',
@@ -553,7 +585,9 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     const hostLease = createBundledConversationRuntimeHostLease();
 
     try {
-      await expect(hostLease.host.resolveAgentRealtimeVoiceConversationBinding({
+      const resolveBinding = hostLease.host.resolveAgentRealtimeVoiceConversationBinding;
+      if (!resolveBinding) throw new Error('Agent realtime binding resolver is unavailable');
+      await expect(resolveBinding({
         provider: {
           pluginId: 'acme.voice.codex',
           localId: 'realtime-codex',
@@ -655,6 +689,41 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     expect(machineSpawnNewSession).toHaveBeenCalledTimes(2);
   });
 
+  it('preserves a sanitized retryable connected-service diagnostic through voice-home binding', async () => {
+    const errorDetail = {
+      kind: 'connected_service_ux_diagnostic' as const,
+      uxDiagnostic: {
+        code: 'connected_service_credential_refresh_unavailable' as const,
+        failurePhase: 'materialization' as const,
+        source: 'spawn_resume' as const,
+        serviceId: 'openai-codex',
+        agentId: 'codex',
+        profileId: 'voice-profile',
+        retryable: true,
+        suggestedActions: ['retry', 'open_connected_accounts'] as const,
+        diagnostics: {
+          reason: 'spawn_preflight',
+          status: 'refresh_failed',
+          category: 'network_error',
+        },
+      },
+    };
+    machineSpawnNewSession.mockResolvedValueOnce({
+      type: 'error',
+      errorCode: 'SPAWN_VALIDATION_FAILED',
+      errorMessage: 'connected_service_credential_refresh_unavailable',
+      errorDetail,
+    });
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
+      code: 'service_temporarily_unavailable',
+      message: 'connected_service_credential_refresh_unavailable',
+      errorDetail,
+    });
+  });
+
   it('uses the canonical absolute directory identity for voice-home reuse', async () => {
     state.machines['machine-1'].metadata = {
       homeDir: '/Users/test',
@@ -712,7 +781,6 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       spawnMock: machineSpawnTrustedHiddenSystemSession,
       sessionId: 'voice-home-session',
       targetFingerprint: 'voice-home-target',
-      spawnNonce: 'voice-home-nonce',
       materialize: (params) => {
         state.sessions['voice-home-session'] = {
           id: 'voice-home-session',
@@ -765,7 +833,6 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       spawnMock: machineSpawnTrustedHiddenSystemSession,
       sessionId: 'voice-home-session',
       targetFingerprint: 'voice-home-target',
-      spawnNonce: 'voice-home-nonce',
       materialize: (params) => {
         state.sessions['voice-home-session'] = {
           id: 'voice-home-session',
@@ -844,7 +911,6 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       spawnMock: machineSpawnTrustedHiddenSystemSession,
       sessionId: 'voice-home-session',
       targetFingerprint: 'voice-home-target',
-      spawnNonce: 'voice-home-nonce',
       materialize: (params) => {
         state.sessions['voice-home-session'] = {
           id: 'voice-home-session',
@@ -898,12 +964,108 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       machineSpawnTrustedHiddenSystemSession.mock.calls[0]?.[0].userAttemptId,
     );
     expect(underlyingMachineRpc).toHaveBeenCalledTimes(1);
+    expect(requirements.isReusableSession).toHaveBeenCalledWith({
+      sessionId: 'voice-home-session',
+      metadata: expect.anything(),
+    });
     expect(completeMachineSpawnAttemptCustody).toHaveBeenCalledTimes(1);
     expect(state.sessions['voice-home-session'].metadata).toMatchObject({
       systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
       voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
       voiceAgentStartupInstructionsV1: globalVoiceStartupInstructionsMarker,
     });
+  });
+
+  it('clears a replayed global Voice spawn that became inactive and creates a fresh viable carrier', async () => {
+    enableCodexStartupInstructionsV1();
+    const metadataFailure = new Error('provider startup instructions must remain private');
+    rejectNextMetadataCommitForSession('stale-voice-home-session', metadataFailure);
+    const underlyingMachineRpc = installCustodyBackedSpawn({
+      spawnMock: machineSpawnTrustedHiddenSystemSession,
+      sessionId: (rpcInvocation) => (
+        rpcInvocation === 1
+          ? 'stale-voice-home-session'
+          : 'fresh-voice-home-session'
+      ),
+      targetFingerprint: 'voice-home-target',
+      materialize: (params, sessionId) => {
+        state.sessions[sessionId] = {
+          id: sessionId,
+          active: true,
+          updatedAt: 1,
+          metadata: {
+            machineId: params.machineId,
+            path: params.directory,
+          },
+        };
+      },
+    });
+    const requirements = {
+      backendTarget: { kind: 'backend', backendId: 'codex' } as const,
+      connectedServices: {
+        v: 1 as const,
+        bindingsByServiceId: {
+          openai: { source: 'connected' as const, selection: 'profile' as const, profileId: 'realtime-work' },
+        },
+      },
+      permissionIntent: 'read-only' as const,
+      coldResumeStartupInstructionsEffective: false,
+      isReusableSession: vi.fn(async ({ sessionId }: { sessionId: string }) => (
+        state.sessions[sessionId]?.active === true
+      )),
+    };
+    const completePersistedCustody = completeMachineSpawnAttemptCustody.getMockImplementation();
+    if (!completePersistedCustody) throw new Error('custody completion test owner is unavailable');
+    const custodyStatesAfterCompletion: unknown[] = [];
+    completeMachineSpawnAttemptCustody.mockImplementation(async (custody) => {
+      const completed = await completePersistedCustody(custody);
+      custodyStatesAfterCompletion.push(
+        readSpawnAttemptCustodyState({ serverId: 'server-1', accountId: 'account-1' }),
+      );
+      return completed;
+    });
+
+    const {
+      ensureVoiceConversationSessionForVoiceHome,
+      VoiceConversationSessionMetadataCommitError,
+    } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome(requirements)).rejects.toBeInstanceOf(
+      VoiceConversationSessionMetadataCommitError,
+    );
+    state.sessions['stale-voice-home-session'].active = false;
+
+    await expect(ensureVoiceConversationSessionForVoiceHome(requirements))
+      .resolves.toBe('fresh-voice-home-session');
+
+    expect(machineSpawnTrustedHiddenSystemSession).toHaveBeenCalledTimes(3);
+    expect(machineSpawnTrustedHiddenSystemSession.mock.calls.map(([options]) => options.userAttemptId))
+      .toEqual([
+        machineSpawnTrustedHiddenSystemSession.mock.calls[0]?.[0].userAttemptId,
+        machineSpawnTrustedHiddenSystemSession.mock.calls[0]?.[0].userAttemptId,
+        machineSpawnTrustedHiddenSystemSession.mock.calls[0]?.[0].userAttemptId,
+      ]);
+    expect(underlyingMachineRpc).toHaveBeenCalledTimes(2);
+    expect(underlyingMachineRpc.mock.calls[1]?.[0].spawnNonce)
+      .not.toBe(underlyingMachineRpc.mock.calls[0]?.[0].spawnNonce);
+    expect(requirements.isReusableSession).not.toHaveBeenCalled();
+    expect(completeMachineSpawnAttemptCustody).toHaveBeenCalledTimes(2);
+    expect(custodyStatesAfterCompletion[0]).toEqual({ status: 'missing' });
+    expect(state.sessions['stale-voice-home-session']).toMatchObject({
+      active: false,
+      metadata: {
+        systemSessionV1: { v: 1, key: 'voice_conversation_retired', hidden: true },
+      },
+    });
+    expect(state.sessions['fresh-voice-home-session']).toMatchObject({
+      active: true,
+      metadata: {
+        systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+        voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
+      },
+    });
+    expect(readSpawnAttemptCustodyState({ serverId: 'server-1', accountId: 'account-1' }))
+      .toEqual({ status: 'missing' });
   });
 
   it('preserves the typed metadata failure with only a sanitized compensation identity when retirement also fails', async () => {
@@ -943,6 +1105,71 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     expect(JSON.stringify(failedEnsure)).not.toContain(metadataFailure.message);
     expect(JSON.stringify(failedEnsure)).not.toContain(retirementFailure.message);
     expect(completeMachineSpawnAttemptCustody).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes a session refresh failure from a metadata write rejection behind the typed commit error', async () => {
+    const refreshFailure = new Error('private session refresh transport detail');
+    refreshSessions.mockRejectedValueOnce(refreshFailure);
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    const refreshRejection = await ensureVoiceConversationSessionForVoiceHome().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    const metadataFailure = new Error('private metadata write response');
+    rejectNextMetadataCommitForSession('voice-home-session', metadataFailure);
+    const writeRejection = await ensureVoiceConversationSessionForVoiceHome().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(refreshRejection).toMatchObject({
+      code: 'VOICE_CONVERSATION_METADATA_COMMIT_FAILED',
+      sessionId: 'voice-home-session',
+      reason: 'session_refresh_failed',
+    });
+    expect(writeRejection).toMatchObject({
+      code: 'VOICE_CONVERSATION_METADATA_COMMIT_FAILED',
+      sessionId: 'voice-home-session',
+      reason: 'metadata_write_rejected',
+    });
+    expect((refreshRejection as { reason?: unknown }).reason)
+      .not.toBe((writeRejection as { reason?: unknown }).reason);
+    const serializedRejections = `${JSON.stringify(refreshRejection)}${JSON.stringify(writeRejection)}`;
+    expect(serializedRejections).not.toContain(refreshFailure.message);
+    expect(serializedRejections).not.toContain(metadataFailure.message);
+  });
+
+  it('reports a stalled session-metadata wait as its own typed commit reason', async () => {
+    machineSpawnNewSession.mockImplementation(async () => {
+      state.sessions['voice-home-session'] = {
+        id: 'voice-home-session',
+        active: true,
+        updatedAt: 1,
+        metadata: null,
+      };
+      return { type: 'success', sessionId: 'voice-home-session' };
+    });
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    vi.useFakeTimers();
+    try {
+      const pending = ensureVoiceConversationSessionForVoiceHome().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(pending).resolves.toMatchObject({
+        code: 'VOICE_CONVERSATION_METADATA_COMMIT_FAILED',
+        sessionId: 'voice-home-session',
+        reason: 'session_metadata_wait_timed_out',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('lets a raw online machine record reach the authoritative spawn operation without UI-only readiness projection', async () => {
@@ -1908,7 +2135,6 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       spawnMock: machineSpawnNewSession,
       sessionId: 'voice-root-session',
       targetFingerprint: 'voice-root-target',
-      spawnNonce: 'voice-root-nonce',
       materialize: (spawnParams) => {
         state.sessions['voice-root-session'] = {
           id: 'voice-root-session',
@@ -1982,7 +2208,6 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       spawnMock: machineSpawnNewSession,
       sessionId: 'voice-root-session',
       targetFingerprint: 'voice-root-target',
-      spawnNonce: 'voice-root-nonce',
       materialize: (spawnParams) => {
         state.sessions['voice-root-session'] = {
           id: 'voice-root-session',
@@ -2052,7 +2277,6 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       spawnMock: machineSpawnNewSession,
       sessionId: 'voice-root-session',
       targetFingerprint: 'voice-root-target',
-      spawnNonce: 'voice-root-nonce',
       materialize: (spawnParams) => {
         state.sessions['voice-root-session'] = {
           id: 'voice-root-session',

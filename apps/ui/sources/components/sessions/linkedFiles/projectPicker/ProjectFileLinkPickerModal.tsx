@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { LinkFilePickerPopoverContent } from './LinkFilePickerPopoverContent';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type ProjectFileLinkPickerModalProps = Readonly<{
     sessionId: string;
@@ -64,7 +64,7 @@ export const ProjectFileLinkPickerModal = React.memo((props: ProjectFileLinkPick
                     {t('files.projectLinkPicker.title')}
                 </Text>
                 <Pressable onPress={props.onClose} style={styles.closeButton} accessibilityRole="button">
-                    <Octicons name="x" size={18} color={theme.colors.text.secondary} />
+                    <Icon name="x" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
             <View style={styles.body}>

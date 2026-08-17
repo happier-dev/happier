@@ -1,18 +1,17 @@
-import type { VoiceAdapterController } from '@/voice/session/types';
 import type {
   BundledVoiceRuntimeContribution,
-} from '@happier-dev/bundled-voice-runtime-contract';
-import type {
-  PluginVoiceAccountOperationService,
-} from '@happier-dev/plugin-sdk/runtime';
+  VoiceAdapterController,
+} from '@/voice/session/types';
+import {
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+} from '@happier-dev/protocol';
 
-import {
-  createAccountVoiceOperationService,
-} from '@/voice/credentials/accountVoiceOperationService';
-import {
-  createDaemonActionVoiceOperationService,
-} from '@/voice/credentials/daemonActionVoiceOperationService';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
+import {
+  readSafeVoiceRuntimeFailureCode,
+  recordVoiceRuntimeFailure,
+} from '@/voice/runtime/voiceRuntimeFailureCode';
 
 import {
   createBundledHostedConversationService,
@@ -29,16 +28,8 @@ import type { BundledConversationRuntimeEntry } from './bundledConversationRunti
 
 export type { BundledConversationRuntimeEntry } from './bundledConversationRuntimeEntries';
 
-export class BundledConversationRuntimeCompositionError extends Error {
-  readonly cleanup: Promise<void>;
-  override readonly cause: unknown;
-
-  constructor(cause: unknown, cleanup: Promise<void>) {
-    super('bundled_conversation_runtime_composition_failed');
-    this.name = 'BundledConversationRuntimeCompositionError';
-    this.cause = cause;
-    this.cleanup = cleanup;
-  }
+function excluded(code: string): Error {
+  return Object.assign(new Error(code), { code });
 }
 
 export function isBundledHostedConversationEntryAuthorized(
@@ -46,79 +37,6 @@ export function isBundledHostedConversationEntryAuthorized(
   authorizedEntries: readonly BundledConversationRuntimeEntry[],
 ): boolean {
   return authorizedEntries.includes(entry);
-}
-
-export type BundledVoiceAccountOperationRoute =
-  | Readonly<{ kind: 'savedSecret' }>
-  | Readonly<{ kind: 'daemonAction'; actionLocalId: string }>;
-
-function routeKey(route: BundledVoiceAccountOperationRoute): string {
-  return route.kind === 'savedSecret'
-    ? 'savedSecret'
-    : `daemonAction:${route.actionLocalId}`;
-}
-
-function accountOperationCancelled(): Error {
-  return Object.assign(new Error('voice_account_operation_cancelled'), {
-    code: 'voice_account_operation_cancelled',
-  });
-}
-
-async function runBundledVoiceAccountOperationWithRouteFence<T>(
-  input: Readonly<{
-    isCurrent(): boolean;
-    readRoute(): BundledVoiceAccountOperationRoute;
-    run(
-      route: BundledVoiceAccountOperationRoute,
-    ): Promise<T>;
-  }>,
-): Promise<T> {
-  const route = input.readRoute();
-  if (!input.isCurrent()) throw accountOperationCancelled();
-  const expectedRouteKey = routeKey(route);
-  let response: T;
-  try {
-    response = await input.run(route);
-  } catch (error) {
-    if (!input.isCurrent()) throw accountOperationCancelled();
-    let currentRoute: BundledVoiceAccountOperationRoute;
-    try {
-      currentRoute = input.readRoute();
-    } catch {
-      throw accountOperationCancelled();
-    }
-    if (routeKey(currentRoute) !== expectedRouteKey) {
-      throw accountOperationCancelled();
-    }
-    throw error;
-  }
-  if (!input.isCurrent()) throw accountOperationCancelled();
-  let currentRoute: BundledVoiceAccountOperationRoute;
-  try {
-    currentRoute = input.readRoute();
-  } catch {
-    throw accountOperationCancelled();
-  }
-  if (routeKey(currentRoute) !== expectedRouteKey) {
-    throw accountOperationCancelled();
-  }
-  return response;
-}
-
-export async function requestBundledVoiceAccountOperationWithRouteFence(
-  input: Readonly<{
-    isCurrent(): boolean;
-    readRoute(): BundledVoiceAccountOperationRoute;
-    request(
-      route: BundledVoiceAccountOperationRoute,
-    ): ReturnType<PluginVoiceAccountOperationService['request']>;
-  }>,
-): ReturnType<PluginVoiceAccountOperationService['request']> {
-  return await runBundledVoiceAccountOperationWithRouteFence({
-    isCurrent: input.isCurrent,
-    readRoute: input.readRoute,
-    run: input.request,
-  });
 }
 
 function isAdapter(value: VoiceAdapterController | null, providerId: string): value is VoiceAdapterController {
@@ -129,7 +47,16 @@ function isAdapter(value: VoiceAdapterController | null, providerId: string): va
     && typeof value.stop === 'function';
 }
 
-/** Compose generated first-party modules through the installed/public activation owner. */
+/**
+ * Compose generated first-party modules through the installed/public activation
+ * owner.
+ *
+ * Composition is per-entry isolated: a leaf that throws while being composed is
+ * excluded and named, and every healthy leaf still registers. A shared abort
+ * would let one plugin leaf's import or activation error withdraw Voice from
+ * every other provider and take down the shell that mounts this composition,
+ * which the plugin platform's activation isolation contract forbids.
+ */
 export function createBundledConversationRuntimes(input: Readonly<{
   bundledEntries: readonly BundledConversationRuntimeEntry[];
   hostedConversationEntries?: readonly BundledConversationRuntimeEntry[];
@@ -137,123 +64,37 @@ export function createBundledConversationRuntimes(input: Readonly<{
 }>): readonly BundledVoiceRuntimeContribution[] {
   const runtimes: BundledVoiceRuntimeContribution[] = [];
   const seen = new Set<string>();
-  try {
-    for (const entry of input.bundledEntries) {
-      const { uiEntry } = entry;
-      if (seen.has(uiEntry.providerId)) {
-        throw new Error(`duplicate_bundled_conversation_runtime:${uiEntry.providerId}`);
+  for (const entry of input.bundledEntries) {
+    let scope: ReturnType<typeof createExternalVoiceProviderActivationScope> | null = null;
+    try {
+      const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+        pluginId: entry.pluginId,
+        localId: entry.declaration.id,
+      }));
+      // Identity and duplicate denial precede activation, so an excluded entry
+      // never registers, never observes a host binding, and never displaces the
+      // leaf that already owns the identity.
+      if (providerId !== entry.providerId) {
+        throw excluded('voice_bundled_runtime_identity_mismatch');
+      }
+      if (seen.has(providerId)) {
+        throw excluded('voice_bundled_runtime_duplicate_identity');
       }
       if (getCurrentBundledConversationRuntimeHost() !== input.host) {
-        throw new Error('voice_runtime_host_unavailable');
+        throw excluded('voice_runtime_host_unavailable');
       }
       const recipientContract = createBundledVoiceRecipientContract({
-        pluginId: uiEntry.pluginId,
-        declaration: uiEntry.declaration,
+        pluginId: entry.pluginId,
+        declaration: entry.declaration,
       });
-      const createInvocationAccountOperations = recipientContract
-        ? (
-            signal: AbortSignal,
-            conversationSessionId: string | null,
-            isCurrent: () => boolean,
-          ) => {
-            const savedSecret = createAccountVoiceOperationService({
-              providerId: uiEntry.providerId,
-              recipientContract,
-              signal,
-              isCurrent,
-            });
-            const readRoute = (): BundledVoiceAccountOperationRoute => {
-              const projection = input.host.projectVoiceSettings(
-                input.host.getSettings(),
-                uiEntry.providerId,
-              );
-              return uiEntry.internal.resolveAccountOperationTarget?.(
-                projection?.providerConfig,
-              ) ?? Object.freeze({ kind: 'savedSecret' as const });
-            };
-            const createDaemonAction = (
-              route: Extract<
-                BundledVoiceAccountOperationRoute,
-                Readonly<{ kind: 'daemonAction' }>
-              >,
-            ) => createDaemonActionVoiceOperationService({
-              pluginId: uiEntry.pluginId,
-              actionLocalId: route.actionLocalId,
-              conversationSessionId,
-              signal,
-              isCurrent,
-            });
-            return Object.freeze({
-              async inspectAvailability() {
-                await runBundledVoiceAccountOperationWithRouteFence({
-                  isCurrent,
-                  readRoute,
-                  async run(route) {
-                    if (route.kind === 'savedSecret') {
-                      await savedSecret.inspectAvailability();
-                      return;
-                    }
-                    await createDaemonAction(route).inspectAvailability();
-                  },
-                });
-              },
-              async request(
-                request: Parameters<PluginVoiceAccountOperationService['request']>[0],
-              ) {
-                return await requestBundledVoiceAccountOperationWithRouteFence({
-                  isCurrent,
-                  readRoute,
-                  async request(route) {
-                    if (route.kind === 'savedSecret') return await savedSecret.request(request);
-                    if (!conversationSessionId) {
-                      throw new Error('voice_account_operation_session_required');
-                    }
-                    return await createDaemonAction(route).request(request);
-                  },
-                });
-              },
-            });
-          }
-        : null;
-      const scope = createExternalVoiceProviderActivationScope({
-        pluginId: uiEntry.pluginId,
-        declarations: [uiEntry.declaration],
+      scope = createExternalVoiceProviderActivationScope({
+        pluginId: entry.pluginId,
+        declarations: [entry.declaration],
         hostPlatform: input.host.getPlatform(),
         hostBindingsByLocalId: Object.freeze({
-          [uiEntry.declaration.id]: Object.freeze({
-            providerId: uiEntry.providerId,
+          [entry.declaration.id]: Object.freeze({
             recipientContract,
             descriptor: 'bundled' as const,
-            ...(uiEntry.internal.resolveSurfaceCapabilities
-              ? {
-                  resolveSurfaceCapabilities: (settings: unknown) => {
-                    const projection = input.host.projectVoiceSettings(settings, uiEntry.providerId);
-                    return projection?.providerId === uiEntry.providerId
-                      ? uiEntry.internal.resolveSurfaceCapabilities!(projection.providerConfig)
-                      : null;
-                  },
-                }
-              : {}),
-            ...(createInvocationAccountOperations
-              ? {
-                  createInvocationAccountOperations,
-                }
-              : {}),
-            ...(createInvocationAccountOperations
-              && uiEntry.internal.resolveAccountOperationTarget
-              ? {
-                  async inspectInvocationAccountOperations(
-                    signal: AbortSignal,
-                    isCurrent: () => boolean,
-                  ) {
-                    await createInvocationAccountOperations(
-                      signal,
-                      null,
-                      isCurrent,
-                    ).inspectAvailability();
-                  },
-                }
-              : {}),
             ...(input.hostedConversationEntries
               && isBundledHostedConversationEntryAuthorized(
                 entry,
@@ -276,22 +117,30 @@ export function createBundledConversationRuntimes(input: Readonly<{
       if (commit) {
         void commit.catch(() => undefined);
       }
-      const registration = getExternalVoiceProviderRegistration(uiEntry.providerId);
-      if (!registration || !isAdapter(registration.adapter, uiEntry.providerId)) {
-        throw new Error(`invalid_bundled_conversation_runtime:${uiEntry.providerId}`);
+      const registration = getExternalVoiceProviderRegistration(providerId);
+      if (!registration || !isAdapter(registration.adapter, providerId)) {
+        throw excluded('voice_bundled_runtime_invalid_registration');
       }
-      seen.add(uiEntry.providerId);
+      seen.add(providerId);
+      const committedScope = scope;
       runtimes.push(Object.freeze({
         adapter: registration.adapter,
         async dispose() {
-          await scope.unwind();
+          await committedScope.unwind();
         },
       }));
+    } catch (error) {
+      // The excluded leaf is otherwise indistinguishable from a provider the
+      // user never configured: Start becomes a no-op with no request, no
+      // microphone, and no other observer.
+      recordVoiceRuntimeFailure(
+        entry.providerId,
+        'unregistered',
+        'adapter_unavailable',
+        readSafeVoiceRuntimeFailureCode(error) ?? 'voice_bundled_runtime_activation_failed',
+      );
+      void Promise.resolve(scope?.unwind()).catch(() => undefined);
     }
-    return Object.freeze(runtimes);
-  } catch (error) {
-    const cleanup = Promise.allSettled(runtimes.map(async (runtime) => await runtime.dispose()))
-      .then(() => undefined);
-    throw new BundledConversationRuntimeCompositionError(error, cleanup);
   }
+  return Object.freeze(runtimes);
 }

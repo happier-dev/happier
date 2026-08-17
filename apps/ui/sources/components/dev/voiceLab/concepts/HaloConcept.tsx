@@ -13,12 +13,12 @@ import Animated, {
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { ControlRow, TactilePressable } from '../ConceptControls';
-import { Bloom, Grain } from '../VoiceLight';
-import { TranscriptStream } from '../TranscriptStream';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
-import { controlsForState } from '../voiceLabModel';
-import { VOICE_MOTION, light, useVoiceLabTokens, VOICE_LIGHT } from '../voiceLabTokens';
+import { ControlRow, TactilePressable } from '@/components/voice/controls/VoiceControls';
+import { Bloom, Grain } from '@/components/voice/light/VoiceLight';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
+import { controlsForState, VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
+import { VOICE_MOTION, light, useVoiceLightTokens, VOICE_LIGHT } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, number, number, number]));
@@ -37,8 +37,8 @@ const Sphere = React.memo(function Sphere(props: Readonly<{
     stop: keyof typeof VOICE_LIGHT;
     stopSecondary: keyof typeof VOICE_LIGHT;
 }>) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const { size } = props;
 
     const body = useAnimatedStyle(() => {
@@ -151,8 +151,8 @@ const Sphere = React.memo(function Sphere(props: Readonly<{
  * coexistence policy rather than both drifting into the same corner.
  */
 export function HaloConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const { state } = props;
     const controls = controlsForState(state.id, props.provider, props.surface === 'session');
 
@@ -303,7 +303,7 @@ export function HaloConcept(props: VoiceConceptProps) {
                         </View>
 
                         <View style={{ flex: 1, paddingHorizontal: 14 }}>
-                            <TranscriptStream />
+                            <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} />
                         </View>
 
                         <View style={{ padding: 14, paddingTop: 10 }}>

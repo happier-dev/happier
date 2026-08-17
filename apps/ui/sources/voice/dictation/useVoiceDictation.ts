@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { getSharedVoiceAudioSessionCoordinator } from '@happier-dev/audio-stream-native';
 
 import { storage } from '@/sync/domains/state/storage';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
@@ -7,6 +8,7 @@ import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { createLocalVoiceCaptureOwner } from '@/voice/runtime/input/LocalVoiceCaptureOwner';
 import { createVoiceCaptureAdmissionBinding } from '@/voice/runtime/input/VoiceCaptureAdmissionBinding';
 import { voiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
+import { resolveVoiceExecutionMachineId } from '@/voice/settings/executionMachine';
 import {
     recordedAudioTranscriptionController,
 } from '@/voice/runtime/input/recordedAudioTranscriptionController';
@@ -31,9 +33,13 @@ const dictationCaptureOwner = createVoiceCaptureAdmissionBinding({
     productOwner: 'dictation',
 });
 
+const admittedWebRecordingBlobs = new Map<string, Blob>();
+
 async function measureRecordedAudioBytes(uri: string): Promise<number | null> {
     if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-        return (await (await runtimeFetch(uri)).blob()).size;
+        const blob = await (await runtimeFetch(uri)).blob();
+        admittedWebRecordingBlobs.set(uri, blob);
+        return blob.size;
     }
     return await resolveLocalUploadSourceSizeBytes({
         kind: 'native',
@@ -43,6 +49,7 @@ async function measureRecordedAudioBytes(uri: string): Promise<number | null> {
 
 async function deleteRecordedAudio(uri: string): Promise<void> {
     if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+        admittedWebRecordingBlobs.delete(uri);
         URL.revokeObjectURL(uri);
         return;
     }
@@ -56,10 +63,15 @@ async function deleteRecordedAudio(uri: string): Promise<void> {
 export const voiceDictationController = createVoiceDictationController({
     captureOwner: dictationCaptureOwner,
     getSettings: () => storage.getState().settings,
+    nativeAudioSessionCoordinator: getSharedVoiceAudioSessionCoordinator(),
+    resolveExecutionMachineId: () => resolveVoiceExecutionMachineId(),
     measureRecordedAudioBytes,
     deleteRecordedAudio,
     transcribeRecordedAudio: (params) => (
-        recordedAudioTranscriptionController.transcribe(params)
+        recordedAudioTranscriptionController.transcribe({
+            ...params,
+            webBlob: admittedWebRecordingBlobs.get(params.uri) ?? null,
+        })
     ),
 });
 

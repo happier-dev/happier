@@ -56,17 +56,12 @@ vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageSelectButton: () => copyButtonsVisible,
 }));
 
-vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({
-    StructuredMessageBlock: () => null,
-    renderStructuredMessage: () => null,
-}));
-
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({
     extractWorkspaceFileMentions: () => [],
 }));
 
-vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
-    LinkedWorkspaceFilesRow: () => null,
+vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({
+    StructuredReferencesRow: () => null,
 }));
 
 vi.mock('@/components/tools/shell/views/ToolView', () => ({
@@ -123,7 +118,7 @@ describe('MessageView unsupported-content rendering', () => {
             ['unparsed agent message', 'agent-text', '[Unparsed agent message]', 'unparsed-agent-message'],
             ['unsupported agent output', 'agent-text', '[Unsupported agent output: future-type]', 'unsupported-agent-output'],
             ['unsupported transcript record', 'agent-text', '[Unsupported transcript record]', 'unsupported-transcript-record'],
-        ] as const)('keeps the raw diagnostic text for an %s', async (_name, kind, rawText, marker) => {
+        ] as const)('keeps raw diagnostic text without the structured unavailable shell for an %s', async (_name, kind, rawText, marker) => {
             const { MessageView } = await import('./MessageView');
 
             const screen = await renderScreen(
@@ -143,6 +138,7 @@ describe('MessageView unsupported-content rendering', () => {
 
             const markdownView = screen.findByType('MarkdownView' as any);
             expect(markdownView.props.markdown).toBe(rawText);
+            expect(screen.findByTestId('structured-message-unavailable')).toBeNull();
         });
 
         it('copies the raw diagnostic so the offending payload type can be reported', async () => {
@@ -178,7 +174,6 @@ describe('MessageView unsupported-content rendering', () => {
         it.each([
             ['unparsed agent message', '[Unparsed agent message]', 'unparsed-agent-message'],
             ['unsupported agent output', '[Unsupported agent output: future-type]', 'unsupported-agent-output'],
-            ['unsupported transcript record', '[Unsupported transcript record]', 'unsupported-transcript-record'],
         ] as const)('renders no transcript row for an %s', async (_name, rawText, marker) => {
             const { MessageView } = await import('./MessageView');
 
@@ -198,6 +193,7 @@ describe('MessageView unsupported-content rendering', () => {
             );
 
             expect(screen.findAllByType('MarkdownView' as any)).toHaveLength(0);
+            expect(screen.findByTestId('structured-message-unavailable')).toBeNull();
         });
 
         it('keeps a localized placeholder for the user own unparsed message instead of dropping it', async () => {
@@ -220,6 +216,7 @@ describe('MessageView unsupported-content rendering', () => {
 
             const markdownView = screen.findByType('MarkdownView' as any);
             expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unparsedUserMessage');
+            expect(screen.findByTestId('structured-message-unavailable')).toBeNull();
         });
 
         it('does not leak the raw fallback text into select-preview/copy text for the user own message', async () => {
@@ -247,6 +244,32 @@ describe('MessageView unsupported-content rendering', () => {
 
             await screen.pressByTestIdAsync('transcript-message-copy:u2');
             expect(setClipboardStringSafeMock).toHaveBeenCalledWith('transcript.unsupportedContent.unparsedUserMessage');
+        });
+
+        it.each([
+            ['corrupt field profile', 'agent-text', '[Unsupported transcript record: field]'],
+            ['oversized profile', 'agent-text', '[Unsupported transcript record: too large]'],
+            ['future profile', 'user-text', '[Unsupported transcript record: v2]'],
+        ] as const)('renders the structured unavailable shell for a %s', async (_name, kind, rawText) => {
+            const { MessageView } = await import('./MessageView');
+
+            const screen = await renderScreen(
+                <MessageView
+                    sessionId="s1"
+                    metadata={null}
+                    message={{
+                        kind,
+                        id: `structured-${kind}-${rawText.length}`,
+                        localId: `local-structured-${kind}-${rawText.length}`,
+                        createdAt: 1,
+                        text: rawText,
+                        meta: { happierUnsupportedContentV1: 'unsupported-transcript-record' },
+                    } as any}
+                />,
+            );
+
+            expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
+            expect(screen.findAllByType('MarkdownView' as any).map((view: any) => view.props.markdown)).not.toContain(rawText);
         });
     });
 

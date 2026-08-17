@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Animated } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import ReanimatedAnimated, {
     useAnimatedStyle,
     useSharedValue,
@@ -10,6 +9,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SelectionListBackChip } from './SelectionListBackChip';
 import { selectionListTestId } from './_shared';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const SEARCH_ICON_SIZE = 16;
 const LEADING_SWAP_DURATION_MS = 180;
@@ -103,7 +103,7 @@ export function SelectionListSearchHeaderLeadingSlot(
                     testID={selectionListTestId(props.rootTestID, 'leading', 'search-icon')}
                     style={[styles.leadingSearchIcon, { opacity: searchOpacity }]}
                 >
-                    <Ionicons name="search" size={SEARCH_ICON_SIZE} color={theme.colors.text.secondary} />
+                    <Icon name="magnifying-glass" size={SEARCH_ICON_SIZE} color={theme.colors.text.secondary} />
                 </Animated.View>
             ) : (
                 <Animated.View style={[styles.leadingBackWrap, { opacity: backOpacity }]}>

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
@@ -17,6 +16,7 @@ import {
 } from '@/sync/domains/models/favoriteModelSelections';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const FAVORITE_MODELS_AGENT_PICKER_OPTION_ID = 'favorite-models';
 
@@ -30,10 +30,11 @@ export type FavoriteModelTogglePayload = Readonly<{
 function FavoriteModelsPickerIcon(props: Readonly<{ size?: number }>) {
     const { theme } = useUnistyles();
     return (
-        <Ionicons
+        <Icon
             name="star"
             size={props.size ?? 12}
             color={theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background}
+            weight={theme.dark ? 'fill' : 'regular'}
         />
     );
 }

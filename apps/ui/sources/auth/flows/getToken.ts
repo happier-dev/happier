@@ -2,14 +2,35 @@ import { authChallenge } from "./challenge";
 import { encodeBase64 } from "@/encryption/base64";
 import { Encryption } from "@/sync/encryption/encryption";
 import sodium from '@/encryption/libsodium.lib';
-import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import {
+    assertCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
 import { serverFetch } from '@/sync/http/client';
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import {
+    AuthErrorCodeSchema,
+    readServerEnabledBit,
+    type KeyChallengeAuthRequest,
+} from '@happier-dev/protocol';
+import { HappyError } from '@/utils/errors/errors';
 
 const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
 
-export async function authGetToken(secret: Uint8Array) {
-    const serverFeatures = await getReadyServerFeatures({ timeoutMs: 800 });
+export async function authGetToken(
+    secret: Uint8Array,
+    options?: Readonly<{
+        expectedAccountId: string;
+    }>,
+) {
+    const serverFeaturesSnapshot =
+        await getServerFeaturesSnapshot({
+            timeoutMs: 800,
+            force: Boolean(options),
+        });
+    const serverFeatures =
+        serverFeaturesSnapshot.status === 'ready'
+            ? serverFeaturesSnapshot.features
+            : null;
     if (serverFeatures) {
         // Backward compatibility:
         // - New servers explicitly advertise `features.auth.login.keyChallenge.enabled`.
@@ -20,20 +41,32 @@ export async function authGetToken(secret: Uint8Array) {
             throw new Error('Authentication failed: key-challenge login is disabled on this server.');
         }
     }
+    if (options) {
+        assertCurrentAccountStoredContentServerCompatibility(
+            serverFeaturesSnapshot,
+        );
+    }
 
-    const { challenge, signature, publicKey } = authChallenge(secret);
+    const { challenge, signature, publicKey } =
+        authChallenge(secret, options);
 
-    const body: any = {
+    const body: KeyChallengeAuthRequest = {
         challenge: encodeBase64(challenge),
         signature: encodeBase64(signature),
         publicKey: encodeBase64(publicKey),
+        ...(options
+            ? {
+                expectedAccountId:
+                    options.expectedAccountId,
+            }
+            : {}),
     };
 
     // Backward compatibility: only send new key fields when the server advertises support.
     // Older servers validate request bodies strictly and would reject unknown fields.
     const supportsContentKeys =
         serverFeatures ? readServerEnabledBit(serverFeatures, 'sharing.contentKeys') === true : false;
-    if (supportsContentKeys) {
+    if (supportsContentKeys || options) {
         const encryption = await Encryption.create(secret);
         const contentPublicKey = encryption.contentDataKey;
 
@@ -55,7 +88,30 @@ export async function authGetToken(secret: Uint8Array) {
         body: JSON.stringify(body),
     }, { includeAuth: false });
     if (!response.ok) {
-        throw new Error(`Authentication failed: ${response.status}`);
+        let code: string | undefined;
+        try {
+            const payload = await response.json() as unknown;
+            const candidate = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+                ? (payload as { error?: unknown }).error
+                : undefined;
+            const parsed = AuthErrorCodeSchema.safeParse(candidate);
+            if (parsed.success) {
+                code = parsed.data;
+            }
+        } catch {
+            // A non-JSON failure still retains its HTTP classification below.
+        }
+
+        const isServerFailure = response.status >= 500;
+        throw new HappyError(
+            `Authentication failed: ${response.status}`,
+            isServerFailure,
+            {
+                status: response.status,
+                kind: isServerFailure ? 'server' : 'auth',
+                ...(code ? { code } : {}),
+            },
+        );
     }
     const data = await response.json() as { token: string };
     return data.token;

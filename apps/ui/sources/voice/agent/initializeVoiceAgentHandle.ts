@@ -51,11 +51,11 @@ import { findSessionListLookupSession } from '@/sync/domains/session/listing/ses
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
     getDaemonVoiceAgentClient: () => VoiceAgentClient;
-    getOpenAiCompatVoiceAgentClient: () => VoiceAgentClient;
     enqueuePendingContextUpdate: (sessionId: string, update: string) => void;
 }>;
 
@@ -92,7 +92,7 @@ function shouldUseImmediateVoiceWelcome(settings: any, agentCfg: any): boolean {
 function resolveVoiceAgentBootstrapConfig(args: Readonly<{
     settings: any;
     agentCfg: any;
-    backend: 'daemon' | 'openai_compat';
+    backend: 'daemon';
     initialContext: string;
 }>): VoiceAgentBootstrapConfig {
     return {
@@ -143,18 +143,46 @@ function buildVoiceAgentStartArgsBase(args: Readonly<{
 export async function initializeVoiceAgentHandle({
     sessionId,
     getDaemonVoiceAgentClient,
-    getOpenAiCompatVoiceAgentClient,
     enqueuePendingContextUpdate,
 }: InitializeVoiceAgentHandleParams): Promise<VoiceAgentHandle> {
     const settings: any = storage.getState().settings;
     const voiceCfg = readLocalConversationSettingsFromAccountSettings(settings);
     const agentCfg = voiceCfg.agent;
-    const requestedBackend = (agentCfg?.backend ?? 'daemon') as 'daemon' | 'openai_compat';
+    const providerChatState = agentCfg?.providerChat ?? null;
+    if (providerChatState?.status === 'needs_selection') {
+        throw Object.assign(new Error('voice_agent_selection_required'), {
+            code: 'VOICE_AGENT_SELECTION_REQUIRED',
+        });
+    }
+    if (providerChatState?.status === 'migration_required') {
+        throw Object.assign(new Error('voice_agent_provider_chat_migration_required'), {
+            code: 'VOICE_AGENT_PROVIDER_CHAT_MIGRATION_REQUIRED',
+        });
+    }
+    const providerChat = providerChatState?.status === 'configured' ? providerChatState : null;
+    const backend = 'daemon' as const;
     const permissionIntent = (agentCfg?.permissionIntent ?? 'read-only') as PermissionIntent;
     const idleTtlSeconds = Number(agentCfg?.idleTtlSeconds ?? 300);
     const verbosity = (agentCfg?.verbosity ?? 'short') as 'short' | 'balanced';
-    const agentSource = (agentCfg?.agentSource ?? 'session') as 'session' | 'agent';
+    const agentSource = providerChat
+        ? 'agent' as const
+        : (agentCfg?.agentSource ?? 'session') as 'session' | 'agent';
     const agentId = agentSource === 'agent' ? (agentCfg?.agentId ?? 'claude') : null;
+    if (providerChat) {
+        const selectedAgentId = String(agentId ?? '').trim();
+        const expectedTargetKey = selectedAgentId
+            ? buildAgentUniverseBackendTargetKey(selectedAgentId)
+            : null;
+        if (
+            !expectedTargetKey
+            || providerChat.chat.agentTargetKey !== expectedTargetKey
+            || providerChat.commit.agentTargetKey !== expectedTargetKey
+        ) {
+            throw Object.assign(new Error('voice_agent_provider_selection_mismatch'), {
+                code: 'VOICE_AGENT_PROVIDER_SELECTION_MISMATCH',
+            });
+        }
+    }
 
     const transcriptCfg = agentCfg?.transcript ?? null;
     const configuredTranscriptPersistenceMode =
@@ -162,7 +190,7 @@ export async function initializeVoiceAgentHandle({
     const transcriptEpochRaw = transcriptCfg ? Number((transcriptCfg as any).epoch ?? 0) : 0;
     const transcriptEpoch =
         Number.isFinite(transcriptEpochRaw) && transcriptEpochRaw >= 0 ? Math.floor(transcriptEpochRaw) : 0;
-    const resolveTranscriptConfig = (backend: 'daemon' | 'openai_compat') => {
+    const resolveTranscriptConfig = (backend: 'daemon') => {
         if (backend === 'daemon') {
             return { persistenceMode: 'persistent' as const, epoch: transcriptEpoch };
         }
@@ -199,12 +227,12 @@ export async function initializeVoiceAgentHandle({
         await Promise.resolve(sync.refreshSessionMessages(normalizedSessionId)).catch(() => {});
     };
 
-    const resolveModelIds = (backend: 'daemon' | 'openai_compat', daemonSessionId: string) => {
-        if (backend === 'openai_compat') {
-            const openaiCompatCfg = agentCfg?.openaiCompat ?? null;
-            const chatModelId = String(openaiCompatCfg?.chatModel ?? 'default');
-            const commitModelId = String(openaiCompatCfg?.commitModel ?? chatModelId);
-            return { chatModelId, commitModelId };
+    const resolveModelIds = (backend: 'daemon', daemonSessionId: string) => {
+        if (providerChat) {
+            return {
+                chatModelId: providerChat.chat.modelId,
+                commitModelId: providerChat.commit.modelId,
+            };
         }
 
         const session = resolveDaemonSessionFromState(daemonSessionId);
@@ -221,23 +249,17 @@ export async function initializeVoiceAgentHandle({
     };
 
     const boundTargetSessionId = resolveBoundTargetSessionId(sessionId);
-    const boundConversationSessionId =
-        requestedBackend === 'daemon'
-            ? resolveBoundConversationSessionId(sessionId)
-            : null;
-    const daemonTargetSessionId =
-        requestedBackend === 'daemon'
-            ? normalizeNonEmptyString(boundTargetSessionId ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : sessionId))
-            : null;
+    const boundConversationSessionId = resolveBoundConversationSessionId(sessionId);
+    const daemonTargetSessionId = normalizeNonEmptyString(
+        boundTargetSessionId ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : sessionId),
+    );
     if (daemonTargetSessionId) {
         await ensureSessionTranscriptReady(daemonTargetSessionId, { forceRefresh: true });
         assertActiveDaemonTargetSession(daemonTargetSessionId);
     } else if (boundTargetSessionId) {
         await ensureSessionTranscriptReady(boundTargetSessionId);
     }
-    if (requestedBackend === 'daemon') {
-        await ensureSessionTranscriptReady(boundConversationSessionId, { forceRefresh: true });
-    }
+    await ensureSessionTranscriptReady(boundConversationSessionId, { forceRefresh: true });
 
     const {
         bootstrapInitialContext,
@@ -248,19 +270,15 @@ export async function initializeVoiceAgentHandle({
 
     const shouldFallbackFromDaemon = (error: unknown) => shouldRecoverUnavailableGlobalVoiceAutoMachine(error);
 
-    if (requestedBackend === 'daemon') {
-        if (daemonTargetSessionId == null) {
-            assertActiveDaemonTargetSession(sessionId);
-        }
-        await assertDaemonVoiceAgentRuntimeSupported();
+    if (daemonTargetSessionId == null) {
+        assertActiveDaemonTargetSession(sessionId);
     }
+    await assertDaemonVoiceAgentRuntimeSupported();
 
-    const backend: 'daemon' | 'openai_compat' = requestedBackend;
-    const globalConversationSessionId =
-        requestedBackend === 'daemon' ? resolvePersistedDaemonConversationSessionId() : null;
+    const globalConversationSessionId = resolvePersistedDaemonConversationSessionId();
     const isGlobalVoiceAgent =
         sessionId === VOICE_AGENT_GLOBAL_SESSION_ID
-        || (requestedBackend === 'daemon' && sessionId === globalConversationSessionId);
+        || sessionId === globalConversationSessionId;
     let daemonConversationSessionId =
         backend === 'daemon' && isGlobalVoiceAgent
             ? normalizeNonEmptyString(globalConversationSessionId ?? boundConversationSessionId)
@@ -395,7 +413,7 @@ export async function initializeVoiceAgentHandle({
         return typeof run?.backendId === 'string' && run.backendId.trim() === resolvedAgentId;
     };
 
-    const refreshStartState = (nextBackend: 'daemon' | 'openai_compat', nextRpcSessionId: string) => {
+    const refreshStartState = (nextBackend: 'daemon', nextRpcSessionId: string) => {
         rpcSessionId = nextRpcSessionId;
         ({ chatModelId, commitModelId } = resolveModelIds(nextBackend, nextRpcSessionId));
         if (nextBackend !== 'daemon') {
@@ -429,10 +447,7 @@ export async function initializeVoiceAgentHandle({
         initialContext: effectiveInitialContext,
     });
 
-    const client: VoiceAgentClient =
-        backend === 'openai_compat'
-            ? getOpenAiCompatVoiceAgentClient()
-            : getDaemonVoiceAgentClient();
+    const client: VoiceAgentClient = getDaemonVoiceAgentClient();
 
     const startArgsBase = buildVoiceAgentStartArgsBase({
         agentSource,
@@ -447,7 +462,7 @@ export async function initializeVoiceAgentHandle({
         idleTtlSeconds,
         bootstrap,
     });
-    const buildStartTranscript = (nextBackend: 'daemon' | 'openai_compat') => resolveTranscriptConfig(nextBackend);
+    const buildStartTranscript = (nextBackend: 'daemon') => resolveTranscriptConfig(nextBackend);
 
     const started = await (async () => {
         const ensureExistingGlobalDaemonRunHasPersistentTranscript = async () => {
@@ -540,6 +555,26 @@ export async function initializeVoiceAgentHandle({
                 ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
                 chatModelId,
                 commitModelId,
+                ...(providerChat
+                    ? {
+                        chatModelSelection: providerChat.chat,
+                        commitModelSelection: providerChat.commit,
+                    }
+                    : {}),
+                ...(providerChat && providerChat.configuration.temperature !== null
+                    ? {
+                        sessionConfigOptionOverrides: {
+                            v: 1 as const,
+                            updatedAt: 0,
+                            overrides: {
+                                temperature: {
+                                    updatedAt: 0,
+                                    value: providerChat.configuration.temperature,
+                                },
+                            },
+                        },
+                    }
+                    : {}),
                 ...(buildStartTranscript(backend) ? { transcript: buildStartTranscript(backend) } : {}),
                 ...(backend === 'daemon'
                     ? {
@@ -590,7 +625,6 @@ export async function initializeVoiceAgentHandle({
             await reconcileExistingDaemonRuns();
             return await startDaemonForCurrentSession();
         } catch (error) {
-            if (requestedBackend !== 'daemon') throw error;
             if (
                 !attemptedGlobalMachineRecovery
                 && backend === 'daemon'

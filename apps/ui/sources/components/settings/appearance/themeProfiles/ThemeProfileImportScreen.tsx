@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { File } from 'expo-file-system';
 import { Pressable, View } from 'react-native';
@@ -15,6 +14,7 @@ import { t } from '@/text';
 import { getSupportedThemeProfileImportFormats, importThemeProfileFromJson } from '@/theme/profiles/themeProfileImportExport';
 import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
 import { nowThemeProfileTimestamp, upsertThemeProfile } from './themeProfileScreenUtils';
+import { Icon } from '@/components/ui/icons/Icon';
 
 async function readPickedThemeFile(entry: NativePickedFile): Promise<string> {
     if (entry.kind === 'web') {
@@ -77,7 +77,7 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
                 <View style={styles.jsonEditorRow}>
                     <View style={styles.jsonEditorHeader}>
                         <View style={styles.jsonEditorTitle}>
-                            <Ionicons name="code-slash-outline" size={28} color={theme.colors.accent.green} />
+                            <Icon name="code" size={29} color={theme.colors.accent.green} />
                             <Text style={styles.jsonEditorTitleText}>{t('settingsAppearance.themeProfiles.importJson')}</Text>
                         </View>
                         <Pressable
@@ -87,7 +87,7 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
                             onPress={() => { void pickFile(); }}
                             style={({ pressed }) => [styles.fileButton, pressed ? styles.fileButtonPressed : null]}
                         >
-                            <Ionicons name="document-attach-outline" size={18} color={theme.colors.text.primary} />
+                            <Icon name="file-arrow-up" size={16} color={theme.colors.text.primary} />
                             <Text style={styles.fileButtonText}>{t('settingsAppearance.themeProfiles.importFile')}</Text>
                         </Pressable>
                     </View>

@@ -32,7 +32,7 @@ describe('useVoiceSurfaceTargetState', () => {
         registerVoiceAdapters([]);
     });
 
-    it('keeps global scope when the voice surface is explicitly placed in the session', async () => {
+    it('keeps an explicitly placed in-session surface bound to its exact session when Global is the default', async () => {
         registerVoiceAdapters([createSurfaceAdapter('global_provider', true, 'global')]);
         const { useVoiceSurfaceTargetState } = await import('./useVoiceSurfaceTargetState');
 
@@ -54,8 +54,8 @@ describe('useVoiceSurfaceTargetState', () => {
         }));
 
         expect(hook.getCurrent().locationAllowsVariant).toBe(true);
-        expect(hook.getCurrent().bindingScope).toBe('global');
-        expect(hook.getCurrent().startSessionId).toBe(null);
+        expect(hook.getCurrent().bindingScope).toBe('session');
+        expect(hook.getCurrent().startSessionId).toBe('exact-session');
         await hook.unmount();
     });
 
@@ -186,7 +186,7 @@ describe('useVoiceSurfaceTargetState', () => {
 
         const hook = await renderHook(() => useVoiceSurfaceTargetState({
             pathname: '/',
-            providerId: 'realtime_elevenlabs',
+            providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             sessionId: null,
             variant: 'sidebar',
             voice: {},
@@ -204,7 +204,7 @@ describe('useVoiceSurfaceTargetState', () => {
         const serverId = 'surface-test-server';
         const baseParams = {
             pathname: '/',
-            providerId: 'realtime_elevenlabs',
+            providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             sessionId: null,
             variant: 'sidebar' as const,
             voice: null,
@@ -216,7 +216,7 @@ describe('useVoiceSurfaceTargetState', () => {
         let unmountHook: (() => Promise<void>) | null = null;
 
         try {
-            registerVoiceAdapters([createSurfaceAdapter('realtime_elevenlabs', false, 'surface')]);
+            registerVoiceAdapters([createSurfaceAdapter('happier.voice.elevenlabs/realtime-elevenlabs', false, 'surface')]);
             setFocusedSessionId(selectedSessionId);
             storage.setState((state) => ({
                 ...state,

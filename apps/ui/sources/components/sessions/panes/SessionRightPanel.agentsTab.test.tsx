@@ -200,7 +200,7 @@ describe('SessionRightPanel (core tabs)', () => {
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
     });
 
-    it('falls back to git when persisted pane state points at an unregistered tab', async () => {
+    it('uses git as an in-memory default when persisted pane state points at an unregistered tab', async () => {
         scopeState = { right: { isOpen: true, activeTabId: 'reviews', tabState: {} } };
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
@@ -209,7 +209,7 @@ describe('SessionRightPanel (core tabs)', () => {
         const gitSurface = findHostByTestId(screen, 'session-rightpanel-surface-git');
         expect(gitSurface).not.toBeNull();
         expect(gitSurface?.props.pointerEvents).toBe('auto');
-        expect(setRightTabSpy).toHaveBeenCalledWith('git');
+        expect(setRightTabSpy).not.toHaveBeenCalled();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-reviews')).toBeNull();

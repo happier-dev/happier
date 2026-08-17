@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { t } from '@/text';
 
@@ -31,6 +31,9 @@ export const ConnectedServiceSegmentedShell = React.memo(function ConnectedServi
     props: ConnectedServiceSegmentedShellProps,
 ) {
     const { poolsAvailable } = props;
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const tabBarMaxWidthStyle = useLayoutMaxWidthStyle();
     // Fail-closed: an unavailable Pools segment can never be the active tab.
     const activeSegment: ConnectedServiceDetailSegment = poolsAvailable ? props.activeSegment : 'accounts';
 
@@ -43,7 +46,7 @@ export const ConnectedServiceSegmentedShell = React.memo(function ConnectedServi
         <View testID="connected-services-detail-shell">
             {poolsAvailable ? (
                 <View style={styles.tabBarWrapper}>
-                    <View style={styles.tabBar}>
+                    <View style={[styles.tabBar, tabBarMaxWidthStyle]}>
                         <SegmentedTabBar
                             tabs={tabs}
                             activeTabId={activeSegment}
@@ -65,7 +68,6 @@ const styles = StyleSheet.create(() => ({
     },
     tabBar: {
         width: '100%',
-        maxWidth: layout.maxWidth,
         paddingHorizontal: 24,
         paddingTop: 12,
         paddingBottom: 8,

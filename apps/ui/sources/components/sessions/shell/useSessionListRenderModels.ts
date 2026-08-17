@@ -19,8 +19,11 @@ import {
     createSessionListReachabilitySummaryCache,
 } from './buildSessionListReachabilitySummary';
 import { buildSessionListRowViewModels, type SessionListRowViewModel } from './sessionListRowViewModels';
-import { useSessionListRelativeNowMs } from './sessionListRowClocks';
-import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from '@/hooks/session/sessionListRuntimeClock';
+import {
+    useSessionListRelativeNowMs,
+    useSessionListRuntimeNowMs,
+    useSessionListRuntimeWake,
+} from '@/hooks/session/sessionListRuntimeClock';
 import type { SessionWorkingTextMode } from '@/utils/sessions/sessionUtils';
 import { normalizeSessionListShellState } from './normalizeSessionListShellState';
 import {

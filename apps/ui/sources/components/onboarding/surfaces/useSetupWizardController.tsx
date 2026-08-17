@@ -747,6 +747,7 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
             <>
                 {relayDriftBanner ? <RelayDriftActionCard banner={relayDriftBanner} /> : null}
                 {renderWizardChoiceList({
+                    accessibilityLabel: t('setupOnboarding.screenTitle'),
                     style: styles.branchList,
                     items: [
                         showLocalMachine && {
@@ -754,7 +755,7 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
                             testID: `${testIDPrefix}-branch:local`,
                             selected: action === 'local',
                             onPress: () => chooseAction('local'),
-                            icon: 'laptop-outline',
+                            icon: 'laptop',
                             title: t('settings.machineSetupCurrentMachineTitle'),
                             subtitle: t('settings.machineSetupCurrentMachineSubtitle'),
                         },
@@ -763,7 +764,7 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
                             testID: `${testIDPrefix}-branch:relayLocal`,
                             selected: action === 'relayLocal',
                             onPress: () => chooseAction('relayLocal'),
-                            icon: 'cloud-upload-outline',
+                            icon: 'cloud-arrow-up',
                             title: t('setupOnboarding.relayOnThisComputerTitle'),
                             subtitle: t('setupOnboarding.relayOnThisComputerSubtitle'),
                         },
@@ -772,7 +773,7 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
                             testID: `${testIDPrefix}-branch:remote`,
                             selected: action === 'remote' && remoteSetupIntent === 'remoteMachine',
                             onPress: chooseRemoteMachineSetup,
-                            icon: 'server-outline',
+                            icon: 'hard-drives',
                             title: t('settings.machineSetupSshMachineTitle'),
                             subtitle: t('settings.machineSetupSshMachineSubtitle'),
                         },
@@ -781,7 +782,7 @@ export function useSetupWizardController(props: SetupWizardSurfaceProps): SetupW
                             testID: `${testIDPrefix}-branch:remoteRelay`,
                             selected: action === 'remote' && remoteSetupIntent === 'remoteRelayHost',
                             onPress: chooseRemoteRelayHost,
-                            icon: 'cloud-upload-outline',
+                            icon: 'cloud-arrow-up',
                             title: t('setupOnboarding.relayOnRemoteComputerTitle'),
                             subtitle: t('setupOnboarding.relayOnRemoteComputerSubtitle'),
                         },

@@ -45,6 +45,6 @@ export async function runTransferFinalizeRecovery<TResponse>(params: Readonly<{
         if (!action) return null;
         if (action === MODAL_HOST_UNMOUNTED) continue;
         const result = await params.recovery.invoke(action);
-        if (result.status !== 'recovery_required') return result;
+        if (!params.recovery.isActionable()) return result;
     }
 }

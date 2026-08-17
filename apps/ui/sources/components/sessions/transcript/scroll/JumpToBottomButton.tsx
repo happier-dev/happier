@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: {
     count: number;
@@ -44,7 +44,7 @@ export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: 
                         {label}
                     </Text>
                 ) : null}
-                <Ionicons name="chevron-down" size={16} color={theme.colors.text.primary} />
+                <Icon name="caret-down" size={16} color={theme.colors.text.primary} />
             </Pressable>
         </GlassPanel>
     );

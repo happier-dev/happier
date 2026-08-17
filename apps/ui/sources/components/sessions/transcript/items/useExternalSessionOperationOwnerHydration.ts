@@ -6,6 +6,10 @@ import type {
 } from '@happier-dev/protocol';
 
 import { machineExternalSessionOperationStatus } from '@/sync/ops/machineExternalSessions';
+import {
+    createExternalSessionOperationPresentationIdentity,
+    matchesExternalSessionOperationPresentation,
+} from '@/sync/runtime/external/externalSessionOperationPresentationIdentity';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type HydratedProgressState = Readonly<{
@@ -14,28 +18,26 @@ type HydratedProgressState = Readonly<{
 }> | null;
 
 function createOperationKey(params: Readonly<{
+    machineId: string;
+    ownerScopeKey: string;
+    serverId: string;
     sessionId: string;
     presentation: ExternalSessionOperationSharedPresentationV1;
 }>): string {
     return JSON.stringify([
+        params.serverId,
+        params.ownerScopeKey,
+        params.machineId,
         params.sessionId,
-        params.presentation.operationId,
-        params.presentation.revision,
+        createExternalSessionOperationPresentationIdentity(params.presentation),
     ]);
-}
-
-function matchesPresentation(
-    progress: ExternalSessionOperationProgressV1,
-    presentation: ExternalSessionOperationSharedPresentationV1,
-): boolean {
-    return progress.operationId === presentation.operationId
-        && progress.revision === presentation.revision;
 }
 
 export function useExternalSessionOperationOwnerHydration(params: Readonly<{
     isExactOwner: boolean;
     machineId: string | null;
     machineOnline: boolean;
+    ownerScopeKey: string | null;
     presentation: ExternalSessionOperationSharedPresentationV1 | null;
     serverId: string | null;
     sessionId: string;
@@ -44,35 +46,60 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
         isExactOwner,
         machineId,
         machineOnline,
+        ownerScopeKey,
         presentation,
         serverId,
         sessionId,
     } = params;
-    const eligible = isExactOwner && machineId !== null && machineOnline;
-    const currentKey = presentation
-        ? createOperationKey({ sessionId, presentation })
+    const authorized = isExactOwner
+        && machineId !== null
+        && ownerScopeKey !== null
+        && serverId !== null;
+    const readEligible = authorized && machineOnline;
+    const currentKey = authorized && presentation
+        ? createOperationKey({
+            machineId,
+            ownerScopeKey,
+            presentation,
+            serverId,
+            sessionId,
+        })
         : null;
     const currentRef = React.useRef<Readonly<{
-        eligible: boolean;
+        authorized: boolean;
         key: string | null;
         machineId: string | null;
         presentation: ExternalSessionOperationSharedPresentationV1 | null;
+        readEligible: boolean;
         serverId: string | null;
     }>>({
-        eligible,
+        authorized,
         key: currentKey,
         machineId,
         presentation,
+        readEligible,
         serverId,
     });
     currentRef.current = {
-        eligible,
+        authorized,
         key: currentKey,
         machineId,
         presentation,
+        readEligible,
         serverId,
     };
-    const attemptedKeysRef = React.useRef(new Set<string>());
+    const readEpisodeRef = React.useRef<Readonly<{
+        key: string | null;
+        readEligible: boolean;
+    }>>({
+        key: null,
+        readEligible: false,
+    });
+    const requestSequenceRef = React.useRef(0);
+    const latestRequestRef = React.useRef<Readonly<{
+        key: string;
+        sequence: number;
+    }> | null>(null);
     const mountedRef = React.useRef(true);
     const [hydrated, setHydrated] = React.useState<HydratedProgressState>(null);
 
@@ -88,23 +115,37 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             key: string;
             machineId: string;
             presentation: ExternalSessionOperationSharedPresentationV1;
-            serverId: string | null;
+            serverId: string;
         }>,
     ) => {
+        const sequence = requestSequenceRef.current + 1;
+        requestSequenceRef.current = sequence;
+        latestRequestRef.current = {
+            key: snapshot.key,
+            sequence,
+        };
         try {
             const result = await machineExternalSessionOperationStatus({
                 machineId: snapshot.machineId,
                 sessionId,
                 operationId: snapshot.presentation.operationId,
                 revision: snapshot.presentation.revision,
-            }, snapshot.serverId ? { serverId: snapshot.serverId } : undefined);
+            }, { serverId: snapshot.serverId });
             const current = currentRef.current;
             if (!mountedRef.current) return;
             if (
-                !current.eligible
+                latestRequestRef.current?.key !== snapshot.key
+                || latestRequestRef.current.sequence !== sequence
+            ) return;
+            if (
+                !current.authorized
                 || current.key !== snapshot.key
                 || !result.ok
-                || !matchesPresentation(result.progress, snapshot.presentation)
+                || !current.presentation
+                || !matchesExternalSessionOperationPresentation(
+                    result.progress,
+                    current.presentation,
+                )
             ) {
                 if (current.key === snapshot.key) {
                     setHydrated(null);
@@ -118,6 +159,8 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
         } catch {
             if (
                 mountedRef.current
+                && latestRequestRef.current?.key === snapshot.key
+                && latestRequestRef.current.sequence === sequence
                 && currentRef.current.key === snapshot.key
             ) {
                 setHydrated(null);
@@ -126,12 +169,30 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
     }, [sessionId]);
 
     React.useEffect(() => {
-        if (!eligible || !currentKey || !machineId || !presentation) {
+        if (!authorized || !currentKey || !machineId || !presentation || !serverId) {
+            readEpisodeRef.current = {
+                key: null,
+                readEligible: false,
+            };
             setHydrated(null);
             return;
         }
-        if (attemptedKeysRef.current.has(currentKey)) return;
-        attemptedKeysRef.current.add(currentKey);
+        if (!readEligible) {
+            readEpisodeRef.current = {
+                key: currentKey,
+                readEligible: false,
+            };
+            return;
+        }
+        const readEpisode = readEpisodeRef.current;
+        if (
+            readEpisode.key === currentKey
+            && readEpisode.readEligible
+        ) return;
+        readEpisodeRef.current = {
+            key: currentKey,
+            readEligible: true,
+        };
         fireAndForget(loadCurrent({
             key: currentKey,
             machineId,
@@ -139,11 +200,12 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             serverId,
         }), { tag: 'externalSessionOperation.ownerHydration' });
     }, [
+        authorized,
         currentKey,
-        eligible,
         loadCurrent,
         machineId,
         presentation,
+        readEligible,
         serverId,
     ]);
 
@@ -152,16 +214,21 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
     ) => {
         const current = currentRef.current;
         if (
-            !current.eligible
+            !current.authorized
             || !current.key
             || !current.machineId
             || !current.presentation
+            || !current.serverId
         ) {
             setHydrated(null);
             return;
         }
+        if (!current.readEligible) return;
         setHydrated(null);
-        if (!matchesPresentation(progress, current.presentation)) return;
+        if (!matchesExternalSessionOperationPresentation(
+            progress,
+            current.presentation,
+        )) return;
         fireAndForget(loadCurrent({
             key: current.key,
             machineId: current.machineId,
@@ -171,11 +238,14 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
     }, [loadCurrent]);
 
     const progress = (
-        eligible
+        authorized
         && currentKey !== null
         && hydrated?.key === currentKey
         && presentation
-        && matchesPresentation(hydrated.progress, presentation)
+        && matchesExternalSessionOperationPresentation(
+            hydrated.progress,
+            presentation,
+        )
     )
         ? hydrated.progress
         : null;

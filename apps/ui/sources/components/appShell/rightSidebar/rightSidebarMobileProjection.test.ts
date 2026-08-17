@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import {
@@ -7,24 +8,30 @@ import {
 } from './rightSidebarMobileProjection';
 import { resolveRightSidebarTabs } from './rightSidebarTabRegistry';
 
+const REVIEW_PLUGIN_ID = 'acme.review';
+
+const pluginBinding = normalizePluginUiDestinationBindingV1({
+    pluginId: REVIEW_PLUGIN_ID,
+    destinationId: 'review-panel',
+    rendererId: 'review-panel-renderer',
+    container: 'rightSidebarTab',
+    target: { kind: 'session' },
+});
+if (!pluginBinding) {
+    throw new Error('test fixture must use an admitted V2 session right-sidebar binding');
+}
+
 const pluginPlacement = {
-    id: 'pluginUi:review:surfacePlacement:review-panel',
-    pluginId: 'review',
+    id: `surfacePlacement:${REVIEW_PLUGIN_ID}:review-panel`,
+    pluginId: REVIEW_PLUGIN_ID,
     contributionKind: 'surfacePlacement',
     descriptorId: 'review-panel',
-    placement: 'session.rightSidebarTab',
-    target: { kind: 'session' },
+    binding: pluginBinding,
+    target: pluginBinding.target,
     renderer: { kind: 'host', rendererId: 'review.panel' },
     display: { developerFallback: 'Review' },
     availability: { state: 'available', reason: 'available', diagnostics: [] },
-    order: 70,
-    rightSidebar: {
-        tabId: 'review',
-        scope: 'session',
-        order: 70,
-        mobile: { enabled: true, surface: 'pluginTab' },
-        disabledPolicy: 'disable',
-    },
+    headerActions: [],
 } satisfies PluginUiSurfacePlacementProjection;
 
 describe('rightSidebarMobileProjection', () => {
@@ -47,13 +54,14 @@ describe('rightSidebarMobileProjection', () => {
             { tabId: 'terminal', surface: 'terminal', owner: 'builtin' },
             { tabId: 'browser', surface: 'browser', owner: 'builtin' },
             { tabId: 'services', surface: 'services', owner: 'builtin' },
-            { tabId: 'plugin:review:review', surface: 'plugin', owner: 'plugin' },
+            { tabId: `plugin:${REVIEW_PLUGIN_ID}:review-panel`, surface: 'plugin', owner: 'plugin' },
         ]);
 
         expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'session', surface: 'browser', tabs })).toBe('browser');
         expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'session', surface: 'services', tabs })).toBe('services');
         expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'session', surface: 'navigation', tabs })).toBe('navigation');
-        expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'session', surface: 'plugin', tabs })).toBe('plugin:review:review');
+        expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'session', surface: 'plugin', tabs }))
+            .toBe(`plugin:${REVIEW_PLUGIN_ID}:review-panel`);
     });
 
     it('keeps the agents tab desktop-only: it declares no session mobile surface', () => {
@@ -90,6 +98,6 @@ describe('rightSidebarMobileProjection', () => {
         });
 
         expect(resolveRightSidebarMobileProjection({ scope: 'session', tabs }).map((entry) => entry.tabId))
-            .not.toContain('plugin:review:review');
+            .not.toContain(`plugin:${REVIEW_PLUGIN_ID}:review-panel`);
     });
 });

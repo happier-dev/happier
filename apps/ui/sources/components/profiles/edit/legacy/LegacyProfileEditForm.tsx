@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, ViewStyle, Linking, Platform, Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -41,6 +40,7 @@ import { LegacyProfileDefaultsSections } from './LegacyProfileDefaultsSections';
 import { LegacyProfileBackendCompatibilitySection } from './LegacyProfileBackendCompatibilitySection';
 import { buildLegacyProfileSave } from './buildLegacyProfileSave';
 import { useLegacyProfileSecretRequirements } from './useLegacyProfileSecretRequirements';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export interface LegacyProfileEditFormProps {
     profile: AIBackendProfile;
@@ -526,7 +526,7 @@ export function LegacyProfileEditForm({
                 <ItemGroup title={t('profiles.setupInstructions.title')} footer={profileDocs.description}>
                     <Item
                         title={t('profiles.setupInstructions.viewCloudGuide')}
-                        icon={<Ionicons name="book-outline" size={29} color={theme.colors.button.secondary.tint} />}
+                        icon={<Icon name="book" size={29} color={theme.colors.button.secondary.tint} />}
                         onPress={() => void openSetupGuide()}
                     />
                 </ItemGroup>
@@ -536,7 +536,7 @@ export function LegacyProfileEditForm({
                 <Item
                     title={t('profiles.machineLogin.title')}
                     subtitle={t('profiles.machineLogin.subtitle')}
-                    leftElement={<Ionicons name="terminal-outline" size={24} color={theme.colors.text.secondary} />}
+                    leftElement={<Icon name="terminal" size={24} color={theme.colors.text.secondary} />}
                     rightElement={(
                         <Switch
                             value={effectiveAuthMode === 'machineLogin'}
@@ -611,7 +611,7 @@ export function LegacyProfileEditForm({
                         detailStyle={resolvedMachine
                             ? { color: isMachineOnline(resolvedMachine) ? theme.colors.status.connected : theme.colors.status.disconnected }
                             : undefined}
-                        icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.button.secondary.tint} />}
+                        icon={<Icon name="desktop" size={29} color={theme.colors.button.secondary.tint} />}
                         onPress={showMachinePreviewPicker}
                     />
                 </ItemGroup>

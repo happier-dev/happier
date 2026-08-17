@@ -55,7 +55,7 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
     expect(cache.getStats().messageBytes).toBeLessThanOrEqual(180);
   });
 
-  it('returns plaintext messages without decrypting and caches them', async () => {
+  it('rejects a plaintext envelope before disclosure in an E2EE Session', async () => {
     const cache = new EncryptionCache()
     const sessionId = 's_plain'
 
@@ -84,14 +84,14 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
 
     const first = await sessionEnc.decryptMessages([msg as any])
     expect(first[0]).toBeTruthy()
-    expect(first[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'hello' } })
+    expect(first[0]!.content).toBeNull()
 
     const second = await sessionEnc.decryptMessages([msg as any])
     expect(second[0]).toBeTruthy()
-    expect(second[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'hello' } })
+    expect(second[0]!.content).toBeNull()
   })
 
-  it('rehydrates plaintext messages when content changes for the same message id', async () => {
+  it('rejects plaintext envelope updates for the same message id in an E2EE Session', async () => {
     const cache = new EncryptionCache()
     const sessionId = 's_plain_stream'
 
@@ -119,11 +119,11 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
 
     const first = await sessionEnc.decryptMessages([msg1 as any])
     expect(first[0]).toBeTruthy()
-    expect(first[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'partial' } })
+    expect(first[0]!.content).toBeNull()
 
     const second = await sessionEnc.decryptMessages([msg2 as any])
     expect(second[0]).toBeTruthy()
-    expect(second[0]!.content).toEqual({ role: 'user', content: { type: 'text', text: 'final' } })
+    expect(second[0]!.content).toBeNull()
   })
 
   it('treats invalid plaintext envelopes as undecipherable (content: null)', async () => {
@@ -155,7 +155,7 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
     expect(result[0]!.content).toBeNull()
   })
 
-  it('accepts unknown agent output data.type in plaintext messages (forward compatible)', async () => {
+  it('rejects forward-compatible plaintext records in an E2EE Session', async () => {
     const cache = new EncryptionCache()
     const sessionId = 's_plain_unknown_output'
 
@@ -195,7 +195,7 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
 
     const result = await sessionEnc.decryptMessages([msg as any])
     expect(result[0]).toBeTruthy()
-    expect(result[0]!.content).toEqual(msg.content.v)
+    expect(result[0]!.content).toBeNull()
   })
 
   it('retries decrypting encrypted messages when a prior attempt failed (does not permanently cache null)', async () => {

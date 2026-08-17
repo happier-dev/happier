@@ -3,11 +3,12 @@ import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { DependabotIcon } from '@/components/ui/icons/DependabotIcon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
 import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 
 /**
  * A live indicator: present exactly while agents are running in this session. `activeCount` is the
@@ -35,9 +36,8 @@ export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
             onPress={onPress}
             hitSlop={15}
             style={({ pressed }) => ({
-                minWidth: 44,
+                width: 44,
                 height: 44,
-                paddingHorizontal: 10,
                 alignItems: 'center',
                 justifyContent: 'center',
                 opacity: pressed ? 0.7 : 1,
@@ -45,32 +45,9 @@ export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={t('session.openSubagents', { count: props.activeCount })}
         >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <DependabotIcon size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
-                {props.activeCount > 0 ? (
-                    <View
-                        style={{
-                            minWidth: 18,
-                            height: 18,
-                            paddingHorizontal: 5,
-                            borderRadius: 999,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            backgroundColor: theme.colors.accent.blue,
-                        }}
-                    >
-                        <Text
-                            style={{
-                                color: theme.colors.surface.base,
-                                fontSize: 11,
-                                fontWeight: '700',
-                            }}
-                        >
-                            {props.activeCount}
-                        </Text>
-                    </View>
-                ) : null}
-            </View>
+            <SessionHeaderIconWithCount count={props.activeCount}>
+                <Icon name="robot" size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.chrome.header.foreground} />
+            </SessionHeaderIconWithCount>
         </Pressable>
     );
 });

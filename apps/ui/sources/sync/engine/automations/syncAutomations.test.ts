@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchAndApplyAutomations } from './syncAutomations';
+import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './syncAutomations';
 
-const listAutomationsMock = vi.hoisted(() => vi.fn());
-const listAutomationRunsMock = vi.hoisted(() => vi.fn());
+const listAutomationDefinitionsV3Mock = vi.hoisted(() => vi.fn());
+const listAutomationDefinitionRunsV3Mock = vi.hoisted(() => vi.fn());
 const isRuntimeFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn(() => ({ serverId: 'server-1' })));
 
 vi.mock('@/sync/api/automations/apiAutomations', () => ({
-    listAutomations: listAutomationsMock,
+    listAutomationDefinitionsV3: listAutomationDefinitionsV3Mock,
 }));
 
 vi.mock('@/sync/api/automations/apiAutomationRuns', () => ({
-    listAutomationRuns: listAutomationRunsMock,
+    listAutomationDefinitionRunsV3: listAutomationDefinitionRunsV3Mock,
 }));
 
 vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
@@ -23,72 +23,115 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: getActiveServerSnapshotMock,
 }));
 
+const eventSummary = {
+    id: 'event-1',
+    name: 'Repository updates',
+    description: null,
+    enabled: true,
+    trigger: {
+        kind: 'pluginEvent' as const,
+        eventRef: {
+            pluginId: 'happier.scm.github',
+            localId: 'repository-event-v1',
+        },
+        sourceSelectorId: 'selector-1',
+        sourceContractVersion: 1,
+        observation: {
+            kind: 'checkpointedPull' as const,
+            watcher: null,
+        },
+    },
+    targetType: 'existingSession' as const,
+    templateVersion: 3,
+    nextRunAt: null,
+    lastRunAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+    assignments: [],
+};
+
+const eventRun = {
+    id: 'run-event-1',
+    automationId: 'event-1',
+    state: 'succeeded' as const,
+    origin: {
+        kind: 'pluginEvent' as const,
+        occurrenceKey: 'occurrence-1',
+        sourceSelectorId: 'selector-1',
+        occurredAt: 10,
+    },
+    dueAt: 10,
+    claimedAt: null,
+    startedAt: 11,
+    finishedAt: 12,
+    claimedByMachineId: 'machine-1',
+    leaseExpiresAt: null,
+    attempt: 1,
+    errorCode: null,
+    producedSessionId: null,
+    executionDispatchState: 'settled' as const,
+    executionAttempt: 1,
+    replyHandoffState: 'none' as const,
+    replyHandoffAttempt: 0,
+    replyHandoffDueAt: null,
+    createdAt: 10,
+    updatedAt: 12,
+};
+
 describe('fetchAndApplyAutomations', () => {
     beforeEach(() => {
-        listAutomationsMock.mockReset();
-        listAutomationRunsMock.mockReset();
+        listAutomationDefinitionsV3Mock.mockReset();
+        listAutomationDefinitionRunsV3Mock.mockReset();
         isRuntimeFeatureEnabledMock.mockReset();
         getActiveServerSnapshotMock.mockClear();
 
         isRuntimeFeatureEnabledMock.mockResolvedValue(true);
-        listAutomationsMock.mockResolvedValue([
-            {
-                id: 'a1',
-                name: 'Nightly',
-                enabled: true,
-                description: null,
-                schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
-                targetType: 'new_session',
-                templateCiphertext: 'cipher',
-                templateVersion: 1,
-                nextRunAt: null,
-                lastRunAt: null,
-                createdAt: 1,
-                updatedAt: 1,
-                assignments: [],
-            },
-        ]);
-        listAutomationRunsMock.mockResolvedValue({
-            runs: [
-                {
-                    id: 'r1',
-                    automationId: 'a1',
-                    state: 'succeeded',
-                    scheduledAt: 10,
-                    startedAt: 11,
-                    finishedAt: 12,
-                    updatedAt: 12,
-                    claimedByMachineId: 'm1',
-                    errorCode: null,
-                    errorMessage: null,
-                    summaryCiphertext: null,
-                    producedSessionId: null,
-                },
-            ],
+        listAutomationDefinitionsV3Mock.mockResolvedValue([eventSummary]);
+        listAutomationDefinitionRunsV3Mock.mockResolvedValue({
+            runs: [eventRun],
             nextCursor: null,
         });
     });
 
-    it('refreshes already-loaded automation runs after applying automations', async () => {
+    it('applies content-free V3 summaries and refreshes already-loaded Event runs through V3', async () => {
         const applyAutomations = vi.fn();
         const setAutomationRuns = vi.fn();
 
         await fetchAndApplyAutomations({
             credentials: { accessToken: 'token' } as any,
             applyAutomations,
-            loadedAutomationRunIds: ['a1'],
+            loadedAutomationRunIds: ['event-1'],
             setAutomationRuns,
         });
 
-        expect(applyAutomations).toHaveBeenCalledTimes(1);
-        expect(listAutomationRunsMock).toHaveBeenCalledWith({
+        expect(applyAutomations).toHaveBeenCalledWith([expect.objectContaining({
+            id: 'event-1',
+            trigger: eventSummary.trigger,
+            detail: { kind: 'unloaded', templateVersion: 3 },
+            linkedExistingSessionId: null,
+        })]);
+        const appliedSummary = applyAutomations.mock.calls[0]?.[0]?.[0];
+        expect(appliedSummary).not.toHaveProperty('triggerDefinitionEnvelope');
+        expect(listAutomationDefinitionRunsV3Mock).toHaveBeenCalledWith({
             credentials: { accessToken: 'token' },
-            automationId: 'a1',
+            automationId: 'event-1',
             limit: 20,
         });
-        expect(setAutomationRuns).toHaveBeenCalledWith('a1', expect.arrayContaining([
-            expect.objectContaining({ id: 'r1', state: 'succeeded' }),
-        ]));
+        expect(setAutomationRuns).toHaveBeenCalledWith('event-1', [eventRun], null);
+    });
+
+    it('does not turn a list refresh into a private direct-detail fanout', async () => {
+        const applyAutomations = vi.fn();
+
+        await fetchAndApplyAutomations({
+            credentials: { accessToken: 'token' } as any,
+            applyAutomations,
+        });
+
+        expect(listAutomationDefinitionsV3Mock).toHaveBeenCalledTimes(1);
+        expect(applyAutomations.mock.calls[0]?.[0]?.[0]).toMatchObject({
+            detail: { kind: 'unloaded', templateVersion: 3 },
+        });
     });
 
     it('drops fetched automations when the captured sync scope is stale before apply', async () => {
@@ -98,13 +141,44 @@ describe('fetchAndApplyAutomations', () => {
         await fetchAndApplyAutomations({
             credentials: { accessToken: 'token' } as any,
             applyAutomations,
-            loadedAutomationRunIds: ['a1'],
+            loadedAutomationRunIds: ['event-1'],
             setAutomationRuns,
             shouldContinue: () => false,
-        } as Parameters<typeof fetchAndApplyAutomations>[0] & { shouldContinue: () => boolean });
+        });
 
         expect(applyAutomations).not.toHaveBeenCalled();
-        expect(listAutomationRunsMock).not.toHaveBeenCalled();
+        expect(listAutomationDefinitionRunsV3Mock).not.toHaveBeenCalled();
         expect(setAutomationRuns).not.toHaveBeenCalled();
+    });
+});
+
+describe('fetchAndApplyAutomationRuns', () => {
+    it('passes an opaque continuation cursor to the V3 API and applies the result only through the continuation owner', async () => {
+        listAutomationDefinitionRunsV3Mock.mockResolvedValue({
+            runs: [eventRun],
+            nextCursor: null,
+        });
+        isRuntimeFeatureEnabledMock.mockResolvedValue(true);
+        const setAutomationRuns = vi.fn();
+        const appendAutomationRuns = vi.fn();
+
+        const result = await fetchAndApplyAutomationRuns({
+            credentials: { accessToken: 'token' } as any,
+            automationId: 'event-1',
+            limit: 20,
+            cursor: 'opaque-root-page',
+            setAutomationRuns,
+            appendAutomationRuns,
+        });
+
+        expect(listAutomationDefinitionRunsV3Mock).toHaveBeenCalledWith({
+            credentials: { accessToken: 'token' },
+            automationId: 'event-1',
+            limit: 20,
+            cursor: 'opaque-root-page',
+        });
+        expect(setAutomationRuns).not.toHaveBeenCalled();
+        expect(appendAutomationRuns).toHaveBeenCalledWith('event-1', 'opaque-root-page', [eventRun], null);
+        expect(result).toEqual({ nextCursor: null });
     });
 });

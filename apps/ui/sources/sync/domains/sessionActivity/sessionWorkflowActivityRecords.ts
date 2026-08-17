@@ -2,7 +2,7 @@ import {
     SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
     SessionWorkflowRunSnapshotV1Schema,
     buildWorkflowRunSystemRecordLocalId,
-    type SessionSystemRecord,
+    type LegacyHostSessionSystemRecord as SessionSystemRecord,
     type SessionSystemRecordContent,
     type SessionWorkflowRunSnapshotV1,
 } from '@happier-dev/protocol';
@@ -37,7 +37,7 @@ export async function openWorkflowRunSystemRecordContent(params: Readonly<{
 }>): Promise<SessionWorkflowRunSnapshotV1 | null> {
     let rawPayload: unknown;
     if (isEncryptedContent(params.content)) {
-        const sessionEncryption = sync.encryption.getSessionEncryption(params.sessionId);
+        const sessionEncryption = sync.encryption?.getSessionEncryption(params.sessionId);
         if (!sessionEncryption) return null;
         rawPayload = await sessionEncryption.decryptRaw(params.content.c);
         if (rawPayload === null || rawPayload === undefined) return null;

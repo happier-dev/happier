@@ -3,8 +3,8 @@ import { useShallow } from 'zustand/react/shallow';
 import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
 
 import type {
-  Automation,
-  AutomationRun,
+  AutomationDefinition,
+  AutomationDefinitionRun,
 } from '../domains/automations/automationTypes';
 import type {
   DiscardedPendingMessage,
@@ -21,12 +21,28 @@ import {
   listOpenApprovalArtifactsForSession,
   type OpenApprovalArtifactForSession,
 } from '../domains/artifacts/approvalArtifacts';
-import { countEnabledAutomationsLinkedToSession } from '../domains/automations/automationSessionLink';
+import { countEnabledAutomationDefinitionsLinkedToSession } from '../domains/automations/automationSessionLink';
 import type { LocalSettings } from '../domains/settings/localSettings';
+import {
+    buildRealmQualifiedMobileSurfaceStorageKey,
+    readRealmQualifiedMobileSurface,
+    readSessionMobileSurfaceWithPredecessor,
+    resolveMobileSurfacePersistenceScope,
+    resolveSessionMobileSurfacePersistenceKeys,
+    type SessionMobileSurfacePersistenceKeys,
+} from '../domains/settings/mobileSurfacePersistence';
 import type { AgentTextMessage, Message } from '../domains/messages/messageTypes';
 import { messageAttentionImpact } from '../domains/messages/messageUserAttention';
-import type { Settings } from '../domains/settings/settings';
+import type {
+  Settings,
+  SettingsWriteDelta,
+  WritableSettingsKey,
+} from '../domains/settings/settings';
 import { settingsDefaults } from '../domains/settings/settings';
+import {
+  mergeCurrentSecretBindingsIntoRawBindings,
+  readRetainedSecretBindingsByProfileId,
+} from '../domains/settings/secretBindings';
 import {
   deriveSessionListRenderableHasUnreadMessagesFromSession,
   isSessionListRenderableWarmCacheProgressOnlyChange,
@@ -39,8 +55,10 @@ import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listin
 import { getPermissionsInUiWhileLocal } from '../domains/state/agentStateCapabilities';
 import { getSessionLocalControlState, type SessionLocalControlState } from '../domains/session/control/sessionLocalControl';
 import { readExternalSessionLink } from '../domains/session/external/readExternalSessionLink';
+import { resolveSessionMachineId } from '../domains/session/external/resolveSessionMachineId';
 import type { SessionForkSupportSource } from '../domains/sessionFork/forkUiSupport';
 import { agentTextLooksLikeExecutionRunSignal, shouldIncludeSubagentSourceMessage } from '../domains/session/subagents/subagentSourceMessageDetection';
+import { readExecutionRunResultStatus } from '../domains/session/subagents/executionRuns/executionRunSubagentStatus';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import type { UserProfile } from '../domains/social/friendTypes';
@@ -51,9 +69,17 @@ import {
   createMessagesByRefsSelector,
   type MessageStoreRef,
 } from './messageSelection';
-import { useApplyLocalSettings, useApplySettings } from './settingsWriters';
+import {
+  useApplyLocalSettings,
+  useApplyFavoriteModelSelectionReplacementIntent,
+  useApplyRememberedEngineSelectionReplacementIntent,
+  useApplyRetainedSecretBindingsByProfileId,
+  useApplySettings,
+} from './settingsWriters';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 import { resolveWorkspaceTargetForSessionFromState } from '../domains/session/resolveWorkspaceTargetForSessionFromState';
+import { createProjectForSessionResolver } from '../runtime/orchestration/projectForSessionResolver';
 import { normalizeSessionId } from '../domains/session/normalizeSessionId';
 import { buildSessionMetadataStabilitySignature } from '../domains/session/metadata/sessionMetadataStability';
 import { readSessionOwnerMetadataView } from '../domains/session/readSessionOwnerMetadataView';
@@ -62,7 +88,6 @@ import type { MachineDisplayRenderable } from '../domains/machines/machineDispla
 import { normalizeTrimmedString } from '../domains/session/listing/normalizeTrimmedString';
 import {
   buildSessionListServerScopedRowKey,
-  normalizeSessionListKeyParts,
 } from '../domains/session/listing/sessionListKeyNormalization';
 import {
   buildSessionListRuntimePriorityRowKeys,
@@ -80,6 +105,7 @@ import {
   type SessionOrganizationProjection,
 } from '../domains/session/organization';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { resolveServerScopedMachine } from './domains/machines/resolveServerScopedMachine';
 import {
   buildSessionRealtimeScmScopeFromSnapshot,
   getMountedSessionRealtimeScmConsumerScopeResetVersion,
@@ -124,6 +150,54 @@ export function useSessions() {
 
 export function useSession(id: string): Session | null {
   return getStorage()(useShallow((state) => state.sessions[id] ?? null));
+}
+
+export type SessionReferenceTarget = Readonly<{
+  /**
+   * `true` only when this viewer has positive evidence the session is gone. A cache miss is not
+   * evidence: see the note below.
+   */
+  deleted: boolean;
+  metadata: SessionListRenderableSession['metadata'] | Session['metadata'] | null;
+}>;
+
+/**
+ * The exact projection a transcript session reference consumes. A reference's identity is the
+ * session id, so only two things can change what it renders: whether that session is still
+ * present for this viewer, and the metadata its title is derived from. Turn-lifecycle churn
+ * (thinking, agentState, seq, presence, updatedAt) changes neither, so a reference chip must
+ * not re-render for it.
+ *
+ * **A cache miss is not evidence that the session is gone**, which is the whole content of this
+ * hook. Both session maps are list-scoped caches, and neither is a record of what exists:
+ *
+ * - `sessionListRenderables` holds one entry per row the session list currently covers. A
+ *   replace-mode `/v2/sessions` page evicts every previously-known row it omits inside its
+ *   removal window, and that endpoint filters `archivedAt: null` **server-side**, so archiving a
+ *   session is by itself enough to empty this map of it.
+ * - `sessions` holds only the full records this run hydrated, which is a deliberately small set.
+ *   It is in practice a *subset* of the renderables, so it can never rescue a row the renderable
+ *   eviction removed. That is why answering presence from either map, or from their union,
+ *   produces the same false "Unavailable session" for an archived target.
+ *
+ * An archived session is fully readable: opening `/session/<id>` from exactly that
+ * both-maps-empty state loads and renders it. So an uncached reference stays pressable, and the
+ * session route — which already answers a genuinely missing id with its own explicit
+ * "Session isn't available" screen — owns the failure the client cannot predict.
+ *
+ * `deleted` therefore comes from `deletedSessionIds`, written only by `deleteSession`. `metadata`
+ * is whichever cached copy exists so a known session still shows its live title; it is always a
+ * *stored* object, never a projection, so the selection stays referentially stable.
+ */
+export function useSessionReferenceTarget(sessionId: string): SessionReferenceTarget {
+  return getStorage()(
+    useShallow((state) => ({
+      deleted: state.deletedSessionIds[sessionId] === true,
+      metadata: state.sessionListRenderables[sessionId]?.metadata
+        ?? state.sessions[sessionId]?.metadata
+        ?? null,
+    })),
+  );
 }
 
 const sessionForkSupportSourceCache = new Map<string, Readonly<{
@@ -208,6 +282,51 @@ export function useSessionChatFooterState(sessionId: string | null): SessionChat
 
 export function useSessionMetadata(sessionId: string): Session['metadata'] | null {
   return getStorage()((state) => state.sessions[sessionId]?.metadata ?? null);
+}
+
+/**
+ * The session's machine id, as a PRIMITIVE.
+ *
+ * Same reason as {@link useSessionInteractionSource}: a caller that only needs "which machine does
+ * this session live on" must not subscribe to the whole `Session` record — nor to `metadata`, which
+ * is an object the sync layer replaces wholesale on a push and so re-renders a `useShallow` /
+ * reference-compared subscriber for every unrelated field it carries. A string compares by value, so
+ * the subscription fires exactly when the answer changes.
+ *
+ * V-2 (2026-08-11): the transcript reached this through `useExecutionRunsBackendsForSession`, which
+ * held `useSession(id)` purely to read `metadata` and hand it to `resolveSessionMachineId`. With an
+ * `action-draft` row present that put a whole-session subscription in the transcript producer, so
+ * every unrelated session-field write re-ran the option hook — MEASURED at 1 render per write, and 0
+ * once it reads this instead.
+ */
+export function useSessionMachineId(sessionId: string): string | null {
+  return getStorage()((state) => resolveSessionMachineId(state.sessions[sessionId]?.metadata));
+}
+
+export type SessionInteractionSource = Readonly<{
+  accessLevel: Session['accessLevel'];
+  canApprovePermissions: Session['canApprovePermissions'];
+  active: Session['active'];
+}>;
+
+/**
+ * The exact projection `deriveTranscriptInteractionFromSession` consumes. Transcript rows
+ * subscribe to this instead of the whole `Session` record: turn-lifecycle churn (thinking,
+ * agentState, agentStateVersion, updatedAt, seq, presence) cannot change interaction rights,
+ * so a row must not re-render for it.
+ */
+export function useSessionInteractionSource(sessionId: string): SessionInteractionSource | null {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessions[sessionId];
+      if (!session) return null;
+      return {
+        accessLevel: session.accessLevel,
+        canApprovePermissions: session.canApprovePermissions,
+        active: session.active,
+      };
+    })
+  );
 }
 
 export function useSessionListPreferredMetadata(sessionId: string | null | undefined): SessionMetadataLike {
@@ -807,30 +926,82 @@ export function useSessionServerId(sessionId: string, enabled = true): string | 
     );
 }
 
-function resolveSessionLastMobileSurfaceStorageKeyFromState(
-  state: Pick<StorageState, 'sessions' | 'sessionListIndexByServerId' | 'sessionListRenderables' | 'concurrentSessionListCacheByServerId'>,
+function resolveSessionLastMobileSurfacePersistenceKeysFromState(
+  state: Pick<StorageState, 'profileScope' | 'sessions' | 'sessionListIndexByServerId' | 'sessionListRenderables' | 'concurrentSessionListCacheByServerId'>,
   sessionId: string,
-): string {
+  activeServerId: string | null | undefined,
+  explicitServerId?: string | null,
+): SessionMobileSurfacePersistenceKeys | null {
   const normalizedSessionId = normalizeSessionId(sessionId);
-  if (!normalizedSessionId) return '';
-  const resolvedServerId = resolveSessionListLookupSessionServerScopeFromState({
-    sessions: state.sessions as Record<string, { serverId?: unknown } | null>,
-    sessionListIndexByServerId: state.sessionListIndexByServerId,
-    sessionListRenderables: state.sessionListRenderables,
-    concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
-  }, normalizedSessionId)?.serverId ?? null;
-  return normalizeSessionListKeyParts(resolvedServerId, normalizedSessionId).sessionKey ?? normalizedSessionId;
+  if (!normalizedSessionId) return null;
+  const resolvedExplicitServerId = normalizeTrimmedString(explicitServerId);
+  const resolvedServerId = resolvedExplicitServerId
+    || (resolveSessionListLookupSessionServerScopeFromState({
+      sessions: state.sessions as Record<string, { serverId?: unknown } | null>,
+      sessionListIndexByServerId: state.sessionListIndexByServerId,
+      sessionListRenderables: state.sessionListRenderables,
+      concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+    }, normalizedSessionId)?.serverId ?? null);
+  return resolveSessionMobileSurfacePersistenceKeys({
+    sessionId: normalizedSessionId,
+    activeScope: state.profileScope,
+    activeServerId,
+    targetServerId: resolvedServerId,
+  });
 }
 
 function readSessionLastMobileSurfaceFromMap(
   persistedBySessionId: LocalSettings['sessionLastMobileSurfaceBySessionId'] | null | undefined,
-  sessionId: string,
-  scopedStorageKey: string,
-): LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null {
-  const scopedValue = scopedStorageKey ? persistedBySessionId?.[scopedStorageKey] ?? null : null;
-  if (typeof scopedValue === 'string') return scopedValue;
-  const legacyValue = persistedBySessionId?.[sessionId] ?? null;
-  return typeof legacyValue === 'string' ? legacyValue : null;
+  persistenceKeys: SessionMobileSurfacePersistenceKeys | null,
+): Readonly<{
+  surface: LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null;
+  predecessorSurface: LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null;
+}> {
+  return readSessionMobileSurfaceWithPredecessor(persistedBySessionId, persistenceKeys);
+}
+
+function resolveProjectLastMobileSurfaceStorageKeyFromState(
+  state: Pick<StorageState, 'profileScope' | 'settings'>,
+  workspaceRefId: string,
+  activeServerId: string | null | undefined,
+): string | null {
+  const normalizedWorkspaceRefId = normalizeTrimmedString(workspaceRefId);
+  if (!normalizedWorkspaceRefId) return null;
+  const activeScope = state.profileScope ?? null;
+  const workspaceRef = activeScope
+    ? state.settings.workspaceRefsV1.find((candidate) => (
+      candidate.id === normalizedWorkspaceRefId
+      && areServerProfileIdentifiersEquivalent(candidate.serverId, activeScope.serverId)
+    )) ?? null
+    : null;
+  const scope = resolveMobileSurfacePersistenceScope({
+    activeScope,
+    activeServerId,
+    targetServerId: workspaceRef?.serverId ?? null,
+  });
+  return scope
+    ? buildRealmQualifiedMobileSurfaceStorageKey('project', scope, normalizedWorkspaceRefId)
+    : null;
+}
+
+function selectProjectLastMobileSurfacesByWorkspaceRefId(
+  state: Pick<StorageState, 'localSettings' | 'profileScope' | 'settings'>,
+  activeServerId: string | null | undefined,
+): Readonly<Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]>> {
+  const persisted = state.localSettings.projectLastMobileSurfaceByWorkspaceRefId;
+  const result: Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]> = {};
+  for (const workspaceRef of state.settings.workspaceRefsV1) {
+    const storageKey = resolveProjectLastMobileSurfaceStorageKeyFromState(
+      state,
+      workspaceRef.id,
+      activeServerId,
+    );
+    const surface = readRealmQualifiedMobileSurface(persisted, storageKey);
+    if (surface) {
+      result[workspaceRef.id] = surface;
+    }
+  }
+  return result;
 }
 
 const emptyArray: unknown[] = [];
@@ -918,7 +1089,18 @@ function appendSubagentSourceMessageSignature(parts: string[], message: Message)
     description: tool?.description ?? null,
     permissionStatus: tool?.permission?.status ?? null,
     input: tool?.input ?? null,
-    result: tool?.result ?? null,
+    // A still-running execution run streams prose into its result, so the signature carries only
+    // the field the roster derivation actually reads — the structured status the execution-run
+    // manager wrote — through that derivation's own owner. Otherwise every token would change the
+    // signature and hand every consumer a fresh array to re-derive.
+    //
+    // Narrowed to `SubAgentRun` on purpose: the Claude teammate derivation discovers a spawned
+    // member from a spawn tool's *result*, so dropping a running tool's result wholesale would
+    // delay that roster entry. Once the call leaves `running` the state itself changes the
+    // signature, so the full result is read again either way.
+    result: tool?.state === 'running' && tool?.name === 'SubAgentRun'
+      ? { status: readExecutionRunResultStatus(tool?.result) }
+      : tool?.result ?? null,
   }));
   const signature = messageParts.join('\u0001');
   sessionSubagentSourceMessageSignatureCache.set(message, signature);
@@ -1416,6 +1598,21 @@ export function useSessionActionDrafts(sessionId: string): SessionActionDraft[] 
   );
 }
 
+/**
+ * Whether this session has any action-draft row at all.
+ *
+ * A BOOLEAN selector, not `useSessionActionDrafts(...).length > 0`: the draft objects are rewritten
+ * on every keystroke, so the shallow-compared array above re-renders its subscriber constantly. The
+ * transcript root uses this to decide whether to pay for the draft-card option subscription
+ * (`useSessionActionFieldOptionsForRowHeight`) at all, and it must not itself become a per-keystroke
+ * re-render of the whole transcript.
+ */
+export function useSessionHasActionDrafts(sessionId: string): boolean {
+  return getStorage()(
+    (state) => (state.actionDraftsBySessionId?.[sessionId]?.length ?? 0) > 0
+  );
+}
+
 function summarizeCommittedSessionMessagesForUnread(
   sessionMessages: StorageState['sessionMessages'][string] | undefined,
 ): ReturnType<typeof summarizeSessionListReadableActivityFromMessageRecords> {
@@ -1517,18 +1714,95 @@ export function useSettings(): Settings {
   return getStorage()(useShallow((state) => state.settings ?? settingsDefaults));
 }
 
-export function useSettingMutable<K extends keyof Settings>(
+export function useSettingsVersion(): number | null {
+  return getStorage()((state) => state.settingsVersion);
+}
+
+export function useSettingMutable<K extends WritableSettingsKey>(
   name: K
 ): [Settings[K], (value: Settings[K]) => void] {
   const applySettings = useApplySettings();
   const setValue = React.useCallback(
     (value: Settings[K]) => {
-      applySettings({ [name]: value } as Partial<Settings>);
+      const delta: SettingsWriteDelta = {};
+      delta[name] = value;
+      applySettings(delta);
     },
     [applySettings, name]
   );
   const value = useSetting(name);
   return [value, setValue];
+}
+
+/**
+ * Runtime profile consumers edit only current maps; the Protocol-owned raw
+ * root retains opaque carriers for later writeback.
+ */
+export function useCurrentSecretBindingsByProfileIdMutable(): [
+  Settings['currentSecretBindingsByProfileId'],
+  (value: Settings['currentSecretBindingsByProfileId']) => void,
+] {
+  const applyRetainedBindings = useApplyRetainedSecretBindingsByProfileId();
+  const rawBindings = getStorage()(useShallow((state) => (
+    readRetainedSecretBindingsByProfileId(state.settings ?? settingsDefaults)
+  )));
+  const currentBindings = useSetting('currentSecretBindingsByProfileId');
+  const setCurrentBindings = React.useCallback(
+    (nextBindings: Settings['currentSecretBindingsByProfileId']) => {
+      applyRetainedBindings(mergeCurrentSecretBindingsIntoRawBindings({
+        rawBindings,
+        currentBindings,
+        nextBindings,
+      }));
+    },
+    [applyRetainedBindings, currentBindings, rawBindings],
+  );
+  return [currentBindings, setCurrentBindings];
+}
+
+/**
+ * New Session consumes only the strict Favorite projection. Its replacement
+ * intent is replayed by the canonical Account Settings CAS owner.
+ */
+export function useCurrentFavoriteModelSelectionsV1Mutable(): [
+  Settings['currentFavoriteModelSelectionsV1'],
+  (value: Settings['currentFavoriteModelSelectionsV1']) => void,
+] {
+  const applyFavoriteReplacement = useApplyFavoriteModelSelectionReplacementIntent();
+  const currentFavorites = useSetting('currentFavoriteModelSelectionsV1');
+  const setCurrentFavorites = React.useCallback(
+    (nextFavorites: Settings['currentFavoriteModelSelectionsV1']) => {
+      fireAndForget(
+        applyFavoriteReplacement({ base: currentFavorites, proposed: nextFavorites }),
+        { tag: 'useCurrentFavoriteModelSelectionsV1Mutable' },
+      );
+    },
+    [applyFavoriteReplacement, currentFavorites],
+  );
+  return [currentFavorites, setCurrentFavorites];
+}
+
+/**
+ * New Session consumes only the strict remembered-selection projection. Its
+ * replacement intent cannot replace an opaque future value at the same scope
+ * key, including after a concurrent CAS winner arrives.
+ */
+export function useCurrentRememberedEngineSelectionsByScopeV1Mutable(): [
+  Settings['currentRememberedEngineSelectionsByScopeV1'],
+  (value: Settings['currentRememberedEngineSelectionsByScopeV1']) => void,
+] {
+  const applyRememberedReplacement = useApplyRememberedEngineSelectionReplacementIntent();
+  const currentSelections = useSetting('currentRememberedEngineSelectionsByScopeV1');
+  const setCurrentSelections = React.useCallback(
+    (nextSelections: Settings['currentRememberedEngineSelectionsByScopeV1']) => {
+      fireAndForget(
+        applyRememberedReplacement({ base: currentSelections, proposed: nextSelections }),
+        { tag: 'useCurrentRememberedEngineSelectionsByScopeV1Mutable' },
+      );
+    },
+    [applyRememberedReplacement, currentSelections],
+  );
+  return [currentSelections, setCurrentSelections];
 }
 
 export function useSetting<K extends keyof Settings>(name: K): Settings[K] {
@@ -1602,6 +1876,20 @@ export function useMachineRecordValues(): Machine[] {
 
 const EMPTY_MACHINE_LIST_BY_SERVER_ID: Record<string, Machine[] | null> = {};
 
+/**
+ * Raw server-scoped inventory for consumers that must retain unavailable
+ * tombstones. Launch and session pickers should use `useMachineListByServerId`
+ * instead, which intentionally removes revoked records.
+ */
+export function useMachineRecordListsByServerId(): Record<string, Machine[] | null> {
+  const machineListByServerId = getStorage()(useShallow((state) => state.machineListByServerId));
+  return React.useMemo(() => {
+    return machineListByServerId && typeof machineListByServerId === 'object'
+      ? (machineListByServerId as Record<string, Machine[] | null>)
+      : EMPTY_MACHINE_LIST_BY_SERVER_ID;
+  }, [machineListByServerId]);
+}
+
 export function useMachineListByServerId(): Record<string, Machine[] | null> {
   const machineListByServerIdRaw = getStorage()(useShallow((state) => state.machineListByServerId));
   const machineListByServerId = machineListByServerIdRaw ?? EMPTY_MACHINE_LIST_BY_SERVER_ID;
@@ -1661,10 +1949,11 @@ export function useMachine(machineId: string, enabled = true): Machine | null {
   );
 }
 
-type MachineCliDetectionTarget = Readonly<{
+export type MachineCliDetectionTarget = Readonly<{
   daemonStateVersion: number;
   isOnline: boolean;
 }>;
+export type MachineCliDetectionTargets = Readonly<Record<string, MachineCliDetectionTarget>>;
 
 type MachineCliDetectionTargetCacheEntry = Readonly<{
   signature: string;
@@ -1694,25 +1983,32 @@ export function useMachineCliDetectionTarget(machineId: string | null): MachineC
   });
 }
 
+function normalizeMachineCliDetectionTargetIds(machineIds: readonly string[]): string[] {
+  return [...new Set(machineIds.map((machineId) => String(machineId ?? '').trim()).filter(Boolean))].sort();
+}
+
+/**
+ * Projects currentness for a dynamic set through one store subscription.
+ * Each entry reuses the exact-machine target owner above, so plural callers
+ * do not duplicate daemon-version or online normalization.
+ */
+export function useMachineCliDetectionTargets(machineIds: readonly string[]): MachineCliDetectionTargets {
+  const normalizedMachineIds = normalizeMachineCliDetectionTargetIds(machineIds);
+  const normalizedMachineIdsKey = normalizedMachineIds.join('\u0000');
+  const stableMachineIds = React.useMemo(() => normalizedMachineIds, [normalizedMachineIdsKey]);
+  const selectTargets = React.useCallback((state: StorageState): MachineCliDetectionTargets => {
+    const targets: Record<string, MachineCliDetectionTarget> = {};
+    for (const machineId of stableMachineIds) {
+      targets[machineId] = getStableMachineCliDetectionTarget(machineId, state.machines[machineId] ?? null);
+    }
+    return targets;
+  }, [stableMachineIds]);
+  return getStorage()(useShallow(selectTargets));
+}
+
 export function useServerScopedMachine(serverId: string | null | undefined, machineId: string): Machine | null {
   return getStorage()(useShallow((state) => {
-    const normalizedMachineId = typeof machineId === 'string' ? machineId.trim() : '';
-    if (!normalizedMachineId) {
-      return null;
-    }
-
-    const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
-    if (normalizedServerId.length > 0) {
-      const scopedMachines = state.machineListByServerId?.[normalizedServerId];
-      if (Array.isArray(scopedMachines)) {
-        const scopedMachine = scopedMachines.find((candidate) => candidate.id === normalizedMachineId) ?? null;
-        if (scopedMachine) {
-          return scopedMachine;
-        }
-      }
-    }
-
-    return state.machines[normalizedMachineId] ?? null;
+    return resolveServerScopedMachine(state, serverId, machineId);
   }));
 }
 
@@ -1866,20 +2162,33 @@ export function useProjectForSession(sessionId: string | null) {
   );
 }
 
+/**
+ * The workspace root the session targets.
+ *
+ * The project lookup is resolved purely, not through the store's `getProjectForSession`, which
+ * reads *by writing*: it calls `projectManager.addSession`, which re-files the session across
+ * several `Map`s. This selector is what zustand runs as its snapshot-equality check, so it
+ * re-executes for every mounted consumer on every publish — a transcript mounts one consumer per
+ * row wrapper and a streaming session publishes continuously — and the machine-target resolver
+ * reaches the lookup twice per resolution, so the writes multiply by rows x publishes x 2. The
+ * registration is redundant besides: `applySessions` re-files every session whose project grouping
+ * fields moved, so the manager is maintained by its producer rather than by its readers.
+ *
+ * The result is a plain `string | null`, so `useShallow` would only add a ref and a wrapper — the
+ * default `Object.is` snapshot check is already exact for a primitive.
+ */
 export function useSessionWorkspacePath(sessionId: string | null): string | null {
-  return getStorage()(
-    useShallow((state) => {
-      const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-      if (!normalizedSessionId) return null;
-      return resolveWorkspaceTargetForSessionFromState({
-        sessions: state.sessions,
-        sessionListRenderables: state.sessionListRenderables,
-        machines: state.machines,
-        sessionListIndexByServerId: state.sessionListIndexByServerId,
-        getProjectForSession: state.getProjectForSession,
-      }, normalizedSessionId)?.rootPath ?? null;
-    })
-  );
+  return getStorage()((state) => {
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) return null;
+    return resolveWorkspaceTargetForSessionFromState({
+      sessions: state.sessions,
+      sessionListRenderables: state.sessionListRenderables,
+      machines: state.machines,
+      sessionListIndexByServerId: state.sessionListIndexByServerId,
+      getProjectForSession: createProjectForSessionResolver(state.sessions),
+    }, normalizedSessionId)?.rootPath ?? null;
+  });
 }
 
 export function useSessionRpcAvailabilityState(sessionId: string | null): Readonly<{
@@ -2040,45 +2349,109 @@ export function useLocalSetting<K extends keyof LocalSettings>(name: K): LocalSe
   return getStorage()(useShallow((state) => state.localSettings[name]));
 }
 
-export function useSessionLastMobileSurface(sessionId: string | null): LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null {
-  return getStorage()(useShallow((state) => {
+export function useSessionLastMobileSurface(
+  sessionId: string | null,
+  serverId?: string | null,
+): LocalSettings['sessionLastMobileSurfaceBySessionId'][string] | null {
+  const activeServer = useActiveServerSnapshot();
+  const applyLocalSettings = useApplyLocalSettings();
+  const selection = getStorage()(useShallow((state) => {
     if (!sessionId) return null;
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) return null;
-    const scopedStorageKey = resolveSessionLastMobileSurfaceStorageKeyFromState(state, normalizedSessionId);
-    return readSessionLastMobileSurfaceFromMap(
-      state.localSettings.sessionLastMobileSurfaceBySessionId,
+    const persistenceKeys = resolveSessionLastMobileSurfacePersistenceKeysFromState(
+      state,
       normalizedSessionId,
-      scopedStorageKey,
+      activeServer.serverId,
+      serverId,
     );
+    const persistedSelection = readSessionLastMobileSurfaceFromMap(
+      state.localSettings.sessionLastMobileSurfaceBySessionId,
+      persistenceKeys,
+    );
+    return {
+      surface: persistedSelection.surface,
+      predecessorSurface: persistedSelection.predecessorSurface,
+      currentStorageKey: persistenceKeys?.realmQualifiedStorageKey ?? null,
+      predecessorStorageKey: persistenceKeys?.predecessorServerQualifiedStorageKey ?? null,
+    };
   }));
+  const currentStorageKey = selection?.currentStorageKey ?? null;
+  const predecessorStorageKey = selection?.predecessorStorageKey ?? null;
+  const predecessorSurface = selection?.predecessorSurface ?? null;
+
+  React.useEffect(() => {
+    if (!currentStorageKey || !predecessorStorageKey || !predecessorSurface) return;
+    const state = getStorage().getState();
+    const persisted = state.localSettings.sessionLastMobileSurfaceBySessionId ?? {};
+    const currentPredecessorSurface = persisted[predecessorStorageKey];
+    if (typeof currentPredecessorSurface !== 'string') return;
+
+    const next = { ...persisted };
+    if (typeof next[currentStorageKey] !== 'string') {
+      next[currentStorageKey] = currentPredecessorSurface;
+    }
+    delete next[predecessorStorageKey];
+    applyLocalSettings({ sessionLastMobileSurfaceBySessionId: next });
+  }, [applyLocalSettings, currentStorageKey, predecessorStorageKey, predecessorSurface]);
+
+  return selection?.surface ?? null;
 }
 
 export function usePersistSessionLastMobileSurface(): (
   sessionId: string,
   surface: LocalSettings['sessionLastMobileSurfaceBySessionId'][string],
+  serverId?: string | null,
 ) => void {
   const applyLocalSettings = useApplyLocalSettings();
-  return React.useCallback((sessionId, surface) => {
+  const activeServer = useActiveServerSnapshot();
+  return React.useCallback((sessionId, surface, serverId) => {
     const normalizedSessionId = normalizeSessionId(sessionId);
     if (!normalizedSessionId) return;
-    const scopedStorageKey = resolveSessionLastMobileSurfaceStorageKeyFromState(getStorage().getState(), normalizedSessionId);
-    const current = getStorage().getState().localSettings.sessionLastMobileSurfaceBySessionId ?? {};
+    const state = getStorage().getState();
+    const persistenceKeys = resolveSessionLastMobileSurfacePersistenceKeysFromState(
+      state,
+      normalizedSessionId,
+      activeServer.serverId,
+      serverId,
+    );
+    if (!persistenceKeys) return;
+    const current = state.localSettings.sessionLastMobileSurfaceBySessionId ?? {};
+    const currentStorageKey = persistenceKeys.realmQualifiedStorageKey;
+    const predecessorStorageKey = persistenceKeys.predecessorServerQualifiedStorageKey;
+    if (current[currentStorageKey] === surface && !(predecessorStorageKey in current)) return;
+    const next = {
+      ...current,
+      [currentStorageKey]: surface,
+    };
+    delete next[predecessorStorageKey];
     applyLocalSettings({
-      sessionLastMobileSurfaceBySessionId: {
-        ...current,
-        [scopedStorageKey || normalizedSessionId]: surface,
-      },
+      sessionLastMobileSurfaceBySessionId: next,
     });
-  }, [applyLocalSettings]);
+  }, [activeServer.serverId, applyLocalSettings]);
 }
 
 export function useProjectLastMobileSurface(workspaceRefId: string | null): LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string] | null {
+  const activeServer = useActiveServerSnapshot();
   return getStorage()(useShallow((state) => {
     if (!workspaceRefId) return null;
-    const value = state.localSettings.projectLastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] ?? null;
-    return typeof value === 'string' ? value : null;
+    const storageKey = resolveProjectLastMobileSurfaceStorageKeyFromState(
+      state,
+      workspaceRefId,
+      activeServer.serverId,
+    );
+    return readRealmQualifiedMobileSurface(
+      state.localSettings.projectLastMobileSurfaceByWorkspaceRefId,
+      storageKey,
+    );
   }));
+}
+
+export function useProjectLastMobileSurfacesByWorkspaceRefId(): Readonly<Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]>> {
+  const activeServer = useActiveServerSnapshot();
+  return getStorage()(useShallow((state) => (
+    selectProjectLastMobileSurfacesByWorkspaceRefId(state, activeServer.serverId)
+  )));
 }
 
 export function usePersistProjectLastMobileSurface(): (
@@ -2086,15 +2459,24 @@ export function usePersistProjectLastMobileSurface(): (
   surface: LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string],
 ) => void {
   const applyLocalSettings = useApplyLocalSettings();
+  const activeServer = useActiveServerSnapshot();
   return React.useCallback((workspaceRefId, surface) => {
-    const current = getStorage().getState().localSettings.projectLastMobileSurfaceByWorkspaceRefId ?? {};
+    const state = getStorage().getState();
+    const storageKey = resolveProjectLastMobileSurfaceStorageKeyFromState(
+      state,
+      workspaceRefId,
+      activeServer.serverId,
+    );
+    if (!storageKey) return;
+    const current = state.localSettings.projectLastMobileSurfaceByWorkspaceRefId ?? {};
+    if (current[storageKey] === surface) return;
     applyLocalSettings({
       projectLastMobileSurfaceByWorkspaceRefId: {
         ...current,
-        [workspaceRefId]: surface,
+        [storageKey]: surface,
       },
     });
-  }, [applyLocalSettings]);
+  }, [activeServer.serverId, applyLocalSettings]);
 }
 
 // Artifact hooks
@@ -2221,10 +2603,10 @@ export function useAllArtifacts(): DecryptedArtifact[] {
   );
 }
 
-export function useAutomations(): Automation[] {
+export function useAutomations(): AutomationDefinition[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return emptyArray as Automation[];
+      if (!state.isDataReady) return emptyArray as AutomationDefinition[];
       return sortValuesByUpdatedAtDescending(state.automations);
     })
   );
@@ -2255,7 +2637,7 @@ export function useEnabledAutomationsCountForSession(
 
       previousIsDataReady = state.isDataReady;
       previousAutomations = state.automations;
-      previousCount = countEnabledAutomationsLinkedToSession(
+      previousCount = countEnabledAutomationDefinitionsLinkedToSession(
         Object.values(state.automations),
         normalizedSessionId,
       );
@@ -2266,14 +2648,18 @@ export function useEnabledAutomationsCountForSession(
   return getStorage()(selector);
 }
 
-export function useAutomation(automationId: string): Automation | null {
+export function useAutomation(automationId: string): AutomationDefinition | null {
   return getStorage()(useShallow((state) => state.automations[automationId] ?? null));
 }
 
-export function useAutomationRuns(automationId: string): AutomationRun[] {
+export function useAutomationRuns(automationId: string): AutomationDefinitionRun[] {
   return getStorage()(
     useShallow((state) => state.automationRunsByAutomationId[automationId] ?? emptyArray)
-  ) as AutomationRun[];
+  ) as AutomationDefinitionRun[];
+}
+
+export function useAutomationRunNextCursor(automationId: string): string | null {
+  return getStorage()((state) => state.automationRunNextCursorByAutomationId[automationId] ?? null);
 }
 
 export function useDraftArtifacts(): DecryptedArtifact[] {
@@ -2301,14 +2687,6 @@ export function useArtifactsCount(): number {
 
 export function useEntitlement(id: KnownEntitlements): boolean {
   return getStorage()(useShallow((state) => state.purchases.entitlements[id] ?? false));
-}
-
-export function useRealtimeStatus(): 'disconnected' | 'connecting' | 'connected' | 'error' {
-  return getStorage()(useShallow((state) => state.realtimeStatus));
-}
-
-export function useRealtimeMode(): 'idle' | 'speaking' {
-  return getStorage()(useShallow((state) => state.realtimeMode));
 }
 
 export function useSocketStatus() {

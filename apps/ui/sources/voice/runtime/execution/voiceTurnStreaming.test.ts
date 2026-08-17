@@ -165,8 +165,7 @@ describe('createVoiceTurnStreaming', () => {
             getVoiceAgentHandle: async () => createHandle(client),
             interruptActiveTurn: () => undefined,
             resetCachedHandle: () => undefined,
-            runSerializedTurn: async (_sessionId, task) => await task(),
-            stop: async () => undefined,
+            trackActiveTurn: async (_sessionId, task) => await task(),
             voiceAgentPendingContextBySessionId: new Map(),
             voiceAgentTurnAbortControllerBySessionId: new Map(),
         });
@@ -221,8 +220,7 @@ describe('createVoiceTurnStreaming', () => {
             getVoiceAgentHandle: async () => createHandle(client),
             interruptActiveTurn: () => undefined,
             resetCachedHandle: () => undefined,
-            runSerializedTurn: async (_sessionId, task) => await task(),
-            stop: async () => undefined,
+            trackActiveTurn: async (_sessionId, task) => await task(),
             voiceAgentPendingContextBySessionId: new Map(),
             voiceAgentTurnAbortControllerBySessionId: new Map(),
         });
@@ -256,8 +254,7 @@ describe('createVoiceTurnStreaming', () => {
             getVoiceAgentHandle: async () => createHandle(client),
             interruptActiveTurn: () => undefined,
             resetCachedHandle: () => undefined,
-            runSerializedTurn: async (_sessionId, task) => await task(),
-            stop: async () => undefined,
+            trackActiveTurn: async (_sessionId, task) => await task(),
             voiceAgentPendingContextBySessionId: new Map(),
             voiceAgentTurnAbortControllerBySessionId: new Map(),
         });

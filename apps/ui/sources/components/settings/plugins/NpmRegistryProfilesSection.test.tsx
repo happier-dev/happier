@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 
 const mocks = vi.hoisted(() => ({
     get: vi.fn(),
@@ -17,8 +18,6 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
     theme: { colors: { accent: { blue: 'blue' } } },
 }));
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({ usePrimaryMachineFromActiveSelection: () => mocks.machineId }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({ getActiveServerId: () => mocks.serverId }));
 vi.mock('@/sync/ops/machineNpmRegistryProfiles', () => ({
     machineNpmRegistryProfilesGet: mocks.get,
     machineNpmRegistryProfilesMutate: mocks.mutate,
@@ -34,6 +33,63 @@ vi.mock('@/components/ui/lists/Item', async () => ({
 }));
 
 import { NpmRegistryProfilesSection } from './NpmRegistryProfilesSection';
+
+type NpmRegistryProfilesTargetSelection = Pick<
+    MachineAdministrationTargetSelectionV1,
+    'selectedTarget' | 'canExecute' | 'resolveExecutionTarget'
+>;
+
+function createTargetSelection(
+    machineId = mocks.machineId,
+    serverId = mocks.serverId,
+): NpmRegistryProfilesTargetSelection {
+    if (!machineId || !serverId) {
+        return {
+            selectedTarget: null,
+            canExecute: false,
+            resolveExecutionTarget: () => null,
+        };
+    }
+    const target = { serverIdentityId: `portable-${serverId}`, machineId };
+    return {
+        selectedTarget: target,
+        canExecute: true,
+        resolveExecutionTarget: () => ({
+            kind: 'resolved',
+            target,
+            serverId,
+            profile: {
+                id: serverId,
+                name: `Server ${serverId}`,
+                serverUrl: `https://${serverId}.example.test`,
+                serverIdentityId: target.serverIdentityId,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: 1,
+            },
+            machine: {
+                id: machineId,
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: null,
+                metadataVersion: 0,
+                daemonState: null,
+                daemonStateVersion: 0,
+            },
+        }),
+    };
+}
+
+type TestSectionProps = Omit<React.ComponentProps<typeof NpmRegistryProfilesSection>, 'targetSelection'> & Readonly<{
+    targetSelection?: NpmRegistryProfilesTargetSelection;
+}>;
+
+function TestSection({ targetSelection = createTargetSelection(), ...props }: TestSectionProps): React.ReactElement {
+    return <NpmRegistryProfilesSection {...props} targetSelection={targetSelection} />;
+}
 
 async function flush(): Promise<void> {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -78,12 +134,124 @@ describe('NpmRegistryProfilesSection', () => {
 
     it('loads secret-free profiles and exposes a sign-in action', async () => {
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
         expect(mocks.get).toHaveBeenCalledWith('machine-a', { serverId: 'server-a' });
         const profile = tree.root.findByProps({ testID: 'settings.plugins.registries.profile.registry_acme' });
         expect(profile.props.subtitle).toContain('https://registry.acme.test');
         expect(tree.root.findByProps({ testID: 'settings.plugins.registries.login.registry_acme' })).toBeTruthy();
+    });
+
+    it('uses the supplied fresh exact target rather than deriving the primary machine', async () => {
+        const targetSelection = createTargetSelection('machine-b', 'server-b');
+        let tree!: ReturnType<typeof create>;
+        await act(async () => {
+            tree = create(<TestSection
+                daemonOperationsAvailable
+                targetSelection={targetSelection}
+            />);
+        });
+        await flush();
+
+        expect(tree.root.findByProps({ testID: 'settings.plugins.registries.profile.registry_acme' })).toBeTruthy();
+        expect(mocks.get).toHaveBeenCalledWith('machine-b', { serverId: 'server-b' });
+        expect(mocks.get).not.toHaveBeenCalledWith('machine-a', { serverId: 'server-a' });
+    });
+
+    it('routes a profile mutation through the supplied fresh exact target', async () => {
+        const selected = createTargetSelection('machine-b', 'server-b');
+        const resolveExecutionTarget = vi.fn(selected.resolveExecutionTarget);
+        const targetSelection: NpmRegistryProfilesTargetSelection = {
+            ...selected,
+            resolveExecutionTarget,
+        };
+        let tree!: ReturnType<typeof create>;
+        await act(async () => {
+            tree = create(<TestSection daemonOperationsAvailable targetSelection={targetSelection} />);
+        });
+        await flush();
+        const testItem = tree.root.findByProps({ testID: 'settings.plugins.registries.test.registry_acme' });
+        expect(testItem.props.disabled).toBe(false);
+        const callsBeforeMutation = resolveExecutionTarget.mock.calls.length;
+
+        await act(async () => {
+            testItem.props.onPress();
+        });
+        await flush();
+
+        expect(resolveExecutionTarget.mock.calls.length).toBeGreaterThan(callsBeforeMutation);
+
+        expect(mocks.mutate).toHaveBeenCalledWith('machine-b', expect.objectContaining({
+            action: 'test',
+            profileId: 'registry_acme',
+            machineId: 'machine-b',
+            expectedRevision: 2,
+        }), { serverId: 'server-b' });
+        expect(mocks.mutate).not.toHaveBeenCalledWith('machine-a', expect.anything(), { serverId: 'server-a' });
+    });
+
+    it('does not send a profile mutation after fresh resolution loses the selected target', async () => {
+        const selected = createTargetSelection('machine-b', 'server-b');
+        let current = selected.resolveExecutionTarget();
+        const targetSelection: NpmRegistryProfilesTargetSelection = {
+            ...selected,
+            resolveExecutionTarget: () => current,
+        };
+        let tree!: ReturnType<typeof create>;
+        await act(async () => {
+            tree = create(<TestSection daemonOperationsAvailable targetSelection={targetSelection} />);
+        });
+        await flush();
+
+        current = null;
+        await act(async () => {
+            tree.root.findByProps({ testID: 'settings.plugins.registries.test.registry_acme' }).props.onPress();
+        });
+        await flush();
+
+        expect(mocks.mutate).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when its selected portable target cannot be freshly resolved', async () => {
+        const selected = createTargetSelection('machine-b', 'server-b');
+        const targetSelection: NpmRegistryProfilesTargetSelection = {
+            ...selected,
+            canExecute: false,
+            resolveExecutionTarget: () => null,
+        };
+        let tree!: ReturnType<typeof create>;
+        await act(async () => {
+            tree = create(<TestSection daemonOperationsAvailable targetSelection={targetSelection} />);
+        });
+        await flush();
+
+        expect(mocks.get).not.toHaveBeenCalled();
+        expect(tree.root.findByProps({ testID: 'settings.plugins.registries.add' }).props.disabled).toBe(true);
+    });
+
+    it('discards a read when fresh resolution loses the same selected target', async () => {
+        const selected = createTargetSelection('machine-a', 'server-a');
+        let current = selected.resolveExecutionTarget();
+        const targetSelection: NpmRegistryProfilesTargetSelection = {
+            ...selected,
+            resolveExecutionTarget: () => current,
+        };
+        let resolveGet!: (value: unknown) => void;
+        const pendingGet = new Promise((resolve) => { resolveGet = resolve; });
+        mocks.get.mockReturnValueOnce(pendingGet);
+        let tree!: ReturnType<typeof create>;
+        await act(async () => {
+            tree = create(<TestSection daemonOperationsAvailable targetSelection={targetSelection} />);
+        });
+        expect(mocks.get).toHaveBeenCalledWith('machine-a', { serverId: 'server-a' });
+
+        current = null;
+        await act(async () => {
+            resolveGet({ status: 'success', snapshot: snapshot() });
+            await pendingGet;
+        });
+
+        expect(tree.root.findAllByProps({ testID: 'settings.plugins.registries.profile.registry_acme' })).toHaveLength(0);
     });
 
     it('binds and unbinds a marketplace source by opaque profile id without handling credentials', async () => {
@@ -94,7 +262,7 @@ describe('NpmRegistryProfilesSection', () => {
         };
         let tree!: ReturnType<typeof create>;
         await act(async () => {
-            tree = create(<NpmRegistryProfilesSection
+            tree = create(<TestSection
                 daemonOperationsAvailable
                 marketplaceSources={[source]}
                 onSetMarketplaceSourceProfile={setBinding}
@@ -107,7 +275,7 @@ describe('NpmRegistryProfilesSection', () => {
         expect(setBinding).toHaveBeenCalledWith('marketplace:private', 'registry_acme');
 
         await act(async () => {
-            tree.update(<NpmRegistryProfilesSection
+            tree.update(<TestSection
                 daemonOperationsAvailable
                 marketplaceSources={[{ ...source, registryProfileId: 'registry_acme' }]}
                 onSetMarketplaceSourceProfile={setBinding}
@@ -127,7 +295,7 @@ describe('NpmRegistryProfilesSection', () => {
         const setBinding = vi.fn(async () => undefined);
         let tree!: ReturnType<typeof create>;
         await act(async () => {
-            tree = create(<NpmRegistryProfilesSection
+            tree = create(<TestSection
                 daemonOperationsAvailable
                 marketplaceSources={[{
                     id: 'marketplace:private', title: 'Private catalog', sourceUrl: 'https://catalog.example.test/private.json',
@@ -146,7 +314,7 @@ describe('NpmRegistryProfilesSection', () => {
     it('keeps the token in the secure prompt-to-mutation path only', async () => {
         mocks.prompt.mockResolvedValueOnce('boundary-secret');
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
         await act(async () => { await tree.root.findByProps({ testID: 'settings.plugins.registries.login.registry_acme' }).props.onPress(); });
         expect(mocks.prompt).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ inputType: 'secure-text' }));
@@ -167,7 +335,7 @@ describe('NpmRegistryProfilesSection', () => {
             },
         });
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
         expect(tree.root.findByProps({ testID: 'settings.plugins.registries.paused.https://registry.old.test' }).props.subtitle)
             .toContain('https://registry.old.test');
@@ -176,7 +344,7 @@ describe('NpmRegistryProfilesSection', () => {
     it('renders empty and retryable load states instead of silently clearing the section', async () => {
         mocks.get.mockRejectedValueOnce(new Error('offline'));
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
         expect(tree.root.findByProps({ testID: 'settings.plugins.registries.loadError' })).toBeTruthy();
 
@@ -194,7 +362,7 @@ describe('NpmRegistryProfilesSection', () => {
         mocks.prompt.mockResolvedValueOnce('Acme updated').mockResolvedValueOnce('@acme, @team');
         mocks.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
 
         await act(async () => {
@@ -224,9 +392,9 @@ describe('NpmRegistryProfilesSection', () => {
                 : Promise.resolve({ status: 'success', snapshot: snapshot('registry_beta', 'Beta') })
         ));
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         mocks.machineId = 'machine-b';
-        await act(async () => { tree.update(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree.update(<TestSection daemonOperationsAvailable />); });
         await flush();
         expect(tree.root.findByProps({ testID: 'settings.plugins.registries.profile.registry_beta' })).toBeTruthy();
 
@@ -241,7 +409,7 @@ describe('NpmRegistryProfilesSection', () => {
         mocks.prompt.mockResolvedValueOnce('boundary-secret');
         mocks.mutate.mockRejectedValueOnce(new Error('offline'));
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
         await act(async () => {
             await tree.root.findByProps({ testID: 'settings.plugins.registries.login.registry_acme' }).props.onPress();
@@ -253,7 +421,7 @@ describe('NpmRegistryProfilesSection', () => {
     it('rejects an invalid registry origin before collecting or sending more fields', async () => {
         mocks.prompt.mockResolvedValueOnce('not-a-registry-origin');
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
         await act(async () => { await tree.root.findByProps({ testID: 'settings.plugins.registries.add' }).props.onPress(); });
         expect(mocks.alert).toHaveBeenCalled();
@@ -269,11 +437,11 @@ describe('NpmRegistryProfilesSection', () => {
             snapshot: { ...acme, profiles: [...acme.profiles, ...beta.profiles] },
         });
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
 
         await act(async () => {
-            tree.update(<NpmRegistryProfilesSection daemonOperationsAvailable={false} />);
+            tree.update(<TestSection daemonOperationsAvailable={false} />);
         });
 
         expect(mocks.get).toHaveBeenCalledTimes(1);
@@ -304,9 +472,9 @@ describe('NpmRegistryProfilesSection', () => {
         mocks.get.mockReturnValueOnce(pendingGet);
 
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await act(async () => {
-            tree.update(<NpmRegistryProfilesSection daemonOperationsAvailable={false} />);
+            tree.update(<TestSection daemonOperationsAvailable={false} />);
         });
         await act(async () => {
             resolveGet({ status: 'success', snapshot: snapshot() });
@@ -324,7 +492,7 @@ describe('NpmRegistryProfilesSection', () => {
         mocks.mutate.mockReturnValueOnce(pendingMutation);
 
         let tree!: ReturnType<typeof create>;
-        await act(async () => { tree = create(<NpmRegistryProfilesSection daemonOperationsAvailable />); });
+        await act(async () => { tree = create(<TestSection daemonOperationsAvailable />); });
         await flush();
         await act(async () => {
             void tree.root.findByProps({ testID: 'settings.plugins.registries.login.registry_acme' }).props.onPress();
@@ -333,10 +501,10 @@ describe('NpmRegistryProfilesSection', () => {
         expect(mocks.mutate).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            tree.update(<NpmRegistryProfilesSection daemonOperationsAvailable={false} />);
+            tree.update(<TestSection daemonOperationsAvailable={false} />);
         });
         await act(async () => {
-            tree.update(<NpmRegistryProfilesSection daemonOperationsAvailable />);
+            tree.update(<TestSection daemonOperationsAvailable />);
         });
         await flush();
         expect(mocks.get).toHaveBeenCalledTimes(2);
@@ -376,7 +544,7 @@ describe('NpmRegistryProfilesSection', () => {
 
         let tree!: ReturnType<typeof create>;
         await act(async () => {
-            tree = create(<NpmRegistryProfilesSection
+            tree = create(<TestSection
                 daemonOperationsAvailable
                 marketplaceSources={[source]}
                 onSetMarketplaceSourceProfile={setBinding}
@@ -391,7 +559,7 @@ describe('NpmRegistryProfilesSection', () => {
 
         mocks.machineId = 'machine-b';
         await act(async () => {
-            tree.update(<NpmRegistryProfilesSection
+            tree.update(<TestSection
                 daemonOperationsAvailable
                 marketplaceSources={[source]}
                 onSetMarketplaceSourceProfile={setBinding}

@@ -61,7 +61,23 @@ module.exports = function (api) {
           },
         },
       ],
-      ['react-native-unistyles/plugin', { root: 'sources' }],
+      [
+        'react-native-unistyles/plugin',
+        {
+          root: 'sources',
+          // Unistyles only rewrites `react-native` host imports in files under
+          // `root`. Shared Happier UI primitives (Text, Pressable, StatusDot,
+          // Spinner, InfoState) now live in `@happier-dev/plugin-ui` and are
+          // rendered INSIDE the core app tree by the adapters in
+          // `sources/components/ui/**`, which style them with Unistyles
+          // entries. Without this path those files keep the raw react-native
+          // components, which silently drop every `unistyles_*` style — the
+          // whole app's text typography collapses to react-native-web's
+          // 14px/400 default. Forward slashes are correct on every platform:
+          // the plugin maps them to the host separator (`toPlatformPath`).
+          autoProcessPaths: ['packages/plugin-ui/src'],
+        },
+      ],
       workletsPluginConfig // Must be last - automatically selects correct plugin for version
     ],
   };

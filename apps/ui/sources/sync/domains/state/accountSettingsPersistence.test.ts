@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsDefaults, type Settings } from '../settings/settings';
+import { accountSettingsScopeKeySuffix } from '../settings/scope/accountSettingsScope';
 
 type AccountSettingsScope = Readonly<{
     serverId: string;
@@ -16,6 +17,31 @@ type AccountSettingsPersistenceModule = Readonly<{
 }>;
 
 const store = vi.hoisted(() => new Map<string, string>());
+
+function accountSettingsStorageKey(scope: AccountSettingsScope): string {
+    return `account-settings:v2:${accountSettingsScopeKeySuffix(scope)}`;
+}
+
+function pendingAccountSettingsStorageKey(scope: AccountSettingsScope): string {
+    return `pending-account-settings:v2:${accountSettingsScopeKeySuffix(scope)}`;
+}
+
+/** Simulates a cache written by an older UI that still persisted retired roots. */
+function writeLegacyAccountSettingsCache(
+    scope: AccountSettingsScope,
+    settings: Record<string, unknown>,
+    version: number,
+): void {
+    store.set(accountSettingsStorageKey(scope), JSON.stringify({ settings, version }));
+}
+
+/** Simulates an older pending cache; current public writers never receive these roots. */
+function writeLegacyPendingAccountSettingsCache(
+    scope: AccountSettingsScope,
+    settings: Record<string, unknown>,
+): void {
+    store.set(pendingAccountSettingsStorageKey(scope), JSON.stringify(settings));
+}
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -87,6 +113,103 @@ describe('accountSettingsPersistence', () => {
         expect(mod.loadAccountSettings(sameServerDifferentAccount)).toMatchObject({
             settings: expect.objectContaining({ crashReportsOptOut: true }),
             version: 2,
+        });
+    });
+
+    it('typed-refuses raw secret-string values without changing cached or pending account settings', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod, 'account settings persistence module should exist').not.toBeNull();
+        if (!mod) return;
+
+        const rawSecret = 'must-never-reach-device-settings-storage';
+        const secret = {
+            id: 'secret-a',
+            name: 'Secret A',
+            kind: 'apiKey',
+            encryptedValue: { _isSecretValue: true, value: rawSecret },
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        mod.saveAccountSettings(scopeA, { ...settingsDefaults, analyticsOptOut: true }, 1);
+        mod.savePendingAccountSettings(scopeA, { crashReportsOptOut: true });
+        const before = new Map(store);
+
+        expect(() => mod.saveAccountSettings(scopeA, {
+            ...settingsDefaults,
+            secrets: [secret],
+        } as Settings, 2)).toThrow(expect.objectContaining({
+            code: 'local_secret_unavailable',
+        }));
+        expect(() => mod.savePendingAccountSettings(scopeA, {
+            secrets: [secret],
+        } as Partial<Settings>)).toThrow(expect.objectContaining({
+            code: 'local_secret_unavailable',
+        }));
+
+        expect(store).toEqual(before);
+        expect([...store.values()].join('\n')).not.toContain(rawSecret);
+    });
+
+    it('typed-refuses hydration from a legacy persisted snapshot containing a raw secret', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod, 'account settings persistence module should exist').not.toBeNull();
+        if (!mod) return;
+
+        mod.saveAccountSettings(scopeA, { ...settingsDefaults, analyticsOptOut: true }, 1);
+        const accountSettingsKey = [...store.keys()].find((key) => key.includes('account-settings:v2:'));
+        expect(accountSettingsKey).toBeTypeOf('string');
+        if (!accountSettingsKey) return;
+        store.set(accountSettingsKey, JSON.stringify({
+            version: 2,
+            settings: {
+                secrets: [{
+                    id: 'secret-a',
+                    name: 'Secret A',
+                    kind: 'apiKey',
+                    encryptedValue: {
+                        _isSecretValue: true,
+                        value: 'legacy-raw-secret',
+                    },
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+            },
+        }));
+
+        expect(() => mod.loadAccountSettings(scopeA)).toThrow(expect.objectContaining({
+            code: 'local_secret_unavailable',
+        }));
+    });
+
+    it('preserves already device-sealed secret values through persistence hydration', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod, 'account settings persistence module should exist').not.toBeNull();
+        if (!mod) return;
+
+        const sealedSecret = {
+            id: 'secret-sealed',
+            name: 'Sealed secret',
+            kind: 'apiKey',
+            encryptedValue: {
+                _isSecretValue: true,
+                encryptedValue: {
+                    t: 'enc-v1',
+                    c: 'opaque-device-ciphertext',
+                },
+            },
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        mod.saveAccountSettings(scopeA, {
+            ...settingsDefaults,
+            secrets: [sealedSecret],
+        } as Settings, 3);
+
+        expect(mod.loadAccountSettings(scopeA)).toMatchObject({
+            version: 3,
+            settings: {
+                secrets: [sealedSecret],
+            },
         });
     });
 
@@ -249,14 +372,14 @@ describe('accountSettingsPersistence', () => {
         const identityScope = { serverId: 'srv_identity', accountId: 'account-a' };
         const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
 
-        mod.savePendingAccountSettings(identityScope, {
+        writeLegacyPendingAccountSettingsCache(identityScope, {
             pinnedSessionKeysV1: ['s1:canonical'],
             sessionListGroupOrderV1: {
                 'folder:shared': ['s1:canonical'],
                 'folder:canonical': ['s1:canonical-only'],
             },
         });
-        mod.savePendingAccountSettings(legacyScope, {
+        writeLegacyPendingAccountSettingsCache(legacyScope, {
             pinnedSessionKeysV1: ['s1:legacy', 's1:canonical'],
             sessionListGroupOrderV1: {
                 'folder:shared': ['s1:legacy'],
@@ -278,7 +401,7 @@ describe('accountSettingsPersistence', () => {
         const identityScope = { serverId: 'srv_identity', accountId: 'account-a' };
         const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
 
-        mod.saveAccountSettings(identityScope, {
+        writeLegacyAccountSettingsCache(identityScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['identity-session'],
             workspaceLabelsV1: {
@@ -298,7 +421,7 @@ describe('accountSettingsPersistence', () => {
                 identityGroup: ['identity-session'],
             },
         }, 22);
-        mod.saveAccountSettings(legacyScope, {
+        writeLegacyAccountSettingsCache(legacyScope, {
             ...settingsDefaults,
             analyticsOptOut: true,
             pinnedSessionKeysV1: ['legacy-session', 'identity-session'],
@@ -350,7 +473,7 @@ describe('accountSettingsPersistence', () => {
         const identityScope = { serverId: 'srv_identity', accountId: 'account-a' };
         const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
 
-        mod.saveAccountSettings(legacyScope, {
+        writeLegacyAccountSettingsCache(legacyScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['localhost-18829:session-a'],
             sessionTagsV1: {
@@ -366,7 +489,7 @@ describe('accountSettingsPersistence', () => {
         expect(mod.loadPendingAccountSettings(identityScope)).toEqual({});
 
         mod.savePendingAccountSettings(identityScope, {});
-        mod.saveAccountSettings(identityScope, {
+        writeLegacyAccountSettingsCache(identityScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: [],
             sessionTagsV1: {},
@@ -391,21 +514,21 @@ describe('accountSettingsPersistence', () => {
         const identityScope = { serverId: 'srv_identity', accountId: 'account-a' };
         const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
 
-        mod.saveAccountSettings(legacyScope, {
+        writeLegacyAccountSettingsCache(legacyScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['localhost-18829:session-a'],
         }, 17);
         mod.prepareAccountSettingsScopeForActivation(identityScope, [legacyScope]);
 
         mod.savePendingAccountSettings(identityScope, {});
-        mod.saveAccountSettings(identityScope, {
+        writeLegacyAccountSettingsCache(identityScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: [],
             workspaceLabelsV1: {
                 workspaceA: 'Canonical label',
             },
         }, 23);
-        mod.saveAccountSettings(legacyScope, {
+        writeLegacyAccountSettingsCache(legacyScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['localhost-18829:session-a'],
             workspaceLabelsV1: {
@@ -432,7 +555,7 @@ describe('accountSettingsPersistence', () => {
         const lanScope = { serverId: '192.168.1.115-52753', accountId: 'account-a' };
         const otherAccountScope = { serverId: 'other-server', accountId: 'account-b' };
 
-        mod.saveAccountSettings(identityScope, {
+        writeLegacyAccountSettingsCache(identityScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['srv_identity:session-existing'],
             sessionTagsV1: {
@@ -451,7 +574,7 @@ describe('accountSettingsPersistence', () => {
                 presentation: 'grouped',
             }],
         }, 22);
-        mod.saveAccountSettings(localhostScope, {
+        writeLegacyAccountSettingsCache(localhostScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['localhost-52753:session-localhost', 'srv_identity:session-existing'],
             sessionTagsV1: {
@@ -489,7 +612,7 @@ describe('accountSettingsPersistence', () => {
             serverSelectionActiveTargetKind: 'server',
             serverSelectionActiveTargetId: 'localhost-52753',
         }, 17);
-        mod.savePendingAccountSettings(lanScope, {
+        writeLegacyPendingAccountSettingsCache(lanScope, {
             pinnedSessionKeysV1: ['192.168.1.115-52753:session-lan'],
             sessionTagsV1: {
                 '192.168.1.115-52753:session-lan': ['lan-tag'],
@@ -501,7 +624,7 @@ describe('accountSettingsPersistence', () => {
                 presentation: 'grouped',
             }],
         });
-        mod.savePendingAccountSettings(otherAccountScope, {
+        writeLegacyPendingAccountSettingsCache(otherAccountScope, {
             pinnedSessionKeysV1: ['other-server:session-other'],
         });
 
@@ -535,7 +658,7 @@ describe('accountSettingsPersistence', () => {
         if (!mod) return;
 
         const identityScope = { serverId: 'srv_identity', accountId: 'account-a' };
-        mod.saveAccountSettings(identityScope, {
+        writeLegacyAccountSettingsCache(identityScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['127.0.0.1-52753:session-a'],
             sessionTagsV1: {
@@ -615,7 +738,7 @@ describe('accountSettingsPersistence', () => {
             workspaceRefId: 'workspace-a',
         };
 
-        mod.savePendingAccountSettings(identityScope, {
+        writeLegacyPendingAccountSettingsCache(identityScope, {
             sessionFoldersV1: {
                 v: 1,
                 folders: [
@@ -641,7 +764,7 @@ describe('accountSettingsPersistence', () => {
                 workspaceA: ['identity-session'],
             },
         });
-        mod.savePendingAccountSettings(legacyScope, {
+        writeLegacyPendingAccountSettingsCache(legacyScope, {
             sessionFoldersV1: {
                 v: 1,
                 folders: [
@@ -683,18 +806,18 @@ describe('accountSettingsPersistence', () => {
         const identityScope = { serverId: 'srv_identity', accountId: 'account-a' };
         const lateLegacyScope = { serverId: 'public-host-18829', accountId: 'account-a' };
 
-        mod.savePendingAccountSettings(identityScope, {
+        writeLegacyPendingAccountSettingsCache(identityScope, {
             pinnedSessionKeysV1: ['first-legacy-session'],
             sessionTagsV1: {
                 firstLegacySession: ['first-tag'],
             },
         });
-        mod.saveAccountSettings(lateLegacyScope, {
+        writeLegacyAccountSettingsCache(lateLegacyScope, {
             ...settingsDefaults,
             analyticsOptOut: true,
             pinnedSessionKeysV1: ['late-cached-session'],
         }, 8);
-        mod.savePendingAccountSettings(lateLegacyScope, {
+        writeLegacyPendingAccountSettingsCache(lateLegacyScope, {
             workspaceLabelsV1: {
                 lateWorkspace: 'Late workspace',
             },
@@ -719,7 +842,7 @@ describe('accountSettingsPersistence', () => {
 
         mod.prepareAccountSettingsScopeForActivation(identityScope, [lateLegacyScope]);
 
-        mod.saveAccountSettings(lateLegacyScope, {
+        writeLegacyAccountSettingsCache(lateLegacyScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['public-host-18829:late-session'],
             sessionTagsV1: {
@@ -741,19 +864,19 @@ describe('accountSettingsPersistence', () => {
         const orphanedHostScope = { serverId: 'lan-host-18829', accountId: 'account-a' };
         const otherAccountScope = { serverId: 'lan-host-18829', accountId: 'account-b' };
 
-        mod.saveAccountSettings(orphanedHostScope, {
+        writeLegacyAccountSettingsCache(orphanedHostScope, {
             ...settingsDefaults,
             pinnedSessionKeysV1: ['orphaned-session'],
             sessionTagsV1: {
                 orphanedSession: ['orphaned-tag'],
             },
         }, 12);
-        mod.savePendingAccountSettings(orphanedHostScope, {
+        writeLegacyPendingAccountSettingsCache(orphanedHostScope, {
             workspaceLabelsV1: {
                 orphanedWorkspace: 'Orphaned workspace',
             },
         });
-        mod.savePendingAccountSettings(otherAccountScope, {
+        writeLegacyPendingAccountSettingsCache(otherAccountScope, {
             pinnedSessionKeysV1: ['other-account-session'],
         });
 
@@ -776,7 +899,7 @@ describe('accountSettingsPersistence', () => {
         const hostScope = { serverId: 'localhost-18829', accountId: 'account-a' };
         const unrelatedHostScope = { serverId: 'staging-18829', accountId: 'account-a' };
 
-        mod.savePendingAccountSettings(unrelatedHostScope, {
+        writeLegacyPendingAccountSettingsCache(unrelatedHostScope, {
             pinnedSessionKeysV1: ['staging-18829:session-staging'],
             workspaceLabelsV1: {
                 stagingWorkspace: 'Staging workspace',

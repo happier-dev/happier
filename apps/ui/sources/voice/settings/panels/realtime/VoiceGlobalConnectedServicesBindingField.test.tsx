@@ -81,6 +81,23 @@ describe('VoiceGlobalConnectedServicesBindingField', () => {
       showChevron: true,
     });
     expect(item.props.onPress).toEqual(expect.any(Function));
+
+    act(() => item.props.onPress());
+    const modalConfig = modalShow.mock.calls[0]?.[0] as {
+      component: React.ComponentType<Record<string, unknown>>;
+      props: Record<string, unknown>;
+    } | undefined;
+    expect(modalConfig).toBeDefined();
+    if (!modalConfig) throw new Error('expected Connected Services picker modal');
+    const pickerScreen = await renderScreen(React.createElement(
+      modalConfig.component,
+      { ...modalConfig.props, onClose: vi.fn() },
+    ));
+    expect(pickerScreen.tree.findByType('ConnectedServicesPicker' as any).props).toMatchObject({
+      bindingsByServiceId: {},
+      allowDefaultProfileFallback: false,
+      includeNativeAuthOption: false,
+    });
   });
 
   it.each([
@@ -198,12 +215,12 @@ describe('VoiceGlobalConnectedServicesBindingField', () => {
         roles: ['realtime_conversation'],
         platforms: ['web'],
         capabilities: {
-          readiness: { requirements: [] },
           turn: { cancelResponse: false, bargeIn: false },
         },
         execution: {
           kind: 'experimental_agent_session_realtime',
           agent: 'claude',
+          supportedRuntimeVersions: ['1.2.3'],
         },
         settings: {
           schemaVersion: 2,

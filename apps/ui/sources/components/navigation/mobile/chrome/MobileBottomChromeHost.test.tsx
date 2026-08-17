@@ -74,6 +74,9 @@ const cockpitRegistrationState = vi.hoisted(() => ({
     setBottomChromeHeight: vi.fn(),
     dismissingSessionId: null as string | null,
 }));
+const cockpitRegistrationListeners = vi.hoisted(() => ({
+    listeners: new Set<() => void>(),
+}));
 const routerState = vi.hoisted(() => ({
     back: vi.fn(),
     navigate: vi.fn(),
@@ -303,7 +306,14 @@ const storageMock = createStorageModuleStub({
 vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry', () => ({
-    useSessionCockpitChromeRegistration: () => cockpitRegistrationState.registration,
+    useSessionCockpitChromeRegistration: () => React.useSyncExternalStore(
+        (listener) => {
+            cockpitRegistrationListeners.listeners.add(listener);
+            return () => cockpitRegistrationListeners.listeners.delete(listener);
+        },
+        () => cockpitRegistrationState.registration,
+        () => cockpitRegistrationState.registration,
+    ),
     useSessionCockpitBottomChromeHeightSetter: () => cockpitRegistrationState.setBottomChromeHeight,
     useSessionCockpitDismissingSessionId: () => cockpitRegistrationState.dismissingSessionId ?? null,
 }));
@@ -339,6 +349,12 @@ function notifyStorageListeners(): void {
 
 function notifyPathListeners(): void {
     for (const listener of pathListeners.listeners) {
+        listener();
+    }
+}
+
+function notifyCockpitRegistrationListeners(): void {
+    for (const listener of cockpitRegistrationListeners.listeners) {
         listener();
     }
 }
@@ -401,6 +417,7 @@ describe('MobileBottomChromeHost', () => {
         storageMutators.setProjectLastMobileSurfaceByWorkspaceRefId.mockReset();
         storageMutators.setMobileWorkspaceExperience.mockReset();
         cockpitRegistrationState.registration = null;
+        cockpitRegistrationListeners.listeners.clear();
         cockpitRegistrationState.setBottomChromeHeight.mockReset();
         animatedTimingState.timings = [];
         storageListeners.listeners.clear();
@@ -866,6 +883,42 @@ describe('MobileBottomChromeHost', () => {
 
         expect(switchSurface).toHaveBeenCalledWith('git');
         expect(routerState.replace).toHaveBeenCalledWith('/session/session-1/git');
+    });
+
+    it('updates the outer route hint when the registered nested navigator reports a Back-selected surface', async () => {
+        pathState.pathname = '/session/session-1/git';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+        cockpitRegistrationState.registration = {
+            sessionId: 'session-1',
+            activeSurface: 'git',
+            terminalTabAvailable: true,
+            openDetailsTabCount: 0,
+            switchSurface: vi.fn(),
+        };
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+        expect(routerState.replace).not.toHaveBeenCalled();
+
+        const priorRegistration = cockpitRegistrationState.registration;
+        if (!priorRegistration) {
+            throw new Error('test fixture must retain the initial cockpit registration');
+        }
+        cockpitRegistrationState.registration = {
+            ...priorRegistration,
+            activeSurface: 'chat',
+        };
+        await act(async () => {
+            notifyCockpitRegistrationListeners();
+        });
+
+        expect(screen.tree.findByType('SessionCockpitTabBar' as never).props.activeSurface).toBe('chat');
+        expect(routerState.replace).toHaveBeenCalledWith('/session/session-1?mobileSurface=chat');
     });
 
     it('keeps session cockpit chrome mounted when a tab press has incidental vertical movement', async () => {

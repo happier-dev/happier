@@ -2,6 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { PluginUiLaunchInputV1, PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginSurfaceTarget, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
+
 import { renderScreen } from '@/dev/testkit';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
@@ -28,6 +31,49 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
 });
+
+/**
+ * The mount's surface identity, exactly as the bound controller produces it
+ * (§3.1). The pane takes ONE identity now — it no longer rebuilds a second one
+ * from the renderer contribution beside the controller's.
+ */
+const surfaceContext: PluginUiSurfaceContextV1 = {
+    pluginId: 'acme.preview',
+    contributionId: 'preview-web',
+    surfaceId: 'sessionSurface:acme.preview:preview-pane',
+    placement: 'sessionPane',
+    platform: 'web',
+    channel: 'internal',
+    resourceScope: [],
+    diagnostics: [],
+};
+
+const sessionSurfaceContext: PluginUiSurfaceContextV1 = {
+    ...surfaceContext,
+    sessionId: 'session-1',
+};
+
+const browserSurfaceContext: PluginUiSurfaceContextV1 = {
+    ...sessionSurfaceContext,
+    placement: 'browserSurface',
+};
+
+// These fixtures carry the exact public context that a destination host gives
+// a hosted-web surface. Keep the host-api tests on the real mount/snapshot
+// contract rather than preserving the retired placement field behind casts.
+const canonicalMount = {
+    kind: 'destination',
+    destination: { pluginId: 'acme.preview', localId: 'preview-web' },
+    container: 'rightPane',
+} satisfies SurfaceContext['mount'];
+
+const canonicalTargetedContributions = {
+    target: {
+        pluginId: 'acme.target',
+        immutableGenerationId: 'target-generation-1',
+    },
+    points: [],
+} satisfies SurfaceContext['targetedContributions'];
 
 const projection: PluginUiProjectionModel = {
     ...EMPTY_PLUGIN_UI_PROJECTION,
@@ -90,12 +136,276 @@ describe('PluginHostedWebPane', () => {
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={projection}
+            platform="web"
+        />);
+
+        const unavailable = screen.findByTestId('plugin-hosted-web-unavailable');
+        expect(unavailable).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_preview_unavailable')).toBeTruthy();
+        expect(unavailable?.props.role).toBe('status');
+        expect(unavailable?.props['aria-live']).toBe('polite');
+        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebUnavailableTitle');
+        expect(screen.getTextContent()).not.toContain('hosted_web_preview_unavailable');
+    });
+
+    it('fails closed when a bound mount supplies a null selected hosted-web renderer', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            projectedContribution={null}
+            surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             platform="web"
         />);
 
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
+    it.each(['web', 'desktop', 'ios', 'android'] as const)(
+        'publishes the packaged-frame adapter unavailability diagnostic on %s instead of advertising a frame',
+        async (platform) => {
+            const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+            const packagedStaticAssetProjection: PluginUiProjectionModel = {
+                ...projection,
+                hostedWebById: {
+                    ...projection.hostedWebById,
+                    'hostedWeb:acme.preview:preview-web': {
+                        ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                        service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
+                        runtime: {
+                            state: 'fallback',
+                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                            decision: {
+                                state: 'fallback',
+                                reason: 'hosted_web_frame_adapter_unavailable',
+                                diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                            },
+                        },
+                    },
+                },
+            };
+
+            const screen = await renderScreen(<PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={{ ...surfaceContext, platform }}
+                pluginUiProjection={packagedStaticAssetProjection}
+                platform={platform}
+            />);
+
+            expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_frame_adapter_unavailable')).toBeTruthy();
+            expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+        },
+    );
+
+    it('reports a missing Artifact endpoint without rewriting an admitted browser frame as unavailable', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const projectedBrowserArtifact: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={projectedBrowserArtifact}
+            platform="web"
+        />);
+
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_preview_unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
+    it.each([
+        'e2ee_unavailable',
+        'transport_unavailable',
+        'feature_disabled',
+        'hosted_web_static_artifact_missing',
+        'hosted_web_frame_adapter_unavailable',
+    ] as const)('preserves the bounded %s hosted-web reason through the safe state card', async (reason) => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const unavailableProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    runtime: {
+                        state: 'fallback',
+                        diagnostics: [reason],
+                        decision: {
+                            state: 'fallback',
+                            reason,
+                            diagnostics: [reason],
+                        },
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={unavailableProjection}
+            platform="web"
+        />);
+
+        expect(screen.findByTestId(`plugin-hosted-web-unavailable-diagnostic-${reason}`)).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
+    it('keeps an issuer diagnostic authoritative when a local guard also refuses the frame', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const { sandbox: _sandbox, ...descriptorWithoutSandbox } = projection.hostedWebById['hostedWeb:acme.preview:preview-web'];
+        const missingSandboxProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': descriptorWithoutSandbox,
+            },
+        };
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={missingSandboxProjection}
+            endpointUrl="https://preview.happier.test/plugin/acme/"
+            platform="web"
+            unavailableDiagnosticCode="e2ee_unavailable"
+        />);
+
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-e2ee_unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_sandbox_unavailable')).toBeNull();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
+    it('uses an exact projected daemon endpoint even when packaged-frame admission is unavailable', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const daemonPreviewProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
+                    runtime: {
+                        state: 'fallback',
+                        diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        decision: {
+                            state: 'fallback',
+                            reason: 'hosted_web_frame_adapter_unavailable',
+                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        },
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={daemonPreviewProjection}
+            endpointUrl="https://preview.happier.test/plugin/acme/"
+            platform="web"
+        />);
+
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
+    });
+
+    it('does not let a bypassed packaged-frame fallback hide a later local security refusal', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const { security: _security, ...descriptorWithoutSecurity } = projection.hostedWebById['hostedWeb:acme.preview:preview-web'];
+        const daemonPreviewProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...descriptorWithoutSecurity,
+                    service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
+                    runtime: {
+                        state: 'fallback',
+                        diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        decision: {
+                            state: 'fallback',
+                            reason: 'hosted_web_frame_adapter_unavailable',
+                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        },
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={daemonPreviewProjection}
+            endpointUrl="https://preview.happier.test/plugin/acme/"
+            platform="web"
+        />);
+
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_security_unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_frame_adapter_unavailable')).toBeNull();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
+    it('keeps a browser Artifact capability frame opaque without exposing its Session in the guest URL', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const artifactProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
+                    runtime: {
+                        state: 'fallback',
+                        diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        decision: {
+                            state: 'fallback',
+                            reason: 'hosted_web_frame_adapter_unavailable',
+                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        },
+                    },
+                },
+            },
+        };
+        try {
+            const screen = await renderScreen(<PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={sessionSurfaceContext}
+                pluginUiProjection={artifactProjection}
+                endpointUrl="https://artifacts.happier.test/v1/plugins/availability/ui-artifacts/browser/capability/"
+                opaqueArtifactFrame
+                platform="web"
+                onBridgeMessage={() => undefined}
+            />);
+
+            const frame = findHostedWebIframe(screen);
+            const frameUrl = new URL(String(frame.props.src));
+            expect(frameUrl.searchParams.get('happierSessionId')).toBeNull();
+            expect(frameUrl.searchParams.get('happierHostOrigin')).toBe('https://host.happier.test');
+            expect(frameUrl.toString()).not.toContain('session-1');
+            expect(frame.props.sandbox).toBe('allow-scripts');
+            expect(frame.props.csp).toBeUndefined();
+        } finally {
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
     });
 
     it('fails closed when projection runtime policy does not make hosted-web executable', async () => {
@@ -121,7 +431,7 @@ describe('PluginHostedWebPane', () => {
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={disabledProjection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
@@ -130,12 +440,38 @@ describe('PluginHostedWebPane', () => {
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
     });
 
+    it('publishes a policy category when the canonical projection policy refuses the pane', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const policyRefusalProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    visibility: { operand: 'feature.enabled', value: 'preview-hosting' },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={policyRefusalProjection}
+            endpointUrl="https://preview.happier.test/plugin/acme/"
+            platform="web"
+        />);
+
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_policy_denied')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebPolicyDenied');
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
     it('renders the host frame only for preview-policy-accepted URLs', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
@@ -145,7 +481,9 @@ describe('PluginHostedWebPane', () => {
         expect(frame).toBeTruthy();
         expect(frame?.props.src).toContain('https://preview.happier.test/plugin/acme/');
         expect(frame?.props.src).toContain('happierBridgeNonce=');
-        expect(frame?.props.sandbox).toBe('allow-scripts');
+        // A secure endpoint gets the addressable origin the bridge needs and
+        // nothing more (EU-8).
+        expect(frame?.props.sandbox).toBe('allow-scripts allow-same-origin');
         expect(frame?.props.referrerPolicy).toBe('no-referrer');
         expect(frame?.props.title).toBe('Preview panel');
     });
@@ -174,7 +512,7 @@ describe('PluginHostedWebPane', () => {
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={policyProjection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
@@ -186,15 +524,15 @@ describe('PluginHostedWebPane', () => {
         expect(frame?.props.sandbox).toContain('allow-same-origin');
     });
 
-    it('fails closed when non-static hosted-web endpoints request unenforceable CSP widening', async () => {
+    it('fails closed when session hosted-web endpoints request unenforceable CSP widening', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
-        const managedProjection: PluginUiProjectionModel = {
+        const sessionEndpointProjection: PluginUiProjectionModel = {
             ...projection,
             hostedWebById: {
                 ...projection.hostedWebById,
                 'hostedWeb:acme.preview:preview-web': {
                     ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                    service: { kind: 'managedService', serviceId: 'preview-dev' },
+                    service: { kind: 'sessionEndpoint', endpointIdPath: '/preview/id' },
                     security: {
                         allowedConnectOrigins: ['https://api.example.test'],
                         csp: {
@@ -208,13 +546,39 @@ describe('PluginHostedWebPane', () => {
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
-            pluginUiProjection={managedProjection}
+            surfaceContext={surfaceContext}
+            pluginUiProjection={sessionEndpointProjection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
         />);
 
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_security_unavailable')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebSecurityUnavailable');
+    });
+
+    it('presents a missing sandbox policy with its own recovery guidance while retaining its bounded diagnostic', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const { sandbox: _sandbox, ...descriptorWithoutSandbox } = projection.hostedWebById['hostedWeb:acme.preview:preview-web'];
+        const missingSandboxProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': descriptorWithoutSandbox,
+            },
+        };
+
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={missingSandboxProjection}
+            endpointUrl="https://preview.happier.test/plugin/acme/"
+            platform="web"
+        />);
+
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_sandbox_unavailable')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebSandboxUnavailable');
+        expect(screen.getTextContent()).not.toContain('hosted_web_sandbox_unavailable');
     });
 
     it('forwards only nonce-bound hosted web bridge messages from the expected origin', async () => {
@@ -239,14 +603,13 @@ describe('PluginHostedWebPane', () => {
             const screen = await renderScreen(
                 <PluginHostedWebPane
                     contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceId="sessionSurface:acme.preview:preview-pane"
+                    surfaceContext={sessionSurfaceContext}
                     pluginUiProjection={projection}
                     endpointUrl="https://preview.happier.test/plugin/acme/"
                     platform="web"
                     {...({
                         bridgeNonce: 'nonce-1',
                         onBridgeMessage,
-                        sessionId: 'session-1',
                     } as any)}
                 />,
                 {
@@ -323,7 +686,7 @@ describe('PluginHostedWebPane', () => {
         try {
             const screen = await renderScreen(<PluginHostedWebPane
                 contributionId="hostedWeb:acme.preview:preview-web"
-                surfaceId="sessionSurface:acme.preview:preview-pane"
+                surfaceContext={surfaceContext}
                 pluginUiProjection={projection}
                 endpointUrl="https://preview.happier.test/plugin/acme/"
                 platform="web"
@@ -343,6 +706,24 @@ describe('PluginHostedWebPane', () => {
         }
     });
 
+    it('presents a missing bridge nonce with its own recovery guidance while retaining its bounded diagnostic', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={projection}
+            endpointUrl="https://preview.happier.test/plugin/acme/"
+            platform="web"
+            bridgeNonce=""
+            onBridgeMessage={() => undefined}
+        />);
+
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_bridge_nonce_unavailable')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebBridgeNonceUnavailable');
+        expect(screen.getTextContent()).not.toContain('hosted_web_bridge_nonce_unavailable');
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
     it('rotates bridge authority when the daemon projection generation changes', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
@@ -356,7 +737,7 @@ describe('PluginHostedWebPane', () => {
         const element = (generation: number) => (
             <PluginHostedWebPane
                 contributionId="hostedWeb:acme.preview:preview-web"
-                surfaceId="sessionSurface:acme.preview:preview-pane"
+                surfaceContext={surfaceContext}
                 pluginUiProjection={{ ...projection, generation }}
                 endpointUrl="https://preview.happier.test/plugin/acme/"
                 platform="web"
@@ -394,7 +775,7 @@ describe('PluginHostedWebPane', () => {
         const element = (generation: number) => (
             <PluginHostedWebPane
                 contributionId="hostedWeb:acme.preview:preview-web"
-                surfaceId="sessionSurface:acme.preview:preview-pane"
+                surfaceContext={surfaceContext}
                 pluginUiProjection={{ ...projection, generation }}
                 endpointUrl="https://preview.happier.test/plugin/acme/"
                 platform="web"
@@ -423,7 +804,7 @@ describe('PluginHostedWebPane', () => {
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
     });
 
-    it('returns typed host API responses to allowed hosted-web bridge requests', async () => {
+    it('does not admit a predecessor direct host-method bridge envelope', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const listeners = new Set<(event: MessageEvent) => void>();
         const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
@@ -446,7 +827,7 @@ describe('PluginHostedWebPane', () => {
                 ...projection.hostedWebById,
                 'hostedWeb:acme.preview:preview-web': {
                     ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                    bridge: { allowedMessages: ['requestSessionResource'] },
+                    bridge: { allowedMessages: ['hostApi'] },
                 },
             },
         };
@@ -456,13 +837,11 @@ describe('PluginHostedWebPane', () => {
             await renderScreen(
                 <PluginHostedWebPane
                     contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceId="sessionSurface:acme.preview:preview-pane"
+                    surfaceContext={browserSurfaceContext}
                     pluginUiProjection={bridgeProjection}
                     endpointUrl="https://preview.happier.test/plugin/acme/"
                     platform="web"
                     bridgeNonce="nonce-1"
-                    sessionId="session-1"
-                    surfacePlacement="browserSurface"
                     hostApi={{
                         platform: 'web',
                         channel: 'internal',
@@ -489,33 +868,21 @@ describe('PluginHostedWebPane', () => {
                         sessionId: 'session-1',
                         nonce: 'nonce-1',
                         sequence: 2,
-                        kind: 'requestSessionResource',
+                        kind: 'readResource',
                         payload: { resource: { kind: 'session' } },
                     },
                     source: iframeSource,
                 } as MessageEvent);
             });
 
-            expect(iframeSource.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-                version: 1,
-                pluginId: 'acme.preview',
-                contributionId: 'preview-web',
-                surfaceId: 'sessionSurface:acme.preview:preview-pane',
-                requestSequence: 2,
-                kind: 'result',
-                payload: { state: 'available', title: 'Preview' },
-            }), 'https://preview.happier.test');
-            expect(handleRequest).toHaveBeenCalledWith(expect.objectContaining({
-                surface: expect.objectContaining({
-                    placement: 'browserSurface',
-                }),
-            }));
+            expect(iframeSource.postMessage).not.toHaveBeenCalled();
+            expect(handleRequest).not.toHaveBeenCalled();
         } finally {
             (globalThis as any).window = previousWindow;
         }
     });
 
-    it('keeps the hosted snapshot mounted while host API is unavailable and restores requests after reconnect', async () => {
+    it('keeps the hosted snapshot mounted while host API interaction reconnects', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const listeners = new Set<(event: MessageEvent) => void>();
         const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
@@ -537,7 +904,7 @@ describe('PluginHostedWebPane', () => {
                 ...projection.hostedWebById,
                 'hostedWeb:acme.preview:preview-web': {
                     ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                    bridge: { allowedMessages: ['requestSessionResource'] },
+                    bridge: { allowedMessages: ['hostApi'] },
                 },
             },
         };
@@ -550,12 +917,11 @@ describe('PluginHostedWebPane', () => {
         const element = (interactionEnabled: boolean) => (
             <PluginHostedWebPane
                 contributionId="hostedWeb:acme.preview:preview-web"
-                surfaceId="sessionSurface:acme.preview:preview-pane"
+                surfaceContext={sessionSurfaceContext}
                 pluginUiProjection={bridgeProjection}
                 endpointUrl="https://preview.happier.test/plugin/acme/"
                 platform="web"
                 bridgeNonce="nonce-1"
-                sessionId="session-1"
                 hostApi={hostApi}
                 interactionEnabled={interactionEnabled}
             />
@@ -607,17 +973,13 @@ describe('PluginHostedWebPane', () => {
                         sessionId: 'session-1',
                         nonce: 'nonce-1',
                         sequence: 3,
-                        kind: 'requestSessionResource',
+                        kind: 'readResource',
                         payload: { resource: { kind: 'session' } },
                     },
                     source: iframeSource,
                 } as MessageEvent);
             });
-            expect(iframeSource.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-                requestSequence: 3,
-                kind: 'error',
-                payload: expect.objectContaining({ code: 'unavailable' }),
-            }), 'https://preview.happier.test');
+            expect(iframeSource.postMessage).not.toHaveBeenCalled();
             expect(handleRequest).not.toHaveBeenCalled();
 
             await screen.update(element(true));
@@ -642,17 +1004,14 @@ describe('PluginHostedWebPane', () => {
                         sessionId: 'session-1',
                         nonce: 'nonce-1',
                         sequence: 4,
-                        kind: 'requestSessionResource',
+                        kind: 'readResource',
                         payload: { resource: { kind: 'session' } },
                     },
                     source: iframeSource,
                 } as MessageEvent);
             });
-            expect(handleRequest).toHaveBeenCalledTimes(1);
-            expect(iframeSource.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-                requestSequence: 4,
-                kind: 'result',
-            }), 'https://preview.happier.test');
+            expect(handleRequest).not.toHaveBeenCalled();
+            expect(iframeSource.postMessage).not.toHaveBeenCalled();
         } finally {
             (globalThis as any).window = previousWindow;
         }
@@ -664,7 +1023,7 @@ describe('PluginHostedWebPane', () => {
         const handleRequest = vi.fn();
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
@@ -684,11 +1043,79 @@ describe('PluginHostedWebPane', () => {
         });
 
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_bridge_timeout')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebBridgeTimeout');
         expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
         expect(handleRequest).not.toHaveBeenCalled();
     });
 
-    it('does not honor same-origin sandbox requests for path-fallback hosted web endpoints', async () => {
+    it('keeps the targeted caller fallback when hosted-web bridge readiness times out', async () => {
+        vi.useFakeTimers();
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const screen = await renderScreen(<PluginHostedWebPane
+            contributionId="hostedWeb:acme.preview:preview-web"
+            surfaceContext={surfaceContext}
+            pluginUiProjection={projection}
+            endpointUrl="https://preview.happier.test/plugin/acme/"
+            platform="web"
+            bridgeNonce="targeted-timeout-nonce"
+            hostApi={{
+                platform: 'web',
+                channel: 'internal',
+                handleRequest: vi.fn(),
+            }}
+            readyTimeoutMs={5}
+            targetedFallback={React.createElement('TargetedHostedFallback', {
+                testID: 'targeted-hosted-ready-timeout-fallback',
+            })}
+        />);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(5);
+        });
+
+        expect(screen.findByTestId('targeted-hosted-ready-timeout-fallback')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeNull();
+        expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+    });
+
+    it('presents an origin-less URL implementation with its own recovery guidance while retaining its bounded diagnostic', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const previousUrl = globalThis.URL;
+        class OriginlessHttpsUrl {
+            readonly protocol = 'https:';
+            readonly origin = '';
+
+            constructor(_input: string) {
+                // This platform-boundary fixture models a URL implementation that cannot
+                // supply an addressable frame origin; the pane must fail closed before use.
+            }
+        }
+        Object.defineProperty(globalThis, 'URL', {
+            configurable: true,
+            value: OriginlessHttpsUrl,
+        });
+        try {
+            const screen = await renderScreen(<PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={surfaceContext}
+                pluginUiProjection={projection}
+                endpointUrl="https://preview.happier.test/plugin/acme/"
+                platform="web"
+            />);
+
+            expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_frame_origin_unavailable')).toBeTruthy();
+            expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebFrameOriginUnavailable');
+            expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+        } finally {
+            Object.defineProperty(globalThis, 'URL', {
+                configurable: true,
+                value: previousUrl,
+            });
+        }
+    });
+
+    it('gives the guest an addressable origin regardless of the declared route mode (EU-8)', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const pathFallbackProjection: PluginUiProjectionModel = {
             ...projection,
@@ -704,16 +1131,29 @@ describe('PluginHostedWebPane', () => {
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={pathFallbackProjection}
             endpointUrl="https://app.happier.test/v1/local-services/preview/preview_1/"
             platform="web"
         />);
 
+        // REPLACED ORACLE (EU-8). This asserted `not.toContain('allow-same-origin')`
+        // for a `pathFallback` endpoint, which locked in an OPAQUE guest origin —
+        // and an opaque origin silently breaks BOTH bridge directions in a real
+        // browser (the guest posts from `origin: "null"`, and the host cannot
+        // address an exact `targetOrigin` back). It could only look correct
+        // because every unit test on this path fabricates `event.origin`.
+        // The former browser-script citation was retired: it exercised a
+        // Session preview substitute rather than this hosted frame, so this
+        // test makes no Chromium-execution claim.
         const frame = findHostedWebIframe(screen);
         expect(frame).toBeTruthy();
         expect(frame?.props.sandbox).toContain('allow-scripts');
-        expect(frame?.props.sandbox).not.toContain('allow-same-origin');
+        expect(frame?.props.sandbox).toContain('allow-same-origin');
+        // Still clamped: the author's other sandbox requests are unaffected by
+        // the transport's origin requirement.
+        expect(frame?.props.sandbox).not.toContain('allow-popups');
+        expect(frame?.props.sandbox).not.toContain('allow-top-navigation');
     });
 
     it('does not render daemon loopback endpoints on native clients', async () => {
@@ -721,13 +1161,15 @@ describe('PluginHostedWebPane', () => {
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             endpointUrl="http://127.0.0.1:5173/"
             platform="ios"
         />);
 
         expect(screen.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_endpoint_policy_denied')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('pluginRuntime.hostedWebEndpointPolicyDenied');
     });
 
     it('does not render loopback aliases or IPv4-mapped loopback endpoints on native clients', async () => {
@@ -735,14 +1177,14 @@ describe('PluginHostedWebPane', () => {
 
         const ipv4Alias = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             endpointUrl="http://127.1.2.3:5173/"
             platform="ios"
         />);
         const mappedIpv6 = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={projection}
             endpointUrl="http://[::ffff:127.0.0.1]:5173/"
             platform="android"
@@ -750,6 +1192,8 @@ describe('PluginHostedWebPane', () => {
 
         expect(ipv4Alias.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
         expect(mappedIpv6.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+        expect(ipv4Alias.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_endpoint_policy_denied')).toBeTruthy();
+        expect(mappedIpv6.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_endpoint_policy_denied')).toBeTruthy();
     });
 
     describe('native dev-loopback relaxation (RN-WEB-LOADER item 6)', () => {
@@ -790,7 +1234,7 @@ describe('PluginHostedWebPane', () => {
                 const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
                 const screen = await renderScreen(<PluginHostedWebPane
                     contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceId="sessionSurface:acme.preview:preview-pane"
+                    surfaceContext={surfaceContext}
                     pluginUiProjection={devLoopbackProjection}
                     endpointUrl="http://127.0.0.1:5173/"
                     platform="ios"
@@ -808,7 +1252,7 @@ describe('PluginHostedWebPane', () => {
                 const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
                 const screen = await renderScreen(<PluginHostedWebPane
                     contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceId="sessionSurface:acme.preview:preview-pane"
+                    surfaceContext={surfaceContext}
                     pluginUiProjection={devLoopbackProjection}
                     endpointUrl="http://127.0.0.1:5173/"
                     platform="ios"
@@ -826,7 +1270,7 @@ describe('PluginHostedWebPane', () => {
                 const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
                 const screen = await renderScreen(<PluginHostedWebPane
                     contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceId="sessionSurface:acme.preview:preview-pane"
+                    surfaceContext={surfaceContext}
                     pluginUiProjection={projection}
                     endpointUrl="http://127.0.0.1:5173/"
                     platform="ios"
@@ -844,7 +1288,7 @@ describe('PluginHostedWebPane', () => {
                 const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
                 const screen = await renderScreen(<PluginHostedWebPane
                     contributionId="hostedWeb:acme.preview:preview-web"
-                    surfaceId="sessionSurface:acme.preview:preview-pane"
+                    surfaceContext={surfaceContext}
                     pluginUiProjection={devLoopbackProjection}
                     endpointUrl="http://127.0.0.1:5173/"
                     platform="ios"
@@ -861,7 +1305,7 @@ describe('PluginHostedWebPane', () => {
             const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
             const screen = await renderScreen(<PluginHostedWebPane
                 contributionId="hostedWeb:acme.preview:preview-web"
-                surfaceId="sessionSurface:acme.preview:preview-pane"
+                surfaceContext={surfaceContext}
                 pluginUiProjection={projection}
                 endpointUrl="https://plugin.example.test/"
                 platform="ios"
@@ -886,14 +1330,14 @@ describe('PluginHostedWebPane', () => {
 
         const screen = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={policyProjection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
         />);
         const native = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={policyProjection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="ios"
@@ -930,14 +1374,14 @@ describe('PluginHostedWebPane', () => {
 
         const missing = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={missingPolicyProjection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
         />);
         const malformed = await renderScreen(<PluginHostedWebPane
             contributionId="hostedWeb:acme.preview:preview-web"
-            surfaceId="sessionSurface:acme.preview:preview-pane"
+            surfaceContext={surfaceContext}
             pluginUiProjection={malformedPolicyProjection}
             endpointUrl="https://preview.happier.test/plugin/acme/"
             platform="web"
@@ -945,5 +1389,1255 @@ describe('PluginHostedWebPane', () => {
 
         expect(missing.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
         expect(malformed.findByTestId('plugin-hosted-web-unavailable')).toBeTruthy();
+    });
+    it('pushes a host context update into the real frame over the canonical wire (EU-8)', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+
+        const canonicalProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+        const canonicalHostApi = {
+            identity,
+            mount: canonicalMount,
+            methods: ['context'] as const,
+            target: { kind: 'session', sessionId: 'session-1' },
+            accountEncryptionMode: 'e2ee' as const,
+            translations: { 'preview.title': 'Preview' },
+            targetedContributions: canonicalTargetedContributions,
+        } as const;
+
+        try {
+            const screen = await renderScreen(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={sessionSurfaceContext}
+                    pluginUiProjection={canonicalProjection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    bridgeNonce="nonce-1"
+                    hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
+                    canonicalHostApi={canonicalHostApi}
+                />,
+                {
+                    createNodeMock: (element) => (
+                        (element as { type?: string }).type === 'iframe'
+                            ? { contentWindow: iframeSource }
+                            : null
+                    ),
+                },
+            );
+
+            const guestEnvelope = (
+                sequence: number,
+                kind: 'ready' | 'hostApi',
+                payload: unknown,
+            ) => ({
+                origin: 'https://preview.happier.test',
+                source: iframeSource,
+                data: {
+                    version: 1,
+                    pluginId: 'acme.preview',
+                    contributionId: 'preview-web',
+                    surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                    sessionId: 'session-1',
+                    nonce: 'nonce-1',
+                    sequence,
+                    kind,
+                    payload,
+                },
+            } as unknown as MessageEvent);
+
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent(guestEnvelope(1, 'ready', { ready: true }));
+            });
+            const negotiated = iframeSource.postMessage as unknown as ReturnType<typeof vi.fn>;
+            expect(negotiated).toHaveBeenCalledWith(expect.objectContaining({
+                direction: 'hostToFrame',
+                kind: 'bootstrap',
+                nonce: 'nonce-1',
+            }), 'https://preview.happier.test');
+            negotiated.mockClear();
+
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent(guestEnvelope(2, 'hostApi', {
+                    wireVersion: 1,
+                    kind: 'negotiate',
+                    identity,
+                    apiRange: '^1.0.0',
+                }));
+            });
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent(guestEnvelope(3, 'hostApi', {
+                    wireVersion: 1,
+                    kind: 'subscribe',
+                    identity,
+                    requestId: 'request-1',
+                    subscriptionId: 'subscription-1',
+                    method: 'watchContext',
+                }));
+            });
+
+            expect(negotiated.mock.calls[0]?.[0]).toMatchObject({
+                kind: 'result',
+                payload: { kind: 'negotiated', methods: expect.arrayContaining(['watchContext']) },
+            });
+            negotiated.mockClear();
+
+            // A change to the mount's own facts must reach the frame as a push.
+            await screen.update(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={sessionSurfaceContext}
+                    pluginUiProjection={canonicalProjection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    bridgeNonce="nonce-1"
+                    hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
+                    canonicalHostApi={{
+                        ...canonicalHostApi,
+                        translations: { 'preview.title': 'Aper\u00e7u' },
+                    }}
+                />,
+            );
+
+            const pushes = negotiated.mock.calls.filter(
+                (call) => (call[0] as { direction?: string }).direction === 'hostToFrame',
+            );
+            expect(pushes).toHaveLength(1);
+            expect(pushes[0]?.[0]).toMatchObject({
+                direction: 'hostToFrame',
+                kind: 'hostApi',
+                nonce: 'nonce-1',
+                payload: {
+                    kind: 'subscription',
+                    subscriptionId: 'subscription-1',
+                    event: { translations: { 'preview.title': 'Aper\u00e7u' } },
+                },
+            });
+            // Exact origin, never a wildcard: a wildcard would hand host facts
+            // to whatever document occupies the frame after a navigation.
+            expect(pushes[0]?.[1]).toBe('https://preview.happier.test');
+
+            // A theme/locale-style context refresh preserves a live guest
+            // subscription, but a different exact target is a new bound surface
+            // lifetime. It must not be delivered as another context push through
+            // the old bridge — that would let the prior target keep its host API.
+            negotiated.mockClear();
+            await screen.update(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={sessionSurfaceContext}
+                    pluginUiProjection={canonicalProjection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    bridgeNonce="nonce-1"
+                    hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
+                    canonicalHostApi={{
+                        ...canonicalHostApi,
+                        target: {
+                            kind: 'browser',
+                            targetId: 'browser-target-replacement',
+                            origin: 'https://replacement.example.test',
+                        },
+                    }}
+                />,
+            );
+            const targetReplacementPushes = negotiated.mock.calls.filter(
+                (call) => (call[0] as { direction?: string }).direction === 'hostToFrame',
+            );
+            expect(targetReplacementPushes).toHaveLength(0);
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+    it('keeps the canonical frame mounted while its incumbent bridge renegotiates newly installed methods', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSources: Array<{ postMessage: ReturnType<typeof vi.fn> }> = [];
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+        const renderPane = (methods: readonly ('context' | 'readResource')[]) => (
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={sessionSurfaceContext}
+                pluginUiProjection={bridgeProjection}
+                endpointUrl="https://preview.happier.test/plugin/acme/"
+                platform="web"
+                bridgeNonce="nonce-1"
+                hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
+                canonicalHostApi={{
+                    identity,
+                    mount: canonicalMount,
+                    methods,
+                    target: { kind: 'session', sessionId: 'session-1' },
+                    accountEncryptionMode: 'e2ee',
+                    translations: { 'preview.title': 'Preview' },
+                    targetedContributions: canonicalTargetedContributions,
+                }}
+            />
+        );
+
+        try {
+            const screen = await renderScreen(renderPane(['context']), {
+                createNodeMock: (element) => {
+                    if ((element as { type?: string }).type !== 'iframe') return null;
+                    const source = { postMessage: vi.fn() };
+                    iframeSources.push(source);
+                    return { contentWindow: source as unknown as WindowProxy };
+                },
+            });
+            const incumbentSource = iframeSources[0];
+            expect(incumbentSource).toBeDefined();
+
+            const guestEnvelope = (sequence: number, payload: unknown) => ({
+                origin: 'https://preview.happier.test',
+                source: incumbentSource as unknown as WindowProxy,
+                data: {
+                    version: 1,
+                    pluginId: 'acme.preview',
+                    contributionId: 'preview-web',
+                    surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                    sessionId: 'session-1',
+                    nonce: 'nonce-1',
+                    sequence,
+                    kind: 'hostApi',
+                    payload,
+                },
+            } as unknown as MessageEvent);
+            const readyEnvelope = (sequence: number) => ({
+                origin: 'https://preview.happier.test',
+                source: incumbentSource as unknown as WindowProxy,
+                data: {
+                    version: 1,
+                    pluginId: 'acme.preview',
+                    contributionId: 'preview-web',
+                    surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                    sessionId: 'session-1',
+                    nonce: 'nonce-1',
+                    sequence,
+                    kind: 'ready',
+                    payload: { ready: true },
+                },
+            } as unknown as MessageEvent);
+
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent(readyEnvelope(1));
+            });
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent(guestEnvelope(2, {
+                    wireVersion: 1,
+                    kind: 'negotiate',
+                    identity,
+                    apiRange: '^1.0.0',
+                }));
+            });
+            expect(incumbentSource?.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'result',
+                payload: expect.objectContaining({
+                    kind: 'negotiated',
+                    methods: expect.not.arrayContaining(['readResource']),
+                }),
+            }), 'https://preview.happier.test');
+            incumbentSource?.postMessage.mockClear();
+
+            await screen.update(renderPane(['context', 'readResource']));
+
+            // A capability expansion is transport negotiation, not a physical
+            // iframe lifetime: guest state and its post-ready bootstrap remain.
+            expect(iframeSources).toHaveLength(1);
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent(guestEnvelope(3, {
+                    wireVersion: 1,
+                    kind: 'negotiate',
+                    identity,
+                    apiRange: '^1.0.0',
+                }));
+            });
+            expect(incumbentSource?.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'result',
+                payload: expect.objectContaining({
+                    kind: 'negotiated',
+                    methods: expect.arrayContaining(['readResource']),
+                }),
+            }), 'https://preview.happier.test');
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+    it('lends the incumbent Composer publication sink only for the mounted bridge lifetime', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const setComposerSubscriptionPublisher = vi.fn();
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+        const paneProps = {
+            contributionId: 'hostedWeb:acme.preview:preview-web',
+            surfaceContext: sessionSurfaceContext,
+            pluginUiProjection: {
+                ...projection,
+                hostedWebById: {
+                    ...projection.hostedWebById,
+                    'hostedWeb:acme.preview:preview-web': {
+                        ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                        bridge: { allowedMessages: ['hostApi'] },
+                    },
+                },
+            },
+            endpointUrl: 'https://preview.happier.test/plugin/acme/',
+            platform: 'web' as const,
+            bridgeNonce: 'nonce-1',
+            hostApi: { platform: 'web' as const, channel: 'internal' as const, handleRequest: async () => null },
+            canonicalHostApi: {
+                identity,
+                mount: canonicalMount,
+                methods: ['watchComposer'] as const,
+                target: { kind: 'session' as const, sessionId: 'session-1' },
+                accountEncryptionMode: 'e2ee' as const,
+                translations: { 'preview.title': 'Preview' },
+                targetedContributions: canonicalTargetedContributions,
+            },
+            setComposerSubscriptionPublisher,
+        };
+
+        try {
+            const screen = await renderScreen(
+                <PluginHostedWebPane {...paneProps} />,
+                {
+                    createNodeMock: (element) => (
+                        (element as { type?: string }).type === 'iframe'
+                            ? { contentWindow: { postMessage: vi.fn() } as unknown as WindowProxy }
+                            : null
+                    ),
+                },
+            );
+
+            expect(setComposerSubscriptionPublisher).toHaveBeenLastCalledWith(expect.any(Function));
+
+            await screen.unmount();
+
+            expect(setComposerSubscriptionPublisher).toHaveBeenLastCalledWith(undefined);
+        } finally {
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+    it('admits the strict ready lifecycle for a canonical host API bridge and sends bootstrap only after readiness', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+
+        try {
+            const screen = await renderScreen(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={sessionSurfaceContext}
+                    pluginUiProjection={bridgeProjection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    bridgeNonce="nonce-1"
+                    hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
+                    canonicalHostApi={{
+                        identity,
+                        mount: canonicalMount,
+                        methods: ['context'],
+                        target: { kind: 'session', sessionId: 'session-1' },
+                        accountEncryptionMode: 'e2ee',
+                        translations: { 'preview.title': 'Preview' },
+                        targetedContributions: canonicalTargetedContributions,
+                    }}
+                />,
+                {
+                    createNodeMock: (element) => (
+                        (element as { type?: string }).type === 'iframe'
+                            ? { contentWindow: iframeSource }
+                            : null
+                    ),
+                },
+            );
+            expect(iframeSource.postMessage).not.toHaveBeenCalled();
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierSessionId')).toBeNull();
+
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'https://preview.happier.test',
+                    source: iframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.preview',
+                        contributionId: 'preview-web',
+                        surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                        nonce: 'nonce-1',
+                        sequence: 1,
+                        kind: 'ready',
+                        payload: { ready: true },
+                    },
+                } as MessageEvent);
+            });
+
+            expect(iframeSource.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+                direction: 'hostToFrame',
+                kind: 'bootstrap',
+                nonce: 'nonce-1',
+                payload: expect.objectContaining({ identity }),
+            }), 'https://preview.happier.test');
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+
+    it('bootstraps the selected B generated V2 Artifact frame from its nonce-bound sessionless ready message', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.review:detail': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    id: 'hostedWeb:acme.review:detail',
+                    pluginId: 'acme.review',
+                    contributionId: 'detail',
+                    generatedV2: true,
+                    bridge: { allowedMessages: ['hostApi'] },
+                    service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
+                    runtime: {
+                        state: 'fallback',
+                        diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        decision: {
+                            state: 'fallback',
+                            reason: 'hosted_web_frame_adapter_unavailable',
+                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        },
+                    },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.review',
+            pluginVersion: '1.2.3',
+            viewId: 'detail',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+
+        try {
+            const screen = await renderScreen(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.review:detail"
+                    surfaceContext={{
+                        ...sessionSurfaceContext,
+                        pluginId: 'acme.review',
+                        contributionId: 'detail',
+                        surfaceId: 'targeted:review-hosted-42',
+                    }}
+                    pluginUiProjection={bridgeProjection}
+                    endpointUrl="https://artifacts.happier.test/v1/plugins/availability/ui-artifacts/browser/capability/"
+                    opaqueArtifactFrame
+                    platform="web"
+                    bridgeNonce="nonce-1"
+                    hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
+                    canonicalHostApi={{
+                        identity,
+                        mount: canonicalMount,
+                        methods: ['context'],
+                        target: { kind: 'browser', targetId: 'browser-targeted-hosted-77' },
+                        accountEncryptionMode: 'plain',
+                        translations: {},
+                        targetedContributions: {
+                            target: {
+                                pluginId: 'acme.browser',
+                                immutableGenerationId: 'browser-targeted-hosted-generation-77',
+                            },
+                            points: [],
+                        },
+                    }}
+                />,
+                {
+                    createNodeMock: (element) => (
+                        (element as { type?: string }).type === 'iframe'
+                            ? { contentWindow: iframeSource }
+                            : null
+                    ),
+                },
+            );
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierSessionId')).toBeNull();
+
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'null',
+                    source: iframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.review',
+                        contributionId: 'detail',
+                        surfaceId: 'targeted:review-hosted-42',
+                        nonce: 'nonce-1',
+                        sequence: 1,
+                        kind: 'ready',
+                        payload: { ready: true },
+                    },
+                } as MessageEvent);
+            });
+
+            expect(iframeSource.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+                direction: 'hostToFrame',
+                kind: 'bootstrap',
+                nonce: 'nonce-1',
+                payload: expect.objectContaining({ identity }),
+            }), '*');
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+
+    it('retires an opaque Artifact resource bridge before a replacement document can receive host traffic', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const handleRequest = vi.fn(async () => null);
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                    service: { kind: 'staticAssets', assetRootId: 'hosted-web/preview-web' },
+                    runtime: {
+                        state: 'fallback',
+                        diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        decision: {
+                            state: 'fallback',
+                            reason: 'hosted_web_frame_adapter_unavailable',
+                            diagnostics: ['hosted_web_frame_adapter_unavailable'],
+                        },
+                    },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+
+        try {
+            const screen = await renderScreen(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={sessionSurfaceContext}
+                    pluginUiProjection={bridgeProjection}
+                    endpointUrl="https://artifacts.happier.test/v1/plugins/availability/ui-artifacts/browser/capability/"
+                    opaqueArtifactFrame
+                    platform="web"
+                    bridgeNonce="nonce-1"
+                    hostApi={{ platform: 'web', channel: 'internal', handleRequest }}
+                    canonicalHostApi={{
+                        identity,
+                        mount: canonicalMount,
+                        methods: ['watchResource'],
+                        target: { kind: 'session', sessionId: 'session-1' },
+                        accountEncryptionMode: 'plain',
+                        translations: { 'preview.title': 'Preview' },
+                        targetedContributions: canonicalTargetedContributions,
+                    }}
+                />,
+                {
+                    createNodeMock: (element) => (
+                        (element as { type?: string }).type === 'iframe'
+                            ? { contentWindow: iframeSource }
+                            : null
+                    ),
+                },
+            );
+            const initialFrame = findHostedWebIframe(screen);
+
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'null',
+                    source: iframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.preview',
+                        contributionId: 'preview-web',
+                        surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                        nonce: 'nonce-1',
+                        sequence: 1,
+                        kind: 'ready',
+                        payload: { ready: true },
+                    },
+                } as MessageEvent);
+            });
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'null',
+                    source: iframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.preview',
+                        contributionId: 'preview-web',
+                        surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                        sessionId: 'session-1',
+                        nonce: 'nonce-1',
+                        sequence: 2,
+                        kind: 'hostApi',
+                        payload: {
+                            wireVersion: 1,
+                            kind: 'subscribe',
+                            identity,
+                            requestId: 'watch-resource-request',
+                            subscriptionId: 'watch-resource-subscription',
+                            method: 'watchResource',
+                            payload: { resource: { kind: 'session' } },
+                        },
+                    },
+                } as MessageEvent);
+            });
+            await vi.waitFor(() => expect(handleRequest).toHaveBeenCalledWith(expect.objectContaining({
+                method: 'watchResource',
+            })));
+            (iframeSource.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+            await act(async () => {
+                initialFrame.props.onLoad?.();
+                await Promise.resolve();
+            });
+            await act(async () => {
+                initialFrame.props.onLoad?.();
+                await Promise.resolve();
+            });
+
+            await vi.waitFor(() => expect(handleRequest).toHaveBeenCalledWith(expect.objectContaining({
+                method: 'disposeHostResource',
+                payload: { subscriptionId: 'watch-resource-subscription' },
+            })));
+            expect(iframeSource.postMessage).not.toHaveBeenCalled();
+            expect(screen.root.findAllByType('iframe')).toHaveLength(0);
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+
+    it('delivers canonical disconnect during teardown even after ordinary surface currentness has closed', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        let current = true;
+        const isCurrent = () => current;
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+        const canonicalHostApi = {
+            identity,
+            mount: canonicalMount,
+            methods: ['context'] as const,
+            target: { kind: 'session', sessionId: 'session-1' },
+            accountEncryptionMode: 'e2ee' as const,
+            translations: { 'preview.title': 'Preview' },
+            targetedContributions: canonicalTargetedContributions,
+        } as const;
+        const element = (target: PluginSurfaceTarget) => (
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={sessionSurfaceContext}
+                pluginUiProjection={bridgeProjection}
+                endpointUrl="https://preview.happier.test/plugin/acme/"
+                platform="web"
+                bridgeNonce="nonce-1"
+                hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
+                isCurrent={isCurrent}
+                canonicalHostApi={{ ...canonicalHostApi, target }}
+            />
+        );
+
+        try {
+            const screen = await renderScreen(element(canonicalHostApi.target), {
+                createNodeMock: (node) => (
+                    (node as { type?: string }).type === 'iframe'
+                        ? { contentWindow: iframeSource }
+                        : null
+                ),
+            });
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'https://preview.happier.test',
+                    source: iframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.preview',
+                        contributionId: 'preview-web',
+                        surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                        sessionId: 'session-1',
+                        nonce: 'nonce-1',
+                        sequence: 1,
+                        kind: 'ready',
+                        payload: { ready: true },
+                    },
+                } as MessageEvent);
+            });
+            (iframeSource.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+            // A replacement retires the old exact frame lifetime. Ordinary
+            // traffic is stale now, but this one terminal push is what lets the
+            // guest abort its Data pager instead of retaining Account-A rows.
+            current = false;
+            await screen.update(element({
+                kind: 'browser',
+                targetId: 'replacement-target',
+                origin: 'https://replacement.example.test',
+            }));
+
+            expect(iframeSource.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+                direction: 'hostToFrame',
+                kind: 'hostApi',
+                payload: expect.objectContaining({
+                    kind: 'disconnected',
+                    reason: 'host_api_handler_disposed',
+                }),
+            }), 'https://preview.happier.test');
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+
+    it('rejects bridge traffic after the bound surface is no longer current without invoking the host', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const handleRequest = vi.fn(async () => null);
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+
+        try {
+            await renderScreen(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={sessionSurfaceContext}
+                    pluginUiProjection={bridgeProjection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    bridgeNonce="nonce-1"
+                    hostApi={{ platform: 'web', channel: 'internal', handleRequest }}
+                    isCurrent={() => false}
+                    canonicalHostApi={{
+                        identity,
+                        mount: canonicalMount,
+                        methods: ['executeAction'],
+                        target: { kind: 'session', sessionId: 'session-1' },
+                        accountEncryptionMode: 'e2ee',
+                        translations: { 'preview.title': 'Preview' },
+                        targetedContributions: canonicalTargetedContributions,
+                    }}
+                />,
+                {
+                    createNodeMock: (element) => (
+                        (element as { type?: string }).type === 'iframe'
+                            ? { contentWindow: iframeSource }
+                            : null
+                    ),
+                },
+            );
+
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'https://preview.happier.test',
+                    source: iframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.preview',
+                        contributionId: 'preview-web',
+                        surfaceId: 'sessionSurface:acme.preview:preview-pane',
+                        sessionId: 'session-1',
+                        nonce: 'nonce-1',
+                        sequence: 1,
+                        kind: 'hostApi',
+                        payload: {
+                            wireVersion: 1,
+                            kind: 'request',
+                            identity,
+                            requestId: 'request-1',
+                            method: 'executeAction',
+                            payload: { action: 'open' },
+                        },
+                    },
+                } as MessageEvent);
+            });
+
+            expect(handleRequest).not.toHaveBeenCalled();
+            expect(iframeSource.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'error',
+                payload: { code: 'stale_surface', diagnostics: [] },
+            }), 'https://preview.happier.test');
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+        }
+    });
+
+    it('remounts a reopened bound instance with a freshly minted bridge nonce', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+        const randomUUID = vi.fn()
+            .mockReturnValueOnce('mount-instance-one')
+            .mockReturnValueOnce('mount-instance-two');
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: { randomUUID },
+        });
+
+        try {
+            const screen = await renderScreen(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={surfaceContext}
+                    pluginUiProjection={projection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    {...({ mountInstanceKey: 'mount-one' } as any)}
+                />,
+            );
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierBridgeNonce')).toBe('mount-instance-one');
+
+            await screen.update(
+                <PluginHostedWebPane
+                    contributionId="hostedWeb:acme.preview:preview-web"
+                    surfaceContext={surfaceContext}
+                    pluginUiProjection={projection}
+                    endpointUrl="https://preview.happier.test/plugin/acme/"
+                    platform="web"
+                    {...({ mountInstanceKey: 'mount-two' } as any)}
+                />,
+            );
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierBridgeNonce')).toBe('mount-instance-two');
+        } finally {
+            if (previousCrypto) Object.defineProperty(globalThis, 'crypto', previousCrypto);
+            else Reflect.deleteProperty(globalThis, 'crypto');
+        }
+    });
+
+    it('remounts a same-instance targeted hosted-web guest with a fresh nonce when launch input changes', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const listeners = new Set<(event: MessageEvent) => void>();
+        const iframeSources = [
+            { postMessage: vi.fn() },
+            { postMessage: vi.fn() },
+        ] as unknown as WindowProxy[];
+        let iframeMounts = 0;
+        const previousWindow = (globalThis as any).window;
+        const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+        const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+        const randomUUID = vi.fn()
+            .mockReturnValueOnce('launch-frame-one')
+            .mockReturnValueOnce('launch-frame-two');
+        (globalThis as any).window = {
+            addEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.add(listener);
+            },
+            removeEventListener: (event: string, listener: (event: MessageEvent) => void) => {
+                if (event === 'message') listeners.delete(listener);
+            },
+            dispatchEvent: (event: MessageEvent) => {
+                for (const listener of [...listeners]) listener(event);
+            },
+        };
+        Object.defineProperty(globalThis, 'location', {
+            configurable: true,
+            value: { origin: 'https://host.happier.test' },
+        });
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: { randomUUID },
+        });
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                },
+            },
+        };
+        const identity = {
+            pluginId: 'acme.preview',
+            pluginVersion: '1.2.3',
+            viewId: 'preview-pane',
+            generation: '1',
+            sessionId: 'session-1',
+        } as const;
+        const canonicalHostApi = {
+            identity,
+            mount: canonicalMount,
+            methods: ['context'] as const,
+            target: { kind: 'session', sessionId: 'session-1' } as const,
+            accountEncryptionMode: 'e2ee' as const,
+            translations: { 'preview.title': 'Preview' },
+            targetedContributions: canonicalTargetedContributions,
+        };
+        const hostApi = { platform: 'web' as const, channel: 'internal' as const, handleRequest: vi.fn(async () => null) };
+        const element = (launchInput: PluginUiLaunchInputV1) => (
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={sessionSurfaceContext}
+                pluginUiProjection={bridgeProjection}
+                endpointUrl="https://preview.happier.test/plugin/acme/"
+                platform="web"
+                hostApi={hostApi}
+                canonicalHostApi={canonicalHostApi}
+                launchInput={launchInput}
+                mountInstanceKey="review-42"
+            />
+        );
+
+        try {
+            const screen = await renderScreen(element({ reviewId: 'review-42', stale: 'discard-me' }), {
+                createNodeMock: (element) => (
+                    (element as { type?: string }).type === 'iframe'
+                        ? (() => {
+                            const iframeSource = iframeSources[iframeMounts]!;
+                            iframeMounts += 1;
+                            return { contentWindow: iframeSource };
+                        })()
+                        : null
+                ),
+            });
+            const firstIframeSource = iframeSources[0]!;
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierBridgeNonce'))
+                .toBe('launch-frame-one');
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'https://preview.happier.test',
+                    source: firstIframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.preview',
+                        contributionId: 'preview-web',
+                        surfaceId: sessionSurfaceContext.surfaceId,
+                        sessionId: 'session-1',
+                        nonce: 'launch-frame-one',
+                        sequence: 1,
+                        kind: 'ready',
+                        payload: { ready: true },
+                    },
+                } as MessageEvent);
+            });
+            (firstIframeSource.postMessage as ReturnType<typeof vi.fn>).mockClear();
+
+            // Launch input is bootstrap authority. Reopening the same logical
+            // mount must give it a new guest realm rather than replacing a
+            // live realm's bootstrap state in place.
+            await screen.update(element({ filter: 'open' }));
+            expect(iframeMounts).toBe(2);
+            expect(new URL(String(findHostedWebIframe(screen).props.src)).searchParams.get('happierBridgeNonce'))
+                .toBe('launch-frame-two');
+            expect(firstIframeSource.postMessage).not.toHaveBeenCalled();
+
+            const secondIframeSource = iframeSources[1]!;
+            await act(async () => {
+                (globalThis as any).window.dispatchEvent({
+                    origin: 'https://preview.happier.test',
+                    source: secondIframeSource,
+                    data: {
+                        version: 1,
+                        pluginId: 'acme.preview',
+                        contributionId: 'preview-web',
+                        surfaceId: sessionSurfaceContext.surfaceId,
+                        sessionId: 'session-1',
+                        nonce: 'launch-frame-two',
+                        sequence: 1,
+                        kind: 'ready',
+                        payload: { ready: true },
+                    },
+                } as MessageEvent);
+            });
+            await vi.waitFor(() => expect(secondIframeSource.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+                direction: 'hostToFrame',
+                kind: 'bootstrap',
+                nonce: 'launch-frame-two',
+                payload: expect.objectContaining({
+                    identity,
+                    launchInput: { filter: 'open' },
+                }),
+            }), 'https://preview.happier.test'));
+            expect(firstIframeSource.postMessage).not.toHaveBeenCalled();
+        } finally {
+            (globalThis as any).window = previousWindow;
+            if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+            else Reflect.deleteProperty(globalThis, 'location');
+            if (previousCrypto) Object.defineProperty(globalThis, 'crypto', previousCrypto);
+            else Reflect.deleteProperty(globalThis, 'crypto');
+        }
+    });
+
+    it('never places subPath, launch input, or canonical runtime identity in the frame URL', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const bridgeProjection: PluginUiProjectionModel = {
+            ...projection,
+            hostedWebById: {
+                ...projection.hostedWebById,
+                'hostedWeb:acme.preview:preview-web': {
+                    ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
+                    bridge: { allowedMessages: ['hostApi'] },
+                },
+            },
+        };
+
+        const screen = await renderScreen(
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={sessionSurfaceContext}
+                pluginUiProjection={bridgeProjection}
+                endpointUrl="https://preview.happier.test/plugin/acme/"
+                platform="web"
+                bridgeNonce="nonce-1"
+                {...({ subPath: 'work/ideas.md', launchInput: { noteId: 'note-7' } } as any)}
+            />,
+        );
+
+        const frame = findHostedWebIframe(screen);
+        const url = new URL(String(frame?.props.src));
+        expect(url.searchParams.has('happierSubPath')).toBe(false);
+        expect(url.searchParams.has('happierLaunchInput')).toBe(false);
+        expect(url.searchParams.has('happierPluginVersion')).toBe(false);
+        expect(url.searchParams.has('happierViewId')).toBe(false);
+        expect(url.searchParams.has('happierGeneration')).toBe(false);
+
+        // Wrong-implementation control: absent launch facts are absent, not
+        // empty strings or `null`, so the guest can still tell "no input" from
+        // "input that happens to be null".
+        const withoutLaunch = await renderScreen(
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={sessionSurfaceContext}
+                pluginUiProjection={bridgeProjection}
+                endpointUrl="https://preview.happier.test/plugin/acme/"
+                platform="web"
+                bridgeNonce="nonce-1"
+            />,
+        );
+        const plainUrl = new URL(String(findHostedWebIframe(withoutLaunch)?.props.src));
+        expect(plainUrl.searchParams.has('happierSubPath')).toBe(false);
+        expect(plainUrl.searchParams.has('happierLaunchInput')).toBe(false);
     });
 });

@@ -5,7 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import {
     CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY,
     CurrentSessionPresentationStateV1Schema,
+    currentSessionPresentationEntryIdentityV1,
 } from '@happier-dev/protocol/sessions';
+import type { PluginProjectedComposerRegionEntryV1 } from '@happier-dev/protocol';
 
 import { Text } from '@/components/ui/text/Text';
 import { recordSessionPayloadConsumptionTelemetry } from '@/sync/domains/session/sessionPayloadConsumptionTelemetry';
@@ -16,6 +18,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
         paddingHorizontal: 12,
         paddingVertical: 8,
+    },
+    transientLines: {
+        gap: 6,
     },
     item: {
         borderRadius: 8,
@@ -35,48 +40,89 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const CurrentSessionPresentationSurface = React.memo(function CurrentSessionPresentationSurface(props: Readonly<{
     session: Pick<Session, 'agentState'>;
     placement: 'beforeComposer' | 'afterComposer';
+    /**
+     * SessionView supplies the one normalized manifest catalog. These entries
+     * remain independent from transient Presentation state even though this
+     * incumbent component owns their shared physical before/after slot.
+     */
+    composerRegions?: readonly PluginProjectedComposerRegionEntryV1[];
+    /**
+     * The composition owner creates the exact Composer mount and delegates it
+     * to PluginSurfaceHost. This physical slot never selects renderers or
+     * creates a second loader, Resource, crash, or Host API owner.
+     */
+    renderComposerRegion?: (region: PluginProjectedComposerRegionEntryV1) => React.ReactNode;
 }>) {
     const styles = stylesheet;
     const raw = (props.session.agentState as Record<string, unknown> | null)?.[
         CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY
     ];
     const parsed = CurrentSessionPresentationStateV1Schema.safeParse(raw);
-    if (!parsed.success) return null;
-    if (props.placement === 'beforeComposer') {
+    // Transient Presentation and manifest regions have independent producers
+    // and deletion/generation lifecycles. A missing or invalid transient
+    // record therefore withholds only transient chrome; it cannot suppress an
+    // otherwise admitted manifest Composer region in this shared slot.
+    const presentation = parsed.success ? parsed.data : null;
+    if (presentation && props.placement === 'beforeComposer') {
         recordSessionPayloadConsumptionTelemetry({
             family: 'presentation',
-            payload: parsed.data,
-            itemCount: parsed.data.statuses.length + parsed.data.widgets.length,
-            lineCount: parsed.data.statuses.length
-                + parsed.data.widgets.reduce((sum, widget) => sum + widget.lines.length, 0),
+            payload: presentation,
+            itemCount: presentation.statuses.length + presentation.widgets.length,
+            lineCount: presentation.statuses.length
+                + presentation.widgets.reduce((sum, widget) => sum + widget.lines.length, 0),
         });
     }
 
-    const lines = props.placement === 'beforeComposer'
+    const lines = !presentation
+        ? []
+        : props.placement === 'beforeComposer'
         ? [
-            ...parsed.data.statuses.map((status) => ({ key: `status:${status.key}`, lines: [status.text] })),
-            ...parsed.data.widgets
+            ...presentation.statuses.map((status) => ({
+                key: `status:${currentSessionPresentationEntryIdentityV1(status.owner, status.localKey)}`,
+                lines: [status.text],
+            })),
+            ...presentation.widgets
                 .filter((widget) => widget.placement === 'beforeComposer')
-                .map((widget) => ({ key: `widget:${widget.key}`, lines: widget.lines })),
+                .map((widget) => ({
+                    key: `widget:${currentSessionPresentationEntryIdentityV1(widget.owner, widget.localKey)}`,
+                    lines: widget.lines,
+                })),
         ]
-        : parsed.data.widgets
+        : presentation.widgets
             .filter((widget) => widget.placement === 'afterComposer')
-            .map((widget) => ({ key: `widget:${widget.key}`, lines: widget.lines }));
-    if (lines.length === 0) return null;
+            .map((widget) => ({
+                key: `widget:${currentSessionPresentationEntryIdentityV1(widget.owner, widget.localKey)}`,
+                lines: widget.lines,
+            }));
+    // Preserve normalized catalog order verbatim. Manifest regions do not use
+    // Presentation's keyed delete lifecycle and are therefore never folded
+    // into `lines` or its telemetry payload.
+    const composerRegions = (props.composerRegions ?? []).filter((region) => (
+        region.definition.placement === props.placement
+    ));
+    if (lines.length === 0 && composerRegions.length === 0) return null;
 
     return (
         <View
             style={styles.group}
             testID={`current-session-presentation-${props.placement}`}
-            accessibilityLiveRegion="polite"
         >
-            {lines.map((item) => (
-                <View key={item.key} style={styles.item}>
-                    {item.lines.map((line, index) => (
-                        <Text key={`${item.key}:${index}`} style={styles.text}>{line}</Text>
+            {lines.length > 0 ? (
+                <View style={styles.transientLines} accessibilityLiveRegion="polite">
+                    {lines.map((item) => (
+                        <View key={item.key} style={styles.item}>
+                            {item.lines.map((line, index) => (
+                                <Text key={`${item.key}:${index}`} style={styles.text}>{line}</Text>
+                            ))}
+                        </View>
                     ))}
                 </View>
-            ))}
+            ) : null}
+            {props.renderComposerRegion ? composerRegions.map((region) => (
+                <React.Fragment key={`composer-region:${region.id}:${region.immutableGenerationId}`}>
+                    {props.renderComposerRegion!(region)}
+                </React.Fragment>
+            )) : null}
         </View>
     );
 });

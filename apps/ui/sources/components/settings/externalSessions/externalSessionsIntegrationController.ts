@@ -32,7 +32,6 @@ type ExternalSessionsInventoryRefreshIntent =
         PluginSessionHookStatusInputV1['intent'],
         'passive_inventory' | 'install_preview' | 'installation_recheck'
     >;
-const EXTERNAL_SESSIONS_STATUS_INVENTORY_MAX_PAGES = 50;
 
 export type ExternalSessionsHookManagementTransport = Readonly<{
     status: (
@@ -66,6 +65,9 @@ export type ExternalSessionsIntegrationControllerState = Readonly<{
     integrations: readonly ExternalSessionsIntegrationDescriptor[] | null;
     operations: ExternalSessionsIntegrationOperations | null;
     inventoryState: ExternalSessionsIntegrationInventoryState;
+    hasMoreInventory: boolean;
+    loadingMoreInventory: boolean;
+    loadMoreInventory: () => Promise<void>;
     retryInventory: () => Promise<void>;
 }>;
 
@@ -104,9 +106,10 @@ type ExternalSessionsIntegrationInventoryLoadResult = Readonly<{
     status: 'ready' | 'partial' | 'error';
     integrations: readonly ExternalSessionsIntegrationDescriptor[];
     diagnosticCodes: readonly string[];
+    nextCursor: string | null;
 }>;
 
-async function loadExternalSessionsIntegrationInventory(params: Readonly<{
+async function loadExternalSessionsIntegrationInventoryPage(params: Readonly<{
     machineId: string;
     intent?: ExternalSessionsInventoryRefreshIntent;
     installationId?: string;
@@ -114,40 +117,42 @@ async function loadExternalSessionsIntegrationInventory(params: Readonly<{
     agent?: ExternalSessionsKnownAgent | null;
     knownAgents?: readonly ExternalSessionsKnownAgent[];
     transport?: ExternalSessionsHookManagementTransport;
+    cursor?: string;
+    nonInstallationCountByAgentState?: Map<string, number>;
 }>): Promise<ExternalSessionsIntegrationInventoryLoadResult> {
     const transport = params.transport ?? machineExternalSessionsHookManagementTransport;
-    const rows: ExternalSessionsIntegrationDescriptor[] = [];
     try {
-        const seenCursors = new Set<string>();
-        const diagnosticCodes = new Set<string>();
-        const nonInstallationCountByAgentState = new Map<string, number>();
-        let cursor: string | undefined;
-        let pageCount = 0;
-        do {
-            pageCount += 1;
-            if (pageCount > EXTERNAL_SESSIONS_STATUS_INVENTORY_MAX_PAGES) {
-                return {
-                    status: 'error',
-                    integrations: rows,
-                    diagnosticCodes: [
-                        ...diagnosticCodes,
-                        'inventory_page_limit_exceeded',
-                    ],
-                };
-            }
-            const common = {
-                machineId: params.machineId,
-                serverId: params.serverId,
-                ...(cursor ? { cursor } : {}),
-                limit: PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_ROWS,
-            };
-            const result = params.intent === 'install_preview'
-                ? params.agent
+        const nonInstallationCountByAgentState =
+            params.nonInstallationCountByAgentState ?? new Map<string, number>();
+        const common = {
+            machineId: params.machineId,
+            serverId: params.serverId,
+            ...(params.cursor ? { cursor: params.cursor } : {}),
+            limit: PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_ROWS,
+        };
+        const result = params.intent === 'install_preview'
+            ? params.agent
+                ? await transport.status({
+                    machineId: params.machineId,
+                    serverId: params.serverId,
+                    intent: 'install_preview',
+                    agent: params.agent.agent,
+                })
+                : {
+                    ok: false as const,
+                    diagnostic: {
+                        code: 'operation_failed' as const,
+                        retryable: false,
+                    },
+                }
+            : params.intent === 'installation_recheck'
+                ? params.agent && params.installationId
                     ? await transport.status({
                         machineId: params.machineId,
                         serverId: params.serverId,
-                        intent: 'install_preview',
+                        intent: 'installation_recheck',
                         agent: params.agent.agent,
+                        installationId: params.installationId,
                     })
                     : {
                         ok: false as const,
@@ -156,107 +161,80 @@ async function loadExternalSessionsIntegrationInventory(params: Readonly<{
                             retryable: false,
                         },
                     }
-                : params.intent === 'installation_recheck'
-                    ? params.agent && params.installationId
-                        ? await transport.status({
-                            machineId: params.machineId,
-                            serverId: params.serverId,
-                            intent: 'installation_recheck',
-                            agent: params.agent.agent,
-                            installationId: params.installationId,
-                        })
-                        : {
-                            ok: false as const,
-                            diagnostic: {
-                                code: 'operation_failed' as const,
-                                retryable: false,
-                            },
-                        }
-                    : await transport.status({
-                        ...common,
-                        intent: 'passive_inventory',
-                        ...(params.agent ? { agent: params.agent.agent } : {}),
-                    });
-            if (!result.ok) {
-                return {
-                    status: 'error',
-                    integrations: rows,
-                    diagnosticCodes: [result.diagnostic.code],
-                };
+                : await transport.status({
+                    ...common,
+                    intent: 'passive_inventory',
+                    ...(params.agent ? { agent: params.agent.agent } : {}),
+                });
+        if (!result.ok) {
+            return {
+                status: 'error',
+                integrations: [],
+                diagnosticCodes: [result.diagnostic.code],
+                nextCursor: null,
+            };
+        }
+        const rows = result.rows.map((row) => {
+            const projectedAgent = params.knownAgents?.find((knownAgent) => (
+                sameAgent(knownAgent.agent, row.agent)
+            )) ?? null;
+            const nonInstallationGroupKey = [
+                row.agent.pluginId,
+                row.agent.localId,
+                row.status.state,
+            ].join('\u0000');
+            const nonInstallationOrdinal =
+                nonInstallationCountByAgentState.get(nonInstallationGroupKey) ?? 0;
+            if (!('installationId' in row.status) || !row.status.installationId) {
+                nonInstallationCountByAgentState.set(
+                    nonInstallationGroupKey,
+                    nonInstallationOrdinal + 1,
+                );
             }
-            rows.push(...result.rows.map((row) => {
-                const projectedAgent = params.knownAgents?.find((knownAgent) => (
-                    sameAgent(knownAgent.agent, row.agent)
-                )) ?? null;
-                const nonInstallationGroupKey = [
-                    row.agent.pluginId,
-                    row.agent.localId,
-                    row.status.state,
-                ].join('\u0000');
-                const nonInstallationOrdinal =
-                    nonInstallationCountByAgentState.get(nonInstallationGroupKey) ?? 0;
-                if (!('installationId' in row.status) || !row.status.installationId) {
-                    nonInstallationCountByAgentState.set(
-                        nonInstallationGroupKey,
-                        nonInstallationOrdinal + 1,
-                    );
-                }
-                return {
-                    key: integrationKey(
-                        params.machineId,
-                        row.agent,
-                        row.status,
-                        nonInstallationOrdinal,
-                    ),
-                    machineId: params.machineId,
-                    agent: row.agent,
-                    agentTitle: params.agent && sameAgent(params.agent.agent, row.agent)
-                        ? params.agent.agentTitle
-                        : projectedAgent?.agentTitle ?? fallbackAgentTitle(row.agent),
-                    ...row.status,
-                } satisfies ExternalSessionsIntegrationDescriptor;
-            }));
-            for (const diagnostic of result.diagnostics) {
-                diagnosticCodes.add(diagnostic.code);
-            }
-            if (params.intent && params.intent !== 'passive_inventory') {
-                if (
-                    rows.length !== 1
-                    || result.nextCursor !== null
-                    || result.diagnostics.length > 0
-                ) {
-                    return {
-                        status: 'error',
-                        integrations: [],
-                        diagnosticCodes: ['operation_failed'],
-                    };
-                }
-                break;
-            }
-            if (result.nextCursor === null) break;
-            if (seenCursors.has(result.nextCursor)) {
-                return {
-                    status: 'error',
-                    integrations: rows,
-                    diagnosticCodes: [
-                        ...diagnosticCodes,
-                        'inventory_cursor_repeated',
-                    ],
-                };
-            }
-            seenCursors.add(result.nextCursor);
-            cursor = result.nextCursor;
-        } while (cursor);
+            return {
+                key: integrationKey(
+                    params.machineId,
+                    row.agent,
+                    row.status,
+                    nonInstallationOrdinal,
+                ),
+                machineId: params.machineId,
+                agent: row.agent,
+                agentTitle: params.agent && sameAgent(params.agent.agent, row.agent)
+                    ? params.agent.agentTitle
+                    : projectedAgent?.agentTitle ?? fallbackAgentTitle(row.agent),
+                ...row.status,
+            } satisfies ExternalSessionsIntegrationDescriptor;
+        });
+        if (
+            params.intent
+            && params.intent !== 'passive_inventory'
+            && (
+                rows.length !== 1
+                || result.nextCursor !== null
+                || result.diagnostics.length > 0
+            )
+        ) {
+            return {
+                status: 'error',
+                integrations: [],
+                diagnosticCodes: ['operation_failed'],
+                nextCursor: null,
+            };
+        }
+        const diagnosticCodes = result.diagnostics.map((diagnostic) => diagnostic.code);
         return {
-            status: diagnosticCodes.size > 0 ? 'partial' : 'ready',
+            status: diagnosticCodes.length > 0 ? 'partial' : 'ready',
             integrations: rows,
-            diagnosticCodes: [...diagnosticCodes],
+            diagnosticCodes,
+            nextCursor: result.nextCursor,
         };
     } catch {
         return {
             status: 'error',
-            integrations: rows,
+            integrations: [],
             diagnosticCodes: ['operation_failed'],
+            nextCursor: null,
         };
     }
 }
@@ -268,7 +246,7 @@ export async function refreshExternalSessionsIntegrationStatuses(params: Readonl
     knownAgents?: readonly ExternalSessionsKnownAgent[];
     transport?: ExternalSessionsHookManagementTransport;
 }>): Promise<ExternalSessionsIntegrationDescriptor[] | null> {
-    const result = await loadExternalSessionsIntegrationInventory(params);
+    const result = await loadExternalSessionsIntegrationInventoryPage(params);
     return result.status === 'ready' ? [...result.integrations] : null;
 }
 
@@ -309,6 +287,7 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
     isCurrentScope?: () => boolean;
 }>): ExternalSessionsIntegrationOperations {
     const transport = params.transport ?? machineExternalSessionsHookManagementTransport;
+    const isCurrentScope = () => params.isCurrentScope?.() !== false;
 
     async function toggle(
         integration: ExternalSessionsIntegrationDescriptor,
@@ -316,19 +295,21 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
             input: ServerScoped<PluginSessionHookInstallationMutationInputV1>,
         ) => Promise<PluginSessionHookToggleResponseV1>,
     ): Promise<void> {
+        if (!isCurrentScope()) return;
         const result = await operation({
             machineId: integration.machineId,
             serverId: params.serverId,
             agent: integration.agent,
             installationId: requireInstallationId(integration),
         });
-        if (params.isCurrentScope && !params.isCurrentScope()) return;
+        if (!isCurrentScope()) return;
         assertMutationSucceeded(result);
         if (result.ok) params.applyStatus(integration, result.status);
     }
 
     return {
         reviewAndInstall: async (integration, confirm) => {
+            if (!isCurrentScope()) return;
             const mayRequestPreview = integration.state === 'not_installed'
                 || (
                     integration.state === 'needs_attention'
@@ -341,7 +322,7 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
             }
             const requestIsCurrent = params.startRequest?.() ?? (() => true);
             const previewResult =
-                await loadExternalSessionsIntegrationInventory({
+                await loadExternalSessionsIntegrationInventoryPage({
                     machineId: integration.machineId,
                     intent: 'install_preview',
                     serverId: params.serverId,
@@ -351,7 +332,7 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
                     },
                     transport,
                 });
-            if (!requestIsCurrent()) return;
+            if (!requestIsCurrent() || !isCurrentScope()) return;
             if (
                 previewResult.status !== 'ready'
                 || previewResult.integrations.length !== 1
@@ -384,14 +365,14 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
                 );
             }
             if (!await confirm(candidate.installPreview)) return;
-            if (!requestIsCurrent()) return;
+            if (!requestIsCurrent() || !isCurrentScope()) return;
             const result = await transport.install({
                 machineId: candidate.machineId,
                 serverId: params.serverId,
                 agent: candidate.agent,
                 expectedPreviewId: candidate.installPreview.previewId,
             });
-            if (params.isCurrentScope && !params.isCurrentScope()) return;
+            if (!isCurrentScope()) return;
             if (!result.ok) {
                 if (
                     result.diagnostic.code === 'concurrent_edit'
@@ -411,17 +392,19 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
             await toggle(integration, transport.enable);
         },
         uninstall: async (integration) => {
+            if (!isCurrentScope()) return;
             const result = await transport.uninstall({
                 machineId: integration.machineId,
                 serverId: params.serverId,
                 agent: integration.agent,
                 installationId: requireInstallationId(integration),
             });
-            if (params.isCurrentScope && !params.isCurrentScope()) return;
+            if (!isCurrentScope()) return;
             assertMutationSucceeded(result);
             if (result.ok) params.applyStatus(integration, result.status);
         },
         checkAgain: async (integration) => {
+            if (!isCurrentScope()) return;
             await params.refresh(integration, 'installation_recheck');
         },
     };
@@ -448,6 +431,7 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
     knownAgents?: readonly ExternalSessionsKnownAgent[];
     enabled?: boolean;
     transport?: ExternalSessionsHookManagementTransport;
+    isExecutionTargetCurrent?: () => boolean;
 }>): ExternalSessionsIntegrationControllerState {
     const enabled = params.enabled !== false;
     const agentSignature = knownAgentSignature(params.agent);
@@ -460,17 +444,30 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
         agentSignature,
         projectedAgentsSignature,
     ]);
+    const targetScopeSignature = JSON.stringify([
+        enabled,
+        params.machineId,
+        params.serverId ?? null,
+    ]);
     const scopeSignatureRef = React.useRef(scopeSignature);
     scopeSignatureRef.current = scopeSignature;
     const agentRef = React.useRef(params.agent);
     agentRef.current = params.agent;
     const knownAgentsRef = React.useRef(params.knownAgents);
     knownAgentsRef.current = params.knownAgents;
+    const isExecutionTargetCurrentRef = React.useRef(params.isExecutionTargetCurrent);
+    isExecutionTargetCurrentRef.current = params.isExecutionTargetCurrent;
     const requestRevisionRef = React.useRef(0);
+    const nextCursorRef = React.useRef<string | null>(null);
+    const seenCursorsRef = React.useRef(new Set<string>());
+    const nonInstallationCountByAgentStateRef = React.useRef(new Map<string, number>());
+    const loadMorePromiseRef = React.useRef<Promise<void> | null>(null);
     const [integrations, setIntegrations] = React.useState<
         readonly ExternalSessionsIntegrationDescriptor[] | null
     >(null);
-    const [loadedMachineId, setLoadedMachineId] = React.useState<string | null>(null);
+    const [loadedTargetScopeSignature, setLoadedTargetScopeSignature] = React.useState<string | null>(null);
+    const [hasMoreInventory, setHasMoreInventory] = React.useState(false);
+    const [loadingMoreInventory, setLoadingMoreInventory] = React.useState(false);
     const [inventoryState, setInventoryState] =
         React.useState<ExternalSessionsIntegrationInventoryState>({
             status: 'idle',
@@ -482,8 +479,17 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
         intent: ExternalSessionsInventoryRefreshIntent = 'passive_inventory',
     ) => {
         const machineId = params.machineId;
-        if (!enabled || !machineId) return;
+        if (!enabled || !machineId || isExecutionTargetCurrentRef.current?.() === false) return;
         const requestRevision = ++requestRevisionRef.current;
+        const requestScopeSignature = scopeSignatureRef.current;
+        if (!integration) {
+            nextCursorRef.current = null;
+            seenCursorsRef.current = new Set();
+            nonInstallationCountByAgentStateRef.current = new Map();
+            loadMorePromiseRef.current = null;
+            setHasMoreInventory(false);
+            setLoadingMoreInventory(false);
+        }
         setInventoryState((current) => ({
             status: 'loading',
             diagnosticCodes: current.diagnosticCodes,
@@ -494,7 +500,7 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
                 agentTitle: integration.agentTitle,
             }
             : agentRef.current;
-        const result = await loadExternalSessionsIntegrationInventory({
+        const result = await loadExternalSessionsIntegrationInventoryPage({
             machineId,
             intent,
             serverId: params.serverId,
@@ -504,8 +510,15 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
                 : {}),
             knownAgents: knownAgentsRef.current,
             transport: params.transport,
+            nonInstallationCountByAgentState: !integration
+                ? nonInstallationCountByAgentStateRef.current
+                : undefined,
         });
-        if (requestRevisionRef.current !== requestRevision) return;
+        if (
+            requestRevisionRef.current !== requestRevision
+            || scopeSignatureRef.current !== requestScopeSignature
+            || isExecutionTargetCurrentRef.current?.() === false
+        ) return;
         const refreshed = result.integrations;
         if (result.status === 'error' && refreshed.length === 0) {
             setInventoryState({
@@ -515,7 +528,10 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
             return;
         }
         if (!integration) {
-            setLoadedMachineId(machineId);
+            nextCursorRef.current = result.nextCursor;
+            if (result.nextCursor) seenCursorsRef.current.add(result.nextCursor);
+            setHasMoreInventory(result.nextCursor !== null);
+            setLoadedTargetScopeSignature(targetScopeSignature);
             setIntegrations(refreshed);
             setInventoryState({
                 status: result.status,
@@ -523,7 +539,7 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
             });
             return;
         }
-        setLoadedMachineId(machineId);
+        setLoadedTargetScopeSignature(targetScopeSignature);
         setIntegrations((current) => {
             const refreshedKeys = new Set(refreshed.map((entry) => entry.key));
             const retained = (current ?? []).filter((entry) => (
@@ -544,7 +560,100 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
                     diagnosticCodes: result.diagnosticCodes,
                 }
         ));
-    }, [enabled, params.machineId, params.serverId, params.transport]);
+    }, [enabled, params.machineId, params.serverId, params.transport, targetScopeSignature]);
+
+    const loadMoreInventory = React.useCallback((): Promise<void> => {
+        const existing = loadMorePromiseRef.current;
+        if (existing) return existing;
+        const machineId = params.machineId;
+        const cursor = nextCursorRef.current;
+        if (
+            !enabled
+            || !machineId
+            || !cursor
+            || isExecutionTargetCurrentRef.current?.() === false
+        ) return Promise.resolve();
+
+        const requestRevision = requestRevisionRef.current;
+        const request = (async () => {
+            setLoadingMoreInventory(true);
+            const result = await loadExternalSessionsIntegrationInventoryPage({
+                machineId,
+                cursor,
+                intent: 'passive_inventory',
+                serverId: params.serverId,
+                agent: agentRef.current,
+                knownAgents: knownAgentsRef.current,
+                transport: params.transport,
+                nonInstallationCountByAgentState:
+                    nonInstallationCountByAgentStateRef.current,
+            });
+            if (
+                requestRevisionRef.current !== requestRevision
+                || scopeSignatureRef.current !== scopeSignature
+                || isExecutionTargetCurrentRef.current?.() === false
+            ) return;
+
+            if (result.status === 'error') {
+                nextCursorRef.current = null;
+                setHasMoreInventory(false);
+                setInventoryState((current) => ({
+                    status: 'partial',
+                    diagnosticCodes: [
+                        ...new Set([
+                            ...current.diagnosticCodes,
+                            ...result.diagnosticCodes,
+                        ]),
+                    ],
+                }));
+                return;
+            }
+
+            const cursorRepeated = (
+                result.nextCursor !== null
+                && seenCursorsRef.current.has(result.nextCursor)
+            );
+
+            nextCursorRef.current = cursorRepeated ? null : result.nextCursor;
+            if (result.nextCursor && !cursorRepeated) {
+                seenCursorsRef.current.add(result.nextCursor);
+            }
+            setHasMoreInventory(result.nextCursor !== null && !cursorRepeated);
+            setIntegrations((current) => {
+                const nextByKey = new Map(
+                    (current ?? []).map((entry) => [entry.key, entry] as const),
+                );
+                for (const entry of result.integrations) nextByKey.set(entry.key, entry);
+                return [...nextByKey.values()];
+            });
+            setInventoryState((current) => {
+                const diagnosticCodes = [
+                    ...new Set([
+                        ...current.diagnosticCodes,
+                        ...result.diagnosticCodes,
+                        ...(cursorRepeated ? ['inventory_cursor_repeated'] : []),
+                    ]),
+                ];
+                return {
+                    status: diagnosticCodes.length > 0 ? 'partial' : 'ready',
+                    diagnosticCodes,
+                };
+            });
+        })().finally(() => {
+            if (loadMorePromiseRef.current === request) {
+                loadMorePromiseRef.current = null;
+                setLoadingMoreInventory(false);
+            }
+        });
+        loadMorePromiseRef.current = request;
+        return request;
+    }, [
+        enabled,
+        params.machineId,
+        params.serverId,
+        params.transport,
+        scopeSignature,
+    ]);
 
     const applyStatus = React.useCallback((
         integration: ExternalSessionsIntegrationDescriptor,
@@ -564,12 +673,27 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
             ...(integration.detail ? { detail: integration.detail } : {}),
             ...status,
         };
-        setIntegrations((current) => [
-            ...(current ?? []).filter((candidate) =>
-                candidate.key !== integration.key
-                && candidate.key !== next.key),
-            next,
-        ]);
+        setIntegrations((current) => {
+            const rows = current ?? [];
+            const actedIndex = rows.findIndex((candidate) => (
+                candidate.key === integration.key
+            ));
+            const currentResultIndex = rows.findIndex((candidate) => (
+                candidate.key === next.key
+            ));
+            const replacementIndex = actedIndex >= 0
+                ? actedIndex
+                : currentResultIndex;
+            if (replacementIndex < 0) return [...rows, next];
+            return rows.flatMap((candidate, index) => {
+                if (index === replacementIndex) return [next];
+                if (
+                    candidate.key === integration.key
+                    || candidate.key === next.key
+                ) return [];
+                return [candidate];
+            });
+        });
         setInventoryState((current) => (
             current.status === 'loading'
                 ? {
@@ -588,10 +712,16 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
     }, []);
 
     React.useEffect(() => {
-        if (!enabled || !params.machineId) {
+        if (!enabled || !params.machineId || isExecutionTargetCurrentRef.current?.() === false) {
             requestRevisionRef.current += 1;
-            setLoadedMachineId(null);
+            nextCursorRef.current = null;
+            seenCursorsRef.current = new Set();
+            nonInstallationCountByAgentStateRef.current = new Map();
+            loadMorePromiseRef.current = null;
+            setLoadedTargetScopeSignature(null);
             setIntegrations(null);
+            setHasMoreInventory(false);
+            setLoadingMoreInventory(false);
             setInventoryState({
                 status: 'idle',
                 diagnosticCodes: [],
@@ -619,7 +749,8 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
                 applyStatus,
                 startRequest,
                 isCurrentScope: () =>
-                    scopeSignatureRef.current === scopeSignature,
+                    scopeSignatureRef.current === scopeSignature
+                    && isExecutionTargetCurrentRef.current?.() !== false,
             })
             : null
     ), [
@@ -639,15 +770,18 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
     }, [refresh]);
 
     const scopedIntegrations = React.useMemo(() => (
-        enabled && loadedMachineId === params.machineId
+        enabled && loadedTargetScopeSignature === targetScopeSignature
             ? integrations?.filter((integration) => integration.machineId === params.machineId) ?? null
             : null
-    ), [enabled, integrations, loadedMachineId, params.machineId]);
+    ), [enabled, integrations, loadedTargetScopeSignature, params.machineId, targetScopeSignature]);
 
     return {
         integrations: scopedIntegrations,
         operations,
         inventoryState,
+        hasMoreInventory,
+        loadingMoreInventory,
+        loadMoreInventory,
         retryInventory,
     };
 }

@@ -234,6 +234,81 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         }
     });
 
+    it('reports exact target credential removal failure and restores earlier deleted copies', async () => {
+        const localStorageHandle = installLocalStorageMock();
+        restoreLocalStorage = localStorageHandle.restore;
+
+        const state = {
+            activeServerId: 'other-server',
+            activeServerUrl: 'https://other.example.test',
+            profiles: [
+                {
+                    id: 'relay-profile',
+                    serverIdentityId: 'srv_identity_relay',
+                    legacyServerIds: ['relay-legacy'],
+                    serverUrl: 'https://relay.example.test',
+                    name: 'Relay',
+                },
+                {
+                    id: 'other-server',
+                    serverUrl: 'https://other.example.test',
+                    name: 'Other',
+                },
+            ],
+        };
+
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerId: () => state.activeServerId,
+                getActiveServerUrl: () => state.activeServerUrl,
+                listServerProfiles: () => state.profiles,
+            };
+        });
+
+        const primaryKey = 'auth_credentials__srv_srv_identity_relay';
+        const legacyKey = 'auth_credentials__srv_relay-profile';
+        const primaryRaw = JSON.stringify({
+            token: 'target-token',
+            secret: 'target-secret',
+        });
+        const legacyRaw = JSON.stringify({
+            token: 'legacy-token',
+            secret: 'legacy-secret',
+        });
+        const unrelatedGlobalRaw = JSON.stringify({
+            token: 'unrelated-token',
+            secret: 'unrelated-secret',
+        });
+        localStorageHandle.store.set(primaryKey, primaryRaw);
+        localStorageHandle.store.set(legacyKey, legacyRaw);
+        localStorageHandle.store.set('auth_credentials', unrelatedGlobalRaw);
+        localStorageHandle.removeItemMock.mockImplementation((key: string) => {
+            if (key === legacyKey) {
+                throw new Error('legacy delete failed');
+            }
+            localStorageHandle.store.delete(key);
+        });
+
+        try {
+            const { TokenStorage } = await import('./tokenStorage');
+
+            await expect(TokenStorage.removeCredentialsForServerUrl(
+                'https://relay.example.test',
+                { serverId: 'relay-profile' },
+            )).resolves.toBe(false);
+
+            expect(localStorageHandle.store.get(primaryKey)).toBe(primaryRaw);
+            expect(localStorageHandle.store.get(legacyKey)).toBe(legacyRaw);
+            expect(localStorageHandle.store.get('auth_credentials')).toBe(
+                unrelatedGlobalRaw,
+            );
+        } finally {
+            vi.doUnmock('@/sync/domains/server/serverProfiles');
+        }
+    });
+
     it('migrates credentials stored under legacy URL hashing when normalization changes (127.0.0.1 -> localhost)', async () => {
         const localStorageHandle = installLocalStorageMock();
         restoreLocalStorage = localStorageHandle.restore;

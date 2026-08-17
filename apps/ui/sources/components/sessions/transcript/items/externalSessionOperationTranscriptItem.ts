@@ -4,6 +4,9 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
+import {
+    matchesExternalSessionOperationPresentation,
+} from '@/sync/runtime/external/externalSessionOperationPresentationIdentity';
 
 export type ExternalSessionOperationTranscriptDismissal = Readonly<{
     sessionId: string;
@@ -24,8 +27,11 @@ export function appendExternalSessionOperationTranscriptItem(
 ): ChatTranscriptListItem[] {
     if (!operation.presentation) return [...base];
     const progress = (
-        operation.progress?.operationId === operation.presentation.operationId
-        && operation.progress.revision === operation.presentation.revision
+        operation.progress
+        && matchesExternalSessionOperationPresentation(
+            operation.progress,
+            operation.presentation,
+        )
     )
         ? operation.progress
         : null;

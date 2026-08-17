@@ -9,7 +9,7 @@ import {
     type ExternalSessionsCandidatesListResponse,
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
-import { createCapturingLegendListMock, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createCapturingLegendListMock, createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
@@ -118,7 +118,6 @@ function createExternalSessionsBrowsePluginProjection(): PluginProjectionV2 {
             sources: [{
                 sourceKind: params.sourceKind,
                 schema: {
-                    passthrough: true,
                     fields: params.schemaFields ?? [
                         { name: 'kind', kind: 'literal', value: params.sourceKind },
                     ],
@@ -181,7 +180,15 @@ function createExternalSessionsBrowsePluginProjection(): PluginProjectionV2 {
         },
     });
 }
-let machinesState = [
+let machinesState: Array<{
+    id: string;
+    active: boolean;
+    metadata: {
+        displayName: string;
+        host: string;
+        homeDir?: string;
+    };
+}> = [
     { id: 'machine-1', active: true, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
     { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
 ];
@@ -266,12 +273,17 @@ vi.mock('@/components/ui/popover', () => createPassThroughModule(['PopoverScope'
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 vi.mock('@/components/ui/status/StatusPill', () => ({
     StatusPill: (props: Record<string, unknown>) => React.createElement('StatusPill', props),
+    resolveStatusPillVariantForState: (state: string) => state === 'live'
+        ? 'success'
+        : state === 'needsAttention'
+            ? 'warning'
+            : 'neutral',
 }));
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 
-const { module: capturedLegendList } = createCapturingLegendListMock({
+const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
 });
 
@@ -357,6 +369,63 @@ describe('ExternalSessionsBrowseScreen', () => {
         modalAlertSpy.mockClear();
         mutateAccountSettingsSpy.mockClear();
         accountSettingsState.current = {};
+    });
+
+    it('renders cold daemon projection loading instead of an authoritative empty result', async () => {
+        daemonProjectionState.current = {
+            phase: 'loading',
+            inputs: null,
+        };
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        expect(screen.findByTestId('direct-session-candidates:loading')).not.toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:empty')).toBeNull();
+        expect(candidatesListSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders an actionable unavailable state for an unsupported daemon projection', async () => {
+        daemonProjectionState.current = {
+            phase: 'unsupported',
+            inputs: null,
+        };
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        expect(screen.findByTestId('direct-session-candidates:unavailable')).not.toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:empty')).toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:unavailable-action')).not.toBeNull();
+        expect(candidatesListSpy).not.toHaveBeenCalled();
+    });
+
+    it('retries a failed daemon projection without presenting an authoritative empty result', async () => {
+        daemonProjectionState.current = {
+            phase: 'error',
+            inputs: null,
+        };
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        expect(screen.findByTestId('direct-session-candidates:projection-error')).not.toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:empty')).toBeNull();
+
+        daemonProjectionState.current = {
+            phase: 'ready',
+            inputs: {
+                mergedProviderProjectionById: {},
+                mergedBackendProjectionById: {},
+                discoveredBackendIds: [],
+                pluginProjectionV2: createExternalSessionsBrowsePluginProjection(),
+            },
+        };
+        await screen.pressByTestIdAsync('direct-session-candidates:projection-error-action');
+        await flushHookEffects();
+
+        expect(screen.findByTestId('direct-session-candidate:codex-session-1')).not.toBeNull();
+        expect(candidatesListSpy).toHaveBeenCalledTimes(1);
     });
 
     it('offers one default-off source consent only from the successful scope and mutates no link side effect', async () => {
@@ -481,7 +550,7 @@ describe('ExternalSessionsBrowseScreen', () => {
         const candidateSubtitle = candidateItem?.props.subtitle;
         expect(React.isValidElement(candidateSubtitle)).toBe(true);
         const candidateSubtitleLines = React.Children.toArray((candidateSubtitle as any).props.children) as any[];
-        expect(String(candidateSubtitleLines[0]?.props?.children)).toContain('externalSessions.browseActivityRunningNow');
+        expect(String(candidateSubtitleLines[0]?.props?.children)).toMatch(/^\d+(?:m|h|d|w|mo|y)$/);
         expect(String(candidateSubtitleLines[2]?.props?.children)).toContain('/tmp/worktree');
         expect(candidateSubtitleLines.map((line) => String(line?.props?.children ?? '')).join('\n')).not.toContain('codex-session-1');
         expect(candidateItem?.props.density).toBeUndefined();
@@ -494,6 +563,34 @@ describe('ExternalSessionsBrowseScreen', () => {
         const statusPill = badgeChildren.find((child: any) => child?.type?.name === 'StatusPill');
         expect((statusPill as any)?.props?.label).toBe('status.workingExternally');
         expect((statusPill as any)?.props?.isPulsing).toBe(true);
+    });
+
+    it('uses the selected machine home directory for candidate project presentation', async () => {
+        machinesState = [{
+            id: 'machine-1',
+            active: true,
+            metadata: {
+                displayName: 'Windows PC',
+                host: 'windows.local',
+                homeDir: 'C:\\Users\\alice',
+            },
+        }];
+        candidatesListSpy.mockResolvedValueOnce({
+            ok: true,
+            candidates: [{
+                remoteSessionId: 'windows-session-1',
+                title: 'Windows session',
+                updatedAtMs: 1_700_000_000_000,
+                details: { path: 'C:\\Users/alice\\projects/happier' },
+            }],
+            nextCursor: null,
+        });
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        expect(screen.getTextContent()).toContain('~/PROJECTS/HAPPIER');
+        expect(screen.getTextContent()).not.toContain('C:\\Users');
     });
 
     it('retries an empty-page continuation from its cursor instead of restarting the browse scope', async () => {
@@ -518,11 +615,14 @@ describe('ExternalSessionsBrowseScreen', () => {
         const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
         await flushHookEffects();
 
-        await screen.pressByTestIdAsync('direct-session-candidates:empty-continuation-action');
+        expect(screen.findByTestId('direct-session-candidates:empty-continuation-action')).toBeNull();
+        await act(async () => {
+            legendListState.props?.onEndReached?.();
+        });
         await flushHookEffects();
-        expect(screen.findByTestId('direct-session-candidates:error')).not.toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:pagination:error')).not.toBeNull();
 
-        await screen.pressByTestIdAsync('direct-session-candidates:error-action');
+        await screen.pressByTestIdAsync('direct-session-candidates:pagination:retry');
         await flushHookEffects();
 
         expect(candidatesListSpy).toHaveBeenNthCalledWith(3, expect.objectContaining({
@@ -560,7 +660,7 @@ describe('ExternalSessionsBrowseScreen', () => {
         const candidateSubtitle = candidateItem?.props.subtitle;
         expect(React.isValidElement(candidateSubtitle)).toBe(true);
         const candidateSubtitleLines = React.Children.toArray((candidateSubtitle as any).props.children) as any[];
-        expect(String(candidateSubtitleLines[0]?.props?.children)).toContain('ago');
+        expect(String(candidateSubtitleLines[0]?.props?.children)).toMatch(/^\d+(?:m|h|d|w|mo|y)$/);
         expect(String(candidateSubtitleLines[2]?.props?.children)).toContain('/tmp/claude-project');
         const badgeChildren = React.Children.toArray(candidateItem!.props.rightElement.props.children);
         const statusPill = badgeChildren.find((child: any) => child?.type?.name === 'StatusPill');
@@ -803,6 +903,49 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
     });
 
+    it('links a candidate the still-building index has already served', async () => {
+        const indexingContinuation = vi.fn(() => createDeferred<ExternalSessionsCandidatesListResponse>().promise);
+        candidatesListSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                candidates: [
+                    {
+                        remoteSessionId: 'codex-session-1',
+                        title: 'Existing Codex Session',
+                        updatedAtMs: 1_700_000_000_000,
+                        activity: 'running',
+                        details: {
+                            path: '/tmp/worktree',
+                            codexBackendMode: 'appServer',
+                            source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+                        },
+                    },
+                ] as ExternalSessionCandidateV1[],
+                nextCursor: null,
+                preparation: { kind: 'building_candidate_index', scanned: 50, total: 5_000 },
+            })
+            .mockImplementation(indexingContinuation);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const servedCandidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(servedCandidate).not.toBeNull();
+        expect(servedCandidate?.props.disabled).toBe(false);
+        expect(indexingContinuation).toHaveBeenCalled();
+
+        await screen.pressByTestIdAsync('direct-session-candidate:codex-session-1');
+
+        expect(linkEnsureSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            remoteSessionId: 'codex-session-1',
+            titleHint: 'Existing Codex Session',
+            directoryHint: '/tmp/worktree',
+        }));
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
+    });
+
     it('admits only one link submission before React commits the pending state', async () => {
         let resolveLink!: (value: Awaited<ReturnType<typeof linkEnsureSpy>>) => void;
         const pendingLink = new Promise<Awaited<ReturnType<typeof linkEnsureSpy>>>((resolve) => {
@@ -844,7 +987,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(modalAlertSpy).toHaveBeenCalledWith(
             'common.error',
-            'newSession.daemonRpcUnavailableBody',
+            'externalSessions.browseAgentUnavailable',
         );
         expect(modalAlertSpy).not.toHaveBeenCalledWith(
             expect.anything(),
@@ -867,9 +1010,9 @@ describe('ExternalSessionsBrowseScreen', () => {
             inputs: retainedInputs,
         };
 
-        await act(async () => {
-            screen.tree.update(<ExternalSessionsBrowseScreen />);
-        });
+        await screen.update(
+            <ExternalSessionsBrowseScreen onRequestClose={() => undefined} />,
+        );
         await flushHookEffects();
 
         expect(findDropdownMenuByTriggerTestId(
@@ -880,8 +1023,321 @@ describe('ExternalSessionsBrowseScreen', () => {
             screen,
             'direct-session-source-picker-trigger',
         )?.props?.selectedId).toBe('codex:user');
-        expect(screen.findByTestId('direct-session-candidate:codex-session-1')).not.toBeNull();
+        const retainedCandidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(retainedCandidate).not.toBeNull();
+        expect(retainedCandidate?.props.disabled).toBe(true);
+        expect(screen.findByTestId('direct-session-candidates:pagination:loading')).not.toBeNull();
+
+        await act(async () => {
+            await retainedCandidate?.props.onPress?.();
+        });
+
         expect(candidatesListSpy).not.toHaveBeenCalled();
+        expect(linkEnsureSpy).not.toHaveBeenCalled();
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps retained candidates mounted with retry when daemon projection refresh fails', async () => {
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const retainedInputs = daemonProjectionState.current.inputs;
+        candidatesListSpy.mockClear();
+        daemonProjectionState.current = {
+            phase: 'error',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        await flushHookEffects();
+
+        const retainedCandidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(retainedCandidate).not.toBeNull();
+        expect(retainedCandidate?.props.disabled).toBe(true);
+        expect(screen.findByTestId('direct-session-candidates:pagination:error')).not.toBeNull();
+
+        daemonProjectionState.current = {
+            phase: 'ready',
+            inputs: retainedInputs,
+        };
+        await screen.pressByTestIdAsync('direct-session-candidates:pagination:retry');
+        await flushHookEffects();
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('direct-session-candidate:codex-session-1')?.props.disabled).toBe(false);
+    });
+
+    it('completes an in-flight candidate link across a daemon liveness refresh', async () => {
+        let resolveLink!: (value: ExternalSessionLinkEnsureResponse) => void;
+        const linkPromise = new Promise<ExternalSessionLinkEnsureResponse>((resolve) => {
+            resolveLink = resolve;
+        });
+        linkEnsureSpy.mockImplementationOnce(() => linkPromise);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const retainedInputs = daemonProjectionState.current.inputs;
+        const candidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        let pendingPress: Promise<void> | undefined;
+        await act(async () => {
+            pendingPress = candidate?.props.onPress?.();
+            await Promise.resolve();
+        });
+        expect(linkEnsureSpy).toHaveBeenCalledTimes(1);
+
+        daemonProjectionState.current = {
+            phase: 'loading',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        await flushHookEffects();
+
+        resolveLink({ ok: true, sessionId: 'happy-session-1', created: true });
+        await act(async () => {
+            await pendingPress;
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
+    });
+
+    it('fences an in-flight candidate link when the selected machine changes', async () => {
+        let resolveLink!: (value: ExternalSessionLinkEnsureResponse) => void;
+        const linkPromise = new Promise<ExternalSessionLinkEnsureResponse>((resolve) => {
+            resolveLink = resolve;
+        });
+        linkEnsureSpy.mockImplementationOnce(() => linkPromise);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
+        const candidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        let pendingPress: Promise<void> | undefined;
+        await act(async () => {
+            pendingPress = candidate?.props.onPress?.();
+            await Promise.resolve();
+        });
+        expect(linkEnsureSpy).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            await machineDropdown!.props?.onSelect?.('machine-2');
+        });
+        await flushHookEffects();
+
+        resolveLink({ ok: true, sessionId: 'stale-happy-session', created: true });
+        await act(async () => {
+            await pendingPress;
+        });
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
+    it('fences a candidate press captured before the scope changed', async () => {
+        candidatesListSpy.mockResolvedValue({
+            ok: true,
+            candidates: [
+                {
+                    remoteSessionId: 'codex-linked-1',
+                    title: 'Linked Codex Session',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'idle',
+                    linkedSessionId: 'happy-existing-1',
+                    details: { path: '/tmp/linked' },
+                },
+                {
+                    remoteSessionId: 'codex-session-1',
+                    title: 'Existing Codex Session',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'running',
+                    details: { path: '/tmp/worktree' },
+                },
+            ] as ExternalSessionCandidateV1[],
+            nextCursor: null,
+        });
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
+        const staleLinkedPress = screen.findByTestId('direct-session-candidate:codex-linked-1')?.props.onPress;
+        const staleUnlinkedPress = screen.findByTestId('direct-session-candidate:codex-session-1')?.props.onPress;
+        expect(typeof staleLinkedPress).toBe('function');
+        expect(typeof staleUnlinkedPress).toBe('function');
+
+        await act(async () => {
+            await machineDropdown!.props?.onSelect?.('machine-2');
+        });
+        await flushHookEffects();
+
+        await act(async () => {
+            await staleLinkedPress?.();
+        });
+        expect(routerPushSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await staleUnlinkedPress?.();
+        });
+        expect(linkEnsureSpy).not.toHaveBeenCalled();
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
+    it('fences a stale-scope candidate press before it picks a remote session id', async () => {
+        const onPickRemoteSessionId = vi.fn();
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(
+            <ExternalSessionsBrowseScreen
+                interaction="pickRemoteSessionId"
+                onPickRemoteSessionId={onPickRemoteSessionId}
+            />,
+        );
+        await flushHookEffects();
+
+        const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
+        const stalePress = screen.findByTestId('direct-session-candidate:codex-session-1')?.props.onPress;
+
+        await act(async () => {
+            await machineDropdown!.props?.onSelect?.('machine-2');
+        });
+        await flushHookEffects();
+
+        await act(async () => {
+            await stalePress?.();
+        });
+
+        expect(onPickRemoteSessionId).not.toHaveBeenCalled();
+    });
+
+    it('links a candidate press captured before a daemon liveness round trip', async () => {
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const retainedInputs = daemonProjectionState.current.inputs;
+        const onPress = screen.findByTestId('direct-session-candidate:codex-session-1')?.props.onPress;
+        expect(typeof onPress).toBe('function');
+
+        daemonProjectionState.current = {
+            phase: 'loading',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        daemonProjectionState.current = {
+            phase: 'ready',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        await flushHookEffects();
+
+        await act(async () => {
+            await onPress?.();
+        });
+
+        expect(linkEnsureSpy).toHaveBeenCalledTimes(1);
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
+    });
+
+    it('keeps retained candidates inert until the post-projection refresh is authoritative', async () => {
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const retainedInputs = daemonProjectionState.current.inputs;
+        daemonProjectionState.current = {
+            phase: 'loading',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        await flushHookEffects();
+
+        let resolveRefresh!: (value: ExternalSessionsCandidatesListResponse) => void;
+        const refreshPromise = new Promise<ExternalSessionsCandidatesListResponse>((resolve) => {
+            resolveRefresh = resolve;
+        });
+        candidatesListSpy.mockImplementationOnce(() => refreshPromise);
+        daemonProjectionState.current = {
+            phase: 'ready',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const retainedCandidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(retainedCandidate?.props.disabled).toBe(true);
+        await act(async () => {
+            await retainedCandidate?.props.onPress?.();
+        });
+        expect(linkEnsureSpy).not.toHaveBeenCalled();
+
+        resolveRefresh({
+            ok: true,
+            candidates: [{
+                remoteSessionId: 'codex-session-1',
+                title: 'Refreshed Codex Session',
+                updatedAtMs: 1_700_000_000_001,
+                activity: 'idle',
+                details: { path: '/tmp/worktree' },
+            }],
+            nextCursor: null,
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('direct-session-candidate:codex-session-1')?.props.disabled).toBe(false);
+    });
+
+    it('preserves retained candidates as inert context when the post-projection refresh fails', async () => {
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+
+        const retainedInputs = daemonProjectionState.current.inputs;
+        daemonProjectionState.current = {
+            phase: 'loading',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        await flushHookEffects();
+
+        candidatesListSpy.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'internal_error',
+            error: 'private daemon detail',
+        });
+        daemonProjectionState.current = {
+            phase: 'ready',
+            inputs: retainedInputs,
+        };
+        await screen.update(<ExternalSessionsBrowseScreen onRequestClose={() => undefined} />);
+        await flushHookEffects();
+
+        const retainedCandidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(retainedCandidate).not.toBeNull();
+        expect(retainedCandidate?.props.disabled).toBe(true);
+        expect(screen.findByTestId('direct-session-candidates:pagination:error')).not.toBeNull();
+        await act(async () => {
+            await retainedCandidate?.props.onPress?.();
+        });
+        expect(linkEnsureSpy).not.toHaveBeenCalled();
+
+        candidatesListSpy.mockResolvedValueOnce({
+            ok: true,
+            candidates: [{
+                remoteSessionId: 'codex-session-1',
+                title: 'Recovered Codex Session',
+                updatedAtMs: 1_700_000_000_002,
+                activity: 'idle',
+                details: { path: '/tmp/worktree' },
+            }],
+            nextCursor: null,
+        });
+        await screen.pressByTestIdAsync('direct-session-candidates:pagination:retry');
+        await flushHookEffects();
+
+        const recoveredCandidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(recoveredCandidate?.props.title).toBe('Recovered Codex Session');
+        expect(recoveredCandidate?.props.disabled).toBe(false);
     });
 
     it('switches to the codex connected-service source before linking', async () => {

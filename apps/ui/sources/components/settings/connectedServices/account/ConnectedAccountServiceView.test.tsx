@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -23,6 +23,28 @@ const modalConfirmMock = vi.hoisted(() => vi.fn());
 const modalPromptMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const applySettingsMock = vi.hoisted(() => vi.fn());
+const administrationTargetState = vi.hoisted(() => ({
+    current: {
+        target: {
+            serverIdentityId: 'server-identity-a',
+            machineId: 'machine-1',
+        },
+        serverId: 'server-a',
+        machine: {
+            id: 'machine-1',
+            active: true,
+            metadata: { displayName: 'Machine' },
+        },
+    } as Readonly<{
+        target: Readonly<{ serverIdentityId: string; machineId: string }>;
+        serverId: string;
+        machine: Readonly<{
+            id: string;
+            active: boolean;
+            metadata: Readonly<{ displayName: string }>;
+        }>;
+    }> | null,
+}));
 const routeState = vi.hoisted(() => ({
     serviceId: undefined as string | undefined,
     pluginId: 'acme.accounts',
@@ -57,25 +79,26 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
-vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: unknown) => styles },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                accent: { blue: 'blue' },
-                input: { text: 'text', background: 'background', placeholder: 'placeholder' },
-                border: { default: 'border' },
-                text: { primary: 'primary', secondary: 'secondary' },
-            },
-        },
-    }),
-}));
+// The testkit owns this boundary. The previous inline mock returned the
+// stylesheet FACTORY unevaluated and carried only four colour groups, which the
+// full account block (surfaces, state tones, shadows) cannot render against.
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
-vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ ...routeState }),
-}));
+// The testkit owns this boundary. Params stay driven by `routeState` so each
+// test picks the route focus, while navigation now goes through the tracked
+// router the drill-in affordances push onto.
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({
+        params: () => ({ ...routeState }),
+        router: { canGoBack: () => true },
+    }).module;
+});
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://server.test', generation: 1 }),
 }));
@@ -96,7 +119,7 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => ({
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID: {
         github: {
             service: {
-                pluginId: 'happier.scm.hosting.github',
+                pluginId: 'happier.scm.forge.github',
                 localId: 'github-account',
             },
             peerOperations: {
@@ -138,7 +161,7 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => ({
         },
         bitbucket: {
             service: {
-                pluginId: 'happier.scm.hosting.bitbucket',
+                pluginId: 'happier.scm.forge.bitbucket',
                 localId: 'bitbucket-account',
             },
             peerOperations: {
@@ -148,21 +171,57 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => ({
         },
     },
 }));
-vi.mock('@/sync/store/hooks', () => ({
-    useAllMachines: () => machineState.current,
-    useMachineListByServerId: () => ({ 'server-a': machineState.current }),
-    useProfile: () => profileState,
-    useSessions: () => [],
-    useSettings: () => settingsState.current,
-}));
+vi.mock('@/sync/store/hooks', async () => {
+    // `useLocalSetting` reaches this module through the row-density and font-scale
+    // hooks under Item/DropdownMenu; the testkit owns that boundary's defaults.
+    const {
+        createUseLocalSettingMock,
+        createUseSettingMutableMock,
+    } = await import('@/dev/testkit/mocks/storage');
+    const useSetting = ((name: string) =>
+        (settingsState.current as Record<string, unknown>)[name]
+    ) as never;
+    return {
+        useAllMachines: () => machineState.current,
+        useMachineListByServerId: () => ({ 'server-a': machineState.current }),
+        useProfile: () => profileState,
+        useSessions: () => [],
+        useSettings: () => settingsState.current,
+        // Account blocks read individual synced settings (pinned usage meters,
+        // collapse state) through `useSetting`; project them off the same state
+        // the `useSettings` mock returns so the two can never disagree.
+        useSetting,
+        // Account blocks persist collapse state through `useSettingMutable`; the
+        // testkit owns that boundary's read/write pairing.
+        useSettingMutable: createUseSettingMutableMock(useSetting),
+        useLocalSetting: createUseLocalSettingMock(),
+    };
+});
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
 }));
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        candidates: [],
+        pickerRows: [],
+        state: { kind: 'unselected', candidates: [] },
+        selectedTarget: administrationTargetState.current?.target ?? null,
+        canExecute: administrationTargetState.current !== null,
+        selectTarget: () => {},
+        clearTarget: () => {},
+        resolveExecutionTarget: () => administrationTargetState.current,
+    }),
+}));
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
+}));
 function currentRegistryEntry() {
     const github = routeState.serviceId === 'github'
-        || routeState.pluginId === 'happier.scm.hosting.github';
+        || routeState.pluginId === 'happier.scm.forge.github';
     const bitbucket = routeState.serviceId === 'bitbucket'
-        || routeState.pluginId === 'happier.scm.hosting.bitbucket';
+        || routeState.pluginId === 'happier.scm.forge.bitbucket';
     const codex = routeState.serviceId === 'openai-codex'
         || routeState.pluginId === 'happier.agent.codex';
     if (codex) {
@@ -172,6 +231,7 @@ function currentRegistryEntry() {
                 pluginId: 'happier.agent.codex',
                 localId: 'openai-codex',
             },
+            legacyServiceId: 'openai-codex',
             projectedTitle: 'Codex',
             connectCommand: 'happier connect openai-codex',
             supportsOauth: true,
@@ -183,9 +243,10 @@ function currentRegistryEntry() {
         return {
             serviceId: 'bitbucket',
             service: {
-                pluginId: 'happier.scm.hosting.bitbucket',
+                pluginId: 'happier.scm.forge.bitbucket',
                 localId: 'bitbucket-account',
             },
+            legacyServiceId: 'bitbucket',
             projectedTitle: 'Bitbucket',
             connectCommand: 'happier connect bitbucket',
             supportsOauth: false,
@@ -197,9 +258,10 @@ function currentRegistryEntry() {
         ? {
             serviceId: 'github',
             service: {
-                pluginId: 'happier.scm.hosting.github',
+                pluginId: 'happier.scm.forge.github',
                 localId: 'github-account',
             },
+            legacyServiceId: 'github',
             projectedTitle: 'GitHub',
             connectCommand: 'happier connect github',
             supportsOauth: true,
@@ -227,7 +289,8 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
         errorReason: null,
     }),
 }));
-vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
+vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/connectedServices/connectedServiceRegistry')>(),
     getConnectedServiceRegistryEntry: () => currentRegistryEntry(),
 }));
 vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', async (importOriginal) => {
@@ -313,6 +376,50 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props),
 }));
 
+/**
+ * Per-account affordances (reconnect / edit label / configure) are no longer
+ * sibling `Item` rows: each account renders exactly ONE account block whose
+ * kebab owns them, and default-ness is the block's own `isDefault` control.
+ * `tree.find` returns the OUTERMOST match for a testID — the block container —
+ * so its props are the reachable-affordance contract under test.
+ */
+type AccountBlockAction = Readonly<{
+    id: string;
+    disabled?: boolean;
+    onPress: () => unknown;
+}>;
+
+function accountBlockActionIds(account: ReactTestInstance): readonly string[] {
+    return ((account.props.actions ?? []) as ReadonlyArray<AccountBlockAction>)
+        .map((entry) => entry.id);
+}
+
+async function pressAccountBlockActionAsync(
+    account: ReactTestInstance,
+    actionId: string,
+): Promise<void> {
+    const actions = (account.props.actions ?? []) as ReadonlyArray<AccountBlockAction>;
+    const action = actions.find((entry) => entry.id === actionId);
+    if (!action) {
+        throw new Error(
+            `Missing account block action "${actionId}" (present: ${actions.map((entry) => entry.id).join(', ') || 'none'})`,
+        );
+    }
+    await act(async () => {
+        await action.onPress();
+    });
+}
+
+async function toggleAccountBlockDefaultAsync(account: ReactTestInstance): Promise<void> {
+    const onToggleDefault = account.props.onToggleDefault as (() => unknown) | undefined;
+    if (typeof onToggleDefault !== 'function') {
+        throw new Error('Account block exposes no default toggle');
+    }
+    await act(async () => {
+        await onToggleDefault();
+    });
+}
+
 describe('ConnectedAccountServiceView', () => {
     beforeEach(() => {
         runControlMock.mockReset();
@@ -336,6 +443,18 @@ describe('ConnectedAccountServiceView', () => {
         machineState.current = [
             { id: 'machine-1', active: true, metadata: { displayName: 'Machine' } },
         ];
+        administrationTargetState.current = {
+            target: {
+                serverIdentityId: 'server-identity-a',
+                machineId: 'machine-1',
+            },
+            serverId: 'server-a',
+            machine: {
+                id: 'machine-1',
+                active: true,
+                metadata: { displayName: 'Machine' },
+            },
+        };
         settingsState.current = {
             connectedServicesDefaultProfileByServiceId: {},
             connectedServicesProfileLabelByKey: {},
@@ -343,15 +462,19 @@ describe('ConnectedAccountServiceView', () => {
         profileState.connectedServicesV2 = [];
     });
 
-    it('runs account operations only on the exact selected server and machine', async () => {
-        Object.assign(routeState, {
-            serverId: 'server-a',
-            machineId: 'machine-selected',
-        });
-        machineState.current = [
-            { id: 'machine-other', active: true, metadata: { displayName: 'Other' } },
-            { id: 'machine-selected', active: true, metadata: { displayName: 'Selected' } },
-        ];
+    it('runs account operations only on the exact Administration-selected server and machine', async () => {
+        administrationTargetState.current = {
+            target: {
+                serverIdentityId: 'server-identity-b',
+                machineId: 'machine-selected',
+            },
+            serverId: 'server-b',
+            machine: {
+                id: 'machine-selected',
+                active: true,
+                metadata: { displayName: 'Selected' },
+            },
+        };
         const service = { pluginId: 'acme.accounts', localId: 'work' };
         runControlMock.mockResolvedValueOnce({
             status: 'described',
@@ -374,44 +497,21 @@ describe('ConnectedAccountServiceView', () => {
 
         await vi.waitFor(() => {
             expect(runControlMock).toHaveBeenCalledWith(expect.objectContaining({
-                serverId: 'server-a',
+                serverId: 'server-b',
                 machineId: 'machine-selected',
             }));
         });
     });
 
-    it.each([
-        {
-            title: 'selected machine is offline',
-            serverId: 'server-a',
-            machines: [
-                { id: 'machine-other', active: true, metadata: { displayName: 'Other' } },
-                { id: 'machine-selected', active: false, metadata: { displayName: 'Selected' } },
-            ],
-        },
-        {
-            title: 'selected server is no longer active',
-            serverId: 'server-stale',
-            machines: [
-                { id: 'machine-other', active: true, metadata: { displayName: 'Other' } },
-                { id: 'machine-selected', active: true, metadata: { displayName: 'Selected' } },
-            ],
-        },
-    ])('fails closed when $title instead of using another online machine', async ({ serverId, machines }) => {
-        Object.assign(routeState, {
-            serverId,
-            machineId: 'machine-selected',
-        });
-        machineState.current = machines;
+    it('fails closed without a fresh Administration target instead of using another online machine', async () => {
+        administrationTargetState.current = null;
 
         const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
         const rendered = await renderScreen(<ConnectedAccountServiceView />);
         await act(async () => undefined);
 
         expect(runControlMock).not.toHaveBeenCalled();
-        expect(rendered.tree.findAllByType('Item' as never).some((item) => (
-            item.props.title === 'connectedServices.detail.unknownService'
-        ))).toBe(true);
+        expect(rendered.tree.findByType('MachineAdministrationTargetSelector' as never)).toBeTruthy();
     });
 
     it('uses advertised V4 and opens only the exact qualified group from route focus', async () => {
@@ -448,6 +548,7 @@ describe('ConnectedAccountServiceView', () => {
             groups: [{
                 v: 1,
                 ref: { service, groupId: 'team' },
+                incarnation: 'qualified-group-row-team',
                 displayName: 'Team',
                 policy: {
                     v: 1,
@@ -503,22 +604,27 @@ describe('ConnectedAccountServiceView', () => {
                 expect.objectContaining({ token: 'token' }),
                 { service },
             );
+            // A `group` focus now renders the pool's OWN screen (the pool
+            // detail), not a row inside the service detail.
             expect(rendered.tree.find(
-                (node) => node.props.testID === 'qualified-connected-account-group:team',
-            ).props.title).toBe('Team');
+                (node) => node.props.testID === 'connected-services-pool-detail:name'
+                    && typeof node.props.subtitle === 'string',
+            ).props.subtitle).toBe('Team');
         });
+        // Only the focused pool is on screen: the service detail's segmented
+        // shell (and therefore every other pool row) is not rendered at all.
         expect(rendered.tree.findAll(
-            (node) => node.props.testID === 'qualified-connected-account-group:other',
+            (node) => node.props.testID === 'connected-services-detail-shell',
         )).toHaveLength(0);
     });
 
-    it('keeps exact-old GitHub unsupported because its generated operation set is empty', async () => {
+    it('renders an unavailable service description once with localized retry recovery', async () => {
         Object.assign(routeState, {
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         });
         const service = {
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         };
         runControlMock.mockResolvedValueOnce({
@@ -534,10 +640,19 @@ describe('ConnectedAccountServiceView', () => {
         });
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
         expect(listLegacyGroupsV3Mock).not.toHaveBeenCalled();
+        expect(rendered.tree.find(
+            (node) => node.props.testID === 'connected-account:error',
+        ).props.title).toBe('connectedServices.errors.generic');
         expect(rendered.tree.findAllByType('Item' as never).some((item) => (
-            item.props.title
-            === 'connected_account_service_identity_unsupported'
-        ))).toBe(true);
+            item.props.title === 'connected_account_service_identity_unsupported'
+        ))).toBe(false);
+
+        await pressTestInstanceAsync(
+            rendered.tree.find(
+                (node) => node.props.testID === 'connected-account:error:retry',
+            ),
+        );
+        expect(runControlMock).toHaveBeenCalledTimes(2);
     });
 
     it('renders daemon-proven exact-old Codex accounts passively with no mutation affordance', async () => {
@@ -631,18 +746,28 @@ describe('ConnectedAccountServiceView', () => {
                 || node.props.testID.startsWith('connected-account-default:')
             )
         ))).toHaveLength(0);
+        // The label/default/configure affordances those rows used to carry now
+        // live on the block itself, so passivity has to be proven there too: an
+        // exact-old peer without `credential_write` exposes NO mutation action
+        // and no default toggle. The only remaining kebab entry is the
+        // read-only drill-in to the account's own detail screen.
+        const passiveAccount = rendered.tree.find(
+            (node) => node.props.testID === 'connected-account:account-1',
+        );
+        expect(accountBlockActionIds(passiveAccount)).toEqual(['open']);
+        expect(passiveAccount.props.onToggleDefault).toBeUndefined();
         expect(runAuthenticationMock).not.toHaveBeenCalled();
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
         expect(listLegacyGroupsV3Mock).not.toHaveBeenCalled();
     });
 
-    it('keeps revisioned multi-mode authentication passive while retaining guarded disconnect', async () => {
+    it('keeps a revisioned peer row with no stored revision entirely passive', async () => {
         Object.assign(routeState, {
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         });
         const service = {
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         };
         runControlMock.mockResolvedValueOnce({
@@ -705,8 +830,14 @@ describe('ConnectedAccountServiceView', () => {
         const account = rendered.tree.find(
             (node) => node.props.testID === 'connected-account:account-1',
         );
-        expect(account.props.disabled).toBe(true);
-        expect(account.props.onPress).toBeUndefined();
+        // The account row press that used to start a reconnect is gone; the block
+        // must offer NO credential-mutation action and no default toggle for a
+        // peer whose authentication modes are all passive, so nothing mutable is
+        // reachable through the account itself. The missing stored revision
+        // makes this historical row passive despite its peer supporting guarded
+        // operations, so only the read-only drill-in remains.
+        expect(accountBlockActionIds(account)).toEqual(['open']);
+        expect(account.props.onToggleDefault).toBeUndefined();
         expect(rendered.tree.findAll((node) => (
             typeof node.props.testID === 'string'
             && (
@@ -719,18 +850,18 @@ describe('ConnectedAccountServiceView', () => {
                 )
             )
         ))).toHaveLength(0);
-        expect(rendered.tree.find(
-            (node) => (
-                node.props.testID
-                === 'connected-account-revoke:account-1'
-            ),
-        )).toBeTruthy();
+        // The guarded disconnect is retained ON the account it acts on, never as
+        // a service-level row further down the screen.
+        expect(rendered.tree.findAll((node) => (
+            typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('connected-account-revoke:')
+        ))).toHaveLength(0);
         expect(runAuthenticationMock).not.toHaveBeenCalled();
     });
 
     it('fails a revisioned Bitbucket peer closed before daemon, group, or quota effects', async () => {
         Object.assign(routeState, {
-            pluginId: 'happier.scm.hosting.bitbucket',
+            pluginId: 'happier.scm.forge.bitbucket',
             localId: 'bitbucket-account',
         });
         runControlMock.mockResolvedValueOnce({
@@ -747,10 +878,12 @@ describe('ConnectedAccountServiceView', () => {
         expect(runAuthenticationMock).not.toHaveBeenCalled();
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
         expect(listLegacyGroupsV3Mock).not.toHaveBeenCalled();
+        expect(rendered.tree.find(
+            (node) => node.props.testID === 'connected-account:error',
+        ).props.title).toBe('connectedServices.errors.generic');
         expect(rendered.tree.findAllByType('Item' as never).some((item) => (
-            item.props.title
-            === 'connected_account_service_identity_unsupported'
-        ))).toBe(true);
+            item.props.title === 'connected_account_service_identity_unsupported'
+        ))).toBe(false);
     });
 
     it('writes labels and defaults through the qualified preference owner', async () => {
@@ -759,6 +892,7 @@ describe('ConnectedAccountServiceView', () => {
             ref: { service, accountId: 'account-a' },
             status: 'connected',
             authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
             configurationReady: true,
             configurationRevision: null,
@@ -790,17 +924,20 @@ describe('ConnectedAccountServiceView', () => {
         const rendered = await renderScreen(<ConnectedAccountServiceView />);
         await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledOnce());
 
-        await pressTestInstanceAsync(rendered.tree.find((node) => (
-            node.props.testID === 'connected-account-label:account-a'
-        )));
+        await pressAccountBlockActionAsync(
+            rendered.tree.find((node) => (
+                node.props.testID === 'connected-account:account-a'
+            )),
+            'label',
+        );
         expect(applySettingsMock).toHaveBeenCalledWith({
             connectedServicesProfileLabelByKey: {
                 'acme.accounts%2Fwork/account-a': 'Team',
             },
         });
 
-        await pressTestInstanceAsync(rendered.tree.find((node) => (
-            node.props.testID === 'connected-account-default:account-b'
+        await toggleAccountBlockDefaultAsync(rendered.tree.find((node) => (
+            node.props.testID === 'connected-account:account-b'
         )));
         expect(applySettingsMock).toHaveBeenLastCalledWith({
             connectedServicesDefaultProfileByServiceId: {
@@ -913,6 +1050,11 @@ describe('ConnectedAccountServiceView', () => {
         const token = await vi.waitFor(() => tree.find(
             (node) => node.props.testID === 'connected-account-manual:token',
         ));
+        const { ItemList } = await import('@/components/ui/lists/ItemList');
+        const formList = tree.findAllByType(ItemList).find((list) => (
+            list.props.keyboardAware === true
+        ));
+        expect(formList?.props.keyboardShouldPersistTaps).toBe('handled');
         await act(async () => token.props.onChangeText('secret-token'));
         await pressTestInstanceAsync(
             tree.find((node) => node.props.testID === 'connected-account-manual:submit'),
@@ -1107,6 +1249,91 @@ describe('ConnectedAccountServiceView', () => {
         expect(runAuthenticationMock).toHaveBeenCalledOnce();
     });
 
+    it('drops an in-flight authentication controller when the Administration target changes', async () => {
+        const service = { pluginId: 'acme.accounts', localId: 'work' };
+        const manualMode = {
+            id: 'manual',
+            kind: 'manual',
+            outcomeReconciliation: 'none',
+            fields: [{
+                id: 'token',
+                title: 'Token',
+                schema: { type: 'string', minLength: 1 },
+                secret: true,
+            }],
+        };
+        runControlMock
+            .mockResolvedValueOnce({
+                status: 'described',
+                service,
+                descriptor: {
+                    id: 'work',
+                    title: 'Acme A',
+                    authentication: {
+                        defaultModeId: 'manual',
+                        modes: [manualMode],
+                    },
+                },
+                generation: 'generation-a',
+                immutableGenerationId: 'artifact-a',
+                accounts: [],
+            })
+            .mockResolvedValueOnce({
+                status: 'described',
+                service,
+                descriptor: {
+                    id: 'work',
+                    title: 'Acme B',
+                    authentication: {
+                        defaultModeId: 'manual',
+                        modes: [manualMode],
+                    },
+                },
+                generation: 'generation-b',
+                immutableGenerationId: 'artifact-b',
+                accounts: [],
+            });
+        let settleAuthentication!: (
+            response: Readonly<{
+                status: 'awaitingManual';
+                attemptId: string;
+            }>,
+        ) => void;
+        runAuthenticationMock.mockReturnValueOnce(new Promise((resolve) => {
+            settleAuthentication = resolve;
+        }));
+
+        const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
+        const rendered = await renderScreen(<ConnectedAccountServiceView />);
+        await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledOnce());
+        await pressTestInstanceAsync(rendered.tree.find((node) => (
+            node.props.testID === 'connected-account-mode:manual'
+        )));
+        await vi.waitFor(() => expect(runAuthenticationMock).toHaveBeenCalledOnce());
+
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'server-identity-b', machineId: 'machine-2' },
+            serverId: 'server-b',
+            machine: { id: 'machine-2', active: true, metadata: { displayName: 'Machine B' } },
+        };
+        await rendered.update(<ConnectedAccountServiceView />);
+        await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledTimes(2));
+        await act(async () => {
+            settleAuthentication({
+                status: 'awaitingManual',
+                attemptId: 'attempt-a',
+            });
+        });
+
+        expect(rendered.tree.findAll((node) => (
+            node.props.testID === 'connected-account-manual:submit'
+        ))).toHaveLength(0);
+        expect(rendered.tree.findAll((node) => (
+            node.props.testID === 'connected-account-mode:manual'
+        )).length).toBeGreaterThan(0);
+        expect(runAuthenticationMock).toHaveBeenCalledOnce();
+    });
+
     it('leaves scalar built-in URL translation to the compatibility route', async () => {
         Object.assign(routeState, {
             serviceId: 'github',
@@ -1136,7 +1363,7 @@ describe('ConnectedAccountServiceView', () => {
         },
         {
             serviceId: 'github',
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         },
     ])('rejects malformed, foreign, or mixed qualified route params %#', async (route) => {
@@ -1158,7 +1385,7 @@ describe('ConnectedAccountServiceView', () => {
     it('revokes only the selected exact account and cleans group references only after explicit confirmation', async () => {
         Object.assign(routeState, {
             serviceId: undefined,
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         });
         settingsState.current = {
@@ -1173,13 +1400,14 @@ describe('ConnectedAccountServiceView', () => {
             },
         };
         const service = {
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         };
         const account = {
             ref: { service, accountId: 'account-1' },
             status: 'connected',
             authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
             configurationReady: true,
             configurationRevision: null,
@@ -1235,9 +1463,12 @@ describe('ConnectedAccountServiceView', () => {
         const rendered = await renderScreen(<ConnectedAccountServiceView />);
 
         await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledTimes(1));
-        await pressTestInstanceAsync(rendered.tree.find(
-            (node) => node.props.testID === 'connected-account-revoke:account-1',
-        ));
+        await pressAccountBlockActionAsync(
+            rendered.tree.find(
+                (node) => node.props.testID === 'connected-account:account-1',
+            ),
+            'disconnect',
+        );
 
         await vi.waitFor(() => {
             const revocations = runControlMock.mock.calls
@@ -1288,6 +1519,84 @@ describe('ConnectedAccountServiceView', () => {
         });
     });
 
+    it('explains a typed revoke conflict with the localized owner copy instead of a bare error', async () => {
+        Object.assign(routeState, {
+            serviceId: undefined,
+            pluginId: 'happier.scm.forge.github',
+            localId: 'github-account',
+        });
+        const service = {
+            pluginId: 'happier.scm.forge.github',
+            localId: 'github-account',
+        };
+        const account = {
+            ref: { service, accountId: 'account-1' },
+            status: 'connected',
+            authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+            configurationReady: true,
+            configurationRevision: null,
+            scopes: [],
+        };
+        const described = {
+            status: 'described',
+            service,
+            descriptor: {
+                id: 'work',
+                title: 'Acme Work',
+                authentication: {
+                    defaultModeId: 'manual',
+                    modes: [{
+                        id: 'manual',
+                        kind: 'manual',
+                        outcomeReconciliation: 'none',
+                        fields: [{
+                            id: 'token',
+                            title: 'Token',
+                            schema: { type: 'string', minLength: 1 },
+                            secret: true,
+                        }],
+                    }],
+                },
+            },
+            generation: 'generation-1',
+            immutableGenerationId: 'artifact-1',
+            accounts: [account],
+        };
+        // The cleanup retry conflicts too: the user is left with the failure, so
+        // it has to say what happened rather than "error".
+        runControlMock
+            .mockResolvedValueOnce(described)
+            .mockRejectedValueOnce(Object.assign(new Error('conflict'), {
+                code: 'connect_credential_referenced_by_group',
+            }))
+            .mockResolvedValueOnce({
+                status: 'conflict',
+                code: 'connect_credential_referenced_by_group',
+            });
+        modalConfirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+        const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
+        const rendered = await renderScreen(<ConnectedAccountServiceView />);
+        await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledTimes(1));
+        await pressAccountBlockActionAsync(
+            rendered.tree.find(
+                (node) => node.props.testID === 'connected-account:account-1',
+            ),
+            'disconnect',
+        );
+
+        await vi.waitFor(() => {
+            expect(rendered.tree.find(
+                (node) => node.props.testID === 'connected-account:error',
+            ).props.title).toBe(
+                'connectedServices.errors.credentialReferencedByGroup',
+            );
+        });
+        expect(modalConfirmMock).toHaveBeenCalledTimes(2);
+    });
+
     it('keeps reconnect configuration and continuation bound to the exact qualified account', async () => {
         const service = {
             pluginId: 'acme.accounts',
@@ -1297,6 +1606,7 @@ describe('ConnectedAccountServiceView', () => {
             ref: { service, accountId: 'account-1' },
             status: 'needs_reauth',
             authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
             configurationReady: false,
             configurationRevision: 'config-1',
@@ -1396,9 +1706,12 @@ describe('ConnectedAccountServiceView', () => {
         const rendered = await renderScreen(<ConnectedAccountServiceView />);
 
         await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledTimes(1));
-        await pressTestInstanceAsync(rendered.tree.find(
-            (node) => node.props.testID === 'connected-account:account-1',
-        ));
+        await pressAccountBlockActionAsync(
+            rendered.tree.find(
+                (node) => node.props.testID === 'connected-account:account-1',
+            ),
+            'reconnect',
+        );
 
         await vi.waitFor(() => {
             expect(runAuthenticationMock).toHaveBeenCalledWith({
@@ -1479,6 +1792,7 @@ describe('ConnectedAccountServiceView', () => {
             ref: { service, accountId: 'account-1' },
             status: 'connected',
             authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
             configurationReady: true,
             configurationRevision: 'config-1',
@@ -1593,12 +1907,12 @@ describe('ConnectedAccountServiceView', () => {
             (node) => node.props.testID === 'connected-account-mode:manual',
         ));
         await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledTimes(2));
-        await pressTestInstanceAsync(rendered.tree.find(
-            (node) => (
-                node.props.testID
-                === 'connected-account-configuration-settings:account-1'
+        await pressAccountBlockActionAsync(
+            rendered.tree.find(
+                (node) => node.props.testID === 'connected-account:account-1',
             ),
-        ));
+            'configure',
+        );
 
         await vi.waitFor(() => {
             expect(runControlMock).toHaveBeenCalledWith({
@@ -1841,6 +2155,7 @@ describe('ConnectedAccountServiceView', () => {
             ref: { service, accountId: 'account-1' },
             status: 'connected',
             authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned',
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
             configurationReady: false,
             configurationRevision: null,
@@ -1904,9 +2219,11 @@ describe('ConnectedAccountServiceView', () => {
             signal: expect.any(AbortSignal),
         });
 
+        // The blocked marker rides the block's identity line now (the account row
+        // subtitle it used to share is gone with the row).
         expect(rendered.tree.find((node) => (
             node.props.testID === 'connected-account:account-1'
-        )).props.subtitle).toContain('common.blocked');
+        )).props.identityLabel).toContain('common.blocked');
         expect(rendered.tree.find((node) => (
             node.props.testID
             === 'connected-service-configuration-settings:manual'

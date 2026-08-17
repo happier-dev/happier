@@ -1,7 +1,9 @@
 import type { VoiceAdapterController } from '@/voice/session/types';
+import type { RealtimeVoiceProviderSettingsOperations } from '@happier-dev/plugin-sdk/voice/client';
 import type {
-  PluginVoiceProviderSettingsOperations,
-} from '@happier-dev/plugin-sdk/runtime';
+  PluginSettingsActionInput,
+  PluginSettingsActionResult,
+} from '@happier-dev/plugin-sdk/settings';
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
 
 import type { VoiceProviderRegistryEntry } from './providerRegistry';
@@ -18,14 +20,12 @@ export type ExternalVoiceProviderRegistration = Readonly<{
       catalog: 'voices' | 'models';
       providerConfig: VoiceRealtimeJsonValue;
       signal: AbortSignal;
-    }>): ReturnType<NonNullable<PluginVoiceProviderSettingsOperations['listCatalog']>>;
-    provision?(input: Readonly<{
-      request: VoiceRealtimeJsonValue;
-      providerConfig: VoiceRealtimeJsonValue;
-      disabledActionIds: readonly string[];
-      extraSystemAppendBlocks: readonly string[];
+    }>): ReturnType<NonNullable<RealtimeVoiceProviderSettingsOperations['listCatalog']>>;
+  }>;
+  settingsActions?: Readonly<{
+    execute(input: PluginSettingsActionInput & Readonly<{
       signal: AbortSignal;
-    }>): ReturnType<NonNullable<PluginVoiceProviderSettingsOperations['provision']>>;
+    }>): Promise<PluginSettingsActionResult>;
   }>;
 }>;
 

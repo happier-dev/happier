@@ -1,18 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
 import type {
+  BundledRetiringDirectMediaTranscriptDrain,
   BundledRealtimeProviderRuntimeHost,
-  VoiceConversationController,
-  VoiceConversationControllerDeps,
-  VoiceConversationControllerStartResult,
+} from '@/voice/registry/bundledConversationRuntimeContract';
+import type {
   VoiceRealtimeConnection,
-  VoiceMachineErrorKind,
   VoiceTurnControlAction,
-} from '@happier-dev/bundled-voice-runtime-contract';
+} from '@happier-dev/plugin-sdk/voice/client';
 
-import { createVoiceConversationController } from '@/voice/runtime/controller/VoiceConversationController';
+import {
+  createVoiceConversationController,
+  type VoiceConversationController,
+  type VoiceConversationControllerDeps,
+  type VoiceConversationControllerStartResult,
+} from '@/voice/runtime/controller/VoiceConversationController';
 import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot';
 import { createVoiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
+import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { useVoiceConversationRuntimeStore } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
@@ -23,12 +28,20 @@ vi.mock('@/voice/transcript/voiceTurnInterruption', () => ({
   markVoiceConversationAssistantTurnInterrupted: markAssistantInterrupted,
 }));
 
+const logSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/log', () => ({ log: { log: logSpy, warn: vi.fn(), error: vi.fn() } }));
+
 function createDeferredVoid() {
   let resolve!: () => void;
   const promise = new Promise<void>((resolvePromise) => {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function runCurrentGenerationEffect(callback: () => void): boolean {
+  callback();
+  return true;
 }
 
 describe('createBundledRealtimeProviderRuntime', () => {
@@ -51,7 +64,10 @@ describe('createBundledRealtimeProviderRuntime', () => {
       getStream: vi.fn(() => null),
       getAudioContext: vi.fn(() => null),
     };
-    const releaseDirectMediaConversation = vi.fn();
+    const carrierReleases = [createDeferredVoid(), createDeferredVoid()];
+    const releaseDirectMediaConversation = vi.fn(async () => {
+      await carrierReleases[releaseDirectMediaConversation.mock.calls.length - 1]?.promise;
+    });
     const releasePrepared = vi.fn(async (input: Readonly<{ attemptId: number }>) => {
       if (activeProviderPreparation === input.attemptId) {
         activeProviderPreparation = null;
@@ -112,36 +128,45 @@ describe('createBundledRealtimeProviderRuntime', () => {
     let carrierAcquisitionCount = 0;
     const host = {
       globalVoiceSessionId: controlSessionId,
+      runCurrentGenerationEffect,
       getPlatform: () => 'web' as const,
       getRealtimeClientToolDefinitions: () => [],
       getSettings: () => ({ voice: { providerId } }),
       projectVoiceSettings: () => ({ providerId, providerConfig: {} }),
       machine: {
-        transitionToAcquiringMic: (sessionId: string, adapterId: string) =>
-          runtimeMachine.transitionToAcquiringMic({ controlSessionId: sessionId, adapterId }),
-        transitionToConnecting: (sessionId: string, adapterId: string) =>
-          runtimeMachine.transitionToConnecting({ controlSessionId: sessionId, adapterId }),
-        setReconnecting: (sessionId: string, adapterId: string, reconnecting: boolean) =>
-          runtimeMachine.setReconnecting({ controlSessionId: sessionId, adapterId, reconnecting }),
-        transitionToConnected: (sessionId: string, adapterId: string) =>
-          runtimeMachine.transitionToConnected({ controlSessionId: sessionId, adapterId }),
-        transitionToSpeaking: (sessionId: string, adapterId: string) =>
-          runtimeMachine.transitionToSpeaking({ controlSessionId: sessionId, adapterId }),
-        transitionToEnding: (sessionId: string, adapterId: string) =>
-          runtimeMachine.transitionToEnding({ controlSessionId: sessionId, adapterId }),
-        transitionToDisconnected: (sessionId: string, adapterId: string, error: unknown | null) =>
+        transitionToAcquiringMic: (sessionId: string, adapterId: string, attemptId?: number) =>
+          runtimeMachine.transitionToAcquiringMic({ controlSessionId: sessionId, adapterId, attemptId }),
+        transitionToConnecting: (sessionId: string, adapterId: string, attemptId?: number) =>
+          runtimeMachine.transitionToConnecting({ controlSessionId: sessionId, adapterId, attemptId }),
+        setReconnecting: (sessionId: string, adapterId: string, reconnecting: boolean, attemptId?: number) =>
+          runtimeMachine.setReconnecting({ controlSessionId: sessionId, adapterId, attemptId, reconnecting }),
+        transitionToConnected: (sessionId: string, adapterId: string, attemptId?: number) =>
+          runtimeMachine.transitionToConnected({ controlSessionId: sessionId, adapterId, attemptId }),
+        transitionToSpeaking: (sessionId: string, adapterId: string, attemptId?: number) =>
+          runtimeMachine.transitionToSpeaking({ controlSessionId: sessionId, adapterId, attemptId }),
+        transitionToEnding: (sessionId: string, adapterId: string, attemptId?: number) =>
+          runtimeMachine.transitionToEnding({ controlSessionId: sessionId, adapterId, attemptId }),
+        transitionToDisconnected: (sessionId: string, adapterId: string, error: unknown | null, attemptId?: number) =>
           runtimeMachine.transitionToDisconnected({
             controlSessionId: sessionId,
             adapterId,
+            attemptId,
             error: error as Parameters<typeof runtimeMachine.transitionToDisconnected>[0]['error'],
           }),
-        setError: (sessionId: string, adapterId: string, error: unknown) =>
+        setError: (sessionId: string, adapterId: string, error: unknown, attemptId?: number) =>
           runtimeMachine.setError({
             controlSessionId: sessionId,
             adapterId,
+            attemptId,
             error: error as Parameters<typeof runtimeMachine.setError>[0]['error'],
           }),
-        setMuted: runtimeMachine.setMuted,
+        setMuted: (sessionId: string, adapterId: string, attemptId: number, muted: boolean) =>
+          runtimeMachine.setMuted({
+            controlSessionId: sessionId,
+            adapterId,
+            attemptId,
+            micMuted: muted,
+          }),
         getSnapshot: runtimeMachine.getSnapshot,
         projectSnapshot: (adapterId: string, snapshot: unknown) =>
           deriveLocalVoiceSessionSnapshot(
@@ -171,14 +196,23 @@ describe('createBundledRealtimeProviderRuntime', () => {
       resolveConversationSessionId: vi.fn(() => controlSessionId),
       applyTargetSelection: vi.fn(async () => undefined),
       acquireAudioMode: vi.fn(async () => ({ release: vi.fn(async () => undefined) })),
-      createStorageMirror: vi.fn(() => vi.fn()),
       openLevelWriter: vi.fn(() => ({
         write: vi.fn(),
         reset: vi.fn(),
         close: vi.fn(),
       })),
       projectTranscript,
-      beginTranscriptAttempt: vi.fn(() => ++transcriptEpoch),
+      admitTranscriptPersistenceEvent: vi.fn(() => null),
+      commitAdmittedTranscriptPersistenceEvent: vi.fn(() => null),
+      releaseAdmittedTranscriptPersistenceEvent: vi.fn(() => false),
+      settleTranscriptPersistence: vi.fn(async () => undefined),
+      beginTranscriptAttempt: vi.fn(() => {
+        transcriptEpoch += 1;
+        return {
+          epoch: transcriptEpoch,
+          attemptIdentity: `attempt-${transcriptEpoch}`,
+        };
+      }),
       presentHostedLeaseNotice: vi.fn(),
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
@@ -218,10 +252,10 @@ describe('createBundledRealtimeProviderRuntime', () => {
         decodeControl: vi.fn(() => []),
         encodeTurnControl: vi.fn(() => null),
       },
+      microphoneMode: 'host_webrtc',
       createConnection,
       encodeToolResults: vi.fn(() => []),
       encodeToolContinuation: vi.fn(() => ({ type: 'unused' })),
-      requiresMicForConnection: true,
       encodeContextUpdate: vi.fn(() => []),
       encodeTextTurn: vi.fn((text: string) => [{ type: 'input_text', text }]),
       resolveSurfaceCapabilities: vi.fn(() => null),
@@ -249,7 +283,15 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(onStopped).not.toHaveBeenCalled();
 
       staleConnectionClose.resolve();
-      await staleStop;
+      await vi.waitFor(() => {
+        expect(host.releaseDirectMediaConversation).toHaveBeenCalledTimes(1);
+      });
+      let staleStopSettled = false;
+      void staleStop.then(() => {
+        staleStopSettled = true;
+      });
+      await Promise.resolve();
+      expect(staleStopSettled).toBe(false);
 
       expect(runtimeMachine.getSnapshot()).toMatchObject({
         adapterId: providerId,
@@ -257,7 +299,12 @@ describe('createBundledRealtimeProviderRuntime', () => {
         state: 'connected',
       });
       expect(mic.teardown).not.toHaveBeenCalled();
-      expect(releaseDirectMediaConversation).not.toHaveBeenCalled();
+      expect(releaseDirectMediaConversation).toHaveBeenCalledExactlyOnceWith({
+        adapterId: providerId,
+        controlSessionId,
+        conversationSessionId: controlSessionId,
+        transcriptAttemptIdentity: 'attempt-1',
+      });
       expect(activeProviderPreparation).toBe(2);
       expect(onStopped).not.toHaveBeenCalled();
       expect(() => controllerInput!.projectTranscript?.({
@@ -284,13 +331,38 @@ describe('createBundledRealtimeProviderRuntime', () => {
         text: 'continue on B',
         localId: 'replacement-b-text',
         deliveryCommand: 'interrupt_and_send',
+        onAccepted: async () => {},
       })).resolves.toBeUndefined();
       expect(sendControlByAttempt.get(2)).toHaveBeenCalledWith({
         type: 'input_text',
         text: 'continue on B',
       });
+      carrierReleases[0]!.resolve();
+      await staleStop;
+      const activeStop = runtime.adapter.stop({ sessionId: controlSessionId });
+      await vi.waitFor(() => {
+        expect(releaseDirectMediaConversation).toHaveBeenCalledTimes(2);
+      });
+      let activeStopSettled = false;
+      void activeStop.then(() => {
+        activeStopSettled = true;
+      });
+      await Promise.resolve();
+      expect(activeStopSettled).toBe(false);
+      expect(micActive).toBe(false);
+      expect(mic.teardown).toHaveBeenCalledTimes(1);
+      expect(runtimeMachine.getSnapshot()).toMatchObject({
+        adapterId: providerId,
+        controlSessionId,
+        state: 'disconnected',
+      });
+      expect(onStopped).not.toHaveBeenCalled();
+      carrierReleases[1]!.resolve();
+      await activeStop;
+      expect(onStopped).toHaveBeenCalledTimes(1);
     } finally {
       staleConnectionClose.resolve();
+      for (const release of carrierReleases) release.resolve();
       await staleStop?.catch(() => {});
       await runtime.dispose();
       runtimeMachine.reset();
@@ -321,6 +393,12 @@ describe('createBundledRealtimeProviderRuntime', () => {
       getStream: vi.fn(() => null),
       getAudioContext: vi.fn(() => null),
     };
+    const providerManagedInputWriter = {
+      write: vi.fn(),
+      reset: vi.fn(),
+      close: vi.fn(),
+    };
+    const openLevelWriter = vi.fn(() => providerManagedInputWriter);
     let selectedProviderId = 'realtime_sdk';
     let providerConfig: Readonly<Record<string, unknown>> = {
       authentication: { source: 'voice_saved_secret' },
@@ -336,7 +414,8 @@ describe('createBundledRealtimeProviderRuntime', () => {
       })),
       sendClientControl: vi.fn(async () => ({ status: 'sent' as const })),
       getActiveControlSessionId: vi.fn(() => null),
-      getOwnedControlSessionId: vi.fn(() => null),
+      getOwnedControlSessionId: vi.fn(() => 'voice-global'),
+      getOwnedAttemptId: vi.fn(() => 1),
       requestReconnect: vi.fn(async () => false),
       playbackCursorMs: vi.fn(() => null),
       beginOutputInterruptionCandidate: vi.fn(() => 'unsupported' as const),
@@ -344,6 +423,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     } satisfies VoiceConversationController;
     const host = {
       globalVoiceSessionId: 'voice-global',
+      runCurrentGenerationEffect,
       getPlatform: () => 'web' as const,
       getRealtimeClientToolDefinitions: () => [],
       getSettings: () => ({ voice: { providerId: selectedProviderId } }),
@@ -373,10 +453,16 @@ describe('createBundledRealtimeProviderRuntime', () => {
       resolveConversationSessionId: vi.fn((controlSessionId: string) => controlSessionId),
       applyTargetSelection: vi.fn(),
       acquireAudioMode,
-      createStorageMirror: vi.fn(() => vi.fn()),
-      openLevelWriter: vi.fn(() => ({ write: vi.fn(), reset: vi.fn(), close: vi.fn() })),
+      openLevelWriter,
       projectTranscript: vi.fn(() => null),
-      beginTranscriptAttempt: vi.fn(() => 1),
+      admitTranscriptPersistenceEvent: vi.fn(() => null),
+      commitAdmittedTranscriptPersistenceEvent: vi.fn(() => null),
+      releaseAdmittedTranscriptPersistenceEvent: vi.fn(() => false),
+      settleTranscriptPersistence: vi.fn(async () => undefined),
+      beginTranscriptAttempt: vi.fn(() => ({
+        epoch: 1,
+        attemptIdentity: 'attempt-1',
+      })),
       presentHostedLeaseNotice: vi.fn(),
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
@@ -403,7 +489,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       createConnection: vi.fn(async () => { throw new Error('unused'); }),
       encodeToolResults: vi.fn(() => []),
       encodeToolContinuation: vi.fn(() => ({ type: 'unused' })),
-      requiresMicForConnection: false,
+      microphoneMode: 'provider_managed',
       setInputMuted,
       encodeContextUpdate: vi.fn(() => []),
       encodeTextTurn: vi.fn(() => []),
@@ -411,6 +497,19 @@ describe('createBundledRealtimeProviderRuntime', () => {
       resolveSurfaceCapabilities: vi.fn(() => null),
     });
     await runtime.adapter.start({ sessionId: 'voice-global' });
+    expect(openLevelWriter).toHaveBeenCalledWith({
+      channel: 'input',
+      sourceId: 'realtime_sdk:voice-global',
+    });
+    expect(providerManagedInputWriter.close).not.toHaveBeenCalled();
+    await expect(runtime.adapter.sendTextTurn?.({
+      controlSessionId: 'voice-global',
+      conversationSessionId: 'voice-global',
+      text: 'unsupported typed turn',
+      localId: 'voice-local-unsupported',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: async () => {},
+    })).rejects.toThrow('voice_text_turn_unsupported');
 
     await expect(runtime.adapter.resolveConversationBinding?.({
       controlSessionId: 'codex-session',
@@ -450,7 +549,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     expect(host.acquireAudioMode).toHaveBeenCalledWith('realtime_sdk');
     expect(mic.setMuted).toHaveBeenCalledWith(true);
     expect(setInputMuted).toHaveBeenCalledWith(true);
-    expect(host.machine.setMuted).toHaveBeenCalledWith(true);
+    expect(host.machine.setMuted).toHaveBeenCalledWith('voice-global', 'realtime_sdk', 1, true);
     expect(releaseAudioMode).toHaveBeenCalledTimes(1);
 
     let resolveAttemptAAudioMode!: (lease: Readonly<{ release(): Promise<void> }>) => void;
@@ -560,6 +659,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       sendClientControl: vi.fn(async () => ({ status: 'sent' as const })),
       getActiveControlSessionId: vi.fn(() => null),
       getOwnedControlSessionId: vi.fn(() => null),
+      getOwnedAttemptId: vi.fn(() => null),
       requestReconnect: vi.fn(async () => false),
       playbackCursorMs: vi.fn(() => null),
       beginOutputInterruptionCandidate: vi.fn(() => 'unsupported' as const),
@@ -567,6 +667,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     } satisfies VoiceConversationController;
     const host = {
       globalVoiceSessionId: 'voice-global',
+      runCurrentGenerationEffect,
       getPlatform: () => 'web' as const,
       getRealtimeClientToolDefinitions: () => [],
       getSettings: () => ({ voice: { providerId: 'realtime_test' } }),
@@ -609,10 +710,16 @@ describe('createBundledRealtimeProviderRuntime', () => {
       resolveConversationSessionId: vi.fn((controlSessionId: string) => controlSessionId),
       applyTargetSelection: vi.fn(async () => await targetSelection.promise),
       acquireAudioMode: vi.fn(async () => ({ release: vi.fn(async () => undefined) })),
-      createStorageMirror: vi.fn(() => vi.fn()),
       openLevelWriter: vi.fn(() => ({ write: vi.fn(), reset: vi.fn(), close: vi.fn() })),
       projectTranscript: vi.fn(() => null),
-      beginTranscriptAttempt: vi.fn(() => 1),
+      admitTranscriptPersistenceEvent: vi.fn(() => null),
+      commitAdmittedTranscriptPersistenceEvent: vi.fn(() => null),
+      releaseAdmittedTranscriptPersistenceEvent: vi.fn(() => false),
+      settleTranscriptPersistence: vi.fn(async () => undefined),
+      beginTranscriptAttempt: vi.fn(() => ({
+        epoch: 1,
+        attemptIdentity: 'attempt-1',
+      })),
       presentHostedLeaseNotice: vi.fn(),
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
@@ -652,7 +759,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       createConnection: vi.fn(async () => { throw new Error('unused'); }),
       encodeToolResults: vi.fn(() => []),
       encodeToolContinuation: vi.fn(() => ({ type: 'unused' })),
-      requiresMicForConnection: false,
+      microphoneMode: 'provider_managed',
       encodeContextUpdate: vi.fn(() => []),
       encodeTextTurn: vi.fn(() => []),
       resolveSurfaceCapabilities: vi.fn(() => null),
@@ -708,6 +815,16 @@ describe('createBundledRealtimeProviderRuntime', () => {
     });
     const beginOutputInterruptionCandidate = vi.fn(() => 'retained' as const);
     const resolveOutputInterruptionCandidate = vi.fn();
+    const requestReconnect = vi.fn(async () => true);
+    const inboundWatchdog = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      markTurnActive: vi.fn(),
+      markAwaitingResponse: vi.fn(),
+      noteInboundEvent: vi.fn(),
+    };
+    let reportInboundStall = (): void => {};
+    const getActiveControlSessionId = vi.fn((): string | null => 'voice-global');
     const micStream = { getAudioTracks: () => [] } as unknown as MediaStream;
     const ensureMicActive = vi.fn<() => Promise<void>>(async () => undefined);
     const mic = {
@@ -726,9 +843,10 @@ describe('createBundledRealtimeProviderRuntime', () => {
       outputLevelWriters.push(writer);
       return writer;
     });
+    const closeWebRtcConnection = vi.fn(async () => undefined);
     const webRtcConnection = {
       state: () => 'open',
-      close: vi.fn(async () => undefined),
+      close: closeWebRtcConnection,
     } as unknown as VoiceRealtimeConnection;
     const closePcmConnection = vi.fn(async () => undefined);
     const pcmConnection = {
@@ -747,51 +865,34 @@ describe('createBundledRealtimeProviderRuntime', () => {
     const createSdkHandleConnection = vi.fn(() => webRtcConnection);
     const createWebSocketPcmMedia = vi.fn(() => pcmMedia);
     const createWebSocketPcmConnection = vi.fn(() => pcmConnection);
-    const driver = Object.freeze({});
     const negotiatedWebRtc = Object.freeze({
       signaling: Object.freeze({
         exchangeOffer: vi.fn(async () => ({ answerSdp: 'v=0\r\n' })),
       }),
       control: Object.freeze({ label: 'events', onOpen: vi.fn() }),
     });
-    let failAfterPcmCreation = false;
+    let failAfterConnectionCreation = false;
     const createConnection = vi.fn(async (input: unknown) => {
       const media = (input as Readonly<{
-        attemptId: number;
         media: Readonly<{
           createWebRtcConnection(input: typeof negotiatedWebRtc): VoiceRealtimeConnection;
-          createPcmConnection(input: Readonly<{
-            driver: unknown;
-            input: Readonly<{ sampleRate: number; chunkMs: number }>;
-            output: Readonly<{ sampleRate: number; maxBufferedMs: number }>;
-            onInputChunk(base64Pcm16Le: string): void;
-            onInputError?(code: string): void;
-          }>): Readonly<{
-            connection: VoiceRealtimeConnection;
-            enqueueOutput(base64Pcm16Le: string): boolean;
-            clearOutput(): void;
-            waitForOutputDrain(signal: AbortSignal): Promise<void>;
-          }>;
         }>;
       }>).media;
-      const attemptId = (input as Readonly<{ attemptId: number }>).attemptId;
-      if (attemptId === 7) return media.createWebRtcConnection(negotiatedWebRtc);
-      const publicPcm = media.createPcmConnection({
-        driver,
-        input: { sampleRate: 24_000, chunkMs: 100 },
-        output: { sampleRate: 24_000, maxBufferedMs: 5_000 },
-        onInputChunk: vi.fn(),
-        onInputError: vi.fn(),
-      });
-      expect(publicPcm.connection).toBe(pcmConnection);
-      expect(publicPcm.enqueueOutput('AQI=')).toBe(true);
-      publicPcm.clearOutput();
-      await publicPcm.waitForOutputDrain(new AbortController().signal);
-      if (failAfterPcmCreation) throw new Error('provider_connection_creation_failed');
-      return pcmConnection;
+      const connection = media.createWebRtcConnection(negotiatedWebRtc);
+      if (failAfterConnectionCreation) throw new Error('provider_connection_creation_failed');
+      return connection;
     });
     const releaseAudioMode = vi.fn(async () => undefined);
     let interruptionPolicy: 'client_two_stage' | 'provider_immediate' = 'client_two_stage';
+    let hostGenerationCurrent = true;
+    const captureRetiringDirectMediaTranscriptDrain = vi.fn(() => (
+      Object.freeze({}) as unknown as BundledRetiringDirectMediaTranscriptDrain
+    ));
+    let resolvedConversationSessionId: string | null = 'session-1';
+    let directMediaAcquisitionCount = 0;
+    const carrierRebindStarted = createDeferredVoid();
+    const releaseCarrierRebind = createDeferredVoid();
+    const releaseTranscriptPersistence = createDeferredVoid();
     const hostMedia = {
       createSdkHandleConnection,
       createWebRtcConnection,
@@ -800,6 +901,12 @@ describe('createBundledRealtimeProviderRuntime', () => {
     };
     const host = {
       globalVoiceSessionId: 'voice-global',
+      isCurrentGeneration: () => hostGenerationCurrent,
+      runCurrentGenerationEffect(callback: () => void): boolean {
+        if (!hostGenerationCurrent) return false;
+        callback();
+        return true;
+      },
       getPlatform: () => 'web' as const,
       getRealtimeClientToolDefinitions: () => [],
       getSettings: () => ({ voice: { providerId: 'realtime_example' } }),
@@ -820,9 +927,10 @@ describe('createBundledRealtimeProviderRuntime', () => {
           fail,
           performTurnControl,
           sendClientControl,
-          getActiveControlSessionId: vi.fn(() => 'voice-global'),
+          getActiveControlSessionId,
           getOwnedControlSessionId: vi.fn(() => 'voice-global'),
-          requestReconnect: vi.fn(async () => true),
+          getOwnedAttemptId: vi.fn(() => 1),
+          requestReconnect,
           playbackCursorMs: vi.fn(() => 0),
           beginOutputInterruptionCandidate,
           resolveOutputInterruptionCandidate,
@@ -836,16 +944,29 @@ describe('createBundledRealtimeProviderRuntime', () => {
         emitMicFailure = (failure) => options.onFailure(failure);
         return mic;
       }),
+      createInboundWatchdog: vi.fn((options: Readonly<{ onStall(): void }>) => {
+        reportInboundStall = options.onStall;
+        return inboundWatchdog;
+      }),
       openLevelWriter,
       ensureBound: vi.fn(async () => undefined),
-      acquireDirectMediaConversation: vi.fn(() => ({
-        conversationSessionId: 'session-1',
-      })),
+      acquireDirectMediaConversation: vi.fn(async () => {
+        directMediaAcquisitionCount += 1;
+        if (directMediaAcquisitionCount > 1) {
+          carrierRebindStarted.resolve();
+          await releaseCarrierRebind.promise;
+          resolvedConversationSessionId = 'session-2';
+        }
+        return {
+          conversationSessionId: resolvedConversationSessionId ?? 'session-2',
+        };
+      }),
       releaseDirectMediaConversation: vi.fn(),
-      resolveConversationSessionId: vi.fn(() => 'session-1'),
+      captureRetiringDirectMediaTranscriptDrain,
+      releaseRetiringDirectMediaTranscriptDrain: vi.fn(),
+      resolveConversationSessionId: vi.fn(() => resolvedConversationSessionId),
       applyTargetSelection: vi.fn(),
       acquireAudioMode: vi.fn(async () => ({ release: releaseAudioMode })),
-      createStorageMirror: vi.fn(() => vi.fn()),
       projectTranscript: vi.fn(({ event }: Readonly<{ event: unknown }>) => {
         const transcript = event as Readonly<{ role?: unknown; type?: unknown; itemId?: unknown }>;
         return transcript.role === 'assistant'
@@ -854,7 +975,16 @@ describe('createBundledRealtimeProviderRuntime', () => {
           ? 'persisted-assistant-1'
           : null;
       }),
-      beginTranscriptAttempt: vi.fn(() => 1),
+      admitTranscriptPersistenceEvent: vi.fn(() => null),
+      commitAdmittedTranscriptPersistenceEvent: vi.fn(() => null),
+      releaseAdmittedTranscriptPersistenceEvent: vi.fn(() => false),
+      settleTranscriptPersistence: vi.fn(async () => {
+        await releaseTranscriptPersistence.promise;
+      }),
+      beginTranscriptAttempt: vi.fn(() => ({
+        epoch: 1,
+        attemptIdentity: 'attempt-1',
+      })),
       presentHostedLeaseNotice: vi.fn(),
       presentAttemptDiagnostic: vi.fn(),
       clearAttemptStatus: vi.fn(),
@@ -893,6 +1023,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
         },
         prepare, decodeControl: vi.fn(), encodeTurnControl: vi.fn(),
       },
+      microphoneMode: 'host_webrtc',
       createConnection,
       outputLevelMeter: 'measured',
       encodeToolResults: vi.fn(() => [{ type: 'tool.output' }]), encodeToolContinuation: vi.fn(() => ({ type: 'response.create' })),
@@ -936,6 +1067,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       onConnectionReady: expect.any(Function),
     });
     const runtimeEvents = controllerInput as unknown as Readonly<{
+      onInboundControlEvent(): void;
       onCanonicalEvent(
         event: Parameters<VoiceConversationControllerDeps['onCanonicalEvent']>[0],
       ): Promise<void>;
@@ -946,6 +1078,8 @@ describe('createBundledRealtimeProviderRuntime', () => {
         event: unknown;
       }>): void;
     }>;
+    runtimeEvents.onInboundControlEvent();
+    expect(inboundWatchdog.noteInboundEvent).toHaveBeenCalledTimes(1);
     const createControllerConnection = (controllerInput as unknown as Readonly<{
       createConnection(session: unknown, attemptId: number, signal: AbortSignal): Promise<unknown>;
     }>).createConnection;
@@ -986,20 +1120,8 @@ describe('createBundledRealtimeProviderRuntime', () => {
     connectionInput.levels.onOutputLevel(0.6);
     expect(attemptOneWriter.write).toHaveBeenCalledWith(0.6);
     await createControllerConnection({ config: null, safeMetadata: null }, 8, new AbortController().signal);
-    expect(createWebSocketPcmMedia).toHaveBeenCalledWith(expect.objectContaining({
-      mic,
-      input: { sampleRate: 24_000, chunkMs: 100 },
-      output: {
-        sampleRate: 24_000,
-        maxBufferedMs: 5_000,
-        retainedOutputMaxMs: expect.any(Number),
-      },
-      onOutputLevel: expect.any(Function),
-    }));
-    expect(createWebSocketPcmConnection).toHaveBeenCalledWith({ driver, pcm: pcmMedia.pcm });
-    expect(pcmMedia.enqueueOutput).toHaveBeenCalledWith('AQI=');
-    expect(pcmMedia.clearOutput).toHaveBeenCalledTimes(1);
-    expect(pcmMedia.waitForOutputDrain).toHaveBeenCalledTimes(1);
+    expect(createWebSocketPcmMedia).not.toHaveBeenCalled();
+    expect(createWebSocketPcmConnection).not.toHaveBeenCalled();
     expect(attemptOneWriter.close).toHaveBeenCalledTimes(1);
     const attemptTwoWriter = outputLevelWriters[1]!;
     const secondConnectionInput = createConnection.mock.calls[1]![0] as Readonly<{
@@ -1014,7 +1136,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     expect(attemptTwoWriter.write).toHaveBeenCalledWith(0.8);
     expect(() => secondConnectionInput.media.createWebRtcConnection(negotiatedWebRtc))
       .toThrow('voice_media_factory_expired');
-    expect(createWebRtcConnection).toHaveBeenCalledTimes(1);
+    expect(createWebRtcConnection).toHaveBeenCalledTimes(2);
     const cancelledAttempt = new AbortController();
     cancelledAttempt.abort();
     await expect(createControllerConnection(
@@ -1024,6 +1146,15 @@ describe('createBundledRealtimeProviderRuntime', () => {
     )).rejects.toMatchObject({ name: 'AbortError' });
     expect(createConnection).toHaveBeenCalledTimes(2);
     await runtimeEvents.onCanonicalEvent({ type: 'assistant_output_started', itemId: 'assistant-1' });
+    expect(inboundWatchdog.markTurnActive).toHaveBeenCalledWith(true);
+    // Generation replacement revokes A's live provider authority before A's
+    // asynchronous disposal completes. A queued provider event must not enter
+    // its barge-in coordinator and create an interruption candidate.
+    beginOutputInterruptionCandidate.mockClear();
+    hostGenerationCurrent = false;
+    await runtimeEvents.onCanonicalEvent({ type: 'input_speech_started' });
+    expect(beginOutputInterruptionCandidate).not.toHaveBeenCalled();
+    hostGenerationCurrent = true;
     await controllerInput!.resources!.preflight?.({
       controlSessionId: 'session-1',
       attemptId: 1,
@@ -1037,6 +1168,46 @@ describe('createBundledRealtimeProviderRuntime', () => {
       signal: new AbortController().signal,
     });
     expect(host.beginTranscriptAttempt).toHaveBeenCalledWith({ conversationSessionId: 'session-1' });
+    resolvedConversationSessionId = null;
+    logSpy.mockClear();
+    runtimeEvents.projectTranscript({
+      controlSessionId: 'session-1',
+      attemptId: 1,
+      connectionId: 1,
+      event: {
+        v: 1,
+        epoch: 7,
+        sequence: 7,
+        revision: 1,
+        eventId: 'assistant-1:delta',
+        role: 'assistant',
+        type: 'voice.transcript.delta',
+        text: 'the current',
+        itemId: 'assistant-1',
+        provenance: 'live',
+      },
+    });
+    runtimeEvents.projectTranscript({
+      controlSessionId: 'session-1',
+      attemptId: 1,
+      connectionId: 1,
+      event: {
+        v: 1,
+        epoch: 7,
+        sequence: 8,
+        revision: 2,
+        eventId: 'assistant-1:updated',
+        role: 'assistant',
+        type: 'voice.transcript.updated',
+        text: 'the current response',
+        itemId: 'assistant-1',
+        provenance: 'live',
+      },
+    });
+    expect(host.acquireDirectMediaConversation).toHaveBeenCalledTimes(1);
+    expect(host.beginTranscriptAttempt).toHaveBeenCalledTimes(1);
+    expect(host.projectTranscript).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalled();
     runtimeEvents.projectTranscript({
       controlSessionId: 'session-1',
       attemptId: 1,
@@ -1054,6 +1225,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
         provenance: 'live',
       },
     });
+    await carrierRebindStarted.promise;
     await new Promise((resolve) => setTimeout(resolve, 900));
     await runtimeEvents.onCanonicalEvent({ type: 'input_speech_started' });
     expect(host.machine.transitionToSpeaking).toHaveBeenCalledWith('voice-global', 'realtime_example');
@@ -1075,8 +1247,14 @@ describe('createBundledRealtimeProviderRuntime', () => {
         provenance: 'live',
       },
     });
-    expect(host.projectTranscript).toHaveBeenNthCalledWith(1, {
-      conversationSessionId: 'session-1',
+    await vi.waitFor(() => expect(
+      resolveOutputInterruptionCandidate,
+    ).toHaveBeenCalledWith('confirmed'));
+    expect(markAssistantInterrupted).not.toHaveBeenCalled();
+    releaseCarrierRebind.resolve();
+    await vi.waitFor(() => expect(host.projectTranscript).toHaveBeenNthCalledWith(1, {
+      conversationSessionId: 'session-2',
+      retiringTranscriptDrain: expect.any(Object),
       source: {
         pluginId: 'happier.voice.test',
         contributionId: 'realtime-example',
@@ -1084,7 +1262,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       event: {
         v: 1,
         epoch: 1,
-        sequence: 1,
+        sequence: 3,
         revision: 1,
         eventId: 'assistant-1:final',
         role: 'assistant',
@@ -1093,9 +1271,10 @@ describe('createBundledRealtimeProviderRuntime', () => {
         itemId: 'assistant-1',
         provenance: 'live',
       },
-    });
+    }));
     expect(host.projectTranscript).toHaveBeenNthCalledWith(2, {
-      conversationSessionId: 'session-1',
+      conversationSessionId: 'session-2',
+      retiringTranscriptDrain: expect.any(Object),
       source: {
         pluginId: 'happier.voice.test',
         contributionId: 'realtime-example',
@@ -1103,7 +1282,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       event: {
         v: 1,
         epoch: 1,
-        sequence: 2,
+        sequence: 4,
         revision: 1,
         eventId: 'user-1:final',
         role: 'user',
@@ -1114,10 +1293,63 @@ describe('createBundledRealtimeProviderRuntime', () => {
       },
     });
     await vi.waitFor(() => expect(resolveOutputInterruptionCandidate).toHaveBeenCalledWith('confirmed'));
+    expect(markAssistantInterrupted).not.toHaveBeenCalled();
+    releaseTranscriptPersistence.resolve();
     await vi.waitFor(() => expect(markAssistantInterrupted).toHaveBeenCalledWith({
-      conversationSessionId: 'session-1',
+      conversationSessionId: 'session-2',
       assistantEntryId: 'persisted-assistant-1',
     }));
+    expect(captureRetiringDirectMediaTranscriptDrain).toHaveBeenCalledTimes(1);
+    expect(markAssistantInterrupted).toHaveBeenCalledTimes(1);
+    resolvedConversationSessionId = null;
+    runtimeEvents.projectTranscript({
+      controlSessionId: 'session-1',
+      attemptId: 1,
+      connectionId: 1,
+      event: {
+        v: 1,
+        epoch: 7,
+        sequence: 10,
+        revision: 2,
+        eventId: 'assistant-1:corrected',
+        role: 'assistant',
+        type: 'voice.transcript.corrected',
+        text: 'the corrected response',
+        itemId: 'assistant-1',
+        provenance: 'live',
+      },
+    });
+    await Promise.resolve();
+    expect(host.acquireDirectMediaConversation).toHaveBeenCalledTimes(2);
+    expect(host.projectTranscript).toHaveBeenCalledTimes(2);
+    runtimeEvents.projectTranscript({
+      controlSessionId: 'session-1',
+      attemptId: 1,
+      connectionId: 1,
+      event: {
+        v: 1,
+        epoch: 7,
+        sequence: 11,
+        revision: 1,
+        eventId: 'assistant-2:final',
+        role: 'assistant',
+        type: 'voice.transcript.final',
+        text: 'the next authoritative response',
+        itemId: 'assistant-2',
+        provenance: 'live',
+      },
+    });
+    await vi.waitFor(() => {
+      expect(host.acquireDirectMediaConversation).toHaveBeenCalledTimes(3);
+      expect(host.projectTranscript).toHaveBeenNthCalledWith(3, expect.objectContaining({
+        conversationSessionId: 'session-2',
+        event: expect.objectContaining({
+          type: 'voice.transcript.final',
+          text: 'the next authoritative response',
+        }),
+      }));
+    });
+    resolvedConversationSessionId = 'session-1';
     expect(interruptOrder).toEqual([
       'local-output-cleared',
       'cancel_response',
@@ -1126,14 +1358,17 @@ describe('createBundledRealtimeProviderRuntime', () => {
     interruptOrder.length = 0;
     sentEvents.length = 0;
     await runtimeEvents.onCanonicalEvent({ type: 'assistant_output_stopped' });
+    expect(inboundWatchdog.markTurnActive).toHaveBeenCalledWith(false);
+    expect(inboundWatchdog.markAwaitingResponse).toHaveBeenCalledWith(false);
     expect(attemptTwoWriter.reset).toHaveBeenCalledTimes(1);
-    failAfterPcmCreation = true;
+    closeWebRtcConnection.mockClear();
+    failAfterConnectionCreation = true;
     await expect(createControllerConnection(
       { config: null, safeMetadata: null },
       10,
       new AbortController().signal,
     )).rejects.toThrow('provider_connection_creation_failed');
-    expect(closePcmConnection).toHaveBeenCalledWith({
+    expect(closeWebRtcConnection).toHaveBeenCalledWith({
       code: 'error',
       detail: 'voice_connection_creation_failed',
     });
@@ -1146,6 +1381,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     const controllerProtocol = (controllerInput as unknown as Readonly<{
       adapter: Readonly<{ prepare(input: unknown): Promise<unknown> }>;
       machine: Readonly<{
+        connected(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
         reconnecting(input: Readonly<{ controlSessionId: string; active: boolean }>): void;
         disconnected(input: Readonly<{ controlSessionId: string; code?: string }>): void;
         failed(input: Readonly<{ controlSessionId: string; code: string }>): void;
@@ -1166,7 +1402,17 @@ describe('createBundledRealtimeProviderRuntime', () => {
     prepare.mockRejectedValueOnce(Object.assign(new Error('rate_limited'), { code: 'rate_limited' }));
     await expect(controllerProtocol.adapter.prepare({})).rejects.toThrow('rate_limited');
     controllerProtocol.machine.reconnecting({ controlSessionId: 'voice-global', active: true });
-    expect(host.machine.setReconnecting).toHaveBeenCalledWith('voice-global', 'realtime_example', true);
+    expect(inboundWatchdog.stop).toHaveBeenCalled();
+    expect(host.machine.setReconnecting).toHaveBeenCalledWith(
+      'voice-global',
+      'realtime_example',
+      true,
+      undefined,
+    );
+    controllerProtocol.machine.connected({ controlSessionId: 'voice-global', attemptId: 1 });
+    expect(inboundWatchdog.start).toHaveBeenCalled();
+    reportInboundStall();
+    await vi.waitFor(() => expect(requestReconnect).toHaveBeenCalledTimes(1));
     controllerProtocol.machine.disconnected({ controlSessionId: 'voice-global', code: 'credential_unavailable' });
     expect(inputLevelWriter.close).toHaveBeenCalledTimes(1);
     expect(attemptTwoWriter.close).toHaveBeenCalledTimes(1);
@@ -1202,10 +1448,30 @@ describe('createBundledRealtimeProviderRuntime', () => {
       kind: 'mic_ended',
       reason: 'mic_ended',
     });
+    logSpy.mockClear();
     controllerProtocol.machine.failed({ controlSessionId: 'voice-global', code: 'provider_specific_failure' });
     expect(host.createMachineError).toHaveBeenLastCalledWith({
       kind: 'provider_error',
       reason: 'provider_specific_failure',
+    });
+    // Flattening an unknown code into `provider_error` renders as the single
+    // generic "Connection Error"; the typed reason must survive in the log.
+    const flattenedLog = String(logSpy.mock.calls.at(-1)?.[0]);
+    expect(flattenedLog).toContain('provider_specific_failure');
+    expect(flattenedLog).toContain('realtime_example');
+    // One credential fact, one kind: a credential code that arrives as a thrown
+    // failure must classify exactly as the same code arriving as a decline, or
+    // the surface offers a "Retry" that can never succeed instead of "Review
+    // credentials".
+    controllerProtocol.machine.failed({ controlSessionId: 'voice-global', code: 'credential_unavailable' });
+    expect(host.createMachineError).toHaveBeenLastCalledWith({
+      kind: 'provider_auth_invalid',
+      reason: 'credential_unavailable',
+    });
+    controllerProtocol.machine.failed({ controlSessionId: 'voice-global', code: 'realtime_byo_not_configured' });
+    expect(host.createMachineError).toHaveBeenLastCalledWith({
+      kind: 'provider_setup_required',
+      reason: 'realtime_byo_not_configured',
     });
     controllerProtocol.machine.failed({ controlSessionId: 'voice-global', code: 'update_required' });
     expect(host.createMachineError).toHaveBeenLastCalledWith({
@@ -1300,11 +1566,96 @@ describe('createBundledRealtimeProviderRuntime', () => {
     ]);
 
     sentEvents.length = 0;
-    await runtime.adapter.sendTextTurn!({ controlSessionId: 'voice-global', conversationSessionId: 'session-1', text: 'hello', localId: 'voice-local-1', deliveryCommand: 'interrupt_and_send' });
+    await expect(runtime.adapter.sendTextTurn!({
+      controlSessionId: 'session-1',
+      conversationSessionId: 'session-1',
+      text: 'stale carrier text',
+      localId: 'voice-local-stale',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: async () => {},
+    })).rejects.toMatchObject({
+      message: 'voice_transcript_carrier_changed',
+      code: 'VOICE_TEXT_TURN_REJECTED_BEFORE_EFFECT',
+      pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance',
+    });
+    expect(sentEvents).toEqual([]);
+
+    host.settleTranscriptPersistence.mockImplementationOnce(async () => {
+      sentEvents.push('transcript-drained');
+    });
+    await runtime.adapter.sendTextTurn!({
+      controlSessionId: 'session-1',
+      conversationSessionId: 'session-2',
+      text: 'hello',
+      localId: 'voice-local-1',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: async () => { sentEvents.push('pending-settled'); },
+    });
     expect(sentEvents).toEqual([
       { type: 'conversation.item.create', text: 'hello' },
+      'transcript-drained',
+      'pending-settled',
       { type: 'response.create' },
     ]);
+
+    sentEvents.length = 0;
+    let releaseFirstSettlement!: () => void;
+    const firstSettlement = new Promise<void>((resolve) => {
+      releaseFirstSettlement = resolve;
+    });
+    host.settleTranscriptPersistence.mockImplementationOnce(async () => {
+      await firstSettlement;
+    });
+    const firstTypedTurn = runtime.adapter.sendTextTurn!({
+      controlSessionId: 'session-1',
+      conversationSessionId: 'session-2',
+      text: 'first overlapping turn',
+      localId: 'voice-local-overlap-1',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: async () => { sentEvents.push('first-settled'); },
+    });
+    await vi.waitFor(() => {
+      expect(sentEvents).toEqual([
+        { type: 'conversation.item.create', text: 'first overlapping turn' },
+      ]);
+    });
+    const secondTypedTurn = runtime.adapter.sendTextTurn!({
+      controlSessionId: 'session-1',
+      conversationSessionId: 'session-2',
+      text: 'second overlapping turn',
+      localId: 'voice-local-overlap-2',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: async () => { sentEvents.push('second-settled'); },
+    });
+    await Promise.resolve();
+    expect(sentEvents).toEqual([
+      { type: 'conversation.item.create', text: 'first overlapping turn' },
+    ]);
+    releaseFirstSettlement();
+    await Promise.all([firstTypedTurn, secondTypedTurn]);
+    expect(sentEvents).toEqual([
+      { type: 'conversation.item.create', text: 'first overlapping turn' },
+      'first-settled',
+      { type: 'response.create' },
+      { type: 'conversation.item.create', text: 'second overlapping turn' },
+      'second-settled',
+      { type: 'response.create' },
+    ]);
+
+    const acceptedSentEventCount = sentEvents.length;
+    sendClientControl.mockResolvedValueOnce({
+      status: 'unavailable',
+      code: 'voice_connection_not_open',
+    });
+    await expect(runtime.adapter.sendTextTurn!({
+      controlSessionId: 'session-1',
+      conversationSessionId: 'session-2',
+      text: 'not accepted',
+      localId: 'voice-local-rejected',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: async () => {},
+    })).rejects.toThrow('voice_service_unavailable');
+    expect(sentEvents).toHaveLength(acceptedSentEventCount);
     await expect(runtime.adapter.performRuntimeAction?.('forget_provider_conversation'))
       .resolves.toEqual({ status: 'completed' });
     await expect(runtime.adapter.performRuntimeAction?.('unknown'))
@@ -1318,28 +1669,569 @@ describe('createBundledRealtimeProviderRuntime', () => {
     runtime.adapter.sendContextUpdate({ sessionId: 'voice-global', update: 'later context' });
     await vi.waitFor(() => expect(fail).toHaveBeenCalledWith('voice_context_update_failed'));
 
+    sentEvents.length = 0;
+    let releaseStoppedTurnSettlement!: () => void;
+    const stoppedTurnSettlement = new Promise<void>((resolve) => {
+      releaseStoppedTurnSettlement = resolve;
+    });
+    host.settleTranscriptPersistence.mockImplementationOnce(async () => {
+      await stoppedTurnSettlement;
+    });
+    const acceptedBeforeStop = vi.fn(async () => {});
+    const turnAcceptedBeforeStop = runtime.adapter.sendTextTurn!({
+      controlSessionId: 'session-1',
+      conversationSessionId: 'session-2',
+      text: 'accepted before stop',
+      localId: 'voice-local-stop-1',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: acceptedBeforeStop,
+    });
+    await vi.waitFor(() => {
+      expect(sentEvents).toEqual([
+        { type: 'conversation.item.create', text: 'accepted before stop' },
+      ]);
+    });
+    const queuedBeforeStop = runtime.adapter.sendTextTurn!({
+      controlSessionId: 'session-1',
+      conversationSessionId: 'session-2',
+      text: 'must not revive after stop',
+      localId: 'voice-local-stop-2',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted: async () => { sentEvents.push('stale-queued-settled'); },
+    });
+    let queuedBeforeStopSettled = false;
+    void queuedBeforeStop.catch(() => {
+      queuedBeforeStopSettled = true;
+    });
+    const startCallsBeforeStop = start.mock.calls.length;
+    await runtime.adapter.stop({ sessionId: 'session-1' });
+    getActiveControlSessionId.mockReturnValue(null);
+    await Promise.resolve();
+    expect(queuedBeforeStopSettled).toBe(true);
+    releaseStoppedTurnSettlement();
+    await expect(turnAcceptedBeforeStop).rejects.toThrow('voice_transcript_attempt_ownership_mismatch');
+    await expect(queuedBeforeStop).rejects.toThrow('voice_transcript_attempt_ownership_mismatch');
+    expect(acceptedBeforeStop).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(startCallsBeforeStop);
+    expect(sentEvents).toEqual([
+      { type: 'conversation.item.create', text: 'accepted before stop' },
+    ]);
+
     start.mockResolvedValueOnce({ status: 'failed', code: 'voice_context_update_failed' });
     await expect(runtime.adapter.start({ sessionId: 'session-2' })).rejects.toMatchObject({
       message: 'voice_context_update_failed',
       code: 'voice_context_update_failed',
     });
-    expect(stop).toHaveBeenCalledTimes(2);
-    expect(host.voiceHooks.onStopped).toHaveBeenCalledTimes(3);
+    expect(stop).toHaveBeenCalledTimes(3);
+    expect(host.voiceHooks.onStopped).toHaveBeenCalledTimes(4);
 
     start.mockResolvedValueOnce({ status: 'failed', code: 'machine unavailable at /Users/private/repository' });
     await expect(runtime.adapter.start({ sessionId: 'session-unsafe-code' })).rejects.toMatchObject({
       message: 'voice_connection_failed',
       code: 'voice_connection_failed',
     });
-    expect(stop).toHaveBeenCalledTimes(2);
-    expect(host.voiceHooks.onStopped).toHaveBeenCalledTimes(4);
+    expect(stop).toHaveBeenCalledTimes(3);
+    expect(host.voiceHooks.onStopped).toHaveBeenCalledTimes(5);
 
     start.mockResolvedValueOnce({ status: 'declined', code: 'credential_unavailable' });
     await expect(runtime.adapter.start({ sessionId: 'session-3' })).resolves.toBeUndefined();
-    expect(stop).toHaveBeenCalledTimes(2);
-    expect(host.voiceHooks.onStopped).toHaveBeenCalledTimes(5);
+    expect(stop).toHaveBeenCalledTimes(3);
+    expect(host.voiceHooks.onStopped).toHaveBeenCalledTimes(6);
+
+    /*
+     * A Start that ends without connecting and without informing the machine is
+     * the one failure the surface cannot explain: it keeps whatever label it had
+     * (including a stale "Connection Error") and no port records a reason.
+     * `voice_provider_not_selected` is returned by the controller's pre-attempt
+     * selection guard, before any machine transition, provider request or
+     * microphone acquisition — so the runtime must name it here or it is
+     * unrecoverable.
+     */
+    logSpy.mockClear();
+    start.mockResolvedValueOnce({ status: 'declined', code: 'voice_provider_not_selected' });
+    await expect(runtime.adapter.start({ sessionId: 'session-4' })).resolves.toBeUndefined();
+    const unsettledDecline = String(logSpy.mock.calls.at(-1)?.[0]);
+    expect(unsettledDecline).toContain('[voiceRuntimeFailure]');
+    expect(unsettledDecline).toContain('voice_provider_not_selected');
+    expect(unsettledDecline).toContain('realtime_example');
+
+    // An aborted start that never reached a terminal machine error is the same
+    // unexplainable outcome and must be nameable once.
+    logSpy.mockClear();
+    start.mockResolvedValueOnce({ status: 'aborted' });
+    await expect(runtime.adapter.start({ sessionId: 'session-5' })).resolves.toBeUndefined();
+    expect(String(logSpy.mock.calls.at(-1)?.[0])).toContain('voice_start_not_settled');
+
+    // A start the machine already named must not be reported twice.
+    logSpy.mockClear();
+    start.mockImplementationOnce(async () => {
+      controllerProtocol.machine.disconnected({
+        controlSessionId: 'session-6',
+        code: 'realtime_byo_not_configured',
+      });
+      return { status: 'declined', code: 'realtime_byo_not_configured' };
+    });
+    await expect(runtime.adapter.start({ sessionId: 'session-6' })).resolves.toBeUndefined();
+    expect(logSpy.mock.calls.filter(
+      (call) => String(call[0]).includes('[voiceRuntimeFailure]'),
+    )).toHaveLength(1);
 
     await runtime.dispose();
-    expect(stop).toHaveBeenCalledTimes(3);
+    expect(stop).toHaveBeenCalledTimes(4);
+  });
+
+  it('names every refused authoritative transcript event exactly once per attempt', async () => {
+    logSpy.mockClear();
+    let controllerInput: VoiceConversationControllerDeps | null = null;
+    let resolvedConversationSessionId: string | null = 'carrier-1';
+    let rebindFailure: Error | null = null;
+    let pendingCarrierRebind: ReturnType<typeof createDeferredVoid> | null = null;
+    let carrierRebindStarted: ReturnType<typeof createDeferredVoid> | null = null;
+    let activeResourceAttemptId: number | null = null;
+    let hostGenerationCurrent = true;
+    let transcriptAttemptSequence = 0;
+    let releaseReboundCarrier = createDeferredVoid();
+    let rejectAudioModeRelease = false;
+    const releaseAudioMode = vi.fn(async () => {
+      if (rejectAudioModeRelease) throw new Error('audio_mode_release_failed');
+    });
+    const releaseDirectMediaConversation = vi.fn(async (input: Readonly<{
+      conversationSessionId: string;
+    }>) => {
+      if (input.conversationSessionId === 'carrier-2') {
+        await releaseReboundCarrier.promise;
+      }
+    });
+    const onStopped = vi.fn();
+    const mic = {
+      ensureActive: vi.fn(async () => undefined),
+      teardown: vi.fn(async () => undefined),
+      setMuted: vi.fn(),
+      isMuted: vi.fn(() => false),
+      getStream: vi.fn(() => null),
+      getAudioContext: vi.fn(() => null),
+    };
+    const projectTranscript = vi.fn(() => null);
+    const controllerStop = vi.fn(async () => {
+      const attemptId = activeResourceAttemptId;
+      activeResourceAttemptId = null;
+      if (attemptId === null) return;
+      await controllerInput!.resources!.release({
+        controlSessionId: 'voice-global',
+        attemptId,
+        reason: { code: 'user_stop' },
+      }).catch(() => {});
+    });
+    const host = {
+      globalVoiceSessionId: 'voice-global',
+      isCurrentGeneration: () => hostGenerationCurrent,
+      runCurrentGenerationEffect(callback: () => void): boolean {
+        if (!hostGenerationCurrent) return false;
+        callback();
+        return true;
+      },
+      getPlatform: () => 'web' as const,
+      getRealtimeClientToolDefinitions: () => [],
+      getSettings: () => ({ voice: { providerId: 'realtime_drop' } }),
+      projectVoiceSettings: () => ({ providerId: 'realtime_drop', providerConfig: {} }),
+      machine: {
+        transitionToAcquiringMic: vi.fn(), transitionToConnecting: vi.fn(), transitionToConnected: vi.fn(),
+        setReconnecting: vi.fn(), transitionToSpeaking: vi.fn(), transitionToEnding: vi.fn(),
+        transitionToDisconnected: vi.fn(), setError: vi.fn(), setMuted: vi.fn(),
+        getSnapshot: vi.fn(() => ({ status: 'disconnected' })),
+        projectSnapshot: vi.fn(() => ({
+          adapterId: 'realtime_drop', sessionId: null,
+          status: 'disconnected' as const, mode: 'idle' as const, canStop: false,
+        })),
+        subscribe: vi.fn(() => vi.fn()),
+      },
+      createConversationController: vi.fn((input: VoiceConversationControllerDeps) => {
+        controllerInput = input;
+        return {
+          start: vi.fn(async (): Promise<VoiceConversationControllerStartResult> => ({ status: 'connected' })),
+          stop: controllerStop,
+          fail: vi.fn(async () => undefined),
+          performTurnControl: vi.fn(async () => ({ status: 'sent' as const })),
+          sendClientControl: vi.fn(async () => ({ status: 'sent' as const })),
+          getActiveControlSessionId: vi.fn((): string | null => 'voice-global'),
+          getOwnedControlSessionId: vi.fn((): string | null => 'voice-global'),
+          getOwnedAttemptId: vi.fn(() => 1),
+          requestReconnect: vi.fn(async () => true),
+          playbackCursorMs: vi.fn(() => 0),
+          beginOutputInterruptionCandidate: vi.fn(() => 'unsupported' as const),
+          resolveOutputInterruptionCandidate: vi.fn(),
+        };
+      }),
+      createMicSession: vi.fn(() => mic),
+      openLevelWriter: vi.fn(() => ({ write: vi.fn(), reset: vi.fn(), close: vi.fn() })),
+      ensureBound: vi.fn(async () => undefined),
+      acquireDirectMediaConversation: vi.fn(async () => {
+        if (rebindFailure) throw rebindFailure;
+        const rebind = pendingCarrierRebind;
+        if (rebind) {
+          carrierRebindStarted?.resolve();
+          await rebind.promise;
+        }
+        return { conversationSessionId: resolvedConversationSessionId ?? 'carrier-1' };
+      }),
+      releaseDirectMediaConversation,
+      resolveConversationSessionId: vi.fn(() => resolvedConversationSessionId),
+      applyTargetSelection: vi.fn(async () => undefined),
+      acquireAudioMode: vi.fn(async () => ({ release: releaseAudioMode })),
+      projectTranscript,
+      settleTranscriptPersistence: vi.fn(async () => undefined),
+      beginTranscriptAttempt: vi.fn(() => {
+        transcriptAttemptSequence += 1;
+        return {
+          epoch: transcriptAttemptSequence,
+          attemptIdentity: `attempt-drop-${transcriptAttemptSequence}`,
+        };
+      }),
+      presentHostedLeaseNotice: vi.fn(),
+      presentAttemptDiagnostic: vi.fn(),
+      clearAttemptStatus: vi.fn(),
+      createToolBarrier: vi.fn(() => ({
+        run: vi.fn(async () => ({ status: 'submitted' as const })), cancel: vi.fn(), dispose: vi.fn(),
+      })),
+      voiceHooks: { onStarted: vi.fn(() => ''), onStopped },
+      createMachineError: vi.fn((input) => ({
+        ...input, phase: 'runtime' as const, retryPolicy: 'user_action' as const,
+        recoveryAction: 'retry' as const, presentation: 'error' as const, recoverable: true,
+      })),
+      createSdkHandleConnection: vi.fn(),
+      createWebRtcConnection: vi.fn(),
+      createWebSocketPcmMedia: vi.fn(),
+      createWebSocketPcmConnection: vi.fn(),
+    } as unknown as BundledRealtimeProviderRuntimeHost;
+    const runtime = createBundledRealtimeProviderRuntime(host, {
+      providerId: 'realtime_drop',
+      execution: { kind: 'direct_media' },
+      protocol: {
+        id: 'realtime_drop',
+        turnControls: {
+          cancelResponse: 'immediate' as const, truncatePlayback: 'unsupported' as const,
+          clearInput: true, stopSession: true, resumption: 'none' as const,
+          replay: 'none' as const, exactMessage: true,
+        },
+        prepare: vi.fn(), decodeControl: vi.fn(), encodeTurnControl: vi.fn(),
+      },
+      microphoneMode: 'host_webrtc',
+      createConnection: vi.fn(),
+      encodeToolResults: vi.fn(() => []),
+      encodeToolContinuation: vi.fn(() => ({ type: 'response.create' })),
+      encodeContextUpdate: vi.fn(() => []),
+      encodeTextTurn: vi.fn(() => []),
+      resolveSurfaceCapabilities: () => ({
+        allowsGlobalStart: true, controlSessionScope: 'global',
+        requiresVoiceAgentFeature: false, bargeInEnabled: false,
+      }),
+    });
+    const authoritativeFinal = (eventId: string) => Object.freeze({
+      v: 1 as const,
+      epoch: 3,
+      sequence: 1,
+      revision: 1,
+      eventId,
+      role: 'user' as const,
+      type: 'voice.transcript.final' as const,
+      text: 'History Canary Delta 92',
+      itemId: 'user-item-1',
+      provenance: 'live' as const,
+    });
+    const transcriptDropRecords = () => logSpy.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.includes('[voiceRuntimeFailure]') && line.includes('transcript_dropped'));
+
+    try {
+      // A targeted direct-media attempt whose carrier binding disappears mid-turn
+      // cannot be re-acquired under a different identity. Refusing the write is
+      // correct; destroying the user's authoritative words without a trace is not.
+      await runtime.adapter.start({ sessionId: 'target-session' });
+      const runtimeEvents = controllerInput as unknown as Readonly<{
+        projectTranscript(input: Readonly<{
+          controlSessionId: string; attemptId: number; connectionId: number; event: unknown;
+        }>): void;
+      }>;
+      await controllerInput!.resources!.prepare({
+        controlSessionId: 'target-session',
+        attemptId: 1,
+        request: { requestedTargetSessionId: 'carrier-1' },
+        signal: new AbortController().signal,
+      });
+      activeResourceAttemptId = 1;
+      logSpy.mockClear();
+      resolvedConversationSessionId = null;
+      runtimeEvents.projectTranscript({
+        controlSessionId: 'target-session',
+        attemptId: 1,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-1'),
+      });
+      runtimeEvents.projectTranscript({
+        controlSessionId: 'target-session',
+        attemptId: 1,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-2'),
+      });
+      expect(projectTranscript).not.toHaveBeenCalled();
+      const targetedDrops = transcriptDropRecords();
+      expect(targetedDrops).toHaveLength(1);
+      expect(targetedDrops[0]).toContain('transcript_carrier_unavailable');
+      expect(targetedDrops[0]).toContain('voice_transcript_conversation_unavailable');
+      expect(targetedDrops[0]).toContain('realtime_drop');
+      // The record must never carry what the user said.
+      expect(targetedDrops[0]).not.toContain('History Canary Delta 92');
+      await runtime.adapter.stop({ sessionId: 'voice-global' });
+      releaseAudioMode.mockClear();
+      releaseDirectMediaConversation.mockClear();
+      onStopped.mockClear();
+
+      // An authoritative final admitted before End owns its carrier rebind and
+      // persistence drain. Starting release while acquisition is pending must
+      // not turn that already-received final into a superseded drop, and the
+      // public stop cannot settle before the rebound carrier's admitted writes.
+      resolvedConversationSessionId = 'carrier-1';
+      await runtime.adapter.start({ sessionId: '' });
+      await controllerInput!.resources!.prepare({
+        controlSessionId: 'voice-global',
+        attemptId: 2,
+        request: {},
+        signal: new AbortController().signal,
+      });
+      activeResourceAttemptId = 2;
+      // Generation replacement wins authority synchronously, before its old
+      // runtime enters disposal. A new final in that interval has not crossed
+      // the retiring-tail custody boundary and must not begin a carrier write.
+      hostGenerationCurrent = false;
+      logSpy.mockClear();
+      projectTranscript.mockClear();
+      (controllerInput as unknown as typeof runtimeEvents).projectTranscript({
+        controlSessionId: 'voice-global',
+        attemptId: 2,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-after-generation-replacement'),
+      });
+      expect(projectTranscript).not.toHaveBeenCalled();
+      expect(transcriptDropRecords()).toHaveLength(1);
+      expect(transcriptDropRecords()[0]).toContain('transcript_generation_retired');
+      hostGenerationCurrent = true;
+      rejectAudioModeRelease = true;
+      resolvedConversationSessionId = null;
+      pendingCarrierRebind = createDeferredVoid();
+      carrierRebindStarted = createDeferredVoid();
+      logSpy.mockClear();
+      (controllerInput as unknown as typeof runtimeEvents).projectTranscript({
+        controlSessionId: 'voice-global',
+        attemptId: 2,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-before-stop'),
+      });
+      await carrierRebindStarted.promise;
+      let stopSettled = false;
+      const stopping = runtime.adapter.stop({ sessionId: 'voice-global' }).then(() => {
+        stopSettled = true;
+      });
+      // The controller is still waiting for the admitted final's carrier rebind,
+      // before resources.release registers its transcript drain by attempt id.
+      let duplicateStopSettled = false;
+      const duplicateStopping = runtime.adapter.stop({ sessionId: 'voice-global' }).then(() => {
+        duplicateStopSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(stopSettled).toBe(false);
+      expect(duplicateStopSettled).toBe(false);
+      expect(releaseDirectMediaConversation).not.toHaveBeenCalled();
+      expect(onStopped).not.toHaveBeenCalled();
+      (controllerInput as unknown as typeof runtimeEvents).projectTranscript({
+        controlSessionId: 'voice-global',
+        attemptId: 2,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-after-stop-started'),
+      });
+      resolvedConversationSessionId = 'carrier-2';
+      pendingCarrierRebind.resolve();
+      await vi.waitFor(() => expect(
+        releaseDirectMediaConversation,
+      ).toHaveBeenCalledWith(expect.objectContaining({
+        conversationSessionId: 'carrier-2',
+      })));
+      expect(releaseDirectMediaConversation.mock.calls.filter(
+        ([input]) => (input as Readonly<{ conversationSessionId?: string }>).conversationSessionId === 'carrier-2',
+      )).toHaveLength(1);
+      expect(releaseAudioMode).toHaveBeenCalledTimes(1);
+      expect(stopSettled).toBe(false);
+      expect(duplicateStopSettled).toBe(false);
+      releaseReboundCarrier.resolve();
+      await Promise.all([stopping, duplicateStopping]);
+      await controllerInput!.resources!.release({
+        controlSessionId: 'voice-global',
+        attemptId: 2,
+        reason: { code: 'user_stop' },
+      });
+      expect(releaseDirectMediaConversation.mock.calls.filter(
+        ([input]) => (input as Readonly<{ conversationSessionId?: string }>).conversationSessionId === 'carrier-2',
+      )).toHaveLength(1);
+      expect(releaseAudioMode).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(projectTranscript).toHaveBeenCalledWith(expect.objectContaining({
+        conversationSessionId: 'carrier-2',
+        event: expect.objectContaining({ eventId: 'user-final-before-stop' }),
+      })));
+      expect(projectTranscript).toHaveBeenCalledTimes(1);
+      expect(projectTranscript).not.toHaveBeenCalledWith(expect.objectContaining({
+        event: expect.objectContaining({ eventId: 'user-final-after-stop-started' }),
+      }));
+      expect(transcriptDropRecords()).toHaveLength(1);
+      expect(transcriptDropRecords()[0]).toContain('transcript_carrier_unavailable');
+
+      // A targetless attempt whose carrier recreation fails loses the same words
+      // through the other branch, and must be nameable there too.
+      resolvedConversationSessionId = 'carrier-1';
+      pendingCarrierRebind = null;
+      carrierRebindStarted = null;
+      await runtime.adapter.start({ sessionId: '' });
+      await controllerInput!.resources!.prepare({
+        controlSessionId: 'voice-global',
+        attemptId: 3,
+        request: {},
+        signal: new AbortController().signal,
+      });
+      activeResourceAttemptId = 3;
+      logSpy.mockClear();
+      projectTranscript.mockClear();
+      resolvedConversationSessionId = null;
+      rebindFailure = new Error('carrier_recreation_unavailable');
+      (controllerInput as unknown as typeof runtimeEvents).projectTranscript({
+        controlSessionId: 'voice-global',
+        attemptId: 3,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-3'),
+      });
+      await vi.waitFor(() => expect(transcriptDropRecords()).toHaveLength(1));
+      expect(transcriptDropRecords()[0]).toContain('transcript_carrier_rebind_failed');
+      expect(projectTranscript).not.toHaveBeenCalled();
+
+      // A late event after End Voice is fenced deliberately, but the fence is
+      // still a lost authoritative word and is named once, not once per event.
+      await runtime.adapter.stop({ sessionId: 'voice-global' });
+      logSpy.mockClear();
+      (controllerInput as unknown as typeof runtimeEvents).projectTranscript({
+        controlSessionId: 'voice-global',
+        attemptId: 3,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-4'),
+      });
+      (controllerInput as unknown as typeof runtimeEvents).projectTranscript({
+        controlSessionId: 'voice-global',
+        attemptId: 3,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-5'),
+      });
+      const fencedDrops = transcriptDropRecords();
+      expect(fencedDrops).toHaveLength(1);
+      expect(fencedDrops[0]).toContain('transcript_attempt_unowned');
+
+      // Disposal is another End Voice entrypoint. It must join the same
+      // attempt-scoped Stop/drain owner rather than clearing its custody while
+      // an admitted final still waits for carrier rebind and persistence.
+      rebindFailure = null;
+      pendingCarrierRebind = null;
+      carrierRebindStarted = null;
+      releaseReboundCarrier = createDeferredVoid();
+      resolvedConversationSessionId = 'carrier-1';
+      projectTranscript.mockClear();
+      logSpy.mockClear();
+      releaseAudioMode.mockClear();
+      releaseDirectMediaConversation.mockClear();
+      onStopped.mockClear();
+      controllerStop.mockClear();
+      await runtime.adapter.start({ sessionId: '' });
+      await controllerInput!.resources!.prepare({
+        controlSessionId: 'voice-global',
+        attemptId: 4,
+        request: {},
+        signal: new AbortController().signal,
+      });
+      activeResourceAttemptId = 4;
+      pendingCarrierRebind = createDeferredVoid();
+      carrierRebindStarted = createDeferredVoid();
+      resolvedConversationSessionId = null;
+      (controllerInput as unknown as typeof runtimeEvents).projectTranscript({
+        controlSessionId: 'voice-global',
+        attemptId: 4,
+        connectionId: 1,
+        event: authoritativeFinal('user-final-before-dispose'),
+      });
+      await carrierRebindStarted.promise;
+
+      let disposalSettled = false;
+      let duplicateDisposalSettled = false;
+      let stopSettledDuringDisposal = false;
+      let duplicateStopSettledDuringDisposal = false;
+      const disposal = runtime.dispose();
+      const duplicateDisposal = runtime.dispose();
+      expect(duplicateDisposal).toBe(disposal);
+      void disposal.then(() => {
+        disposalSettled = true;
+      });
+      void duplicateDisposal.then(() => {
+        duplicateDisposalSettled = true;
+      });
+      const stoppingDuringDisposal = runtime.adapter.stop({ sessionId: 'voice-global' });
+      const duplicateStoppingDuringDisposal = runtime.adapter.stop({ sessionId: 'voice-global' });
+      expect(duplicateStoppingDuringDisposal).toBe(stoppingDuringDisposal);
+      void stoppingDuringDisposal.then(() => {
+        stopSettledDuringDisposal = true;
+      });
+      void duplicateStoppingDuringDisposal.then(() => {
+        duplicateStopSettledDuringDisposal = true;
+      });
+
+      await Promise.resolve();
+      expect(disposalSettled).toBe(false);
+      expect(duplicateDisposalSettled).toBe(false);
+      expect(stopSettledDuringDisposal).toBe(false);
+      expect(duplicateStopSettledDuringDisposal).toBe(false);
+      expect(releaseDirectMediaConversation).not.toHaveBeenCalled();
+
+      resolvedConversationSessionId = 'carrier-2';
+      pendingCarrierRebind.resolve();
+      await vi.waitFor(() => expect(
+        releaseDirectMediaConversation,
+      ).toHaveBeenCalledWith(expect.objectContaining({
+        conversationSessionId: 'carrier-2',
+      })));
+      expect(releaseDirectMediaConversation.mock.calls.filter(
+        ([input]) => (input as Readonly<{ conversationSessionId?: string }>).conversationSessionId === 'carrier-2',
+      )).toHaveLength(1);
+      expect(releaseAudioMode).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(projectTranscript).toHaveBeenCalledWith(expect.objectContaining({
+        conversationSessionId: 'carrier-2',
+        event: expect.objectContaining({ eventId: 'user-final-before-dispose' }),
+      })));
+      expect(projectTranscript).toHaveBeenCalledTimes(1);
+
+      // The rejected fallible audio release must not cause any caller to skip
+      // the already-admitted carrier drain or settle before that same drain.
+      await Promise.resolve();
+      expect(disposalSettled).toBe(false);
+      expect(duplicateDisposalSettled).toBe(false);
+      expect(stopSettledDuringDisposal).toBe(false);
+      expect(duplicateStopSettledDuringDisposal).toBe(false);
+      expect(controllerStop).toHaveBeenCalledTimes(1);
+      expect(onStopped).not.toHaveBeenCalled();
+
+      releaseReboundCarrier.resolve();
+      await Promise.all([
+        disposal,
+        duplicateDisposal,
+        stoppingDuringDisposal,
+        duplicateStoppingDuringDisposal,
+      ]);
+      expect(onStopped).toHaveBeenCalledTimes(1);
+    } finally {
+      pendingCarrierRebind?.resolve();
+      releaseReboundCarrier.resolve();
+      await runtime.dispose();
+    }
   });
 });

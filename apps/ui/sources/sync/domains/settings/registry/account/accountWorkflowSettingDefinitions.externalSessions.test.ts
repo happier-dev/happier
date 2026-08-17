@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { serializeTrackedSettingEntries } from '../../../../../track/settingsAnalytics/serializeTrackedSettingEntries';
 import { applySettings, settingsParse } from '../../settings';
-import { ACCOUNT_WORKFLOW_SETTING_DEFINITIONS } from './accountWorkflowSettingDefinitions';
+import { ACCOUNT_SETTING_ANALYTICS_ARTIFACTS } from './accountSettingAnalytics';
 
 const POLICY = {
     machineId: 'machine-1',
@@ -72,9 +72,9 @@ describe('externalSessionsSettingsV1 account persistence', () => {
     });
 
     it('serializes only passive intent and the aggregate enabled policy count', () => {
-        const analytics = ACCOUNT_WORKFLOW_SETTING_DEFINITIONS
+        const definition = ACCOUNT_SETTING_ANALYTICS_ARTIFACTS.definitions
             .externalSessionsSettingsV1
-            .analytics;
+        const analytics = definition.analytics;
         expect(analytics?.currentPropertyValueKinds).toEqual({
             keepPassivelyFollowingAfterRestart: 'boolean',
             autoLinkSourcePolicyEnabledCount: 'count',
@@ -95,7 +95,7 @@ describe('externalSessionsSettingsV1 account persistence', () => {
         expect(JSON.stringify(serialized)).not.toContain(POLICY.sourcePolicyId);
 
         const tracked = serializeTrackedSettingEntries(
-            ACCOUNT_WORKFLOW_SETTING_DEFINITIONS.externalSessionsSettingsV1,
+            definition,
             {
                 v: 1,
                 keepPassivelyFollowingAfterRestart: true,

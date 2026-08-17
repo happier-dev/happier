@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 
+import type { VoiceReadinessRole } from '@happier-dev/protocol';
+
 import type { DeviceSpeechRecognitionAvailability } from '@/voice/input/deviceSpeechRecognitionAvailability';
 
 export type VoiceProviderModeId = 'off' | 'happier' | 'byo' | 'local';
@@ -400,4 +402,27 @@ export function resolveVoiceProviderAvailability(input: ResolveVoiceProviderAvai
             paths: localPaths,
         }),
     };
+}
+
+/**
+ * Canonical role-aware projection for the built-in Device speech path.
+ *
+ * Device STT consumes the passive browser/native recognition fact. Device TTS
+ * is intentionally not recognition-dependent and therefore has no path here.
+ */
+export function resolveVoiceDeviceSpeechRolePath(input: Readonly<{
+    role: VoiceReadinessRole;
+    platformOs?: string;
+    local?: ResolveVoiceProviderAvailabilityInput['local'];
+}>): VoiceLocalExecutionPathAvailability | null {
+    if (input.role !== 'dictation_stt' && input.role !== 'conversation_stt') {
+        return null;
+    }
+    const platformOs = input.platformOs ?? Platform.OS;
+    const paths = resolveVoiceProviderAvailability({
+        happierVoiceSupported: true,
+        platformOs,
+        local: input.local,
+    }).local.paths;
+    return platformOs === 'web' ? paths.browserSpeech : paths.nativeDevice;
 }

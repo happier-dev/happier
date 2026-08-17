@@ -7,6 +7,7 @@ import {
 } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,7 +47,7 @@ installToolShellCommonModuleMocks({
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSetting: createUseSettingMock({ fallback: (key) => settings[key] }),
+                useSetting: createUseSettingMock({ fallback: (key) => settings[key] ?? settingsDefaults[key] }),
             },
         }),
 });
@@ -137,7 +138,7 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => (
         expanded ? React.createElement(React.Fragment, null, children) : null,
 }));
 
-let settings: Record<string, unknown> = {};
+let settings: Partial<Settings> = {};
 
 describe('ToolTimelineRow (permission pending)', () => {
     beforeEach(() => {
@@ -334,7 +335,7 @@ describe('ToolTimelineRow (permission pending)', () => {
     });
 
     it('renders PermissionFooter when transcript prompts are forced even if the global setting prefers the composer', async () => {
-        settings.permissionPromptSurface = 'composer';
+        settings = { ...settings, permissionPromptSurface: 'composer' };
 
         const { ToolTimelineRow } = await import('./ToolTimelineRow');
         const tool: any = {

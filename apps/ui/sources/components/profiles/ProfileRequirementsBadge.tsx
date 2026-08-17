@@ -1,6 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -9,11 +8,15 @@ import { useProfileEnvRequirements } from '@/hooks/session/useProfileEnvRequirem
 import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { Icon } from '@/components/ui/icons/Icon';
+import { HappierBadge, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 export interface ProfileRequirementsBadgeProps {
     profile: AIBackendProfile;
     machineId: string | null;
+    /** Optional exact server context for the machine environment preflight. */
+    serverId?: string | null;
     onPressIn?: () => void;
     onPress?: () => void;
     /**
@@ -39,6 +42,7 @@ export function ProfileRequirementsBadge(props: ProfileRequirementsBadgeProps) {
     const requirements = useProfileEnvRequirements(
         props.machineEnvOverride ? null : props.machineId,
         props.machineEnvOverride ? null : (show ? props.profile : null),
+        props.serverId,
     );
 
     if (!show) {
@@ -68,43 +72,42 @@ export function ProfileRequirementsBadge(props: ProfileRequirementsBadgeProps) {
             : 'key-outline';
 
     return (
-        <Pressable
+        <HappierPressable
+            accessibilityLabel={label}
             onPressIn={(e) => {
                 e?.stopPropagation?.();
                 props.onPressIn?.();
             }}
-            onPress={(e) => {
-                e?.stopPropagation?.();
+            onPress={() => {
                 props.onPress?.();
             }}
             style={({ pressed }) => [
-                styles.badge,
                 {
-                    borderColor: statusColor,
                     opacity: pressed ? 0.85 : 1,
                 },
             ]}
         >
-            <View style={styles.badgeRow}>
-                {normalizeNodeForView(<Ionicons name={iconName as any} size={14} color={statusColor} />)}
-                <Text style={[styles.badgeText, { color: statusColor }]} numberOfLines={1}>
-                    {label}
-                </Text>
-            </View>
-        </Pressable>
+            <HappierBadge
+                color={statusColor}
+                backgroundColor={theme.colors.surface.base}
+                borderColor={statusColor}
+                radius={999}
+                horizontalPadding={10}
+                verticalPadding={6}
+            >
+                <View style={styles.badgeRow}>
+                    {normalizeNodeForView(<Icon name={iconName as any} size={14} color={statusColor} />)}
+                    <Text style={[styles.badgeText, { color: statusColor }]} numberOfLines={1}>
+                        {label}
+                    </Text>
+                </View>
+            </HappierBadge>
+        </HappierPressable>
     );
 }
 
 
 const stylesheet = StyleSheet.create((theme) => ({
-    badge: {
-        maxWidth: 140,
-        borderWidth: 1,
-        borderRadius: 999,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        backgroundColor: theme.colors.surface.base,
-    },
     badgeRow: {
         flexDirection: 'row',
         alignItems: 'center',

@@ -55,6 +55,9 @@ describe('PopoverBackdrop', () => {
                 anchorRect={{ x: 20, y: 560, width: 120, height: 40 }}
                 windowWidth={390}
                 windowHeight={844}
+                // No native overlay portal root here, so the layout space IS the window: this case
+                // still pins window-space behaviour and must stay green after the portal-space fix.
+                portalSpaceHeight={844}
                 webPortalOffsetX={0}
                 webPortalOffsetY={0}
             />,
@@ -66,5 +69,8 @@ describe('PopoverBackdrop', () => {
         expect(style.top).toBe(0);
         expect(style.bottom).toBe(284);
         expect(pressable.props.onPress).toBe(onRequestClose);
+        // Native keeps React Native's responder-level ownership; only RNW moves this
+        // compatibility prop into styles to avoid its deprecated-prop warning.
+        expect(pressable.props.pointerEvents).toBe('auto');
     });
 });

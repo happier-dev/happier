@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+    EMPTY_PERSISTED_PANE_SCOPE_STATE,
     objectKeyCount,
     paneScopeStateSchema,
     serializeNormalizedPaneSizeWithBasisKey,
@@ -10,6 +11,12 @@ const sessionMobileSurfaceSchema = z.union([
     z.enum(['chat', 'browse', 'git', 'navigation', 'tabs', 'browser', 'services', 'terminal']),
     z.custom<`plugin:${string}:${string}`>((value) => typeof value === 'string' && /^plugin:[^:]+:.+$/.test(value)),
 ]);
+
+const compactAppDestinationIdSchema = z.string().trim().min(1).max(256);
+const compactAppDestinationPreferencesSchema = z.object({
+    orderedDestinationIds: z.array(compactAppDestinationIdSchema).max(128).default([]),
+    hiddenDestinationIds: z.array(compactAppDestinationIdSchema).max(128).default([]),
+}).strict();
 
 export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     uiContentWidthMode: {
@@ -103,7 +110,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     sessionLastMobileSurfaceBySessionId: {
         schema: z.record(z.string(), sessionMobileSurfaceSchema).default({}),
         default: {},
-        description: 'Last active mobile session surface by server-scoped session key, with legacy bare session ids accepted for compatibility',
+        description: 'Last active mobile session surface by realm-qualified session key',
         storageScope: 'local',
         analytics: {
             trackCurrentState: true,
@@ -114,10 +121,41 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
             serializeCurrent: objectKeyCount,
         },
     },
+    sessionCockpitPinnedSurfaceIds: {
+        schema: z.array(z.string().trim().min(1)).max(3).default([]),
+        default: [],
+        description: 'User-pinned qualified destinations in the Session mobile cockpit',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'device_user',
+            serializeCurrent: (value: readonly string[]) => value.length,
+        },
+    },
+    compactAppDestinationPreferencesV1: {
+        schema: compactAppDestinationPreferencesSchema,
+        default: { orderedDestinationIds: [], hiddenDestinationIds: [] },
+        description: 'User ordering and visibility preferences for compact App destinations',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'device_user',
+            serializeCurrent: (value: Readonly<{
+                orderedDestinationIds: readonly string[];
+                hiddenDestinationIds: readonly string[];
+            }>) => value.orderedDestinationIds.length + value.hiddenDestinationIds.length,
+        },
+    },
     projectLastMobileSurfaceByWorkspaceRefId: {
         schema: z.record(z.string(), z.enum(['overview', 'browse', 'git', 'tabs', 'terminal', 'browser', 'services'])).default({}),
         default: {},
-        description: 'Last active mobile project surface by workspace ref id',
+        description: 'Last active mobile project surface by realm-qualified workspace key',
         storageScope: 'local',
         analytics: {
             trackCurrentState: true,
@@ -157,7 +195,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         },
     },
     appPaneScopesV1: {
-        schema: z.record(z.string(), paneScopeStateSchema).default({}),
+        schema: z.record(z.string(), paneScopeStateSchema.catch(EMPTY_PERSISTED_PANE_SCOPE_STATE)).default({}),
         default: {},
         description: 'Persisted app pane scope state by scope id',
         storageScope: 'local',

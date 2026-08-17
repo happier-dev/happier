@@ -113,6 +113,9 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
   machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
     machineContributionRegistryProjectionDescribeMock(...args),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/ops/capabilities', () => ({

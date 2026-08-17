@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -16,6 +15,7 @@ import type {
     PlanChecklistVariant,
 } from './types';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon, type IconName, type IconWeight } from '@/components/ui/icons/Icon';
 
 function getRowStatus(
     item: PlanChecklistItem,
@@ -44,21 +44,21 @@ function getRowStatus(
     return selected ? 'queued' : 'idle';
 }
 
-function getExecutionStatusIcon(status: PlanChecklistItemStatus, selected: boolean): React.ComponentProps<typeof Ionicons>['name'] | null {
+function getExecutionStatusIcon(status: PlanChecklistItemStatus, selected: boolean): IconName | null {
     if (status === 'running') {
         return null;
     }
     if (status === 'done') {
-        return 'checkmark-circle';
+        return 'check-circle';
     }
     if (status === 'error') {
-        return 'close-circle';
+        return 'x-circle';
     }
     if (status === 'queued') {
-        return 'ellipse-outline';
+        return 'circle';
     }
     if (status === 'idle') {
-        return 'ellipse-outline';
+        return 'circle';
     }
     return null;
 }
@@ -380,9 +380,13 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
     );
     const detailsAvailable = hasDetailsContent;
     const shouldRevealDetailsToggle = detailsAvailable && (Platform.OS !== 'web' || hovered || props.expanded);
-    const iconName = props.phase === 'select'
-        ? (status === 'done' ? 'checkmark-circle' : (props.selected ? 'checkmark-circle-outline' : 'ellipse-outline'))
+    // 'checkmark-circle' (done) and 'checkmark-circle-outline' (selected) both render the same
+    // 'check-circle' glyph now; Phosphor expresses the old filled-vs-outline Ionicons pair as a
+    // weight, not a name — see iconWeight below.
+    const iconName: IconName | null = props.phase === 'select'
+        ? (status === 'done' || props.selected ? 'check-circle' : 'circle')
         : getExecutionStatusIcon(status, props.selected);
+    const iconWeight: IconWeight | undefined = props.phase === 'select' && status === 'done' ? 'fill' : undefined;
     const canToggleSelection = props.phase === 'select' && !props.item.disabled;
     const canToggleExpanded = detailsAvailable;
     const rowOnPress = React.useMemo(() => {
@@ -415,8 +419,8 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     pressed ? { opacity: 0.7 } : null,
                 ])}
             >
-                <Ionicons
-                    name={props.expanded ? 'chevron-up' : 'chevron-down'}
+                <Icon
+                    name={props.expanded ? 'caret-up' : 'caret-down'}
                     size={16}
                     color={theme.colors.text.secondary}
                 />
@@ -486,7 +490,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                                 usesOnboardingVariant && status !== 'done' && status !== 'error' ? (
                                     <Text style={styles.timelineNumber}>{timelineNodeIndex}</Text>
                                 ) : (
-                                    <Ionicons
+                                    <Icon
                                         name={iconName}
                                         size={usesCompactNestedRow ? 16 : (usesOnboardingVariant ? 18 : 16)}
                                         color={
@@ -498,6 +502,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                                                         ? (usesOnboardingVariant ? theme.colors.text.primary : theme.colors.accent.blue)
                                                         : theme.colors.text.tertiary
                                         }
+                                        weight={iconWeight}
                                     />
                                 )
                             ) : null}

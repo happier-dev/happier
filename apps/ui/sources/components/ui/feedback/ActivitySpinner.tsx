@@ -1,120 +1,81 @@
+import {
+    iconMatchedSpinnerSize,
+    resolveHappierWebSpinnerPresentation,
+} from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { ActivityIndicator as NativeActivityIndicator, Platform, View, type ActivityIndicatorProps, type ViewStyle } from 'react-native';
+import {
+    ActivityIndicator as RNActivityIndicator,
+    Platform,
+    View,
+    type ActivityIndicatorProps as RNActivityIndicatorProps,
+} from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
-const DEFAULT_SMALL_SPINNER_SIZE = 20;
-const DEFAULT_LARGE_SPINNER_SIZE = 36;
-const DEFAULT_NUMERIC_SPINNER_SIZE = 20;
-const STEPPED_WEB_SPINNER_MAX_SIZE = DEFAULT_SMALL_SPINNER_SIZE;
-const STEPPED_WEB_SPINNER_TIMING_FUNCTION = 'steps(6, end)';
-const SPINNER_ANIMATION_NAME = 'happierActivitySpinnerSpin';
+export { iconMatchedSpinnerSize };
 
-type WebActivitySpinnerStyle = ViewStyle & {
-    animationDuration?: string;
-    animationIterationCount?: string;
-    animationName?: string;
-    animationTimingFunction?: string;
-    borderTopColor?: string;
-    willChange?: string;
-};
-
-export type ActivitySpinnerProps = Omit<ActivityIndicatorProps, 'size'> & {
-    size?: ActivityIndicatorProps['size'] | number;
+export type ActivitySpinnerProps = RNActivityIndicatorProps & Readonly<{
     /** Keep the web spinner visible while disabling the CSS transform animation. */
     animationEnabled?: boolean;
-};
-
-function resolveSpinnerSize(size: ActivityIndicatorProps['size']): number {
-    if (typeof size === 'number' && Number.isFinite(size)) {
-        return Math.max(1, size);
-    }
-    if (size === 'large') {
-        return DEFAULT_LARGE_SPINNER_SIZE;
-    }
-    return DEFAULT_SMALL_SPINNER_SIZE;
-}
-
-function resolveSpinnerBorderWidth(size: number): number {
-    return Math.max(1.5, Math.min(3, size / 8));
-}
+}>;
 
 /**
- * A vector icon draws its circle INSET in its em box, but a spinner's diameter IS its box. So a
- * spinner and an Ionicons `checkmark-circle` given the same number render at visibly different
- * sizes, and a status slot that swaps one for the other appears to change size as it settles.
+ * Happier core's activity-spinner adapter.
  *
- * Measured from a rendered transcript at matched scale: a filled circle glyph declared at 16 draws
- * ~12.8px of ink, next to a `size="small"` spinner's full 20px ring — the running state read 1.55x
- * the size of the success state it turns into.
+ * The shared presentation owner supplies web-spinner visibility, sizing and
+ * motion semantics. This adapter owns the native RN hosts and their complete
+ * style/prop contract, plus the resolved Unistyles colour and app-wide
+ * reduced-motion preference (§3.10.2).
  *
- * Every status slot that pairs a spinner with a glyph derives the spinner from the glyph size here.
- * Before this existed, four of them each guessed separately and all four disagreed.
+ * The preference is read only on the web branch, exactly as before. Spinners
+ * mount by the hundred in virtualized lists, and the native branch cannot use
+ * the value — subscribing every instance to a preference it ignores is the cost
+ * the split here exists to avoid.
  */
-const ICON_CIRCLE_INK_RATIO = 0.8;
-
-export function iconMatchedSpinnerSize(iconSize: number): number {
-    return Math.round(iconSize * ICON_CIRCLE_INK_RATIO);
-}
-
 export function ActivitySpinner(props: ActivitySpinnerProps) {
     const { theme } = useUnistyles();
     const resolvedColor = props.color ?? theme.colors.text.secondary;
 
     if (Platform.OS !== 'web') {
-        return <NativeActivityIndicator {...props} color={resolvedColor} />;
+        const { animationEnabled: _animationEnabled, ...nativeProps } = props;
+        return <RNActivityIndicator {...nativeProps} color={resolvedColor} />;
     }
 
     return <WebActivitySpinner {...props} resolvedColor={resolvedColor} />;
 }
 
-function WebActivitySpinner(
-    props: ActivitySpinnerProps & Readonly<{ resolvedColor: ActivityIndicatorProps['color'] }>,
-) {
+function WebActivitySpinner(props: ActivitySpinnerProps & Readonly<{ resolvedColor: unknown }>) {
     const reducedMotion = useReducedMotionPreference();
 
     const {
-        animating = true,
-        animationEnabled = true,
-        color,
-        hidesWhenStopped = true,
+        animating,
+        animationEnabled,
+        color: _color,
+        hidesWhenStopped,
         size,
         style,
         resolvedColor,
         ...viewProps
     } = props;
+    const presentation = resolveHappierWebSpinnerPresentation({
+        animating,
+        animationEnabled,
+        color: resolvedColor,
+        hidesWhenStopped,
+        reducedMotion,
+        size,
+    });
 
-    if (!animating && hidesWhenStopped) {
+    if (!presentation) {
         return null;
     }
-
-    const resolvedSize = resolveSpinnerSize(size ?? DEFAULT_NUMERIC_SPINNER_SIZE);
-    const spinnerStyle: WebActivitySpinnerStyle = {
-        width: resolvedSize,
-        height: resolvedSize,
-        alignSelf: 'center',
-        borderRadius: resolvedSize / 2,
-        borderWidth: resolveSpinnerBorderWidth(resolvedSize),
-        borderColor: typeof resolvedColor === 'string' ? resolvedColor : 'currentColor',
-        borderTopColor: 'transparent',
-        ...(animationEnabled && !reducedMotion ? {
-            animationDuration: '850ms',
-            animationIterationCount: 'infinite',
-            animationName: SPINNER_ANIMATION_NAME,
-            animationTimingFunction: resolvedSize <= STEPPED_WEB_SPINNER_MAX_SIZE
-                ? STEPPED_WEB_SPINNER_TIMING_FUNCTION
-                : 'linear',
-            willChange: 'transform',
-        } : null),
-        opacity: animating ? 1 : 0,
-    };
 
     return (
         <View
             {...viewProps}
-            accessibilityRole={props.accessibilityRole ?? 'progressbar'}
-            style={[spinnerStyle, style]}
+            accessibilityRole={props.accessibilityRole ?? presentation.accessibilityRole}
+            style={[presentation.style, style]}
         />
     );
 }

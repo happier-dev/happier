@@ -8,7 +8,7 @@ import {
     type MarketplaceIndexQueryV1,
     type MarketplaceIndexQueryResultV1,
     MarketplaceIndexQueryResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/marketplace';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 

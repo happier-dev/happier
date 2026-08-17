@@ -32,7 +32,7 @@ type RelayUpload<TResponse extends UploadResponse> = Readonly<{
         payloadBase64: string;
         encryptedDataKeyEnvelopeBase64: string;
     }>) => Promise<UploadResponse>;
-    finalize: (request: Readonly<{ uploadId: string }>) => Promise<TResponse>;
+    finalize: (request: Readonly<{ uploadId: string }>) => Promise<TResponse | BulkTransferFailureResponse>;
     abort?: ((request: Readonly<{ uploadId: string }>) => Promise<unknown>) | null;
 }>;
 
@@ -87,7 +87,7 @@ export async function uploadBulkPayloadFromFileWithCarrierFallbacks<
             return directResult;
         }
 
-        return await uploadBulkPayloadFromFile<TResponse>({
+        return await uploadBulkPayloadFromFile<TResponse | BulkTransferFailureResponse>({
             fileReader: params.fileReader,
             init: params.relay.init,
             sendChunk: params.relay.sendChunk,

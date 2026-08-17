@@ -124,7 +124,7 @@ export const ConnectedServiceQuotaSummaryCardSection = React.memo(function Conne
                     </View>
                 </PanelCard>
             ) : (
-                <CardGrid columns={3} collapseBelow="medium" columnGap={12} rowGap={12}>
+                <CardGrid columns={3} columnGap={12} rowGap={12}>
                     {props.cards.map((card) => (
                         <CardGridColumn key={card.key}>
                             <MetricCard

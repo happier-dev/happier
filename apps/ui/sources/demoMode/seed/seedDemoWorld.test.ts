@@ -4,7 +4,8 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { loadSessionReviewCommentsDrafts } from '@/sync/domains/state/sessionPersistence';
-import { loadSettings, saveSettings } from '@/sync/domains/state/settingsPersistence';
+import { loadProfile } from '@/sync/domains/state/profilePersistence';
+import { loadLocalSettings, loadSettings, saveSettings } from '@/sync/domains/state/settingsPersistence';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { Socket as SocketIoClientSocket } from 'socket.io-client';
@@ -168,6 +169,28 @@ describe('seedDemoWorld and clearDemoWorld', () => {
 
         const persistedAfterClear = loadSessionReviewCommentsDrafts();
         expect(Object.keys(persistedAfterClear).filter((key) => key.startsWith('demo-'))).toEqual([]);
+    });
+
+    it('never persists demo connected accounts or theme profiles to durable storage (seed and clear)', async () => {
+        // The A12 accounts/pools and A13 theme profiles are demo presentation state.
+        // Routing them through `applyProfile` / `applyLocalSettings` would write them
+        // to the real device profile, which a hard exit mid-journey would strand.
+        const beforeProfile = structuredClone(storage.getState().profile.connectedServicesV2);
+        const beforeThemeProfiles = structuredClone(storage.getState().localSettings.themeProfiles);
+
+        await seedDemoWorld();
+
+        expect(storage.getState().profile.connectedServicesV2.length).toBeGreaterThan(0);
+        expect(storage.getState().localSettings.themeProfiles.profiles.length).toBeGreaterThan(0);
+        expect(loadProfile().connectedServicesV2).toEqual(beforeProfile);
+        expect(loadLocalSettings().themeProfiles).toEqual(beforeThemeProfiles);
+
+        await clearDemoWorld();
+
+        expect(storage.getState().profile.connectedServicesV2).toEqual(beforeProfile);
+        expect(storage.getState().localSettings.themeProfiles).toEqual(beforeThemeProfiles);
+        expect(loadProfile().connectedServicesV2).toEqual(beforeProfile);
+        expect(loadLocalSettings().themeProfiles).toEqual(beforeThemeProfiles);
     });
 
     it('activates the demo server while seeded and restores the previous active server on clear', async () => {

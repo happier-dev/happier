@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
+
 import { formatUsageLimitRecoveryOperationError } from './formatUsageLimitRecoveryOperationError';
 
 describe('formatUsageLimitRecoveryOperationError', () => {
@@ -13,9 +15,15 @@ describe('formatUsageLimitRecoveryOperationError', () => {
         expect(message).not.toContain('_');
     });
 
-    it('preserves non-control provider errors', () => {
-        expect(formatUsageLimitRecoveryOperationError({
+    it('maps unknown error codes to generic product copy instead of forwarding boundary detail', () => {
+        const rawCode = '/private/runner/session?token=never-render-this';
+        const message = formatUsageLimitRecoveryOperationError({
             error: 'provider is still rate limited',
-        })).toBe('provider is still rate limited');
+            errorCode: rawCode,
+        });
+
+        expect(message).toBe(t('errors.operationFailed'));
+        expect(message).not.toContain('/private/runner/session');
+        expect(message).not.toContain('token=never-render-this');
     });
 });

@@ -1,6 +1,10 @@
 import { selectionListTestId } from './_shared';
 import type { SelectionListOption } from './_types';
 
+export function resolveSelectionListListboxDomId(rootTestID: string | undefined): string {
+    return selectionListTestId(rootTestID, 'listbox');
+}
+
 export function resolveSelectionListOptionDomId(params: Readonly<{
     option: Pick<SelectionListOption, 'id' | 'testID'>;
     rootTestID: string | undefined;

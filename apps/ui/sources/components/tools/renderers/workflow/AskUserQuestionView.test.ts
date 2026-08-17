@@ -23,6 +23,15 @@ const openAttachedSessionTerminal = vi.fn();
 const useSettingMutable = vi.fn(() => [null, vi.fn()]);
 const machinePluginSettingsSet = vi.fn();
 const resolvePreferredServerIdForSessionId = vi.fn(() => 'server-a');
+const getServerProfileById = vi.fn((_serverId: string) => ({ serverIdentityId: 'srv_server_a' }));
+const scopedPluginSettingsRead = vi.fn();
+const scopedPluginSettingsWrite = vi.fn();
+const resolveScopedPluginSettingsServerIdentity = vi.fn((_serverId: string): string | null => 'srv_server_a');
+const activeAccountLifetime = vi.hoisted(() => Object.freeze({
+    scope: Object.freeze({ serverId: 'server-a', accountId: 'account-a' }),
+    isCurrent: () => true,
+    onRetire: () => Object.freeze({ dispose(): void {} }),
+}));
 let attachedSessionTerminalAvailable = true;
 let attachedSessionTerminalUnavailableReason: 'missing_machine' | 'terminal_disabled' | 'cli_update_required' | null = null;
 let supportsAnswersInPermission = true;
@@ -81,10 +90,31 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machinePluginSettingsSet: (...args: unknown[]) => machinePluginSettingsSet(...args),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: () => resolvePreferredServerIdForSessionId(),
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getServerProfileById: (serverId: string) => getServerProfileById(serverId),
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime,
+}));
+
+vi.mock('@/sync/domains/plugins/settings/scopedPluginSettingsRuntime', () => ({
+    scopedPluginSettingsAdapter: {
+        read: (...args: unknown[]) => scopedPluginSettingsRead(...args),
+        write: (...args: unknown[]) => scopedPluginSettingsWrite(...args),
+    },
+    resolveScopedPluginSettingsServerIdentity: (serverId: string) => (
+        resolveScopedPluginSettingsServerIdentity(serverId)
+    ),
 }));
 
 vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', () => ({
@@ -214,7 +244,7 @@ describe('AskUserQuestionView', () => {
             snapshot: {
                 protocolVersion: 1,
                 pluginId: 'claude',
-                storageScope: 'synced',
+                scope: { kind: 'daemon' },
                 revision: '1',
                 values: {
                     claudeUnifiedTerminalWorkspaceTrust: 'always_trust_happier_workspaces',
@@ -223,6 +253,42 @@ describe('AskUserQuestionView', () => {
             },
         });
         resolvePreferredServerIdForSessionId.mockClear();
+        getServerProfileById.mockReset();
+        getServerProfileById.mockReturnValue({ serverIdentityId: 'srv_server_a' });
+        scopedPluginSettingsRead.mockReset();
+        scopedPluginSettingsRead.mockResolvedValue({
+            status: 'ready',
+            snapshot: {
+                scope: { kind: 'daemon' },
+                target: {
+                    kind: 'daemon',
+                    machineId: 'machine-1',
+                    serverId: 'server-a',
+                    serverIdentityId: 'srv_server_a',
+                },
+                revision: { kind: 'daemon', value: '1' },
+                values: {},
+            },
+        });
+        scopedPluginSettingsWrite.mockReset();
+        scopedPluginSettingsWrite.mockResolvedValue({
+            status: 'ready',
+            snapshot: {
+                scope: { kind: 'daemon' },
+                target: {
+                    kind: 'daemon',
+                    machineId: 'machine-1',
+                    serverId: 'server-a',
+                    serverIdentityId: 'srv_server_a',
+                },
+                revision: { kind: 'daemon', value: '2' },
+                values: {
+                    claudeUnifiedTerminalWorkspaceTrust: 'always_trust_happier_workspaces',
+                },
+            },
+        });
+        resolveScopedPluginSettingsServerIdentity.mockReset();
+        resolveScopedPluginSettingsServerIdentity.mockReturnValue('srv_server_a');
         attachedSessionTerminalAvailable = true;
         attachedSessionTerminalUnavailableReason = null;
         supportsAnswersInPermission = true;
@@ -522,6 +588,7 @@ describe('AskUserQuestionView', () => {
             source: 'claude_unified_terminal_dialog_choice',
         };
         askUserQuestionSessionState.current = {
+            serverId: 'server-a',
             metadataLayoutVersion: 1,
             metadata: { machineId: 'shared-decoy-machine' },
             ownerMetadataView: { machineId: 'machine-1' },
@@ -564,13 +631,164 @@ describe('AskUserQuestionView', () => {
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
             'How should Claude continue?': ['trust_always'],
         });
-        expect(machinePluginSettingsSet).toHaveBeenCalledWith('machine-1', {
-            serverId: 'server-a',
+        expect(scopedPluginSettingsRead).toHaveBeenCalledWith({
+            pluginId: 'claude',
+            scope: { kind: 'daemon' },
+            target: {
+                kind: 'daemon',
+                machineId: 'machine-1',
+                serverId: 'server-a',
+                serverIdentityId: 'srv_server_a',
+            },
+            fields: [{ key: 'claudeUnifiedTerminalWorkspaceTrust', redacted: false }],
+        });
+        expect(scopedPluginSettingsWrite).toHaveBeenCalledWith({
             pluginId: 'claude',
             fieldId: 'claudeUnifiedTerminalWorkspaceTrust',
-            value: 'always_trust_happier_workspaces',
+            mutation: { kind: 'set', value: 'always_trust_happier_workspaces' },
+            expectedRevision: { kind: 'daemon', value: '1' },
+            scope: { kind: 'daemon' },
+            target: {
+                kind: 'daemon',
+                machineId: 'machine-1',
+                serverId: 'server-a',
+                serverIdentityId: 'srv_server_a',
+            },
+            fields: [{ key: 'claudeUnifiedTerminalWorkspaceTrust', redacted: false }],
         });
+        expect(machinePluginSettingsSet).not.toHaveBeenCalled();
+        expect(resolvePreferredServerIdForSessionId).not.toHaveBeenCalled();
         expect(useSettingMutable).not.toHaveBeenCalledWith('claudeUnifiedTerminalWorkspaceTrust');
+    });
+
+    it('persists a remembered resume policy through the same scoped plugin settings owner', async () => {
+        activeAskUserQuestionRequest = {
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            source: 'claude_unified_terminal_dialog_choice',
+        };
+        askUserQuestionSessionState.current = {
+            serverId: 'server-a',
+            metadataLayoutVersion: 1,
+            ownerMetadataView: { machineId: 'machine-1' },
+            agentState: {
+                capabilities: { askUserQuestionAnswersInPermission: true },
+                requests: {
+                    toolu_1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        source: 'claude_unified_terminal_dialog_choice',
+                        arguments: {},
+                        createdAt: 1,
+                    },
+                },
+            },
+        };
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: { kind: 'recognized', dialogId: 'resume_choice', secondaryAction: 'open_terminal' },
+                questions: [{
+                    header: 'Claude resume',
+                    question: 'How should Claude resume this session?',
+                    multiSelect: false,
+                    options: [{
+                        choice: 'always_resume_from_summary',
+                        label: 'Always resume from summary',
+                        description: '',
+                        settingMutation: {
+                            settingId: 'claudeUnifiedTerminalResumeChoice',
+                            value: 'resume_from_summary',
+                        },
+                    }],
+                }],
+            },
+        }));
+
+        await chooseOptionAndSubmit(screen, 'Always resume from summary');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            'How should Claude resume this session?': ['always_resume_from_summary'],
+        });
+        expect(scopedPluginSettingsRead).toHaveBeenCalledWith({
+            pluginId: 'claude',
+            scope: { kind: 'daemon' },
+            target: {
+                kind: 'daemon',
+                machineId: 'machine-1',
+                serverId: 'server-a',
+                serverIdentityId: 'srv_server_a',
+            },
+            fields: [{ key: 'claudeUnifiedTerminalResumeChoice', redacted: false }],
+        });
+        expect(scopedPluginSettingsWrite).toHaveBeenCalledWith({
+            pluginId: 'claude',
+            fieldId: 'claudeUnifiedTerminalResumeChoice',
+            mutation: { kind: 'set', value: 'resume_from_summary' },
+            expectedRevision: { kind: 'daemon', value: '1' },
+            scope: { kind: 'daemon' },
+            target: {
+                kind: 'daemon',
+                machineId: 'machine-1',
+                serverId: 'server-a',
+                serverIdentityId: 'srv_server_a',
+            },
+            fields: [{ key: 'claudeUnifiedTerminalResumeChoice', redacted: false }],
+        });
+    });
+
+    it('fails closed when workspace trust has no portable server identity', async () => {
+        activeAskUserQuestionRequest = {
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            source: 'claude_unified_terminal_dialog_choice',
+        };
+        askUserQuestionSessionState.current = {
+            serverId: 'server-a',
+            metadataLayoutVersion: 1,
+            ownerMetadataView: { machineId: 'machine-1' },
+            agentState: {
+                capabilities: { askUserQuestionAnswersInPermission: true },
+                requests: {
+                    toolu_1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        source: 'claude_unified_terminal_dialog_choice',
+                        arguments: {},
+                        createdAt: 1,
+                    },
+                },
+            },
+        };
+        resolveScopedPluginSettingsServerIdentity.mockReturnValue(null);
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: { kind: 'recognized', dialogId: 'trust_folder', secondaryAction: 'open_terminal' },
+                questions: [{
+                    header: 'Workspace trust',
+                    question: 'How should Claude continue?',
+                    multiSelect: false,
+                    options: [{
+                        choice: 'trust_always',
+                        label: 'Trust and remember',
+                        description: '',
+                        settingMutation: {
+                            settingId: 'claudeUnifiedTerminalWorkspaceTrust',
+                            value: 'always_trust_happier_workspaces',
+                        },
+                    }],
+                }],
+            },
+        }));
+
+        await chooseOptionAndSubmit(screen, 'Trust and remember');
+
+        expect(scopedPluginSettingsWrite).not.toHaveBeenCalled();
+        expect(modalAlert).toHaveBeenCalledWith(
+            'common.error',
+            'Unable to persist Claude workspace trust without an exact server target.',
+        );
     });
 
     it('does not fall back to layout1 shared metadata for workspace-trust persistence', async () => {

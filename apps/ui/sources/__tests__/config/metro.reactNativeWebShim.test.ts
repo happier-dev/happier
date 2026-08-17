@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 function getUiDir(): string {
     return join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
@@ -85,7 +85,7 @@ describe('metro.config.js (web)', () => {
         expect(config.resolver.nodeModulesPaths).toContain(rootNodeModules);
     });
 
-    it('resolves React Native private packages in narrowed native Metro runs', () => {
+    it('resolves React Native\'s declared private package through the coherent app-level dependency in narrowed native Metro runs', () => {
         const uiDir = getUiDir();
         const reactNativeDir = resolve(uiDir, 'node_modules/react-native');
         const config = loadMetroConfig(uiDir, {
@@ -93,9 +93,13 @@ describe('metro.config.js (web)', () => {
             EXPO_NO_METRO_WORKSPACE_ROOT: '1',
             HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS: '1',
         });
-        const expectedEntry = createRequire(join(reactNativeDir, 'package.json')).resolve(
-            '@react-native/virtualized-lists',
-        );
+        const expectedEntry = createRequire(join(uiDir, 'package.json')).resolve('@react-native/virtualized-lists');
+        const reactNativePackage = JSON.parse(
+            readFileSync(join(reactNativeDir, 'package.json'), 'utf8'),
+        ) as { dependencies?: Record<string, string> };
+        const resolvedPackage = JSON.parse(
+            readFileSync(join(dirname(expectedEntry), 'package.json'), 'utf8'),
+        ) as { version?: string };
 
         const resolved = config.resolver.resolveRequest(
             {
@@ -115,7 +119,10 @@ describe('metro.config.js (web)', () => {
             type: 'sourceFile',
             filePath: expectedEntry,
         });
-        expect(config.watchFolders).toContain(dirname(expectedEntry));
+        expect(resolvedPackage.version).toBe(
+            reactNativePackage.dependencies?.['@react-native/virtualized-lists'],
+        );
+        expect(config.resolver.nodeModulesPaths).toContain(resolve(uiDir, 'node_modules'));
         expect(
             blockList.some((entry: unknown) => entry instanceof RegExp && entry.test(expectedEntry)),
         ).toBe(false);
@@ -156,6 +163,121 @@ describe('metro.config.js (web)', () => {
             type: 'sourceFile',
             filePath: resolve(repoRoot, 'packages/voice-modelpacks/src/index.ts'),
         });
+    });
+
+    it('resolves generated bundled Plugin UI asset imports only as packaged Metro assets', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+        const defaultResolution = { type: 'empty' };
+        const relativeArtifactPath = 'react-native-web/inspector-app-native/entry.mjs';
+
+        const resolved = config.resolver.resolveRequest(
+            {
+                originModulePath: join(
+                    uiDir,
+                    'sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts',
+                ),
+                resolveRequest: () => defaultResolution,
+            },
+            `@happier-dev/plugins-inspector/happier-plugin-ui/${relativeArtifactPath}`,
+            'web',
+        );
+
+        expect(resolved).toEqual({
+            type: 'assetFiles',
+            filePaths: [resolve(
+                repoRoot,
+                'packages/plugins/inspector/dist/happier-plugin-ui',
+                relativeArtifactPath,
+            )],
+        });
+    });
+
+    it('exports generated bundled Plugin UI artifact imports to the package consumer', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const requireFromGeneratedConsumer = createRequire(join(
+            uiDir,
+            'sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts',
+        ));
+
+        expect(requireFromGeneratedConsumer.resolve(
+            '@happier-dev/plugins-inspector/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs',
+        )).toBe(resolve(
+            repoRoot,
+            'packages/plugins/inspector/dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs',
+        ));
+    });
+
+    it('keeps packaged Plugin UI artifact bytes hashable while blocking unrelated workspace dist output', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const artifactRoot = resolve(
+            repoRoot,
+            'packages/plugins/inspector/dist/happier-plugin-ui',
+        );
+        const config = loadMetroConfig(uiDir, {
+            CI: '1',
+            EXPO_NO_METRO_WORKSPACE_ROOT: '1',
+            HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS: '1',
+        });
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const isBlocked = (candidatePath: string) => blockList.some(
+            (entry: unknown) => entry instanceof RegExp && entry.test(candidatePath),
+        );
+
+        expect(config.watchFolders).toContain(resolve(repoRoot, 'packages/plugins/inspector'));
+        expect(isBlocked(join(artifactRoot, 'react-native-web/inspector-app-native/entry.mjs'))).toBe(false);
+        expect(isBlocked(resolve(repoRoot, 'packages/plugins/inspector/dist/index.js'))).toBe(true);
+    });
+
+    it('keeps future bundled Plugin UI artifacts hashable when Metro starts before publication', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const packageRoot = resolve(repoRoot, 'packages/plugins/inspector');
+        const artifactRoot = resolve(packageRoot, 'dist/happier-plugin-ui');
+        const manifestPath = join(artifactRoot, 'ui-artifacts.json');
+        const originalExistsSync = existsSync;
+        const existsSyncSpy = vi.spyOn(fs, 'existsSync').mockImplementation(
+            (candidatePath: Parameters<typeof existsSync>[0]) => (
+                resolve(String(candidatePath)) === manifestPath
+                    ? false
+                    : originalExistsSync(candidatePath)
+            ),
+        );
+
+        try {
+            const config = loadMetroConfig(uiDir, {
+                CI: '1',
+                EXPO_NO_METRO_WORKSPACE_ROOT: '1',
+                HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS: '1',
+            });
+            const blockList = Array.isArray(config.resolver.blockList)
+                ? config.resolver.blockList
+                : [config.resolver.blockList];
+            const futureArtifactPath = join(
+                artifactRoot,
+                'react-native/channels-app-native/ios/src_ui_renderSurface_tsx.chunk.bundle',
+            );
+
+            expect(config.watchFolders).toContain(packageRoot);
+            // Metro tests directory paths before descending. Blocking `dist`
+            // itself prunes the permitted `happier-plugin-ui` subtree even
+            // when the eventual artifact path does not match the block list.
+            expect(blockList.some(
+                (entry: unknown) => entry instanceof RegExp && entry.test(resolve(packageRoot, 'dist')),
+            )).toBe(false);
+            expect(config.resolver.assetExts).toContain('bundle');
+            expect(config.resolver.assetExts).toContain('map');
+            expect(blockList.some(
+                (entry: unknown) => entry instanceof RegExp && entry.test(futureArtifactPath),
+            )).toBe(false);
+        } finally {
+            existsSyncSpy.mockRestore();
+        }
     });
 
     it('watches hoisted Expo packages when monorepo root node_modules is excluded (SHA-1 hashing)', () => {
@@ -238,7 +360,26 @@ describe('metro.config.js (web)', () => {
         ).toBe(true);
     });
 
-    it('blocks pack publication trees without hiding canonical workspace source or dist trees', () => {
+    it('blocks generated CLI runner snapshots without hiding CLI source', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir, { HAPPIER_STACK_STACK: 'repo-metro-test' });
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const isBlocked = (candidatePath: string) => (
+            blockList.some((entry: unknown) => entry instanceof RegExp && entry.test(candidatePath))
+        );
+        const cliRoot = resolve(repoRoot, 'apps/cli');
+
+        expect(config.watchFolders).toContain(cliRoot);
+        expect(isBlocked(join(cliRoot, '.runner-snapshots', 'current', 'tools', 'unpacked', 'zellij'))).toBe(true);
+        expect(isBlocked(String.raw`C:\repo\apps\cli\.runner-snapshots\current\tools\unpacked\zellij`)).toBe(true);
+        expect(isBlocked(join(cliRoot, 'src/index.ts'))).toBe(false);
+        expect(isBlocked(join(cliRoot, '.runner-snapshot-scratch', 'src/index.ts'))).toBe(false);
+    });
+
+    it('blocks pack publication trees and regular internal workspace dist while retaining canonical source', () => {
         const uiDir = getUiDir();
         const repoRoot = resolve(uiDir, '..', '..');
         const config = loadMetroConfig(uiDir);
@@ -269,7 +410,7 @@ describe('metro.config.js (web)', () => {
             isBlocked(String.raw`C:\repo\packages\protocol\.tmp.publish-1\src\index.ts`),
         ).toBe(true);
         expect(isBlocked(join(packageRoot, 'src/index.ts'))).toBe(false);
-        expect(isBlocked(join(packageRoot, 'dist/index.js'))).toBe(false);
+        expect(isBlocked(join(packageRoot, 'dist/index.js'))).toBe(true);
         expect(isBlocked(join(packageRoot, '.tmp/index.ts'))).toBe(false);
         expect(isBlocked(join(packageRoot, 'dist.staging/index.js'))).toBe(false);
     });
@@ -294,6 +435,22 @@ describe('metro.config.js (web)', () => {
         expect(
             blockList.some((entry: unknown) => entry instanceof RegExp && entry.test(nestedNodeModulesPath)),
         ).toBe(true);
+    });
+
+    it('blocks package-manager executable shims from Metro file-map crawls', () => {
+        const uiDir = getUiDir();
+        const config = loadMetroConfig(uiDir);
+        const blockList = Array.isArray(config.resolver.blockList)
+            ? config.resolver.blockList
+            : [config.resolver.blockList];
+        const isBlocked = (candidatePath: string) => blockList.some(
+            (entry: unknown) => entry instanceof RegExp && entry.test(candidatePath),
+        );
+
+        expect(isBlocked(resolve(uiDir, '..', '..', 'node_modules', '.bin', 'eslint'))).toBe(true);
+        expect(isBlocked(resolve(uiDir, 'node_modules', '.bin', 'expo'))).toBe(true);
+        expect(isBlocked(String.raw`C:\repo\node_modules\.bin\eslint`)).toBe(true);
+        expect(isBlocked(resolve(uiDir, '..', '..', 'node_modules', 'eslint', 'bin', 'eslint.js'))).toBe(false);
     });
 
     it('allows enabling Watchman via env var on machines where it is stable', () => {

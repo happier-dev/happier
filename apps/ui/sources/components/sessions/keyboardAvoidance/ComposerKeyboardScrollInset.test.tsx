@@ -4,11 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SharedValue } from 'react-native-reanimated';
 
 import { renderScreen } from '@/dev/testkit';
-import {
-    ComposerKeyboardProvider,
-    ComposerKeyboardScrollInset,
-    type ComposerKeyboardLayout,
-} from './index';
+
+import { ComposerKeyboardProvider, type ComposerKeyboardLayout } from './ComposerKeyboardContext';
+import { ComposerKeyboardScrollInset } from './ComposerKeyboardScrollInset';
 
 function isSharedValueUpdater<T>(value: T | ((current: T) => T)): value is (current: T) => T {
     return typeof value === 'function';
@@ -85,11 +83,12 @@ describe('ComposerKeyboardScrollInset', () => {
             },
         });
 
-        const screen = await renderScreen(
+        const renderTree = () => (
             <ComposerKeyboardProvider layout={layout}>
                 <ComposerKeyboardScrollInset testID="transcript-composer-keyboard-inset" />
-            </ComposerKeyboardProvider>,
+            </ComposerKeyboardProvider>
         );
+        const screen = await renderScreen(renderTree());
 
         const node = screen.findByTestId('transcript-composer-keyboard-inset');
         expect(readHeight(node?.props.style)).toBe(0);
@@ -103,11 +102,44 @@ describe('ComposerKeyboardScrollInset', () => {
                 listener(192);
             }
         });
+        // The test Reanimated stub samples animated styles when React renders.
+        await screen.update(renderTree());
 
         expect(readHeight(node?.props.style)).toBe(192);
     });
 
+    it('follows live native keyboard geometry without waiting for an inset notification', async () => {
+        const layout = createLayout({
+            bottomInset: 291,
+            composerHeight: 134,
+            keyboardHeightForInset: 291,
+            listBottomInset: 425,
+            subscribeListBottomInset: (listener) => {
+                listener(425);
+                return () => {};
+            },
+        });
+
+        const renderTree = () => (
+            <ComposerKeyboardProvider layout={layout}>
+                <ComposerKeyboardScrollInset testID="transcript-composer-keyboard-inset" />
+            </ComposerKeyboardProvider>
+        );
+        const screen = await renderScreen(renderTree());
+        expect(readHeight(screen.findByTestId('transcript-composer-keyboard-inset')?.props.style)).toBe(425);
+
+        await act(async () => {
+            layout.keyboardHeightForInset.value = 145;
+            layout.bottomInset.value = 145;
+            layout.listBottomInset.value = 279;
+        });
+        await screen.update(renderTree());
+
+        expect(readHeight(screen.findByTestId('transcript-composer-keyboard-inset')?.props.style)).toBe(279);
+    });
+
     it('applies notified totals even when guest-runtime shared-value reads lag behind', async () => {
+        const onHeightChange = vi.fn();
         const listeners = new Set<(height: number) => void>();
         const layout = createLayout({
             bottomInset: 267,
@@ -125,12 +157,16 @@ describe('ComposerKeyboardScrollInset', () => {
 
         const screen = await renderScreen(
             <ComposerKeyboardProvider layout={layout}>
-                <ComposerKeyboardScrollInset testID="transcript-composer-keyboard-inset" />
+                <ComposerKeyboardScrollInset
+                    testID="transcript-composer-keyboard-inset"
+                    onHeightChange={onHeightChange}
+                />
             </ComposerKeyboardProvider>,
         );
 
         const node = screen.findByTestId('transcript-composer-keyboard-inset');
         expect(readHeight(node?.props.style)).toBe(420);
+        expect(onHeightChange).toHaveBeenLastCalledWith(420);
 
         await act(async () => {
             for (const listener of listeners) {
@@ -138,7 +174,10 @@ describe('ComposerKeyboardScrollInset', () => {
             }
         });
 
-        expect(readHeight(node?.props.style)).toBe(439);
+        // The notification is the canonical settled JS-side total. The rendered spacer
+        // keeps following the animated shared values, which can still read one step behind.
+        expect(readHeight(node?.props.style)).toBe(420);
+        expect(onHeightChange).toHaveBeenLastCalledWith(439);
     });
 
     it('settles on the last notified total after the composer and keyboard have collapsed', async () => {

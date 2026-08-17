@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -9,7 +8,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { deleteArtifact } from '@/sync/api/artifacts/apiArtifacts';
@@ -22,6 +21,7 @@ import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
 import { describePromptLibraryEntrySubtitle } from './describePromptLibraryEntrySubtitle';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type PromptLibraryEntryListKind = 'doc' | 'bundle';
 
@@ -32,7 +32,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     paddingVertical: 12,
-    maxWidth: layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
@@ -56,11 +55,11 @@ function getScreenConfig(kind: PromptLibraryEntryListKind) {
       emptyTitle: t('promptLibrary.noPrompts'),
       emptySubtitle: t('promptLibrary.noPromptsSubtitle'),
       addTitle: t('promptLibrary.addPrompt'),
-      addIcon: 'add-circle-outline' as const,
+      addIcon: 'plus-circle' as const,
       addHref: '/settings/prompts/docs/new',
       editHref: (artifactId: string) => `/settings/prompts/docs/${artifactId}`,
       exportHref: (artifactId: string) => `/settings/prompts/docs/${artifactId}/export`,
-      itemIcon: 'document-text-outline' as const,
+      itemIcon: 'file-text' as const,
       testPrefix: 'promptLibrary.entry.doc',
     };
   }
@@ -70,16 +69,20 @@ function getScreenConfig(kind: PromptLibraryEntryListKind) {
     emptyTitle: t('promptLibrary.noSkills'),
     emptySubtitle: t('promptLibrary.noSkillsSubtitle'),
     addTitle: t('promptLibrary.addSkill'),
-    addIcon: 'add-circle-outline' as const,
+    addIcon: 'plus-circle' as const,
     addHref: '/settings/prompts/skills/new',
     editHref: (artifactId: string) => `/settings/prompts/skills/${artifactId}`,
     exportHref: (artifactId: string) => `/settings/prompts/skills/${artifactId}/export`,
-    itemIcon: 'sparkles-outline' as const,
+    itemIcon: 'sparkle' as const,
     testPrefix: 'promptLibrary.entry.bundle',
   };
 }
 
 export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: PromptLibraryEntryListKind }>) => {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const contentStyle = React.useMemo(() => [styles.content, contentMaxWidthStyle], [contentMaxWidthStyle]);
   const router = useRouter();
   const { theme } = useUnistyles();
   const artifacts = useArtifacts();
@@ -164,7 +167,7 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
 
   return (
     <View style={styles.container}>
-      <ItemList containerStyle={styles.content}>
+      <ItemList containerStyle={contentStyle}>
         <ItemGroup title={screen.title}>
           <TextInput
             testID={`promptLibrary.search.${props.kind}`}
@@ -212,7 +215,7 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
                     exportsCount: (count) => t('promptLibrary.linkedAssetsCount', { count }),
                   },
                 })}
-                icon={<Ionicons name={screen.itemIcon} size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name={screen.itemIcon} size={29} color={theme.colors.text.secondary} />}
                 onPress={() => router.push(screen.editHref(artifact.id))}
                 rightElement={(
                   <ItemRowActions
@@ -222,25 +225,25 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
                       {
                         id: 'edit',
                         title: t('common.edit'),
-                        icon: 'pencil-outline',
+                        icon: 'pencil',
                         onPress: () => router.push(screen.editHref(artifact.id)),
                       },
                       {
                         id: 'duplicate',
                         title: t('common.duplicate'),
-                        icon: 'copy-outline',
+                        icon: 'copy',
                         onPress: () => { void duplicateEntry(artifact.id); },
                       },
                       {
                         id: 'external',
                         title: t('promptLibrary.manageExternalAssets'),
-                        icon: 'cloud-upload-outline',
+                        icon: 'cloud-arrow-up',
                         onPress: () => router.push(screen.exportHref(artifact.id)),
                       },
                       {
                         id: 'delete',
                         title: t('common.delete'),
-                        icon: 'trash-outline',
+                        icon: 'trash',
                         destructive: true,
                         onPress: () => { void deleteEntry(artifact.id); },
                       },
@@ -254,7 +257,7 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
               testID={`promptLibrary.empty.${props.kind}`}
               title={screen.emptyTitle}
               subtitle={screen.emptySubtitle}
-              icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
+              icon={<Icon name="info" size={29} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           )}
@@ -264,7 +267,7 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
           <Item
             testID={`promptLibrary.add.${props.kind}`}
             title={screen.addTitle}
-            icon={<Ionicons name={screen.addIcon} size={29} color={theme.colors.accent.blue} />}
+            icon={<Icon name={screen.addIcon} size={29} color={theme.colors.accent.blue} />}
             onPress={() => router.push(screen.addHref)}
           />
         </ItemGroup>

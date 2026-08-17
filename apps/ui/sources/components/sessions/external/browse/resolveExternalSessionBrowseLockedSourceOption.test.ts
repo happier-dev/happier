@@ -31,7 +31,6 @@ describe('resolveExternalSessionBrowseLockedSource', () => {
                         sources: [{
                             sourceKind: 'codexHome',
                             schema: {
-                                passthrough: true,
                                 fields: [
                                     { name: 'kind', kind: 'literal', value: 'codexHome' },
                                     { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },

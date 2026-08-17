@@ -23,7 +23,7 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
     providerId: 'local_conversation',
     settingsSectionId: 'voice.provider.local_conversation',
     roles: ['conversation_stt', 'conversation_tts', 'vad', 'endpointing'],
-    requirements: ['runtime', 'model', 'execution_machine', 'endpoint'],
+    requirements: ['server_feature', 'runtime', 'model', 'execution_machine', 'endpoint', 'credential'],
     selectionOptions: [{
       id: 'local',
       modeId: null,
@@ -52,6 +52,17 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
     settingsSectionId: 'voice.speech.device',
     roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
     requirements: [],
+    localReadiness: { kind: 'device_speech' },
+    processingDisclosures: {
+      stt: {
+        titleKey: 'settingsVoice.local.deviceStt',
+        disclosureKey: 'settingsVoice.realtimeProviders.speechProcessing.deviceStt',
+      },
+      tts: {
+        titleKey: 'settingsVoice.local.deviceTts',
+        disclosureKey: 'settingsVoice.realtimeProviders.speechProcessing.deviceTts',
+      },
+    },
   } satisfies VoiceUiRuntimeContribution),
   Object.freeze({
     kind: 'voice.speech-engine.v1',
@@ -61,15 +72,6 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
     settingsSectionId: 'voice.speech.local_neural',
     roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
     requirements: ['runtime', 'model'],
-  } satisfies VoiceUiRuntimeContribution),
-  Object.freeze({
-    kind: 'voice.speech-engine.v1',
-    pluginId: 'happier.voice.builtin',
-    providerId: 'openai_compat',
-    role: 'both',
-    settingsSectionId: 'voice.speech.openai_compat',
-    roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
-    requirements: ['execution_machine', 'endpoint', 'runtime'],
   } satisfies VoiceUiRuntimeContribution),
   Object.freeze({
     kind: 'voice.turn-support.v1',

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
@@ -125,7 +126,7 @@ describe('DaemonVoiceAgentClient', () => {
     expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: expect.stringMatching(/execution\.run\.ensureOrStart/i),
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
         payload: expect.objectContaining({
           runId: 'run_old',
           resume: true,
@@ -139,6 +140,129 @@ describe('DaemonVoiceAgentClient', () => {
         }),
       }),
     );
+  });
+
+  it('carries independent chat and commit Provider selections without endpoint or secret material', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: 'run_provider', created: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+    const chatModelSelection = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'backend:opencode',
+      providerConnectionId: 'voice-openai-compatible-chat',
+      modelId: 'chat-model',
+    });
+    const commitModelSelection = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'backend:opencode',
+      providerConnectionId: 'voice-openai-compatible-chat',
+      modelId: 'commit-model',
+    });
+
+    await client.start({
+      sessionId: 's1',
+      agentSource: 'agent',
+      agentId: 'opencode',
+      verbosity: 'short',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      chatModelSelection,
+      commitModelSelection,
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: 0,
+        overrides: { temperature: { updatedAt: 0, value: 0.2 } },
+      },
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 300,
+      initialContext: 'ctx',
+    });
+
+    const call = vi.mocked(sessionRpcWithServerScope).mock.calls[0]?.[0] as any;
+    expect(call.method).toBe(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
+    expect(call.payload.start).toMatchObject({
+      modelId: 'chat-model',
+      modelSelection: chatModelSelection,
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      intentInput: { commitModelSelection },
+      sessionConfigOptionOverrides: {
+        overrides: { temperature: { value: 0.2 } },
+      },
+    });
+    expect(JSON.stringify(call.payload.start)).not.toMatch(/baseUrl|apiKey|secret/i);
+  });
+
+  it.each(['chat', 'commit'] as const)(
+    'uses the current-only Provider-safe ensureOrStart method for a Provider-bound %s selection',
+    async (role) => {
+      const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+      vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: `run_${role}`, created: true } as any);
+
+      const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+      const client = new DaemonVoiceAgentClient();
+      const providerSelection = ProviderBoundModelRefSchema.parse({
+        agentTargetKey: 'backend:opencode',
+        providerConnectionId: 'voice-openai-compatible-chat',
+        modelId: `${role}-model`,
+      });
+
+      await client.start({
+        sessionId: 's1',
+        agentSource: 'agent',
+        agentId: 'opencode',
+        verbosity: 'short',
+        chatModelId: role === 'chat' ? providerSelection.modelId : 'native-chat',
+        commitModelId: role === 'commit' ? providerSelection.modelId : 'native-commit',
+        ...(role === 'chat'
+          ? { chatModelSelection: providerSelection }
+          : { commitModelSelection: providerSelection }),
+        permissionIntent: 'read-only',
+        idleTtlSeconds: 300,
+        initialContext: 'ctx',
+      });
+
+      expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(expect.objectContaining({
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+      }));
+    },
+  );
+
+  it('keeps native model selections on the legacy-compatible ensureOrStart method', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+    const chatModelSelection = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'chat-model',
+    });
+    const commitModelSelection = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'commit-model',
+    });
+
+    await client.start({
+      sessionId: 's1',
+      agentSource: 'agent',
+      agentId: 'codex',
+      verbosity: 'short',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      chatModelSelection,
+      commitModelSelection,
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 300,
+      initialContext: 'ctx',
+    });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(expect.objectContaining({
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+    }));
   });
 
   it('forwards replay seed requests through the ensureOrStart start payload', async () => {
@@ -405,7 +529,7 @@ describe('DaemonVoiceAgentClient', () => {
     }));
   });
 
-  it('surfaces RPC method unavailable from ensureOrStart without falling back', async () => {
+  it('fails Provider-bound start closed when the current-only method is unavailable without falling back', async () => {
     const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerScope).mockRejectedValueOnce(
       Object.assign(new Error('RPC method not available'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }),
@@ -413,15 +537,21 @@ describe('DaemonVoiceAgentClient', () => {
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
     const client = new DaemonVoiceAgentClient();
+    const chatModelSelection = ProviderBoundModelRefSchema.parse({
+      agentTargetKey: 'backend:opencode',
+      providerConnectionId: 'voice-openai-compatible-chat',
+      modelId: 'fast',
+    });
 
     await expect(
       client.start({
         sessionId: 's1',
         agentSource: 'agent',
-        agentId: 'codex',
+        agentId: 'opencode',
         verbosity: 'short',
         chatModelId: 'fast',
         commitModelId: 'fast',
+        chatModelSelection,
         permissionIntent: 'read-only',
         idleTtlSeconds: 300,
         initialContext: 'ctx',
@@ -429,6 +559,11 @@ describe('DaemonVoiceAgentClient', () => {
     ).rejects.toMatchObject({ message: 'RPC method not available', rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
 
     expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(expect.objectContaining({
+      // Prospective predecessor basis: ../remote-dev@a313378db62c559f24dabebe72ddcf17e0497e6f
+      // exposes only execution.run.ensureOrStart, so this exact current-only method fails closed.
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+    }));
   });
 
   it('throws invalid_rpc_response for malformed start payloads', async () => {

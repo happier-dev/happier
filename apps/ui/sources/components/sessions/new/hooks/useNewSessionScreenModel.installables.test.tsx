@@ -142,6 +142,8 @@ const testSettingsDefaults = vi.hoisted(() => ({
     favoriteDirectories: [],
     favoriteMachines: [],
     favoriteProfiles: [],
+    currentFavoriteModelSelectionsV1: [],
+    currentRememberedEngineSelectionsByScopeV1: {},
     profiles: [] as AIBackendProfile[],
     profileEnabledById: {} as Record<string, boolean>,
     secrets: [],
@@ -204,6 +206,8 @@ const includeLaunchSelectionMachinesState = vi.hoisted(() => ({
 const storageState = vi.hoisted(() => ({
     workspaceLocations: {} as Record<string, unknown>,
     workspaceCheckouts: {} as Record<string, unknown>,
+    // The `@session` picker's real candidate source: session-list rows, per server.
+    sessionListRowStateByServerId: {} as Record<string, Record<string, unknown>>,
 }));
 const routeParamsState = vi.hoisted(() => ({
     value: {} as Record<string, string | string[] | undefined>,
@@ -213,6 +217,8 @@ const getMockStorageState = vi.hoisted(() => () => ({
     settings: settingsRuntimeState.current ?? testSettingsDefaults,
     workspaceLocations: storageState.workspaceLocations,
     workspaceCheckouts: storageState.workspaceCheckouts,
+    sessions: {} as Record<string, unknown>,
+    sessionListRowStateByServerId: storageState.sessionListRowStateByServerId,
     createSessionActionDraft: createSessionActionDraftMock,
 }));
 
@@ -335,6 +341,16 @@ installNewSessionScreenModelCommonModuleMocks({
                 (settingsRuntimeState.current as any)?.[key] ?? (testSettingsDefaults as any)[key],
                 vi.fn(),
             ],
+            useCurrentFavoriteModelSelectionsV1Mutable: () => [
+                (settingsRuntimeState.current as any)?.currentFavoriteModelSelectionsV1
+                    ?? (testSettingsDefaults as any).currentFavoriteModelSelectionsV1,
+                vi.fn(),
+            ],
+            useCurrentRememberedEngineSelectionsByScopeV1Mutable: () => [
+                (settingsRuntimeState.current as any)?.currentRememberedEngineSelectionsByScopeV1
+                    ?? (testSettingsDefaults as any).currentRememberedEngineSelectionsByScopeV1,
+                vi.fn(),
+            ],
             // Boundary fixture: the suite overrides only the settings fields it actually reads.
             useSettings: (() => (settingsRuntimeState.current ?? testSettingsDefaults) as any) as any,
         });
@@ -408,6 +424,17 @@ const ensureAgentInstallablesBackgroundMock = vi.hoisted(() => vi.fn(async (_par
 
 vi.mock('@/sync/ops', () => ({
     machineCapabilitiesInvoke,
+}));
+
+/**
+ * The machine RPC transport — a genuine system boundary, and the only thing stubbed on the
+ * file-suggestion path. Everything above it (`suggestionFile` → `workspaceFileSearch` →
+ * `machineRipgrep`) runs for real, so the address the host resolved is observed where it
+ * actually matters: on the wire.
+ */
+const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unknown) => ({} as unknown)));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params) as never,
 }));
 
 vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
@@ -1771,14 +1798,91 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(windowsChip).toBeUndefined();
     });
 
-    it('enables slash autocomplete for provider-independent new-session commands', async () => {
+    it('enables workspace, session, plugin-reference and slash autocomplete before a session exists', async () => {
         const hook = await renderNewSessionScreenModel();
         const model = hook.getCurrent();
 
-        expect(model?.simpleProps?.emptyAutocompletePrefixes).toEqual(['/']);
+        expect(model?.simpleProps?.emptyAutocompleteKinds).toEqual([
+            'file',
+            'session',
+            'composerReference',
+            'slashCommand',
+        ]);
 
         const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions?.('/happier');
         expect(suggestions?.some((suggestion: { text: string }) => suggestion.text === '/happier-diagnose')).toBe(true);
+    });
+
+    /**
+     * The two capabilities the `'__new_session__'` sentinel used to make impossible: it faked a
+     * session so session-addressed lookups would accept a call, and every one of them then
+     * answered for no session, so `@` and `@session` offered nothing at all before spawn.
+     *
+     * They are asserted HERE, at the host, because the host is the only place the arguments are
+     * chosen. `emptyAutocompleteKinds` above says a kind is eligible; it does not say the host
+     * handed the resolver anything to answer with. The picker's own wiring suite builds its
+     * arguments by hand, so it cannot see a host that stops passing them.
+     */
+    it('addresses the file search at the machine and folder the user picked', async () => {
+        routeParamsState.value = { machineId: 'machine-1', path: '/repo' };
+        includeLaunchSelectionMachinesState.value = true;
+        machineRpcWithServerScopeMock.mockReset();
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, stdout: 'README.md\nsrc/index.ts\n' });
+        const { fileSearchCache } = await import('@/sync/domains/input/suggestionFile');
+        // Whole-cache clear: the index is keyed by this workspace address, and a warm entry
+        // from an earlier case would serve rows without issuing the RPC this asserts on.
+        fileSearchCache.clearCache();
+
+        try {
+            const hook = await renderNewSessionScreenModel();
+            const model = hook.getCurrent();
+
+            const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions?.('@REA');
+            expect(suggestions?.some((suggestion: { text: string }) => suggestion.text === '@README.md')).toBe(true);
+
+            // The addressing, not just the presence of rows: without an explicit machine and
+            // cwd the daemon searches its OWN working directory and would offer files from a
+            // tree the user never chose.
+            const ripgrep = machineRpcWithServerScopeMock.mock.calls
+                .map(([params]) => params as { machineId: string; method: string; serverId?: string | null; payload: { cwd?: string } })
+                .filter((params) => params.method === 'ripgrep');
+            expect(ripgrep).toHaveLength(1);
+            expect(ripgrep[0]?.machineId).toBe('machine-1');
+            expect(ripgrep[0]?.payload.cwd).toBe('/repo');
+            // `s1` is the declared spawn target and is deliberately not the active server.
+            expect(ripgrep[0]?.serverId).toBe('s1');
+        } finally {
+            fileSearchCache.clearCache();
+        }
+    });
+
+    it('scopes the `@session` picker to the server this session will spawn on', async () => {
+        const row = (id: string) => ({
+            id,
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2_000,
+            active: true,
+            archivedAt: null,
+            metadata: { name: `Session ${id}`, path: '/repo' },
+        });
+        // `s1` is the mocked `targetServerId`; `s_active` is the activated profile scope,
+        // deliberately different, so scoping to the wrong one is observable.
+        storageState.sessionListRowStateByServerId = {
+            s1: { peer: row('peer') },
+            s_active: { elsewhere: row('elsewhere') },
+        };
+
+        try {
+            const hook = await renderNewSessionScreenModel();
+            const model = hook.getCurrent();
+
+            const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions?.('@session:');
+
+            expect(suggestions?.map((suggestion: { key: string }) => suggestion.key)).toEqual(['session-peer']);
+        } finally {
+            storageState.sessionListRowStateByServerId = {};
+        }
     });
 
 });

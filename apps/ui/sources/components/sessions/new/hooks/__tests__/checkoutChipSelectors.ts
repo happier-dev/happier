@@ -152,6 +152,7 @@ export function getCheckoutChipLabel(model: unknown): React.ReactNode {
             tint: '#000',
             dismiss: () => {},
             blurInput: () => {},
+            openCollapsedPopover: () => {},
         });
         const item = Array.isArray(action) ? action[0] : action;
         const label = (item as { label?: unknown } | undefined)?.label;

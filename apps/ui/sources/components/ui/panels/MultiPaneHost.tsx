@@ -1,13 +1,28 @@
 import * as React from 'react';
-import { Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ResolvedPaneLayout } from './paneBreakpoints';
 import { ResizableDockedPane } from './ResizableDockedPane';
-import { ESCAPE_KEY_BLOCKER_PRIORITIES, getMaxEscapeKeyBlockerPriority, isEscapeEventHandled } from './escapeKeyHandling';
-import { usePaneAnimatedPresence } from './motion/usePaneAnimatedPresence';
 import { PaneAnimatedScrimPressable } from './motion/PaneAnimatedScrimPressable';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import {
+    ModalPaneBoundaryView,
+    useModalPaneBoundary,
+    useModalPanePresentation,
+} from './ModalPaneBoundary';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
+import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
+import { t } from '@/text';
+import { shadowLevelStyle } from '@/shadowElevation';
+
+// One radius wherever a pane meets the header. The header spans above these columns and is not
+// part of them, so a square top-left corner reads as a slab wedged underneath; rounding it lets
+// the pane sit into the header instead. Matches the content sheet's seam radius.
+const PANE_TOP_CORNER_RADIUS_PX = 16;
+// The pre-boundary Escape owner closes Details before Right when both docked
+// columns are present. Keep that user-visible precedence inside the one pane
+// layer rather than relying on hook registration order.
+const DOCKED_DETAILS_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.pane + 1;
 
 export type MultiPaneHostProps = Readonly<{
     main: React.ReactNode;
@@ -27,6 +42,8 @@ export type MultiPaneHostProps = Readonly<{
     onCommitDetailsDockWidthPx: (widthPx: number) => void;
     onDragRightDockWidthPx?: (widthPx: number | null) => void;
     onDragDetailsDockWidthPx?: (widthPx: number | null) => void;
+    rightOverlayFocusReturnRef?: FocusReturnMutableRef;
+    detailsOverlayFocusReturnRef?: FocusReturnMutableRef;
 }>;
 
 export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
@@ -43,162 +60,123 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     } = props;
 
     const { theme } = useUnistyles();
-    const reduceMotion = useReducedMotionPreference();
-    const overlayDurationMs = reduceMotion ? motionTokens.durationMs.instant : motionTokens.durationMs.base;
-    // Shared pane progress also drives docked width/height interpolation, which requires the JS driver.
-    const overlayUseNativeDriver = false;
     const overlayZIndexBase = 50;
 
-    const [rightOverlayClosing, setRightOverlayClosing] = React.useState(false);
-    const [detailsOverlayClosing, setDetailsOverlayClosing] = React.useState(false);
-    const rightOverlayCloseTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const detailsOverlayCloseTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    React.useEffect(() => {
-        return () => {
-            if (rightOverlayCloseTimeoutRef.current) clearTimeout(rightOverlayCloseTimeoutRef.current);
-            if (detailsOverlayCloseTimeoutRef.current) clearTimeout(detailsOverlayCloseTimeoutRef.current);
-        };
-    }, []);
+    // One surface for both docked panes. Details and right are separate columns wearing identical
+    // chrome; while this lived inline in each of them the two copies had to be edited in lockstep,
+    // which is exactly the shape that lets one quietly fall behind the other.
+    const dockedPaneSurfaceStyle = React.useMemo(() => ({
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        // Both edges that face the app get the line. The pane is inset from the top as well as the
+        // left — the header runs above it — so stopping at the left edge left the rounded corner
+        // trailing off into nothing where the arc turned horizontal.
+        borderLeftWidth: StyleSheet.hairlineWidth,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        // Half the weight of border.default on purpose: the wrapper's cast carries the separation,
+        // so this line only has to define the edge. Alpha, not a flat hex, so it composites over
+        // whatever is behind.
+        borderLeftColor: theme.colors.border.subtle,
+        borderTopColor: theme.colors.border.subtle,
+        backgroundColor: theme.colors.surface.base,
+        borderTopLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
+        // Required for the radius to be visible at all: the pane's children paint their own
+        // backgrounds (the tab strip's inset fill) straight into the corner otherwise. An element's
+        // own `overflow` clips its DESCENDANTS, not the shadow it casts itself, so the seam on the
+        // animated wrapper above survives this.
+        overflow: 'hidden' as const,
+    }), [theme]);
 
     // Pane *presence* is the logical open signal. Layout controls whether it's docked/overlay/hidden.
     // This lets us keep a pane mounted (state preserved) even when the layout temporarily hides it
     // (e.g. overlayStack where details overlays and right is hidden).
-    const detailsTargetOpenBase = Boolean(detailsPane);
-    const rightTargetOpenBase = Boolean(rightPane);
-
-    const detailsTargetOpen =
-        detailsTargetOpenBase && !(layout.details === 'overlay' && detailsOverlayClosing);
-    const rightTargetOpen =
-        rightTargetOpenBase && !(layout.right === 'overlay' && rightOverlayClosing);
-
-    const detailsPresence = usePaneAnimatedPresence({
-        targetOpen: detailsTargetOpen,
+    const detailsPresence = useModalPanePresentation({
+        targetOpen: Boolean(detailsPane),
         node: detailsPane,
-        durationMs: overlayDurationMs,
-        useNativeDriver: overlayUseNativeDriver,
+        overlay: layout.details === 'overlay',
+        onClose: onCloseDetails,
     });
-    const rightPresence = usePaneAnimatedPresence({
-        targetOpen: rightTargetOpen,
+    const rightPresence = useModalPanePresentation({
+        targetOpen: Boolean(rightPane),
         node: rightPane,
-        durationMs: overlayDurationMs,
-        useNativeDriver: overlayUseNativeDriver,
+        overlay: layout.right === 'overlay',
+        onClose: onCloseRight,
     });
-
-    const requestCloseOverlayDetails = React.useCallback(() => {
-        if (detailsOverlayCloseTimeoutRef.current) {
-            clearTimeout(detailsOverlayCloseTimeoutRef.current);
-            detailsOverlayCloseTimeoutRef.current = null;
-        }
-        if (layout.details !== 'overlay' || !detailsPresence.present) {
-            onCloseDetails();
-            return;
-        }
-        if (reduceMotion) {
-            onCloseDetails();
-            return;
-        }
-        setDetailsOverlayClosing(true);
-        Animated.timing(detailsPresence.progress, {
-            toValue: 0,
-            duration: overlayDurationMs,
-            easing: motionTokens.easing.standard,
-            useNativeDriver: overlayUseNativeDriver,
-        }).start();
-        detailsOverlayCloseTimeoutRef.current = setTimeout(() => {
-            detailsOverlayCloseTimeoutRef.current = null;
-            onCloseDetails();
-            setDetailsOverlayClosing(false);
-        }, overlayDurationMs);
-    }, [detailsPresence.present, detailsPresence.progress, layout.details, onCloseDetails, overlayDurationMs, overlayUseNativeDriver, reduceMotion]);
-
-    const requestCloseOverlayRight = React.useCallback(() => {
-        if (rightOverlayCloseTimeoutRef.current) {
-            clearTimeout(rightOverlayCloseTimeoutRef.current);
-            rightOverlayCloseTimeoutRef.current = null;
-        }
-        if (layout.right !== 'overlay' || !rightPresence.present) {
-            onCloseRight();
-            return;
-        }
-        if (reduceMotion) {
-            onCloseRight();
-            return;
-        }
-        setRightOverlayClosing(true);
-        Animated.timing(rightPresence.progress, {
-            toValue: 0,
-            duration: overlayDurationMs,
-            easing: motionTokens.easing.standard,
-            useNativeDriver: overlayUseNativeDriver,
-        }).start();
-        rightOverlayCloseTimeoutRef.current = setTimeout(() => {
-            rightOverlayCloseTimeoutRef.current = null;
-            onCloseRight();
-            setRightOverlayClosing(false);
-        }, overlayDurationMs);
-    }, [layout.right, onCloseRight, overlayDurationMs, overlayUseNativeDriver, reduceMotion, rightPresence.present, rightPresence.progress]);
-
-    React.useEffect(() => {
-        const maybeWindow: any = (globalThis as any).window;
-        if (!maybeWindow?.addEventListener) return;
-
-        const shouldListen =
-            ((layout.right === 'overlay' || layout.right === 'docked') && rightPresence.present) ||
-            ((layout.details === 'overlay' || layout.details === 'docked') && detailsPresence.present);
-        if (!shouldListen) return;
-
-        const onKeyDown = (event: any) => {
-            if (event?.key !== 'Escape') return;
-            if (isEscapeEventHandled(event)) return;
-            if (event?.defaultPrevented) return;
-            const target = event?.target;
-            const tagNameRaw = typeof target?.tagName === 'string' ? target.tagName : '';
-            const tagName = String(tagNameRaw).toLowerCase();
-            if (tagName === 'input' || tagName === 'textarea') return;
-            if (target?.isContentEditable) return;
-            if (getMaxEscapeKeyBlockerPriority() > ESCAPE_KEY_BLOCKER_PRIORITIES.panes) return;
-
-            if (layout.details === 'overlay' && detailsPresence.present) {
-                requestCloseOverlayDetails();
-                return;
-            }
-            if (layout.right === 'overlay' && rightPresence.present) {
-                requestCloseOverlayRight();
-                return;
-            }
-            if (layout.details === 'docked' && detailsPresence.present) {
-                requestCloseOverlayDetails();
-                return;
-            }
-            if (layout.right === 'docked' && rightPresence.present) {
-                requestCloseOverlayRight();
-            }
-        };
-
-        maybeWindow.addEventListener('keydown', onKeyDown);
-        return () => {
-            maybeWindow.removeEventListener?.('keydown', onKeyDown);
-        };
-    }, [
-        detailsPresence.present,
-        layout.details,
-        layout.right,
-        requestCloseOverlayDetails,
-        requestCloseOverlayRight,
-        rightPresence.present,
-    ]);
+    const rightModalActive = layout.right === 'overlay' && rightPresence.present;
+    const detailsModalActive = layout.details === 'overlay' && detailsPresence.present && !rightModalActive;
+    const rightModalLabel = t('ui.modalPane.right');
+    const detailsModalLabel = t('ui.modalPane.details');
+    const detailsModalBoundary = useModalPaneBoundary({
+        active: detailsModalActive,
+        label: detailsModalLabel,
+        onRequestClose: detailsPresence.requestClose,
+        focusReturnRef: props.detailsOverlayFocusReturnRef,
+        discardPendingFocusReturn: Boolean(detailsPane) && layout.details !== 'overlay',
+        escapeEnabled: detailsModalActive || (layout.details === 'docked' && detailsPresence.present),
+        escapePriority: detailsModalActive
+            ? ESCAPE_LAYER_PRIORITIES.overlay
+            : DOCKED_DETAILS_ESCAPE_PRIORITY,
+        allowEditableEscape: detailsModalActive,
+    });
+    const rightModalBoundary = useModalPaneBoundary({
+        active: rightModalActive,
+        label: rightModalLabel,
+        onRequestClose: rightPresence.requestClose,
+        focusReturnRef: props.rightOverlayFocusReturnRef,
+        discardPendingFocusReturn: Boolean(rightPane) && layout.right !== 'overlay',
+        escapeEnabled: rightModalActive || (layout.right === 'docked' && rightPresence.present),
+        escapePriority: rightModalActive
+            ? ESCAPE_LAYER_PRIORITIES.overlay
+            : ESCAPE_LAYER_PRIORITIES.pane,
+        allowEditableEscape: rightModalActive,
+    });
+    const {
+        nativeAccessibilityFocusAnchor: detailsNativeAccessibilityFocusAnchor,
+        nativeBackLayer: detailsNativeBackLayer,
+        ...detailsModalOverlayProps
+    } = detailsModalBoundary.overlayProps;
+    const {
+        nativeAccessibilityFocusAnchor: rightNativeAccessibilityFocusAnchor,
+        nativeBackLayer: rightNativeBackLayer,
+        ...rightModalOverlayProps
+    } = rightModalBoundary.overlayProps;
+    const activeMainBoundary = rightModalActive
+        ? rightModalBoundary
+        : detailsModalActive
+            ? detailsModalBoundary
+            : null;
+    const setMainUnderlayFocusRef = React.useCallback<React.RefCallback<HTMLElement>>((node) => {
+        detailsModalBoundary.setUnderlayFocusRef(node);
+        rightModalBoundary.setUnderlayFocusRef(node);
+    }, [detailsModalBoundary, rightModalBoundary]);
+    // The pane host already owns these visible/covered facts. Feed them into
+    // the private focus boundary instead of asking plugin surfaces to infer
+    // their own presentation state.
+    const mainFocusEligible = activeMainBoundary === null;
+    const detailsOverlayFocusEligible = detailsModalActive && !detailsPresence.closing;
+    const rightOverlayFocusEligible = rightModalActive && !rightPresence.closing;
 
     const mainRegion = (
         <View style={{ flex: 1, minWidth: 0, minHeight: 0, position: 'relative' }}>
-            {main}
+            <ModalPaneBoundaryView
+                ref={setMainUnderlayFocusRef}
+                testID="multi-pane-main-underlay"
+                style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+                {...(activeMainBoundary?.underlayProps ?? {})}
+            >
+                <PluginSurfaceFocusEligibilityProvider active={mainFocusEligible}>
+                    {main}
+                </PluginSurfaceFocusEligibilityProvider>
+            </ModalPaneBoundaryView>
 
-            {layout.details === 'overlay' && detailsPresence.present ? (
+            {detailsModalActive ? (
                 <>
                     <PaneAnimatedScrimPressable
                         testID="multi-pane-details-scrim"
                         accessibilityRole="button"
-                        onPress={requestCloseOverlayDetails}
+                        accessibilityLabel={t('ui.modalPane.dismiss', { pane: detailsModalLabel })}
+                        onPress={detailsPresence.requestClose}
                         animatedStyle={{
                             position: 'absolute',
                             top: 0,
@@ -214,6 +192,9 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                         }}
                     />
                     <Animated.View
+                        ref={detailsModalBoundary.setOverlayFocusRef}
+                        testID="multi-pane-details-modal"
+                        {...detailsModalOverlayProps}
                         style={{
                             position: 'absolute',
                             top: 0,
@@ -221,6 +202,14 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             bottom: 0,
                             zIndex: overlayZIndexBase + 1,
                             backgroundColor: theme.colors.surface.base,
+                            // Overlay only. Docked, this pane is part of the layout and its seam is
+                            // the hairline border; floating above the content it is a modal surface,
+                            // so it takes the modal elevation and rounds the one edge that shows.
+                            // Its own `overflow` clips the content, not the shadow it casts.
+                            borderTopLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
+                            borderBottomLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
+                            overflow: 'hidden',
+                            ...shadowLevelStyle(theme.colors.shadowLevels[6]),
                             transform: [
                                 {
                                     translateX: detailsPresence.progress.interpolate({
@@ -239,7 +228,15 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             onCommitWidthPx={props.onCommitDetailsDockWidthPx}
                             onDragWidthPx={props.onDragDetailsDockWidthPx}
                         >
-                            {detailsPresence.node}
+                            <ModalPaneBoundaryView
+                                nativeAccessibilityFocusAnchor={detailsNativeAccessibilityFocusAnchor}
+                                nativeBackLayer={detailsNativeBackLayer}
+                                style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+                            >
+                                <PluginSurfaceFocusEligibilityProvider active={detailsOverlayFocusEligible}>
+                                    {detailsPresence.node}
+                                </PluginSurfaceFocusEligibilityProvider>
+                            </ModalPaneBoundaryView>
                         </ResizableDockedPane>
                     </Animated.View>
                 </>
@@ -247,11 +244,12 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
 
             {layout.kind === 'overlayStack' && rightPresence.present && (layout.right === 'overlay' || layout.right === 'hidden') ? (
                 <>
-                    {layout.right === 'overlay' ? (
+                    {rightModalActive ? (
                         <PaneAnimatedScrimPressable
                             testID="multi-pane-right-scrim"
                             accessibilityRole="button"
-                            onPress={requestCloseOverlayRight}
+                            accessibilityLabel={t('ui.modalPane.dismiss', { pane: rightModalLabel })}
+                            onPress={rightPresence.requestClose}
                             animatedStyle={{
                                 position: 'absolute',
                                 top: 0,
@@ -268,6 +266,9 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                         />
                     ) : null}
                     <Animated.View
+                        ref={rightModalActive ? rightModalBoundary.setOverlayFocusRef : undefined}
+                        testID={rightModalActive ? 'multi-pane-right-modal' : undefined}
+                        {...(rightModalActive ? rightModalOverlayProps : {})}
                         style={{
                             position: 'absolute',
                             top: 0,
@@ -276,6 +277,16 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             zIndex: layout.right === 'overlay' ? overlayZIndexBase + 3 : overlayZIndexBase - 1,
                             backgroundColor: theme.colors.surface.base,
                             opacity: layout.right === 'overlay' ? 1 : 0,
+                            // Same rule as the details overlay: a floating pane is a modal surface,
+                            // a hidden/parked one is not.
+                            ...(layout.right === 'overlay'
+                                ? {
+                                    borderTopLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
+                                    borderBottomLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
+                                    overflow: 'hidden' as const,
+                                    ...shadowLevelStyle(theme.colors.shadowLevels[6]),
+                                }
+                                : null),
                             transform: [
                                 {
                                     translateX: layout.right === 'overlay'
@@ -288,16 +299,33 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             ],
                         }}
                     >
-                        <ResizableDockedPane
-                            testID="multi-pane-right-overlay"
-                            widthPx={rightDockWidthPx}
-                            minWidthPx={props.rightDockMinWidthPx ?? 260}
-                            maxWidthPx={props.rightDockMaxWidthPx ?? 720}
-                            onCommitWidthPx={props.onCommitRightDockWidthPx}
-                            onDragWidthPx={props.onDragRightDockWidthPx}
+                        <ModalPaneBoundaryView
+                            testID={layout.right === 'hidden' ? 'multi-pane-right-parked' : undefined}
+                            nativeAccessibilityFocusAnchor={rightNativeAccessibilityFocusAnchor}
+                            nativeBackLayer={rightNativeBackLayer}
+                            suppressDescendantPaneBoundaries={layout.right === 'hidden'}
+                            style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+                            pointerEvents={layout.right === 'hidden' ? 'none' : 'auto'}
+                            inert={Platform.OS === 'web' && layout.right === 'hidden' ? true : undefined}
+                            aria-hidden={Platform.OS === 'web' && layout.right === 'hidden' ? true : undefined}
+                            accessibilityElementsHidden={Platform.OS === 'web' ? undefined : layout.right === 'hidden'}
+                            importantForAccessibility={Platform.OS === 'web'
+                                ? undefined
+                                : layout.right === 'hidden' ? 'no-hide-descendants' : 'auto'}
                         >
-                            {rightPresence.node}
-                        </ResizableDockedPane>
+                            <ResizableDockedPane
+                                testID="multi-pane-right-overlay"
+                                widthPx={rightDockWidthPx}
+                                minWidthPx={props.rightDockMinWidthPx ?? 260}
+                                maxWidthPx={props.rightDockMaxWidthPx ?? 720}
+                                onCommitWidthPx={props.onCommitRightDockWidthPx}
+                                onDragWidthPx={props.onDragRightDockWidthPx}
+                            >
+                                <PluginSurfaceFocusEligibilityProvider active={rightOverlayFocusEligible}>
+                                    {rightPresence.node}
+                                </PluginSurfaceFocusEligibilityProvider>
+                            </ResizableDockedPane>
+                        </ModalPaneBoundaryView>
                     </Animated.View>
                 </>
             ) : null}
@@ -321,11 +349,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     // own shadow is not clipped by its own overflow, so this is the only owner that
                     // can reach the main content. x-offset only, no spread, web-only.
                     ...(Platform.OS === 'web'
-                        ? {
-                            boxShadow: theme.dark
-                                ? '-5px 0 22px rgba(0, 0, 0, 0.13)'
-                                : '-5px 0 22px rgba(0, 0, 0, 0.035)',
-                        }
+                        ? { boxShadow: theme.colors.shadowSeamCastBoxShadow }
                         : {}),
                     opacity: detailsPresence.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
                     transform: [
@@ -338,32 +362,25 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     ],
                 }}
             >
-                <ResizableDockedPane
-                    testID="multi-pane-details-docked"
-                    widthPx={detailsDockWidthPx}
-                    minWidthPx={props.detailsDockMinWidthPx ?? 320}
-                    maxWidthPx={props.detailsDockMaxWidthPx ?? 900}
-                    onCommitWidthPx={props.onCommitDetailsDockWidthPx}
-                    onDragWidthPx={props.onDragDetailsDockWidthPx}
+                <ModalPaneBoundaryView
+                    style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+                    {...(rightModalActive ? rightModalBoundary.underlayProps : {})}
                 >
-                    <View
-                        style={{
-                            flex: 1,
-                            minHeight: 0,
-                            minWidth: 0,
-                            borderLeftWidth: StyleSheet.hairlineWidth,
-                            // Half the weight of border.default on purpose: the wrapper's cast
-                            // carries the separation, so this line only has to define the edge.
-                            // Alpha, not a flat hex, so it composites over whatever is behind.
-                            borderLeftColor: theme.dark
-                                ? 'rgba(255, 255, 255, 0.025)'
-                                : 'rgba(0, 0, 0, 0.041)',
-                            backgroundColor: theme.colors.surface.base,
-                        }}
+                    <ResizableDockedPane
+                        testID="multi-pane-details-docked"
+                        widthPx={detailsDockWidthPx}
+                        minWidthPx={props.detailsDockMinWidthPx ?? 320}
+                        maxWidthPx={props.detailsDockMaxWidthPx ?? 900}
+                        onCommitWidthPx={props.onCommitDetailsDockWidthPx}
+                        onDragWidthPx={props.onDragDetailsDockWidthPx}
                     >
-                        {detailsPresence.node}
-                    </View>
-                </ResizableDockedPane>
+                        <View style={dockedPaneSurfaceStyle}>
+                            <PluginSurfaceFocusEligibilityProvider active={!rightModalActive}>
+                                {detailsPresence.node}
+                            </PluginSurfaceFocusEligibilityProvider>
+                        </View>
+                    </ResizableDockedPane>
+                </ModalPaneBoundaryView>
             </Animated.View>
         ) : null;
 
@@ -384,11 +401,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     // own shadow is not clipped by its own overflow, so this is the only owner that
                     // can reach the main content. x-offset only, no spread, web-only.
                     ...(Platform.OS === 'web'
-                        ? {
-                            boxShadow: theme.dark
-                                ? '-5px 0 22px rgba(0, 0, 0, 0.13)'
-                                : '-5px 0 22px rgba(0, 0, 0, 0.035)',
-                        }
+                        ? { boxShadow: theme.colors.shadowSeamCastBoxShadow }
                         : {}),
                     opacity: rightPresence.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
                     transform: [
@@ -401,32 +414,25 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     ],
                 }}
             >
-                <ResizableDockedPane
-                    testID="multi-pane-right-docked"
-                    widthPx={rightDockWidthPx}
-                    minWidthPx={props.rightDockMinWidthPx ?? 260}
-                    maxWidthPx={props.rightDockMaxWidthPx ?? 720}
-                    onCommitWidthPx={props.onCommitRightDockWidthPx}
-                    onDragWidthPx={props.onDragRightDockWidthPx}
+                <ModalPaneBoundaryView
+                    style={{ flex: 1, minWidth: 0, minHeight: 0 }}
+                    {...(detailsModalActive ? detailsModalBoundary.underlayProps : {})}
                 >
-                    <View
-                        style={{
-                            flex: 1,
-                            minHeight: 0,
-                            minWidth: 0,
-                            borderLeftWidth: StyleSheet.hairlineWidth,
-                            // Half the weight of border.default on purpose: the wrapper's cast
-                            // carries the separation, so this line only has to define the edge.
-                            // Alpha, not a flat hex, so it composites over whatever is behind.
-                            borderLeftColor: theme.dark
-                                ? 'rgba(255, 255, 255, 0.025)'
-                                : 'rgba(0, 0, 0, 0.041)',
-                            backgroundColor: theme.colors.surface.base,
-                        }}
+                    <ResizableDockedPane
+                        testID="multi-pane-right-docked"
+                        widthPx={rightDockWidthPx}
+                        minWidthPx={props.rightDockMinWidthPx ?? 260}
+                        maxWidthPx={props.rightDockMaxWidthPx ?? 720}
+                        onCommitWidthPx={props.onCommitRightDockWidthPx}
+                        onDragWidthPx={props.onDragRightDockWidthPx}
                     >
-                        {rightPresence.node}
-                    </View>
-                </ResizableDockedPane>
+                        <View style={dockedPaneSurfaceStyle}>
+                            <PluginSurfaceFocusEligibilityProvider active={!detailsModalActive}>
+                                {rightPresence.node}
+                            </PluginSurfaceFocusEligibilityProvider>
+                        </View>
+                    </ResizableDockedPane>
+                </ModalPaneBoundaryView>
             </Animated.View>
         ) : null;
 

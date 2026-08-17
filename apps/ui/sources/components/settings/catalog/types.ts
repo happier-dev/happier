@@ -41,6 +41,10 @@ export const SETTINGS_PAGE_IDS = {
     promptsLibrary: 'promptsLibrary',
     promptsAssets: 'promptsAssets',
     voice: 'voice',
+    voiceConversations: 'voiceConversations',
+    voiceDictation: 'voiceDictation',
+    voicePrivacy: 'voicePrivacy',
+    voiceAdvanced: 'voiceAdvanced',
     memory: 'memory',
 
     session: 'session',
@@ -66,7 +70,9 @@ export const SETTINGS_PAGE_IDS = {
 } as const;
 
 export type SettingsPageId =
-    (typeof SETTINGS_PAGE_IDS)[keyof typeof SETTINGS_PAGE_IDS];
+    | (typeof SETTINGS_PAGE_IDS)[keyof typeof SETTINGS_PAGE_IDS]
+    | `pluginSettingsPage:${string}`
+    | `pluginSettingsGroup:${string}`;
 
 export type SettingsPageGate = Readonly<{
     featureId?: string;
@@ -81,22 +87,37 @@ export type SettingsPageIconFactory = (params: Readonly<{
 
 export type SettingsPageNode = Readonly<{
     id: SettingsPageId;
-    titleKey: TranslationKey;
+    /** Built-in localization key. Plugin rows never supply one. */
+    titleKey?: TranslationKey;
+    /** Host-resolved plugin display text; built-in rows resolve their key at runtime. */
+    title?: string;
     subtitleKey?: TranslationKey;
+    subtitle?: string;
     route?: string;
     keywords?: readonly string[];
     icon?: SettingsPageIconFactory;
     gate?: SettingsPageGate;
+    /** Exact qualified destination identity for the one generic plugin route. */
+    pluginSettingsPage?: Readonly<{
+        pluginId: string;
+        pageId: string;
+    }>;
     children?: readonly SettingsPageNode[];
 }>;
 
 export type ResolvedSettingsPageNode = Readonly<{
     id: SettingsPageId;
-    titleKey: TranslationKey;
+    titleKey?: TranslationKey;
+    title?: string;
     subtitleKey?: TranslationKey;
+    subtitle?: string;
     route?: string;
     keywords: readonly string[];
     icon?: SettingsPageIconFactory;
+    pluginSettingsPage?: Readonly<{
+        pluginId: string;
+        pageId: string;
+    }>;
     children?: readonly ResolvedSettingsPageNode[];
 }>;
 

@@ -3,9 +3,8 @@ import { FlatList, Platform, View, type ViewToken } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
-import { Ionicons } from '@expo/vector-icons';
 import { t, type TranslationKey } from '@/text';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useSetting } from '@/sync/domains/state/storage';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -15,6 +14,7 @@ import { sessionListStyles } from './sessionListStyles';
 import { SessionFolderFocusBreadcrumbs, SessionsListHeader } from './sessionListChrome';
 import type { SessionFolderFocusScope } from '@/sync/domains/session/folders';
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type SessionListVirtualizedNode = Readonly<{
     id: string;
@@ -142,7 +142,7 @@ const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFoote
                 title={hideInactiveSessions
                     ? t('sessionInfo.inactiveAndArchivedSessions')
                     : t('sessionInfo.archivedSessions')}
-                icon={<Ionicons name="archive-outline" size={22} color={theme.colors.text.secondary} />}
+                icon={<Icon name="archive" size={20} color={theme.colors.text.secondary} />}
                 onPress={props.onPress}
             />
         </ItemGroup>
@@ -199,10 +199,14 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     onClearFolderFocus: () => void;
     onSelectFolderBreadcrumb: (folderId: string) => void;
 }>) {
+    // Read reactively and keep it in the memo deps: `layout.maxWidth` alone would be
+    // pinned by this memo, so the user's content-width preference would only reach the
+    // list after a remount.
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
     const contentContainerStyle = React.useMemo(() => ({
         paddingBottom: props.safeAreaBottom + 128,
-        maxWidth: layout.maxWidth,
-    }), [props.safeAreaBottom]);
+        maxWidth: contentMaxWidthStyle.maxWidth,
+    }), [contentMaxWidthStyle, props.safeAreaBottom]);
     const onPressArchivedSessionsRef = React.useRef(props.onPressArchivedSessions);
     onPressArchivedSessionsRef.current = props.onPressArchivedSessions;
     const handlePressArchivedSessions = React.useCallback(() => {
@@ -290,6 +294,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     return (
         <VirtualizedList
             ref={props.listRef as React.Ref<VirtualizedListRef>}
+            backendPreference={isWeb ? 'flat' : 'legend'}
             data={props.nodes as any}
             renderItem={props.renderItem as any}
             extraData={props.rowExtraData}

@@ -67,6 +67,20 @@ const state = vi.hoisted(() => ({
     ],
     runner: null as SystemTaskRunner | null,
 }));
+const administrationTargetState = vi.hoisted(() => ({
+    current: {
+        target: { serverIdentityId: 'identity-a', machineId: 'machine-1' },
+        serverId: 'server-a',
+        machine: {
+            id: 'machine-1',
+            metadata: { displayName: 'Machine 1', host: 'machine-1.local' },
+        },
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        serverId: string;
+        machine: { id: string; metadata: { displayName: string; host: string } };
+    } | null,
+}));
 
 installServerSettingsHooksCommonModuleMocks({
     text: async () => {
@@ -75,8 +89,12 @@ installServerSettingsHooksCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
-    usePrimaryMachineFromActiveSelection: () => 'machine-1',
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.current?.target ?? null,
+        canExecute: administrationTargetState.current !== null,
+        resolveExecutionTarget: () => administrationTargetState.current,
+    }),
 }));
 
 vi.mock('@/components/machines/doctorSnapshot/machineDoctorSnapshotCache', () => ({
@@ -86,6 +104,7 @@ vi.mock('@/components/machines/doctorSnapshot/machineDoctorSnapshotCache', () =>
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => state.activeServerSnapshot,
     listServerProfiles: () => state.profiles,
+    areServerProfileIdentifiersEquivalent: () => true,
 }));
 
 const upsertAndActivateServerSpy = vi.hoisted(() => vi.fn((..._args: any[]) => ({ id: 'server-daemon', serverUrl: 'https://daemon-relay.example.test' })));
@@ -144,6 +163,14 @@ describe('useRelayDriftBanner', () => {
             getSnapshot: () => null,
             subscribe: () => () => {},
         } satisfies SystemTaskRunner;
+        administrationTargetState.current = {
+            target: { serverIdentityId: 'identity-a', machineId: 'machine-1' },
+            serverId: 'server-a',
+            machine: {
+                id: 'machine-1',
+                metadata: { displayName: 'Machine 1', host: 'machine-1.local' },
+            },
+        };
     });
 
     it('does not show drift when the daemon public relay matches the active relay', async () => {
@@ -167,6 +194,38 @@ describe('useRelayDriftBanner', () => {
             },
         };
 
+        let banner: RelayDriftBanner | null = null;
+        function Probe() {
+            banner = useRelayDriftBanner();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(banner).toBeNull();
+    });
+
+    it('does not fall back to the active machine when the Administration target is unavailable', async () => {
+        administrationTargetState.current = null;
+        state.cachedDoctorSnapshot = {
+            cachedAt: 1,
+            snapshot: {
+                capturedAt: '2026-03-29T00:00:00.000Z',
+                server: {
+                    activeServerId: 'server-a',
+                    serverUrl: 'https://different-relay.example.test',
+                    publicServerUrl: 'https://different-relay.example.test',
+                    webappUrl: 'https://different-relay.example.test',
+                },
+                accountId: 'acct_1',
+                settings: {
+                    activeServerId: 'server-a',
+                    servers: [],
+                    knownAccountIds: ['acct_1'],
+                },
+            },
+        };
+        const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         let banner: RelayDriftBanner | null = null;
         function Probe() {
             banner = useRelayDriftBanner();

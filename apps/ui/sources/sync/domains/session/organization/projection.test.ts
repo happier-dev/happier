@@ -20,6 +20,7 @@ describe('buildSessionOrganizationProjection', () => {
                     parentFolderKey: null,
                     sortKey: null,
                     display: null,
+                    displayState: { status: 'available', value: null },
                     archivedAt: null,
                     createdAt: 1,
                     updatedAt: 1,

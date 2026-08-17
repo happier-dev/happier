@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
@@ -11,11 +10,12 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 
-import type { GroupedToolCallChromeMode } from './groupedToolCallRowContent';
+import type { GroupedToolCallChromeMode } from './groupedToolCallRowRenderDecision';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type ToolCallsGroupChromeVariant = 'cards' | 'feed' | 'feed_background';
 export type ToolCallsGroupUnitPosition = 'header' | 'middle' | 'footer';
@@ -114,9 +114,11 @@ export function ToolCallsGroupUnitRowFrame(props: Readonly<{
     unitTestID: string;
     children: React.ReactNode;
 }>) {
+    const centeredContentMaxWidthStyle = useLayoutMaxWidthStyle();
+
     return (
         <View style={unitStyles.centered}>
-            <View style={unitStyles.centeredContent}>
+            <View style={[unitStyles.centeredContent, centeredContentMaxWidthStyle]}>
                 <View
                     testID={props.unitTestID}
                     style={resolveToolCallsGroupUnitContainerStyle(props.variant, props.position)}
@@ -179,7 +181,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
             ]}
         >
             <View style={chromeStyles.headerGutter}>
-                <Ionicons name="layers-outline" size={16} color={theme.colors.text.secondary} />
+                <Icon name="stack-simple" size={16} color={theme.colors.text.secondary} />
             </View>
             <Text style={chromeStyles.title}>
                 {t('session.toolCalls')}
@@ -195,11 +197,11 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                     {props.status === 'running' ? (
                         <ActivitySpinner size={iconMatchedSpinnerSize(GROUP_STATUS_ICON_SIZE_PX)} color={theme.colors.text.secondary} />
                     ) : props.status === 'error' ? (
-                        <Ionicons name="alert-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.danger.foreground} />
+                        <Icon name="warning-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.danger.foreground} />
                     ) : props.status === 'permission_denied' || props.status === 'permission_canceled' ? (
-                        <Ionicons name="remove-circle-outline" size={16} color={theme.colors.state.danger.foreground} />
+                        <Icon name="minus-circle" size={16} color={theme.colors.state.danger.foreground} />
                     ) : (
-                        <Ionicons name="checkmark-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.success.foreground} />
+                        <Icon name="check-circle" size={GROUP_STATUS_ICON_SIZE_PX} color={theme.colors.state.success.foreground} />
                     )}
                     {terminalStatusLabel ? (
                         <Text style={chromeStyles.terminalStatusText} numberOfLines={1}>
@@ -208,8 +210,8 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                     ) : null}
                 </View>
                 {props.expanded ? (
-                    <Ionicons
-                        name="chevron-up-outline"
+                    <Icon
+                        name="caret-up"
                         size={16}
                         color={theme.colors.text.secondary}
                     />
@@ -319,7 +321,6 @@ const unitStyles = StyleSheet.create((theme) => ({
     centeredContent: {
         flexGrow: 1,
         flexBasis: 0,
-        maxWidth: layout.maxWidth,
     },
     container: {
         marginHorizontal: 16,

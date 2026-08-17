@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getCredentialsMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
+const readPendingExternalAuthStateMock = vi.hoisted(() => vi.fn());
+const readPendingExternalAuthStateForServerUrlMock = vi.hoisted(() => vi.fn());
+const classifyRejectedCredentialMock = vi.hoisted(() => vi.fn());
 const setCredentialsMock = vi.hoisted(() => vi.fn());
 const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => false));
 const invokeTauriMock = vi.hoisted(() => vi.fn());
@@ -10,6 +13,12 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentials: (...args: unknown[]) => getCredentialsMock(...args),
         getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlMock(...args),
+        readPendingExternalAuthState: (...args: unknown[]) => readPendingExternalAuthStateMock(...args),
+        readPendingExternalAuthStateForServerUrl: (...args: unknown[]) =>
+            readPendingExternalAuthStateForServerUrlMock(...args),
+        classifyPendingExternalAuthFirstKeyRejectedCredential:
+            (...args: unknown[]) =>
+                classifyRejectedCredentialMock(...args),
         setCredentials: (...args: unknown[]) => setCredentialsMock(...args),
     },
 }));
@@ -64,6 +73,20 @@ describe('resolveBootCredentials', () => {
         getCredentialsForServerUrlMock.mockReset();
         setCredentialsMock.mockReset();
         setCredentialsMock.mockResolvedValue(true);
+        readPendingExternalAuthStateMock.mockReset();
+        readPendingExternalAuthStateMock.mockResolvedValue({
+            value: null,
+            serverMismatch: false,
+        });
+        readPendingExternalAuthStateForServerUrlMock.mockReset();
+        readPendingExternalAuthStateForServerUrlMock.mockResolvedValue({
+            value: null,
+            serverMismatch: false,
+        });
+        classifyRejectedCredentialMock.mockReset();
+        classifyRejectedCredentialMock.mockResolvedValue({
+            kind: 'allowed',
+        });
         isTauriDesktopMock.mockReset();
         isTauriDesktopMock.mockReturnValue(false);
         invokeTauriMock.mockReset();
@@ -92,6 +115,31 @@ describe('resolveBootCredentials', () => {
         expect(getServerUrl()).toBe('http://localhost:24731');
     });
 
+    it('keeps the current server and credentials when active custody blocks a web server override', async () => {
+        stubWebRuntime('http://happier.example.test/?server=http%3A%2F%2Flocalhost%3A24731');
+
+        const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        setServerUrl('https://retained.example.test');
+        getCredentialsMock.mockResolvedValue({ token: 'retained-token' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'target-token' });
+        readPendingExternalAuthStateMock.mockResolvedValue({
+            value: {
+                accountEncryptionFirstKey: {
+                    migrationSubmissionAttempted: true,
+                },
+            },
+            serverMismatch: false,
+        });
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'retained-token',
+        });
+        expect(getServerUrl()).toBe('https://retained.example.test');
+        expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
+        expect(setCredentialsMock).not.toHaveBeenCalled();
+    });
+
     it('falls back to default credentials when no terminal-connect boot override exists for the current route', async () => {
         stubWebRuntime('http://happier.example.test/');
         (globalThis as any).sessionStorage.setItem(
@@ -109,6 +157,65 @@ describe('resolveBootCredentials', () => {
         expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
         expect(getServerUrl()).toBe('https://other.example.test');
         expect((globalThis as any).sessionStorage.getItem('happier:terminalConnect:webBootstrapHash:v1')).toBeNull();
+    });
+
+    it('does not adopt the exact first-key bearer rejected before reload', async () => {
+        stubWebRuntime('http://happier.example.test/');
+        const rejectedCredentials = {
+            token: 'rejected-token',
+        };
+        getCredentialsMock.mockResolvedValue(
+            rejectedCredentials,
+        );
+        classifyRejectedCredentialMock.mockResolvedValue({
+            kind: 'rejected',
+            pending: {},
+        });
+
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        setServerUrl('https://retained.example.test');
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toBeNull();
+        expect(classifyRejectedCredentialMock)
+            .toHaveBeenCalledWith({
+                serverUrl:
+                    'https://retained.example.test',
+                serverId:
+                    getActiveServerSnapshot().serverId,
+                token: rejectedCredentials.token,
+            });
+        expect(setCredentialsMock).not.toHaveBeenCalled();
+    });
+
+    it('adopts a replacement bearer when the first-key rejection classifier allows it', async () => {
+        stubWebRuntime('http://happier.example.test/');
+        const replacementCredentials = {
+            token: 'replacement-token',
+        };
+        getCredentialsMock.mockResolvedValue(
+            replacementCredentials,
+        );
+        classifyRejectedCredentialMock.mockResolvedValue({
+            kind: 'allowed',
+        });
+
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        setServerUrl('https://retained.example.test');
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves
+            .toEqual(replacementCredentials);
+        expect(classifyRejectedCredentialMock)
+            .toHaveBeenCalledWith(
+                expect.objectContaining({
+                    serverUrl:
+                        'https://retained.example.test',
+                    token:
+                        replacementCredentials.token,
+                }),
+            );
     });
 
     it('falls back to stack-owned desktop boot credentials when a stack Tauri app has no persisted UI credentials yet', async () => {
@@ -147,6 +254,82 @@ describe('resolveBootCredentials', () => {
                 publicKey: 'public-key',
                 machineKey: 'machine-key',
             },
+        });
+    });
+
+    it('persists token-only stack desktop boot credentials without fabricating account encryption material', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        invokeTauriMock.mockResolvedValue({
+            token: 'stack-token-only',
+            encryption: null,
+        });
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'stack-token-only',
+        });
+        expect(setCredentialsMock).toHaveBeenCalledWith({
+            token: 'stack-token-only',
+        });
+    });
+
+    it('does not adopt imported desktop credentials when marked first-key custody refuses replacement', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        invokeTauriMock.mockResolvedValue({
+            token: 'replacement-token',
+            encryption: null,
+        });
+        getCredentialsMock.mockResolvedValue({
+            token: 'retained-token',
+        });
+        readPendingExternalAuthStateForServerUrlMock.mockResolvedValue({
+            value: {
+                accountEncryptionFirstKey: {
+                    migrationSubmissionAttempted: true,
+                },
+            },
+            serverMismatch: false,
+        });
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'retained-token',
+        });
+        expect(setCredentialsMock).not.toHaveBeenCalled();
+    });
+
+    it('does not adopt imported desktop credentials when credential persistence is refused', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsForServerUrlMock.mockResolvedValue(null);
+        invokeTauriMock.mockResolvedValue({
+            token: 'replacement-token',
+            encryption: null,
+        });
+        getCredentialsMock.mockResolvedValue({
+            token: 'retained-token',
+        });
+        setCredentialsMock.mockResolvedValue(false);
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'retained-token',
         });
     });
 
@@ -208,6 +391,41 @@ describe('resolveBootCredentials', () => {
             serverId: getActiveServerSnapshot().serverId,
         });
         expect(getCredentialsMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the current server and credentials when active custody blocks stack runtime activation', async () => {
+        stubWebRuntime('http://localhost:8081/');
+        (globalThis as any).window.__HAPPIER_WEB_RUNTIME_CONFIG__ = {
+            serverUrl: 'http://127.0.0.1:3009',
+            serverContext: 'stack',
+        };
+        isTauriDesktopMock.mockReturnValue(true);
+        getCredentialsMock.mockResolvedValue({
+            token: 'retained-token',
+        });
+        getCredentialsForServerUrlMock.mockResolvedValue({
+            token: 'stack-token',
+        });
+        readPendingExternalAuthStateMock.mockResolvedValue({
+            value: {
+                accountEncryptionFirstKey: {
+                    migrationSubmissionAttempted: true,
+                },
+            },
+            serverMismatch: false,
+        });
+
+        const { setServerUrl, getServerUrl } = await import('@/sync/domains/server/serverConfig');
+        setServerUrl('https://retained.example.test');
+
+        const { resolveBootCredentials } = await import('./resolveBootCredentials');
+        await expect(resolveBootCredentials('web')).resolves.toEqual({
+            token: 'retained-token',
+        });
+        expect(getServerUrl()).toBe('https://retained.example.test');
+        expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
+        expect(invokeTauriMock).not.toHaveBeenCalled();
+        expect(setCredentialsMock).not.toHaveBeenCalled();
     });
 
     it('falls back to stack-owned desktop boot credentials when the active stack server is selected but no server-scoped UI credentials exist yet', async () => {

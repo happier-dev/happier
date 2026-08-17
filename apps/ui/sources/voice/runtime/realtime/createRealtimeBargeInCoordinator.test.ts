@@ -185,6 +185,51 @@ describe('createRealtimeBargeInCoordinator', () => {
     });
   });
 
+  it('reports the exact assistant identity when its final arrives after interruption confirmation', async () => {
+    let now = 1_000;
+    const onConfirmedInterruption = vi.fn();
+    const coordinator = createRealtimeBargeInCoordinator({
+      beginOutputInterruptionCandidate: () => 'retained',
+      resolveOutputInterruptionCandidate: vi.fn(),
+      readPlaybackCursorMs: () => 0,
+      onConfirmedInterruption,
+      interrupt: vi.fn(async () => undefined),
+      transitionToSpeaking: vi.fn(),
+      transitionToConnected: vi.fn(),
+      getControlSessionId: () => 'voice-global',
+      isBargeInEnabled: () => true,
+      now: () => now,
+    });
+
+    coordinator.onAssistantOutputStarted({ itemId: 'turn-n' });
+    now += 1_500;
+    coordinator.onInputSpeechStarted();
+    await coordinator.onTranscript({
+      role: 'user',
+      type: 'voice.transcript.final',
+      text: 'please stop and answer this question',
+    });
+    expect(onConfirmedInterruption).toHaveBeenCalledExactlyOnceWith({
+      controlSessionId: 'voice-global',
+      playedMs: 0,
+      assistantEntryId: null,
+    });
+
+    await coordinator.onTranscript({
+      role: 'assistant',
+      type: 'voice.transcript.final',
+      text: 'current response',
+      itemId: 'turn-n',
+      assistantEntryId: 'persisted-turn-n',
+    });
+
+    expect(onConfirmedInterruption).toHaveBeenNthCalledWith(2, {
+      controlSessionId: 'voice-global',
+      playedMs: 0,
+      assistantEntryId: 'persisted-turn-n',
+    });
+  });
+
   it('clears a candidate final identity when output becomes overlapping before confirmation', async () => {
     let now = 1_000;
     const onConfirmedInterruption = vi.fn();
@@ -436,6 +481,38 @@ describe('createRealtimeBargeInCoordinator', () => {
     expect(continueAfterConfirmedSpeech).not.toHaveBeenCalled();
     coordinator.onAssistantOutputStopped();
     await Promise.resolve();
+    expect(continueAfterConfirmedSpeech).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates the response for a committed user turn taken while the assistant is idle', async () => {
+    const continueAfterConfirmedSpeech = vi.fn(async () => undefined);
+    const interrupt = vi.fn(async () => undefined);
+    let bargeInEnabled = true;
+    const coordinator = createRealtimeBargeInCoordinator({
+      beginOutputInterruptionCandidate: () => 'ducked',
+      resolveOutputInterruptionCandidate: vi.fn(),
+      interrupt,
+      continueAfterConfirmedSpeech,
+      transitionToSpeaking: vi.fn(), transitionToConnected: vi.fn(),
+      getControlSessionId: () => 'voice-global', isBargeInEnabled: () => bargeInEnabled,
+    });
+
+    coordinator.onInputSpeechStarted();
+    coordinator.onInputSpeechStopped();
+    await Promise.resolve();
+
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(continueAfterConfirmedSpeech).toHaveBeenCalledTimes(1);
+
+    // Output already in flight is the two-stage gate's business, and with
+    // barge-in off no candidate is opened at all; creating a response from the
+    // plain path there would talk over the answer already being produced.
+    bargeInEnabled = false;
+    coordinator.onAssistantOutputStarted();
+    coordinator.onInputSpeechStarted();
+    coordinator.onInputSpeechStopped();
+    await Promise.resolve();
+
     expect(continueAfterConfirmedSpeech).toHaveBeenCalledTimes(1);
   });
 });

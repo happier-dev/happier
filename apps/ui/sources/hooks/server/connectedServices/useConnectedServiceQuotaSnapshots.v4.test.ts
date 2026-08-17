@@ -144,8 +144,8 @@ vi.mock('@/sync/store/hooks', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
-    useServerFeaturesRuntimeSnapshot: () => ({
+const serverFeaturesState = {
+    current: {
         status: 'ready',
         features: {
             capabilities: {
@@ -155,7 +155,11 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
                 },
             },
         },
-    }),
+    },
+};
+
+vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
+    useServerFeaturesRuntimeSnapshot: () => serverFeaturesState.current,
 }));
 
 vi.mock('./useCredentialScopedAccountModeResolver', () => ({
@@ -191,6 +195,17 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
             serverId: 'server-a',
             serverUrl: 'https://server-a.example.test',
             generation: 1,
+        };
+        serverFeaturesState.current = {
+            status: 'ready',
+            features: {
+                capabilities: {
+                    connectedServices: {
+                        credentialDelete: { revisionGuard: true },
+                        qualifiedAccounts: { protocolVersion: 4 },
+                    },
+                },
+            },
         };
         getQualifiedSpy.mockResolvedValue(response);
         const { __resetConnectedServiceQuotaSnapshotStore } = await import(
@@ -234,6 +249,51 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
             hook.getCurrent().snapshotsByKey['anthropic/work']
                 ?.meters[0]?.meterId,
         ).toBe('weekly');
+        await hook.unmount();
+    });
+
+    it('polls a novel qualified account without inventing a legacy service id', async () => {
+        const novelRef = {
+            service: {
+                pluginId: 'acme.connected.accounts',
+                localId: 'gateway',
+            },
+            accountId: 'work',
+        } as const;
+        const novelSnapshot = QualifiedConnectedAccountQuotaSnapshotV4Schema.parse({
+            ...snapshot,
+            ref: novelRef,
+        });
+        getQualifiedSpy.mockResolvedValue(QualifiedConnectedAccountQuotaResponseV4Schema.parse({
+            ...response,
+            ref: novelRef,
+            sourceResolution: {
+                ...response.sourceResolution,
+                source: {
+                    ...response.sourceResolution.source,
+                    ref: novelRef,
+                },
+            },
+            content: { t: 'plain', v: novelSnapshot },
+        }));
+        const { useConnectedServiceQuotaSnapshots } = await import(
+            './useConnectedServiceQuotaSnapshots'
+        );
+        const hook = await renderHook(() => useConnectedServiceQuotaSnapshots([{
+            ref: novelRef,
+        }]));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+
+        const key = 'acme.connected.accounts%2Fgateway/work';
+        expect(getQualifiedSpy).toHaveBeenCalledWith(credentials, novelRef, expect.anything());
+        expect(getLegacyPlainSpy).not.toHaveBeenCalled();
+        expect(getLegacySealedSpy).not.toHaveBeenCalled();
+        expect(hook.getCurrent().profiles).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'qualified', key, ref: novelRef }),
+        ]));
+        expect(hook.getCurrent().snapshotsByKey[key]).toEqual(
+            expect.objectContaining({ ref: novelRef }),
+        );
         await hook.unmount();
     });
 
@@ -308,6 +368,61 @@ describe('useConnectedServiceQuotaSnapshots V4 transport', () => {
         expect(
             hook.getCurrent().snapshotsByKey['anthropic/work'],
         ).toBeNull();
+        await hook.unmount();
+    });
+
+    it('performs no quota operation when the advertised qualified protocol is not 4', async () => {
+        serverFeaturesState.current = {
+            status: 'ready',
+            features: {
+                capabilities: {
+                    connectedServices: {
+                        credentialDelete: { revisionGuard: true },
+                        qualifiedAccounts: { protocolVersion: 5 },
+                    },
+                },
+            },
+        };
+        const { useConnectedServiceQuotaSnapshots } = await import(
+            './useConnectedServiceQuotaSnapshots'
+        );
+        const hook = await renderHook(() =>
+            useConnectedServiceQuotaSnapshots([{
+                serviceId: 'anthropic',
+                profileId: 'work',
+            }]));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+
+        expect(getQualifiedSpy).not.toHaveBeenCalled();
+        expect(getLegacyPlainSpy).not.toHaveBeenCalled();
+        expect(getLegacySealedSpy).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('shares one V4 quota entry between the list and detail readers', async () => {
+        const { useConnectedServiceQuotaSnapshots } = await import(
+            './useConnectedServiceQuotaSnapshots'
+        );
+        const { useQualifiedConnectedAccountQuota } = await import(
+            './useQualifiedConnectedAccountQuota'
+        );
+        const hook = await renderHook(() => ({
+            list: useConnectedServiceQuotaSnapshots([{
+                serviceId: 'anthropic',
+                profileId: 'work',
+            }]),
+            detail: useQualifiedConnectedAccountQuota(ref),
+        }));
+        await flushHookEffects({ cycles: 8, turns: 8 });
+
+        expect(getQualifiedSpy).toHaveBeenCalledTimes(1);
+        expect(
+            hook.getCurrent().detail.snapshot?.meters[0]?.meterId,
+        ).toBe('weekly');
+        expect(
+            hook.getCurrent().list.snapshotsByKey['anthropic/work']
+                ?.meters[0]?.meterId,
+        ).toBe('weekly');
         await hook.unmount();
     });
 });

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Platform, View, type KeyboardTypeOptions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -16,6 +15,7 @@ import { Typography } from '@/constants/Typography';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const SESSION_REPLAY_MAX_SEED_CHARS_MIN = 500;
 const SESSION_REPLAY_MAX_SEED_CHARS_MAX = 200_000;
@@ -84,7 +84,7 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                     testID="settings-session-replay-enabled-item"
                     title={t('settingsSession.replayResume.enabledTitle')}
                     subtitle={sessionReplayEnabled ? t('settingsSession.replayResume.enabledSubtitleOn') : t('settingsSession.replayResume.enabledSubtitleOff')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.state.success.foreground} />}
+                    icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.state.success.foreground} />}
                     rightElement={<Switch value={sessionReplayEnabled} onValueChange={setSessionReplayEnabled} />}
                     showChevron={false}
                     onPress={() => setSessionReplayEnabled(!sessionReplayEnabled)}
@@ -104,7 +104,7 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: t('settingsSession.replayResume.strategyTitle'),
-                                icon: <Ionicons name="list-outline" size={29} color={theme.colors.state.success.foreground} />,
+                                icon: <Icon name="list" size={29} color={theme.colors.state.success.foreground} />,
                             }}
                             items={replayStrategyOptions.map((opt) => ({
                                 id: opt.key,
@@ -166,7 +166,7 @@ export const SessionResumeSettingsView = React.memo(function SessionResumeSettin
                 <Item
                     title={t('settingsSession.handoff.title')}
                     subtitle={t('settingsSession.handoff.entrySubtitle')}
-                    icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.green} />}
+                    icon={<Icon name="arrows-left-right" size={29} color={theme.colors.accent.green} />}
                     onPress={() => router.push(SETTINGS_ROUTES.handoff)}
                 />
             </ItemGroup>

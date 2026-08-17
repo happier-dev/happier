@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('getClipboardStringTrimmedSafe', () => {
+    it('preserves the raw clipboard value when the host must distinguish a failed read', async () => {
+        vi.resetModules();
+        vi.doMock('expo-clipboard', () => ({
+            getStringAsync: vi.fn(async () => '  review link  '),
+        }));
+
+        const { getClipboardStringSafe } = await import('./clipboard');
+        await expect(getClipboardStringSafe()).resolves.toBe('  review link  ');
+    });
+
     it('returns trimmed clipboard contents', async () => {
         vi.resetModules();
         vi.doMock('expo-clipboard', () => {

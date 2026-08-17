@@ -1,4 +1,6 @@
 import { switchConnectionToActiveServer } from '../../runtime/orchestration/connectionManager';
+import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
+import { guardAccountEncryptionFirstKeyCredentialMutation } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from './serverRuntime';
 import {
     areServerProfileIdentifiersEquivalent,
@@ -29,6 +31,44 @@ export function isSameServerUrl(left: string, right: string): boolean {
     const leftKey = createServerUrlComparableKey(left);
     if (!leftKey) return false;
     return leftKey === createServerUrlComparableKey(right);
+}
+
+async function presentRetainedTargetCustody(): Promise<void> {
+    const target = getActiveServerSnapshot();
+    await presentFirstKeyCredentialLifecycle({
+        run: async () => {
+            const guard =
+                await guardAccountEncryptionFirstKeyCredentialMutation({
+                    serverUrl: target.serverUrl,
+                    serverId: target.serverId,
+                });
+            return guard.kind === 'allowed'
+                ? { kind: 'completed' }
+                : guard;
+        },
+    });
+}
+
+async function runGuardedActiveServerSwitch(
+    run: () => Promise<void>,
+): Promise<boolean> {
+    let switched = false;
+    await presentFirstKeyCredentialLifecycle({
+        run: async () => {
+            const guard =
+                await guardAccountEncryptionFirstKeyCredentialMutation();
+            if (guard.kind !== 'allowed') {
+                return guard;
+            }
+            await run();
+            switched = true;
+            return { kind: 'completed' };
+        },
+    });
+    if (switched) {
+        await presentRetainedTargetCustody();
+    }
+    return switched;
 }
 
 function canSkipActiveServerUrlSwitch(params: Readonly<{
@@ -66,17 +106,18 @@ export async function upsertActivateAndSwitchServer(params: Readonly<{
     const scope = params.scope ?? 'device';
     if (canSkipActiveServerUrlSwitch({ activeServerUrl: active.serverUrl, targetServerUrl, scope })) return false;
 
-    upsertAndActivateServer({
-        serverUrl: targetServerUrl,
-        name: params.name ?? defaultServerNameFromUrl(targetServerUrl),
-        source: params.source ?? 'url',
-        scope,
+    return await runGuardedActiveServerSwitch(async () => {
+        upsertAndActivateServer({
+            serverUrl: targetServerUrl,
+            name: params.name ?? defaultServerNameFromUrl(targetServerUrl),
+            source: params.source ?? 'url',
+            scope,
+        });
+        await switchConnectionToActiveServer();
+        if (params.refreshAuth) {
+            await params.refreshAuth();
+        }
     });
-    await switchConnectionToActiveServer();
-    if (params.refreshAuth) {
-        await params.refreshAuth();
-    }
-    return true;
 }
 
 export async function setActiveServerAndSwitch(params: Readonly<{
@@ -91,13 +132,14 @@ export async function setActiveServerAndSwitch(params: Readonly<{
     const scope = params.scope ?? 'device';
     if (canSkipActiveServerIdSwitch({ activeServerId: active.serverId, targetServerId, scope })) return false;
 
-    setActiveServer({
-        serverId: targetServerId,
-        scope,
+    return await runGuardedActiveServerSwitch(async () => {
+        setActiveServer({
+            serverId: targetServerId,
+            scope,
+        });
+        await switchConnectionToActiveServer();
+        if (params.refreshAuth) {
+            await params.refreshAuth();
+        }
     });
-    await switchConnectionToActiveServer();
-    if (params.refreshAuth) {
-        await params.refreshAuth();
-    }
-    return true;
 }

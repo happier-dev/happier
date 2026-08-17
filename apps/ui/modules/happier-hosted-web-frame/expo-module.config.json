@@ -1,0 +1,10 @@
+{
+  "name": "HappierHostedWebFrame",
+  "platforms": ["android", "ios"],
+  "android": {
+    "modules": ["dev.happier.hostedwebframe.HappierHostedWebFrameModule"]
+  },
+  "ios": {
+    "modules": ["HappierHostedWebFrameModule"]
+  }
+}

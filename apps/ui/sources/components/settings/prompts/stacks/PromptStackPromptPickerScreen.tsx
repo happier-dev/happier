@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
 import type { PromptStackEntryV1, PromptStacksV1 } from '@happier-dev/protocol';
@@ -14,6 +13,7 @@ import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -109,7 +109,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
               key={doc.id}
               testID={`promptStackPicker.doc.${doc.id}`}
               title={doc.header?.title ?? doc.title ?? t('promptLibrary.untitledPrompt')}
-              icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />}
+              icon={<Icon name="file-text" size={20} color={theme.colors.text.secondary} />}
               onPress={() => add({ kind: 'doc', artifactId: doc.id })}
               rightElement={(
                 <ItemRowActions
@@ -119,7 +119,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
                     {
                       id: 'edit',
                       title: t('common.edit'),
-                      icon: 'pencil-outline',
+                      icon: 'pencil',
                       onPress: () => openArtifactEditor({ kind: 'doc', artifactId: doc.id }),
                     },
                   ]}
@@ -131,7 +131,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
             <Item
               testID="promptStackPicker.emptyPrompts"
               title={t('promptLibrary.stackPickerNoPrompts')}
-              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />}
+              icon={<Icon name="info" size={20} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           ) : null}
@@ -143,7 +143,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
               key={bundle.id}
               testID={`promptStackPicker.bundle.${bundle.id}`}
               title={bundle.header?.title ?? bundle.title ?? t('promptLibrary.untitledSkill')}
-              icon={<Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />}
+              icon={<Icon name="sparkle" size={20} color={theme.colors.text.secondary} />}
               onPress={() => add({ kind: 'bundle', artifactId: bundle.id })}
               rightElement={(
                 <ItemRowActions
@@ -153,7 +153,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
                     {
                       id: 'edit',
                       title: t('common.edit'),
-                      icon: 'pencil-outline',
+                      icon: 'pencil',
                       onPress: () => openArtifactEditor({ kind: 'bundle', artifactId: bundle.id }),
                     },
                   ]}
@@ -165,7 +165,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
             <Item
               testID="promptStackPicker.emptySkills"
               title={t('promptLibrary.stackPickerNoSkills')}
-              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />}
+              icon={<Icon name="info" size={20} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           ) : null}
@@ -176,14 +176,14 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
             testID="promptStackPicker.addPrompt"
             title={t('promptLibrary.addPrompt')}
             subtitle={t('promptLibrary.addPromptSubtitle')}
-            icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
+            icon={<Icon name="plus-circle" size={20} color={theme.colors.accent.blue} />}
             onPress={() => router.push('/settings/prompts/docs/new')}
           />
           <Item
             testID="promptStackPicker.addSkill"
             title={t('promptLibrary.addSkill')}
             subtitle={t('promptLibrary.addSkillSubtitle')}
-            icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.indigo} />}
+            icon={<Icon name="plus-circle" size={20} color={theme.colors.accent.indigo} />}
             onPress={() => router.push('/settings/prompts/skills/new')}
           />
         </ItemGroup>

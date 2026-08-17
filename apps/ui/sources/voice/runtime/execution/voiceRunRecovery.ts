@@ -13,7 +13,6 @@ import {
     persistVoiceAgentRunMetadata,
     resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
-import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 
 function resolveExecutionRunBackendId(run: Readonly<Record<string, unknown>> | null | undefined): string | null {
     const backendIdRaw = typeof run?.backendId === 'string' ? run.backendId.trim() : '';
@@ -170,15 +169,10 @@ export function createVoiceRunRecovery(args: Readonly<{
     };
 
     const stop = async (sessionId: string): Promise<void> => {
-        const agentCfg = readLocalConversationSettingsFromAccountSettings(storage.getState().settings).agent;
-        const requestedBackend = (agentCfg?.backend ?? 'daemon') as 'daemon' | 'openai_compat';
-        const persistedRuntimeState =
-            requestedBackend === 'daemon'
-                ? readPersistedVoiceConversationRuntimeState({
-                    managedSessionId: sessionId,
-                })
-                : null;
-        const metadataSessionId = persistedRuntimeState?.metadataSessionId ?? resolveVoiceRunMetadataSessionId(sessionId, requestedBackend);
+        const persistedRuntimeState = readPersistedVoiceConversationRuntimeState({
+            managedSessionId: sessionId,
+        });
+        const metadataSessionId = persistedRuntimeState?.metadataSessionId ?? resolveVoiceRunMetadataSessionId(sessionId, 'daemon');
         const persistedRunMeta = persistedRuntimeState?.runMetadata ?? (metadataSessionId
             ? readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId })
             : null);
@@ -212,11 +206,11 @@ export function createVoiceRunRecovery(args: Readonly<{
             } catch {
                 // best-effort only
             }
-        } else if (requestedBackend === 'daemon' && persistedRunMeta?.runId) {
+        } else if (persistedRunMeta?.runId) {
             await sessionExecutionRunStop(fallbackRpcSessionId, { runId: persistedRunMeta.runId }).catch(() => {});
         }
 
-        if (requestedBackend === 'daemon' && daemonBackendId) {
+        if (daemonBackendId) {
             const listed: any = await Promise.resolve(sessionExecutionRunList(daemonRpcSessionId, {})).catch(() => null);
             const runs = Array.isArray(listed?.runs) ? listed.runs : [];
             const matchingRunIds: string[] = Array.from(

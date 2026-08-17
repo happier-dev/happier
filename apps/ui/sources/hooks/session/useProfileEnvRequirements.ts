@@ -29,6 +29,7 @@ export interface ProfileEnvRequirementsResult {
 export function useProfileEnvRequirements(
     machineId: string | null,
     profile: AIBackendProfile | null | undefined,
+    serverId?: string | null,
 ): ProfileEnvRequirementsResult {
     const required = useMemo<ProfileEnvRequirement[]>(() => {
         const raw = profile?.envVarRequirements ?? [];
@@ -47,6 +48,7 @@ export function useProfileEnvRequirements(
     const { meta, policy, isLoading, isPreviewEnvSupported } = useEnvironmentVariables(machineId, keysToQuery, {
         extraEnv,
         sensitiveKeys,
+        serverId,
     });
 
     const isReady = useMemo(() => {

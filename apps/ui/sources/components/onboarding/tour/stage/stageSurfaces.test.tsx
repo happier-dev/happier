@@ -55,4 +55,53 @@ describe('stageSurfaces', () => {
         expect(stageSurfaceModuleState.voiceLoads).toBe(1);
         expect(secondScreen.findByType('JourneyVoiceStageSurface' as never)).not.toBeNull();
     });
+
+    it('retries a failed surface import instead of caching the rejection for the whole session', async () => {
+        const { cacheStageSurfaceLoader } = await import('./stageSurfaces');
+        let attempts = 0;
+        const load = cacheStageSurfaceLoader(async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error('stage surface chunk unavailable');
+            return { default: () => null };
+        });
+
+        await expect(load()).rejects.toThrow('stage surface chunk unavailable');
+
+        const resolved = await load();
+        expect(attempts).toBe(2);
+        expect(await load()).toBe(resolved);
+        expect(attempts).toBe(2);
+
+        // A surface can fail because a chunk it COMPOSES failed, and that nested
+        // lazy lives inside the already-cached module, so the reset has to drop a
+        // successful entry too.
+        load.reset();
+        expect(await load()).not.toBe(resolved);
+        expect(attempts).toBe(3);
+    });
+
+    it('replaces the lazy component on reset so React cannot keep replaying a cached rejection', async () => {
+        const { resetStageSurfaceComponent, stageSurfaceById } = await import('./stageSurfaces');
+        const poisoned = stageSurfaceById.get('voice')?.component;
+        expect(poisoned).toBeDefined();
+
+        resetStageSurfaceComponent('voice');
+
+        const replacement = stageSurfaceById.get('voice')?.component;
+        expect(replacement).toBeDefined();
+        expect(replacement).not.toBe(poisoned);
+
+        const RetriedVoiceSurface = replacement as NonNullable<typeof replacement>;
+        const screen = await renderScreen(
+            <React.Suspense fallback={null}>
+                <RetriedVoiceSurface device="desktop" />
+            </React.Suspense>,
+            { flushOptions: { cycles: 0 } },
+        );
+        await act(async () => {
+            await vi.dynamicImportSettled();
+        });
+
+        expect(screen.findByType('JourneyVoiceStageSurface' as never)).not.toBeNull();
+    });
 });

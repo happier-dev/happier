@@ -1,18 +1,19 @@
 import { extractShellCommand, formatPermissionRequestSummary } from '@happier-dev/protocol';
 import React, { useRef, useState } from 'react';
 import { View, TouchableOpacity, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { sessionAbort, sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { getAgentBehavior } from '@/agents/catalog/catalog';
 import { parseParenIdentifier } from '@/components/tools/normalization/parse/parseParenIdentifier';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     recordPermissionActionFailure,
     type PermissionActionFailureKind,
@@ -212,6 +213,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const historicalAgentId = useHistoricalTranscriptAgentId();
     const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
     const minimumInteractiveTargetStyle = {
         minWidth: minimumInteractiveTargetSize,
@@ -250,7 +252,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         };
     }, []);
     
-    const agentId = resolveAgentIdForPermissionUi({ metadata, flavor: metadata?.flavor, toolName });
+    // A terminal outcome was decided by whoever was running at the time, so a
+    // Session that later switched Agent must not re-label its history. A
+    // pending request is the opposite case: it is live, and only the current
+    // Agent can answer it, so live authority is kept there deliberately.
+    const liveAgentId = resolveAgentIdForPermissionUi({ metadata, flavor: metadata?.flavor, toolName });
+    const agentId = permission.status === 'pending'
+        ? liveAgentId
+        : (historicalAgentId ?? liveAgentId);
     const copy = getPermissionFooterCopy(agentId);
     const permissionFooterBehavior = getAgentBehavior(agentId).permissions?.footer;
     const isCodexDecision = copy.protocol === 'codexDecision';
@@ -410,8 +419,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         const lower = toolName.toLowerCase();
         if (!command || !(lower === 'bash' || lower === 'execute' || lower === 'shell')) return;
 
-        const stripped = stripSimpleEnvPrelude(command);
-        const parts = stripped.split(/\s+/).filter(Boolean);
+        if (!isBroadShellGrantEligible(command)) return;
+        const parts = command.trim().split(/\s+/).filter(Boolean);
         const cmd = parts[0];
         const sub = parts[1];
         const canUseSubcommand =
@@ -448,8 +457,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         const lower = toolName.toLowerCase();
         if (!command || !(lower === 'bash' || lower === 'execute' || lower === 'shell')) return;
 
-        const stripped = stripSimpleEnvPrelude(command);
-        const first = stripped.split(/\s+/).filter(Boolean)[0];
+        if (!isBroadShellGrantEligible(command)) return;
+        const first = command.trim().split(/\s+/).filter(Boolean)[0];
         if (!first) return;
 
         await runPermissionAction('approve_for_session_command', setLoadingForSessionCommandName, async () => {
@@ -546,35 +555,11 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
     const shellToolNames = new Set(['bash', 'execute', 'shell']);
 
-    const stripSimpleEnvPrelude = (command: string): string => {
-        const stripLeadingEnvAssignments = (input: string): string => {
-            const parts = input.trim().split(/\s+/);
-            let i = 0;
-            while (i < parts.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i])) {
-                i++;
-            }
-            return parts.slice(i).join(' ');
-        };
-
-        const stripLeadingUnsetPrelude = (input: string): string => {
-            const trimmed = input.trimStart();
-            if (!trimmed.startsWith('unset ')) return input;
-            // Only strip a simple "unset VAR VAR2; <cmd>" prelude. If there is no semicolon,
-            // or if it looks like a real unset invocation (flags/assignments), keep it.
-            const match = trimmed.match(/^unset(?:\s+[A-Za-z_][A-Za-z0-9_]*)+\s*;\s*/);
-            if (!match) return input;
-            return trimmed.slice(match[0].length);
-        };
-
-        let out = command.trim();
-        // Claude (and some shells) prepend env assignment and/or env-unset preludes; strip them
-        // for "effective command" purposes (allowlisting/prefix matching + button labels).
-        for (let i = 0; i < 3; i++) {
-            const next = stripLeadingUnsetPrelude(stripLeadingEnvAssignments(out)).trim();
-            if (next === out) break;
-            out = next;
-        }
-        return out;
+    const isBroadShellGrantEligible = (command: string): boolean => {
+        const trimmed = command.trim();
+        if (!trimmed) return false;
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(trimmed) || /^unset(?:\s|$)/.test(trimmed)) return false;
+        return !/[;&|<>`\r\n]/.test(trimmed) && !trimmed.includes('$(');
     };
 
     const matchesPrefix = (command: string, prefix: string): boolean => {
@@ -599,7 +584,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             if (allowedTools.includes(exact)) return true;
 
             // Also accept prefixes (e.g. `Bash(git status:*)`) and shell-tool synonyms.
-            const effectiveCommand = stripSimpleEnvPrelude(command);
+            if (!isBroadShellGrantEligible(command)) return false;
+            const effectiveCommand = command.trim();
             for (const item of allowedTools) {
                 if (typeof item !== 'string') continue;
                 const parsed = parseParenIdentifier(item);
@@ -626,7 +612,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
     const isApprovedForSessionSubcommand = (() => {
         if (!isApproved || !allowedTools || !isShellTool || !commandForShell) return false;
-        const effectiveCommand = stripSimpleEnvPrelude(commandForShell);
+        if (!isBroadShellGrantEligible(commandForShell)) return false;
+        const effectiveCommand = commandForShell.trim();
         const parts = effectiveCommand.split(/\s+/).filter(Boolean);
         const cmd = parts[0];
         const sub = parts[1];
@@ -667,7 +654,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
     const isApprovedForSessionCommandName = (() => {
         if (!isApproved || !allowedTools || !isShellTool || !commandForShell) return false;
-        const effective = stripSimpleEnvPrelude(commandForShell);
+        if (!isBroadShellGrantEligible(commandForShell)) return false;
+        const effective = commandForShell.trim();
         const first = effective.split(/\s+/).filter(Boolean)[0];
         if (!first) return false;
         for (const item of allowedTools) {
@@ -700,7 +688,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             accessibilityRole="alert"
             style={styles.actionError}
         >
-            <Ionicons name="alert-circle-outline" size={14} color={theme.colors.state.danger.foreground} />
+            <Icon name="warning-circle" size={14} color={theme.colors.state.danger.foreground} />
             <Text style={styles.actionErrorText}>
                 {t('errors.operationFailed')} {t('errors.tryAgain')}
             </Text>
@@ -915,13 +903,17 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
     // Render rule-update buttons for the non-decision protocol.
     const showAllowForSessionSubcommand = isShellTool && typeof commandForShell === 'string' && (() => {
-        const stripped = stripSimpleEnvPrelude(String(commandForShell));
-        const parts = stripped.split(/\s+/).filter(Boolean);
+        if (!isBroadShellGrantEligible(commandForShell)) return false;
+        const parts = commandForShell.trim().split(/\s+/).filter(Boolean);
         const cmd = parts[0];
         const sub = parts[1];
         return Boolean(cmd) && Boolean(sub) && !String(sub).startsWith('-') && ['git', 'npm', 'yarn', 'pnpm', 'cargo', 'docker', 'kubectl', 'gh', 'brew'].includes(String(cmd));
     })();
-    const showAllowForSessionCommandName = isShellTool && typeof commandForShell === 'string' && commandForShell.length > 0 && Boolean(stripSimpleEnvPrelude(String(commandForShell)).split(/\s+/).filter(Boolean)[0]);
+    const showAllowForSessionCommandName =
+        isShellTool
+        && typeof commandForShell === 'string'
+        && isBroadShellGrantEligible(commandForShell)
+        && Boolean(commandForShell.trim().split(/\s+/).filter(Boolean)[0]);
     const primaryActionsDisabled = !isPending || loadingButton !== null || loadingAllEdits || loadingForSession;
     const ruleActionsDisabled = primaryActionsDisabled || loadingForSessionPrefix || loadingForSessionCommandName;
     return (
@@ -1075,8 +1067,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                                     (isApprovedForSessionSubcommand && !isApprovedForSessionCommandName) && styles.buttonTextSelected
                                 ]} numberOfLines={1} ellipsizeMode="tail">
                                     {(() => {
-                                        const stripped = stripSimpleEnvPrelude(String(commandForShell));
-                                        const parts = stripped.split(/\s+/).filter(Boolean);
+                                        const parts = String(commandForShell).trim().split(/\s+/).filter(Boolean);
                                         const cmd = parts[0] ?? '';
                                         const sub = parts[1] ?? '';
                                         return `${t('claude.permissions.yesForSubcommand')}${cmd && sub ? ` (${cmd} ${sub})` : ''}`;
@@ -1119,7 +1110,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                                     isPending && styles.buttonTextAllowRule,
                                     isApprovedForSessionCommandName && styles.buttonTextSelected
                                 ]} numberOfLines={1} ellipsizeMode="tail">
-                                    {t('claude.permissions.yesForCommandName')}{typeof commandForShell === 'string' ? ` (${stripSimpleEnvPrelude(commandForShell).split(/\s+/).filter(Boolean)[0] ?? ''})` : ''}
+                                    {t('claude.permissions.yesForCommandName')}{typeof commandForShell === 'string' ? ` (${commandForShell.trim().split(/\s+/).filter(Boolean)[0] ?? ''})` : ''}
                                 </Text>
                             </View>
                         )}

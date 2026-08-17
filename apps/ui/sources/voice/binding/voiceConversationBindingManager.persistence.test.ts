@@ -24,7 +24,7 @@ describe('voice conversation binding persistence publication', () => {
       persistBinding,
     });
     const input = {
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's1',
     };
@@ -67,7 +67,7 @@ describe('voice conversation binding persistence publication', () => {
       persistBinding,
     });
     await manager.ensureBound({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's1',
     });

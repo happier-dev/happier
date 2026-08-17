@@ -118,7 +118,7 @@ describe('ToolTimelineRowHeader', () => {
             />,
         );
 
-        expect(ioniconPropsState.some((i) => i.name === 'open-outline')).toBe(true);
+        expect(ioniconPropsState.some((i) => i.name === 'arrow-square-out')).toBe(true);
     });
 
     it('renders the open action outside the primary row pressable on web', async () => {
@@ -293,7 +293,7 @@ describe('ToolTimelineRowHeader', () => {
             />,
         );
 
-        expect(ioniconPropsState.some((i) => i.name === 'chevron-down')).toBe(true);
+        expect(ioniconPropsState.some((i) => i.name === 'caret-down')).toBe(true);
 
         const getChevronLayerOpacity = () => {
             const chevronIcon = screen.findByTestId('tool-timeline-ionicon:chevron-down');
@@ -325,7 +325,7 @@ describe('ToolTimelineRowHeader', () => {
             />,
         );
 
-        expect(ioniconPropsState.some((i) => i.name === 'chevron-up')).toBe(true);
-        expect(ioniconPropsState.some((i) => i.name === 'chevron-down')).toBe(false);
+        expect(ioniconPropsState.some((i) => i.name === 'caret-up')).toBe(true);
+        expect(ioniconPropsState.some((i) => i.name === 'caret-down')).toBe(false);
     });
 });

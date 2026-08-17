@@ -29,8 +29,10 @@ describe('stopVoiceQaMediaSession', () => {
     );
   });
 
-  it('fails visibly when the local turn owner leaves the same capture listening', async () => {
-    await expect(stopVoiceQaMediaSession({
+  it('stops the terminal QA session when a completed hands-free turn has already rearmed capture', async () => {
+    const stopSession = vi.fn(async () => {});
+
+    await stopVoiceQaMediaSession({
       sessionId: 'session-local',
       snapshot: { adapterId: 'local_conversation' },
       getSnapshot: () => ({
@@ -42,8 +44,10 @@ describe('stopVoiceQaMediaSession', () => {
       }),
       resolveEngineKind: () => 'local',
       toggleLocalTurn: async () => {},
-      stopSession: async () => {},
-    })).rejects.toThrow('voice_qa_media_stop_unsettled');
+      stopSession,
+    });
+
+    expect(stopSession).toHaveBeenCalledWith('session-local');
   });
 
   it('surfaces the canonical local runtime failure after capture stop', async () => {
@@ -71,7 +75,7 @@ describe('stopVoiceQaMediaSession', () => {
 
     await stopVoiceQaMediaSession({
       sessionId: 'session-realtime',
-      snapshot: { adapterId: 'realtime_elevenlabs' },
+      snapshot: { adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs' },
       getSnapshot: () => ({
         adapterId: null,
         sessionId: null,

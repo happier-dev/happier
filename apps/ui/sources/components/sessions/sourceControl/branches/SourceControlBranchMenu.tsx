@@ -11,7 +11,7 @@ import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitInd
 import { sessionScmBranchCheckout, sessionScmBranchCreate, sessionScmRepositoryRemoveIndexLock } from '@/sync/ops';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/branches/SwitchBranchWithChangesDialog';
@@ -43,7 +43,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const writeEnabled = props.writeEnabled !== false;
     const snapshot = props.snapshot;
     const currentBranch = props.currentBranch;
-    const machineTarget = readMachineTargetForSession(props.sessionId);
+    const machineTarget = useSessionMachineTarget(props.sessionId);
     const targetServerId = usePreferredServerIdForSession(props.sessionId);
     const repoPath = machineTarget?.basePath ?? snapshot?.repo.rootPath ?? null;
 

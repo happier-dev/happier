@@ -1,16 +1,4 @@
-import { getAllAgentCatalogDefinitions } from '@happier-dev/agents';
-import {
-    AcpCatalogSettingsV1Schema,
-    BackendTargetRefV2Schema,
-    DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
-    LlmTaskRunnerConfigV1Schema,
-    PeerMediationPreferencesV1Schema,
-    buildSettingArtifacts,
-    defineSettingDefinitions,
-} from '@happier-dev/protocol';
-import { z } from 'zod';
-
-const BUILT_IN_BACKEND_IDS = new Set<string>(getAllAgentCatalogDefinitions().map((entry) => entry.id));
+import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 function buildExecutionRunsGuidanceSummaryProperties(value: unknown): Record<string, number> {
     const entries = Array.isArray(value) ? value : [];
@@ -171,156 +159,61 @@ function buildPeerMediationPreferencesSummaryProperties(value: unknown): Record<
     };
 }
 
-export const SessionTmuxMachineOverrideSchema = z.object({
-    useTmux: z.boolean(),
-    sessionName: z.string(),
-    isolated: z.boolean(),
-    tmpDir: z.string().nullable(),
-});
-
-export const InstallableAutoUpdateModeSchema = z.enum(['off', 'notify', 'auto']);
-
-export const InstallablePolicySchema = z.object({
-    autoInstallWhenNeeded: z.boolean().optional(),
-    autoUpdateMode: InstallableAutoUpdateModeSchema.optional(),
-});
-
-export const InstallablesPolicyByMachineIdSchema = z.record(
-    z.string(),
-    z.record(z.string(), InstallablePolicySchema).default({}),
-).default({});
-
-export const ExecutionRunsGuidanceEntrySchema = z.object({
-    id: z.string().min(1),
-    title: z.string().max(200).optional(),
-    description: z.string().min(1).max(10_000),
-    enabled: z.boolean().default(true),
-    suggestedBackendTarget: BackendTargetRefV2Schema.optional(),
-    suggestedModelId: z.string().min(1).max(200).optional(),
-    suggestedIntent: z.enum(['review', 'plan', 'delegate']).optional(),
-    exampleToolCalls: z.array(z.string()).optional(),
-}).superRefine((value, ctx) => {
-    const target = value.suggestedBackendTarget;
-    if (!target) return;
-    if (target.sourceKind === 'configured' || typeof target.configuredBackendId === 'string') return;
-    if (BUILT_IN_BACKEND_IDS.has(target.backendId)) return;
-    ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['suggestedBackendTarget', 'backendId'],
-        message: 'Unknown built-in backend target',
-    });
-});
-
-export const ACCOUNT_RUNTIME_SETTING_DEFINITIONS = defineSettingDefinitions({
+/** UI-only serializers for Protocol-owned runtime Account setting keys. */
+export const ACCOUNT_RUNTIME_SETTING_ANALYTICS = defineAccountSettingAnalytics({
     sessionReplaySummaryRunnerV1: {
-        schema: LlmTaskRunnerConfigV1Schema.nullable(),
-        default: null,
-        description: 'Runner used for on-demand replay summaries (summary_plus_recent)',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'presence',
-            privacy: 'presence_only',
-            identityScope: 'person',
-            serializeCurrent: (value: z.infer<typeof LlmTaskRunnerConfigV1Schema> | null): boolean => value !== null,
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'presence',
+        privacy: 'presence_only',
+        identityScope: 'person',
+        serializeCurrent: (value) => value !== null,
     },
     executionRunsGuidanceEntries: {
-        schema: z.array(ExecutionRunsGuidanceEntrySchema),
-        default: [],
-        description: 'User-configured execution-run guidance entries',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildExecutionRunsGuidanceSummaryProperties,
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildExecutionRunsGuidanceSummaryProperties,
     },
     peerMediationPreferencesV1: {
-        schema: PeerMediationPreferencesV1Schema,
-        default: DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
-        description: 'Direct peer mediation route preferences',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildPeerMediationPreferencesSummaryProperties,
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildPeerMediationPreferencesSummaryProperties,
     },
     sessionTmuxByMachineId: {
-        schema: z.record(z.string(), SessionTmuxMachineOverrideSchema).default({}),
-        default: {},
-        description: 'Per-machine overrides for tmux session spawning',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildSessionTmuxOverrideSummaryProperties,
-        },
-    },
-    sessionTmuxSessionName: {
-        schema: z.string(),
-        default: 'happy',
-        description: 'Default tmux session name for new sessions',
-        storageScope: 'account',
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildSessionTmuxOverrideSummaryProperties,
     },
     sessionTmuxIsolated: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Whether to use an isolated tmux server for new sessions',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'boolean',
-            privacy: 'safe',
-            identityScope: 'person',
-        },
-    },
-    sessionTmuxTmpDir: {
-        schema: z.string().nullable(),
-        default: null,
-        description: 'Optional TMUX_TMPDIR override for isolated tmux server',
-        storageScope: 'account',
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'boolean',
+        privacy: 'safe',
+        identityScope: 'person',
     },
     installablesPolicyByMachineId: {
-        schema: InstallablesPolicyByMachineIdSchema,
-        default: {},
-        description: 'Per-machine installables policy overrides (auto-install / auto-update)',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildInstallablesPolicySummaryProperties,
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildInstallablesPolicySummaryProperties,
     },
     acpCatalogSettingsV1: {
-        schema: AcpCatalogSettingsV1Schema.catch({ v: 2, backends: [] }).default({ v: 2, backends: [] }),
-        default: { v: 2, backends: [] },
-        description: 'Configured ACP backends',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrentProperties: buildAcpCatalogSummaryProperties,
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildAcpCatalogSummaryProperties,
     },
 });
-
-export const ACCOUNT_RUNTIME_SETTING_ARTIFACTS = buildSettingArtifacts(ACCOUNT_RUNTIME_SETTING_DEFINITIONS);

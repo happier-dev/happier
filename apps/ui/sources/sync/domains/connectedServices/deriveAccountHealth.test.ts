@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveAccountHealth } from './deriveAccountHealth';
+import {
+    compareAccountHealthSeverity,
+    deriveAccountHealth,
+    worstAccountHealth,
+    type AccountHealth,
+} from './deriveAccountHealth';
 
 describe('deriveAccountHealth', () => {
     it('is healthy when status is connected and capacity is comfortable', () => {
@@ -33,5 +38,30 @@ describe('deriveAccountHealth', () => {
         expect(deriveAccountHealth({ status: 'refresh_failed_retryable', capacityPct: 5 })).toBe('error');
         // stale attention but needs_reauth error -> error wins.
         expect(deriveAccountHealth({ status: 'needs_reauth', capacityPct: 90, isStale: true })).toBe('error');
+    });
+});
+
+describe('worstAccountHealth', () => {
+    it('returns the most severe value regardless of position', () => {
+        expect(worstAccountHealth(['healthy', 'error', 'attention'])).toBe('error');
+        expect(worstAccountHealth(['attention', 'healthy'])).toBe('attention');
+        expect(worstAccountHealth(['healthy', 'healthy'])).toBe('healthy');
+    });
+
+    it('treats an empty set as healthy (nothing is wrong yet)', () => {
+        expect(worstAccountHealth([])).toBe('healthy');
+    });
+});
+
+describe('compareAccountHealthSeverity', () => {
+    it('sorts attention-first: error, then attention, then healthy', () => {
+        const sorted = (['healthy', 'attention', 'error', 'healthy'] satisfies AccountHealth[])
+            .slice()
+            .sort(compareAccountHealthSeverity);
+        expect(sorted).toEqual(['error', 'attention', 'healthy', 'healthy']);
+    });
+
+    it('is zero for equal severities so callers keep their own tiebreak', () => {
+        expect(compareAccountHealthSeverity('attention', 'attention')).toBe(0);
     });
 });

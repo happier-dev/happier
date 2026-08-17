@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol';
 
 import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -27,6 +28,26 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({ model: { defaultMode: 'default', supportsSelection: false } }),
     resolveAgentIdFromFlavor: () => 'codex',
 }));
+
+function composerAttachmentOnlyMeta(): Record<string, unknown> {
+    return {
+        [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
+            v: 1,
+            composerAttachments: [{
+                v: 1,
+                instanceId: 'attachment-instance-1',
+                attachment: {
+                    pluginId: 'com.acme.review',
+                    localId: 'review',
+                },
+                key: 'review-42',
+                value: { reviewId: '42' },
+                presentation: { label: 'Review #42', typeLabel: 'Review comment' },
+                content: [{ mediaId: 'media-42' }],
+            }],
+        },
+    };
+}
 
 describe('followUpSpawnedSessionWithServerScope', () => {
     beforeEach(() => {
@@ -74,7 +95,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         try {
             await followUpSpawnedSessionWithServerScope({
                 sessionId: 'sess_target',
-                initialMessageText: 'Investigate this bug\n\n[attachments block]',
+                initialMessageText: '  Investigate this bug\n\n[attachments block]  ',
                 displayText: 'Investigate this bug',
                 metaOverrides: {
                     happier: {
@@ -90,7 +111,7 @@ describe('followUpSpawnedSessionWithServerScope', () => {
         expect(thrown).toBeInstanceOf(Error);
         expect((thrown as Error).message).toBe('active send failed');
         expect(readRecoverableFollowUpPayload(thrown)).toEqual({
-            draftText: 'Investigate this bug\n\n[attachments block]',
+            draftText: '  Investigate this bug\n\n[attachments block]  ',
             displayText: 'Investigate this bug',
             metaOverrides: {
                 happier: {
@@ -155,6 +176,99 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                 requestedAction: { v: 1, kind: 'enqueue' },
             },
         );
+    });
+
+    it('sends an attachment-only post-spawn first turn through the canonical sender', async () => {
+        const sendSessionMessageWithServerScope = vi.fn(async () => ({ ok: true as const }));
+        const storedSession = {
+            id: 'sess_target',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 0,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadataVersion: 1,
+            metadata: null,
+            agentStateVersion: 1,
+            agentState: null,
+        } as Session;
+        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
+            resolveContext: async () => ({ scope: 'active', timeoutMs: 5_000 }),
+            sendSessionMessageWithServerScope,
+            activeSync: { refreshSessions: async () => {} },
+            ensureSessionVisibleForMessageRoute: async () => {},
+            getStoredSession: () => storedSession,
+        });
+        const metaOverrides = composerAttachmentOnlyMeta();
+
+        await followUpSpawnedSessionWithServerScope({
+            sessionId: 'sess_target',
+            initialMessageText: '',
+            metaOverrides,
+            messageLocalId: 'spawn-attachment-only-1',
+        });
+
+        expect(sendSessionMessageWithServerScope).toHaveBeenCalledExactlyOnceWith({
+            sessionId: 'sess_target',
+            message: '',
+            serverId: null,
+            displayText: undefined,
+            metaOverrides,
+            profileId: undefined,
+            messageLocalId: 'spawn-attachment-only-1',
+            providerDeliveryIntent: 'first_turn',
+        });
+    });
+
+    it('retains an attachment-only post-spawn input as recoverable when canonical admission fails', async () => {
+        const sendSessionMessageWithServerScope = vi.fn(async () => ({
+            ok: false as const,
+            errorCode: 'prepare_failed',
+            error: 'Attachment preparation failed',
+        }));
+        const storedSession = {
+            id: 'sess_target',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 0,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadataVersion: 1,
+            metadata: null,
+            agentStateVersion: 1,
+            agentState: null,
+        } as Session;
+        const { createFollowUpSpawnedSessionWithServerScope, readRecoverableFollowUpPayload } = await import('./followUpSpawnedSession');
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
+            resolveContext: async () => ({ scope: 'active', timeoutMs: 5_000 }),
+            sendSessionMessageWithServerScope,
+            activeSync: { refreshSessions: async () => {} },
+            ensureSessionVisibleForMessageRoute: async () => {},
+            getStoredSession: () => storedSession,
+        });
+        const metaOverrides = composerAttachmentOnlyMeta();
+
+        let thrown: unknown = null;
+        try {
+            await followUpSpawnedSessionWithServerScope({
+                sessionId: 'sess_target',
+                initialMessageText: '',
+                metaOverrides,
+                messageLocalId: 'spawn-attachment-only-1',
+            });
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toBe('Attachment preparation failed');
+        expect(readRecoverableFollowUpPayload(thrown)).toEqual({
+            draftText: '',
+            metaOverrides,
+        });
     });
 
     it('hydrates scoped sessions through sync bookkeeping instead of writing directly to storage state', async () => {
@@ -305,6 +419,71 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             },
         });
         expect(refreshSessions).not.toHaveBeenCalled();
+    });
+
+    it('routes an attachment-only first turn through the selected server scope after hydration', async () => {
+        const sendSessionMessageWithServerScope = vi.fn(async () => ({ ok: true as const }));
+        const fetchedSession = {
+            id: 'sess_target',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadataVersion: 1,
+            metadata: { path: '/tmp/repo', host: 'host' },
+            agentStateVersion: 1,
+            agentState: null,
+            presence: 'online',
+        } as Session;
+        let storedSession: Session | null = null;
+        const { createFollowUpSpawnedSessionWithServerScope } = await import('./followUpSpawnedSession');
+        const { followUpSpawnedSessionWithServerScope } = createFollowUpSpawnedSessionWithServerScope({
+            resolveContext: async () => ({
+                scope: 'scoped',
+                timeoutMs: 5_000,
+                targetServerId: 'server-b',
+                targetAccountId: 'account-b',
+                targetServerUrl: 'https://server-b.example.test',
+                token: 'token-b',
+                encryption: {
+                    decryptEncryptionKey: async () => null,
+                    initializeSessions: async () => {},
+                    getSessionEncryption: () => null,
+                },
+            }),
+            fetchSessionById: async ({ applySessions }) => {
+                applySessions([fetchedSession]);
+                return { ok: true, session: null };
+            },
+            sendSessionMessageWithServerScope,
+            getStoredSession: () => storedSession,
+            applySessions: (sessions) => {
+                storedSession = sessions[0] as Session;
+            },
+        });
+        const metaOverrides = composerAttachmentOnlyMeta();
+
+        await followUpSpawnedSessionWithServerScope({
+            sessionId: 'sess_target',
+            targetServerId: 'server-b',
+            initialMessageText: '',
+            metaOverrides,
+            messageLocalId: 'scoped-spawn-attachment-only-1',
+        });
+
+        expect(sendSessionMessageWithServerScope).toHaveBeenCalledExactlyOnceWith({
+            sessionId: 'sess_target',
+            message: '',
+            serverId: 'server-b',
+            displayText: undefined,
+            metaOverrides,
+            profileId: undefined,
+            messageLocalId: 'scoped-spawn-attachment-only-1',
+            providerDeliveryIntent: 'first_turn',
+        });
+        expect(storedSession).toBe(fetchedSession);
     });
 
     it('does not send the scoped follow-up when session-by-id hydration returns terminal auth', async () => {

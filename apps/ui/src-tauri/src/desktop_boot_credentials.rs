@@ -13,7 +13,7 @@ pub struct DesktopBootEncryption {
 #[serde(rename_all = "camelCase")]
 pub struct DesktopBootCredentials {
     pub token: String,
-    pub encryption: DesktopBootEncryption,
+    pub encryption: Option<DesktopBootEncryption>,
 }
 
 fn read_non_empty_env(key: &str) -> Option<String> {
@@ -86,10 +86,10 @@ fn parse_boot_credentials(raw: &str) -> Option<DesktopBootCredentials> {
     if parsed.token.trim().is_empty() {
         return None;
     }
-    if parsed.encryption.public_key.trim().is_empty()
-        || parsed.encryption.machine_key.trim().is_empty()
-    {
-        return None;
+    if let Some(encryption) = &parsed.encryption {
+        if encryption.public_key.trim().is_empty() || encryption.machine_key.trim().is_empty() {
+            return None;
+        }
     }
     Some(parsed)
 }
@@ -154,10 +154,10 @@ mod tests {
     fn sample_credentials() -> DesktopBootCredentials {
         DesktopBootCredentials {
             token: "stack-token".to_string(),
-            encryption: DesktopBootEncryption {
+            encryption: Some(DesktopBootEncryption {
                 public_key: "public-key".to_string(),
                 machine_key: "machine-key".to_string(),
-            },
+            }),
         }
     }
 
@@ -185,6 +185,33 @@ mod tests {
         let resolved = resolve_desktop_stack_boot_credentials_with(&|key| env.get(key).cloned())
             .expect("expected credentials result");
         assert_eq!(resolved, Some(credentials));
+    }
+
+    #[test]
+    fn resolves_token_only_stack_boot_credentials_without_encryption_material() {
+        let temp = tempdir().expect("expected tempdir");
+        let cli_home = temp.path().join("cli");
+        let server_id = "stack_activity-surfaces-qa__id_default";
+        let access_key_dir = cli_home.join("servers").join(server_id);
+        create_dir_all(&access_key_dir).expect("expected server dir");
+        write(
+            access_key_dir.join("access.key"),
+            r#"{"token":"stack-token-only","encryption":null}"#,
+        )
+        .expect("expected access key");
+
+        let env = HashMap::from([
+            ("HAPPIER_STACK_STACK", "activity-surfaces-qa".to_string()),
+            ("HAPPIER_HOME_DIR", cli_home.display().to_string()),
+            ("HAPPIER_ACTIVE_SERVER_ID", server_id.to_string()),
+        ]);
+
+        let resolved = resolve_desktop_stack_boot_credentials_with(&|key| env.get(key).cloned())
+            .expect("expected credentials result");
+        assert_eq!(
+            resolved.map(|credentials| credentials.token),
+            Some("stack-token-only".to_string()),
+        );
     }
 
     #[test]

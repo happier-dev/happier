@@ -19,7 +19,7 @@ const activeV3Mock = vi.hoisted(() => vi.fn());
 const generatedLegacyCompatibility = vi.hoisted(() => ({
     github: {
         service: {
-            pluginId: 'happier.scm.hosting.github',
+            pluginId: 'happier.scm.forge.github',
             localId: 'github-account',
         },
         peerOperations: {
@@ -57,7 +57,7 @@ const generatedLegacyCompatibility = vi.hoisted(() => ({
     },
     bitbucket: {
         service: {
-            pluginId: 'happier.scm.hosting.bitbucket',
+            pluginId: 'happier.scm.forge.bitbucket',
             localId: 'bitbucket-account',
         },
         peerOperations: {
@@ -95,15 +95,27 @@ vi.mock('@happier-dev/protocol', async (importOriginal) => ({
 
 import {
     createQualifiedConnectedAccountGroupsClient,
+    MEMBER_PRIORITY_STEP,
+    nextMemberPriority,
     QualifiedConnectedAccountUiSourceError,
 } from './qualifiedConnectedAccountUiSource';
+
+describe('nextMemberPriority', () => {
+    it('starts the ladder at one step for the first member', () => {
+        expect(nextMemberPriority([])).toBe(MEMBER_PRIORITY_STEP);
+    });
+
+    it('appends one full step past the highest existing priority', () => {
+        expect(nextMemberPriority([{ priority: 100 }, { priority: 300 }])).toBe(300 + MEMBER_PRIORITY_STEP);
+    });
+});
 
 const credentials = {
     token: 'token',
     secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 };
 const service = {
-    pluginId: 'happier.scm.hosting.github',
+    pluginId: 'happier.scm.forge.github',
     localId: 'github-account',
 };
 const policy = {
@@ -134,6 +146,7 @@ const qualifiedGroup = {
     displayName: 'Team',
     policy,
     activeConnectedAccountId: 'account-a',
+    incarnation: 'qualified-group-row-team',
     generation: 4,
     runtimeStateRevision: 7,
     state: {},
@@ -222,6 +235,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             ref: { service, groupId: 'team' },
             revision: {
                 protocol: 'v4',
+                incarnation: 'qualified-group-row-team',
                 generation: 4,
                 runtimeStateRevision: 7,
             },
@@ -243,12 +257,14 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             service,
             groupId: 'team',
             policy: { ...policy, autoSwitch: true },
+            expectedIncarnation: 'qualified-group-row-team',
             expectedRuntimeStateRevision: 7,
         });
         expect(activeV4Mock).toHaveBeenCalledWith(credentials, {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-a',
             expectedGeneration: 4,
+            expectedIncarnation: 'qualified-group-row-team',
             expectedRuntimeStateRevision: 7,
             overrideRuntimeCooldown: true,
         });
@@ -333,6 +349,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             activeAccountId: qualifiedGroup.activeConnectedAccountId,
             revision: {
                 protocol: 'v4' as const,
+                incarnation: qualifiedGroup.incarnation,
                 generation: qualifiedGroup.generation,
                 runtimeStateRevision:
                     qualifiedGroup.runtimeStateRevision,
@@ -368,8 +385,9 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
         expect(addMemberV4Mock).toHaveBeenCalledWith(credentials, {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-b',
-            priority: 110,
+            priority: 200,
             enabled: true,
+            expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
         expect(patchMemberV4Mock).toHaveBeenCalledWith(credentials, {
@@ -377,15 +395,18 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             connectedAccountId: 'account-b',
             enabled: false,
             priority: 200,
+            expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
         expect(removeMemberV4Mock).toHaveBeenCalledWith(credentials, {
             group: { service, groupId: 'team' },
             connectedAccountId: 'account-b',
+            expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
         expect(deleteV4Mock).toHaveBeenCalledWith(credentials, {
             group: { service, groupId: 'team' },
+            expectedIncarnation: qualifiedGroup.incarnation,
             expectedRuntimeStateRevision: 7,
         });
     });
@@ -445,7 +466,7 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             serviceId: 'github',
             groupId: 'team',
             profileId: 'account-b',
-            priority: 110,
+            priority: 200,
             enabled: true,
             expectedGeneration: 4,
         });

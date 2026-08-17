@@ -445,11 +445,12 @@ describe('useSessionListIndexByServerId', () => {
 });
 
 describe('mobile cockpit surface local-setting selectors', () => {
-    it('selects only the requested session last mobile surface', async () => {
+    it('does not read a legacy bare session selection without a resolved Account realm', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
+                profileScope: null,
                 localSettings: {
                     ...state.localSettings,
                     sessionLastMobileSurfaceBySessionId: {
@@ -462,7 +463,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
             const hook = await renderHook(() => useSessionLastMobileSurface('session-1'), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
-            expect(hook.getCurrent()).toBe('git');
+            expect(hook.getCurrent()).toBeNull();
 
             await act(async () => {
                 storage.setState((state) => ({
@@ -477,23 +478,73 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 }));
             });
 
-            expect(hook.getCurrent()).toBe('git');
+            expect(hook.getCurrent()).toBeNull();
             await hook.unmount();
         } finally {
             storage.setState(previousState);
         }
     });
 
-    it('prefers the server-scoped session last mobile surface when the server id is known locally', async () => {
+    it('reads only the current Account realm-qualified session selection', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
+                profileScope: { serverId: 'active-server', accountId: 'account-a' },
                 localSettings: {
                     ...state.localSettings,
                     sessionLastMobileSurfaceBySessionId: {
                         'session-1': 'git',
-                        'active-server:session-1': 'terminal',
+                        'active-server:session-1': 'browser',
+                        'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
+                        'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'terminal',
+                    },
+                },
+                sessionListIndexByServerId: {
+                    'active-server': [
+                        {
+                            type: 'session',
+                            sessionId: 'session-1',
+                            serverId: 'active-server',
+                            serverName: 'Current server',
+                        },
+                    ],
+                },
+            }));
+
+            const hook = await renderHook(() => ({
+                surface: useSessionLastMobileSurface('session-1'),
+                explicitSurface: useSessionLastMobileSurface('session-1', 'active-server'),
+                resolvedServerId: useSessionServerId('session-1'),
+            }), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().resolvedServerId).toBe('active-server');
+            expect(hook.getCurrent().explicitSurface).toBe('terminal');
+            expect(hook.getCurrent().surface).toBe('terminal');
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('migrates the attributable remote-dev server-qualified session selection into the active Account realm without reading a bare key', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                profileScope: { serverId: 'active-server', accountId: 'account-a' },
+                localSettings: {
+                    ...state.localSettings,
+                    sessionLastMobileSurfaceBySessionId: {
+                        // The current remote-dev predecessor writes this exact
+                        // server-qualified shape. The bare key is deliberately
+                        // conflicting: it must not become a realm fallback.
+                        'active-server:session-1': 'browser',
+                        'session-1': 'git',
+                        'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
                     },
                 },
                 sessionListIndexByServerId: {
@@ -512,19 +563,29 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
-            expect(hook.getCurrent()).toBe('terminal');
+            expect(hook.getCurrent()).toBe('browser');
 
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            expect(storage.getState().localSettings.sessionLastMobileSurfaceBySessionId).toEqual({
+                'session-1': 'git',
+                'mobile-surface-selection:v2:session:13:active-server9:account-b:9:session-1': 'services',
+                'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'browser',
+            });
             await hook.unmount();
         } finally {
             storage.setState(previousState);
         }
     });
 
-    it('persists a session last mobile surface by merging the current map', async () => {
+    it('does not write a session selection until it can bind an Account realm', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
+                profileScope: null,
                 localSettings: {
                     ...state.localSettings,
                     sessionLastMobileSurfaceBySessionId: {
@@ -542,7 +603,6 @@ describe('mobile cockpit surface local-setting selectors', () => {
 
             expect(storage.getState().localSettings.sessionLastMobileSurfaceBySessionId).toEqual({
                 existing: 'git',
-                'session-1': 'chat',
             });
             await hook.unmount();
         } finally {
@@ -550,11 +610,12 @@ describe('mobile cockpit surface local-setting selectors', () => {
         }
     });
 
-    it('persists a server-scoped session last mobile surface when the server id is known locally', async () => {
+    it('persists a session selection with the resolved Account realm key', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
+                profileScope: { serverId: 'active-server', accountId: 'account-a' },
                 localSettings: {
                     ...state.localSettings,
                     sessionLastMobileSurfaceBySessionId: {
@@ -582,7 +643,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
 
             expect(storage.getState().localSettings.sessionLastMobileSurfaceBySessionId).toEqual({
                 existing: 'git',
-                'active-server:session-1': 'chat',
+                'mobile-surface-selection:v2:session:13:active-server9:account-a:9:session-1': 'chat',
             });
             await hook.unmount();
         } finally {
@@ -590,16 +651,63 @@ describe('mobile cockpit surface local-setting selectors', () => {
         }
     });
 
-    it('selects and persists project last mobile surfaces by workspace ref', async () => {
+    it('selects and persists project mobile surfaces within the active Account realm', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
+                profileScope: { serverId: 'active-server', accountId: 'account-a' },
+                settings: {
+                    ...state.settings,
+                    workspaceRefsV1: [
+                        {
+                            // Workspace-reference ids are only realm-qualified in
+                            // persistence; a same-id record from another server must
+                            // not shadow the active realm's record by array order.
+                            id: 'wr_1',
+                            serverId: 'other-server',
+                            machineId: 'machine-other',
+                            rootPath: '/other-server-repo',
+                            label: null,
+                            createdAtMs: 1,
+                            lastOpenedAtMs: null,
+                        },
+                        {
+                            id: 'wr_1',
+                            serverId: 'active-server',
+                            machineId: 'machine-1',
+                            rootPath: '/repo',
+                            label: null,
+                            createdAtMs: 1,
+                            lastOpenedAtMs: null,
+                        },
+                        {
+                            id: 'wr_2',
+                            serverId: 'active-server',
+                            machineId: 'machine-2',
+                            rootPath: '/other-repo',
+                            label: null,
+                            createdAtMs: 1,
+                            lastOpenedAtMs: null,
+                        },
+                        {
+                            id: 'wr_3',
+                            serverId: 'active-server',
+                            machineId: 'machine-3',
+                            rootPath: '/third-repo',
+                            label: null,
+                            createdAtMs: 1,
+                            lastOpenedAtMs: null,
+                        },
+                    ],
+                },
                 localSettings: {
                     ...state.localSettings,
                     projectLastMobileSurfaceByWorkspaceRefId: {
                         wr_1: 'git',
                         wr_2: 'terminal',
+                        'mobile-surface-selection:v2:project:13:active-server9:account-b:4:wr_1': 'browser',
+                        'mobile-surface-selection:v2:project:13:active-server9:account-a:4:wr_1': 'git',
                     },
                 },
             }));
@@ -620,7 +728,9 @@ describe('mobile cockpit surface local-setting selectors', () => {
             expect(storage.getState().localSettings.projectLastMobileSurfaceByWorkspaceRefId).toEqual({
                 wr_1: 'git',
                 wr_2: 'terminal',
-                wr_3: 'overview',
+                'mobile-surface-selection:v2:project:13:active-server9:account-b:4:wr_1': 'browser',
+                'mobile-surface-selection:v2:project:13:active-server9:account-a:4:wr_1': 'git',
+                'mobile-surface-selection:v2:project:13:active-server9:account-a:4:wr_3': 'overview',
             });
             await selectedHook.unmount();
             await persistHook.unmount();

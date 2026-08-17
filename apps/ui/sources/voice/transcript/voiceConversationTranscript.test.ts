@@ -222,6 +222,7 @@ describe('voiceConversationTranscript', () => {
 
     it('releases only Voice attempt projection state without evicting unrelated Agent rows', async () => {
         const {
+            beginCanonicalVoiceTranscriptAttempt,
             projectCanonicalVoiceTranscriptEvent,
             readCanonicalVoiceTranscriptSnapshot,
             releaseCanonicalVoiceTranscriptConversation,
@@ -233,12 +234,16 @@ describe('voiceConversationTranscript', () => {
                 content: [{ type: 'text', text: 'canonical coding result' }],
             }],
         };
+        const attempt = beginCanonicalVoiceTranscriptAttempt({
+            conversationSessionId: 'direct-agent-session',
+        });
+        if (!attempt) throw new Error('expected transcript attempt');
         projectCanonicalVoiceTranscriptEvent({
             conversationSessionId: 'direct-agent-session',
             event: {
                 v: 1,
                 type: 'voice.transcript.final',
-                epoch: 1,
+                epoch: attempt.epoch,
                 sequence: 1,
                 revision: 1,
                 eventId: 'voice-final',
@@ -249,7 +254,10 @@ describe('voiceConversationTranscript', () => {
             },
         });
 
-        releaseCanonicalVoiceTranscriptConversation('direct-agent-session');
+        await releaseCanonicalVoiceTranscriptConversation({
+            conversationSessionId: 'direct-agent-session',
+            attemptIdentity: attempt.attemptIdentity,
+        });
 
         expect(readCanonicalVoiceTranscriptSnapshot('direct-agent-session')).toEqual([]);
         expect(evictSessionMessages).not.toHaveBeenCalled();

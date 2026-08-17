@@ -8,6 +8,10 @@ import { Text } from '@/components/ui/text/Text';
 
 import { selectionListTestId } from './_shared';
 import type { SelectionListPagination } from './_types';
+import {
+    buildSelectionListSectionGroupA11yProps,
+    type SelectionListA11yPattern,
+} from './buildSelectionListOptionA11yProps';
 
 const styles = StyleSheet.create((theme) => ({
     status: {
@@ -36,6 +40,7 @@ export function SelectionListPaginationFooter(props: Readonly<{
     pagination: SelectionListPagination;
     rootTestID?: string;
     measureMode?: boolean;
+    a11yPattern: SelectionListA11yPattern;
     onRetry: () => void;
 }>): React.ReactElement | null {
     const measureMode = props.measureMode === true;
@@ -47,9 +52,17 @@ export function SelectionListPaginationFooter(props: Readonly<{
             'aria-hidden': true,
         }
         : null;
+    const listboxGroupA11y = measureMode
+        ? null
+        : buildSelectionListSectionGroupA11yProps({ pattern: props.a11yPattern });
+    const wrapListboxSupplement = (content: React.ReactElement): React.ReactElement => (
+        listboxGroupA11y === null
+            ? content
+            : <View role="group" {...listboxGroupA11y}>{content}</View>
+    );
 
     if (props.pagination.loadingMore) {
-        return (
+        return wrapListboxSupplement(
             <View
                 testID={measureMode ? undefined : selectionListTestId(props.rootTestID, 'pagination', 'loading')}
                 style={styles.status}
@@ -66,7 +79,7 @@ export function SelectionListPaginationFooter(props: Readonly<{
     }
 
     if (props.pagination.error) {
-        return (
+        return wrapListboxSupplement(
             <View
                 testID={measureMode ? undefined : selectionListTestId(props.rootTestID, 'pagination', 'error')}
                 style={styles.error}
@@ -90,7 +103,7 @@ export function SelectionListPaginationFooter(props: Readonly<{
 
     if (props.pagination.hasMore) return null;
 
-    return (
+    return wrapListboxSupplement(
         <View
             testID={measureMode ? undefined : selectionListTestId(props.rootTestID, 'pagination', 'end')}
             style={styles.status}

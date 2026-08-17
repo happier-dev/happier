@@ -1,7 +1,6 @@
 import React, { memo, useEffect, useState } from 'react';
 import { View, Switch, Platform, Linking, ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -18,6 +17,7 @@ import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollView
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export interface PublicLinkDialogProps {
@@ -248,7 +248,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                                         setIsConfiguring(true);
                                         requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
                                     }}
-                                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
+                                    icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.blue} />}
                                 />
                             </ItemGroup>
 
@@ -268,7 +268,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                                     />
                                     <Item
                                         title={t('common.copy')}
-                                        icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
+                                        icon={<Icon name="copy" size={29} color={theme.colors.accent.blue} />}
                                         onPress={handleCopyLink}
                                         rightElement={<CopiedPill visible={copyFeedback.isCopied('public-link')} testID="public-link-copy-feedback" />}
                                         showChevron={false}

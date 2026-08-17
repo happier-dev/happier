@@ -25,6 +25,46 @@ export function resolvePluginUiText(params: Readonly<{
     return params.fallback?.trim() || key;
 }
 
+const EMPTY_TRANSLATION_BUNDLE: Readonly<Record<string, string>> = Object.freeze({});
+
+function readStringBundle(value: unknown): Readonly<Record<string, string>> | null {
+    const record = readRecord(value);
+    if (!record) {
+        return null;
+    }
+    const entries = Object.entries(record).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+    );
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+/**
+ * The plugin's projected translation map for one locale, merged over its English
+ * fallback — the same preferred-locale-then-English resolution
+ * {@link resolvePluginUiTranslationText} applies per key, materialized once so an
+ * executable surface can resolve keys synchronously (§3.2, UI-D13).
+ *
+ * This is the same projected bundle the host already reads; no second catalog,
+ * loader or fallback owner is introduced.
+ */
+export function resolvePluginUiTranslationBundle(params: Readonly<{
+    projection: PluginUiProjectionModel | null | undefined;
+    pluginId: string;
+    locale?: string | null;
+}>): Readonly<Record<string, string>> {
+    const bundles = readRecord(params.projection?.translationsByPluginId[params.pluginId]?.bundles);
+    if (!bundles) {
+        return EMPTY_TRANSLATION_BUNDLE;
+    }
+    const preferredLocale = params.locale?.trim() || 'en';
+    const english = readStringBundle(bundles.en);
+    const preferred = preferredLocale === 'en' ? null : readStringBundle(bundles[preferredLocale]);
+    if (!english && !preferred) {
+        return EMPTY_TRANSLATION_BUNDLE;
+    }
+    return Object.freeze({ ...english, ...preferred });
+}
+
 export function resolvePluginUiTranslationText(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
     pluginId: string;

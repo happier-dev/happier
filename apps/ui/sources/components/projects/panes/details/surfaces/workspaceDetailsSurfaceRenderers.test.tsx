@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+    type PluginUiSurfacePlacementProjection,
+} from '@/sync/domains/plugins/ui/projection';
+import { createPluginDetailsDestinationTab } from '@/components/appShell/panes/details/surfaces/pluginDetailsDestination';
 
 vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
@@ -141,5 +148,173 @@ describe('workspace details surface renderers', () => {
         expect(host?.props.launchpadRows).toBe(launchpadRows);
         expect(host?.props.launchpadRefreshStatus).toBe('idle');
         expect(host?.props.launchpadRefreshError).toBeNull();
+    });
+
+    it('registers the canonical qualified plugin details renderer for project tabs', async () => {
+        const { createWorkspaceDetailsSurfaceRenderers } = await import('./workspaceDetailsSurfaceRenderers');
+        const binding = normalizePluginUiDestinationBindingV1({
+            pluginId: 'com.example.viewer',
+            destinationId: 'workspace-file',
+            rendererId: 'workspace-file-renderer',
+            container: 'detailsTab',
+            target: { kind: 'project', workspaceRefIdPath: '/workspace/id' },
+        });
+        if (!binding) throw new Error('project details fixture must be admitted');
+        const placement = {
+            id: 'surfacePlacement:com.example.viewer:workspace-file',
+            pluginId: 'com.example.viewer',
+            contributionKind: 'surfacePlacement' as const,
+            descriptorId: 'workspace-file',
+            binding,
+            target: binding.target,
+            renderer: { kind: 'reactNative', contributionId: 'workspace-file-renderer' },
+            display: { developerFallback: 'Workspace file viewer' },
+            availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
+            headerActions: [],
+        } satisfies PluginUiSurfacePlacementProjection;
+        const projection: PluginUiProjectionModel = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            generation: 4,
+            surfacePlacementsById: { [placement.id]: placement },
+        };
+        const tab = {
+            ...createPluginDetailsDestinationTab({
+                destination: { pluginId: 'com.example.viewer', localId: 'workspace-file' },
+                title: 'Workspace file viewer',
+            }),
+            isPinned: true,
+            isPreview: false,
+        };
+        const renderers = createWorkspaceDetailsSurfaceRenderers({
+            scopeId: 'project:wr_1',
+            workspaceRefId: 'wr_1',
+            workspaceCacheKey: 'workspace:wr_1',
+            workspaceScope: {
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                rootPath: '/repo',
+            },
+            serverId: 'server-1',
+            machineId: 'machine-1',
+            rootPath: '/repo',
+            activeRootPath: '/repo',
+            presentation: 'panel',
+            pinDetailsTab: vi.fn(),
+            openFileTab: vi.fn(),
+            renderWorkspaceInfo: () => React.createElement('WorkspaceInfo'),
+            pluginUiProjection: projection,
+            pluginUiProjectionPhase: 'current',
+            pluginUiInteractionEnabled: true,
+            platform: 'web',
+        });
+        const renderInput = {
+            tab,
+            descriptor: {
+                surfaceId: 'project:wr_1:details:plugin-file',
+                resourceKey: 'pluginDetailsDestination:plugin-file',
+                scope: {
+                    kind: 'project' as const,
+                    workspaceRefId: 'wr_1',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/repo',
+                },
+                region: 'details' as const,
+                status: 'available' as const,
+            },
+            scope: {
+                kind: 'project' as const,
+                workspaceRefId: 'wr_1',
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                rootPath: '/repo',
+            },
+            region: 'details' as const,
+            active: true,
+            callbacks: {},
+        };
+
+        const renderer = renderers.find((candidate) => candidate.id === 'plugin-details-destination:project');
+
+        expect(renderer).toBeDefined();
+        expect(renderer?.canRender(renderInput)).toBe(true);
+    });
+
+    it('passes the current project file-tab context to the shared openable-content viewer owner', async () => {
+        const { createWorkspaceDetailsSurfaceRenderers } = await import('./workspaceDetailsSurfaceRenderers');
+        const replaceTab = vi.fn();
+        const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 9 };
+        const renderers = createWorkspaceDetailsSurfaceRenderers({
+            scopeId: 'project:wr_1',
+            workspaceRefId: 'wr_1',
+            workspaceCacheKey: 'workspace:wr_1',
+            workspaceScope: {
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                rootPath: '/repo',
+            },
+            serverId: 'server-1',
+            machineId: 'machine-1',
+            rootPath: '/repo',
+            activeRootPath: '/repo',
+            presentation: 'panel',
+            pinDetailsTab: vi.fn(),
+            openFileTab: vi.fn(),
+            renderWorkspaceInfo: () => React.createElement('WorkspaceInfo'),
+            pluginUiProjection: projection,
+            pluginUiProjectionPhase: 'current',
+            pluginUiInteractionEnabled: true,
+            platform: 'web',
+        });
+        const renderInput = {
+            tab: {
+                key: 'file:README.md',
+                kind: 'file',
+                title: 'README.md',
+                resource: { kind: 'file', path: 'README.md' },
+                isPinned: true,
+                isPreview: false,
+            },
+            descriptor: {
+                surfaceId: 'project:wr_1:details:file:README.md',
+                resourceKey: 'file:README.md',
+                scope: {
+                    kind: 'project' as const,
+                    workspaceRefId: 'wr_1',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/repo',
+                },
+                region: 'details' as const,
+                status: 'available' as const,
+            },
+            scope: {
+                kind: 'project' as const,
+                workspaceRefId: 'wr_1',
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                rootPath: '/repo',
+            },
+            region: 'details' as const,
+            active: true,
+            callbacks: { replaceTab },
+        };
+        const renderer = renderers.find((candidate) => candidate.id === 'workspace-file');
+
+        const rendered = renderer?.render(renderInput);
+
+        expect(React.isValidElement(rendered)).toBe(true);
+        if (!React.isValidElement<{ openableContentViewer?: unknown }>(rendered)) return;
+        expect(rendered.props.openableContentViewer).toMatchObject({
+            targetKind: 'project',
+            projection,
+            details: renderInput,
+            scopedLaunchFacts: {
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                generation: 9,
+                interactionEnabled: true,
+            },
+        });
     });
 });

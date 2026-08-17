@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, ScrollView, useWindowDimensions, View } from 'react-native';
+import { ScrollView, useWindowDimensions, View } from 'react-native';
 import { StyleSheet } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
@@ -38,6 +38,9 @@ export function AgentInputChipPickerPanel(
     () => agentInputChipPickerHasDetailPane(props.options),
     [props.options],
   );
+  // Deliberately NOT gated on `props.options.length > 1`. In-session there is exactly
+  // one agent option, but this same detail pane is where the MODEL is chosen, so
+  // collapsing it at a single option would make in-session model selection unreachable.
   const showDetailedSelector = detailed;
   const [focusedOptionId, setFocusedOptionId] = React.useState<string | null>(
     props.selectedOptionId ?? props.options[0]?.id ?? null,
@@ -225,9 +228,16 @@ export function AgentInputChipPickerPanel(
                   style={[
                     styles.detailPane,
                     detailedLayout === "split" ? styles.detailScrollContent : null,
-                    Platform.OS === "web"
-                      && detailedLayout === "stacked"
-                      && props.detailContentOwnsScroll === true
+                    // `detailContentOwnsScroll` also switches the surrounding
+                    // popover's own scroll OFF, on every platform. The split
+                    // column bounds the pane through `detailScrollContent`;
+                    // stacked has to bound it here or the pane grows past a
+                    // container that is `overflow: hidden` and no longer
+                    // scrolls — clipping whatever the detail renders last,
+                    // which is its primary action. Measured before this line
+                    // was unguarded: the apply button sat 162 px below the
+                    // container's bottom edge with no way to reach it.
+                    detailedLayout === "stacked" && props.detailContentOwnsScroll === true
                       ? styles.detailPaneOwnScroll
                       : null,
                   ]}
@@ -249,7 +259,7 @@ export function AgentInputChipPickerPanel(
                     }
                     deferAgentInputPopoverClose(props.onRequestClose);
                   }}
-                  applyLabel={props.applyLabel ?? t("common.use")}
+                  applyLabel={focusedOption.applyLabel ?? props.applyLabel ?? t("common.use")}
                   onSelectDetailOption={(id) => {
                     props.onSelect(id);
                   }}

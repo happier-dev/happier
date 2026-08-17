@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -8,6 +7,7 @@ import {
     type SelectionListStatusVariant,
 } from '@/components/ui/selectionList';
 import { StatusPill as BaseStatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -164,11 +164,7 @@ export function buildExistingWorktreeOptions(
                 }),
                 label,
                 subtitle: worktree.path,
-                icon: React.createElement(Ionicons, {
-                    name: 'git-network-outline',
-                    size: WORKTREE_ROW_ICON_SIZE,
-                    color: params.rowIconColor,
-                }),
+                icon: <Icon name="graph" size={WORKTREE_ROW_ICON_SIZE} color={params.rowIconColor} />,
                 rightAccessory: accessory,
                 onSelect: () => params.onSelectExistingWorktree(worktree.path),
             } satisfies SelectionListOption;

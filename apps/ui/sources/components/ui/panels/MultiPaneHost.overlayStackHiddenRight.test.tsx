@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { describe, expect, it } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
@@ -48,6 +49,33 @@ describe('MultiPaneHost (overlayStack hidden right)', () => {
 
         expect(tracker.mounts.right).toBe(1);
         expect(tracker.unmounts.right ?? 0).toBe(0);
+    });
+
+    it('makes a parked right pane inert to pointer, keyboard, and accessibility interaction', async () => {
+        const tree = (await renderScreen(<MultiPaneHost
+                    main={<Main />}
+                    rightPane={<Tracked tracker={createMountTracker()} name="right" />}
+                    detailsPane={<Tracked tracker={createMountTracker()} name="details" />}
+                    layout={{ kind: 'overlayStack', right: 'hidden', details: 'overlay' }}
+                    rightDockWidthPx={360}
+                    detailsDockWidthPx={520}
+                    onCloseRight={() => {}}
+                    onCloseDetails={() => {}}
+                    onCommitRightDockWidthPx={() => {}}
+                    onCommitDetailsDockWidthPx={() => {}}
+                />)).tree;
+
+        const parkedPane = tree.findByTestId('multi-pane-right-parked');
+        if (!parkedPane) throw new Error('expected parked right pane');
+        expect(parkedPane.props.pointerEvents).toBe('none');
+
+        if (Platform.OS === 'web') {
+            expect(parkedPane.props.inert).toBe(true);
+            expect(parkedPane.props['aria-hidden']).toBe(true);
+        } else {
+            expect(parkedPane.props.accessibilityElementsHidden).toBe(true);
+            expect(parkedPane.props.importantForAccessibility).toBe('no-hide-descendants');
+        }
     });
 });
 

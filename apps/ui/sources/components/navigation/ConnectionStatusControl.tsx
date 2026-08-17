@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
@@ -41,6 +40,7 @@ import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/re
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type Variant = 'sidebar' | 'header';
 const RELAY_SETTINGS_ROUTE = '/settings/server';
@@ -332,7 +332,7 @@ function resolveSocketStatusKey(socketStatus: unknown): 'connected' | 'connectin
 
 const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRow(props: Readonly<{
     testID: string;
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    icon: IconName;
     title: string;
     subtitle: string;
     statusLabel: string;
@@ -346,7 +346,7 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
         <View style={styles.statusRow} testID={props.testID}>
             <View style={styles.statusRowLeft}>
                 <View style={styles.statusRowIcon}>
-                    <Ionicons name={props.icon} size={16} color={props.dotColor} />
+                    <Icon name={props.icon} size={16} color={props.dotColor} />
                 </View>
                 <View style={styles.statusRowText}>
                     <Text style={styles.statusRowTitle} numberOfLines={1}>
@@ -368,7 +368,7 @@ const ConnectionPopoverStatusRow = React.memo(function ConnectionPopoverStatusRo
                         onPress={props.onRetry}
                         style={styles.statusRowRetryButton}
                     >
-                        <Ionicons name="refresh-outline" size={17} color={props.statusColor} />
+                        <Icon name="arrow-clockwise" size={16} color={props.statusColor} />
                     </Pressable>
                 ) : null}
                 <StatusPill
@@ -667,8 +667,8 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                     >
                         {activeServerLabel}
                     </Text>
-                    <Ionicons
-                        name={open ? "chevron-up" : "chevron-down"}
+                    <Icon
+                        name={open ? "caret-up" : "caret-down"}
                         size={chevronSize}
                         color={connectionHealth.color}
                         style={styles.statusChevron}
@@ -779,7 +779,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                         <View style={styles.popoverStatusList}>
                                             <ConnectionPopoverStatusRow
                                                 testID="connection-popover-relay"
-                                                icon="server-outline"
+                                                icon="hard-drives"
                                                 title={t('systemStatus.server.activeServer')}
                                                 subtitle={toServerUrlDisplay(getServerUrl())}
                                                 statusLabel={t(endpointPresentation.labelKey)}
@@ -790,7 +790,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                             />
                                             <ConnectionPopoverStatusRow
                                                 testID="connection-popover-realtime"
-                                                icon="pulse-outline"
+                                                icon="pulse"
                                                 title={t('systemStatus.ui.realtime')}
                                                 subtitle={t('systemStatus.ui.socket')}
                                                 statusLabel={t(socketPresentation.labelKey)}
@@ -800,7 +800,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                             />
                                             <ConnectionPopoverStatusRow
                                                 testID="connection-popover-machines"
-                                                icon="laptop-outline"
+                                                icon="laptop"
                                                 title={t('settings.machines')}
                                                 subtitle={machineSubtitle}
                                                 statusLabel={t(connectionHealth.machineLabelKey)}
@@ -867,7 +867,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                                     onPress={handleManageRelay}
                                                     style={styles.popoverSectionIconButton}
                                                 >
-                                                    <Ionicons name="settings-outline" size={18} color={theme.colors.text.secondary} />
+                                                    <Icon name="sliders-horizontal" size={16} color={theme.colors.text.secondary} />
                                                 </Pressable>
                                             </View>
                                         </View>

@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { encodeBase64 } from '@/encryption/base64';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import {
   clearPendingExternalAuthMock,
   flushOAuthEffects,
+  getRandomBytesSpy,
   localSearchParamsMock,
+  loginSpy,
   loginWithCredentialsSpy,
   replaceSpy,
   resetOAuthHarness,
@@ -86,7 +89,9 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
         expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
         expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-        expect(loginWithCredentialsSpy).toHaveBeenCalled();
+        expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_3' });
+        expect(loginSpy).not.toHaveBeenCalled();
+        expect(getRandomBytesSpy).not.toHaveBeenCalled();
         expect(replaceSpy).toHaveBeenCalledWith('/');
       });
     } finally {
@@ -135,7 +140,9 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
       expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-      expect(loginWithCredentialsSpy).toHaveBeenCalled();
+      expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_4' });
+      expect(loginSpy).not.toHaveBeenCalled();
+      expect(getRandomBytesSpy).not.toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');
 
       expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
@@ -143,5 +150,56 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       await screen.unmount();
     }
 
+  });
+
+  it('provisions real E2EE material only after the user explicitly chooses E2EE', async () => {
+    localSearchParamsMock.mockReturnValue({
+      provider: 'github',
+      flow: 'auth',
+      pending: 'p5',
+      storagePolicy: 'optional',
+      provisioning: 'required',
+    });
+    setPendingExternalAuthState({ provider: 'github', proof: 'proof_5' });
+
+    const fetchMock = vi.fn(async (url: any) => {
+      const rawUrl = String(url);
+      if (isReachabilityProbeUrl(rawUrl)) {
+        return new Response('', { status: 200 });
+      }
+      if (rawUrl.includes('/v1/auth/external/github/finalize')) {
+        return new Response(JSON.stringify({ success: true, token: 'tok_5' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
+    });
+    setRuntimeFetch(fetchMock as unknown as typeof fetch);
+
+    const screen = await renderOAuthReturnScreen();
+    try {
+      expect(getRandomBytesSpy).not.toHaveBeenCalled();
+      expect(loginSpy).not.toHaveBeenCalled();
+      expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+
+      await pressTestInstanceAsync(
+        screen.findByTestId('oauth-provisioning-choice-e2ee'),
+        'oauth-provisioning-choice-e2ee',
+      );
+
+      await vi.waitFor(() => {
+        expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize'))).toBe(true);
+        expect(getRandomBytesSpy).toHaveBeenCalled();
+        expect(loginSpy).toHaveBeenCalledWith(
+          'tok_5',
+          encodeBase64(new Uint8Array(32).fill(9), 'base64url'),
+        );
+        expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+        expect(replaceSpy).toHaveBeenCalledWith('/');
+      });
+    } finally {
+      await screen.unmount();
+    }
   });
 });

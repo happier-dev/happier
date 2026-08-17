@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Octicons } from '@expo/vector-icons';
 import { I18nManager, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +9,7 @@ import {
     createDesktopActivityOverlayInteriorSurfaceStyle,
 } from '../DesktopActivityOverlayChrome';
 import type { DesktopActivityOverlayVisualMode } from '../DesktopActivityOverlayVisualMode';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type StopPropagationEvent = Readonly<{
     stopPropagation?: () => void;
@@ -209,7 +209,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                         !canSendDraft ? styles.disabledAction : null,
                     ]}
                 >
-                    <Octicons name="arrow-up" size={15} color={theme.colors.overlay.foreground} />
+                    <Icon name="arrow-up" size={14} color={theme.colors.overlay.foreground} />
                 </Pressable>
             </Pressable>
             {targetUnavailable ? (

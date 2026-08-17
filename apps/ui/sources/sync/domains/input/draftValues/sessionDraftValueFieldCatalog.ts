@@ -25,7 +25,38 @@ export const SESSION_DRAFT_VALUE_FIELD_CATALOG = {
             ttlDays: SESSION_DRAFT_VALUE_DEFAULT_TTL_DAYS,
         },
     },
+    /**
+     * The armed target Agent. It is the other half of the composer decision whose
+     * first half is the draft text, so it lives and dies with that draft: it
+     * survives a remount, it leaves with the message that consumed it, and it goes
+     * with a deleted Session.
+     *
+     * `composerClear` is deliberately absent, unlike the sibling routing fields. A
+     * composer action that consumes the draft does not disarm the live picker, and
+     * a persisted half that cleared where the live half does not would put the one
+     * choice back on two lifetimes — the exact defect this field exists to remove.
+     * Cancelling is its own gesture: re-select the running Agent.
+     *
+     * The reasons an arm can stop being truthful — a closed gate, a changed running
+     * Agent, a target that lost eligibility — are not lifecycle events this catalog
+     * could observe. They are re-validated where the arm is restored.
+     */
+    'routing.agentContinuation': {
+        lifecycle: {
+            send: 'outboundHandoff',
+            sessionDelete: true,
+            ttlDays: SESSION_DRAFT_VALUE_DEFAULT_TTL_DAYS,
+        },
+    },
     'routing.executionRunDelivery': {
+        lifecycle: {
+            send: 'outboundHandoff',
+            composerClear: true,
+            sessionDelete: true,
+            ttlDays: SESSION_DRAFT_VALUE_DEFAULT_TTL_DAYS,
+        },
+    },
+    'structuredInput.composerAttachments': {
         lifecycle: {
             send: 'outboundHandoff',
             composerClear: true,

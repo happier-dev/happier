@@ -96,20 +96,59 @@ function upsertGroup(
     groups: readonly QualifiedConnectedAccountUiGroup[],
     group: QualifiedConnectedAccountUiGroup,
 ): readonly QualifiedConnectedAccountUiGroup[] {
-    const index = groups.findIndex((candidate) => (
-        candidate.ref.groupId === group.ref.groupId
-        && candidate.ref.service.pluginId === group.ref.service.pluginId
-        && candidate.ref.service.localId === group.ref.service.localId
-    ));
+    const index = groups.findIndex((candidate) => sameGroupRef(candidate, group));
     if (index === -1) return [...groups, group];
     const next = [...groups];
     next[index] = group;
     return next;
 }
 
+function sameGroupRef(
+    left: QualifiedConnectedAccountUiGroup,
+    right: QualifiedConnectedAccountUiGroup,
+): boolean {
+    return left.ref.groupId === right.ref.groupId
+        && left.ref.service.pluginId === right.ref.service.pluginId
+        && left.ref.service.localId === right.ref.service.localId;
+}
+
+function sameGroupRevision(
+    left: QualifiedConnectedAccountUiGroup,
+    right: QualifiedConnectedAccountUiGroup,
+): boolean {
+    const leftRevision = left.revision;
+    const rightRevision = right.revision;
+    if (leftRevision.protocol !== rightRevision.protocol) return false;
+    if (leftRevision.generation !== rightRevision.generation) return false;
+    return leftRevision.protocol === 'legacy-v3'
+        || (
+            rightRevision.protocol === 'v4'
+            && leftRevision.incarnation === rightRevision.incarnation
+            && leftRevision.runtimeStateRevision === rightRevision.runtimeStateRevision
+        );
+}
+
+/**
+ * Group actions are fenced by the revision they sent to the peer. A freshly
+ * listed group with the same id but a different generation/revision is a newer
+ * authority (or a recreated group), so a late response must not replace it.
+ */
+function isCurrentGroupRevision(params: Readonly<{
+    state: State;
+    basis: LoadBasis | null;
+    group: QualifiedConnectedAccountUiGroup;
+}>): boolean {
+    return params.state.basis === params.basis
+        && params.state.groups.some((candidate) => (
+            sameGroupRef(candidate, params.group)
+            && sameGroupRevision(candidate, params.group)
+        ));
+}
+
 function isGroupRevisionConflict(error: unknown): boolean {
     const code = readConnectedServiceSettingsErrorCode(error);
     return code === 'connect_group_generation_conflict'
+        || code === 'connect_group_incarnation_conflict'
         || code === 'connect_group_runtime_state_revision_conflict'
         || code === 'connect_group_source_revision_conflict';
 }
@@ -163,6 +202,12 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
     );
     const currentBasisRef = React.useRef(basis);
     currentBasisRef.current = basis;
+    const stateRef = React.useRef(state);
+    stateRef.current = state;
+    // List responses may arrive after a local group mutation under the same
+    // basis. Keep their request epoch with the hook state they are allowed to
+    // replace, rather than giving a consumer its own reconciliation path.
+    const groupsEpochRef = React.useRef(0);
 
     const load = React.useCallback(async (
         preserveGroups: readonly QualifiedConnectedAccountUiGroup[],
@@ -171,28 +216,27 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             setState(EMPTY_STATE);
             return;
         }
+        const listEpoch = ++groupsEpochRef.current;
+        // Last-known-good stays visible while the list reloads: only a CHANGED
+        // basis clears the previous groups.
         setState((previous) => ({
             basis,
             status: 'loading',
-            source: previous.basis === basis ? previous.source : null,
+            source: basis.source,
             groups: previous.basis === basis ? previous.groups : [],
             error: null,
         }));
         try {
-            setState({
-                basis,
-                status: 'loading',
-                source: basis.source,
-                groups: [],
-                error: null,
-            });
             const client = createQualifiedConnectedAccountGroupsClient({
                 credentials: basis.credentials,
                 service: basis.service,
                 source: basis.source,
             });
             const groups = await client.list();
-            if (currentBasisRef.current !== basis) return;
+            if (
+                currentBasisRef.current !== basis
+                || groupsEpochRef.current !== listEpoch
+            ) return;
             setState({
                 basis,
                 status: 'loaded',
@@ -201,7 +245,10 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                 error: null,
             });
         } catch (error) {
-            if (currentBasisRef.current !== basis) return;
+            if (
+                currentBasisRef.current !== basis
+                || groupsEpochRef.current !== listEpoch
+            ) return;
             setState({
                 basis,
                 status: 'error',
@@ -213,7 +260,6 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
     }, [basis]);
 
     React.useEffect(() => {
-        let active = true;
         if (!basis) {
             setState({
                 basis: null,
@@ -226,55 +272,14 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                 groups: [],
                 error: params.peer.error,
             });
-            return () => {
-                active = false;
-            };
+            return;
         }
-        setState({
-            basis,
-            status: 'loading',
-            source: null,
-            groups: [],
-            error: null,
-        });
-        void (async () => {
-            try {
-                setState({
-                    basis,
-                    status: 'loading',
-                    source: basis.source,
-                    groups: [],
-                    error: null,
-                });
-                const client = createQualifiedConnectedAccountGroupsClient({
-                    credentials: basis.credentials,
-                    service: basis.service,
-                    source: basis.source,
-                });
-                const groups = await client.list();
-                if (!active) return;
-                setState({
-                    basis,
-                    status: 'loaded',
-                    source: basis.source,
-                    groups,
-                    error: null,
-                });
-            } catch (error) {
-                if (!active) return;
-                setState({
-                    basis,
-                    status: 'error',
-                    source: basis.source,
-                    groups: [],
-                    error: resolveConnectedServiceSettingsErrorMessage(error),
-                });
-            }
-        })();
-        return () => {
-            active = false;
-        };
-    }, [basis, params.peer.error, params.peer.status]);
+        // Groups from a DIFFERENT basis are never preserved through a failure;
+        // a reload under the same basis keeps what is already on screen.
+        void load(
+            stateRef.current.basis === basis ? stateRef.current.groups : [],
+        );
+    }, [basis, load, params.peer.error, params.peer.status]);
 
     const visibleState: State = state.basis === basis
         ? state
@@ -313,13 +318,27 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
         operation: (
             client: ReturnType<typeof createQualifiedConnectedAccountGroupsClient>,
         ) => Promise<QualifiedConnectedAccountUiGroup>,
+        currentGroup: QualifiedConnectedAccountUiGroup | null,
     ): Promise<QualifiedConnectedAccountUiGroup | null> => {
         if (!client) return null;
         const operationBasis = basis;
+        const operationEpoch = groupsEpochRef.current;
         setMutating(true);
         try {
             const group = await operation(client);
-            if (currentBasisRef.current !== operationBasis) return null;
+            if (
+                currentBasisRef.current !== operationBasis
+                || (
+                    currentGroup
+                        ? !isCurrentGroupRevision({
+                            state: stateRef.current,
+                            basis: operationBasis,
+                            group: currentGroup,
+                        })
+                        : groupsEpochRef.current !== operationEpoch
+                )
+            ) return null;
+            groupsEpochRef.current += 1;
             setState((previous) => ({
                 ...previous,
                 basis,
@@ -354,11 +373,11 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             [load, visibleState.groups],
         ),
         create: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.create(input)),
+            (input) => mutate((activeClient) => activeClient.create(input), null),
             [mutate],
         ),
         patch: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.patch(input)),
+            (input) => mutate((activeClient) => activeClient.patch(input), input.group),
             [mutate],
         ),
         delete: React.useCallback(async (group) => {
@@ -367,10 +386,19 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             setMutating(true);
             try {
                 await client.delete(group);
-                if (currentBasisRef.current !== operationBasis) return false;
+                if (
+                    currentBasisRef.current !== operationBasis
+                    || !isCurrentGroupRevision({
+                        state: stateRef.current,
+                        basis: operationBasis,
+                        group,
+                    })
+                ) return false;
+                groupsEpochRef.current += 1;
                 setState((previous) => ({
                     ...previous,
                     basis,
+                    status: 'loaded',
                     groups: previous.groups.filter((candidate) => (
                         candidate.ref.groupId !== group.ref.groupId
                     )),
@@ -392,15 +420,15 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             }
         }, [basis, client, load]),
         addMember: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.addMember(input)),
+            (input) => mutate((activeClient) => activeClient.addMember(input), input.group),
             [mutate],
         ),
         patchMember: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.patchMember(input)),
+            (input) => mutate((activeClient) => activeClient.patchMember(input), input.group),
             [mutate],
         ),
         removeMember: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.removeMember(input)),
+            (input) => mutate((activeClient) => activeClient.removeMember(input), input.group),
             [mutate],
         ),
         setActiveAccount: React.useCallback(async (input) => {
@@ -409,7 +437,15 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             setMutating(true);
             try {
                 const group = await client.setActiveAccount(input);
-                if (currentBasisRef.current !== operationBasis) return null;
+                if (
+                    currentBasisRef.current !== operationBasis
+                    || !isCurrentGroupRevision({
+                        state: stateRef.current,
+                        basis: operationBasis,
+                        group: input.group,
+                    })
+                ) return null;
+                groupsEpochRef.current += 1;
                 setState((previous) => ({
                     ...previous,
                     basis,

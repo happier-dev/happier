@@ -1,23 +1,28 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { VoiceLocalSttSchema, type VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
+import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
-import { getLocalSttProviderSpec, localSttProviderSpecs } from '@/voice/settings/panels/localStt/providers/registry';
+import { getLocalSttProviderSpec, useLocalSttProviderSpecs } from '@/voice/settings/panels/localStt/providers/registry';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function LocalVoiceSttGroup(props: {
   cfgStt: VoiceLocalSttSettings | any;
   setStt: (next: VoiceLocalSttSettings | any) => void;
+  voice: VoiceSettings;
+  setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  showProcessingDisclosure?: boolean;
 }) {
   const { theme } = useUnistyles();
+  const providerSpecs = useLocalSttProviderSpecs();
   const [openMenu, setOpenMenu] = React.useState<null | 'sttProvider'>(null);
 
   const normalized = React.useMemo(() => {
@@ -46,11 +51,11 @@ export function LocalVoiceSttGroup(props: {
         itemTrigger={{
           title: t('settingsVoice.local.sttProvider'),
         }}
-        items={localSttProviderSpecs.map((spec) => ({
+        items={providerSpecs.map((spec) => ({
           id: spec.id,
           title: spec.title,
           subtitle: spec.subtitle,
-          icon: <Ionicons name={spec.iconName as any} size={22} color={theme.colors.text.secondary} />,
+          icon: <Icon name={spec.iconName as any} size={20} color={theme.colors.text.secondary} />,
         }))}
         onSelect={(id) => {
           props.setStt({ ...normalized, provider: id as any });
@@ -62,8 +67,11 @@ export function LocalVoiceSttGroup(props: {
         <providerSpec.Settings
           cfgStt={normalized}
           setStt={props.setStt}
+          voice={props.voice}
+          setVoice={props.setVoice}
           popoverBoundaryRef={props.popoverBoundaryRef}
           daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+          showProcessingDisclosure={props.showProcessingDisclosure}
         />
       ) : (
         <Item title={t('common.unavailable')} />

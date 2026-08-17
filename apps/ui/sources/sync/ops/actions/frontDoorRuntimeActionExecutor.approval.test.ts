@@ -67,7 +67,6 @@ function createTestExecutor(overrides: Partial<ActionExecutorDeps>) {
         sessionFork: unsupported,
         sessionRollback: unsupported,
         sessionSpawnNew: unsupported,
-        sessionSpawnPicker: unsupported,
         pathsListRecent: unsupported,
         machinesList: unsupported,
         serversList: unsupported,

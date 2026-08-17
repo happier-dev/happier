@@ -58,10 +58,10 @@ describe('voiceAudioMode', () => {
     audioRuntime.acquire.mockResolvedValueOnce({ release, capabilities: { aecAvailable: true, aecActive: true, route: 'speaker' } });
     const { acquireVoiceBackgroundCallAudioMode } = await import('./voiceAudioMode');
 
-    const lease = await acquireVoiceBackgroundCallAudioMode('realtime_elevenlabs');
+    const lease = await acquireVoiceBackgroundCallAudioMode('happier.voice.elevenlabs/realtime-elevenlabs');
 
     expect(audioRuntime.acquire).toHaveBeenCalledWith({
-      ownerId: 'realtime-provider:realtime_elevenlabs',
+      ownerId: 'realtime-provider:happier.voice.elevenlabs/realtime-elevenlabs',
       mode: 'conversation', input: true, output: true, aec: 'preferred',
       capture: 'provider_managed_exclusive',
     });

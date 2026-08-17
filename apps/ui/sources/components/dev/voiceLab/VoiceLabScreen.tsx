@@ -10,7 +10,7 @@ import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime
 import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
 
 import { ConceptStage } from './ConceptStage';
-import { VoiceLabEnergyProvider } from './useVoiceLabEnergy';
+import { VoiceEnergyProvider } from '@/components/voice/light/useVoiceEnergy';
 import { VOICE_LAB_CONCEPTS, placementFor } from './voiceLabConcepts';
 import {
     VOICE_LAB_PROVIDERS,
@@ -22,7 +22,7 @@ import {
     type VoiceLabStateBasis,
     type VoiceLabStateId,
 } from './voiceLabModel';
-import { light, useVoiceLabTokens } from './voiceLabTokens';
+import { light, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceLabSurface } from './conceptTypes';
 
 /**
@@ -91,7 +91,7 @@ const Chip = React.memo(function Chip(props: Readonly<{
     /** Marks how truthful this state is today. */
     basis?: VoiceLabStateBasis;
 }>) {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     const mark = props.basis ? BASIS_MARK[props.basis] : null;
     return (
         <Pressable
@@ -135,7 +135,7 @@ const Chip = React.memo(function Chip(props: Readonly<{
 });
 
 const SectionLabel = React.memo(function SectionLabel(props: Readonly<{ children: string }>) {
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     return (
         <Text style={{ ...Typography.eyebrow(), color: tokens.inkFaint, marginBottom: 8 }}>{props.children}</Text>
     );
@@ -143,13 +143,14 @@ const SectionLabel = React.memo(function SectionLabel(props: Readonly<{ children
 
 export function VoiceLabScreen() {
     const { theme } = useUnistyles();
-    const tokens = useVoiceLabTokens();
+    const tokens = useVoiceLightTokens();
     const reducedMotion = useReducedMotionPreference();
+    const [orbEnabled, setOrbEnabled] = useLocalSettingMutable('voiceOrbEnabled');
 
     const [stateId, setStateId] = React.useState<VoiceLabStateId>('listening');
     const [conceptId, setConceptId] = React.useState<string>('__all__');
     const [surface, setSurface] = React.useState<VoiceLabSurface>('sidebar');
-    const [providerId, setProviderId] = React.useState<VoiceLabProviderId>('realtime_codex');
+    const [providerId, setProviderId] = React.useState<VoiceLabProviderId>('happier.agent.codex/realtime-codex');
     const [expanded, setExpanded] = React.useState(false);
     /** Orthogonal to state, exactly as `micMuted` is on the real snapshot. */
     const [muted, setMuted] = React.useState(false);
@@ -257,6 +258,11 @@ export function VoiceLabScreen() {
                         accent={playing ? light('warm', 1, tokens) : undefined}
                     />
                     <Chip label={expanded ? 'Collapse' : 'Expand'} selected={expanded} onPress={onToggleExpanded} />
+                    <Chip
+                        label={orbEnabled ? 'Orb on' : 'Orb off'}
+                        selected={!orbEnabled}
+                        onPress={() => setOrbEnabled(!orbEnabled)}
+                    />
                     <Chip
                         label={muted ? 'Mic muted' : 'Mic open'}
                         selected={muted}
@@ -367,7 +373,7 @@ export function VoiceLabScreen() {
                   * production surface already keeps and the thing most likely to
                   * be lost when a concept graduates.
                   */}
-                <VoiceLabEnergyProvider state={state} previewTimeMs={frozenAtMs}>
+                <VoiceEnergyProvider state={state} previewTimeMs={frozenAtMs}>
                     <View style={{ flexDirection: 'row', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' }}>
                         {concepts.map((concept) => {
                             const Component = concept.Component;
@@ -400,7 +406,7 @@ export function VoiceLabScreen() {
                             );
                         })}
                     </View>
-                </VoiceLabEnergyProvider>
+                </VoiceEnergyProvider>
 
                 {detail ? (
                     <View style={{ gap: 6, maxWidth: 760 }}>

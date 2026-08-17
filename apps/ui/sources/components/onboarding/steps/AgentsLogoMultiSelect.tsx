@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -7,6 +6,7 @@ import { getAgentIconSource, getAgentIconSvgXml } from '@/agents/catalog/catalog
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import type { AgentId } from '@/agents/registry/registryCore';
 import { StatusDot } from '@/components/ui/status/StatusDot';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type AgentsLogoMultiSelectEntry = Readonly<{
     agentId: string;
@@ -70,7 +70,7 @@ export const AgentsLogoMultiSelect = React.memo(function AgentsLogoMultiSelect(p
                 agentId,
                 iconAgentId: agentId as AgentId,
                 setupAgentId: agentId as AgentId,
-                iconName: 'layers-outline',
+                iconName: 'stack-simple',
             })) ?? []);
             // A logo tile carries no name text, so an agent whose icon cannot resolve
             // would render an empty placeholder tile — skip those entries entirely.
@@ -113,9 +113,9 @@ export const AgentsLogoMultiSelect = React.memo(function AgentsLogoMultiSelect(p
                         {entry.iconAgentId ? (
                             <AgentIcon agentId={entry.iconAgentId} size={22} />
                         ) : (
-                            <Ionicons
-                                name={(entry.iconName ?? 'layers-outline') as any}
-                                size={22}
+                            <Icon
+                                name={(entry.iconName ?? 'stack-simple') as any}
+                                size={20}
                                 color={isSelected ? theme.colors.text.primary : theme.colors.text.secondary}
                             />
                         )}

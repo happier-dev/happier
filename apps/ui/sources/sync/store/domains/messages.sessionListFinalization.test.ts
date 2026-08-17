@@ -121,6 +121,7 @@ async function createHarness() {
         sessionMessages: {},
         isMutableToolCall: () => false,
         applyMessages: () => ({ changed: [], hasReadyEvent: false }),
+        replaceSessionMessages: () => ({ changed: [], hasReadyEvent: false }),
         applyMessagesLoaded: () => {},
         evictSessionMessages: () => {},
         resetSessionMessages: () => {},

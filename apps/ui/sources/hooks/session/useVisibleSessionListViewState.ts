@@ -29,7 +29,7 @@ import {
     applySessionFolderTreeToSessionListIndex,
     type SessionFolderFocusScope,
     type FolderAwareSessionListIndexResult,
-    type SessionFoldersV1,
+    type SessionFolderList,
     type SessionListFocusedFolderV1,
 } from '@/sync/domains/session/folders';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
@@ -67,7 +67,7 @@ function buildFolderAwareSessionListIndex(params: Readonly<{
     sessionFoldersFeatureEnabled: boolean;
     storageFilter: SessionListStorageFilter;
     folderFocusInput: SessionListFocusedFolderV1;
-    sessionFoldersV1: SessionFoldersV1;
+    sessionFoldersV1: SessionFolderList;
     sessionFolderViewModeV1: unknown;
     sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
 }>): FolderAwareSessionListIndexResult {
@@ -207,7 +207,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
     selection: ReturnType<typeof useVisibleSessionListSourceState>['selection'];
     storageFilter: SessionListStorageFilter;
     folderFocusInput: SessionListFocusedFolderV1;
-    sessionFoldersV1: SessionFoldersV1;
+    sessionFoldersV1: SessionFolderList;
     sessionFolderViewModeV1: unknown;
     sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
     sessionIdsWithOpenApprovals: ReadonlySet<string>;

@@ -2,7 +2,12 @@ import { buildSshTarget } from '@happier-dev/protocol';
 
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
-import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
+import {
+    readRemoteHosts,
+    upsertRemoteHost,
+    type RemoteHost,
+    type RemoteHostsV1Raw,
+} from '@/sync/domains/remoteHosts/remoteHostModel';
 import { upsertRemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { randomUUID } from '@/platform/randomUUID';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -10,7 +15,7 @@ import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 export function persistRemoteHostAfterRemoteSshCompletion(params: Readonly<{
     managementEnabled: boolean;
     secretMaterialEnabled: boolean;
-    remoteHostsV1: readonly RemoteHost[];
+    remoteHostsRaw: RemoteHostsV1Raw;
 
     selectedSavedRemoteHostId: string;
     runContext: Readonly<{
@@ -81,7 +86,9 @@ export function persistRemoteHostAfterRemoteSshCompletion(params: Readonly<{
         }
 
         try {
-            getSyncSingleton().applySettings({ remoteHostsV1: [...params.remoteHostsV1, newHost] }, { source: 'ui' });
+            getSyncSingleton().applySettings({
+                remoteHostsV1: upsertRemoteHost(params.remoteHostsRaw, newHost),
+            }, { source: 'ui' });
         } catch {
             // Ignore persistence errors; bootstrap completion is still valid.
         }
@@ -92,7 +99,7 @@ export function persistRemoteHostAfterRemoteSshCompletion(params: Readonly<{
         return;
     }
 
-    const existing = params.remoteHostsV1.find((host) => host.id === usedSavedHostId);
+    const existing = readRemoteHosts(params.remoteHostsRaw).find((host) => host.id === usedSavedHostId);
     if (!existing) {
         return;
     }
@@ -105,9 +112,10 @@ export function persistRemoteHostAfterRemoteSshCompletion(params: Readonly<{
         ...(params.completion.machineId ? { linkedMachineId: params.completion.machineId } : {}),
         ...(relayProfile ? { linkedRelayProfileId: relayProfile.id } : {}),
     };
-    const next = params.remoteHostsV1.map((host) => host.id === usedSavedHostId ? updated : host);
     try {
-        getSyncSingleton().applySettings({ remoteHostsV1: next }, { source: 'ui' });
+        getSyncSingleton().applySettings({
+            remoteHostsV1: upsertRemoteHost(params.remoteHostsRaw, updated),
+        }, { source: 'ui' });
     } catch {
         // Ignore
     }

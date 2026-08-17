@@ -1,6 +1,7 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     deriveSessionRuntimePresentationState,
+    isLiveSessionRuntime,
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
     type SessionRuntimePresentationState,
 } from '@/sync/domains/session/attention/runtimePresentation';
@@ -87,10 +88,6 @@ function latestProjectedFailureTimestamp(session: Session): number | null {
     ]);
 }
 
-function isLiveSessionRuntime(session: Session): boolean {
-    return session.active === true && session.presence === 'online';
-}
-
 function latestRunningRuntimeSignalTimestamp(
     session: Session,
     signals: PetCompanionSessionSignals | undefined,
@@ -119,6 +116,7 @@ function resolveCandidate(
     const runtimePresentation = deriveSessionRuntimePresentationState({
         active: session.active,
         activeAt: session.activeAt,
+        archivedAt: session.archivedAt ?? null,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,

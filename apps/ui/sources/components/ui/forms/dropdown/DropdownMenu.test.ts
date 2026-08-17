@@ -190,6 +190,99 @@ describe('DropdownMenu', () => {
         expect(onOpenChange).toHaveBeenCalledWith(false);
     });
 
+    it('keeps the generic trigger expanded state truthful when opened, dismissed, or closed with Escape', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { Pressable } = await import('react-native');
+
+        function ControlledDropdownMenu() {
+            const [open, setOpen] = React.useState(false);
+            return React.createElement(DropdownMenu, {
+                open,
+                onOpenChange: setOpen,
+                items: [{ id: 'a', title: 'A' }],
+                onSelect: () => {},
+                trigger: ({ toggle }: any) => React.createElement(Pressable, {
+                    testID: 'generic-dropdown-trigger',
+                    onPress: toggle,
+                }),
+            });
+        }
+
+        const screen = await renderScreen(React.createElement(ControlledDropdownMenu));
+        const getTrigger = () => screen.findByTestId('generic-dropdown-trigger');
+
+        expect(getTrigger()?.props.accessibilityState).toEqual({ expanded: false });
+        expect(getTrigger()?.props['aria-expanded']).toBe(false);
+
+        await act(async () => {
+            pressTestInstance(getTrigger()!);
+        });
+        await act(async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(getTrigger()?.props.accessibilityState).toEqual({ expanded: true });
+        expect(getTrigger()?.props['aria-expanded']).toBe(true);
+
+        act(() => {
+            screen.findByType('Popover' as any)?.props.onRequestClose();
+        });
+        expect(getTrigger()?.props.accessibilityState).toEqual({ expanded: false });
+        expect(getTrigger()?.props['aria-expanded']).toBe(false);
+
+        await act(async () => {
+            pressTestInstance(getTrigger()!);
+        });
+        await act(async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        act(() => {
+            useSelectableMenuSpy.mock.calls.at(-1)?.[0]?.onRequestClose();
+        });
+        expect(getTrigger()?.props.accessibilityState).toEqual({ expanded: false });
+        expect(getTrigger()?.props['aria-expanded']).toBe(false);
+    });
+
+    it('uses the DOM aria contract without leaking React Native accessibility state to host triggers', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: () => React.createElement('button', {
+                'data-testid': 'web-dropdown-trigger',
+                type: 'button',
+            }),
+        }));
+
+        const trigger = screen.findByTestId('web-dropdown-trigger');
+        expect(trigger?.props['aria-expanded']).toBe(true);
+        expect(trigger?.props).not.toHaveProperty('accessibilityState');
+    });
+
+    it('provides the controlled expanded state to Item-style triggers', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const renderDropdown = (open: boolean) => React.createElement(DropdownMenu, {
+            open,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            itemTrigger: { title: 'Pick one' },
+        });
+        const screen = await renderScreen(renderDropdown(false));
+
+        expect(screen.findByType('Item' as any)?.props.accessibilityExpanded).toBe(false);
+
+        act(() => {
+            screen.tree.update(renderDropdown(true));
+        });
+
+        expect(screen.findByType('Item' as any)?.props.accessibilityExpanded).toBe(true);
+    });
+
     it('still opens when requestAnimationFrame is present but does not run', async () => {
         vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
 
@@ -243,6 +336,25 @@ describe('DropdownMenu', () => {
 
         expect(onSelect).toHaveBeenCalledWith('a');
         expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it('moves web focus into the open menu through the shared popover owner', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [
+                { id: 'global', title: 'Global' },
+                { id: 'session', title: 'Session' },
+            ],
+            selectedId: 'session',
+            onSelect: vi.fn(),
+            trigger: React.createElement('View'),
+        }));
+
+        const popover = screen.findByType('Popover' as any);
+        expect(popover.props.autoFocusOnOpen).toBe(true);
     });
 
     it('keeps the menu open when closeOnSelect is false', async () => {
@@ -558,7 +670,7 @@ describe('DropdownMenu', () => {
         const rightElementScreen = await renderScreen(item?.props?.rightElement);
 
         expect(rightElementScreen.getTextContent()).toContain('Beta');
-        const chevronIcon = findTestInstanceByTypeWithProps(rightElementScreen.tree, 'Ionicons' as any, { name: 'chevron-down' });
+        const chevronIcon = findTestInstanceByTypeWithProps(rightElementScreen.tree, 'Icon' as any, { name: 'caret-down' });
         expect(chevronIcon?.props?.size).toBe(17);
     });
 

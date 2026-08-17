@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type {
+  MachineAdministrationTargetV1,
   PromptAssetInstallModeV1,
   PromptAssetScopeV1,
   PromptAssetTypeDescriptorV1,
@@ -16,22 +16,30 @@ import { decodeBase64 } from '@/encryption/base64';
 import { defaultPromptAssetTargetInput } from '@/components/settings/prompts/assets/promptAssetExportDefaults';
 import { ContextBar } from '@/components/settings/contextBar/ContextBar';
 import { useContextBarSelection } from '@/components/settings/contextBar/useContextBarSelection';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
-import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import { machinePromptAssetsListTypes } from '@/sync/ops/machinePromptAssets';
 import { machinePromptRegistriesDownloadItem } from '@/sync/ops/machinePromptRegistries';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 import { createPromptRegistrySkillArtifactFromFetchedItem } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
 import { translatePromptLibraryMessage } from '@/sync/ops/promptLibrary/translatePromptLibraryMessage';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import {
+  useMachineAdministrationTargetSelection,
+  type FreshMachineAdministrationExecutionTargetV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
 import { t, type TranslationKey } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
   listPromptAssetTypesForScope,
   resolvePromptAssetTypeSelection,
@@ -48,7 +56,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     paddingVertical: 12,
-    maxWidth: layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
@@ -88,7 +95,6 @@ function decodeUtf8BundleEntry(item: PromptRegistryFetchedItemV1 | null, path: s
 }
 
 export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistryItemDetailsScreen(props: Readonly<{
-  machineId: string;
   sourceId: string;
   itemId: string;
   configuredSources: PromptRegistryConfiguredSourceV1[];
@@ -96,9 +102,43 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
   displayPath?: string | null;
   workspacePath?: string | null;
 }>) {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const contentStyle = React.useMemo(() => [styles.content, contentMaxWidthStyle], [contentMaxWidthStyle]);
   const { theme } = useUnistyles();
   const router = useRouter();
-  const machines = useAllMachines();
+  const administrationTargetSelection = useMachineAdministrationTargetSelection(
+    MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptRegistries,
+  );
+  const selectedTarget = administrationTargetSelection.selectedTarget;
+  const selectionKey = selectedTarget
+    ? `${selectedTarget.serverIdentityId}\0${selectedTarget.machineId}`
+    : '';
+  const selectionKeyRef = React.useRef(selectionKey);
+  selectionKeyRef.current = selectionKey;
+  const resolveExecutionTargetRef = React.useRef(administrationTargetSelection.resolveExecutionTarget);
+  resolveExecutionTargetRef.current = administrationTargetSelection.resolveExecutionTarget;
+  const resolveExactExecutionTarget = React.useCallback((
+    expectedTarget: MachineAdministrationTargetV1 | null,
+  ): FreshMachineAdministrationExecutionTargetV1 | null => {
+    const resolved = resolveExecutionTargetRef.current();
+    return expectedTarget !== null
+      && resolved !== null
+      && machineAdministrationTargetsEqual(expectedTarget, resolved.target)
+      ? resolved
+      : null;
+  }, []);
+  const isExecutionTargetCurrent = React.useCallback((
+    requestedSelection: string,
+    executionTarget: FreshMachineAdministrationExecutionTargetV1,
+  ): boolean => {
+    if (selectionKeyRef.current !== requestedSelection) return false;
+    const current = resolveExactExecutionTarget(executionTarget.target);
+    return current !== null
+      && current.serverId === executionTarget.serverId
+      && current.machine.id === executionTarget.machine.id;
+  }, [resolveExactExecutionTarget]);
   const [promptExternalLinksV1, setPromptExternalLinksV1] = useSettingMutable('promptExternalLinksV1');
   const [item, setItem] = React.useState<PromptRegistryFetchedItemV1 | null>(null);
   const [installTypes, setInstallTypes] = React.useState<PromptAssetTypeDescriptorV1[]>([]);
@@ -110,29 +150,46 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
   const [installModeMenuOpen, setInstallModeMenuOpen] = React.useState(false);
   const [targetInput, setTargetInput] = React.useState('');
   const {
-    machineId: selectedMachineId,
-    setMachineId,
     workspacePath,
     setWorkspacePath,
   } = useContextBarSelection({
     selectionKey: `promptRegistries.details.install.${props.itemId}`,
-    defaultMachineId: props.machineId,
+    // This compatibility entry stores only workspace text. Administration owns
+    // the exact machine/server target for every registry operation below.
+    defaultMachineId: null,
     defaultWorkspacePath: props.workspacePath ?? '',
   });
+  const previousSelectionKeyRef = React.useRef(selectionKey);
+
+  React.useLayoutEffect(() => {
+    const previousSelectionKey = previousSelectionKeyRef.current;
+    previousSelectionKeyRef.current = selectionKey;
+    if (!previousSelectionKey || previousSelectionKey === selectionKey) return;
+    setWorkspacePath('');
+  }, [selectionKey, setWorkspacePath]);
+
+  React.useEffect(() => {
+    setItem(null);
+    setInstallTypes([]);
+    setSelectedInstallTypeId(null);
+  }, [selectionKey]);
 
   const loadItem = React.useCallback(async () => {
-    if (!selectedMachineId) return;
-    const response = await machinePromptRegistriesDownloadItem(selectedMachineId, {
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget) return;
+    const response = await machinePromptRegistriesDownloadItem(executionTarget.machine.id, {
       sourceId: props.sourceId,
       itemId: props.itemId,
       configuredSources: props.configuredSources,
-    });
+    }, { serverId: executionTarget.serverId });
+    if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
     if (!response.ok) {
       Modal.alert(t('common.error'), response.error);
       return;
     }
     setItem(response.item);
-  }, [props.configuredSources, props.itemId, props.sourceId, selectedMachineId]);
+  }, [isExecutionTargetCurrent, props.configuredSources, props.itemId, props.sourceId, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
   const [loading, runLoad] = useHappyAction(loadItem);
 
@@ -141,15 +198,19 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
   }, [runLoad]);
 
   React.useEffect(() => {
-    if (!selectedMachineId) {
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget) {
       setInstallTypes([]);
       setSelectedInstallTypeId(null);
       return;
     }
     let cancelled = false;
     (async () => {
-      const listed = await machinePromptAssetsListTypes(selectedMachineId);
-      if (cancelled || !listed.ok) return;
+      const listed = await machinePromptAssetsListTypes(executionTarget.machine.id, {
+        serverId: executionTarget.serverId,
+      });
+      if (cancelled || !isExecutionTargetCurrent(requestedSelection, executionTarget) || !listed.ok) return;
       const nextTypes = listed.types.filter((entry) => entry.libraryKind === 'bundle' && entry.capabilities.supportsCatalogInstall === true);
       setInstallTypes(nextTypes);
     })().catch(() => {
@@ -159,7 +220,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     return () => {
       cancelled = true;
     };
-  }, [selectedMachineId]);
+  }, [isExecutionTargetCurrent, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
   const scopeCompatibleInstallTypes = React.useMemo(
     () => listPromptAssetTypesForScope(installTypes, installScope),
@@ -198,7 +259,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
         id: entry.id,
         title: entry.title,
         subtitle: entry.description,
-        icon: <Ionicons name="layers-outline" size={22} color={theme.colors.text.secondary} />,
+        icon: <Icon name="stack-simple" size={20} color={theme.colors.text.secondary} />,
       }));
   }, [scopeCompatibleInstallTypes, theme.colors.text.secondary]);
 
@@ -211,7 +272,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
       subtitle: entry === 'symlink'
         ? t('promptLibrary.externalAssetsInstallMethodSymlinkSubtitle')
         : t('promptLibrary.externalAssetsInstallMethodCopySubtitle'),
-      icon: <Ionicons name={entry === 'symlink' ? 'git-branch-outline' : 'copy-outline'} size={22} color={theme.colors.text.secondary} />,
+      icon: <Icon name={entry === 'symlink' ? 'git-branch' : 'copy'} size={20} color={theme.colors.text.secondary} />,
     }));
   }, [availableInstallModes, theme.colors.text.secondary]);
 
@@ -224,22 +285,25 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
   );
 
   const importItem = React.useCallback(async () => {
-    if (!item) return;
+    if (!item || !resolveExactExecutionTarget(selectedTarget)) return;
     const imported = await createPromptRegistrySkillArtifactFromFetchedItem(item);
     if (!imported.ok) {
       Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
       return;
     }
     router.push(`/settings/prompts/skills/${imported.artifactId}`);
-  }, [item, router]);
+  }, [item, resolveExactExecutionTarget, router, selectedTarget]);
 
   const [importing, runImport] = useHappyAction(importItem);
 
   const installItem = React.useCallback(async () => {
-    if (!installType || !selectedMachineId) return;
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!installType || !executionTarget) return;
     const resolvedInstallMode = selectedInstallMode;
     const preview = await installPromptRegistryItem({
-      machineId: selectedMachineId,
+      machineId: executionTarget.machine.id,
+      serverId: executionTarget.serverId,
       configuredSources: props.configuredSources,
       sourceId: props.sourceId,
       itemId: props.itemId,
@@ -253,6 +317,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
       promptExternalLinks: promptExternalLinksV1,
       previewOnly: true,
     });
+    if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
     if (!preview.ok) {
       Modal.alert(t('common.error'), translatePromptLibraryMessage(preview.error));
       if (preview.artifactId) {
@@ -268,8 +333,17 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     );
     if (!confirmed) return;
 
+    const committedExecutionTarget = resolveExactExecutionTarget(executionTarget.target);
+    if (
+      !committedExecutionTarget
+      || !isExecutionTargetCurrent(requestedSelection, committedExecutionTarget)
+    ) {
+      return;
+    }
+
     const installed = await installPromptRegistryItem({
-      machineId: selectedMachineId,
+      machineId: committedExecutionTarget.machine.id,
+      serverId: committedExecutionTarget.serverId,
       configuredSources: props.configuredSources,
       sourceId: props.sourceId,
       itemId: props.itemId,
@@ -283,6 +357,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
       promptExternalLinks: promptExternalLinksV1,
       previewOnly: false,
     });
+    if (!isExecutionTargetCurrent(requestedSelection, committedExecutionTarget)) return;
     if (!installed.ok) {
       Modal.alert(t('common.error'), translatePromptLibraryMessage(installed.error));
       if (installed.artifactId) {
@@ -292,7 +367,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     }
     setPromptExternalLinksV1(installed.nextPromptExternalLinks ?? { v: 1, links: [] });
     router.push(`/settings/prompts/skills/${installed.artifactId}`);
-  }, [installScope, installType, promptExternalLinksV1, props.configuredSources, props.itemId, props.sourceId, router, selectedInstallMode, selectedMachineId, setPromptExternalLinksV1, targetInput, workspacePath]);
+  }, [installScope, installType, isExecutionTargetCurrent, promptExternalLinksV1, props.configuredSources, props.itemId, props.sourceId, resolveExactExecutionTarget, router, selectedInstallMode, selectedTarget, selectionKey, setPromptExternalLinksV1, targetInput, workspacePath]);
 
   const [installing, runInstall] = useHappyAction(installItem);
 
@@ -300,37 +375,28 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
   const additionalFilesCount = Math.max(0, (item?.bundleBody.entries.length ?? 0) - (skillMarkdown ? 1 : 0));
   const screenTitle = item?.title ?? props.title ?? t('common.details');
   const sourceLabel = props.displayPath?.split('/').slice(0, -1).join('/') || item?.description || props.sourceId;
-  const machineLabel = React.useMemo(() => {
-    const machine = machines.find((entry) => entry.id === selectedMachineId) ?? null;
-    return machine?.metadata?.displayName || machine?.metadata?.host || selectedMachineId || t('promptLibrary.registriesNoMachine');
-  }, [machines, selectedMachineId]);
+  const executionTarget = resolveExactExecutionTarget(selectedTarget);
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={contentStyle} keyboardShouldPersistTaps="handled">
         <ItemList>
+          <MachineAdministrationTargetSelector
+            selection={administrationTargetSelection}
+            testIDPrefix="settings.promptRegistries.administration.target"
+          />
           <ItemGroup title={t('common.details')}>
             <ContextBar
-              mode={installScope === 'project' ? 'machine_and_workspace' : 'machine_only'}
-              machine={{
-                selectedId: selectedMachineId,
-                subtitle: machineLabel,
-                items: machines.map((machine) => ({
-                  id: machine.id,
-                  title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
-                  subtitle: machine.id,
-                  icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
-                })),
-                onSelect: setMachineId,
-              }}
+              mode="workspace_only"
               workspace={installScope === 'project' ? {
                 value: workspacePath,
                 onChange: setWorkspacePath,
                 placeholder: t('promptLibrary.externalAssetsProjectDirectoryPlaceholder' as TranslationKey),
                 testID: 'promptRegistries.details.directoryInput',
                 browse: {
-                  machineId: selectedMachineId,
-                  enabled: true,
+                  machineId: executionTarget?.machine.id ?? null,
+                  serverId: executionTarget?.serverId ?? null,
+                  enabled: executionTarget !== null,
                 },
               } : undefined}
             />
@@ -338,28 +404,28 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
               testID="promptRegistries.details.source"
               title={t('promptLibrary.registriesItemSource')}
               subtitle={sourceLabel}
-              icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.text.secondary} />}
+              icon={<Icon name="git-branch" size={29} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
             <Item
               testID="promptRegistries.details.path"
               title={t('promptLibrary.registriesItemPath')}
               subtitle={props.displayPath ?? item?.description ?? props.itemId}
-              icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
+              icon={<Icon name="sparkle" size={29} color={theme.colors.accent.indigo} />}
               showChevron={false}
             />
             <Item
               testID="promptRegistries.details.files"
               title={t('promptLibrary.registriesItemFiles')}
               subtitle={String(additionalFilesCount)}
-              icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.text.secondary} />}
+              icon={<Icon name="file-text" size={29} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
             <Item
               testID="promptRegistries.details.import"
               title={t('promptLibrary.externalAssetsImportAction')}
               subtitle={importing ? t('common.loading') : t('promptLibrary.registriesItemImportSubtitle')}
-              icon={<Ionicons name="download-outline" size={29} color={theme.colors.accent.purple} />}
+              icon={<Icon name="download" size={29} color={theme.colors.accent.purple} />}
               disabled={!item || importing}
               onPress={runImport}
             />
@@ -371,13 +437,13 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
                   id: 'project',
                   title: t('promptLibrary.externalAssetsProjectScope'),
                   subtitle: t('promptLibrary.externalAssetsProjectScopeSubtitle'),
-                  icon: <Ionicons name="folder-outline" size={22} color={theme.colors.accent.indigo} />,
+                  icon: <Icon name="folder" size={20} color={theme.colors.accent.indigo} />,
                 },
                 {
                   id: 'user',
                   title: t('promptLibrary.externalAssetsUserScope'),
                   subtitle: t('promptLibrary.externalAssetsUserScopeSubtitle'),
-                  icon: <Ionicons name="person-outline" size={22} color={theme.colors.accent.blue} />,
+                  icon: <Icon name="person" size={20} color={theme.colors.accent.blue} />,
                 },
               ]}
               selectedId={installScope}
@@ -385,7 +451,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
               itemTrigger={{
                 title: t('promptLibrary.externalAssetsScope'),
                 subtitle: installScope === 'project' ? t('promptLibrary.externalAssetsProjectScope') : t('promptLibrary.externalAssetsUserScope'),
-                icon: <Ionicons name="albums-outline" size={29} color={theme.colors.accent.indigo} />,
+                icon: <Icon name="stack" size={29} color={theme.colors.accent.indigo} />,
               }}
               rowKind="item"
               connectToTrigger
@@ -400,7 +466,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
               itemTrigger={{
                 title: t('promptLibrary.externalAssetsExportType'),
                 subtitle: installType?.title ?? t('promptLibrary.externalAssetsNoTypes'),
-                icon: <Ionicons name="layers-outline" size={29} color={theme.colors.text.secondary} />,
+                icon: <Icon name="stack-simple" size={29} color={theme.colors.text.secondary} />,
               }}
               rowKind="item"
               connectToTrigger
@@ -417,7 +483,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
                 subtitle: selectedInstallMode === 'symlink'
                   ? t('promptLibrary.externalAssetsInstallMethodSymlink')
                   : t('promptLibrary.externalAssetsInstallMethodCopy'),
-                icon: <Ionicons name={selectedInstallMode === 'symlink' ? 'git-branch-outline' : 'copy-outline'} size={29} color={theme.colors.text.secondary} />,
+                icon: <Icon name={selectedInstallMode === 'symlink' ? 'git-branch' : 'copy'} size={29} color={theme.colors.text.secondary} />,
               }}
               rowKind="item"
               connectToTrigger
@@ -436,7 +502,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
                 />
               )}
               subtitleLines={0}
-              icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.text.secondary} />}
+              icon={<Icon name="sparkle" size={29} color={theme.colors.text.secondary} />}
               mode="info"
               showChevron={false}
             />
@@ -458,7 +524,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
           <SettingsActionFooter
             primaryLabel={t('common.install' as TranslationKey)}
             onPrimaryPress={runInstall}
-            primaryDisabled={installing || targetInput.trim().length === 0 || (installScope === 'project' && workspacePath.trim().length === 0)}
+            primaryDisabled={executionTarget === null || installing || targetInput.trim().length === 0 || (installScope === 'project' && workspacePath.trim().length === 0)}
             primaryTestID="promptRegistries.details.install"
           />
         ) : null}

@@ -8,15 +8,18 @@ import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/se
 export type WorkspaceFileSystemTarget = Readonly<{
     machineId: string;
     rootPath: string;
+    agentRootPath?: string | null;
     serverId?: string | null;
 }>;
 
 function resolveAbsoluteWorkspacePath(params: Readonly<{
     rootPath: string;
+    agentRootPath?: string | null;
     requestPath: string;
 }>): string {
     return resolveMachineAbsolutePath({
         rootPath: params.rootPath,
+        agentRootPath: params.agentRootPath,
         requestPath: params.requestPath,
     });
 }
@@ -36,7 +39,7 @@ export async function workspaceCreateDirectory(
             machineId: target.machineId,
             serverId: target.serverId,
             method: RPC_METHODS.CREATE_DIRECTORY,
-            payload: { path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, requestPath: path }) },
+            payload: { path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }) },
         });
 
         return assertRpcResponseWithSuccess<WorkspaceCreateDirectoryResponse>(response);
@@ -71,7 +74,7 @@ export async function workspaceListDirectory(
             machineId: target.machineId,
             serverId: target.serverId,
             method: RPC_METHODS.LIST_DIRECTORY,
-            payload: { path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, requestPath: path }) },
+            payload: { path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }) },
         });
 
         return assertRpcResponseWithSuccess<WorkspaceListDirectoryResponse>(response);
@@ -110,7 +113,7 @@ export async function workspaceGetDirectoryTree(
             serverId: target.serverId,
             method: RPC_METHODS.GET_DIRECTORY_TREE,
             payload: {
-                path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, requestPath: path }),
+                path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
                 maxDepth,
             },
         });

@@ -111,6 +111,9 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/utils/sessions/tempDataStore', () => ({
@@ -317,11 +320,11 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     'plugin:review-bot': {
-                        providerId: 'plugin:review-bot',
+                        id: 'plugin:review-bot',
                         title: 'Review Bot Plugin',
-                        subtitle: 'plugin provider',
+                        subtitle: 'plugin agent',
                         channel: 'plugin',
                         isBuiltIn: false,
                         catalogAgentId: 'claude',
@@ -330,8 +333,8 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                 },
                 backendsById: {
                     'plugin-review-bot': {
-                        backendId: 'plugin-review-bot',
-                        providerId: 'plugin:review-bot',
+                        id: 'plugin-review-bot',
+                        agentId: 'plugin:review-bot',
                         title: 'Review Bot (plugin)',
                         subtitle: 'plugin backend',
                         catalogAgentId: 'claude',
@@ -383,11 +386,11 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                     supported: true,
                     projection: {
                         v: 1,
-                        providersById: {
+                        agentsById: {
                             'plugin:review-bot': {
-                                providerId: 'plugin:review-bot',
+                                id: 'plugin:review-bot',
                                 title: 'Review Bot Plugin',
-                                subtitle: 'plugin provider',
+                                subtitle: 'plugin agent',
                                 channel: 'plugin',
                                 isBuiltIn: false,
                                 catalogAgentId: 'claude',
@@ -396,8 +399,8 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                         },
                         backendsById: {
                             'plugin-review-bot': {
-                                backendId: 'plugin-review-bot',
-                                providerId: 'plugin:review-bot',
+                                id: 'plugin-review-bot',
+                                agentId: 'plugin:review-bot',
                                 title: 'Review Bot (plugin)',
                                 subtitle: 'plugin backend',
                                 catalogAgentId: 'claude',

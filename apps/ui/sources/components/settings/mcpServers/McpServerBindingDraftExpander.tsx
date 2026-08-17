@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 
 import { McpServerBindingV1Schema, type McpServerBindingTargetV1, type McpServerBindingV1 } from '@happier-dev/protocol';
@@ -14,6 +13,7 @@ import { t } from '@/text';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { McpWorkspaceRootPickerModal } from './McpWorkspaceRootPickerModal';
 import { createDefaultMcpBindingTarget, resolveMcpBindingTargetTypeChange } from './resolveMcpBindingTarget';
+import { Icon } from '@/components/ui/icons/Icon';
 
 function createDraftBinding(serverId: string, machines: readonly Machine[]): McpServerBindingV1 {
     const now = Date.now();
@@ -52,10 +52,10 @@ export const McpServerBindingDraftExpander = React.memo(function McpServerBindin
         setDraftBinding((current) => updater(current));
     }, []);
 
-    const setDraftBindingTargetType = React.useCallback((nextType: McpServerBindingTargetV1['t']) => {
+    const setDraftBindingTargetType = React.useCallback((nextType: McpServerBindingTargetV1['t'], selectedMachineId?: string) => {
         updateDraftBinding((current) => {
             const now = Date.now();
-            const nextTarget = resolveMcpBindingTargetTypeChange(current.target, nextType, props.machines);
+            const nextTarget = resolveMcpBindingTargetTypeChange(current.target, nextType, props.machines, selectedMachineId);
             if (!nextTarget) {
                 Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
                 return current;
@@ -145,7 +145,7 @@ export const McpServerBindingDraftExpander = React.memo(function McpServerBindin
                 }}
                 title={t('settings.mcpServersAddApplyRule')}
                 subtitle={t('settings.mcpServersAddApplyRuleSubtitle')}
-                icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
+                icon={<Icon name="plus-circle" size={29} color={theme.colors.state.success.foreground} />}
                 helpText={t('settings.mcpServersAddApplyRuleHelp')}
                 onCancel={handleCancel}
                 onSave={handleSave}

@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -7,10 +6,11 @@ import { Text } from '@/components/ui/text/Text';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
 import { t } from '@/text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type BrowserToolbarOverflowItem = Readonly<{
     id: string;
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
     label: string;
     onPress: () => void;
     disabled?: boolean;
@@ -95,7 +95,7 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
                 onPress={() => setOpen((value) => !value)}
                 style={stylesheet.trigger}
             >
-                <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.text.primary} />
+                <Icon name="dots-three" size={16} color={theme.colors.text.primary} />
             </Pressable>
             {open ? (
                 <Popover
@@ -134,9 +134,9 @@ export function BrowserToolbarOverflowMenu(props: Readonly<{
                                             item.disabled ? stylesheet.itemDisabled : null,
                                         ]}
                                     >
-                                        <Ionicons
+                                        <Icon
                                             name={item.iconName}
-                                            size={18}
+                                            size={16}
                                             color={item.tone === 'active'
                                                 ? theme.colors.state.warning.foreground
                                                 : theme.colors.text.primary}

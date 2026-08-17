@@ -1,11 +1,10 @@
 import * as React from 'react';
 import { View, ScrollView, Platform, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { ToolCall, Message } from '@/sync/domains/messages/messageTypes';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -33,6 +32,8 @@ import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveIna
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { resolveToolPermissionTerminalErrorMessage } from '../permissions/resolveToolPermissionTerminalErrorMessage';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { Icon } from '@/components/ui/icons/Icon';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 
 interface ToolFullViewProps {
@@ -48,6 +49,12 @@ interface ToolFullViewProps {
 
 export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messages = [], jumpChildId, forcePermissionFooterInTranscript = false, interaction }: ToolFullViewProps) {
     const { theme } = useUnistyles();
+    // This view opens one historical row on its own screen, so the row's own
+    // Agent — published by the opener — outranks the Session's current one.
+    const historicalAgentId = useHistoricalTranscriptAgentId();
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
     const toolForRendering = React.useMemo<ToolCall>(() => {
         return resolveInactiveSessionToolCallFailure({
             tool: normalizeToolCallForRendering(tool),
@@ -60,8 +67,9 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
             tool: toolForRendering,
             metadata: metadata ?? null,
             permissionDisabledReason: interaction?.permissionDisabledReason,
+            historicalAgentId,
         });
-    }, [interaction?.permissionDisabledReason, metadata, toolForRendering]);
+    }, [historicalAgentId, interaction?.permissionDisabledReason, metadata, toolForRendering]);
 
     const permissionTerminalError = permissionTerminalErrorMessage ? (
         <TextSelectabilityScope selectable>
@@ -178,7 +186,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
     const debugSection = (
         <View style={styles.section}>
             <View style={styles.sectionHeader}>
-                <Ionicons name="code-slash" size={20} color={theme.colors.accent.orange} />
+                <Icon name="code" size={20} color={theme.colors.accent.orange} />
                 <Text style={styles.sectionTitle}>{t('tools.fullView.debug')}</Text>
                 <Text
                     style={[styles.toolId, { marginLeft: 8 }]}
@@ -235,7 +243,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
 
         return (
             <View style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
-                <View style={[styles.contentWrapper, { flex: 1, minHeight: 0 }]}>
+                <View style={[styles.contentWrapper, contentMaxWidthStyle, { flex: 1, minHeight: 0 }]}>
                     <View style={styles.transcriptSection}>
                         <ChainTranscriptList
                             key={sidechainDatasetKey}
@@ -266,7 +274,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
 
     return (
         <ScrollView style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
-            <View style={styles.contentWrapper}>
+            <View style={[styles.contentWrapper, contentMaxWidthStyle]}>
                 {/* Tool-specific content or generic fallback */}
                 {SpecializedFullView ? (
                     <TextSelectabilityScope selectable>
@@ -287,7 +295,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
                             {toolForRendering.description && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="information-circle" size={20} color={theme.colors.accent.indigo} />
+                                        <Icon name="info" size={20} color={theme.colors.accent.indigo} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.description')}</Text>
                                     </View>
                                     <Text style={styles.description}>{toolForRendering.description}</Text>
@@ -297,7 +305,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
                             {toolForRendering.input && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="log-in" size={20} color={theme.colors.accent.indigo} />
+                                        <Icon name="sign-in" size={20} color={theme.colors.accent.indigo} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.inputParams')}</Text>
                                     </View>
                                     <CodeView code={JSON.stringify(toolForRendering.input, null, 2)} />
@@ -308,7 +316,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
                             {toolForRendering.state === 'completed' && toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="log-out" size={20} color={theme.colors.state.success.foreground} />
+                                        <Icon name="sign-out" size={20} color={theme.colors.state.success.foreground} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
                                     </View>
                                     <CodeView
@@ -320,7 +328,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
                             {toolForRendering.state === 'running' && toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="log-out" size={20} color={theme.colors.state.success.foreground} />
+                                        <Icon name="sign-out" size={20} color={theme.colors.state.success.foreground} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
                                     </View>
                                     <StructuredResultView tool={toolForRendering} metadata={metadata || null} messages={messages} sessionId={sessionId} />
@@ -331,7 +339,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
                             {toolForRendering.state === 'error' && toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="close-circle" size={20} color={theme.colors.state.danger.foreground} />
+                                        <Icon name="x-circle" size={20} color={theme.colors.state.danger.foreground} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
                                     </View>
                                     <View style={styles.errorContainer}>
@@ -348,7 +356,7 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
                             {toolForRendering.state === 'completed' && !toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.emptyOutputContainer}>
-                                        <Ionicons name="checkmark-circle-outline" size={48} color={theme.colors.state.success.foreground} />
+                                        <Icon name="check-circle" size={48} color={theme.colors.state.success.foreground} />
                                         <Text style={styles.emptyOutputText}>{t('tools.fullView.completed')}</Text>
                                         <Text style={styles.emptyOutputSubtext}>{t('tools.fullView.noOutput')}</Text>
                                     </View>
@@ -373,7 +381,6 @@ const styles = StyleSheet.create((theme) => ({
         paddingTop: 12,
     },
     contentWrapper: {
-        maxWidth: layout.maxWidth,
         alignSelf: 'center',
         width: '100%',
     },

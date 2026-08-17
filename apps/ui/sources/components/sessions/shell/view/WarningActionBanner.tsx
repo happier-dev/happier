@@ -1,11 +1,13 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform, Pressable, StyleSheet, useWindowDimensions, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, Pressable, StyleSheet, useWindowDimensions, View, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { HappierBanner, isHappierBannerUrgent } from '@happier-dev/plugin-ui/presentation';
 
 import { COMPOSER_SURFACE_RADIUS } from '@/components/sessions/agentInput/composerContentInset';
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 export type SessionBannerTone = 'warning' | 'neutral';
 
@@ -21,7 +23,7 @@ type SessionBannerAction = Readonly<{
 export type WarningActionBannerProps = Readonly<{
     /** `neutral` covers informational notices; `warning` (default) covers actionable problems. */
     tone?: SessionBannerTone;
-    iconName?: React.ComponentProps<typeof Ionicons>['name'] | null;
+    iconName?: IconName | null;
     title?: string;
     body?: string;
     /** Primary action. Omitted for notice-style banners that carry no action. */
@@ -33,7 +35,7 @@ export type WarningActionBannerProps = Readonly<{
     /** Announced to assistive tech while the primary action's work is in flight. */
     actionBusy?: boolean;
     secondaryActions?: ReadonlyArray<SessionBannerAction>;
-    style?: StyleProp<ViewStyle>;
+    style?: React.ComponentProps<typeof HappierBanner>['style'];
     testID: string;
 }>;
 
@@ -80,18 +82,22 @@ const actionBaseStyle = {
 
 export function WarningActionBanner(props: WarningActionBannerProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const { width } = useWindowDimensions();
     const [measuredWidth, setMeasuredWidth] = React.useState<number | null>(null);
     const availableWidth = typeof measuredWidth === 'number' && measuredWidth > 0 ? measuredWidth : width;
-    const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const handleLayout = React.useCallback((
+        event: Parameters<NonNullable<React.ComponentProps<typeof HappierBanner>['onLayout']>>[0],
+    ) => {
         const nextWidth = Math.max(0, Math.round(event.nativeEvent.layout.width));
         setMeasuredWidth((current) => current === nextWidth ? current : nextWidth);
     }, []);
 
     const tone = props.tone ?? 'warning';
+    const urgent = isHappierBannerUrgent(tone === 'warning' ? 'warning' : 'neutral');
     // The tinted fill and the icon carry the state; the copy stays in normal text roles so the
     // banner reads as a sentence with a status, not as a block of coloured text.
-    const toneTokens = tone === 'neutral'
+    const toneTokens = !urgent
         ? {
             background: theme.colors.state.neutral.background,
             icon: theme.colors.state.neutral.foreground,
@@ -102,7 +108,7 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
         };
     const iconName = props.iconName === null
         ? null
-        : props.iconName ?? (tone === 'neutral' ? 'information-circle-outline' : 'warning-outline');
+        : props.iconName ?? (tone === 'neutral' ? 'info' : 'warning');
 
     const hasPrimaryAction = typeof props.onActionPress === 'function'
         && typeof props.actionLabel === 'string'
@@ -112,9 +118,14 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
     const inlineActions = availableWidth >= INLINE_ACTIONS_MIN_WIDTH;
 
     return (
-        <View
+        <HappierBanner
             testID={props.testID}
             onLayout={handleLayout}
+            title={props.title ?? props.body ?? ''}
+            description={props.body}
+            tone={tone === 'warning' ? 'warning' : 'neutral'}
+            theme={presentationTheme}
+            unstyled
             style={[
                 {
                     flexDirection: inlineActions ? 'row' : 'column',
@@ -132,7 +143,8 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
                 },
                 props.style,
             ]}
-        >
+            renderContent={() => (
+              <>
             <View
                 testID={`${props.testID}-copy-row`}
                 style={{
@@ -148,7 +160,7 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
             >
                 {iconName ? (
                     // Optical nudge: the glyph's ink sits above its box centre next to the title.
-                    <Ionicons name={iconName} size={16} color={toneTokens.icon} style={{ marginTop: 1 }} />
+                    <Icon name={iconName} size={16} color={toneTokens.icon} style={{ marginTop: 1 }} />
                 ) : null}
                 {/* Title/body separation matches `Item`: iOS needs a hair of space under the
                     title, elsewhere the subtitle line-height already provides it. */}
@@ -246,6 +258,8 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
                     ) : null}
                 </View>
             ) : null}
-        </View>
+              </>
+            )}
+        />
     );
 }

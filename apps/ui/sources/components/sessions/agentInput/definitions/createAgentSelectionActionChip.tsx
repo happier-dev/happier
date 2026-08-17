@@ -6,6 +6,7 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 
 const AGENT_CHIP_LOGO_SLOT_SIZE = 16;
 const AGENT_CHIP_LOGO_SIZE = 16;
@@ -25,6 +26,16 @@ export function createAgentSelectionActionChip(params: Readonly<{
     chipStyle: (pressed: boolean) => any;
     textStyle: any;
     onPress: () => void;
+    /**
+     * The reader is reaching for this chip.
+     *
+     * Hover, focus and press-in all mean the same thing here, and all three are
+     * wired because no single one covers every host: a pointer hovers, a keyboard
+     * focuses, and a finger only ever presses. Opening the picker asks the Session's
+     * machine what it can continue with, and that question is worth starting while
+     * the pointer is still travelling.
+     */
+    onIntent?: () => void;
 }>): React.ReactNode {
     const testID = 'agent-input-agent-chip';
     const iconScale = getAgentPickerIconScale(params.agentId);
@@ -36,6 +47,9 @@ export function createAgentSelectionActionChip(params: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={params.label}
             onPress={params.onPress}
+            onHoverIn={params.onIntent}
+            onPressIn={params.onIntent}
+            onFocus={params.onIntent}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}
         >
@@ -45,7 +59,9 @@ export function createAgentSelectionActionChip(params: Readonly<{
                         agentId={params.agentId}
                         size={AGENT_CHIP_LOGO_SIZE}
                         color={params.tint}
-                        style={{ transform: [{ scale: iconScale }] }}
+                        // Composed, not replaced: the brand scale is per-agent optical correction,
+                        // the translate is the shared text-baseline nudge every chip glyph gets.
+                        style={{ transform: [{ scale: iconScale }, ...ICON_LABEL_OPTICAL_NUDGE_STYLE.transform] }}
                         testID="agent-input-agent-chip-logo"
                     />,
                 )}

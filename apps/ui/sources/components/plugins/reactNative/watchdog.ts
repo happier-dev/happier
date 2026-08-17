@@ -1,27 +1,52 @@
-export type PluginReactNativeWatchdogState = Readonly<{
-    surfaceId: string;
-    cacheKey: string;
-    crashCount: number;
-    startupFailureCount: number;
-    disabled: boolean;
+import {
+    DaemonPluginReactNativeCrashBindingTokenV1Schema,
+    DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema,
+    DaemonPluginReactNativeCrashFailureV1Schema,
+    isSameDaemonPluginReactNativeCrashBindingV1,
+    isSameDaemonPluginReactNativeCrashBindingTokenV1,
+    type DaemonPluginReactNativeCrashBindingTokenV1,
+    type DaemonPluginReactNativeCrashFailureV1,
+} from '@happier-dev/protocol';
+
+import { randomUUID } from '@/platform/randomUUID';
+
+/**
+ * The UI owns only failures it has durably quarantined locally while it cannot
+ * yet know whether the daemon accepted the report. Counts, thresholds,
+ * disablement, and reset remain daemon-owned state.
+ */
+export type PluginReactNativePendingFailure = Readonly<{
+    token: DaemonPluginReactNativeCrashBindingTokenV1;
+    failureOccurrenceId: string;
+    failure: DaemonPluginReactNativeCrashFailureV1;
 }>;
 
-export type PluginReactNativeWatchdogTimeout = Readonly<{
-    surfaceId: string;
-    cacheKey: string;
-    code: 'startup_ack_timeout';
-    diagnostics: readonly string[];
+/**
+ * The exact host-selected server/machine/Account target that owns a local
+ * pending occurrence. It never travels to the daemon; the daemon token stays
+ * the sole mutation fence and containment identity.
+ */
+type PluginReactNativePersistedPendingFailure = PluginReactNativePendingFailure & Readonly<{
+    scopeKey: string;
 }>;
 
 export type PluginReactNativeWatchdog = Readonly<{
-    start: (input: Readonly<{ surfaceId: string; cacheKey: string }>) => void;
-    acknowledge: (input: Readonly<{ surfaceId: string }>) => void;
-    cancel: (input: Readonly<{ surfaceId: string; cacheKey?: string }>) => void;
-    collectExpired: () => readonly PluginReactNativeWatchdogTimeout[];
-    recordRenderError: (input: Readonly<{ surfaceId: string; cacheKey: string }>) => PluginReactNativeWatchdogState & Readonly<{
-        diagnostics: readonly string[];
-    }>;
-    readState: (surfaceId: string) => PluginReactNativeWatchdogState | null;
+    /** Persist a new real failure once, before it can be reported. */
+    recordFailure: (input: Readonly<{
+        token: DaemonPluginReactNativeCrashBindingTokenV1;
+        scopeKey: string;
+        failure: DaemonPluginReactNativeCrashFailureV1;
+    }>) => PluginReactNativePendingFailure;
+    /** Removes exactly the occurrence whose daemon receipt was accepted. */
+    acknowledgeReportedFailure: (input: Readonly<{
+        token: DaemonPluginReactNativeCrashBindingTokenV1;
+        scopeKey: string;
+        failureOccurrenceId: string;
+    }>) => void;
+    readPending: (input: Readonly<{
+        token: DaemonPluginReactNativeCrashBindingTokenV1;
+        scopeKey: string;
+    }>) => readonly PluginReactNativePendingFailure[];
 }>;
 
 export type PluginReactNativeWatchdogPersistence = Readonly<{
@@ -30,210 +55,227 @@ export type PluginReactNativeWatchdogPersistence = Readonly<{
 }>;
 
 export type PluginReactNativeWatchdogSnapshot = Readonly<{
-    v: 1;
-    states: readonly PluginReactNativeWatchdogState[];
+    v: 3;
+    pending: readonly PluginReactNativePersistedPendingFailure[];
 }>;
 
-type MutableWatchdogState = {
-    surfaceId: string;
-    cacheKey: string;
-    crashCount: number;
-    startupFailureCount: number;
-    disabled: boolean;
-};
-
-function freezeState(state: MutableWatchdogState): PluginReactNativeWatchdogState {
-    return Object.freeze({ ...state });
+function cloneToken(token: DaemonPluginReactNativeCrashBindingTokenV1): DaemonPluginReactNativeCrashBindingTokenV1 {
+    return Object.freeze({
+        mount: token.mount.kind === 'destination'
+            ? Object.freeze({
+                kind: 'destination' as const,
+                destination: Object.freeze({ ...token.mount.destination }),
+            })
+            : token.mount.kind === 'targetedSurface'
+                ? Object.freeze({
+                    kind: 'targetedSurface' as const,
+                    target: Object.freeze({ ...token.mount.target }),
+                    point: Object.freeze({
+                        pointId: token.mount.point.pointId,
+                        protocol: Object.freeze({ ...token.mount.point.protocol }),
+                    }),
+                    contributor: Object.freeze({ ...token.mount.contributor }),
+                    role: token.mount.role,
+                    presentation: token.mount.presentation,
+                })
+                : Object.freeze({
+                    kind: 'composer' as const,
+                    contribution: Object.freeze({ ...token.mount.contribution }),
+                    immutableGenerationId: token.mount.immutableGenerationId,
+                    role: token.mount.role,
+                }),
+        renderer: Object.freeze({ ...token.renderer }),
+        artifactDigest: token.artifactDigest,
+        crashStateEpoch: token.crashStateEpoch,
+    });
 }
 
-export function createPluginReactNativeWatchdog(options: Readonly<{
-    ackTimeoutMs: number;
-    crashThreshold: number;
-    nowMs: () => number;
-    persistence?: PluginReactNativeWatchdogPersistence;
-    maxPersistedStates?: number;
-}>): PluginReactNativeWatchdog {
-    const states = new Map<string, MutableWatchdogState>();
-    const pendingStartup = new Map<string, { cacheKey: string; deadlineMs: number }>();
-    const maxPersistedStates = Math.max(1, options.maxPersistedStates ?? 100);
-
-    function restorePersistedSnapshot(): void {
-        const snapshot = readPersistedSnapshot(options.persistence);
-        if (!snapshot) {
-            return;
-        }
-        for (const entry of snapshot.states.slice(-maxPersistedStates)) {
-            states.set(entry.surfaceId, {
-                surfaceId: entry.surfaceId,
-                cacheKey: entry.cacheKey,
-                crashCount: entry.crashCount,
-                startupFailureCount: entry.startupFailureCount,
-                disabled: entry.disabled,
-            });
-        }
-    }
-
-    function persistSnapshot(): void {
-        if (!options.persistence) {
-            return;
-        }
-        const snapshot = Object.freeze({
-            v: 1 as const,
-            states: Object.freeze([...states.values()]
-                .slice(-maxPersistedStates)
-                .map((state) => freezeState(state))),
-        });
-        try {
-            options.persistence.writeSnapshot(snapshot);
-        } catch {
-            // Persistence must never make plugin UI crash containment fail open.
-        }
-    }
-
-    function readOrCreate(surfaceId: string, cacheKey: string): MutableWatchdogState {
-        const existing = states.get(surfaceId);
-        if (existing) {
-            if (existing.cacheKey !== cacheKey) {
-                existing.cacheKey = cacheKey;
-                existing.crashCount = 0;
-                existing.startupFailureCount = 0;
-                existing.disabled = false;
-                persistSnapshot();
-                return existing;
-            }
-            existing.cacheKey = cacheKey;
-            return existing;
-        }
-        const created: MutableWatchdogState = {
-            surfaceId,
-            cacheKey,
-            crashCount: 0,
-            startupFailureCount: 0,
-            disabled: false,
-        };
-        states.set(surfaceId, created);
-        return created;
-    }
-
-    restorePersistedSnapshot();
-
+function freezePendingFailure(input: Readonly<{
+    token: DaemonPluginReactNativeCrashBindingTokenV1;
+    failureOccurrenceId: string;
+    failure: DaemonPluginReactNativeCrashFailureV1;
+}>): PluginReactNativePendingFailure {
     return Object.freeze({
-        start: (input) => {
-            readOrCreate(input.surfaceId, input.cacheKey);
-            pendingStartup.set(input.surfaceId, {
-                cacheKey: input.cacheKey,
-                deadlineMs: options.nowMs() + options.ackTimeoutMs,
-            });
-        },
-        acknowledge: (input) => {
-            pendingStartup.delete(input.surfaceId);
-            const state = states.get(input.surfaceId);
-            if (state) {
-                state.startupFailureCount = 0;
-                state.disabled = false;
-                persistSnapshot();
-            }
-        },
-        cancel: (input) => {
-            const pending = pendingStartup.get(input.surfaceId);
-            if (!pending) {
-                return;
-            }
-            if (input.cacheKey && pending.cacheKey !== input.cacheKey) {
-                return;
-            }
-            pendingStartup.delete(input.surfaceId);
-        },
-        collectExpired: () => {
-            const expired: PluginReactNativeWatchdogTimeout[] = [];
-            const now = options.nowMs();
-            for (const [surfaceId, pending] of pendingStartup.entries()) {
-                if (pending.deadlineMs > now) {
-                    continue;
-                }
-                pendingStartup.delete(surfaceId);
-                const state = readOrCreate(surfaceId, pending.cacheKey);
-                state.startupFailureCount += 1;
-                if (state.startupFailureCount >= options.crashThreshold) {
-                    state.disabled = true;
-                }
-                persistSnapshot();
-                expired.push(Object.freeze({
-                    surfaceId,
-                    cacheKey: pending.cacheKey,
-                    code: 'startup_ack_timeout',
-                    diagnostics: Object.freeze(['startup_ack_timeout', 'js_thread_hard_hang_not_contained']),
-                }));
-            }
-            return Object.freeze(expired);
-        },
-        recordRenderError: (input) => {
-            const state = readOrCreate(input.surfaceId, input.cacheKey);
-            state.crashCount += 1;
-            if (state.crashCount >= options.crashThreshold) {
-                state.disabled = true;
-            }
-            persistSnapshot();
-            return Object.freeze({
-                ...freezeState(state),
-                diagnostics: Object.freeze(state.disabled ? ['crash_threshold_reached'] : []),
-            });
-        },
-        readState: (surfaceId) => {
-            const state = states.get(surfaceId);
-            return state ? freezeState(state) : null;
-        },
+        token: cloneToken(input.token),
+        failureOccurrenceId: input.failureOccurrenceId,
+        failure: input.failure,
     });
+}
+
+function freezePersistedPendingFailure(input: Readonly<{
+    token: DaemonPluginReactNativeCrashBindingTokenV1;
+    scopeKey: string;
+    failureOccurrenceId: string;
+    failure: DaemonPluginReactNativeCrashFailureV1;
+}>): PluginReactNativePersistedPendingFailure {
+    return Object.freeze({
+        ...freezePendingFailure(input),
+        scopeKey: input.scopeKey,
+    });
+}
+
+/**
+ * New daemon-issued tokens establish a new current epoch/artifact for one
+ * binding. The UI can therefore forget its older local quarantine; it never
+ * treats a mount-local retry as a reset because that uses the same token.
+ */
+function removeSupersededPendingFailures(
+    pendingFailures: PluginReactNativePersistedPendingFailure[],
+    scopeKey: string,
+    token: DaemonPluginReactNativeCrashBindingTokenV1,
+): boolean {
+    let writeIndex = 0;
+    let changed = false;
+    for (const pending of pendingFailures) {
+        if (
+            pending.scopeKey === scopeKey
+            &&
+            isSameDaemonPluginReactNativeCrashBindingV1(pending.token, token)
+            && !isSameDaemonPluginReactNativeCrashBindingTokenV1(pending.token, token)
+        ) {
+            changed = true;
+            continue;
+        }
+        pendingFailures[writeIndex] = pending;
+        writeIndex += 1;
+    }
+    if (changed) {
+        pendingFailures.length = writeIndex;
+    }
+    return changed;
 }
 
 function readPersistedSnapshot(
     persistence: PluginReactNativeWatchdogPersistence | undefined,
-): PluginReactNativeWatchdogSnapshot | null {
+): readonly PluginReactNativePersistedPendingFailure[] {
     if (!persistence) {
-        return null;
+        return Object.freeze([]);
     }
     let snapshot: unknown;
     try {
         snapshot = persistence.readSnapshot();
     } catch {
-        return null;
+        return Object.freeze([]);
     }
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-        return null;
+        return Object.freeze([]);
     }
     const record = snapshot as Readonly<Record<string, unknown>>;
-    if (record.v !== 1 || !Array.isArray(record.states)) {
-        return null;
+    if (record.v !== 3 || !Array.isArray(record.pending)) {
+        return Object.freeze([]);
     }
-    const states = record.states.flatMap((entry): PluginReactNativeWatchdogState[] => {
+
+    const pendingByOccurrence = new Map<string, PluginReactNativePersistedPendingFailure>();
+    for (const entry of record.pending) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-            return [];
+            continue;
         }
-        const state = entry as Readonly<Record<string, unknown>>;
-        const surfaceId = typeof state.surfaceId === 'string' ? state.surfaceId.trim() : '';
-        const cacheKey = typeof state.cacheKey === 'string' ? state.cacheKey.trim() : '';
-        const crashCount = typeof state.crashCount === 'number' && Number.isInteger(state.crashCount) && state.crashCount >= 0
-            ? state.crashCount
+        const candidate = entry as Readonly<Record<string, unknown>>;
+        const scopeKey = typeof candidate.scopeKey === 'string' && candidate.scopeKey.trim().length > 0
+            ? candidate.scopeKey
             : null;
-        const startupFailureCount = typeof state.startupFailureCount === 'number'
-            && Number.isInteger(state.startupFailureCount)
-            && state.startupFailureCount >= 0
-            ? state.startupFailureCount
-            : null;
-        if (!surfaceId || !cacheKey || crashCount === null || startupFailureCount === null) {
-            return [];
+        const token = DaemonPluginReactNativeCrashBindingTokenV1Schema.safeParse(candidate.token);
+        const occurrenceId = DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema.safeParse(candidate.failureOccurrenceId);
+        const failure = DaemonPluginReactNativeCrashFailureV1Schema.safeParse(candidate.failure);
+        if (!scopeKey || !token.success || !occurrenceId.success || !failure.success) {
+            continue;
         }
-        return [Object.freeze({
-            surfaceId,
-            cacheKey,
-            crashCount,
-            startupFailureCount,
-            disabled: state.disabled === true,
-        })];
-    });
+        const pending = freezePersistedPendingFailure({
+            token: token.data,
+            scopeKey,
+            failureOccurrenceId: occurrenceId.data,
+            failure: failure.data,
+        });
+        const key = JSON.stringify([pending.scopeKey, pending.token, pending.failureOccurrenceId]);
+        const existing = pendingByOccurrence.get(key);
+        // A duplicated persisted entry cannot turn into a second report. Keep
+        // the first exact entry; the daemon is still authoritative for a
+        // same-ID/different-failure conflict.
+        if (!existing) {
+            pendingByOccurrence.set(key, pending);
+        }
+    }
+    return Object.freeze([...pendingByOccurrence.values()]);
+}
+
+export function createPluginReactNativeWatchdog(options: Readonly<{
+    persistence?: PluginReactNativeWatchdogPersistence;
+    createFailureOccurrenceId?: () => string;
+}>): PluginReactNativeWatchdog {
+    const pendingFailures = [...readPersistedSnapshot(options.persistence)];
+    const createFailureOccurrenceId = options.createFailureOccurrenceId ?? randomUUID;
+
+    function persistSnapshot(): void {
+        if (!options.persistence) {
+            return;
+        }
+        try {
+            options.persistence.writeSnapshot(Object.freeze({
+                v: 3 as const,
+                pending: Object.freeze([...pendingFailures]),
+            }));
+        } catch {
+            // This storage adapter is the only local quarantine persistence.
+            // Keep the in-memory quarantine fail-closed for the current mount
+            // when platform storage is temporarily unavailable.
+        }
+    }
+
+    function recordFailure(input: Readonly<{
+        token: DaemonPluginReactNativeCrashBindingTokenV1;
+        scopeKey: string;
+        failure: DaemonPluginReactNativeCrashFailureV1;
+    }>): PluginReactNativePendingFailure {
+        pruneSupersededToken(input);
+        const failureOccurrenceId = DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema.parse(
+            createFailureOccurrenceId(),
+        );
+        const failure = DaemonPluginReactNativeCrashFailureV1Schema.parse(input.failure);
+        const pending = freezePendingFailure({
+            token: input.token,
+            failureOccurrenceId,
+            failure,
+        });
+        pendingFailures.push(freezePersistedPendingFailure({
+            ...pending,
+            scopeKey: input.scopeKey,
+        }));
+        persistSnapshot();
+        return pending;
+    }
+
+    function pruneSupersededToken(input: Readonly<{
+        token: DaemonPluginReactNativeCrashBindingTokenV1;
+        scopeKey: string;
+    }>): void {
+        if (removeSupersededPendingFailures(pendingFailures, input.scopeKey, input.token)) {
+            persistSnapshot();
+        }
+    }
 
     return Object.freeze({
-        v: 1,
-        states: Object.freeze(states),
+        recordFailure,
+        acknowledgeReportedFailure: (input) => {
+            const occurrenceId = DaemonPluginReactNativeCrashFailureOccurrenceIdV1Schema.parse(
+                input.failureOccurrenceId,
+            );
+            const index = pendingFailures.findIndex((pending) => (
+                pending.scopeKey === input.scopeKey
+                &&
+                pending.failureOccurrenceId === occurrenceId
+                && isSameDaemonPluginReactNativeCrashBindingTokenV1(pending.token, input.token)
+            ));
+            if (index < 0) {
+                return;
+            }
+            pendingFailures.splice(index, 1);
+            persistSnapshot();
+        },
+        readPending: (input) => Object.freeze(pendingFailures
+            .filter((pending) => (
+                pending.scopeKey === input.scopeKey
+                && isSameDaemonPluginReactNativeCrashBindingTokenV1(pending.token, input.token)
+            ))
+            .map((pending) => freezePendingFailure(pending))),
     });
 }

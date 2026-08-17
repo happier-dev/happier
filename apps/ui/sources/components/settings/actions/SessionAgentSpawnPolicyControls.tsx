@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -15,6 +14,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t, type TranslationKey } from '@/text';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create(() => ({
     optionIcon: {
@@ -33,7 +33,7 @@ type PolicyToggleDefinition = Readonly<{
     key: BooleanPolicyKey;
     titleKey: TranslationKey;
     subtitleKey: TranslationKey;
-    icon: React.ComponentProps<typeof Ionicons>['name'];
+    icon: IconName;
 }>;
 
 const POLICY_TOGGLE_DEFINITIONS: readonly PolicyToggleDefinition[] = [
@@ -41,73 +41,73 @@ const POLICY_TOGGLE_DEFINITIONS: readonly PolicyToggleDefinition[] = [
         key: 'allowCustomDirectory',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowCustomDirectory.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowCustomDirectory.subtitle',
-        icon: 'folder-open-outline',
+        icon: 'folder-open',
     },
     {
         key: 'allowCrossMachine',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowCrossMachine.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowCrossMachine.subtitle',
-        icon: 'desktop-outline',
+        icon: 'desktop',
     },
     {
         key: 'allowBackendTargetOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowBackendTargetOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowBackendTargetOverride.subtitle',
-        icon: 'hardware-chip-outline',
+        icon: 'cpu',
     },
     {
         key: 'allowModelOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowModelOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowModelOverride.subtitle',
-        icon: 'sparkles-outline',
+        icon: 'sparkle',
     },
     {
         key: 'allowPermissionModeOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowPermissionModeOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowPermissionModeOverride.subtitle',
-        icon: 'shield-checkmark-outline',
+        icon: 'shield-check',
     },
     {
         key: 'allowAgentModeOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowAgentModeOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowAgentModeOverride.subtitle',
-        icon: 'options-outline',
+        icon: 'sliders-horizontal',
     },
     {
         key: 'allowConfigOptionOverrides',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowConfigOptionOverrides.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowConfigOptionOverrides.subtitle',
-        icon: 'options-outline',
+        icon: 'sliders-horizontal',
     },
     {
         key: 'allowProfileOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowProfileOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowProfileOverride.subtitle',
-        icon: 'person-circle-outline',
+        icon: 'user-circle',
     },
     {
         key: 'allowEnvironmentVariables',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowEnvironmentVariables.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowEnvironmentVariables.subtitle',
-        icon: 'key-outline',
+        icon: 'key',
     },
     {
         key: 'allowConnectedServicesOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowConnectedServicesOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowConnectedServicesOverride.subtitle',
-        icon: 'link-outline',
+        icon: 'link',
     },
     {
         key: 'allowMcpSelectionOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowMcpSelectionOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowMcpSelectionOverride.subtitle',
-        icon: 'cube-outline',
+        icon: 'cube',
     },
     {
         key: 'allowTranscriptStorageOverride',
         titleKey: 'settingsActions.spawnPolicy.toggles.allowTranscriptStorageOverride.title',
         subtitleKey: 'settingsActions.spawnPolicy.toggles.allowTranscriptStorageOverride.subtitle',
-        icon: 'archive-outline',
+        icon: 'archive',
     },
 ] as const;
 
@@ -160,9 +160,9 @@ export function normalizeSessionAgentSpawnPolicy(raw: unknown): SessionAgentSpaw
 
 function buildPermissionCeilingItems(iconColor: string): readonly DropdownMenuItem[] {
     const styles = stylesheet;
-    const icon = (name: React.ComponentProps<typeof Ionicons>['name']) => (
+    const icon = (name: IconName) => (
         <View style={styles.optionIcon}>
-            <Ionicons name={name} size={21} color={iconColor} />
+            <Icon name={name} size={20} color={iconColor} />
         </View>
     );
 
@@ -172,14 +172,14 @@ function buildPermissionCeilingItems(iconColor: string): readonly DropdownMenuIt
             testID: 'settings-actions:session-spawn-policy:permissionCeiling:inherit',
             title: t('settingsActions.spawnPolicy.permissionCeiling.options.inherit.title'),
             subtitle: t('settingsActions.spawnPolicy.permissionCeiling.options.inherit.subtitle'),
-            icon: icon('git-branch-outline'),
+            icon: icon('git-branch'),
         },
         ...PERMISSION_CEILING_OPTIONS.map((option) => ({
             id: option.mode,
             testID: `settings-actions:session-spawn-policy:permissionCeiling:${option.mode}`,
             title: t(option.titleKey),
             subtitle: t(option.subtitleKey),
-            icon: icon('shield-outline'),
+            icon: icon('shield'),
         })),
     ] satisfies readonly DropdownMenuItem[];
 }
@@ -227,7 +227,7 @@ export const SessionAgentSpawnPolicyControls = React.memo(function SessionAgentS
                     testID={`settings-actions:session-spawn-policy:${definition.key}:row`}
                     title={t(definition.titleKey)}
                     subtitle={t(definition.subtitleKey)}
-                    icon={<Ionicons name={definition.icon} size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name={definition.icon} size={29} color={theme.colors.text.secondary} />}
                     mode="interactive"
                     disabled={disabled}
                     showChevron={false}
@@ -259,7 +259,7 @@ export const SessionAgentSpawnPolicyControls = React.memo(function SessionAgentS
                 })}
                 itemTrigger={{
                     title: t('settingsActions.spawnPolicy.permissionCeiling.title'),
-                    icon: <Ionicons name="shield-half-outline" size={29} color={theme.colors.text.secondary} />,
+                    icon: <Icon name="shield" size={29} color={theme.colors.text.secondary} />,
                     subtitle: t('settingsActions.spawnPolicy.permissionCeiling.subtitle'),
                     itemProps: {
                         testID: 'settings-actions:session-spawn-policy:permissionCeiling',

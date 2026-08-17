@@ -183,7 +183,7 @@ describe('AgentInput status badges', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     instrumentQuota={{
                         viewModel: providerUsageGauge,
@@ -229,7 +229,7 @@ describe('AgentInput status badges', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     connectionStatus={{
                         text: 'online',

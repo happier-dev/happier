@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
@@ -8,6 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { SourceControlUpdateButton } from '@/components/workspaces/scm/update/SourceControlUpdateControls';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type RepositoryInitResponse = Readonly<{
     success: boolean;
@@ -60,7 +60,7 @@ export function NotSourceControlRepositoryState(props: Readonly<{
                 paddingHorizontal: 20,
             }}
         >
-            <Octicons name="git-branch" size={48} color={theme.colors.text.secondary} />
+            <Icon name="git-branch" size={48} color={theme.colors.text.secondary} />
             <Text
                 style={{
                     fontSize: 16,

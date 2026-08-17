@@ -240,6 +240,27 @@ export function useNewSessionConnectedServices(params: Readonly<{
     supportedConnectedServiceIds,
   ]);
 
+  // Hoisted out of the render callback below: the selection content INVOKES this
+  // during its list build and bakes the result into every option, so it stays a
+  // dependency of that build. Recreated inline it changed identity on every
+  // `renderContent(...)` pass and rebuilt the whole step tree; as a memoised
+  // callback it changes only when the availability data actually does.
+  const resolveOptionAvailability = React.useCallback(({ serviceId, optionId }: Readonly<{
+    serviceId: string;
+    optionId: string;
+  }>) => {
+    const state = authLabel.serviceStatesById[serviceId];
+    if (
+      state?.warningCode
+      && optionId === `connected-service:${encodeURIComponent(serviceId)}:native`
+    ) {
+      return {
+        subtitle: resolveDefaultAuthWarningLabel(state.warningCode),
+      };
+    }
+    return {};
+  }, [authLabel]);
+
   const connectedServicesAuthPopoverContent = React.useCallback(({ maxHeight }: AgentInputContentPopoverRenderArgs) => (
     <NewSessionConnectedServicesSelectionContent
       supportedServiceIds={supportedConnectedServiceIds}
@@ -248,18 +269,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
       bindingsByServiceId={optimisticBindingsByServiceId}
       setBindingForService={setBindingForService}
       defaultProfileIdByServiceId={settings.connectedServicesDefaultProfileByServiceId}
-      resolveOptionAvailability={({ serviceId, optionId }) => {
-        const state = authLabel.serviceStatesById[serviceId];
-        if (
-          state?.warningCode
-          && optionId === `connected-service:${encodeURIComponent(serviceId)}:native`
-        ) {
-          return {
-            subtitle: resolveDefaultAuthWarningLabel(state.warningCode),
-          };
-        }
-        return {};
-      }}
+      resolveOptionAvailability={resolveOptionAvailability}
       onOpenSettings={(serviceId) => {
         router.push(resolveConnectedServiceProfileActionRoute(
           { serviceId },
@@ -275,11 +285,11 @@ export function useNewSessionConnectedServices(params: Readonly<{
       maxHeight={maxHeight}
     />
   ), [
-    authLabel,
     connectedServicesRegistry.entries,
     connectedServiceProfileOptionsByServiceId,
     connectedServiceAccountGroupOptionsByServiceId,
     optimisticBindingsByServiceId,
+    resolveOptionAvailability,
     router,
     setBindingForService,
     settings.connectedServicesDefaultProfileByServiceId,

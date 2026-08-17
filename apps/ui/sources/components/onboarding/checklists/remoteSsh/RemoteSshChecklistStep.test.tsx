@@ -19,6 +19,20 @@ const tauriState = vi.hoisted(() => ({
     isDesktop: false,
 }));
 
+const syncSingletonState = vi.hoisted(() => ({
+    applySettings: vi.fn(),
+    decryptSecretValue: vi.fn(() => null),
+    encryptSecretValue: vi.fn(() => null),
+}));
+
+vi.mock('@/sync/runtime/getSyncSingleton', () => ({
+    getSyncSingleton: () => ({
+        applySettings: syncSingletonState.applySettings,
+        decryptSecretValue: syncSingletonState.decryptSecretValue,
+        encryptSecretValue: syncSingletonState.encryptSecretValue,
+    }),
+}));
+
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemGroup', null, children),
 }));
@@ -213,6 +227,11 @@ describe('RemoteSshChecklistStep', () => {
         featureGateState.managementEnabled = true;
         featureGateState.secretMaterialEnabled = true;
         tauriState.isDesktop = false;
+        syncSingletonState.applySettings.mockReset();
+        syncSingletonState.decryptSecretValue.mockReset();
+        syncSingletonState.decryptSecretValue.mockReturnValue(null);
+        syncSingletonState.encryptSecretValue.mockReset();
+        syncSingletonState.encryptSecretValue.mockReturnValue(null);
     });
 
     it('does not trigger a maximum update depth loop when wired to the wizard chrome override store', async () => {
@@ -479,6 +498,86 @@ describe('RemoteSshChecklistStep', () => {
         expect((spec?.params as any)?.ssh?.password).toBe('hunter2');
 
         expect(runnerHarness.respondSpy).toHaveBeenCalledTimes(0);
+    });
+
+    it('preserves opaque remote-host rows when onboarding updates the selected saved host', async () => {
+        const currentHost = {
+            id: 'host-1',
+            name: 'Developer workstation',
+            ssh: {
+                target: 'dev@example.test',
+                authMode: 'agent' as const,
+            },
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+        };
+        const opaqueFutureHost = {
+            v: 2,
+            id: 'future-host',
+            transport: 'future-transport',
+            futureData: { retained: true },
+        };
+        act(() => {
+            getStorage().getState().applySettingsLocal({
+                remoteHostsV1: [currentHost, opaqueFutureHost],
+            });
+        });
+
+        const runnerHarness = createRunner({
+            startBehavior: (spec, taskId) => spec.kind === 'remote.ssh.bootstrapMachine.v1'
+                ? {
+                    taskId,
+                    snapshot: createSucceededSnapshot(taskId, {
+                        currentStepId: 'ssh.complete',
+                        latestMessage: 'Complete',
+                        data: { machineId: 'machine-1' },
+                    }),
+                }
+                : undefined,
+        });
+        let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
+
+        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
+            testID: 'remote-ssh-step',
+            mode: 'remoteMachine',
+            relayUrl: 'https://relay.example.test',
+            runner: runnerHarness.runner,
+            onWizardPrimaryChange: (state) => {
+                primary = state as typeof primary;
+            },
+        }));
+
+        const requirePrimary = () => {
+            if (!primary) {
+                throw new Error('Expected wizard primary override');
+            }
+            return primary;
+        };
+
+        const hostPicker = screen.findByType('DropdownMenu' as never) as unknown as {
+            props: { onSelect: (id: string) => void };
+        };
+        await act(async () => {
+            hostPicker.props.onSelect(currentHost.id);
+        });
+        await act(async () => {
+            await requirePrimary().onPress();
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        await act(async () => {
+            await requirePrimary().onPress();
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        const writtenSettings = syncSingletonState.applySettings.mock.calls.at(-1)?.[0];
+        expect(writtenSettings?.remoteHostsV1).toHaveLength(2);
+        expect(writtenSettings?.remoteHostsV1[0]).toMatchObject({
+            id: currentHost.id,
+            linkedMachineId: 'machine-1',
+        });
+        expect(writtenSettings?.remoteHostsV1[1]).toStrictEqual(opaqueFutureHost);
     });
 
     it('prefills the inline SSH form from a configured-host suggestion without selecting a saved host', async () => {

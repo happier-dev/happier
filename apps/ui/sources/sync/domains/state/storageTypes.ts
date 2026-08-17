@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { applyRuntimeDescriptorSessionMetadata, normalizeLegacyAgentVocabularySessionMetadata } from "@happier-dev/agents/session/state/metadataWriters";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
+import { SessionOptionOverrideRuleSchema } from "@/sync/domains/sessionControl/schema";
 import type {
     PendingDeliveryBlockedReason,
     PrimaryTurnStatusV1,
@@ -22,14 +23,47 @@ import {
     createSessionSystemSessionV1Schema,
     readRuntimeDescriptorV1FromMetadata,
     RuntimeDescriptorV1Schema,
+    SessionActiveModelSelectionV1Schema,
     SessionAppliedModelV1Schema,
     SessionModelSelectionIntentV1Schema,
+    SessionWorkspaceLocationV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
 } from "@happier-dev/protocol";
 
 //
 // Agent states
 //
+
+/**
+ * Persisted session option catalogs. The model and config catalogs are published under four
+ * metadata keys (`acpSessionModelsV1`, `sessionModelsV1`, `acpConfigOptionsV1`,
+ * `sessionConfigOptionsV1`); they share these schemas so a producer-declared field cannot
+ * survive one carrier and be silently stripped by another. `MetadataSchema`'s top-level
+ * `.passthrough()` does NOT reach nested objects, so every carried field must be declared here.
+ */
+const StoredOptionChoiceSchema = z.object({
+    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+    name: z.string(),
+    description: z.string().optional(),
+});
+
+const StoredModelOptionSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().optional(),
+    type: z.string(),
+    currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+    options: z.array(StoredOptionChoiceSchema).optional(),
+    overridesWhenOn: SessionOptionOverrideRuleSchema.optional(),
+});
+
+const StoredConfigOptionSchema = StoredModelOptionSchema.extend({
+    groups: z.array(z.object({
+        id: z.string(),
+        name: z.string(),
+        options: z.array(StoredOptionChoiceSchema),
+    })).optional(),
+});
 
 const MetadataObjectSchema = z.object({
     // Cloud/system sessions may omit these fields; treat missing/null as empty.
@@ -44,6 +78,7 @@ const MetadataObjectSchema = z.object({
         updatedAt: z.number()
     }).optional(),
     machineId: z.string().optional(),
+    sessionWorkspaceLocationV1: SessionWorkspaceLocationV1Schema.optional(),
     handoffV1: z.object({
         v: z.literal(1),
         sourceMachineId: z.string(),
@@ -127,18 +162,7 @@ const MetadataObjectSchema = z.object({
             description: z.string().optional(),
             contextWindowTokens: z.number().int().nonnegative().optional(),
             extendedContextModelId: z.string().optional(),
-            modelOptions: z.array(z.object({
-                id: z.string(),
-                name: z.string(),
-                description: z.string().optional(),
-                type: z.string(),
-                currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                options: z.array(z.object({
-                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                    name: z.string(),
-                    description: z.string().optional(),
-                })).optional(),
-            })).optional(),
+            modelOptions: z.array(StoredModelOptionSchema).optional(),
         })),
     }).optional(),
     sessionModelsV1: z.object({
@@ -146,24 +170,14 @@ const MetadataObjectSchema = z.object({
         agentId: z.string(),
         updatedAt: z.number(),
         currentModelId: z.string(),
+        activeSelectionV1: SessionActiveModelSelectionV1Schema.optional(),
         availableModels: z.array(z.object({
             id: z.string(),
             name: z.string(),
             description: z.string().optional(),
             contextWindowTokens: z.number().int().nonnegative().optional(),
             extendedContextModelId: z.string().optional(),
-            modelOptions: z.array(z.object({
-                id: z.string(),
-                name: z.string(),
-                description: z.string().optional(),
-                type: z.string(),
-                currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                options: z.array(z.object({
-                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                    name: z.string(),
-                    description: z.string().optional(),
-                })).optional(),
-            })).optional(),
+            modelOptions: z.array(StoredModelOptionSchema).optional(),
         })),
     }).optional(),
     /**
@@ -173,53 +187,13 @@ const MetadataObjectSchema = z.object({
         v: z.literal(1),
         agentId: z.string(),
         updatedAt: z.number(),
-        configOptions: z.array(z.object({
-            id: z.string(),
-            name: z.string(),
-            description: z.string().optional(),
-            type: z.string(),
-            currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-            options: z.array(z.object({
-                value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                name: z.string(),
-                description: z.string().optional(),
-            })).optional(),
-            groups: z.array(z.object({
-                id: z.string(),
-                name: z.string(),
-                options: z.array(z.object({
-                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                    name: z.string(),
-                    description: z.string().optional(),
-                })),
-            })).optional(),
-        })),
+        configOptions: z.array(StoredConfigOptionSchema),
     }).optional(),
     sessionConfigOptionsV1: z.object({
         v: z.literal(1),
         agentId: z.string(),
         updatedAt: z.number(),
-        configOptions: z.array(z.object({
-            id: z.string(),
-            name: z.string(),
-            description: z.string().optional(),
-            type: z.string(),
-            currentValue: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-            options: z.array(z.object({
-                value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                name: z.string(),
-                description: z.string().optional(),
-            })).optional(),
-            groups: z.array(z.object({
-                id: z.string(),
-                name: z.string(),
-                options: z.array(z.object({
-                    value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                    name: z.string(),
-                    description: z.string().optional(),
-                })),
-            })).optional(),
-        })),
+        configOptions: z.array(StoredConfigOptionSchema),
     }).optional(),
     sessionRollbackRangesV1: createSessionRollbackRangesV1Schema(z).optional(),
     /**
@@ -510,6 +484,8 @@ export interface Session {
     acceptedThroughServerSeq?: number | null,
     materializedThroughSourceAt?: number | null,
     publishedThroughServerSeq?: number | null,
+    /** Server-owned sharing admission. Missing on older servers and fails closed for snapshots. */
+    transcriptShareable?: boolean,
     metadataLayoutVersion?: number,
     metadata: Metadata | null,
     /**
@@ -528,7 +504,7 @@ export interface Session {
     thinkingAt: number,
     presence: "online" | number, // "online" when active, timestamp when last seen
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
-    resumingAt?: number | null; // Local-only, bounded resume lifecycle marker shared by header/composer/list status.
+    resumingAt?: number | null; // Local-only: set at resume initiation; cleared by post-attach activity, definitive failure, or a bounded post-acceptance fallback.
     thinkingGraceUntil?: number | null; // Local-only timestamp used to debounce thinking indicator and avoid flicker between streaming chunks
     lastTurnCompletedAt?: number | null; // Local-only explicit terminal lifecycle timestamp used for completion surfaces
     todos?: Array<{
@@ -641,6 +617,18 @@ export const MachineMetadataSchema = z.object({
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>;
 
+export type MachineLockedReason =
+    | 'encryption_material_unavailable'
+    | 'decryption_failed'
+    | 'content_unreadable';
+
+export type MachineAvailability =
+    | Readonly<{ kind: 'available' }>
+    | Readonly<{
+        kind: 'locked';
+        reason: MachineLockedReason;
+    }>;
+
 export interface Machine {
     id: string;
     seq: number;
@@ -660,6 +648,12 @@ export interface Machine {
     metadataVersion: number;
     daemonState: any | null;  // Dynamic daemon state (runtime info)
     daemonStateVersion: number;
+    storageMode?: 'plain' | 'e2ee';
+    /**
+     * Persisted rows that this client cannot read remain visible and carry an
+     * explicit locked state instead of looking like ordinary empty Machines.
+     */
+    availability?: MachineAvailability;
 }
 
 //

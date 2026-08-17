@@ -15,6 +15,7 @@ import { createProfileActionChip } from '../definitions/createProfileActionChip'
 import { createResumeActionChip } from '../definitions/createResumeActionChip';
 import { createSessionModeActionChip } from '../definitions/createSessionModeActionChip';
 import type { ShakeInstance } from '@/components/ui/feedback/Shaker';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 type ChipStyle = (pressed: boolean) => any;
 
@@ -40,7 +41,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     onModePress: () => void;
     hasProfile: boolean;
     profileChipAnchorRef: React.RefObject<View | null>;
-    profileIcon: string;
+    profileIcon: IconName;
     profileLabel: string | null;
     onProfilePress: () => void;
     hasEnvVars: boolean;
@@ -52,6 +53,8 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     agentChipAnchorRef: React.RefObject<View | null>;
     agentLabel: string;
     engineLabel: string;
+    /** Hover/focus/press-in on the Agent chip, before the picker opens. */
+    onAgentIntent?: () => void;
     onAgentPress: () => void;
     machineChipAnchorRef: React.RefObject<View | null>;
     onMachinePress?: () => void;
@@ -110,7 +113,6 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         accessibilityLabel: params.sessionModeAccessibilityLabel,
         chipStyle: params.chipStyle,
         textStyle: params.textStyle,
-        iconKind: params.sessionModeChipPresentation?.iconKind,
         iconName: params.sessionModeChipPresentation?.iconName,
         onPress: params.onModePress,
     }) : null;
@@ -146,6 +148,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
         chipStyle: params.chipStyle,
         textStyle: params.textStyle,
         onPress: params.onAgentPress,
+        onIntent: params.onAgentIntent,
     }) : null;
 
     const machineChip = params.onMachinePress ? createMachineActionChip({

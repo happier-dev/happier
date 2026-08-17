@@ -11,6 +11,7 @@ import type {
     PluginPermissionGrantRevokeActionOutputV1,
     PluginPermissionGrantTargetScopeV1,
     PluginPermissionGrantV1,
+    PluginPermissionSubjectV1,
     PluginPermissionGrantDismissRequestActionOutputV1,
 } from '@happier-dev/protocol';
 
@@ -31,6 +32,7 @@ export type PluginPermissionGrantIdentity = Readonly<{
     pluginId: string;
     capability: PluginPermissionCapabilityV1;
     targetScope?: PluginPermissionGrantTargetScope | null;
+    subject?: PluginPermissionSubjectV1 | null;
 }>;
 
 export type PluginPermissionGrant = PluginPermissionGrantV1;

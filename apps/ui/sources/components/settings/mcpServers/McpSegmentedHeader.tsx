@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -16,10 +16,11 @@ export const McpSegmentedHeader = React.memo(function McpSegmentedHeader(props: 
     testIDPrefix: string;
 }>) {
     const { theme } = useUnistyles();
+    const maxWidthStyle = useLayoutMaxWidthStyle();
 
     return (
         <View style={styles.wrapper}>
-            <View style={styles.container}>
+            <View style={[styles.container, maxWidthStyle]}>
                 <View style={styles.copyBlock}>
                     <Text style={[styles.title, { color: theme.colors.text.secondary }]}>
                         {props.title}
@@ -47,7 +48,6 @@ const styles = StyleSheet.create(() => ({
     },
     container: {
         width: '100%',
-        maxWidth: layout.maxWidth,
         paddingHorizontal: 16,
         paddingTop: 18,
         paddingBottom: 12,

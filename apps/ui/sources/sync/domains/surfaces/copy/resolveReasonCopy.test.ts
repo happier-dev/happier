@@ -4,7 +4,10 @@ import type { BrowserAdapterUnavailableReasonCode } from '@/sync/domains/browser
 import type { BrowserSurfaceUnavailableReason } from '@/components/browser/surfaces/BrowserSurfaceFallback';
 import { t } from '@/text';
 
-import { resolveReasonCopy } from './resolveReasonCopy';
+import {
+    resolvePluginSurfaceStatePresentation,
+    resolveReasonCopy,
+} from './resolveReasonCopy';
 
 // The full BrowserAdapterUnavailableReasonCode enum, restated as a const tuple so
 // this test breaks (typecheck) if the source enum grows and the mapper does not.
@@ -205,11 +208,33 @@ const PLUGIN_RUNTIME_CODES = [
     { code: 'compatibility_channel_unsupported', expected: () => t('pluginRuntime.disabledByPolicy') },
     { code: 'compatibility_feature_disabled', expected: () => t('pluginRuntime.disabledByPolicy') },
     { code: 'profile_mode_unsupported', expected: () => t('pluginRuntime.disabledByPolicy') },
+    { code: 'hosted_web_policy_denied', expected: () => t('pluginRuntime.hostedWebPolicyDenied') },
+    { code: 'hosted_web_endpoint_policy_denied', expected: () => t('pluginRuntime.hostedWebEndpointPolicyDenied') },
+    { code: 'e2ee_unavailable', expected: () => t('pluginRuntime.missingRequirement') },
+    { code: 'artifact_hosting_unsupported', expected: () => t('pluginRuntime.missingRequirement') },
+    { code: 'artifact_hosting_not_opted_in', expected: () => t('pluginRuntime.disabledByPolicy') },
+    { code: 'hosted_web_static_artifact_missing', expected: () => t('pluginRuntime.missingRequirement') },
+    { code: 'hosted_web_frame_adapter_unavailable', expected: () => t('pluginRuntime.missingRequirement') },
     { code: 'missing_native_capability', expected: () => t('pluginRuntime.missingRequirement') },
     { code: 'required_permission_missing', expected: () => t('pluginRuntime.missingRequirement') },
     { code: 'entry_missing', expected: () => t('pluginRuntime.missingRequirement') },
     { code: 'runtime_mismatch', expected: () => t('pluginRuntime.missingRequirement') },
     { code: 'repack_script_manager_unavailable', expected: () => t('pluginRuntime.missingRequirement') },
+    { code: 'transport_unavailable', expected: () => t('pluginRuntime.unavailableGeneric') },
+] as const;
+
+// These are pane-local terminal facts produced after the projection and
+// capability owners have already decided admission. Each one needs distinct
+// recovery copy: grouping them behind the generic plugin-runtime fallback
+// hides whether a refresh, a policy update, or an author-side fix is needed.
+const HOSTED_WEB_LOCAL_TERMINAL_CODES = [
+    'hosted_web_policy_denied',
+    'hosted_web_sandbox_unavailable',
+    'hosted_web_security_unavailable',
+    'hosted_web_frame_origin_unavailable',
+    'hosted_web_bridge_nonce_unavailable',
+    'hosted_web_bridge_timeout',
+    'hosted_web_endpoint_policy_denied',
 ] as const;
 
 describe('resolveReasonCopy — simulator / stream / plugin-runtime kinds (L0-3)', () => {
@@ -241,13 +266,32 @@ describe('resolveReasonCopy — simulator / stream / plugin-runtime kinds (L0-3)
         }
     });
 
-    it('maps known plugin runtime codes to grouped human copy', () => {
+    it('maps known plugin runtime codes to their intended human copy', () => {
         for (const { code, expected } of PLUGIN_RUNTIME_CODES) {
             const copy = resolveReasonCopy({ reasonCode: code, kind: 'pluginRuntime' });
             expect(copy.message).toBe(expected());
             expect(copy.message).not.toContain(code);
             expect(copy.diagnosticCode).toBe(code);
         }
+    });
+
+    it('maps local hosted-web terminal facts to distinct recovery copy instead of a generic runtime fallback', () => {
+        const genericRuntimeCopy = new Set([
+            t('pluginRuntime.unavailableGeneric'),
+            t('pluginRuntime.disabledByPolicy'),
+            t('pluginRuntime.missingRequirement'),
+        ]);
+        const copies = HOSTED_WEB_LOCAL_TERMINAL_CODES.map((reasonCode) => {
+            const copy = resolveReasonCopy({ reasonCode, kind: 'pluginRuntime' });
+            expect(copy.body.length).toBeGreaterThan(0);
+            expect(copy.body).not.toContain(reasonCode);
+            expect(copy.body).not.toBe(t('pluginRuntime.unavailableGeneric'));
+            expect(genericRuntimeCopy.has(copy.body)).toBe(false);
+            expect(copy.diagnosticCode).toBe(reasonCode);
+            return copy.body;
+        });
+
+        expect(new Set(copies)).toHaveLength(HOSTED_WEB_LOCAL_TERMINAL_CODES.length);
     });
 
     it('falls back to a per-kind generic for unknown codes on the new kinds', () => {
@@ -267,5 +311,152 @@ describe('resolveReasonCopy — simulator / stream / plugin-runtime kinds (L0-3)
         expect(stream.message.length).toBeGreaterThan(3);
         expect(plugin.message.length).toBeGreaterThan(3);
         expect(simulator.message).not.toBe(plugin.message);
+    });
+});
+
+describe('resolvePluginSurfaceStatePresentation', () => {
+    it('keeps last-known-good content distinct from an initial or terminal replacement state', () => {
+        const available = resolvePluginSurfaceStatePresentation({
+            state: 'available',
+            reasonCode: 'raw_machine_probe',
+        });
+        expect(available).toMatchObject({
+            disposition: 'content',
+            diagnosticCode: 'raw_machine_probe',
+            card: null,
+        });
+
+        for (const state of ['loading', 'refreshing', 'stale', 'offline', 'unavailable', 'failedRetry'] as const) {
+            const retained = resolvePluginSurfaceStatePresentation({
+                state,
+                reasonCode: 'raw_machine_probe',
+                hasRetainedContent: true,
+            });
+            expect(retained, state).toMatchObject({
+                disposition: 'retain',
+                diagnosticCode: 'raw_machine_probe',
+                card: null,
+                contentNotice: {
+                    accessibilitySemantics: 'status',
+                },
+            });
+            expect(retained.contentNotice?.title.length, state).toBeGreaterThan(0);
+            expect(retained.contentNotice?.reason.length, state).toBeGreaterThan(0);
+            expect(retained.contentNotice?.reason, state).not.toContain('raw_machine_probe');
+        }
+        for (const state of ['loading', 'refreshing', 'stale', 'offline'] as const) {
+            const retained = resolvePluginSurfaceStatePresentation({
+                state,
+                reasonCode: 'raw_machine_probe',
+                hasRetainedContent: true,
+            });
+            expect(retained.contentNotice).toEqual({
+                title: t(`pluginSurfaces.state.${state}.title`),
+                reason: t(`pluginSurfaces.state.${state}.reason`),
+                accessibilitySemantics: 'status',
+            });
+        }
+
+        const initialLoading = resolvePluginSurfaceStatePresentation({
+            state: 'loading',
+            reasonCode: 'raw_machine_probe',
+        });
+        const refreshWithoutLkg = resolvePluginSurfaceStatePresentation({
+            state: 'refreshing',
+            reasonCode: 'raw_machine_probe',
+        });
+        expect(initialLoading).toMatchObject({
+            disposition: 'replace',
+            card: { kind: 'loading', accessibilitySemantics: 'status' },
+        });
+        expect(refreshWithoutLkg).toMatchObject({
+            disposition: 'replace',
+            card: { kind: 'loading', accessibilitySemantics: 'status' },
+        });
+
+        for (const state of ['stale', 'offline', 'unavailable'] as const) {
+            const terminal = resolvePluginSurfaceStatePresentation({
+                state,
+                reasonCode: 'raw_machine_probe',
+            });
+            expect(terminal, state).toMatchObject({
+                disposition: 'replace',
+                card: { kind: 'unavailable', accessibilitySemantics: 'status' },
+            });
+            expect(terminal.card?.reason).not.toContain('raw_machine_probe');
+        }
+
+        const failedRetry = resolvePluginSurfaceStatePresentation({
+            state: 'failedRetry',
+            reasonCode: 'raw_machine_probe',
+        });
+        expect(failedRetry).toMatchObject({
+            disposition: 'replace',
+            card: { kind: 'error', accessibilitySemantics: 'alert' },
+        });
+        expect(failedRetry.card?.reason).not.toContain('raw_machine_probe');
+    });
+
+    it('maps each daemon-issued RN reset state to its localized card or content notice', () => {
+        const requested = resolvePluginSurfaceStatePresentation({
+            state: 'loading',
+            copyVariant: 'pluginReactNativeResetRequested',
+        });
+        expect(requested).toMatchObject({
+            disposition: 'replace',
+            card: {
+                kind: 'loading',
+                title: t('pluginReactNative.reset.requested.title'),
+                reason: t('pluginReactNative.reset.requested.reason'),
+                accessibilitySemantics: 'status',
+            },
+            contentNotice: null,
+        });
+
+        const awaitingProjection = resolvePluginSurfaceStatePresentation({
+            state: 'loading',
+            copyVariant: 'pluginReactNativeResetAwaitingProjection',
+        });
+        expect(awaitingProjection).toMatchObject({
+            disposition: 'replace',
+            card: {
+                kind: 'loading',
+                title: t('pluginReactNative.reset.awaitingProjection.title'),
+                reason: t('pluginReactNative.reset.awaitingProjection.reason'),
+                accessibilitySemantics: 'status',
+            },
+            contentNotice: null,
+        });
+        expect(awaitingProjection.card?.title).not.toBe(requested.card?.title);
+
+        const failed = resolvePluginSurfaceStatePresentation({
+            state: 'failedRetry',
+            copyVariant: 'pluginReactNativeResetFailed',
+        });
+        expect(failed).toMatchObject({
+            disposition: 'replace',
+            card: {
+                kind: 'error',
+                title: t('pluginReactNative.reset.failed.title'),
+                reason: t('pluginReactNative.reset.failed.reason'),
+                accessibilitySemantics: 'alert',
+            },
+            contentNotice: null,
+        });
+
+        const completed = resolvePluginSurfaceStatePresentation({
+            state: 'available',
+            copyVariant: 'pluginReactNativeResetComplete',
+        });
+
+        expect(completed).toMatchObject({
+            disposition: 'content',
+            card: null,
+            contentNotice: {
+                title: t('pluginReactNative.reset.complete.title'),
+                reason: t('pluginReactNative.reset.complete.reason'),
+                accessibilitySemantics: 'status',
+            },
+        });
     });
 });

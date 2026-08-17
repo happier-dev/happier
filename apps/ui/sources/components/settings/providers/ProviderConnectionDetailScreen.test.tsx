@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HappierLink } from '@happier-dev/plugin-ui/presentation';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
@@ -36,6 +37,14 @@ const alert = vi.hoisted(() => vi.fn());
 const alertAsync = vi.hoisted(() => vi.fn(async () => undefined));
 const openUrl = vi.hoisted(() => vi.fn(async () => undefined));
 const probeProviderConnection = vi.hoisted(() => vi.fn());
+const refreshProfile = vi.hoisted(() => vi.fn(async () => undefined));
+const connectedAccountProfileState = vi.hoisted(() => ({
+    accounts: [] as Array<Record<string, unknown>>,
+    groups: [] as Array<Record<string, unknown>>,
+}));
+const connectedServiceRegistryState = vi.hoisted(() => ({
+    entries: [] as Array<Record<string, unknown>>,
+}));
 const router = vi.hoisted(() => ({
     push: vi.fn(),
     replace: vi.fn(),
@@ -45,7 +54,10 @@ const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
 
 installSettingsViewCommonModuleMocks({
-    router: async () => ({ useRouter: () => router }),
+    router: async () => ({
+        usePathname: () => '/settings/providers/cpx-moving',
+        useRouter: () => router,
+    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -89,7 +101,49 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     },
 }));
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: 'server-a' }) }));
-vi.mock('@/components/ui/lists/Item', () => ({ Item: (props: Record<string, unknown>) => React.createElement('Item', props) }));
+vi.mock('@/sync/store/hooks', () => ({
+    useProfile: () => ({
+        connectedAccountsV4: connectedAccountProfileState.accounts,
+        connectedAccountGroupsV4: connectedAccountProfileState.groups,
+    }),
+    useSettings: () => ({ connectedServicesProfileLabelByKey: {} }),
+    useLocalSetting: () => 'comfortable',
+}));
+vi.mock('@/sync/sync', () => ({ sync: { refreshProfile } }));
+vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
+    useServerFeaturesRuntimeSnapshot: () => ({
+        status: 'ready',
+        features: {
+            capabilities: {
+                connectedServices: {
+                    qualifiedAccounts: { protocolVersion: 4 },
+                },
+            },
+        },
+    }),
+}));
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+    useProjectedConnectedServicesRegistry: () => ({
+        scopeKey: 'server-a', status: 'ready', errorReason: null, entries: connectedServiceRegistryState.entries,
+    }),
+}));
+vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
+    getConnectedAccountAuthenticationMode: () => ({
+        id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none',
+    }),
+    getQualifiedConnectedServiceRegistryEntry: () => null,
+    getLegacyConnectedServiceRegistryEntry: () => ({
+        serviceId: 'unavailable', connectCommand: '', supportsOauth: false,
+    }),
+}));
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: (props: { children?: React.ReactNode; rightElement?: React.ReactNode }) => React.createElement(
+        'Item',
+        props,
+        props.children,
+        props.rightElement,
+    ),
+}));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({ ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemGroup', props, props.children) }));
 vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('ItemList', props, props.children) }));
 vi.mock('@/components/settings/providers/ProviderMachineSelector', () => ({ ProviderMachineSelector: (props: Record<string, unknown>) => React.createElement('ProviderMachineSelector', props) }));
@@ -138,6 +192,16 @@ async function pressAndFlush(item: { props: { onPress?: () => void } } | undefin
     });
 }
 
+function findProviderExternalLink(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+    label: string,
+) {
+    return screen.findAllByType(HappierLink).find((node) => (
+        node.props.label === label
+        && typeof node.props.onPress === 'function'
+    ));
+}
+
 describe('ProviderConnectionDetailScreen', () => {
     afterEach(standardCleanup);
     beforeEach(() => {
@@ -147,7 +211,12 @@ describe('ProviderConnectionDetailScreen', () => {
         state.discoveryCandidates = [];
         state.localInstallations = [];
         state.error = null;
+        connectedAccountProfileState.accounts = [];
+        connectedAccountProfileState.groups = [];
+        connectedServiceRegistryState.entries = [];
         run.mockReset();
+        refreshProfile.mockReset();
+        refreshProfile.mockResolvedValue(undefined);
         alert.mockReset();
         alertAsync.mockReset();
         alertAsync.mockResolvedValue(undefined);
@@ -247,15 +316,16 @@ describe('ProviderConnectionDetailScreen', () => {
         const initialConnection = state.connection;
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
-        const website = screen.findAllByType('Item')
+        const websiteRow = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.links.providerWebsite');
         const titles = screen.findAllByType('Item').map((item) => item.props.title);
         const testStatusBefore = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.detail.testConnection')?.props.subtitle;
 
-        expect(website?.props.accessibilityLabel).toBe('settingsProviders.links.providerWebsite');
+        expect(websiteRow?.props.accessibilityLabel).toBe('settingsProviders.links.providerWebsite');
+        expect(websiteRow?.props.onPress).toBeUndefined();
         expect(titles).not.toContain('settingsProviders.links.getApiKey');
-        await pressAndFlush(website);
+        await pressAndFlush(findProviderExternalLink(screen, 'settingsProviders.links.providerWebsite'));
 
         expect(openUrl).toHaveBeenCalledWith('https://provider.example.test');
         expect(run).not.toHaveBeenCalled();
@@ -263,6 +333,15 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.detail.testConnection')?.props.subtitle)
             .toBe(testStatusBefore);
+    });
+
+    it('routes the provider website accessory through HappierLink', async () => {
+        state.connection = connection({ websiteUrl: 'https://provider.example.test' });
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        const website = findProviderExternalLink(screen, 'settingsProviders.links.providerWebsite');
+
+        expect(website?.props.label).toBe('settingsProviders.links.providerWebsite');
     });
 
     it('opens a key-only projected Provider destination without mutating credentials', async () => {
@@ -278,12 +357,13 @@ describe('ProviderConnectionDetailScreen', () => {
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         const titles = screen.findAllByType('Item').map((item) => item.props.title);
-        const getKey = screen.findAllByType('Item')
+        const getKeyRow = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.links.getApiKey');
 
         expect(titles).not.toContain('settingsProviders.links.providerWebsite');
-        expect(getKey?.props.accessibilityLabel).toBe('settingsProviders.links.getApiKey');
-        await pressAndFlush(getKey);
+        expect(getKeyRow?.props.accessibilityLabel).toBe('settingsProviders.links.getApiKey');
+        expect(getKeyRow?.props.onPress).toBeUndefined();
+        await pressAndFlush(findProviderExternalLink(screen, 'settingsProviders.links.getApiKey'));
 
         expect(openUrl).toHaveBeenCalledWith('https://provider.example.test/keys');
         expect(run).not.toHaveBeenCalled();
@@ -298,8 +378,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
 
-        await pressAndFlush(screen.findAllByType('Item')
-            .find((item) => item.props.title === 'settingsProviders.links.providerWebsite'));
+        await pressAndFlush(findProviderExternalLink(screen, 'settingsProviders.links.providerWebsite'));
 
         expect(alert).toHaveBeenCalledWith('common.error', 'settingsProviders.links.failedToOpen');
         expect(screen.findAllByType('Item').map((item) => item.props.title)).toContain('Acme');
@@ -990,7 +1069,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
     it('renders daemon-owned per-agent Works with summaries without inferring protocols', async () => {
         state.connection = connection({
-            icon: 'sparkles-outline',
+            icon: 'sparkle',
             compatibility: [{
                 agentTargetKey: 'backend:codex', agentName: 'Codex', status: 'experimental',
                 reasons: ['compatibility_evidence_missing'],
@@ -1042,7 +1121,8 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findAllByType('Item').map((item) => item.props.subtitle))
             .toContain('settingsProviders.local.runningOutsideHappier');
         const start = screen.findAllByType('Item')
-            .find((item) => item.props.title?.key === 'settingsProviders.local.startManaged');
+            .find((item) => typeof item.props.onPress === 'function'
+                && item.props.subtitle === 'settingsProviders.local.installedNotRunning');
         expect(start).toBeDefined();
         await act(async () => { await start?.props.onPress?.(); });
         expect(run).toHaveBeenCalledWith(expect.objectContaining({
@@ -1051,43 +1131,59 @@ describe('ProviderConnectionDetailScreen', () => {
         }), 'start:acme.plugin/acme');
     });
 
-    it('shows managed process, dependency, protocol, and selected connected-account effects from the connection view', async () => {
+    it('shows projected Provider and Connected Service titles for managed effects without raw implementation ids', async () => {
+        connectedServiceRegistryState.entries = [{
+            serviceId: 'external-account-service',
+            service: {
+                pluginId: 'external.connected-service',
+                localId: 'account',
+            },
+            connectCommand: 'happier connect external-account-service',
+            supportsOauth: true,
+            projectedTitle: 'External account service',
+        }];
+        connectedAccountProfileState.accounts = [{
+            ref: {
+                service: {
+                    pluginId: 'external.connected-service',
+                    localId: 'account',
+                },
+                accountId: 'work',
+            },
+            status: 'connected',
+            authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'cred-1',
+            configurationReady: true,
+            configurationRevision: null,
+            displayName: 'Work account',
+            scopes: [],
+        }];
         state.connection = connection({
+            providerName: 'External Gateway',
             scope: 'machine',
             deployment: {
                 kind: 'managedLocal',
                 targetMachineId: 'machine-a',
                 effects: {
                     implementationIdentity: {
-                        pluginId: 'happier.provider.gateway',
+                        pluginId: 'external.managed.provider',
                         localId: 'gateway',
-                    },
-                    process: {
-                        localServiceId: 'gateway',
-                        manager: 'happier',
-                        lifetime: 'session',
-                        network: 'loopback',
-                        restart: 'never',
-                    },
-                    dependency: {
-                        kind: 'packaged-runtime-binary',
-                        directorySegments: ['cliproxyapi', 'unpacked'],
-                        executableBaseName: 'cliproxyapi',
                     },
                     protocols: ['openai-chat', 'openai-responses'],
                     connectedAccountPurposes: [{
-                        purpose: 'upstream',
+                        purpose: 'upstream-account',
                         service: {
-                            pluginId: 'happier.connected-account.openai',
-                            localId: 'openai',
+                            pluginId: 'external.connected-service',
+                            localId: 'account',
                         },
                         required: true,
                         target: {
                             kind: 'account',
                             account: {
                                 service: {
-                                    pluginId: 'happier.connected-account.openai',
-                                    localId: 'openai',
+                                    pluginId: 'external.connected-service',
+                                    localId: 'account',
                                 },
                                 accountId: 'work',
                             },
@@ -1100,32 +1196,89 @@ describe('ProviderConnectionDetailScreen', () => {
         const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
         const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         const rows = screen.findAllByType('Item');
+        const implementation = rows.find(
+            (item) => item.props.testID === 'provider-connection-managed-implementation',
+        );
+        const titles = rows.map((item) => item.props.title);
 
-        expect(rows.map((item) => item.props.title)).toEqual(expect.arrayContaining([
-            'happier.provider.gateway/gateway',
-            'cliproxyapi',
+        expect(titles).toEqual(expect.arrayContaining([
+            'External Gateway',
+            'External account service',
             'settingsProviders.authoring.protocolTitle',
             'settingsProviders.local.subscriptionPolicyTitle',
-            'upstream',
         ]));
+        expect(titles).not.toContain('external.managed.provider/gateway');
+        expect(titles).not.toContain('upstream-account');
+        expect(titles).not.toContain('external.connected-service/account');
+        expect(titles.some((title) => typeof title === 'string' && /(?:account|group):/.test(title))).toBe(false);
+        expect(implementation?.props.subtitle).toEqual(expect.stringContaining(
+            'settingsProviders.local.startedByHappier',
+        ));
         expect(rows.map((item) => item.props.subtitle)).toEqual(expect.arrayContaining([
-            expect.stringContaining('settingsProviders.local.startedByHappier'),
-            'packaged-runtime-binary · cliproxyapi/unpacked',
             'openai-chat · openai-responses',
             'settingsProviders.local.subscriptionPolicyDescription',
-            'happier.connected-account.openai/openai · work',
+            'Work account',
         ]));
         expect(rows.map((item) => item.props.testID)).toEqual(expect.arrayContaining([
             'provider-connection-managed-subscription-policy',
             'provider-connection-managed-implementation',
-            'provider-connection-managed-dependency',
             'provider-connection-managed-protocols',
-            'provider-connection-managed-purpose:upstream',
+            'provider-connection-managed-purpose:upstream-account',
         ]));
+        expect(rows.some(
+            (item) => item.props.testID === 'provider-connection-managed-dependency',
+        )).toBe(false);
+        expect(rows.map((item) => item.props.title)).not.toContain('cliproxyapi');
     });
 
-    it('activates managed deployment with a group-only purpose target through the existing connection CAS', async () => {
-        prompt.mockResolvedValueOnce('group:team');
+    it('renders a null managed effect as unavailable without hiding the external escape action', async () => {
+        state.connection = connection({
+            sourceStatus: 'unavailable',
+            scope: 'machine',
+            deployment: {
+                kind: 'managedLocal',
+                targetMachineId: 'machine-a',
+                effects: null,
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        const rows = screen.findAllByType('Item');
+        const unavailable = rows.find(
+            (item) => item.props.testID === 'provider-connection-managed-unavailable',
+        );
+
+        expect(unavailable?.props.subtitle).toBe('settingsProviders.status.sourceUnavailable');
+        expect(rows.some(
+            (item) => item.props.testID === 'provider-connection-managed-use-external',
+        )).toBe(true);
+        expect(rows.some(
+            (item) => item.props.testID === 'provider-connection-managed-implementation',
+        )).toBe(false);
+    });
+
+    it('activates managed deployment with a structured group choice through the existing connection CAS', async () => {
+        connectedAccountProfileState.groups = [{
+            v: 1,
+            ref: {
+                service: {
+                    pluginId: 'happier.connected-account.openai',
+                    localId: 'openai',
+                },
+                groupId: 'team',
+            },
+            incarnation: 'qualified-group-row-team',
+            displayName: 'Team pool',
+            policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
+            activeConnectedAccountId: null,
+            generation: 1,
+            runtimeStateRevision: 1,
+            state: { status: 'ready' },
+            createdAt: 1,
+            updatedAt: 1,
+            members: [],
+        }];
         state.connection = connection({
             deployment: { kind: 'external' },
             managedLocalOption: {
@@ -1151,6 +1304,27 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findAllByType('Item').map((item) => item.props.title))
             .toContain('settingsProviders.local.subscriptionPolicyTitle');
         await pressAndFlush(activate);
+        expect(run).not.toHaveBeenCalled();
+        const { ConnectedAccountPurposeTargetChooser } = await import(
+            '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
+        );
+        const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser).find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:upstream',
+        );
+        await act(async () => {
+            chooser?.props.onChange({
+                kind: 'group',
+                service: {
+                    pluginId: 'happier.connected-account.openai',
+                    localId: 'openai',
+                },
+                groupId: 'team',
+            });
+            for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
+        });
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-save',
+        ));
         expect(run).toHaveBeenCalledWith({
             action: 'update',
             machineId: 'machine-a',
@@ -1172,7 +1346,83 @@ describe('ProviderConnectionDetailScreen', () => {
         }, 'deployment:managedLocal');
     });
 
-    it('preserves invalid managed input for correction while cancellation performs no write', async () => {
+    it('activates managed deployment with empty defaults when every purpose is optional and unbound', async () => {
+        state.connection = connection({
+            deployment: { kind: 'external' },
+            managedLocalOption: {
+                targetMachineId: 'machine-a',
+                connectedAccountPurposes: [{
+                    purpose: 'telemetry',
+                    service: {
+                        pluginId: 'happier.connected-account.openai',
+                        localId: 'openai',
+                    },
+                    required: false,
+                }],
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        const activate = screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-configure',
+        );
+
+        await pressAndFlush(activate);
+        expect(run).not.toHaveBeenCalled();
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-save',
+        ));
+        expect(alert).not.toHaveBeenCalled();
+        expect(run).toHaveBeenCalledWith({
+            action: 'update',
+            machineId: 'machine-a',
+            connectionId: 'pc_a',
+            expectedRevision: 0,
+            deployment: {
+                kind: 'managedLocal',
+                purposeBindingDefaults: {},
+            },
+        }, 'deployment:managedLocal');
+    });
+
+    it('reloads Connected Accounts through the canonical profile owner while the chooser is open', async () => {
+        state.connection = connection({
+            deployment: { kind: 'external' },
+            managedLocalOption: {
+                targetMachineId: 'machine-a',
+                connectedAccountPurposes: [{
+                    purpose: 'telemetry',
+                    service: {
+                        pluginId: 'happier.connected-account.openai',
+                        localId: 'openai',
+                    },
+                    required: false,
+                }],
+            },
+        });
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-configure',
+        ));
+
+        const { ConnectedAccountPurposeTargetChooser } = await import(
+            '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
+        );
+        const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser).find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:telemetry',
+        );
+        expect(chooser?.props.reloadSubtitle).toBe('settingsProviders.status.disabled');
+
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:telemetry:reload',
+        ));
+
+        expect(refreshProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('requires a structured target for required purposes and cancellation performs no write', async () => {
         state.connection = connection({
             deployment: { kind: 'external' },
             managedLocalOption: {
@@ -1194,55 +1444,26 @@ describe('ProviderConnectionDetailScreen', () => {
             (item) => item.props.title === 'settingsProviders.local.configureManaged',
         );
 
-        prompt.mockResolvedValueOnce(null);
         await pressAndFlush(activate);
-        expect(run).not.toHaveBeenCalled();
-
-        prompt
-            .mockResolvedValueOnce('profile:active-member')
-            .mockResolvedValueOnce('group:team');
-        let dismissInvalidAlert: (() => void) | null = null;
-        alertAsync.mockImplementationOnce(
-            () => new Promise<undefined>((resolve) => {
-                dismissInvalidAlert = () => resolve(undefined);
-            }),
-        );
-        await pressAndFlush(activate);
-        expect(alertAsync).toHaveBeenCalledWith(
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-save',
+        ));
+        expect(alert).toHaveBeenCalledWith(
             'settingsProviders.local.invalidPurposeTargetTitle',
             'settingsProviders.local.invalidPurposeTargetDescription',
         );
-        expect(prompt).toHaveBeenCalledTimes(2);
         expect(run).not.toHaveBeenCalled();
-        expect(dismissInvalidAlert).not.toBeNull();
 
-        await act(async () => {
-            dismissInvalidAlert?.();
-            for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
-        });
-        expect(prompt).toHaveBeenLastCalledWith(
-            'settingsProviders.local.purposeTargetTitle',
-            expect.stringContaining('upstream'),
-            expect.objectContaining({
-                defaultValue: 'profile:active-member',
-            }),
-        );
-        expect(run).toHaveBeenCalledWith(expect.objectContaining({
-            action: 'update',
-            deployment: {
-                kind: 'managedLocal',
-                purposeBindingDefaults: {
-                    upstream: expect.objectContaining({
-                        kind: 'group',
-                        groupId: 'team',
-                    }),
-                },
-            },
-        }), 'deployment:managedLocal');
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-cancel',
+        ));
+        expect(run).not.toHaveBeenCalled();
+        expect(screen.findAllByType('Item').some(
+            (item) => item.props.testID === 'provider-connection-managed-configure',
+        )).toBe(true);
     });
 
     it('edits future managed defaults and explicitly contracts back to external', async () => {
-        prompt.mockResolvedValueOnce('group:future-team');
         state.connection = connection({
             revision: 4,
             scope: 'machine',
@@ -1253,18 +1474,6 @@ describe('ProviderConnectionDetailScreen', () => {
                     implementationIdentity: {
                         pluginId: 'happier.provider.gateway',
                         localId: 'gateway',
-                    },
-                    process: {
-                        localServiceId: 'gateway',
-                        manager: 'happier',
-                        lifetime: 'session',
-                        network: 'loopback',
-                        restart: 'never',
-                    },
-                    dependency: {
-                        kind: 'packaged-runtime-binary',
-                        directorySegments: ['cliproxyapi', 'unpacked'],
-                        executableBaseName: 'cliproxyapi',
                     },
                     protocols: ['openai-responses'],
                     connectedAccountPurposes: [{
@@ -1311,6 +1520,26 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(edit).toBeDefined();
         expect(useExternal).toBeDefined();
         await pressAndFlush(edit);
+        const { ConnectedAccountPurposeTargetChooser } = await import(
+            '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
+        );
+        const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser).find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:upstream',
+        );
+        await act(async () => {
+            chooser?.props.onChange({
+                kind: 'group',
+                service: {
+                    pluginId: 'happier.connected-account.openai',
+                    localId: 'openai',
+                },
+                groupId: 'future-team',
+            });
+            for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
+        });
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-save',
+        ));
         expect(run).toHaveBeenCalledWith(expect.objectContaining({
             action: 'update',
             connectionId: 'pc_a',

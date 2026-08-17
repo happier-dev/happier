@@ -329,7 +329,9 @@ describe('apiSocket.request server-scoped credentials', () => {
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
             const url = typeof input === 'string' ? input : String(input);
-            if (url.endsWith('/health')) {
+            // "The network is down" must fail every readiness route: an authenticated client probes
+            // /v1/auth/ping, a tokenless one probes /health.
+            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 throw new TypeError('Network request failed');
             }
             if (url.endsWith('/v1/ping')) {

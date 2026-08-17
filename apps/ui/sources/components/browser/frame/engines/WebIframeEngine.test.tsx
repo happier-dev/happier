@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -329,6 +330,72 @@ describe('WebIframeEngine diagnostics wiring', () => {
         expect(historyForward).toHaveBeenCalledTimes(1);
         expect(reload).toHaveBeenCalledTimes(1);
         expect(stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('permits wildcard bridge delivery only for an explicitly opaque Artifact guest', async () => {
+        const testWindow = installTestWindow();
+        const ordinaryFrame = { postMessage: vi.fn() } as unknown as WindowProxy;
+        const opaqueArtifactFrame = { postMessage: vi.fn() } as unknown as WindowProxy;
+
+        await renderScreen(
+            <WebIframeEngine
+                title="Ordinary guest"
+                url="https://preview.example.test/ordinary"
+                sandbox="allow-scripts"
+                testID="ordinary-web-frame"
+                webMessageBridge={{
+                    targetOrigin: '*',
+                    onMessage: () => ({ accepted: true }),
+                }}
+            />,
+            {
+                createNodeMock: (element) => (
+                    (element as { type?: string }).type === 'iframe'
+                        ? { contentWindow: ordinaryFrame }
+                        : null
+                ),
+            },
+        );
+        await renderScreen(
+            <WebIframeEngine
+                title="Opaque Artifact guest"
+                url="https://app.example.test/__happier/hosted-artifacts/hwa_token/index.html"
+                sandbox="allow-scripts"
+                testID="opaque-artifact-web-frame"
+                webMessageBridge={{
+                    targetOrigin: '*',
+                    allowWildcardTargetOrigin: true,
+                    onMessage: () => ({ accepted: true }),
+                }}
+            />,
+            {
+                createNodeMock: (element) => (
+                    (element as { type?: string }).type === 'iframe'
+                        ? { contentWindow: opaqueArtifactFrame }
+                        : null
+                ),
+            },
+        );
+
+        await act(async () => {
+            dispatchMessage(testWindow, {
+                data: 'ordinary-message',
+                origin: 'null',
+                source: ordinaryFrame,
+            });
+            dispatchMessage(testWindow, {
+                data: 'artifact-message',
+                origin: 'null',
+                source: opaqueArtifactFrame,
+            });
+            await Promise.resolve();
+        });
+
+        expect(ordinaryFrame.postMessage).not.toHaveBeenCalled();
+        expect(opaqueArtifactFrame.postMessage).toHaveBeenCalledWith(
+            { accepted: true },
+            '*',
+        );
     });
 
     it('posts eval requests into the iframe and routes nonce-bound eval results back to diagnostics', async () => {

@@ -8,10 +8,12 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The glyph seam, not the glyph renderer: these tests care which name and weight the toggle asks
+// for, which is the whole of its on/off distinction. Rendering real Phosphor SVGs would hide that
+// behind a tree of paths.
+vi.mock('@/components/ui/icons/Icon', () => ({ Icon: 'Icon' }));
+
 installNewSessionComponentsCommonModuleMocks({
-    icons: () => ({
-        Ionicons: createPassThroughComponent('Ionicons'),
-    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -63,7 +65,7 @@ describe('PathFavoriteToggleButton', () => {
         expect(stopImmediatePropagation).toHaveBeenCalledTimes(1);
     });
 
-    it('renders the filled star and uses the remove label when path is already a favorite', async () => {
+    it('fills the star and uses the remove label when path is already a favorite', async () => {
         const { PathFavoriteToggleButton } = await import('./PathFavoriteToggleButton');
 
         const screen = await renderScreen(
@@ -82,12 +84,13 @@ describe('PathFavoriteToggleButton', () => {
         expect(pressable!.props.accessibilityLabel).toBe('Remove from favorites');
         expect(pressable!.props['aria-pressed']).toBe(true);
 
-        const icon = screen.find((node) => String(node.type) === 'Ionicons');
+        const icon = screen.find((node) => String(node.type) === 'Icon');
         expect(icon).toBeTruthy();
         expect(icon!.props.name).toBe('star');
+        expect(icon!.props.weight).toBe('fill');
     });
 
-    it('renders the outline star and uses the add label when path is not a favorite', async () => {
+    it('outlines the star and uses the add label when path is not a favorite', async () => {
         const { PathFavoriteToggleButton } = await import('./PathFavoriteToggleButton');
 
         const screen = await renderScreen(
@@ -105,8 +108,12 @@ describe('PathFavoriteToggleButton', () => {
         expect(pressable!.props.accessibilityLabel).toBe('Add to favorites');
         expect(pressable!.props['aria-pressed']).toBe(false);
 
-        const icon = screen.find((node) => String(node.type) === 'Ionicons');
-        expect(icon!.props.name).toBe('star-outline');
+        const icon = screen.find((node) => String(node.type) === 'Icon');
+        // Phosphor draws one `star`; the two states are told apart by weight, and the colour below
+        // only repeats that — a favourite must never be distinguishable by colour alone.
+        expect(icon!.props.name).toBe('star');
+        expect(icon!.props.weight).toBe('regular');
+        expect(icon!.props.color).not.toBe('#f59e0b');
     });
 
     it('survives Pressable invoking the style callback with web-only `hovered` state', async () => {

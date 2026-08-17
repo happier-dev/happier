@@ -37,20 +37,27 @@ export type RepackInstalledArtifactModuleLoader = (input: Readonly<{
     files?: readonly PluginReactNativeCachedArtifactFile[];
     entryRelativePath?: string;
     repack: RepackScriptManagerRuntimeApi;
-    moduleReference?: RepackInstalledArtifactModuleReference;
+    moduleReference?: PluginReactNativeExecutableModuleReference;
 }>) => Promise<PluginReactNativeExecutableExport>;
 
-export type PluginReactNativeExecutableExport = (
-    (...args: never[]) => unknown
-) & Readonly<{
-    acknowledgeHostRuntime?: PluginReactNativeSurfaceModule['acknowledgeHostRuntime'];
-}>;
+export type PluginReactNativeExecutableExport = (...args: never[]) => unknown;
 
 export type RepackInstalledArtifactModuleReference = Readonly<{
     containerName: string;
     modulePath: string;
     exportName: string;
 }>;
+
+/** Native federation needs container/module/export; RN-web imports the entry module and needs only its export. */
+export type PluginReactNativeExecutableModuleReference =
+    | RepackInstalledArtifactModuleReference
+    | Readonly<{ exportName: string }>;
+
+export function isRepackInstalledArtifactModuleReference(
+    value: PluginReactNativeExecutableModuleReference,
+): value is RepackInstalledArtifactModuleReference {
+    return 'containerName' in value && 'modulePath' in value;
+}
 
 export type RepackInstalledArtifactFileUrlResolver = (input: Readonly<{
     identity: PluginReactNativeBundleCacheIdentity;
@@ -73,7 +80,7 @@ export type PluginReactNativeLoaderBackend = Readonly<{
         bytes: Uint8Array;
         files?: readonly PluginReactNativeCachedArtifactFile[];
         entryRelativePath?: string;
-        moduleReference?: RepackInstalledArtifactModuleReference;
+        moduleReference?: PluginReactNativeExecutableModuleReference;
     }>) => Promise<PluginReactNativeExecutableExport>;
     // RN-2: the dev-hot-reload LOAD path, served from a local dev-server URL with no
     // materialized artifact. Present only when the Re.Pack runtime is available.
@@ -380,6 +387,9 @@ export function createRepackInstalledArtifactModuleLoader(params: Readonly<{
                 inputModuleReference
                 ?? params?.resolveFederatedModule?.(identity)
                 ?? resolveDefaultFederatedModule(identity);
+            if (!isRepackInstalledArtifactModuleReference(moduleReference)) {
+                throw new Error('Re.Pack installed artifact loading requires a federation module reference');
+            }
             const namespace = await repack.federated.importModule(
                 moduleReference.containerName,
                 moduleReference.modulePath,
@@ -440,7 +450,7 @@ export function createRepackScriptManagerBackendFromClient(params: Readonly<{
 export async function loadPluginReactNativeBundleModule(params: Readonly<{
     cache: PluginReactNativeBundleCache;
     identity: PluginReactNativeBundleCacheIdentity;
-    moduleReference?: RepackInstalledArtifactModuleReference;
+    moduleReference?: PluginReactNativeExecutableModuleReference;
     backend?: PluginReactNativeLoaderBackend;
     hostPlatform?: string;
 }>): Promise<PluginReactNativeLoaderResult> {
@@ -454,12 +464,10 @@ export async function loadPluginReactNativeBundleModule(params: Readonly<{
                 : result.diagnostics,
         });
     }
-    const acknowledgeHostRuntime = result.exported.acknowledgeHostRuntime;
     return Object.freeze({
         ok: true,
         module: Object.freeze({
             renderSurface: result.exported as PluginReactNativeSurfaceModule['renderSurface'],
-            ...(acknowledgeHostRuntime ? { acknowledgeHostRuntime } : {}),
         }),
     });
 }
@@ -467,7 +475,7 @@ export async function loadPluginReactNativeBundleModule(params: Readonly<{
 export async function loadPluginReactNativeBundleExport(params: Readonly<{
     cache: PluginReactNativeBundleCache;
     identity: PluginReactNativeBundleCacheIdentity;
-    moduleReference?: RepackInstalledArtifactModuleReference;
+    moduleReference?: PluginReactNativeExecutableModuleReference;
     backend?: PluginReactNativeLoaderBackend;
     hostPlatform?: string;
 }>): Promise<PluginReactNativeExportLoaderResult> {

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -8,6 +7,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { t, type TranslationKeyNoParams } from '@/text';
 
 import type { MemoryContentPolicyV1, MemorySettingsV1 } from '@happier-dev/protocol';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import {
     readMemoryContentPolicy,
     withMemoryContentPolicy,
@@ -21,35 +21,35 @@ const CONTENT_ROWS = [
         testID: 'memory-settings-content-user-messages',
         titleKey: 'memorySearchSettings.contentPolicy.userMessagesTitle',
         subtitleKey: 'memorySearchSettings.contentPolicy.userMessagesSubtitle',
-        iconName: 'person-outline',
+        iconName: 'person',
     },
     {
         key: 'includeAssistantMessages',
         testID: 'memory-settings-content-assistant-messages',
         titleKey: 'memorySearchSettings.contentPolicy.assistantMessagesTitle',
         subtitleKey: 'memorySearchSettings.contentPolicy.assistantMessagesSubtitle',
-        iconName: 'chatbubble-ellipses-outline',
+        iconName: 'chat-circle-dots',
     },
     {
         key: 'includeReasoning',
         testID: 'memory-settings-content-reasoning',
         titleKey: 'memorySearchSettings.contentPolicy.reasoningTitle',
         subtitleKey: 'memorySearchSettings.contentPolicy.reasoningSubtitle',
-        iconName: 'bulb-outline',
+        iconName: 'lightbulb',
     },
     {
         key: 'includeToolSummaries',
         testID: 'memory-settings-content-tool-summaries',
         titleKey: 'memorySearchSettings.contentPolicy.toolSummariesTitle',
         subtitleKey: 'memorySearchSettings.contentPolicy.toolSummariesSubtitle',
-        iconName: 'construct-outline',
+        iconName: 'wrench',
     },
 ] as const satisfies ReadonlyArray<Readonly<{
     key: MemoryContentPolicyKey;
     testID: string;
     titleKey: TranslationKeyNoParams;
     subtitleKey: TranslationKeyNoParams;
-    iconName: React.ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
 }>>;
 
 export const MemorySettingsContentPolicySection = React.memo(function MemorySettingsContentPolicySection(props: Readonly<{
@@ -70,7 +70,7 @@ export const MemorySettingsContentPolicySection = React.memo(function MemorySett
                     testID={`${row.testID}-item`}
                     title={t(row.titleKey)}
                     subtitle={t(row.subtitleKey)}
-                    icon={<Ionicons name={row.iconName} size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name={row.iconName} size={29} color={theme.colors.accent.blue} />}
                     rightElement={(
                         <Switch
                             testID={row.testID}

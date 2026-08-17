@@ -64,11 +64,11 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/components/sessions/shell/sessionPinIcons', () => ({
     PinIcon: (props: { color: string; size: number }) => {
-        iconCalls.push({ name: 'pin', color: props.color, size: props.size });
+        iconCalls.push({ name: 'push-pin', color: props.color, size: props.size });
         return React.createElement('PinIcon', props);
     },
     PinSlashIcon: (props: { color: string; size: number }) => {
-        iconCalls.push({ name: 'pin-slash', color: props.color, size: props.size });
+        iconCalls.push({ name: 'push-pin-slash', color: props.color, size: props.size });
         return React.createElement('PinSlashIcon', props);
     },
 }));
@@ -95,7 +95,7 @@ describe('ToolCallPinAction', () => {
         expect(button?.props.accessibilityRole).toBe('button');
         expect(button?.props.accessibilityLabel).toBe('session.transcriptNavigation.pinToolCallA11y');
         expect(button?.props.hitSlop).toBeUndefined();
-        expect(iconCalls).toEqual([expect.objectContaining({ name: 'pin', color: '#555555', size: 14 })]);
+        expect(iconCalls).toEqual([expect.objectContaining({ name: 'push-pin', color: '#555555', size: 14 })]);
     });
 
     it('uses an unpin label and active color for pinned tool calls', async () => {
@@ -110,7 +110,7 @@ describe('ToolCallPinAction', () => {
         );
 
         expect(screen.findByTestId('tool-pin')?.props.accessibilityLabel).toBe('session.transcriptNavigation.unpinToolCallA11y');
-        expect(iconCalls).toEqual([expect.objectContaining({ name: 'pin-slash', color: '#0b7a75' })]);
+        expect(iconCalls).toEqual([expect.objectContaining({ name: 'push-pin-slash', color: '#0b7a75' })]);
     });
 
     it('stops row propagation before toggling the pin', async () => {

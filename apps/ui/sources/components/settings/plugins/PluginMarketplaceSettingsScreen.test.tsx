@@ -12,8 +12,10 @@ import {
     clearDaemonMergedProjectionCacheForTests,
     loadDaemonMergedProjectionCacheEntry,
 } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { flattenTestStyle } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 type InstalledPluginDiagnostic = Readonly<{
@@ -23,6 +25,9 @@ type InstalledPluginDiagnostic = Readonly<{
 
 type InstalledPluginEntry = Readonly<{
     pluginId: string;
+    desiredGeneration?: string | null;
+    appliedGeneration?: string | null;
+    admittedIntegrity?: string | null;
     title: string;
     description: string | null;
     version: string;
@@ -35,12 +40,10 @@ type InstalledPluginEntry = Readonly<{
         trustPolicy?: string;
         installPolicy?: string;
         resolvedPath?: string;
-        resolvedDigest?: string | null;
     }>;
     install: Readonly<{
         mode: string;
         manifestVersion: string;
-        manifestDigest?: string | null;
         installedPath?: string | null;
     }>;
     compatibility: Readonly<{
@@ -57,7 +60,7 @@ type MachineCapabilitiesResponse = Readonly<{
         checkedAt: number;
         data?: {
             installedPlugins?: readonly InstalledPluginEntry[];
-            developmentActions?: Readonly<{ create: boolean }>;
+            developmentActions?: Readonly<{ create: boolean; develop?: boolean }>;
             developmentSources?: readonly Readonly<{
                 pluginId: string;
                 sourceRootPath: string;
@@ -121,9 +124,136 @@ const modalAlertMock = vi.hoisted(() => vi.fn());
 const modalShowMock = vi.hoisted(() => vi.fn());
 const modalPromptMock = vi.hoisted(() => vi.fn());
 const modalConfirmMock = vi.hoisted(() => vi.fn());
+const activeAccountLifetime = vi.hoisted(() => Object.freeze({
+    scope: Object.freeze({ serverId: 'server-a', accountId: 'account-a' }),
+    isCurrent: () => true,
+    onRetire: () => Object.freeze({ dispose(): void {} }),
+}) satisfies ActiveServerAccountScopeLifetime);
+const machineAdministrationFixture = vi.hoisted(() => ({
+    activeMachines: [] as Array<Record<string, unknown>>,
+    activeServerId: 'server-a',
+    machineListByServerId: {} as Record<string, Array<Record<string, unknown>>>,
+    machineListStatusByServerId: {} as Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>,
+    profiles: [] as Array<Record<string, unknown>>,
+    selections: {
+        version: 1,
+        targetsByKey: {},
+        pluginExecutionOriginsByPluginId: {},
+    } as Record<string, unknown>,
+    setSelections: vi.fn(),
+    storageState: {} as Record<string, unknown>,
+}));
+// A choice alert resolves after the pressed button's handler runs. The default
+// picks the first button so the create flow exercises its real UI-mode branch.
+const modalAlertAsyncMock = vi.hoisted(() => vi.fn(async (
+    _title: string,
+    _message?: string,
+    buttons?: readonly { text: string; onPress?: () => void }[],
+) => {
+    buttons?.[0]?.onPress?.();
+}));
 const prefetchMachineCapabilitiesMock = vi.hoisted(() => vi.fn());
 
 const MARKETPLACE_CAPABILITY_ID = 'tool.plugins';
+
+function setMachineAdministrationTargetFixture(params: Readonly<{
+    serverIdentityId?: string;
+    serverId?: string;
+    machineId?: string;
+    daemonStateVersion?: number;
+}> = {}): void {
+    const activeAt = Date.now();
+    const target = {
+        serverIdentityId: params.serverIdentityId ?? 'server-identity-a',
+        machineId: params.machineId ?? 'machine-1',
+    };
+    const serverId = params.serverId ?? 'server-a';
+    const daemonStateVersion = params.daemonStateVersion ?? 1;
+    const activeMachine = {
+        id: 'machine-1',
+        active: true,
+        activeAt,
+        updatedAt: 1,
+        daemonStateVersion: 1,
+        metadata: { displayName: 'Active machine', host: 'active-host' },
+    };
+    const selectedMachine = {
+        id: target.machineId,
+        active: true,
+        activeAt,
+        updatedAt: 1,
+        daemonStateVersion,
+        metadata: { displayName: target.machineId, host: `${target.machineId}-host` },
+    };
+    machineAdministrationFixture.activeServerId = 'server-a';
+    const activeProfile = {
+        id: 'server-a',
+        name: 'Server A',
+        serverUrl: 'https://server-a.example.test',
+        serverIdentityId: 'server-identity-a',
+        legacyServerIds: [],
+    };
+    machineAdministrationFixture.profiles = serverId === activeProfile.id
+        && target.serverIdentityId === activeProfile.serverIdentityId
+        ? [activeProfile]
+        : [
+            activeProfile,
+            {
+                id: serverId,
+                name: 'Server B',
+                serverUrl: 'https://server-b.example.test',
+                serverIdentityId: target.serverIdentityId,
+                legacyServerIds: [],
+            },
+        ];
+    machineAdministrationFixture.activeMachines = [
+        serverId === 'server-a' ? selectedMachine : activeMachine,
+    ];
+    machineAdministrationFixture.machineListByServerId = {
+        'server-a': [activeMachine],
+        [serverId]: [selectedMachine],
+    };
+    machineAdministrationFixture.machineListStatusByServerId = {
+        'server-a': 'idle',
+        [serverId]: 'idle',
+    };
+    machineAdministrationFixture.selections = {
+        version: 1,
+        targetsByKey: { 'plugins.home': target },
+        pluginExecutionOriginsByPluginId: {},
+    };
+    machineAdministrationFixture.storageState = {
+        isDataReady: true,
+        machines: Object.fromEntries(machineAdministrationFixture.activeMachines.map((machine) => [machine.id, machine])),
+        machineListByServerId: machineAdministrationFixture.machineListByServerId,
+        machineListStatusByServerId: machineAdministrationFixture.machineListStatusByServerId,
+        settings: {
+            machineAdministrationSelectionsV1: machineAdministrationFixture.selections,
+        },
+    };
+    machineAdministrationFixture.setSelections.mockReset();
+    machineAdministrationFixture.setSelections.mockImplementation((next: Record<string, unknown>) => {
+        machineAdministrationFixture.selections = next;
+        machineAdministrationFixture.storageState = {
+            ...machineAdministrationFixture.storageState,
+            settings: { machineAdministrationSelectionsV1: next },
+        };
+    });
+}
+
+function clearMachineAdministrationTargetFixture(): void {
+    machineAdministrationFixture.selections = {
+        version: 1,
+        targetsByKey: {},
+        pluginExecutionOriginsByPluginId: {},
+    };
+    machineAdministrationFixture.storageState = {
+        ...machineAdministrationFixture.storageState,
+        settings: {
+            machineAdministrationSelectionsV1: machineAdministrationFixture.selections,
+        },
+    };
+}
 
 function createInstalledPlugin(overrides: Partial<InstalledPluginEntry> & Pick<InstalledPluginEntry, 'pluginId' | 'title' | 'version'>): InstalledPluginEntry {
     return {
@@ -135,12 +265,10 @@ function createInstalledPlugin(overrides: Partial<InstalledPluginEntry> & Pick<I
             trustPolicy: 'trusted',
             installPolicy: 'allow',
             resolvedPath: '/plugins/sample',
-            resolvedDigest: 'sha256:abc123',
         },
         install: {
             mode: 'catalog',
             manifestVersion: '1',
-            manifestDigest: 'sha256:manifest',
             installedPath: '/plugins/sample',
         },
         compatibility: {
@@ -197,7 +325,7 @@ function createMachineCapabilitiesState(
                         checkedAt: Date.now(),
                         data: {
                             installedPlugins,
-                            developmentActions: { create: true },
+                            developmentActions: { create: true, develop: true },
                             developmentSources,
                         },
                     },
@@ -352,11 +480,6 @@ function createCommunityInstallReviewResult(pendingChangeId: string, action: 'in
                         sourceUrl: 'https://registry.npmjs.org/-/v1/search?text=keywords:happier-plugin&size=100',
                     },
                 },
-                integrity: {
-                    packageDigest: `sha256:${'a'.repeat(64)}`,
-                    manifestDigest: `sha256:${'b'.repeat(64)}`,
-                    uiArtifactDigest: `sha256:${'c'.repeat(64)}`,
-                },
                 signature: { status: 'notProvided' },
                 provenance: { status: 'notProvided' },
                 curation: { status: 'unreviewed', sourceId: 'marketplace:community-npm' },
@@ -377,6 +500,7 @@ function createCommunityInstallReviewResult(pendingChangeId: string, action: 'in
                     authorizationClass: 'hostResourceSelection',
                     normalizedScope: { access: ['read'] },
                 }],
+                rawCredentialAccess: [],
                 compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
                 updatePolicy: 'manual',
             },
@@ -441,6 +565,7 @@ installSettingsViewCommonModuleMocks({
         return createModalModuleMock({
             spies: {
                 alert: (...args) => modalAlertMock(...args),
+                alertAsync: (...args) => modalAlertAsyncMock(...args),
                 show: (...args) => modalShowMock(...args),
                 confirm: (...args) => modalConfirmMock(...args),
                 prompt: (...args) => modalPromptMock(...args),
@@ -459,7 +584,10 @@ installSettingsViewCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
-            translate: (key, params) => key === 'settingsPlugins.marketplaceInstallReviewBody'
+            translate: (key, params) => (
+                key === 'settingsPlugins.marketplaceInstallReviewBody'
+                || key === 'settingsPlugins.developmentTrustSourceRootBody'
+            )
                 ? `${key}:${JSON.stringify(params)}`
                 : key,
         });
@@ -472,11 +600,58 @@ vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => getActiveServerIdMock(),
+    getServerProfileById: (serverId: string) => (
+        machineAdministrationFixture.profiles.find((profile) => profile.id === serverId) ?? null
+    ),
     getActiveServerSnapshot: () => ({
         serverId: getActiveServerIdMock(),
         serverUrl: 'https://server.example.test',
         generation: 1,
     }),
+    listServerProfiles: () => machineAdministrationFixture.profiles,
+    resolveServerProfileForPortableIdentity: (serverIdentityId: string) => {
+        const profiles = machineAdministrationFixture.profiles.filter((profile) => (
+            profile.serverIdentityId === serverIdentityId
+            || (Array.isArray(profile.legacyServerIds) && profile.legacyServerIds.includes(serverIdentityId))
+        ));
+        if (profiles.length === 1) {
+            return { kind: 'resolved', serverIdentityId, profile: profiles[0] };
+        }
+        return profiles.length > 1
+            ? { kind: 'ambiguous', serverIdentityId, profiles }
+            : { kind: 'missing', serverIdentityId };
+    },
+    areServerProfileIdentifiersEquivalent: (left: string, right: string) => left === right,
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: machineAdministrationFixture.activeServerId,
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    }),
+}));
+
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => ({
+        serverId: machineAdministrationFixture.activeServerId,
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    }),
+}));
+
+vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({
+    useServerProfilesGeneration: () => 1,
+}));
+
+vi.mock('@/sync/domains/state/warmCachePersistence', () => ({
+    loadMachineDisplayWarmCacheEntries: () => ({}),
+}));
+
+vi.mock('@/sync/domains/state/storageStore', () => ({
+    storage: {
+        getState: () => machineAdministrationFixture.storageState,
+    },
 }));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
@@ -485,10 +660,21 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
     prefetchMachineCapabilities: (...args: unknown[]) => prefetchMachineCapabilitiesMock(...args),
 }));
 
-vi.mock('@/sync/store/hooks', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/store/hooks')>()),
+vi.mock('@/sync/store/hooks', () => ({
     useEndpointStatus: () => endpointConnectivityState.status,
+    useLocalSetting: () => 'comfortable',
     useMachineCliDetectionTarget: (...args: unknown[]) => useMachineCliDetectionTargetMock(...args),
+    useMachineRecordValues: () => machineAdministrationFixture.activeMachines,
+    useMachineRecordListsByServerId: () => machineAdministrationFixture.machineListByServerId,
+    useMachineListStatusByServerId: () => machineAdministrationFixture.machineListStatusByServerId,
+    useIsDataReady: () => true,
+    useActiveServerAccountScope: () => null,
+    useProfile: () => ({ id: 'prof_1', firstName: '', connectedServices: [] }),
+    useSetting: () => machineAdministrationFixture.selections,
+    useSettingMutable: () => [
+        machineAdministrationFixture.selections,
+        machineAdministrationFixture.setSelections,
+    ],
 }));
 
 vi.mock('@/hooks/machine/useMachineCapabilityInvokeWithAlerts', () => ({
@@ -520,7 +706,7 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machinePluginStructuredMessageActionExecuteMock(...args),
     machinePluginSettingsGet: async (
         machineId: string,
-        opts: { serverId?: string | null; pluginId: string },
+        opts: { serverId?: string | null; serverIdentityId: string; pluginId: string },
     ) => ({
         supported: true,
         snapshot: await machineRpcWithServerScopeMock({
@@ -528,14 +714,23 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
             serverId: opts.serverId,
             method: 'daemon.plugins.settings.get',
             payload: {
+                serverIdentityId: opts.serverIdentityId,
                 machineId,
                 pluginId: opts.pluginId,
+                scope: { kind: 'daemon' },
             },
         }),
     }),
     machinePluginSettingsSet: async (
         machineId: string,
-        opts: { serverId?: string | null; pluginId: string; fieldId: string; value: unknown },
+        opts: Readonly<{
+            serverId?: string | null;
+            serverIdentityId: string;
+            pluginId: string;
+            fieldId: string;
+            mutation: Readonly<{ kind: 'set'; value: unknown }> | Readonly<{ kind: 'delete' }>;
+            expectedRevision?: string;
+        }>,
     ) => ({
         supported: true,
         snapshot: await machineRpcWithServerScopeMock({
@@ -543,10 +738,91 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
             serverId: opts.serverId,
             method: 'daemon.plugins.settings.set',
             payload: {
+                serverIdentityId: opts.serverIdentityId,
                 machineId,
                 pluginId: opts.pluginId,
+                scope: { kind: 'daemon' },
                 fieldId: opts.fieldId,
+                mutation: opts.mutation,
+                ...(opts.expectedRevision === undefined ? {} : { expectedRevision: opts.expectedRevision }),
+            },
+        }),
+    }),
+    machinePluginSecretStatus: async (
+        machineId: string,
+        opts: Readonly<{
+            serverId: string;
+            serverIdentityId: string;
+            pluginId: string;
+            secretId: string;
+            canonicalOrigin?: string;
+        }>,
+    ) => ({
+        supported: true,
+        result: await machineRpcWithServerScopeMock({
+            machineId,
+            serverId: opts.serverId,
+            method: 'daemon.plugins.secrets.status',
+            payload: {
+                serverIdentityId: opts.serverIdentityId,
+                machineId,
+                pluginId: opts.pluginId,
+                secretId: opts.secretId,
+                ...(opts.canonicalOrigin === undefined ? {} : { canonicalOrigin: opts.canonicalOrigin }),
+            },
+        }),
+    }),
+    machinePluginSecretSet: async (
+        machineId: string,
+        opts: Readonly<{
+            serverId: string;
+            serverIdentityId: string;
+            pluginId: string;
+            secretId: string;
+            canonicalOrigin?: string;
+            value: string;
+            expectedRevision?: string;
+        }>,
+    ) => ({
+        supported: true,
+        result: await machineRpcWithServerScopeMock({
+            machineId,
+            serverId: opts.serverId,
+            method: 'daemon.plugins.secrets.set',
+            payload: {
+                serverIdentityId: opts.serverIdentityId,
+                machineId,
+                pluginId: opts.pluginId,
+                secretId: opts.secretId,
+                ...(opts.canonicalOrigin === undefined ? {} : { canonicalOrigin: opts.canonicalOrigin }),
                 value: opts.value,
+                ...(opts.expectedRevision === undefined ? {} : { expectedRevision: opts.expectedRevision }),
+            },
+        }),
+    }),
+    machinePluginSecretDelete: async (
+        machineId: string,
+        opts: Readonly<{
+            serverId: string;
+            serverIdentityId: string;
+            pluginId: string;
+            secretId: string;
+            canonicalOrigin?: string;
+            expectedRevision?: string;
+        }>,
+    ) => ({
+        supported: true,
+        result: await machineRpcWithServerScopeMock({
+            machineId,
+            serverId: opts.serverId,
+            method: 'daemon.plugins.secrets.delete',
+            payload: {
+                serverIdentityId: opts.serverIdentityId,
+                machineId,
+                pluginId: opts.pluginId,
+                secretId: opts.secretId,
+                ...(opts.canonicalOrigin === undefined ? {} : { canonicalOrigin: opts.canonicalOrigin }),
+                ...(opts.expectedRevision === undefined ? {} : { expectedRevision: opts.expectedRevision }),
             },
         }),
     }),
@@ -556,6 +832,14 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: (...args: readonly unknown[]) =>
         machineRpcWithServerScopeMock(...args),
 }));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>();
+    return {
+        ...actual,
+        captureActiveServerAccountScopeLifetime: () => activeAccountLifetime,
+    };
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex'],
@@ -631,12 +915,15 @@ afterEach(() => {
     modalShowMock.mockReset();
     modalPromptMock.mockReset();
     modalConfirmMock.mockReset();
+    modalAlertAsyncMock.mockClear();
     prefetchMachineCapabilitiesMock.mockReset();
+    machineAdministrationFixture.setSelections.mockReset();
     vi.unstubAllGlobals();
 });
 
 beforeEach(() => {
     clearDaemonMergedProjectionCacheForTests();
+    setMachineAdministrationTargetFixture();
     usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-1');
     useMachineCliDetectionTargetMock.mockReturnValue({ daemonStateVersion: 1, isOnline: true });
     getMachineCapabilitiesCacheStateMock.mockImplementation(() => {
@@ -648,7 +935,7 @@ beforeEach(() => {
     getActiveServerIdMock.mockReturnValue('server-a');
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
         supported: true,
-        projection: { v: 1, providersById: {}, backendsById: {} },
+        projection: { v: 1, agentsById: {}, backendsById: {} },
     });
     machineMarketplaceIndexQueryMock.mockResolvedValue({ revision: 1, items: [], nextCursor: null, sources: [], diagnostics: [] });
     machineNpmRegistryProfilesGetMock.mockResolvedValue({
@@ -700,6 +987,48 @@ beforeEach(() => {
 });
 
 describe('PluginSettingsHomeScreen', () => {
+    it('routes plugin capabilities to the exact Administration target rather than active first-machine selection', async () => {
+        setMachineAdministrationTargetFixture({
+            serverIdentityId: 'server-identity-b',
+            serverId: 'server-b',
+            machineId: 'admin-machine-b',
+            daemonStateVersion: 7,
+        });
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([]),
+            refresh: vi.fn(),
+        });
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+
+        expect(useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0]).toMatchObject({
+            machineId: 'admin-machine-b',
+            serverId: 'server-b',
+            cacheKeySalt: expect.stringContaining('7'),
+            enabled: true,
+        });
+        expect(screen.findRow('settings.plugins.administration.target.current')?.props.accessibilityLabel)
+            .toContain('admin-machine-b');
+    });
+
+    it('links to plugin webhook administration from the canonical Plugins settings surface', async () => {
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([]),
+            refresh: vi.fn(),
+        });
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+
+        expect(screen.findRow('settings.plugins.webhooks')).toBeTruthy();
+
+        await act(async () => {
+            screen.pressRow('settings.plugins.webhooks');
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/plugins/webhooks');
+    });
+
     it('defaults to Installed and keeps every plugin-management view reachable through accessible selectors', async () => {
         const installedPlugin = createInstalledPlugin({
             pluginId: 'installed-plugin',
@@ -728,10 +1057,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
@@ -761,11 +1089,11 @@ describe('PluginSettingsHomeScreen', () => {
         const diagnosticsSelector = screen.findByTestId('settings.plugins.management.view:diagnostics');
 
         expect(installedSelector?.props.accessibilityRole).toBe('tab');
-        expect(installedSelector?.props.accessibilityState).toEqual({ selected: true });
-        expect(discoverSelector?.props.accessibilityState).toEqual({ selected: false });
-        expect(developmentSelector?.props.accessibilityState).toEqual({ selected: false });
+        expect(installedSelector?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(discoverSelector?.props.accessibilityState).toMatchObject({ selected: false });
+        expect(developmentSelector?.props.accessibilityState).toMatchObject({ selected: false });
         expect(diagnosticsSelector).toBeTruthy();
-        expect(diagnosticsSelector?.props.accessibilityState).toEqual({ selected: false });
+        expect(diagnosticsSelector?.props.accessibilityState).toMatchObject({ selected: false });
         expect(screen.findByTestId('settings.plugins.management.viewScroller')?.props.horizontal).toBe(true);
         expect(screen.findRow('settings.plugins.marketplace.installed.installed-plugin')).toBeTruthy();
         expect(screen.findRow('settings.plugins.marketplace.loadCatalog')).toBeFalsy();
@@ -775,15 +1103,12 @@ describe('PluginSettingsHomeScreen', () => {
         await act(async () => {
             screen.pressByTestId('settings.plugins.management.view:discover');
         });
-        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findRow('settings.plugins.marketplace.installed.installed-plugin')).toBeFalsy();
         expect(screen.findRow('settings.plugins.marketplace.loadCatalog')).toBeTruthy();
         expect(screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.accessibilityLabel).toBe('settingsPlugins.catalogUrlLabel');
-        expect(screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.style).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({ minHeight: 44 }),
-            ]),
-        );
+        expect(flattenTestStyle(screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.style))
+            .toMatchObject({ minHeight: 44 });
         expect(screen.findRow('settings.plugins.registries.add')).toBeTruthy();
         await act(async () => {
             screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.onChangeText('https://marketplace.example.test/catalog.json');
@@ -792,7 +1117,7 @@ describe('PluginSettingsHomeScreen', () => {
         await act(async () => {
             screen.pressByTestId('settings.plugins.management.view:development');
         });
-        expect(screen.findByTestId('settings.plugins.management.view:development')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:development')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findRow('settings.plugins.marketplace.loadCatalog')).toBeFalsy();
         expect(screen.findRow('settings.plugins.management.development.empty')).toBeTruthy();
 
@@ -804,7 +1129,7 @@ describe('PluginSettingsHomeScreen', () => {
         await act(async () => {
             screen.pressByTestId('settings.plugins.management.view:diagnostics');
         });
-        expect(screen.findByTestId('settings.plugins.management.view:diagnostics')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:diagnostics')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findRow('settings.plugins.management.development.empty')).toBeFalsy();
         expect(screen.findRow('settings.plugins.registryDiagnostic.plugin_runtime_capability_missing.0')).toBeTruthy();
         expect(screen.findByTestId('settings.plugins.registryDiagnostic.plugin_runtime_capability_missing.0.code')?.props.selectable).toBe(true);
@@ -982,9 +1307,55 @@ describe('PluginSettingsHomeScreen', () => {
                     targetDir: '/workspace/plugins/new-plugin',
                     displayName: 'New Plugin',
                     pluginId: 'acme.new-plugin',
+                    ui: 'reactNative',
                 },
             },
         }));
+
+        // The author is asked which UI surface the new plugin starts with, and
+        // declining a surface must still create the plugin without one — the
+        // mode is never inferred or silently defaulted.
+        expect(modalAlertAsyncMock).toHaveBeenCalledWith(
+            'settingsPlugins.developmentCreateSurfaceTitle',
+            'settingsPlugins.developmentCreateSurfaceBody',
+            expect.arrayContaining([
+                expect.objectContaining({ text: 'settingsPlugins.developmentCreateSurfaceReactNative' }),
+                expect.objectContaining({ text: 'settingsPlugins.developmentCreateSurfaceHostedWeb' }),
+                expect.objectContaining({ text: 'settingsPlugins.developmentCreateSurfaceNone' }),
+            ]),
+        );
+
+        invokeWithAlertsMock.mockClear();
+        modalAlertAsyncMock.mockImplementationOnce(async (
+            _title: string,
+            _message?: string,
+            buttons?: readonly { text: string; onPress?: () => void }[],
+        ) => {
+            buttons?.[2]?.onPress?.();
+        });
+        modalPromptMock
+            .mockResolvedValueOnce('/workspace/plugins/plain-plugin')
+            .mockResolvedValueOnce('Plain Plugin')
+            .mockResolvedValueOnce('acme.plain-plugin');
+        await act(async () => {
+            screen.pressByTestId('settings.plugins.management.development.action.create');
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+        });
+        expect(invokeWithAlertsMock).toHaveBeenCalledWith(expect.objectContaining({
+            request: {
+                id: MARKETPLACE_CAPABILITY_ID,
+                method: 'create',
+                params: {
+                    targetDir: '/workspace/plugins/plain-plugin',
+                    displayName: 'Plain Plugin',
+                    pluginId: 'acme.plain-plugin',
+                },
+            },
+        }));
+        invokeWithAlertsMock.mockClear();
 
         await act(async () => {
             screen.pressByTestId('settings.plugins.management.development.development-plugin.action.test');
@@ -1000,6 +1371,159 @@ describe('PluginSettingsHomeScreen', () => {
                 params: { pluginId: 'development-plugin' },
             },
         }));
+    });
+
+    it('names the exact source root in a separate trust decision before the plugin install review', async () => {
+        const refresh = vi.fn();
+        const sourceRootPath = '/workspace/plugins/local-authoring';
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([]),
+            refresh,
+        });
+        const developResult = {
+            action: 'develop',
+            sourceRootPath,
+            change: {
+                kind: 'sourceRootReviewRequired',
+                pendingChangeId: 'pending-source-root-1',
+                review: { source: { kind: 'path', locator: sourceRootPath } },
+            },
+        };
+        invokeWithAlertsMock.mockResolvedValue({
+            supported: true,
+            response: { ok: true, result: developResult },
+        });
+        machineRpcWithServerScopeMock
+            .mockResolvedValueOnce(createCommunityInstallReviewResult('pending-source-root-1').change)
+            .mockResolvedValueOnce({
+                kind: 'committed',
+                pluginId: 'community-plugin',
+                desiredGeneration: 'generation-1',
+                appliedGeneration: 'generation-1',
+                pendingSurfaces: [],
+            });
+        modalPromptMock.mockResolvedValueOnce(sourceRootPath);
+        modalConfirmMock.mockResolvedValueOnce(true);
+        modalShowMock.mockImplementationOnce((config: Readonly<{
+            props?: Readonly<{
+                onResolve?: (result: Readonly<{
+                    approved: boolean;
+                    optionalSelections: readonly Readonly<{ accessId: string; selected: boolean }>[];
+                }>) => void;
+            }>;
+        }>) => {
+            config.props?.onResolve?.({ approved: true, optionalSelections: [{ accessId: 'sessions', selected: false }] });
+            return 'plugin-install-review-modal';
+        });
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+        await act(async () => {
+            await flushAsync();
+            await flushAsync();
+        });
+        await selectPluginManagementView(screen, 'development');
+
+        expect(screen.findRow('settings.plugins.management.development.action.develop')?.props.disabled).toBeFalsy();
+        await act(async () => {
+            screen.pressByTestId('settings.plugins.management.development.action.develop');
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+        });
+
+        expect(invokeWithAlertsMock).toHaveBeenCalledWith(expect.objectContaining({
+            request: {
+                id: MARKETPLACE_CAPABILITY_ID,
+                method: 'develop',
+                params: { sourceRootPath },
+            },
+        }));
+        // The security payload of this decision is the path itself, so the user
+        // is shown the daemon-canonicalised locator verbatim.
+        expect(modalConfirmMock).toHaveBeenCalledWith(
+            'settingsPlugins.developmentTrustSourceRootTitle',
+            expect.stringContaining(sourceRootPath),
+            expect.objectContaining({ confirmText: 'settingsPlugins.developmentTrustSourceRootConfirm' }),
+        );
+        // Trusting a source root is NOT an install commit: the first decision
+        // carries `trustSourceRoot`, and only the separate package review that
+        // the daemon answers with may carry `installAndTrust`.
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            method: 'daemon.plugins.install.review.decide',
+            payload: {
+                v: 1,
+                pendingChangeId: 'pending-source-root-1',
+                decision: 'trustSourceRoot',
+                actorEvidence: {
+                    kind: 'authenticatedLocalUser',
+                    interactionId: expect.any(String),
+                    occurredAtMs: expect.any(Number),
+                },
+            },
+        }));
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: 'daemon.plugins.install.review.decide',
+            payload: expect.objectContaining({
+                pendingChangeId: 'pending-source-root-1',
+                decision: 'installAndTrust',
+                optionalSelections: [{ accessId: 'sessions', selected: false }],
+            }),
+        }));
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        // Declining the source root cancels the pending change and never reaches
+        // a package review.
+        machineRpcWithServerScopeMock.mockClear();
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ kind: 'cancelled' });
+        modalPromptMock.mockResolvedValueOnce(sourceRootPath);
+        modalConfirmMock.mockResolvedValueOnce(false);
+        await act(async () => {
+            screen.pressByTestId('settings.plugins.management.development.action.develop');
+            await flushAsync();
+            await flushAsync();
+            await flushAsync();
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: { v: 1, pendingChangeId: 'pending-source-root-1', decision: 'cancel' },
+        }));
+        expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails the local development affordance closed when the daemon does not advertise the develop action', async () => {
+        const staleState: LoadedMachineCapabilitiesState = {
+            status: 'loaded',
+            snapshot: {
+                response: {
+                    protocolVersion: 1,
+                    results: {
+                        [MARKETPLACE_CAPABILITY_ID]: {
+                            ok: true,
+                            checkedAt: Date.now(),
+                            data: { installedPlugins: [], developmentSources: [] },
+                        },
+                    },
+                },
+            },
+        };
+        useMachineCapabilitiesCacheMock.mockReturnValue({ state: staleState, refresh: vi.fn() });
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+        await act(async () => {
+            await flushAsync();
+        });
+        await selectPluginManagementView(screen, 'development');
+
+        expect(screen.findRow('settings.plugins.management.development.action.develop')?.props.disabled).toBe(true);
+        await act(async () => {
+            screen.pressByTestId('settings.plugins.management.development.action.develop');
+            await flushAsync();
+        });
+        expect(modalPromptMock).not.toHaveBeenCalled();
+        expect(invokeWithAlertsMock).not.toHaveBeenCalled();
     });
 
     it('keeps cached development actions visible but disabled and non-mutating while daemon truth is stale', async () => {
@@ -1096,6 +1620,50 @@ describe('PluginSettingsHomeScreen', () => {
         expect(invokeWithAlertsMock).not.toHaveBeenCalled();
     });
 
+    it('reports a projection failure instead of a disconnect and retries the projection from the notice', async () => {
+        const installedPlugin = createInstalledPlugin({
+            pluginId: 'installed-plugin',
+            title: 'Installed Plugin',
+            version: '1.0.0',
+            enabled: true,
+        });
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: createMachineCapabilitiesState([installedPlugin]),
+            refresh: vi.fn(),
+        });
+        machineMarketplaceSourceRegistryGetMock.mockResolvedValue(null);
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: false,
+            reason: 'error',
+        });
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+        await act(async () => {
+            await flushAsync();
+            await flushAsync();
+        });
+
+        const notice = screen.findRow('settings.plugins.marketplace.readOnlySnapshot');
+        expect(notice).toBeTruthy();
+        expect(notice?.props.accessibilityLabel).not.toBe('settingsPlugins.readOnlySnapshot');
+        expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot-retry')).toBeTruthy();
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledTimes(1);
+
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: { v: 1, agentsById: {}, backendsById: {} },
+        });
+        await act(async () => {
+            screen.pressRow('settings.plugins.marketplace.readOnlySnapshot-retry');
+            await flushAsync();
+            await flushAsync();
+        });
+
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledTimes(2);
+        expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeFalsy();
+    });
+
     it('keeps a loaded cached plugin snapshot read-only until same-version reconnect refreshes capabilities and projection', async () => {
         const installedPlugin = createInstalledPlugin({
             pluginId: 'installed-plugin',
@@ -1119,8 +1687,6 @@ describe('PluginSettingsHomeScreen', () => {
         };
         const loadedCapabilitiesState = createMachineCapabilitiesState([installedPlugin]);
         const loadingCapabilitiesState = createMachineCapabilitiesLoadingState([installedPlugin]);
-        let machineTarget = { daemonStateVersion: 7, isOnline: true };
-        useMachineCliDetectionTargetMock.mockImplementation(() => machineTarget);
         const refresh = vi.fn();
         let initialCapabilityCacheKeySalt: unknown;
         let hasInitialCapabilityCacheKeySalt = false;
@@ -1161,7 +1727,7 @@ describe('PluginSettingsHomeScreen', () => {
             }
             return {
                 supported: true,
-                projection: { v: 1, providersById: {}, backendsById: {} },
+                projection: { v: 1, agentsById: {}, backendsById: {} },
             };
         });
 
@@ -1194,7 +1760,7 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
             await flushAsync();
         });
-        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findRow('settings.plugins.marketplace.action.update.installed-plugin')?.props.disabled).not.toBe(true);
         await act(async () => {
             screen.pressByTestId('settings.plugins.management.view:installed');
@@ -1202,7 +1768,14 @@ describe('PluginSettingsHomeScreen', () => {
 
         machineMarketplaceSourceRegistryGetMock.mockClear();
         machineMarketplaceIndexQueryMock.mockClear();
-        endpointConnectivityState.status = 'offline';
+        const selectedMachine = machineAdministrationFixture.activeMachines[0];
+        if (!selectedMachine) throw new Error('Expected the selected machine fixture.');
+        // Execution authority comes from the selected machine's live presence,
+        // not the active endpoint status. Retire this exact target while
+        // retaining its selected scope, then restore it below to exercise the
+        // reconnect freshness transition.
+        selectedMachine.active = false;
+        selectedMachine.activeAt = 0;
         await act(async () => {
             screen.tree.update(React.createElement(RerenderablePluginSettingsHomeScreen, {
                 capabilityRevision: 2,
@@ -1211,10 +1784,8 @@ describe('PluginSettingsHomeScreen', () => {
         });
 
         expect(screen.findRow('settings.plugins.marketplace.installed.installed-plugin')).toBeTruthy();
-        const readOnlySnapshot = screen.findRow('settings.plugins.marketplace.readOnlySnapshot');
-        expect(readOnlySnapshot?.props.accessibilityLiveRegion).toBe('polite');
-        expect(readOnlySnapshot?.props.accessibilityLabel).toBe('settingsPlugins.readOnlySnapshot');
-        expect(screen.findByTestId('settings.plugins.management.view:installed')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeTruthy();
+        expect(screen.findByTestId('settings.plugins.management.view:installed')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findRow('settings.plugins.marketplace.loadCatalog')).toBeFalsy();
 
         const disconnectedActions = screen.findAllByType('ItemRowActions' as any)
@@ -1242,9 +1813,7 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
         });
 
-        const detailReadOnlySnapshot = detailScreen.findRow('settings.plugins.detail.readOnlySnapshot');
-        expect(detailReadOnlySnapshot?.props.accessibilityLiveRegion).toBe('polite');
-        expect(detailReadOnlySnapshot?.props.accessibilityLabel).toBe('settingsPlugins.readOnlySnapshot');
+        expect(detailScreen.findRow('settings.plugins.detail.readOnlySnapshot')).toBeTruthy();
         expect(detailScreen.findRow('settings.plugins.detail.installed-plugin.action.reload')).toBeFalsy();
         expect(detailScreen.findRow('settings.plugins.detail.installed-plugin.action.disable')?.props.disabled).toBe(true);
         expect(detailScreen.findRow('settings.plugins.detail.installed-plugin.action.rollback')?.props.disabled).toBe(true);
@@ -1261,7 +1830,8 @@ describe('PluginSettingsHomeScreen', () => {
         expect(screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.onChangeText).toBeUndefined();
         expect(screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.onSubmitEditing).toBeUndefined();
 
-        endpointConnectivityState.status = 'online';
+        selectedMachine.active = true;
+        selectedMachine.activeAt = Date.now();
         await act(async () => {
             screen.tree.update(React.createElement(RerenderablePluginSettingsHomeScreen, {
                 capabilityRevision: 3,
@@ -1272,7 +1842,7 @@ describe('PluginSettingsHomeScreen', () => {
 
         expect(screen.findRow('settings.plugins.marketplace.installed.installed-plugin')).toBeFalsy();
         expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeTruthy();
-        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findRow('settings.plugins.marketplace.loadCatalog')?.props.disabled).toBe(true);
         const reconnectCapabilityCacheKeySalt = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0]?.cacheKeySalt;
         expect(reconnectCapabilityCacheKeySalt).not.toBe(initialCapabilityCacheKeySalt);
@@ -1296,7 +1866,7 @@ describe('PluginSettingsHomeScreen', () => {
         });
 
         expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeFalsy();
-        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(screen.findRow('settings.plugins.marketplace.loadCatalog')?.props.disabled).toBe(false);
         expect(screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.editable).toBe(true);
         expect(screen.findRow('settings.plugins.marketplace.catalogUrl')?.props.onChangeText).toBeTypeOf('function');
@@ -1351,10 +1921,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
@@ -1415,10 +1984,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {
                     'installed-plugin.refresh': {
@@ -1910,6 +2478,11 @@ describe('PluginSettingsHomeScreen', () => {
         });
         expect(prefetchMachineCapabilitiesMock).toHaveBeenCalledTimes(1);
 
+        setMachineAdministrationTargetFixture({
+            serverIdentityId: 'server-identity-b',
+            serverId: 'server-b',
+            machineId: 'machine-2',
+        });
         usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-2');
         getActiveServerIdMock.mockReturnValue('server-b');
         await act(async () => {
@@ -1959,10 +2532,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/acme.hooks',
                         },
-                        digest: 'sha256:hooks',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
@@ -1972,7 +2544,10 @@ describe('PluginSettingsHomeScreen', () => {
                     'acme.hooks.settings': {
                         id: 'acme.hooks.settings',
                         pluginId: 'acme.hooks',
-                        storageScope: 'local',
+                        version: 1,
+                        title: 'Hooks settings',
+                        description: null,
+                        scope: { kind: 'daemon' },
                         target: { kind: 'plugin' },
                         presentation: { sections: [], subagentSections: [] },
                         fields: [
@@ -1981,11 +2556,13 @@ describe('PluginSettingsHomeScreen', () => {
                                 kind: 'settings.field',
                                 version: '1.0.0',
                                 valueSchema: { type: 'string' },
+                                valueType: 'string',
                                 control: 'text',
                                 displayKey: 'Endpoint URL',
                                 descriptionKey: 'Used when hook handlers call the remote API.',
                                 capabilityGates: [],
                                 permissionGates: [],
+                                secretCustody: null,
                                 redaction: 'none',
                                 clearWhenEmpty: 'persist',
                                 order: 1,
@@ -1995,11 +2572,13 @@ describe('PluginSettingsHomeScreen', () => {
                                 kind: 'settings.field',
                                 version: '1.0.0',
                                 valueSchema: { type: 'string' },
+                                valueType: 'string',
                                 control: 'password',
                                 displayKey: 'API token',
                                 descriptionKey: 'Stored locally for this plugin.',
                                 capabilityGates: [],
                                 permissionGates: [],
+                                secretCustody: 'daemon',
                                 redaction: 'secret',
                                 clearWhenEmpty: 'omit',
                                 order: 2,
@@ -2009,10 +2588,12 @@ describe('PluginSettingsHomeScreen', () => {
                                 kind: 'settings.field',
                                 version: '1.0.0',
                                 valueSchema: { type: 'boolean' },
+                                valueType: 'boolean',
                                 control: 'switch',
                                 displayKey: 'Enable hooks',
                                 capabilityGates: [],
                                 permissionGates: [],
+                                secretCustody: null,
                                 redaction: 'none',
                                 clearWhenEmpty: 'persist',
                                 defaultBooleanValue: true,
@@ -2023,10 +2604,12 @@ describe('PluginSettingsHomeScreen', () => {
                                 kind: 'settings.field',
                                 version: '1.0.0',
                                 valueSchema: { type: 'string' },
+                                valueType: 'string',
                                 control: 'textarea',
                                 displayKey: 'Notes',
                                 capabilityGates: [],
                                 permissionGates: [],
+                                secretCustody: null,
                                 redaction: 'none',
                                 clearWhenEmpty: 'persist',
                                 order: 4,
@@ -2052,29 +2635,61 @@ describe('PluginSettingsHomeScreen', () => {
             enabled: true,
             notes: 'Persisted note',
         };
-        machineRpcWithServerScopeMock.mockImplementation(async (input: { method?: string; payload?: Record<string, unknown> }) => {
+        let currentRevision = 0;
+        machineRpcWithServerScopeMock.mockImplementation(async (input: Readonly<{
+            method?: string;
+            payload?: Readonly<{
+                fieldId?: string;
+                mutation?: Readonly<{ kind: 'set'; value: unknown }> | Readonly<{ kind: 'delete' }>;
+                pluginId?: string;
+                secretId?: string;
+            }>;
+        }>) => {
             if (input.method === 'daemon.plugins.settings.get') {
                 return {
                     protocolVersion: 1,
                     pluginId: 'acme.hooks',
-                    storageScope: 'local',
-                    revision: '0',
+                    scope: { kind: 'daemon' },
+                    revision: String(currentRevision),
                     values: currentValues,
                     redactedKeys: ['apiToken'],
                 };
             }
             if (input.method === 'daemon.plugins.settings.set') {
+                const mutation = input.payload?.mutation;
+                if (!mutation || mutation.kind !== 'set') {
+                    throw new Error('Expected a canonical Settings set mutation.');
+                }
                 currentValues = {
                     ...currentValues,
-                    [String(input.payload?.fieldId)]: input.payload?.value,
+                    [String(input.payload?.fieldId)]: mutation.value,
                 };
+                currentRevision += 1;
                 return {
                     protocolVersion: 1,
                     pluginId: 'acme.hooks',
-                    storageScope: 'local',
-                    revision: '1',
+                    scope: { kind: 'daemon' },
+                    revision: String(currentRevision),
                     values: currentValues,
                     redactedKeys: ['apiToken'],
+                };
+            }
+            if (input.method === 'daemon.plugins.secrets.status') {
+                return {
+                    protocolVersion: 1,
+                    pluginId: input.payload?.pluginId ?? 'acme.hooks',
+                    secretId: input.payload?.secretId ?? 'apiToken',
+                    state: 'configured',
+                    revision: 'secret-0',
+                };
+            }
+            if (input.method === 'daemon.plugins.secrets.set') {
+                return {
+                    protocolVersion: 1,
+                    pluginId: input.payload?.pluginId ?? 'acme.hooks',
+                    secretId: input.payload?.secretId ?? 'apiToken',
+                    state: 'configured',
+                    revision: 'secret-1',
                 };
             }
             throw new Error(`Unexpected RPC method: ${input.method ?? '<missing>'}`);
@@ -2136,24 +2751,35 @@ describe('PluginSettingsHomeScreen', () => {
             .filter((input) => input.method === 'daemon.plugins.settings.set');
         expect(setCalls.map((call) => call.payload)).toEqual([
             {
+                serverIdentityId: 'server-identity-a',
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
+                scope: { kind: 'daemon' },
                 fieldId: 'endpoint',
-                value: 'https://api.changed.test',
+                mutation: { kind: 'set', value: 'https://api.changed.test' },
+                expectedRevision: '0',
             },
             {
+                serverIdentityId: 'server-identity-a',
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
+                scope: { kind: 'daemon' },
                 fieldId: 'enabled',
-                value: false,
-            },
-            {
-                machineId: 'machine-1',
-                pluginId: 'acme.hooks',
-                fieldId: 'apiToken',
-                value: 'new-secret-token',
+                mutation: { kind: 'set', value: false },
+                expectedRevision: '1',
             },
         ]);
+        expect(machineRpcWithServerScopeMock.mock.calls
+            .map(([input]) => input as { method?: string; payload?: Record<string, unknown> })
+            .filter((input) => input.method === 'daemon.plugins.secrets.set')
+            .map((call) => call.payload)).toEqual([{
+                serverIdentityId: 'server-identity-a',
+                machineId: 'machine-1',
+                pluginId: 'acme.hooks',
+                secretId: 'apiToken',
+                value: 'new-secret-token',
+                expectedRevision: 'secret-0',
+            }]);
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('raw-secret-token');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('new-secret-token');
     });
@@ -2188,10 +2814,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
@@ -2240,10 +2865,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
@@ -2322,10 +2946,9 @@ describe('PluginSettingsHomeScreen', () => {
                                     kind: 'path',
                                     locator: '/plugins/installed-plugin',
                                 },
-                                digest: 'sha256:manifest',
                             },
                         },
-                        providersById: {},
+                        agentsById: {},
                         backendsById: {},
                         actionsById: {},
                         toolsById: {},
@@ -2370,6 +2993,11 @@ describe('PluginSettingsHomeScreen', () => {
             timeoutMs: 10_000,
         });
 
+        setMachineAdministrationTargetFixture({
+            serverIdentityId: 'server-identity-b',
+            serverId: 'server-b',
+            machineId: 'machine-2',
+        });
         usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-2');
         getActiveServerIdMock.mockReturnValue('server-b');
 
@@ -2442,6 +3070,11 @@ describe('PluginSettingsHomeScreen', () => {
         });
         expect(findRollbackAction()?.props.disabled).toBe(true);
 
+        setMachineAdministrationTargetFixture({
+            serverIdentityId: 'server-identity-b',
+            serverId: 'server-b',
+            machineId: 'machine-2',
+        });
         usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-2');
         getActiveServerIdMock.mockReturnValue('server-b');
         await act(async () => {
@@ -2554,9 +3187,8 @@ describe('PluginSettingsHomeScreen', () => {
                         kind: string;
                         locator: string;
                     }>;
-                    digest: string | null;
                 }>>>;
-                providersById: Record<string, never>;
+                agentsById: Record<string, never>;
                 backendsById: Record<string, never>;
                 actionsById: Record<string, never>;
                 toolsById: Record<string, never>;
@@ -2589,6 +3221,7 @@ describe('PluginSettingsHomeScreen', () => {
 
         expect(screen.findRow('settings.plugins.detail.installed-plugin.generation')).toBeFalsy();
 
+        clearMachineAdministrationTargetFixture();
         usePrimaryMachineFromActiveSelectionMock.mockReturnValue(null);
         await act(async () => {
             screen.tree.update(React.createElement(RerenderablePluginSettingsHomeScreen, {
@@ -2612,10 +3245,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
@@ -2660,10 +3292,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},
@@ -2716,7 +3347,6 @@ describe('PluginSettingsHomeScreen', () => {
                 trustPolicy: 'trusted',
                 installPolicy: 'allow',
                 resolvedPath: '/plugins/installed-plugin',
-                resolvedDigest: 'sha256:installed',
             },
             compatibility: {
                 status: 'incompatible',
@@ -2982,11 +3612,6 @@ describe('PluginSettingsHomeScreen', () => {
                                     sourceUrl: 'https://marketplace.example.test/catalog.json',
                                 },
                             },
-                            integrity: {
-                                packageDigest: `sha256:${'a'.repeat(64)}`,
-                                manifestDigest: `sha256:${'b'.repeat(64)}`,
-                                uiArtifactDigest: `sha256:${'c'.repeat(64)}`,
-                            },
                             signature: { status: 'verified', keyId: 'registry-key-1' },
                             provenance: { status: 'notProvided' },
                             curation: {
@@ -2999,6 +3624,7 @@ describe('PluginSettingsHomeScreen', () => {
                             uiArtifacts: { status: 'none', contributionIds: [] },
                             requiredHostAccess: [],
                             optionalHostAccess: [],
+                            rawCredentialAccess: [],
                             compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
                             updatePolicy: 'automatic',
                         },
@@ -3524,7 +4150,6 @@ describe('PluginSettingsHomeScreen', () => {
                 trustPolicy: 'trusted',
                 installPolicy: 'allow',
                 resolvedPath: '/plugins/existing-plugin',
-                resolvedDigest: 'sha256:existing',
             },
             compatibility: {
                 status: 'compatible',
@@ -3544,7 +4169,6 @@ describe('PluginSettingsHomeScreen', () => {
                 trustPolicy: 'trusted',
                 installPolicy: 'allow',
                 resolvedPath: '/plugins/disabled-plugin',
-                resolvedDigest: 'sha256:disabled',
             },
             compatibility: {
                 status: 'compatible',
@@ -3655,7 +4279,6 @@ describe('PluginSettingsHomeScreen', () => {
                 trustPolicy: 'trusted',
                 installPolicy: 'allow',
                 resolvedPath: '/plugins/existing-plugin',
-                resolvedDigest: 'sha256:existing',
             },
             compatibility: {
                 status: 'compatible',
@@ -3774,10 +4397,9 @@ describe('PluginSettingsHomeScreen', () => {
                             kind: 'path',
                             locator: '/plugins/installed-plugin',
                         },
-                        digest: 'sha256:manifest',
                     },
                 },
-                providersById: {},
+                agentsById: {},
                 backendsById: {},
                 actionsById: {},
                 toolsById: {},

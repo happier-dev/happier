@@ -8,6 +8,16 @@ import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTest
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastProps: any = null;
+const rightPaneBuiltinAdapter = {
+    destinationIds: ['right'],
+    defaultDestinationId: 'right',
+    render: () => <div />,
+};
+const detailsPaneBuiltinAdapter = {
+    destinationIds: ['details'],
+    defaultDestinationId: 'details',
+    render: () => <div />,
+};
 
 installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: 2000, height: 900 }),
@@ -43,6 +53,7 @@ vi.mock('./AppPaneProvider', () => ({
                 scope1: {
                     right: { isOpen: true },
                     details: { isOpen: true },
+                    bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
                 },
             },
         },
@@ -59,8 +70,8 @@ describe('AppPaneScopeHost (overlay widths)', () => {
         await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
                     main={<div />}
-                    rightPane={<div />}
-                    detailsPane={<div />}
+                    rightPaneBuiltinAdapter={rightPaneBuiltinAdapter}
+                    detailsPaneBuiltinAdapter={detailsPaneBuiltinAdapter}
                 />);
 
         expect(lastProps).not.toBeNull();

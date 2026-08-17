@@ -24,13 +24,13 @@ describe('createVoiceSessionBindingManager', () => {
     });
 
     const binding = await manager.ensureBound({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's1',
     });
 
     expect(binding?.conversationSessionId).toBe('carrier-s1');
-    expect(store.getState().getByConversationSessionId('carrier-s1')?.adapterId).toBe('realtime_elevenlabs');
+    expect(store.getState().getByConversationSessionId('carrier-s1')?.adapterId).toBe('happier.voice.elevenlabs/realtime-elevenlabs');
     expect(store.getState().getByControlSessionId('voice-global')?.conversationSessionId).toBe('carrier-s1');
     expect(appendNote).not.toHaveBeenCalled();
   });
@@ -70,12 +70,12 @@ describe('createVoiceSessionBindingManager', () => {
     });
 
     await manager.ensureBound({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's1',
     });
     await manager.ensureBound({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's2',
     });
@@ -108,7 +108,7 @@ describe('createVoiceSessionBindingManager', () => {
     });
 
     await manager.ensureBound({
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's1',
     });
@@ -197,23 +197,23 @@ describe('createVoiceSessionBindingManager', () => {
     });
 
     const initial = await manager.ensureBound({
-      adapterId: ' realtime_elevenlabs ',
+      adapterId: ' happier.voice.elevenlabs/realtime-elevenlabs ',
       controlSessionId: ' voice-global ',
       requestedTargetSessionId: ' s1 ',
     });
     const rebound = await manager.ensureBound({
-      adapterId: ' realtime_elevenlabs ',
+      adapterId: ' happier.voice.elevenlabs/realtime-elevenlabs ',
       controlSessionId: ' voice-global ',
       requestedTargetSessionId: ' s1 ',
     });
 
     expect(resolveBinding).toHaveBeenNthCalledWith(1, {
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's1',
     });
     expect(resolveBinding).toHaveBeenNthCalledWith(2, {
-      adapterId: 'realtime_elevenlabs',
+      adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
       controlSessionId: 'voice-global',
       requestedTargetSessionId: 's1',
     });
@@ -234,7 +234,7 @@ describe('createVoiceSessionBindingManager', () => {
         nowMs: () => 1,
         resolveBinding,
         resolveExistingBindingByConversationSessionId: () => ({
-          adapterId: 'realtime_codex',
+          adapterId: 'happier.agent.codex/realtime-codex',
           controlSessionId: 'voice-global',
           conversationSessionId: 'hidden-codex-voice-a',
           transcriptMode: 'native_session',
@@ -247,8 +247,8 @@ describe('createVoiceSessionBindingManager', () => {
       const result = await manager.ensureBoundForOpenConversation({
         openConversationSessionId: 'hidden-codex-voice-a',
         fallbackControlSessionId: 'voice-global',
-        activeAdapterId: 'realtime_codex',
-        providerId: 'realtime_codex',
+        activeAdapterId: 'happier.agent.codex/realtime-codex',
+        providerId: 'happier.agent.codex/realtime-codex',
         requestedTargetSessionId: 'visible-session-b',
       });
 
@@ -267,7 +267,7 @@ describe('createVoiceSessionBindingManager', () => {
         nowMs: () => 1,
         resolveBinding,
         resolveExistingBindingByConversationSessionId: () => ({
-          adapterId: 'realtime_elevenlabs',
+          adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
           controlSessionId: 'voice-global',
           conversationSessionId: 'carrier-s1',
           transcriptMode: 'synthetic',
@@ -279,8 +279,8 @@ describe('createVoiceSessionBindingManager', () => {
       const result = await manager.ensureBoundForOpenConversation({
         openConversationSessionId: 'carrier-s1',
         fallbackControlSessionId: 'voice-global',
-        activeAdapterId: 'realtime_elevenlabs',
-        providerId: 'realtime_elevenlabs',
+        activeAdapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         requestedTargetSessionId: 's1',
       });
 
@@ -380,7 +380,7 @@ describe('createVoiceSessionBindingManager', () => {
         openConversationSessionId: 'carrier-s1',
         fallbackControlSessionId: null,
         activeAdapterId: null,
-        providerId: 'realtime_elevenlabs',
+        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
         requestedTargetSessionId: null,
       });
 

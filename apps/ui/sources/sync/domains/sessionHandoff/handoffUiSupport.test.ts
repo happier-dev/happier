@@ -1,6 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
+const evaluateVendorHandoffEligibilityMetadataMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+    return {
+        ...actual,
+        evaluateVendorHandoffEligibility: (
+            input: Parameters<typeof actual.evaluateVendorHandoffEligibility>[0],
+        ) => {
+            evaluateVendorHandoffEligibilityMetadataMock(input.metadata);
+            return actual.evaluateVendorHandoffEligibility(input);
+        },
+    };
+});
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
@@ -12,6 +26,7 @@ describe('handoffUiSupport', () => {
     beforeEach(() => {
         readMachineTargetForSessionMock.mockReset();
         readMachineTargetForSessionMock.mockReturnValue(null);
+        evaluateVendorHandoffEligibilityMetadataMock.mockReset();
     });
 
     it('returns true for a persisted claude session with a machine id', () => {
@@ -27,6 +42,36 @@ describe('handoffUiSupport', () => {
                 },
             }),
         ).toBe(true);
+    });
+
+    it('projects owner metadata before Agent-owned handoff availability callbacks', () => {
+        expect(
+            canHandoffConversation({
+                sessionId: 'sess_private_projection',
+                session: {
+                    metadata: {
+                        flavor: 'claude',
+                        machineId: 'machine_1',
+                        path: '/repo',
+                        claudeSessionId: 'claude_session_private_projection',
+                        externalSessionOperationV1: {
+                            v: 1,
+                            progress: { operationId: 'owner-operation-private' },
+                        },
+                        externalSessionOperationPresentationV1: {
+                            v: 1,
+                            operationId: 'shared-operation-private',
+                        },
+                        unrelatedOwnerOnlySentinel: 'must-not-reach-agent-code',
+                    },
+                },
+            }),
+        ).toBe(true);
+
+        expect(evaluateVendorHandoffEligibilityMetadataMock).toHaveBeenCalledWith({
+            path: '/repo',
+            claudeSessionId: 'claude_session_private_projection',
+        });
     });
 
     it('returns true for a persisted claude session with a machine id even when vendor handoff id is missing', () => {

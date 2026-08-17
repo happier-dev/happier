@@ -1,12 +1,21 @@
+import {
+    HappierTextSelectabilityScope,
+    useHappierTextPresentation,
+} from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Platform, Text as RNText, TextInput as RNTextInput, type TextInputProps as RNTextInputProps, type TextProps as RNTextProps, type TextStyle } from 'react-native';
+import {
+    Platform,
+    Text as RNText,
+    TextInput as RNTextInput,
+    type TextInputProps as RNTextInputProps,
+    type TextProps as RNTextProps,
+    type TextStyle,
+} from 'react-native';
 
 import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';
 
 import { scaleTextStyle } from './uiFontScale';
-
-const TextSelectabilityContext = React.createContext<boolean>(false);
 
 function isIosWeb(): boolean {
     if (Platform.OS !== 'web') return false;
@@ -33,15 +42,15 @@ function resolveFontSizeFromStyle(style: unknown): number | null {
     return null;
 }
 
-export function TextSelectabilityScope(props: Readonly<{ selectable: boolean; children: React.ReactNode }>) {
-    return (
-        <TextSelectabilityContext.Provider value={props.selectable}>
-            {props.children}
-        </TextSelectabilityContext.Provider>
-    );
-}
+/**
+ * Selectability scoping is owned by the shared presentation layer, so a plugin
+ * surface rendered inside a Happier scope inherits the same behaviour.
+ */
+export const TextSelectabilityScope = HappierTextSelectabilityScope;
 
-export type AppTextProps = RNTextProps & Readonly<{
+export type AppTextProps = Omit<RNTextProps, 'style'> & Readonly<{
+    /** App-owned hosts retain the complete React Native text style contract. */
+    style?: RNTextProps['style'];
     /** Web focus-order override forwarded to the underlying React Native Web text element. */
     tabIndex?: 0 | -1;
     /**
@@ -55,41 +64,47 @@ export type AppTextProps = RNTextProps & Readonly<{
     disableUiFontScaling?: boolean;
 }>;
 
+/**
+ * Happier core's Text adapter.
+ *
+ * The shared presentation owner supplies the text-scale and selectability
+ * semantics. This adapter owns the native host because app callers require the
+ * full React Native text prop/style contract (including Unistyles entries).
+ */
 export const Text = React.memo(
     React.forwardRef<any, AppTextProps>(function AppText(
         {
             style,
             useDefaultTypography = true,
-            selectable,
             disableUiFontScaling = false,
+            selectable,
+            allowFontScaling,
             ...props
         },
         ref
     ) {
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
-        const selectableFromScope = React.useContext(TextSelectabilityContext);
-        const effectiveSelectable = selectable ?? selectableFromScope;
-        const { accessibilityLabel, testID, ...restProps } = props;
-
-        const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale), [style, uiFontScale]);
-        const defaultStyle = useDefaultTypography ? Typography.default() : null;
+        const baseStyle = useDefaultTypography ? Typography.default() : undefined;
+        const presentation = useHappierTextPresentation({ selectable, textScale: uiFontScale });
+        const scaledStyle = React.useMemo(
+            () => scaleTextStyle(style, presentation.metricScale),
+            [presentation.metricScale, style],
+        );
         const mergedStyle = React.useMemo(() => {
-            const out: any[] = [];
-            if (defaultStyle) out.push(defaultStyle);
-            if (Array.isArray(scaledStyle)) out.push(...scaledStyle);
-            else if (scaledStyle) out.push(scaledStyle);
-            return out;
-        }, [defaultStyle, scaledStyle]);
+            const entries: NonNullable<RNTextProps['style']>[] = [];
+            if (baseStyle) entries.push(baseStyle);
+            if (scaledStyle) entries.push(scaledStyle);
+            return entries;
+        }, [baseStyle, scaledStyle]);
 
         return (
             <RNText
                 ref={ref}
                 style={mergedStyle}
-                selectable={effectiveSelectable}
-                accessibilityLabel={accessibilityLabel}
-                testID={testID}
-                {...restProps}
+                selectable={presentation.selectable}
+                {...props}
+                allowFontScaling={allowFontScaling ?? presentation.allowHostFontScaling}
             />
         );
     })
@@ -109,13 +124,12 @@ export const TextInput = React.memo(
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const { accessibilityLabel, testID, ...restProps } = props;
 
-        const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale) as TextStyle, [style, uiFontScale]);
+        const scaledStyle = React.useMemo(() => scaleTextStyle(style, uiFontScale), [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
         const mergedStyle = React.useMemo(() => {
-            const out: any[] = [];
+            const out: NonNullable<RNTextInputProps['style']>[] = [];
             if (defaultStyle) out.push(defaultStyle);
-            if (Array.isArray(scaledStyle)) out.push(...scaledStyle);
-            else if (scaledStyle) out.push(scaledStyle);
+            if (scaledStyle) out.push(scaledStyle);
             if (isIosWeb()) {
                 const resolvedFontSize = resolveFontSizeFromStyle(out);
                 if (typeof resolvedFontSize === 'number' && resolvedFontSize > 0 && resolvedFontSize < 16) {

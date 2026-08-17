@@ -270,6 +270,16 @@ describe('fetchUserMessageHistoryPage', () => {
         expect(result).toEqual({ status: 'unsupported' });
     });
 
+    it('keeps a session the current scope cannot see retryable instead of unsupported', async () => {
+        const result = await fetchUserMessageHistoryPage({
+            sessionId: 's1',
+            request: vi.fn(async () => response({ error: 'Session not found' }, 404)),
+            getSessionEncryption: () => ({ decryptMessages: vi.fn() }),
+        });
+
+        expect(result).toEqual({ status: 'error' });
+    });
+
     it('reports transport failures as retryable errors', async () => {
         const result = await fetchUserMessageHistoryPage({
             sessionId: 's1',

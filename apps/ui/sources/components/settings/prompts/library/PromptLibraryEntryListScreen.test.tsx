@@ -178,6 +178,8 @@ vi.mock('@/sync/ops/promptLibrary/promptBundles', async () => {
 
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1000 },
+    useLayoutMaxWidth: () => 1000,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
 }));
 
 describe('PromptLibraryEntryListScreen', () => {

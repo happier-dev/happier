@@ -50,7 +50,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface.base,
+        // The plane the content pane lies on: the content pane is transparent and each settings
+        // route paints its own canvas through `ItemList`. The rail beside it is the raised
+        // surface, so this canvas is the recessed field the rail sits proud of.
+        backgroundColor: theme.colors.background.canvas,
     },
     row: {
         flex: 1,
@@ -63,6 +66,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 0,
     },
 }));
+
+/**
+ * There is deliberately no seam-cast shadow here. The rail is the raised plane and the content
+ * pane the recessed one, so a leftward cast from the content onto the rail would light the seam
+ * backwards. The rail's own hairline carries the separation on every platform — a hairline is
+ * also the more restrained separator between a white rail and a grey content field.
+ */
 
 export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{ children: React.ReactNode }>) {
     const styles = stylesheet;

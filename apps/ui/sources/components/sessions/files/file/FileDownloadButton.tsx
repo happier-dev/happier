@@ -1,11 +1,10 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useUnistyles } from 'react-native-unistyles';
+import { Platform } from 'react-native';
 
 import { t } from '@/text';
 import { useWorkspaceFileTransfers } from '@/hooks/session/files/useWorkspaceFileTransfers';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 export const FileDownloadButton = React.memo((props: Readonly<{
     sessionId: string;
@@ -13,52 +12,34 @@ export const FileDownloadButton = React.memo((props: Readonly<{
     asZip?: boolean;
     testID?: string;
 }>) => {
-    const { theme } = useUnistyles();
+    const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
     const transfers = useWorkspaceFileTransfers({
         sessionId: props.sessionId,
     });
 
-    const busy = transfers.downloadState.status === 'downloading';
-    const disabled = busy;
-
     return (
-        <Pressable
+        <IconButton
             testID={props.testID}
-            accessibilityRole="button"
             accessibilityLabel={t('files.repositoryTree.actions.download')}
-            disabled={disabled}
-            onPress={(event) => {
+            tooltip={t('files.repositoryTree.actions.download')}
+            iconName="download"
+            iconSize={14}
+            size={28}
+            minimumInteractiveTargetSize={minimumInteractiveTargetSize}
+            interactiveTargetGapPx={20}
+            onPress={async (event) => {
                 event?.stopPropagation?.();
-                void (async () => {
-                    const res = await transfers.startDownload({ path: props.path, asZip: props.asZip === true });
-                    if (!res.ok && res.canceled !== true) {
-                        try {
-                            const { Modal } = await import('@/modal');
-                            Modal.alert(t('common.error'), res.error);
-                        } catch {
-                            // Best-effort only.
-                        }
+                const res = await transfers.startDownload({ path: props.path, asZip: props.asZip === true });
+                if (!res.ok && res.canceled !== true) {
+                    try {
+                        const { Modal } = await import('@/modal');
+                        Modal.alert(t('common.error'), res.error);
+                    } catch {
+                        // Best-effort only.
                     }
-                })();
+                }
             }}
-            style={({ pressed }) => ({
-                width: 28,
-                height: 28,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: theme.colors.border.default,
-                backgroundColor: theme.colors.surface.base,
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: disabled ? 0.55 : pressed ? 0.78 : 1,
-            })}
-        >
-            {busy ? (
-                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-            ) : (
-                <Ionicons name="download-outline" size={14} color={theme.colors.text.secondary} />
-            )}
-        </Pressable>
+        />
     );
 });

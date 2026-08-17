@@ -267,6 +267,26 @@ describe('configured ACP resume capability', () => {
         })).toBe(false);
     });
 
+    test('does not let configured ACP attach bypass a released linked-session identity', () => {
+        expect(canResumeSessionWithOptions({
+            flavor: 'acp:custom-backend',
+            acpConfiguredBackendV1: {
+                v: 1,
+                updatedAt: 123,
+                backendId: 'custom-backend',
+                title: 'Custom Backend',
+            },
+            pluginSessionId: 'plugin-session-1',
+            directSessionV1: {
+                v: 1,
+                providerId: 'plugin-provider',
+                machineId: 'machine-1',
+                remoteSessionId: 'plugin-session-1',
+                source: { kind: 'pluginTranscript' },
+            },
+        })).toBe(false);
+    });
+
     test('treats configured ACP flavors as resumable attach targets without vendor resume ids', () => {
         expect(canAgentResume('acp:custom-backend')).toBe(true);
         expect(canAgentResume('acp:')).toBe(false);
@@ -415,6 +435,22 @@ describe('canContinueSessionWithFreshSpawn', () => {
                     localId: 'antigravity',
                 },
                 sourceKinds: ['antigravityCliPrint'],
+            },
+        })).toBe(false);
+    });
+
+    test('does not treat a released linked session as a fresh pre-start session', () => {
+        expect(canContinueSessionWithFreshSpawn({
+            flavor: 'antigravity',
+            directSessionV1: {
+                v: 1,
+                providerId: 'antigravity',
+                machineId: 'machine-1',
+                remoteSessionId: 'conversation-1',
+                source: {
+                    kind: 'antigravityCliPrint',
+                    brainDir: '/tmp/antigravity-brain',
+                },
             },
         })).toBe(false);
     });

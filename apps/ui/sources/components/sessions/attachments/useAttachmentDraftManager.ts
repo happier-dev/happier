@@ -37,6 +37,8 @@ export function useAttachmentDraftManager(params: Readonly<{
     filePickerRef: React.RefObject<AttachmentFilePickerHandle | null>;
     drafts: readonly AttachmentDraft[];
     getDraftsSnapshot: () => readonly AttachmentDraft[];
+    /** Process-local mutation revision for compare-and-restore consumers. */
+    getDraftRevisionSnapshot: () => number;
     hasSendableAttachments: boolean;
     agentInputAttachments: readonly AgentInputAttachment[];
     addWebFiles: (files: readonly File[]) => void;
@@ -49,6 +51,7 @@ export function useAttachmentDraftManager(params: Readonly<{
     const filePickerRef = React.useRef<AttachmentFilePickerHandle | null>(null);
     const [drafts, setDrafts] = React.useState<AttachmentDraft[]>(() => [...(params.initialDrafts ?? [])]);
     const draftsRef = React.useRef<AttachmentDraft[]>(params.initialDrafts ? [...params.initialDrafts] : []);
+    const draftRevisionRef = React.useRef(0);
 
     const webPreviewUrlsRef = React.useRef<Map<string, string>>(new Map());
     const [webPreviewUrlsVersion, setWebPreviewUrlsVersion] = React.useState(0);
@@ -58,6 +61,17 @@ export function useAttachmentDraftManager(params: Readonly<{
     }, [drafts]);
 
     const getDraftsSnapshot = React.useCallback(() => draftsRef.current, []);
+    const getDraftRevisionSnapshot = React.useCallback(() => draftRevisionRef.current, []);
+
+    const commitDrafts = React.useCallback((updater: (previous: AttachmentDraft[]) => AttachmentDraft[]) => {
+        // Keep this side effect outside React's updater: Strict Mode may replay
+        // updater functions, but one public mutation call gets exactly one
+        // currentness revision.
+        draftRevisionRef.current += 1;
+        setDrafts((previous) => {
+            return updater(previous);
+        });
+    }, []);
 
     React.useEffect(() => {
         return () => {
@@ -71,8 +85,8 @@ export function useAttachmentDraftManager(params: Readonly<{
     }, []);
 
     const applyDraftPatch = React.useCallback((id: string, patch: Partial<Omit<AttachmentDraft, 'id' | 'source'>>) => {
-        setDrafts((prev) => prev.map((d) => d.id === id ? ({ ...d, ...patch } as AttachmentDraft) : d));
-    }, []);
+        commitDrafts((prev) => prev.map((d) => d.id === id ? ({ ...d, ...patch } as AttachmentDraft) : d));
+    }, [commitDrafts]);
 
     const addSources = React.useCallback((sources: readonly AttachmentsUploadFileSource[]) => {
         if (!params.enabled) return;
@@ -99,8 +113,8 @@ export function useAttachmentDraftManager(params: Readonly<{
             );
         }
         if (next.length === 0) return;
-        setDrafts((prev) => [...prev, ...next]);
-    }, [params.enabled, params.maxFileBytes]);
+        commitDrafts((prev) => [...prev, ...next]);
+    }, [commitDrafts, params.enabled, params.maxFileBytes]);
 
     const addWebFiles = React.useCallback((files: readonly File[]) => {
         addSources(files.map((file) => ({ kind: 'web' as const, file })));
@@ -111,16 +125,16 @@ export function useAttachmentDraftManager(params: Readonly<{
     }, [addSources]);
 
     const removeDraft = React.useCallback((id: string) => {
-        setDrafts((prev) => prev.filter((d) => d.id !== id));
-    }, []);
+        commitDrafts((prev) => prev.filter((d) => d.id !== id));
+    }, [commitDrafts]);
 
     const clearDrafts = React.useCallback(() => {
-        setDrafts([]);
-    }, []);
+        commitDrafts(() => []);
+    }, [commitDrafts]);
 
     const replaceDrafts = React.useCallback((nextDrafts: readonly AttachmentDraft[]) => {
-        setDrafts([...nextDrafts]);
-    }, []);
+        commitDrafts(() => [...nextDrafts]);
+    }, [commitDrafts]);
 
     React.useEffect(() => {
         const map = webPreviewUrlsRef.current;
@@ -189,6 +203,7 @@ export function useAttachmentDraftManager(params: Readonly<{
         filePickerRef,
         drafts,
         getDraftsSnapshot,
+        getDraftRevisionSnapshot,
         hasSendableAttachments: drafts.length > 0,
         agentInputAttachments,
         addWebFiles,
@@ -204,6 +219,7 @@ export function useAttachmentDraftManager(params: Readonly<{
         applyDraftPatch,
         clearDrafts,
         drafts,
+        getDraftRevisionSnapshot,
         getDraftsSnapshot,
         removeDraft,
         replaceDrafts,

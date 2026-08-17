@@ -3,8 +3,10 @@ import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   AgentSessionRealtimeHandle,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
   PluginVoiceAgentSessionRealtimeService,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+} from '@happier-dev/plugin-sdk/voice/client';
 import {
   getCurrentBundledConversationRuntimeHost,
   type BundledConversationRuntimeHost,
@@ -108,7 +110,6 @@ function createPublicEntry(input: Readonly<{
     roles: ['realtime_conversation' as const],
     platforms: ['web' as const],
     capabilities: Object.freeze({
-      readiness: Object.freeze({ requirements: [] }),
       turn: Object.freeze({ cancelResponse: false, bargeIn: false }),
     }),
     client: Object.freeze({
@@ -118,33 +119,16 @@ function createPublicEntry(input: Readonly<{
     }),
   });
   return Object.freeze({
-    uiEntry: Object.freeze({
-      kind: 'voice.conversation-provider.v1' as const,
-      pluginId: 'test.voice',
-      providerId: input.providerId,
-      declaration,
-      settingsSectionId: `voice.provider.${input.providerId}`,
-      roles: declaration.roles,
-      requirements: declaration.capabilities.readiness.requirements,
-      supportedPlatforms: declaration.platforms,
-      selectionOptions: Object.freeze([]),
-      internal: Object.freeze({
-        resolveSurfaceCapabilities: () => Object.freeze({
-          allowsGlobalStart: true,
-          controlSessionScope: 'global' as const,
-          requiresVoiceAgentFeature: false,
-          bargeInEnabled: false,
-          cancelResponse: 'unsupported' as const,
-          interruptionPolicy: 'disabled' as const,
-        }),
-      }),
-    }),
+    pluginId: 'test.voice',
+    providerId: `test.voice/${localId}`,
+    declaration,
     activate(api: Pick<PluginApi, 'voiceProviders'>) {
       const host = getCurrentBundledConversationRuntimeHost();
       if (!host) throw new Error('test bundled runtime host is unavailable');
       const bundledHost = host as BundledConversationRuntimeHost;
       input.onCreate?.(bundledHost);
       api.voiceProviders.register(localId, Object.freeze({
+        kind: 'conversation' as const,
         protocol: Object.freeze({
           prepare: async () => Object.freeze({ kind: 'declined' as const, code: 'test' }),
           decodeControl: () => [],
@@ -155,10 +139,15 @@ function createPublicEntry(input: Readonly<{
         encodeToolContinuation: () => Object.freeze({}),
         encodeContextUpdate: () => [],
         encodeTextTurn: () => [],
+        microphoneMode: 'provider_managed' as const,
         ...(input.dispose ? { dispose: () => input.dispose!(bundledHost) } : {}),
       }));
     },
   });
+}
+
+function readBundledEntryProviderId(entry: BundledConversationRuntimeEntry): string {
+  return entry.providerId;
 }
 
 describe('createBuiltinVoiceAdapterAssembly', () => {
@@ -198,33 +187,33 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
   });
 
   it('uses generated public entries as the only production realtime adapter owners', async () => {
-    for (const providerId of [
-      'realtime_elevenlabs',
-      'realtime_codex',
-      'realtime_openai',
-      'realtime_grok',
+    for (const localId of [
+      'realtime-elevenlabs',
+      'realtime-codex',
+      'realtime-openai',
+      'realtime-grok',
     ] as const) {
       const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(
-        (candidate) => candidate.uiEntry.providerId === providerId,
+        (candidate) => candidate.declaration.id === localId,
       );
       expect(entry).toBeDefined();
       expect(entry?.activate).toBeTypeOf('function');
-      expect(entry?.uiEntry.internal).not.toHaveProperty('createActivation');
-      expect(entry?.uiEntry.internal).not.toHaveProperty('createAdapter');
+      expect(entry?.providerId).toContain('/');
     }
 
     const assembly = createBuiltinVoiceAdapterAssembly();
     const generatedProviderIds = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(
-      (entry) => entry.uiEntry.providerId,
+      readBundledEntryProviderId,
     );
     const ids = assembly.adapters.map((adapter) => adapter.id);
-    const productionElevenLabs = assembly.adapters.find((adapter) => adapter.id === 'realtime_elevenlabs');
+    const elevenLabsProviderId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+    const productionElevenLabs = assembly.adapters.find((adapter) => adapter.id === elevenLabsProviderId);
 
     expect(new Set(generatedProviderIds)).toEqual(new Set([
-      'realtime_codex',
-      'realtime_elevenlabs',
-      'realtime_openai',
-      'realtime_grok',
+      'happier.agent.codex/realtime-codex',
+      elevenLabsProviderId,
+      'happier.voice.openai/realtime-openai',
+      'happier.voice.xai/realtime-grok',
     ]));
     expect(ids).toEqual([
       ...generatedProviderIds,
@@ -234,9 +223,9 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     expect(productionElevenLabs).toBeDefined();
     expect(productionElevenLabs?.resolveSurfaceCapabilities).toBeTypeOf('function');
     const voiceSettings = {
-      providerId: 'realtime_elevenlabs',
+      providerId: elevenLabsProviderId,
       providers: {
-        realtime_elevenlabs: {
+        [elevenLabsProviderId]: {
           schemaVersion: 2,
           config: ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
         },
@@ -255,6 +244,26 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     await assembly.dispose();
   });
 
+  it('still assembles every healthy provider when one bundled leaf throws while activating', async () => {
+    const failingEntry = createPublicEntry({
+      providerId: 'test_failing_leaf',
+      onCreate() { throw new ReferenceError('leaf_symbol_is_not_defined'); },
+    });
+
+    // The shell mounting this assembly must keep booting, and Voice must stay
+    // available for every provider the broken leaf does not own.
+    const assembly = createBuiltinVoiceAdapterAssembly({
+      bundledEntries: [failingEntry, ...BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES],
+    });
+
+    expect(assembly.adapters.map((adapter) => adapter.id)).toEqual([
+      ...BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(readBundledEntryProviderId),
+      'local_direct',
+      'local_conversation',
+    ]);
+    await assembly.dispose();
+  });
+
   it('removes executable bundled adapters when their first-party package contribution is absent', async () => {
     const assembly = createBuiltinVoiceAdapterAssembly({ bundledEntries: [] });
     const ids = assembly.adapters.map((adapter) => adapter.id);
@@ -263,14 +272,21 @@ describe('createBuiltinVoiceAdapterAssembly', () => {
     await assembly.dispose();
   });
 
-  it('omits web-only generated runtimes from native assembly while retaining Local Voice', async () => {
-    expect(BUNDLED_FIRST_PARTY_IOS_VOICE_CONVERSATION_RUNTIME_ENTRIES).toEqual([]);
+  it('uses the same OpenAI and Codex public runtimes in native assembly while retaining Local Voice', async () => {
+    expect(BUNDLED_FIRST_PARTY_IOS_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(
+      readBundledEntryProviderId,
+    )).toEqual([
+      'happier.agent.codex/realtime-codex',
+      'happier.voice.openai/realtime-openai',
+    ]);
 
     const assembly = createBuiltinVoiceAdapterAssembly({
       bundledEntries: BUNDLED_FIRST_PARTY_IOS_VOICE_CONVERSATION_RUNTIME_ENTRIES,
     });
 
     expect(assembly.adapters.map((adapter) => adapter.id)).toEqual([
+      'happier.agent.codex/realtime-codex',
+      'happier.voice.openai/realtime-openai',
       'local_direct',
       'local_conversation',
     ]);

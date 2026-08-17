@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Pressable, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -8,6 +7,7 @@ import { t } from '@/text';
 import { ItemListStatic } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export interface SecretAddModalResult {
@@ -46,7 +46,7 @@ export function SecretAddModal(props: SecretAddModalProps) {
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                 >
-                    <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
+                    <Icon name="x" size={20} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
 

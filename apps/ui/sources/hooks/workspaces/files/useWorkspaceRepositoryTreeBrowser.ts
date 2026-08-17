@@ -8,6 +8,7 @@ import {
     listWorkspaceRepositoryDirectoryEntries,
     warmWorkspaceRepositoryDirectoryCache,
 } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { useWorkspaceRepositoryDirectoryRevision } from './useWorkspaceRepositoryDirectoryRevision';
 
 function joinPath(parent: string, name: string): string {
@@ -38,53 +39,46 @@ function toLazyLoadResult(directoryPath: string, result: ListRepositoryDirectory
     };
 }
 
+/**
+ * Takes the workspace as ONE `scope`. The tree reads cached entries under a key and loads
+ * missing ones over RPC, so a `workspaceCacheKey` prop next to a separate machine/root/server
+ * address would let the cache it reads and the server it reads from name different
+ * workspaces — silently, since the rows look identical either way.
+ */
 export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
-    workspaceCacheKey: string;
-    machineId: string;
-    rootPath: string;
-    serverId?: string | null;
+    scope: WorkspaceScopeBase;
     enabled: boolean;
     expandedPaths?: readonly string[];
     onExpandedPathsChange?: (paths: string[]) => void;
     reloadToken?: number;
 }>) {
-    const directoryRevision = useWorkspaceRepositoryDirectoryRevision(input.workspaceCacheKey);
+    const scope = input.scope;
+    const workspaceCacheKey = React.useMemo(() => tryBuildWorkspaceCacheKey(scope) ?? '', [scope]);
+    const directoryRevision = useWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
     const effectiveReloadToken = React.useMemo(() => (
         `${input.reloadToken ?? ''}:${directoryRevision}`
     ), [directoryRevision, input.reloadToken]);
 
     const getCachedEntries = React.useCallback((directoryPath: string) => {
         const cached = getCachedWorkspaceRepositoryDirectoryEntries({
-            workspaceCacheKey: input.workspaceCacheKey,
+            workspaceCacheKey,
             directoryPath,
         });
         return cached ? toLazyEntries(directoryPath, cached) : null;
-    }, [input.workspaceCacheKey]);
+    }, [workspaceCacheKey]);
 
     const loadDirectoryEntries = React.useCallback(async (directoryPath: string) => {
-        const result = await listWorkspaceRepositoryDirectoryEntries({
-            workspaceCacheKey: input.workspaceCacheKey,
-            machineId: input.machineId,
-            rootPath: input.rootPath,
-            directoryPath,
-            serverId: input.serverId,
-        });
+        const result = await listWorkspaceRepositoryDirectoryEntries({ scope, directoryPath });
         return toLazyLoadResult(directoryPath, result);
-    }, [input.machineId, input.rootPath, input.serverId, input.workspaceCacheKey]);
+    }, [scope]);
 
     const warmDirectoryEntries = React.useCallback(async (directoryPath: string) => {
-        const result = await warmWorkspaceRepositoryDirectoryCache({
-            workspaceCacheKey: input.workspaceCacheKey,
-            machineId: input.machineId,
-            rootPath: input.rootPath,
-            directoryPath,
-            serverId: input.serverId,
-        });
+        const result = await warmWorkspaceRepositoryDirectoryCache({ scope, directoryPath });
         return toLazyLoadResult(directoryPath, result);
-    }, [input.machineId, input.rootPath, input.serverId, input.workspaceCacheKey]);
+    }, [scope]);
 
     return useLazyDirectoryTree({
-        scopeKey: input.workspaceCacheKey,
+        scopeKey: workspaceCacheKey,
         enabled: input.enabled,
         rootDirectoryPath: '',
         expandedPaths: input.expandedPaths,

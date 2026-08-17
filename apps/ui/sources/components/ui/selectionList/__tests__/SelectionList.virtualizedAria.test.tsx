@@ -122,6 +122,9 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { selectedOptionId: 'opt-1' })} />,
         );
+        const section = screen.findByTestId('sl:section:forced');
+        expect(section?.props.role).toBe('group');
+        expect(section?.props['aria-label']).toBe('FORCED');
         // The virtualized FlashList is mounted; each rendered row from the
         // mock should carry the wrapper testID matching the plain path:
         // sl:root:option-wrapper:<id>.

@@ -8,13 +8,16 @@ import {
   redactVoiceToolResultForProvider,
   type VoiceToolResultRedactionPrefs,
 } from '@/voice/context/redactVoiceToolResult';
-import { createVoiceToolHandlers, resolveVoiceToolEffectClass } from '@/voice/tools/handlers';
+import {
+  createVoiceToolHandlers,
+  resolveVoiceToolEffectClass,
+  type VoiceToolHandler,
+} from '@/voice/tools/handlers';
 import {
   createRealtimeToolBarrier,
   RealtimeToolExecutionError,
 } from './realtimeToolBarrier';
 
-type VoiceToolHandler = (parameters: unknown) => Promise<string>;
 type VoiceToolHandlers = Readonly<Record<string, VoiceToolHandler>>;
 
 type VoiceHandlerBarrierDeps = Readonly<{
@@ -64,10 +67,13 @@ export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarr
   return createRealtimeToolBarrier({
     classifyCall: (call) => resolveVoiceToolEffectClass(call.toolName),
     authorizeCall: async () => ({ status: 'allowed' }),
-    executeCall: async (call) => {
+    executeCall: async (call, signal) => {
       const handler = deps.handlers[call.toolName];
       if (!handler) throw new RealtimeToolExecutionError('error', 'unsupported_action');
-      const parsed = parseHandlerResult(await handler(call.arguments));
+      const parsed = parseHandlerResult(await handler(call.arguments, {
+        callId: call.callId,
+        signal,
+      }));
       const failureCode = readSafeHandlerFailure(parsed);
       if (failureCode) throw new RealtimeToolExecutionError('error', failureCode);
       return parsed;

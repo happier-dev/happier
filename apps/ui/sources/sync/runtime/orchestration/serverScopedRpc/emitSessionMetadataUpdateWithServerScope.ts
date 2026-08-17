@@ -116,7 +116,16 @@ async function emitSessionMetadataTuplePatch(params: Readonly<{
                 message: body.error,
             };
         }
-        return INVALID_TUPLE_RESPONSE;
+        if (
+            response.status === 409
+            && body
+            && typeof body === 'object'
+            && !Array.isArray(body)
+            && (body as Record<string, unknown>).code
+                === 'metadata_privacy_upgrade_required'
+        ) {
+            return INVALID_TUPLE_RESPONSE;
+        }
     }
 
     if (response.status === 200) {

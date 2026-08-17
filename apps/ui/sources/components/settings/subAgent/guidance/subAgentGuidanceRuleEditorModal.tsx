@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
@@ -27,6 +26,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import type { SubAgentGuidanceRuleEditorResult } from './showSubAgentGuidanceRuleEditorModal';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type Intent = 'review' | 'plan' | 'delegate';
 
@@ -243,7 +243,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     <Item
                         title={t('subAgentGuidance.ruleEditor.enabled.title')}
                         subtitle={enabledSubtitle}
-                        icon={<Ionicons name="sparkles-outline" size={24} color={theme.colors.accent.orange} />}
+                        icon={<Icon name="sparkle" size={24} color={theme.colors.accent.orange} />}
                         rightElement={<Switch value={enabled} onValueChange={setEnabled} />}
                         showChevron={false}
                         showDivider={false}
@@ -299,8 +299,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                             <Item
                                 title={t('subAgentGuidance.ruleEditor.backendPicker.title')}
                                 subtitle={selectedBackendEntry?.title ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
-                                icon={<Ionicons name="hardware-chip-outline" size={24} color={theme.colors.text.secondary} />}
-                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="cpu" size={24} color={theme.colors.text.secondary} />}
+                                rightElement={<Icon name={open ? 'caret-up' : 'caret-down'} size={16} color={theme.colors.text.secondary} />}
                                 onPress={toggle}
                                 showChevron={false}
                                 showDivider={false}
@@ -314,7 +314,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                               subtitle: t('subAgentGuidance.ruleEditor.backendPicker.noPreference.subtitle'),
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name="remove-circle-outline" size={22} color={theme.colors.text.secondary} />
+                                    <Icon name="minus-circle" size={20} color={theme.colors.text.secondary} />
                                 </View>
                               ),
                           },
@@ -324,7 +324,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                               subtitle: entry.subtitle ?? undefined,
                               icon: (
                                   <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                      <Ionicons name="hardware-chip-outline" size={22} color={theme.colors.text.secondary} />
+                                      <Icon name="cpu" size={20} color={theme.colors.text.secondary} />
                                   </View>
                               ),
                           })),
@@ -361,8 +361,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                 <Item
                                     title={t('subAgentGuidance.ruleEditor.modelPicker.title')}
                                     subtitle={modelId ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
-                                    icon={<Ionicons name="layers-outline" size={24} color={theme.colors.text.secondary} />}
-                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.text.secondary} />}
+                                    icon={<Icon name="stack-simple" size={24} color={theme.colors.text.secondary} />}
+                                    rightElement={<Icon name={open ? 'caret-up' : 'caret-down'} size={16} color={theme.colors.text.secondary} />}
                                     onPress={toggle}
                                     showChevron={false}
                                     showDivider={false}
@@ -376,7 +376,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                   subtitle: t('subAgentGuidance.ruleEditor.modelPicker.noPreference.subtitle'),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="remove-circle-outline" size={22} color={theme.colors.text.secondary} />
+                                        <Icon name="minus-circle" size={20} color={theme.colors.text.secondary} />
                                     </View>
                                   ),
                               },
@@ -416,8 +416,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                             <Item
                                 title={t('subAgentGuidance.ruleEditor.intent.title')}
                                 subtitle={intentSubtitle}
-                                icon={<Ionicons name="navigate-outline" size={24} color={theme.colors.text.secondary} />}
-                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="navigation-arrow" size={24} color={theme.colors.text.secondary} />}
+                                rightElement={<Icon name={open ? 'caret-up' : 'caret-down'} size={16} color={theme.colors.text.secondary} />}
                                 onPress={toggle}
                                 showChevron={false}
                                 showDivider={false}
@@ -449,7 +449,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                         ...it,
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="navigate-outline" size={22} color={theme.colors.text.secondary} />
+                                <Icon name="navigation-arrow" size={20} color={theme.colors.text.secondary} />
                             </View>
                         ),
                     }))}

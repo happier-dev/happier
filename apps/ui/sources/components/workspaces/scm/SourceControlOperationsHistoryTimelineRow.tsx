@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
-import { Octicons } from '@expo/vector-icons';
 import type { ScmLogEntry } from '@happier-dev/protocol';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { Icon } from '@/components/ui/icons/Icon';
 
 import {
     formatScmHistoryTimestamp,
@@ -92,7 +92,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                             borderColor: indicatorColor,
                         }}
                     >
-                        <Octicons name="git-commit" size={10} color={indicatorColor} />
+                        <Icon name="git-commit" size={10} color={indicatorColor} />
                     </View>
                 ) : null}
                 {props.showTrailingLine ? (
@@ -131,10 +131,12 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                         style={{
                             paddingHorizontal: 6,
                             paddingVertical: 3,
-                            borderRadius: 999,
+                            // The canonical badge shape, not a capsule. The border stays only for
+                            // HEAD, where it carries state rather than decoration.
+                            borderRadius: 8,
                             backgroundColor: pressedBackground,
-                            borderWidth: 1,
-                            borderColor: props.isHead ? indicatorColor : props.theme.colors.border.default,
+                            borderWidth: props.isHead ? 1 : 0,
+                            borderColor: indicatorColor,
                         }}
                     >
                         <Text style={{ color: props.isHead ? indicatorColor : props.theme.colors.text.secondary, fontSize: 11, ...Typography.mono('semiBold') }}>
@@ -153,7 +155,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
             </View>
 
             <View style={{ justifyContent: 'center', paddingHorizontal: 6 }}>
-                <Octicons name="chevron-right" size={14} color={props.theme.colors.text.secondary} />
+                <Icon name="caret-right" size={14} color={props.theme.colors.text.secondary} />
             </View>
         </Pressable>
     );

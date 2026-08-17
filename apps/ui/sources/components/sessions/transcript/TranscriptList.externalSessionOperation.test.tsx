@@ -175,4 +175,81 @@ describe('TranscriptList external session operation presentation', () => {
             )),
         ).toEqual([]);
     });
+
+    it('dismisses only the exact terminal presentation for the mounted public transcript', async () => {
+        platformState.os = 'web';
+        const completedPresentation =
+            ExternalSessionOperationSharedPresentationV1Schema.parse({
+                v: 1,
+                operationId: 'operation-public-1',
+                revision: 4,
+                kind: 'materialize',
+                status: 'completed',
+                phase: 'publishing',
+            });
+        const { TranscriptList } = await import('./TranscriptList');
+        const renderTranscript = (
+            presentation: typeof completedPresentation,
+        ) => (
+            <TranscriptList
+                sessionId="session-public-1"
+                datasetKey="public:session-public-1:1"
+                metadata={{
+                    path: '/repo',
+                    host: 'public-host',
+                    externalSessionOperationPresentationV1: presentation,
+                }}
+                messages={[]}
+                interaction={{
+                    canSendMessages: false,
+                    canApprovePermissions: false,
+                    permissionDisabledReason: 'public',
+                }}
+            />
+        );
+        const screen = await renderScreen(
+            renderTranscript(completedPresentation),
+        );
+
+        expect(
+            screen.findByTestId('external-session-operation-action-dismiss'),
+        ).not.toBeNull();
+        await screen.pressByTestIdAsync(
+            'external-session-operation-action-dismiss',
+        );
+        expect(
+            screen.findByTestId('external-session-operation-shared-card'),
+        ).toBeNull();
+
+        await screen.update(renderTranscript({
+            ...completedPresentation,
+            revision: completedPresentation.revision + 1,
+        }));
+        expect(
+            screen.findByTestId('external-session-operation-action-dismiss'),
+        ).not.toBeNull();
+
+        await screen.update(renderTranscript({
+            ...completedPresentation,
+            operationId: 'operation-public-2',
+            revision: 1,
+        }));
+        expect(
+            screen.findByTestId('external-session-operation-action-dismiss'),
+        ).not.toBeNull();
+
+        await screen.update(renderTranscript({
+            ...completedPresentation,
+            operationId: 'operation-public-running',
+            revision: 1,
+            status: 'running',
+            phase: 'importing',
+        }));
+        expect(
+            screen.findByTestId('external-session-operation-shared-card'),
+        ).not.toBeNull();
+        expect(
+            screen.findByTestId('external-session-operation-action-dismiss'),
+        ).toBeNull();
+    });
 });

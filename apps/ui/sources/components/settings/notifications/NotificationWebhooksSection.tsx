@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
@@ -9,6 +8,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     hasConfiguredSecretStringValue,
     type NotificationChannelV1,
@@ -155,7 +155,7 @@ export function NotificationWebhooksSection({
                 testID="settings-notifications-add-webhook"
                 title={t('settingsNotifications.webhooks.addTitle')}
                 subtitle={t('settingsNotifications.webhooks.addSubtitle')}
-                icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="plus-circle" size={29} color={theme.colors.accent.blue} />}
                 onPress={() => { void handleAddWebhook(); }}
                 showChevron={false}
             />
@@ -163,7 +163,7 @@ export function NotificationWebhooksSection({
                 <Item
                     title={t('settingsNotifications.webhooks.emptyTitle')}
                     subtitle={t('settingsNotifications.webhooks.emptySubtitle')}
-                    icon={<Ionicons name="link-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             ) : (
@@ -175,7 +175,7 @@ export function NotificationWebhooksSection({
                             subtitle={channel.enabled
                                 ? t('settingsNotifications.webhooks.enabledSubtitle')
                                 : t('settingsNotifications.webhooks.disabledSubtitle')}
-                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="link" size={29} color={theme.colors.accent.blue} />}
                             rightElement={(
                                 <ItemRowActions
                                     title={channel.url}
@@ -184,13 +184,13 @@ export function NotificationWebhooksSection({
                                         {
                                             id: 'edit',
                                             title: t('common.edit'),
-                                            icon: 'pencil-outline',
+                                            icon: 'pencil',
                                             onPress: () => { void handleEditWebhook(channel); },
                                         },
                                         {
                                             id: 'delete',
                                             title: t('common.delete'),
-                                            icon: 'trash-outline',
+                                            icon: 'trash',
                                             destructive: true,
                                             onPress: () => { void handleDeleteWebhook(channel); },
                                         },
@@ -202,7 +202,7 @@ export function NotificationWebhooksSection({
                         <Item
                             title={t('settingsNotifications.webhooks.enabledTitle')}
                             subtitle={t('settingsNotifications.webhooks.channelEnabledSubtitle')}
-                            icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="bell" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={channel.enabled !== false}
@@ -220,7 +220,7 @@ export function NotificationWebhooksSection({
                             subtitle={hasConfiguredSecretStringValue(channel.signingSecret)
                                 ? t('settingsNotifications.webhooks.signingSecretConfiguredSubtitle')
                                 : t('settingsNotifications.webhooks.signingSecretEmptySubtitle')}
-                            icon={<Ionicons name="key-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="key" size={29} color={theme.colors.text.secondary} />}
                             onPress={() => { void handleSetWebhookSigningSecret(channel); }}
                             rightElement={hasConfiguredSecretStringValue(channel.signingSecret) ? (
                                 <ItemRowActions
@@ -230,7 +230,7 @@ export function NotificationWebhooksSection({
                                         {
                                             id: 'clear-signing-secret',
                                             title: t('settingsNotifications.webhooks.signingSecretClearAction'),
-                                            icon: 'close-circle-outline',
+                                            icon: 'x-circle',
                                             onPress: () => { handleClearWebhookSigningSecret(channel); },
                                         },
                                     ]}
@@ -241,7 +241,7 @@ export function NotificationWebhooksSection({
                         <Item
                             title={t('settingsNotifications.webhooks.readyTitle')}
                             subtitle={t('settingsNotifications.webhooks.readySubtitle')}
-                            icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
+                            icon={<Icon name="check-circle" size={29} color={theme.colors.state.success.foreground} />}
                             rightElement={(
                                 <Switch
                                     value={channel.topics.ready !== false}
@@ -263,7 +263,7 @@ export function NotificationWebhooksSection({
                         <Item
                             title={t('settingsNotifications.webhooks.readyPreviewTitle')}
                             subtitle={t('settingsNotifications.webhooks.readyPreviewSubtitle')}
-                            icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="chat-circle-dots" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={channel.readyIncludeMessageText !== false}
@@ -280,7 +280,7 @@ export function NotificationWebhooksSection({
                         <Item
                             title={t('settingsNotifications.webhooks.permissionRequestsTitle')}
                             subtitle={t('settingsNotifications.webhooks.permissionRequestsSubtitle')}
-                            icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="hand" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={channel.topics.permissionRequest !== false}
@@ -302,7 +302,7 @@ export function NotificationWebhooksSection({
                         <Item
                             title={t('settingsNotifications.webhooks.userActionsTitle')}
                             subtitle={t('settingsNotifications.webhooks.userActionsSubtitle')}
-                            icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="chat-dots" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={channel.topics.userActionRequest !== false}

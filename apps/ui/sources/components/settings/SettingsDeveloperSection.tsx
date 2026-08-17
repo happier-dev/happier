@@ -5,6 +5,7 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type SettingsDeveloperSectionProps = Readonly<Pick<SettingsBelowFoldSectionsProps,
     | 'devModeEnabled'
@@ -23,7 +24,7 @@ export const SettingsDeveloperSection = React.memo(function SettingsDeveloperSec
         <ItemGroup title={t('settings.developer')}>
             <Item
                 title={t('settings.developerTools')}
-                icon={<SafeIonicons name="construct-outline" size={29} color={theme.colors.accent.indigo} />}
+                icon={<Icon name="wrench" size={29} color={theme.colors.accent.indigo} />}
                 onPress={() => router.push('/(app)/dev')}
             />
         </ItemGroup>

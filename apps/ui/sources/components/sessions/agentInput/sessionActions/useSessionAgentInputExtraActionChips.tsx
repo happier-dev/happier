@@ -1,7 +1,10 @@
 import * as React from 'react';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type {
+    AgentInputAttachmentsRowItem,
+    AgentInputExtraActionChip,
+} from '@/components/sessions/agentInput/agentInputContracts';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { BrowserContextState } from '@/sync/domains/browser/context';
 import { hasBrowserContextComposerAttachments } from '@/sync/domains/session/input/browserContext';
@@ -35,13 +38,17 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         onRemoveAttachment?: (attachmentId: string) => void;
         disabledReason?: string | null;
     }> | null;
-}>): ReadonlyArray<AgentInputExtraActionChip> | undefined {
+}>): Readonly<{
+    actionChips: readonly AgentInputExtraActionChip[];
+    attachmentRowItems: readonly AgentInputAttachmentsRowItem[];
+}> {
     const reviewWorkspaceCacheKey = React.useMemo(() => (
         params.reviewScope ? tryBuildWorkspaceCacheKey(params.reviewScope) : null
     ), [params.reviewScope]);
 
     return React.useMemo(() => {
         const chips: AgentInputExtraActionChip[] = [];
+        const attachmentRowItems: AgentInputAttachmentsRowItem[] = [];
 
         if (params.attachmentsUploadsEnabled && !params.isReadOnly) {
             chips.push(createAttachmentActionChip({
@@ -62,11 +69,15 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
 
         const browserContext = params.browserContext;
         if (browserContext && hasBrowserContextComposerAttachments(browserContext.state)) {
-            chips.push(createBrowserContextActionChip(browserContext));
+            const browserContextPresentation = createBrowserContextActionChip(browserContext);
+            chips.push(browserContextPresentation.actionChip);
+            if (browserContextPresentation.attachmentRowItem) {
+                attachmentRowItems.push(browserContextPresentation.attachmentRowItem);
+            }
         }
 
         if (params.reviewCommentsEnabled) {
-            const reviewCommentsChip = createReviewCommentsActionChip({
+            const reviewCommentsPresentation = createReviewCommentsActionChip({
                 sessionId: params.sessionId,
                 reviewScope: params.reviewScope,
                 reviewCommentDrafts: params.reviewCommentDrafts,
@@ -99,8 +110,11 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
                     }
                 },
             });
-            if (reviewCommentsChip) {
-                chips.push(reviewCommentsChip);
+            if (reviewCommentsPresentation) {
+                chips.push(reviewCommentsPresentation.actionChip);
+                if (reviewCommentsPresentation.attachmentRowItem) {
+                    attachmentRowItems.push(reviewCommentsPresentation.attachmentRowItem);
+                }
             }
         }
 
@@ -111,7 +125,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
             instructionsText: params.instructionsText,
         }));
 
-        return chips.length > 0 ? chips : undefined;
+        return { actionChips: chips, attachmentRowItems };
     }, [
         params.attachmentsUploadsEnabled,
         params.defaultBackendId,

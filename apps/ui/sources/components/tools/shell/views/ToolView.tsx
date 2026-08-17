@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View, TouchableOpacity, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
 import { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
@@ -46,6 +45,11 @@ import { RowActionRevealSlot } from '@/components/sessions/transcript/messageAct
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { shouldShowTranscriptRowPinAction } from '@/components/sessions/transcript/transcriptRowActionVisibility';
 import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
+import { Icon } from '@/components/ui/icons/Icon';
+import {
+    TranscriptRowSeqProvider,
+    useHistoricalTranscriptAgentId,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
 
@@ -79,6 +83,14 @@ interface ToolViewProps {
 
 export const ToolView = React.memo<ToolViewProps>((props) => {
     const { tool, onPress, sessionId, messageId } = props;
+    // The canonical transcript row sequence. It already reaches this component
+    // for jump targeting; historical Agent attribution is its second reader, and
+    // it is published to the whole tool subtree so the body, the permission
+    // footer and the full view resolve the same Agent without six layers of
+    // prop drilling.
+    const transcriptSeq = props.jumpHighlightSeq ?? null;
+    const historicalAgentId = useHistoricalTranscriptAgentId(transcriptSeq);
+
     const headerActionHost = useRowActionHoverHost();
     const router = useRouter();
     const { theme } = useUnistyles();
@@ -127,8 +139,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             iconSize: 18,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         });
-    }, [props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [historicalAgentId, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
 
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
@@ -233,8 +246,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             iconSize,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         }).icon;
-    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, tool]);
+    }, [headerModel.icon, historicalAgentId, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, tool]);
 
     // Apply the per-tool detail level preference for the timeline card.
     // - title: hide the tool body
@@ -261,11 +275,11 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
     const statusKind = resolveToolStatusIndicatorKind(toolForRendering);
     if (statusKind === 'permission_blocked') {
-        statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.text.secondary} />;
+        statusIcon = <Icon name="minus-circle" size={20} color={theme.colors.text.secondary} />;
     } else if (statusKind === 'permission_pending') {
-        statusIcon = <Ionicons name="lock-closed-outline" size={20} color={theme.colors.state.neutral.foreground} />;
+        statusIcon = <Icon name="lock" size={20} color={theme.colors.state.neutral.foreground} />;
     } else if (isToolUseError) {
-        statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.text.secondary} />;
+        statusIcon = <Icon name="minus-circle" size={20} color={theme.colors.text.secondary} />;
         hideDefaultError = true;
         minimal = true;
     } else {
@@ -276,7 +290,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 }
                 break;
             case 'error':
-                statusIcon = <Ionicons name="alert-circle" size={20} color={theme.colors.state.danger.foreground} />;
+                statusIcon = <Icon name="warning-circle" size={20} color={theme.colors.state.danger.foreground} />;
                 break;
             case 'completed':
             case 'none':
@@ -343,10 +357,11 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         statusKind === 'error' ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
 
     return (
+        <TranscriptRowSeqProvider value={transcriptSeq}>
         <TranscriptJumpAttention
             sessionId={sessionId ?? ''}
             routeMessageId={messageId ?? null}
-            seq={props.jumpHighlightSeq ?? null}
+            seq={transcriptSeq}
             radius={TOOL_VIEW_HIGHLIGHT_RADIUS}
             viewProps={{ testID: 'tool-view-container', ...headerActionHost.hoverProps }}
             style={[styles.container, props.embedded ? styles.containerEmbedded : null]}
@@ -388,7 +403,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 <View style={styles.headerRight}>
                     {errorSummary ? (
                         <View style={styles.headerError}>
-                            <Ionicons name="alert-circle" size={18} color={theme.colors.state.danger.foreground} />
+                            <Icon name="warning-circle" size={16} color={theme.colors.state.danger.foreground} />
                             <Text style={styles.headerErrorText} numberOfLines={1}>
                                 {errorSummary}
                             </Text>
@@ -426,11 +441,11 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                             accessibilityLabel={secondaryTapAction === 'open' ? t('toolView.open') : t('toolView.expand')}
                         >
                             {secondaryTapAction === 'open' ? (
-                                <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
+                                <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
                             ) : (
-                                <Ionicons
-                                    name={isExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
-                                    size={18}
+                                <Icon
+                                    name={isExpanded ? 'caret-up' : 'caret-down'}
+                                    size={16}
                                     color={theme.colors.text.secondary}
                                 />
                             )}
@@ -490,6 +505,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 />
             ))}
         </TranscriptJumpAttention>
+        </TranscriptRowSeqProvider>
     );
 });
 

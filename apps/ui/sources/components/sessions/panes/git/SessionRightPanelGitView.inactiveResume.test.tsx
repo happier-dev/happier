@@ -9,7 +9,7 @@ import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPa
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedInactiveProps: any = null;
-const emitSessionResumeRequestSpy = vi.hoisted(() => vi.fn());
+const emitSessionResumeRequestSpy = vi.hoisted(() => vi.fn(async (_sessionId: string) => true));
 const loadCommitHistorySpy = vi.hoisted(() => vi.fn());
 let machineReachable = false;
 let machineRpcTargetAvailable = false;

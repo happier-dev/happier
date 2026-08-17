@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View, Pressable, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -10,6 +9,7 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 /**
@@ -240,10 +240,11 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                 }}
             >
                 {normalizeNodeForView(
-                    <Ionicons
-                        name={isFavorite ? 'star' : 'star-outline'}
+                    <Icon
+                        name="star"
                         size={24}
                         color={disabled ? theme.colors.text.secondary : color}
+                        weight={disabled ? 'fill' : 'regular'}
                     />,
                 )}
             </Pressable>
@@ -288,8 +289,8 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                         </View>
                         <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
                             {normalizeNodeForView(
-                                <Ionicons
-                                    name="checkmark-circle"
+                                <Icon
+                                    name="check-circle"
                                     size={24}
                                     color={selectedColor}
                                     style={{ opacity: isSelected ? 1 : 0 }}

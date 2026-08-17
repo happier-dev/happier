@@ -97,4 +97,35 @@ describe('useAgentCliInstallQueue', () => {
             'cli.ohMyPi',
         ]);
     });
+
+    it('re-resolves the exact target before each install and stops when it becomes unavailable', async () => {
+        let currentTarget: { machineId: string; serverId: string } | null = {
+            machineId: 'machine-target',
+            serverId: 'server-target',
+        };
+        capabilitiesState.invoke.mockImplementation(async () => {
+            currentTarget = null;
+            return { supported: true, response: { ok: true, result: null } };
+        });
+
+        const hook = await renderHook(() => useAgentCliInstallQueue({
+            machineId: 'legacy-machine',
+            serverId: 'legacy-server',
+            resolveExecutionTarget: () => currentTarget,
+            agentIds: ['codex', 'claude'],
+            agentDetectKeys: { codex: 'codex', claude: 'claude' },
+            installedByAgentId: { codex: false, claude: false },
+        }));
+
+        await act(async () => {
+            await hook.getCurrent().start();
+        });
+
+        expect(capabilitiesState.invoke).toHaveBeenCalledTimes(1);
+        expect(capabilitiesState.invoke).toHaveBeenCalledWith(
+            'machine-target',
+            expect.anything(),
+            expect.objectContaining({ serverId: 'server-target' }),
+        );
+    });
 });

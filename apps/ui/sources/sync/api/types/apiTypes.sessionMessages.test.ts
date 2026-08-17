@@ -26,6 +26,41 @@ describe('ApiMessageSchema', () => {
     expect(parsed.success).toBe(true)
   })
 
+  it('accepts only a canonical opaque message action reference', () => {
+    const reference = {
+      v: 1,
+      sessionId: 'session-1',
+      messageId: 'm1',
+      observedRevision: 'revision-4',
+    } as const
+
+    const parsed = ApiMessageSchema.safeParse({
+      id: 'm1',
+      seq: 1,
+      localId: null,
+      content: { t: 'encrypted', c: 'aGVsbG8=' },
+      createdAt: 1,
+      messageActionReference: reference,
+    })
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect(parsed.data.messageActionReference).toEqual(reference)
+
+    expect(ApiMessageSchema.safeParse({
+      id: 'm1',
+      seq: 1,
+      localId: null,
+      content: { t: 'encrypted', c: 'aGVsbG8=' },
+      createdAt: 1,
+      messageActionReference: {
+        v: 1,
+        sessionId: 'session-1',
+        messageId: 'm1',
+        localId: 'optimistic-local-id',
+      },
+    }).success).toBe(false)
+  })
+
   it('rejects unsupported message role metadata', () => {
     const parsed = ApiMessageSchema.safeParse({
       id: 'm1',

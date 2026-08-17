@@ -4,7 +4,13 @@ const toggleLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async (
 const stopLocalVoiceSession = vi.fn(async () => {});
 const abortLocalVoiceTurn = vi.fn<(sessionId: string) => Promise<void>>(async () => {});
 const appendLocalVoiceAgentContextUpdate = vi.fn();
-const sendLocalVoiceAgentTextTurn = vi.fn<(params: { controlSessionId: string; text: string }) => Promise<void>>(async () => {});
+const sendLocalVoiceAgentTextTurn = vi.fn<(params: {
+  controlSessionId: string;
+  text: string;
+  onAccepted?: () => Promise<void>;
+}) => Promise<void>>(async (params) => {
+  await params.onAccepted?.();
+});
 const setLocalVoiceMuted = vi.fn<(sessionId: string, muted: boolean) => Promise<void>>(async () => {});
 
 vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
@@ -13,7 +19,11 @@ vi.mock('@/voice/local/localVoiceRuntimeController', () => ({
     stopSession: () => stopLocalVoiceSession(),
     abortTurn: (sessionId: string) => abortLocalVoiceTurn(sessionId),
     appendAgentContextUpdate: (sessionId: string, update: string) => appendLocalVoiceAgentContextUpdate(sessionId, update),
-    sendAgentTextTurn: (params: { controlSessionId: string; text: string }) => sendLocalVoiceAgentTextTurn(params),
+    sendAgentTextTurn: (params: {
+      controlSessionId: string;
+      text: string;
+      onAccepted?: () => Promise<void>;
+    }) => sendLocalVoiceAgentTextTurn(params),
     setMuted: (sessionId: string, muted: boolean) => setLocalVoiceMuted(sessionId, muted),
   },
 }));
@@ -52,15 +62,39 @@ describe('createLocalVoiceAdapter', () => {
 
     const withText = createLocalVoiceAdapter('local_conversation', { contextUpdates: true, textTurns: true });
     expect(withText.sendTextTurn).toBeTypeOf('function');
-    await withText.sendTextTurn?.({ controlSessionId: 's1', conversationSessionId: 'voice-home', text: 'hi', localId: 'voice-local-1', deliveryCommand: 'interrupt_and_send' });
+    const onAccepted = vi.fn(async () => {});
+    await withText.sendTextTurn?.({ controlSessionId: 's1', conversationSessionId: 'voice-home', text: 'hi', localId: 'voice-local-1', deliveryCommand: 'interrupt_and_send', onAccepted });
+    expect(onAccepted).toHaveBeenCalledTimes(1);
     expect(sendLocalVoiceAgentTextTurn).toHaveBeenCalledWith({
       controlSessionId: 's1',
       text: 'hi',
       durableDispatch: { localId: 'voice-local-1', deliveryCommand: 'interrupt_and_send' },
+      onAccepted,
     });
 
     const withoutText = createLocalVoiceAdapter('local_direct', { contextUpdates: false, textTurns: false });
     expect('sendTextTurn' in withoutText).toBe(false);
+  });
+
+  it('settles accepted delivery before a later response failure', async () => {
+    const { createLocalVoiceAdapter } = await import('./createLocalVoiceAdapter');
+    const adapter = createLocalVoiceAdapter('local_conversation', { contextUpdates: true, textTurns: true });
+    const onAccepted = vi.fn(async () => {});
+    sendLocalVoiceAgentTextTurn.mockImplementationOnce(async (params) => {
+      await params.onAccepted?.();
+      throw new Error('assistant_stream_failed');
+    });
+
+    await expect(adapter.sendTextTurn?.({
+      controlSessionId: 's1',
+      conversationSessionId: 'voice-home',
+      text: 'keep this prompt',
+      localId: 'voice-local-accepted',
+      deliveryCommand: 'interrupt_and_send',
+      onAccepted,
+    })).rejects.toThrow('assistant_stream_failed');
+
+    expect(onAccepted).toHaveBeenCalledTimes(1);
   });
 
   it('shares the lifecycle delegation across capability flags', async () => {

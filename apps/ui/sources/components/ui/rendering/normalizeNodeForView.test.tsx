@@ -13,7 +13,7 @@ describe('normalizeNodeForView', () => {
             $$typeof: Symbol.for('react.transitional.element'),
             type: undefined,
             key: null,
-            props: { name: 'flash-outline', size: 16 },
+            props: { name: 'lightning', size: 16 },
             _owner: null,
         } as unknown as React.ReactElement;
 

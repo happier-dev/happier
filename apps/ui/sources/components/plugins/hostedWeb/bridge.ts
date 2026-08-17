@@ -1,7 +1,10 @@
+// The narrow UI subpath, not the protocol root: the root index reaches
+// marketplace/machine modules that pull Node builtins into a browser bundle,
+// and this leaf needs exactly one hosted-web schema.
 import {
     PluginHostedWebBridgeEnvelopeV1Schema,
     type PluginHostedWebBridgeEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui';
 
 export type PluginHostedWebBridgeValidationCode =
     | 'invalid_message'
@@ -41,7 +44,12 @@ export function validatePluginHostedWebBridgeMessage(params: Readonly<{
     if (envelope.nonce !== params.expectedNonce) {
         return Object.freeze({ ok: false, code: 'nonce_mismatch' });
     }
-    if (params.expectedSessionId && envelope.sessionId !== params.expectedSessionId) {
+    // The first guest-ready packet has no canonical wire identity yet. Its
+    // source/origin, nonce, destination, and bound surface lifetime are the
+    // bootstrap authority; the host bootstrap then stamps the Session before
+    // every later guest envelope is admitted.
+    const sessionlessInitialReady = envelope.kind === 'ready' && envelope.sessionId === undefined;
+    if (params.expectedSessionId && envelope.sessionId !== params.expectedSessionId && !sessionlessInitialReady) {
         return Object.freeze({ ok: false, code: 'session_mismatch' });
     }
     if (envelope.pluginId !== params.expectedPluginId) {

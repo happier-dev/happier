@@ -1,18 +1,65 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ExternalSessionOperationSharedPresentationV1Schema,
+  createPlainSessionOwnerMetadataEnvelopeV1,
   projectSessionSharedMetadataV1,
+  sealSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema,
-  sealSessionOwnerMetadataV1,
+  type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol';
 
 import { encodeBase64 } from '@/encryption/base64';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { fetchAndApplySessionById, type SessionByIdEncryption } from './sessionById';
+import {
+  fetchAndApplySessionById as fetchAndApplySessionByIdSource,
+  type SessionByIdEncryption,
+} from './sessionById';
+
+const E2EE_ACCOUNT_CURRENTNESS = {
+  mode: 'e2ee',
+  version: 1,
+  signingKeyFingerprint: 'signing-1',
+  contentKeyFingerprint: 'content-1',
+  updatedAt: 1,
+} satisfies AccountEncryptionCurrentnessResponse;
+const PLAIN_ACCOUNT_CURRENTNESS = {
+  mode: 'plain',
+  version: 1,
+  signingKeyFingerprint: null,
+  contentKeyFingerprint: null,
+  updatedAt: 1,
+} satisfies AccountEncryptionCurrentnessResponse;
+
+function fetchAndApplySessionById(
+  params: Omit<
+    Parameters<typeof fetchAndApplySessionByIdSource>[0],
+    'accountCurrentness'
+  > & Readonly<{
+    accountCurrentness?: AccountEncryptionCurrentnessResponse;
+  }>,
+) {
+  return fetchAndApplySessionByIdSource({
+    ...params,
+    accountCurrentness:
+      params.accountCurrentness ?? E2EE_ACCOUNT_CURRENTNESS,
+  });
+}
 
 const onAgentRequest = vi.fn();
-const OWNER_METADATA_CIPHERTEXT =
-  'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
+const OWNER_METADATA_ENVELOPE = sealSessionOwnerMetadataEnvelopeV1({
+  material: {
+    type: 'dataKey',
+    machineKey: new Uint8Array(32).fill(42),
+  },
+  ownerMetadata: SessionOwnerMetadataV1Schema.parse({
+    v: 1,
+    workspace: {
+      path: '/private',
+      host: 'owner-host',
+    },
+  }),
+  randomBytes: (length) => new Uint8Array(length).fill(1),
+});
 const OWNER_TEST_CREDENTIALS = {
   token: 't',
   encryption: {
@@ -40,14 +87,6 @@ function createDeferred<T>(): {
 
 describe('fetchAndApplySessionById', () => {
   it('hydrates owner shared metadata, owner metadata, and full agent state without merging envelopes', async () => {
-    const machineKey = new Uint8Array(32).fill(21);
-    const credentials = {
-      token: 't',
-      encryption: {
-        publicKey: encodeBase64(new Uint8Array(32).fill(22), 'base64'),
-        machineKey: encodeBase64(machineKey, 'base64'),
-      },
-    } as const;
     const privateLegacyMetadata = {
       path: '/private/worktree',
       machineId: 'machine-private',
@@ -85,11 +124,8 @@ describe('fetchAndApplySessionById', () => {
         },
       },
     });
-    const ownerMetadataCiphertext = sealSessionOwnerMetadataV1({
-      material: { type: 'dataKey', machineKey },
-      ownerMetadata,
-      randomBytes: (length) => new Uint8Array(length).fill(9),
-    });
+    const ownerMetadataEnvelope =
+      createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
     const fullAgentState = {
       controlledByUser: false,
       requests: {
@@ -115,7 +151,7 @@ describe('fetchAndApplySessionById', () => {
           metadataLayoutVersion: 1,
           metadataVersion: 4,
           metadata: JSON.stringify(sharedMetadata),
-          ownerMetadata: ownerMetadataCiphertext,
+          ownerMetadata: ownerMetadataEnvelope,
           agentStateVersion: 5,
           agentState: JSON.stringify(fullAgentState),
           share: null,
@@ -125,7 +161,8 @@ describe('fetchAndApplySessionById', () => {
 
     const result = await fetchAndApplySessionById({
       sessionId: 's_owner',
-      credentials,
+      accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+      credentials: { token: 't' },
       encryption: {
         decryptEncryptionKey: async () => null,
         initializeSessions: async () => {},
@@ -155,7 +192,7 @@ describe('fetchAndApplySessionById', () => {
       metadataLayoutVersion: 1,
       metadataVersion: 4,
       sharedMetadataCiphertext: JSON.stringify(sharedMetadata),
-      ownerMetadataCiphertext,
+      ownerMetadataEnvelope,
       agentStateVersion: 5,
       agentStateCiphertext: JSON.stringify(fullAgentState),
       value: {
@@ -168,10 +205,12 @@ describe('fetchAndApplySessionById', () => {
         agentState: fullAgentState,
       },
     });
-    expect(JSON.stringify(hydrated)).not.toContain(ownerMetadataCiphertext);
+    expect(JSON.stringify(hydrated.metadata)).not.toContain('/private/worktree');
   });
 
-  it('hydrates a layout-v1 shared recipient without owner metadata or full Agent state', async () => {
+  it.each(['view', 'edit', 'admin'] as const)(
+    'hydrates a layout-v1 %s recipient without inferring owner metadata or full Agent state',
+    async (accessLevel) => {
     const sharedMetadata = projectSessionSharedMetadataV1({
       metadata: {
         summary: { text: 'Shared title', updatedAt: 10 },
@@ -179,6 +218,9 @@ describe('fetchAndApplySessionById', () => {
     });
     const decryptAgentState = vi.fn(async () => {
       throw new Error('shared recipients must not request full Agent state');
+    });
+    const fetchAccountCurrentness = vi.fn(async () => {
+      throw new Error('shared recipients must not request Account currentness');
     });
     const applySessions = vi.fn();
     const request = vi.fn(async (path: string) => {
@@ -201,7 +243,7 @@ describe('fetchAndApplySessionById', () => {
           agentStateVersion: 7,
           agentState: null,
           share: {
-            accessLevel: 'view',
+            accessLevel,
             canApprovePermissions: false,
           },
         },
@@ -221,6 +263,7 @@ describe('fetchAndApplySessionById', () => {
         }),
       },
       sessionDataKeys: new Map(),
+      fetchAccountCurrentness,
       request,
       applySessions,
       log: { log: () => {} },
@@ -228,6 +271,7 @@ describe('fetchAndApplySessionById', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(fetchAccountCurrentness).not.toHaveBeenCalled();
     expect(decryptAgentState).not.toHaveBeenCalled();
     expect(applySessions).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -250,6 +294,56 @@ describe('fetchAndApplySessionById', () => {
         agentState: null,
       },
     });
+    },
+  );
+
+  it('fails closed when an encrypted owner envelope is present without real account material', async () => {
+    const sharedMetadata = projectSessionSharedMetadataV1({ metadata: {} });
+    const applySessions = vi.fn();
+    const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_encrypted_owner_without_material',
+      credentials: { token: 'token-only' },
+      encryption: {
+        decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
+        initializeSessions: async () => {},
+        getSessionEncryption: () => ({
+          decryptMetadata: async () => null,
+          decryptMetadataPayload: async () => sharedMetadata,
+          decryptAgentState,
+        }),
+      },
+      sessionDataKeys: new Map(),
+      request: vi.fn(async () => new Response(JSON.stringify({
+        session: {
+          id: 's_encrypted_owner_without_material',
+          createdAt: 1,
+          updatedAt: 2,
+          seq: 3,
+          active: true,
+          activeAt: 2,
+          encryptionMode: 'e2ee',
+          dataEncryptionKey: 'dek',
+          metadataLayoutVersion: 1,
+          metadataVersion: 4,
+          metadata: 'encrypted-shared-metadata',
+          ownerMetadata: OWNER_METADATA_ENVELOPE,
+          agentStateVersion: 7,
+          agentState: 'encrypted-agent-state',
+          share: null,
+        },
+      }), { status: 200 })),
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      session: null,
+      errorCode: 'owner_metadata_unavailable',
+    });
+    expect(decryptAgentState).not.toHaveBeenCalled();
+    expect(applySessions).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -369,7 +463,7 @@ describe('fetchAndApplySessionById', () => {
     const getSessionEncryption = vi.fn(() => null);
     const result = await fetchAndApplySessionById({
       sessionId: 's_legacy_payload',
-      credentials: { token: 't' } as any,
+      credentials: { token: 't' },
       encryption: {
         decryptEncryptionKey: async () => null,
         initializeSessions: async () => {},
@@ -433,7 +527,7 @@ describe('fetchAndApplySessionById', () => {
 
     const result = await fetchAndApplySessionById({
       sessionId: 's_legacy',
-      credentials: { token: 't' } as any,
+      credentials: { token: 't' },
       encryption: {
         decryptEncryptionKey: async () => null,
         initializeSessions: async () => {},
@@ -938,7 +1032,7 @@ describe('fetchAndApplySessionById', () => {
         metadataLayoutVersion: 1,
         metadataVersion: 1,
         metadata: 'enc-meta',
-        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+        ownerMetadata: OWNER_METADATA_ENVELOPE,
         agentStateVersion: 1,
         agentState: 'enc-state',
         share: null,
@@ -966,7 +1060,10 @@ describe('fetchAndApplySessionById', () => {
     });
 
     expect(decryptEncryptionKey).toHaveBeenCalledWith('dek');
-    expect(initializeSessions).toHaveBeenCalledWith(new Map([['s1', new Uint8Array([1, 2, 3])]]));
+    expect(initializeSessions).toHaveBeenCalledWith(
+      new Map([['s1', new Uint8Array([1, 2, 3])]]),
+      { shouldContinue: expect.any(Function) },
+    );
     expect(sessionDataKeys.get('s1')).toEqual(new Uint8Array([1, 2, 3]));
     expect(decryptMetadataPayload).toHaveBeenCalledWith(1, 'enc-meta');
     expect(decryptMetadata).not.toHaveBeenCalled();
@@ -1068,7 +1165,7 @@ describe('fetchAndApplySessionById', () => {
         metadataLayoutVersion: 1,
         metadataVersion: 1,
         metadata: 'enc-meta',
-        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+        ownerMetadata: OWNER_METADATA_ENVELOPE,
         agentStateVersion: 1,
         agentState: 'enc-state',
         share: null,
@@ -1098,7 +1195,10 @@ describe('fetchAndApplySessionById', () => {
     });
 
     expect(decryptEncryptionKey).not.toHaveBeenCalled();
-    expect(initializeSessions).toHaveBeenCalledWith(new Map([['s_cached', cachedKey]]));
+    expect(initializeSessions).toHaveBeenCalledWith(
+      new Map([['s_cached', cachedKey]]),
+      { shouldContinue: expect.any(Function) },
+    );
     expect(sessionDataKeys.get('s_cached')).toBe(cachedKey);
     expect(sessionDataKeyEnvelopes.get('s_cached')).toBe('cached-envelope');
     expect(applySessions).toHaveBeenCalledWith([
@@ -1134,7 +1234,7 @@ describe('fetchAndApplySessionById', () => {
         metadataLayoutVersion: 1,
         metadataVersion: 1,
         metadata: 'enc-meta',
-        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+        ownerMetadata: OWNER_METADATA_ENVELOPE,
         agentStateVersion: 1,
         agentState: 'enc-state',
         share: null,
@@ -1221,7 +1321,7 @@ describe('fetchAndApplySessionById', () => {
         metadataLayoutVersion: 1,
         metadataVersion: 1,
         metadata: 'enc-stale-metadata',
-        ownerMetadata: OWNER_METADATA_CIPHERTEXT,
+        ownerMetadata: OWNER_METADATA_ENVELOPE,
         agentStateVersion: 1,
         agentState: 'enc-stale-agent-state',
         share: null,
@@ -1409,6 +1509,7 @@ describe('fetchAndApplySessionById', () => {
       encryption,
       sessionDataKeys: new Map<string, Uint8Array>(),
       log: { log: () => {} },
+      requestAuthority: {},
     };
 
     const firstApplySessions = vi.fn();
@@ -1434,6 +1535,77 @@ describe('fetchAndApplySessionById', () => {
     expect(detailRequests).toBe(1);
     expect(firstApplySessions).toHaveBeenCalledWith([expect.objectContaining({ id: 's_scoped_coalesced' })]);
     expect(secondApplySessions).toHaveBeenCalledWith([expect.objectContaining({ id: 's_scoped_coalesced' })]);
+  });
+
+  it('does not adopt an old in-flight detail response under a new request authority', async () => {
+    const oldDetailGate = createDeferred<void>();
+    let oldDetailRequests = 0;
+    let newDetailRequests = 0;
+    const buildResponse = (path: string) => new Response(JSON.stringify({
+      session: {
+        id: 's_authority_rotation',
+        createdAt: 1,
+        updatedAt: 2,
+        seq: 3,
+        active: true,
+        activeAt: 2,
+        encryptionMode: 'plain',
+        dataEncryptionKey: null,
+        metadataVersion: 1,
+        metadata: JSON.stringify({ path }),
+        agentStateVersion: 1,
+        agentState: null,
+        share: null,
+      },
+    }), { status: 200 });
+    const oldRequest = vi.fn(async () => {
+      oldDetailRequests += 1;
+      await oldDetailGate.promise;
+      return buildResponse('/old-authority');
+    });
+    const newRequest = vi.fn(async () => {
+      newDetailRequests += 1;
+      return buildResponse('/new-authority');
+    });
+    const encryption = {
+      decryptEncryptionKey: async () => null,
+      initializeSessions: async () => {},
+      getSessionEncryption: () => null,
+    } satisfies SessionByIdEncryption;
+    const baseParams = {
+      sessionId: 's_authority_rotation',
+      serverId: 'server-a',
+      credentials: { token: 't' },
+      encryption,
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      log: { log: () => {} },
+      includeTurnsProjection: false,
+    };
+    const oldApplySessions = vi.fn();
+    const newApplySessions = vi.fn();
+    const oldRead = fetchAndApplySessionById({
+      ...baseParams,
+      request: oldRequest,
+      requestAuthority: {},
+      applySessions: oldApplySessions,
+    });
+    await expect.poll(() => oldDetailRequests).toBe(1);
+    const newRead = fetchAndApplySessionById({
+      ...baseParams,
+      request: newRequest,
+      requestAuthority: {},
+      applySessions: newApplySessions,
+    });
+    await Promise.resolve();
+    oldDetailGate.resolve();
+    await Promise.all([oldRead, newRead]);
+
+    expect(newDetailRequests).toBe(1);
+    expect(newApplySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        metadata: expect.objectContaining({ path: '/new-authority' }),
+      }),
+    ]);
   });
 
   it('can hydrate the session shell without fetching the turns projection', async () => {

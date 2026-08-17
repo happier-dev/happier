@@ -10,7 +10,14 @@ export function BrowserFrameLoading(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     return (
-        <View testID={`${props.testID}-loading`} style={browserFrameStyles.centered}>
+        <View
+            testID={`${props.testID}-loading`}
+            accessibilityRole="text"
+            accessibilityLiveRegion="polite"
+            role="status"
+            aria-live="polite"
+            style={browserFrameStyles.centered}
+        >
             <Text style={browserFrameStyles.statusText}>{t('common.loading')}</Text>
         </View>
     );

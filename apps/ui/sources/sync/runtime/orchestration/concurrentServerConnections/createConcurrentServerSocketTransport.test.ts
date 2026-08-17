@@ -79,6 +79,10 @@ describe('createConcurrentServerSocketTransport', () => {
                     token: 'token-a',
                     clientType: 'user-scoped',
                     clientPurpose: 'concurrent-server-cache',
+                    accountStoredContentCompatibility: {
+                        v: 1,
+                        protocolVersion: 1,
+                    },
                 }),
                 forceNew: true,
                 multiplex: false,

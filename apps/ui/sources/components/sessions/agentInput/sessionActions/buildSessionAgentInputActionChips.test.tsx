@@ -86,6 +86,7 @@ describe('buildSessionAgentInputActionChips', () => {
                 tint: '#000',
                 dismiss: () => {},
                 blurInput: () => {},
+                openCollapsedPopover: () => {},
             }));
             expect(collapsedAction.id).toBe(expectation.key);
 

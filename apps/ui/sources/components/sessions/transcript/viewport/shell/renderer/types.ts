@@ -119,13 +119,20 @@ export type TranscriptListShellRef<TItem = unknown> = Readonly<{
      */
     beginExplicitJumpTakeover?: (operationId: TranscriptExplicitJumpOperationId) => () => void;
     /**
-     * Renderer-owned visible-anchor hold for app-initiated in-viewport height commits
-     * (tool/thinking expansion toggles). Under Legend, `localHeightChangeRestoreOwner` is
-     * 'renderer', but Legend MVCP demonstrably re-anchors its mounted window across the
-     * expansion item replacement (live S-C, web + native 2026-07-11). Arming the ONE keyed
-     * held-target transaction before the commit keeps the visible row still: web captures the
-     * DOM anchor; native installs a keyed index hold on the first visible row. No-op while
-     * tail-following (the held-'end'/maintain machinery owns the pinned case).
+     * NATIVE renderer-owned visible-anchor hold for app-initiated in-viewport height commits
+     * (tool/thinking expansion toggles): installs a keyed index hold on the first visible row
+     * before the commit. Native Legend predicts `state.scroll` open-loop with no ground truth,
+     * and the S-C continuation committed +13k px there with no hold armed (live, 2026-07-11).
+     *
+     * NO-OP ON WEB. Legend 3.3.3's `maintainVisibleContentPosition` holds the reader through
+     * an expansion, an above-viewport growth, and an in-viewport item replacement alike,
+     * measured against the installed package in `legendListRenderer.real.integration.test.tsx`
+     * ('holds a detached reader through expansion, above-viewport growth, and item
+     * replacement'). The web arm existed for a re-anchoring captured on 2.0.0-beta.3, before
+     * the 3.3.3 upgrade brought the MVCP anchor lock.
+     *
+     * Also a no-op while tail-following (the held-'end'/maintain machinery owns the pinned
+     * case).
      */
     armVisibleAnchorHold?: () => void;
     /**
@@ -151,7 +158,7 @@ export type TranscriptRendererEntryAnchorHold = Readonly<{
     itemId: string;
     messageId: string | null;
     itemOffsetPx: number;
-    reason?: TranscriptViewportTelemetryScrollReason | 'renderer-capture';
+    reason?: TranscriptViewportTelemetryScrollReason;
 }>;
 
 export type TranscriptRendererScrollToIndexParams = Readonly<{

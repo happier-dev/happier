@@ -1,23 +1,20 @@
 use super::platform::{
-    child_embedding_verified_for,
-    native_devtools_supported, resolve_desktop_browser_strategy,
+    child_embedding_verified_for, native_devtools_supported, resolve_desktop_browser_strategy,
     resolve_desktop_browser_strategy_for_runtime, DesktopBrowserRuntimeSupport,
 };
 use super::types::{
     DesktopBrowserAvailability, DesktopBrowserBoundsPayload, DesktopBrowserBoundsRect,
-    DesktopBrowserCaptureClipRect,
-    DesktopBrowserCaptureErrorCode, DesktopBrowserCaptureRecordingFrameRequest,
-    DesktopBrowserCaptureSnapshotRequest,
+    DesktopBrowserCaptureClipRect, DesktopBrowserCaptureErrorCode,
+    DesktopBrowserCaptureRecordingFrameRequest, DesktopBrowserCaptureSnapshotRequest,
     DesktopBrowserCapturedSnapshot, DesktopBrowserDisabledReason,
     DesktopBrowserDispatchNavigationRequest, DesktopBrowserEvalScriptRequest,
     DesktopBrowserNavigationDispatchKind, DesktopBrowserOpenViewRequest, DesktopBrowserPlatform,
-    DesktopBrowserPrimitive,
-    DesktopBrowserProducer, DesktopBrowserRenderEngine, DesktopBrowserSupport,
-    DesktopBrowserViewCommandRequest, DesktopBrowserViewLoadingState,
+    DesktopBrowserPrimitive, DesktopBrowserProducer, DesktopBrowserRenderEngine,
+    DesktopBrowserSupport, DesktopBrowserViewCommandRequest, DesktopBrowserViewLoadingState,
 };
 use super::{
-    write_recording_frame_file, DesktopBrowserPageLoadEvent, DesktopBrowserState, DesktopBrowserWebViewHandle,
-    DesktopBrowserWebViewHost,
+    write_recording_frame_file, DesktopBrowserPageLoadEvent, DesktopBrowserState,
+    DesktopBrowserWebViewHandle, DesktopBrowserWebViewHost,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -645,8 +642,12 @@ fn windows_and_x11_availability_is_gated_behind_verified_child_embedding() {
 
 #[test]
 fn child_embedding_verification_defaults_pin_windows_and_x11_to_false() {
-    assert!(!child_embedding_verified_for(DesktopBrowserPlatform::Windows));
-    assert!(!child_embedding_verified_for(DesktopBrowserPlatform::LinuxX11));
+    assert!(!child_embedding_verified_for(
+        DesktopBrowserPlatform::Windows
+    ));
+    assert!(!child_embedding_verified_for(
+        DesktopBrowserPlatform::LinuxX11
+    ));
 }
 
 #[test]
@@ -1133,11 +1134,10 @@ fn native_state_dispatches_reload_navigation_with_derived_script_for_existing_vi
             .ok
     );
 
-    let reload = state
-        .dispatch_view_navigation(dispatch_navigation_request(
-            "view_1",
-            DesktopBrowserNavigationDispatchKind::Reload,
-        ));
+    let reload = state.dispatch_view_navigation(dispatch_navigation_request(
+        "view_1",
+        DesktopBrowserNavigationDispatchKind::Reload,
+    ));
     assert!(reload.ok);
 
     let stop = state.dispatch_view_navigation(dispatch_navigation_request(
@@ -1483,8 +1483,12 @@ fn native_state_writes_recording_frame_reference_only() {
             .ok
     );
 
-    let result =
-        state.capture_recording_frame(recording_frame_request("view_1", 0, output_path, 16_000_000));
+    let result = state.capture_recording_frame(recording_frame_request(
+        "view_1",
+        0,
+        output_path,
+        16_000_000,
+    ));
 
     assert!(result.ok);
     let frame = result.frame.expect("frame should be present");
@@ -1493,10 +1497,14 @@ fn native_state_writes_recording_frame_reference_only() {
         .expect("recording frame output path should exist");
     assert_eq!(frame.mime_type, "image/png");
     assert_eq!(frame.size_bytes, 4);
-    assert_eq!(frame.path, expected_output_path.to_string_lossy().to_string());
+    assert_eq!(
+        frame.path,
+        expected_output_path.to_string_lossy().to_string()
+    );
     assert!(result.error_code.is_none());
     // Reference-only: the captured bytes live on disk, never inline in the result.
-    let written = fs::read(&expected_output_path).expect("recording frame should be written to disk");
+    let written =
+        fs::read(&expected_output_path).expect("recording frame should be written to disk");
     assert_eq!(written, vec![0x01, 0x02, 0x03, 0x04]);
     // No leftover partial file.
     assert!(!expected_output_path.with_extension("png.partial").exists());
@@ -1527,8 +1535,7 @@ fn recording_frame_writer_rejects_symlink_escape_out_of_recording_root() {
     fs::create_dir_all(&outside_dir).expect("outside dir");
     unix_fs::symlink(&outside_dir, recording_root.join("linked-out")).expect("symlink");
 
-    let result =
-        write_recording_frame_file(&recording_root, "linked-out/frame.png", &[1, 2, 3, 4]);
+    let result = write_recording_frame_file(&recording_root, "linked-out/frame.png", &[1, 2, 3, 4]);
 
     assert!(result.is_err());
     assert!(!outside_dir.join("frame.png").exists());
@@ -1557,16 +1564,16 @@ fn recording_frame_writer_writes_valid_relative_artifacts_inside_recording_root(
     let recording_root = temp_dir.path().join("recording-root");
     fs::create_dir_all(&recording_root).expect("recording root");
 
-    let output_path = write_recording_frame_file(
-        &recording_root,
-        "nested/frame.png",
-        &[1, 2, 3, 4],
-    )
-    .expect("valid in-root write");
+    let output_path =
+        write_recording_frame_file(&recording_root, "nested/frame.png", &[1, 2, 3, 4])
+            .expect("valid in-root write");
 
     let canonical_root = recording_root.canonicalize().expect("canonical root");
     assert!(output_path.starts_with(&canonical_root));
-    assert_eq!(fs::read(&output_path).expect("written frame"), vec![1, 2, 3, 4]);
+    assert_eq!(
+        fs::read(&output_path).expect("written frame"),
+        vec![1, 2, 3, 4]
+    );
     assert!(!output_path.with_extension("png.partial").exists());
 }
 
@@ -1638,8 +1645,12 @@ fn native_state_rejects_recording_frame_when_capture_unsupported() {
         Box::new(host.clone()),
     );
 
-    let result =
-        state.capture_recording_frame(recording_frame_request("view_1", 0, output_path, 16_000_000));
+    let result = state.capture_recording_frame(recording_frame_request(
+        "view_1",
+        0,
+        output_path,
+        16_000_000,
+    ));
 
     assert!(!result.ok);
     assert_eq!(

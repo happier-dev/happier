@@ -83,6 +83,7 @@ export function resolveDetailsSurfaceRenderer(input: Readonly<{
 
 export function createDetailsSurfacePaneCallbacks(input: Readonly<{
     openTab?: DetailsSurfaceRenderInputV1['callbacks']['openTab'];
+    openOverlay?: DetailsSurfaceRenderInputV1['callbacks']['openOverlay'];
     closeTab?: DetailsSurfaceRenderInputV1['callbacks']['closeTab'];
     pinTab?: DetailsSurfaceRenderInputV1['callbacks']['pinTab'];
     unpinTab?: DetailsSurfaceRenderInputV1['callbacks']['unpinTab'];
@@ -90,6 +91,7 @@ export function createDetailsSurfacePaneCallbacks(input: Readonly<{
 }>): DetailsSurfaceRenderInputV1['callbacks'] {
     return {
         openTab: input.openTab,
+        openOverlay: input.openOverlay,
         closeTab: input.closeTab,
         pinTab: input.pinTab,
         unpinTab: input.unpinTab,

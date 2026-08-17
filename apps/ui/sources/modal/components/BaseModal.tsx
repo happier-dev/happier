@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect } from 'react';
-import { View, TouchableWithoutFeedback, Animated, Platform, ScrollView, type ViewStyle } from 'react-native';
+import { View, TouchableWithoutFeedback, Animated, BackHandler, Platform, ScrollView, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { KeyboardAwareModalFrame } from '@/components/ui/keyboardAvoidance';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -12,6 +12,7 @@ import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import {
     OverlayMotionFrame,
     resolveOverlayMotionPreset,
@@ -19,18 +20,12 @@ import {
     useOverlayPresence,
 } from '@/components/ui/overlays/motion/overlayMotion';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useWebOverlayFocusContainment } from '@/keyboard/webOverlayFocusContainment';
+
+const BASE_MODAL_FOCUS_RETURN = { kind: 'activation-time' } as const;
 
 const isWeb = String(Platform.OS) === 'web';
 const WEB_MODAL_CARD_BOUNDARY_SELECTOR = '[data-happy-modal-card-boundary]';
-const WEB_MODAL_FOCUSABLE_SELECTOR = [
-    'a[href]',
-    'button:not([disabled])',
-    'input:not([disabled]):not([type="hidden"])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[contenteditable="true"]',
-    '[tabindex]:not([tabindex="-1"])',
-].join(',');
 
 // On web, stop events from propagating to expo-router's modal overlay
 // which intercepts clicks when it applies pointer-events: none to body
@@ -137,14 +132,6 @@ function isInsideWebModalCardBoundary(target: EventTarget | null): boolean {
     return false;
 }
 
-function listWebModalFocusableElements(shell: HTMLElement): HTMLElement[] {
-    return Array.from(shell.querySelectorAll<HTMLElement>(WEB_MODAL_FOCUSABLE_SELECTOR)).filter((element) => {
-        if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
-        const style = window.getComputedStyle(element);
-        return style.display !== 'none' && style.visibility !== 'hidden';
-    });
-}
-
 interface BaseModalProps {
     visible: boolean;
     onClose?: () => void;
@@ -177,7 +164,6 @@ export function BaseModal({
     const modalPortalHostRef = React.useRef<HTMLDivElement | null>(null);
     const radixDismissableLayer = React.useMemo(() => (isWeb ? requireRadixDismissableLayer() : null), []);
     const webContentShellRef = React.useRef<HTMLDivElement | null>(null);
-    const webPreviousActiveElementRef = React.useRef<HTMLElement | null>(null);
     const modalMotionPreset = React.useMemo(
         () => resolveOverlayMotionPreset({ kind: 'modal' }),
         [],
@@ -195,6 +181,14 @@ export function BaseModal({
         outputRange: [0, motionTokens.overlay.modal.backdropMaxOpacity],
     });
     const modalAccessibilityLabel = accessibilityLabel ?? t('common.dialog');
+    const modalPointerEvents = resolveOverlayPointerEvents(visible ? 'auto' : 'none');
+    const interactivePointerEvents = resolveOverlayPointerEvents('auto');
+
+    useWebOverlayFocusContainment({
+        active: isWeb && visible && modalPresence.present,
+        containerRef: webContentShellRef,
+        focusReturn: BASE_MODAL_FOCUS_RETURN,
+    });
 
     // On web, avoid setting React state inside a callback ref. In some browser/portal scenarios,
     // ref attach/detach churn can lead to nested update loops ("Maximum update depth exceeded").
@@ -213,35 +207,6 @@ export function BaseModal({
         return installWebModalBodyPointerEventsBypass();
     }, [visible]);
 
-    useLayoutEffect(() => {
-        if (!isWeb) return;
-        if (!visible) return;
-        if (typeof document === 'undefined') return;
-
-        const shell = webContentShellRef.current;
-        if (!shell) return;
-
-        const activeElement = (document.activeElement as HTMLElement | null) ?? null;
-        webPreviousActiveElementRef.current = activeElement;
-        try {
-            shell.focus();
-        } catch {
-            // ignore
-        }
-
-        return () => {
-            const previous = webPreviousActiveElementRef.current;
-            webPreviousActiveElementRef.current = null;
-            if (previous && typeof previous.focus === 'function') {
-                try {
-                    previous.focus();
-                } catch {
-                    // ignore
-                }
-            }
-        };
-    }, [modalPresence.present, visible]);
-
     useEffect(() => {
         if (!isWeb) return;
         if (!visible) return;
@@ -256,36 +221,25 @@ export function BaseModal({
                 return;
             }
 
-            if (event.key !== 'Tab') return;
-            const shell = webContentShellRef.current;
-            if (!shell) return;
-
-            const focusableElements = listWebModalFocusableElements(shell);
-            if (focusableElements.length === 0) {
-                event.preventDefault();
-                event.stopPropagation();
-                shell.focus();
-                return;
-            }
-
-            const firstFocusableElement = focusableElements[0]!;
-            const lastFocusableElement = focusableElements[focusableElements.length - 1]!;
-            const activeElement = document.activeElement;
-            const focusIsOutsideDialog = activeElement == null || !shell.contains(activeElement);
-            const shouldWrapBackward = event.shiftKey
-                && (focusIsOutsideDialog || activeElement === shell || activeElement === firstFocusableElement);
-            const shouldWrapForward = !event.shiftKey
-                && (focusIsOutsideDialog || activeElement === shell || activeElement === lastFocusableElement);
-            if (!shouldWrapBackward && !shouldWrapForward) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-            (shouldWrapBackward ? lastFocusableElement : firstFocusableElement).focus();
         };
 
         document.addEventListener('keydown', handleKeyDown, true);
         return () => {
             document.removeEventListener('keydown', handleKeyDown, true);
+        };
+    }, [onClose, visible]);
+
+    useEffect(() => {
+        if (isWeb) return;
+        if (!visible || !onClose) return;
+
+        const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+            onClose();
+            return true;
+        });
+
+        return () => {
+            subscription.remove();
         };
     }, [onClose, visible]);
 
@@ -396,8 +350,11 @@ export function BaseModal({
             <>
                 {showBackdrop ? (
                     <Animated.View
-                        pointerEvents={visible ? 'auto' : 'none'}
-                        style={overlayStyle as unknown as ViewStyle}
+                        pointerEvents={modalPointerEvents.nativePointerEvents}
+                        style={[
+                            overlayStyle as unknown as ViewStyle,
+                            modalPointerEvents.webStyle,
+                        ]}
                         {...(webEventHandlers as any)}
                     />
                 ) : null}
@@ -434,8 +391,12 @@ export function BaseModal({
                         <ModalPortalTargetProvider target={modalPortalTarget}>
                             <ModalBoundaryProvider>
                                 <KeyboardAwareModalFrame
-                                    pointerEvents="auto"
-                                    style={[styles.container, autoPlacementContainerStyle]}
+                                    pointerEvents={interactivePointerEvents.nativePointerEvents}
+                                    style={[
+                                        styles.container,
+                                        autoPlacementContainerStyle,
+                                        interactivePointerEvents.webStyle,
+                                    ]}
                                 >
                                     <OverlayMotionFrame
                                         visible={visible}
@@ -447,9 +408,12 @@ export function BaseModal({
                                         ]}
                                     >
                                         <View
-                                            pointerEvents="auto"
+                                            pointerEvents={interactivePointerEvents.nativePointerEvents}
                                             {...({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)}
-                                            style={webModalCardBoundaryStyle as unknown as any}
+                                            style={[
+                                                webModalCardBoundaryStyle as unknown as ViewStyle,
+                                                interactivePointerEvents.webStyle,
+                                            ]}
                                         >
                                             {children}
                                         </View>
@@ -484,8 +448,12 @@ export function BaseModal({
 
     return (
         <View
-            style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]}
-            pointerEvents={visible ? 'auto' : 'none'}
+            style={[
+                styles.portalRoot,
+                { zIndex: baseZ, elevation: baseZ },
+                modalPointerEvents.webStyle,
+            ]}
+            pointerEvents={modalPointerEvents.nativePointerEvents}
             role="dialog"
             accessibilityLabel={modalAccessibilityLabel}
             accessibilityViewIsModal={visible}
@@ -535,7 +503,10 @@ export function BaseModal({
                                 keyboardShouldPersistTaps="handled"
                                 centerContent={true}
                             >
-                                <View pointerEvents="auto" style={styles.scrollContentInner}>
+                                <View
+                                    pointerEvents={interactivePointerEvents.nativePointerEvents}
+                                    style={[styles.scrollContentInner, interactivePointerEvents.webStyle]}
+                                >
                                     {children}
                                 </View>
                             </ScrollView>

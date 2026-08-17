@@ -65,10 +65,6 @@ vi.mock('react-native-unistyles', async () => {
     });
 });
 
-vi.mock('./SidebarIcons', () => ({
-    SidebarCollapseIcon: () => React.createElement('SidebarCollapseIcon'),
-}));
-
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props),
 }));
@@ -186,5 +182,16 @@ describe('CollapsedSidebarView desktop chrome', () => {
         expect(controlsGroup.props.style).toEqual(
             expect.objectContaining({ flexDirection: 'column' }),
         );
+    });
+
+    // The rail is the sidebar's CLOSED state, so its button opens rather than closes. It used to
+    // render the collapse glyph anyway — the same drawing the expanded chrome shows — so the control
+    // looked identical whichever state you were in.
+    it('shows the expand glyph on the rail, not the collapse one', async () => {
+        const { CollapsedSidebarView } = await import('./CollapsedSidebarView');
+        const screen = await renderScreen(<CollapsedSidebarView />);
+
+        const expandButton = screen.findByTestId('sidebar-expand-button');
+        expect(expandButton?.findByType('Icon' as never).props.name).toBe('sidebar-left-open');
     });
 });

@@ -121,7 +121,7 @@ describe('RealtimeProviderFields', () => {
       owner: connectedOwner,
       config: connectedOwner.defaultConfig,
       onConfigChange,
-      credentialExists: false,
+      credentialStatus: 'missing',
       catalog: { phase: 'idle' },
       onRequestCatalog: vi.fn(),
       renderConnectedServicesBinding: (field, value, onChange) => React.createElement(
@@ -163,7 +163,7 @@ describe('RealtimeProviderFields', () => {
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner: catalogOwner,
-      config: catalogOwner.defaultConfig, onConfigChange: vi.fn(), credentialExists: true,
+      config: catalogOwner.defaultConfig, onConfigChange: vi.fn(), credentialStatus: 'ready',
       catalog: { phase: 'ready', rows: [{ id: 'voice_a', name: 'Voice A', previewUrl: 'https://example.test/a.mp3' }] },
       onRequestCatalog: vi.fn(),
     }));
@@ -202,7 +202,7 @@ describe('RealtimeProviderFields', () => {
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner,
       config: owner.defaultConfig, onConfigChange,
-      credentialExists: true, catalog: { phase: 'ready', rows: [] },
+      credentialStatus: 'ready', catalog: { phase: 'ready', rows: [] },
       onRequestCatalog: vi.fn(),
     }));
 
@@ -243,7 +243,7 @@ describe('RealtimeProviderFields', () => {
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner,
       config: { model: { kind: 'pinned', id: 'stable' }, resumptionEnabled: true },
-      onConfigChange: vi.fn(), credentialExists: true,
+      onConfigChange: vi.fn(), credentialStatus: 'ready',
       catalog: { phase: 'ready', rows: [] }, onRequestCatalog: vi.fn(),
     }));
     const forget = screen.tree.findByProps({ testID: 'voice-realtime-forget-provider-conversation' });
@@ -271,7 +271,7 @@ describe('RealtimeProviderFields', () => {
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner,
       config: { model: { kind: 'pinned', id: 'stable' }, resumptionEnabled: true },
-      onConfigChange: vi.fn(), credentialExists: true,
+      onConfigChange: vi.fn(), credentialStatus: 'ready',
       catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
     }));
     await act(async () => {
@@ -297,7 +297,7 @@ describe('RealtimeProviderFields', () => {
     const onConfigChange = vi.fn();
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner,
-      config: owner.defaultConfig, onConfigChange, credentialExists: true,
+      config: owner.defaultConfig, onConfigChange, credentialStatus: 'ready',
       catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
     }));
     const toggle = screen.tree.findByProps({ testID: 'voice-realtime-field-resumptionEnabled' }).props.rightElement;
@@ -326,7 +326,7 @@ describe('RealtimeProviderFields', () => {
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner: catalogOwner,
-      config: catalogOwner.defaultConfig, onConfigChange: vi.fn(), credentialExists: true,
+      config: catalogOwner.defaultConfig, onConfigChange: vi.fn(), credentialStatus: 'ready',
       catalog: { phase: 'ready', rows: [{ id: 'voice_a', name: 'Voice A', previewUrl: 'https://example.test/a.mp3' }] },
       onRequestCatalog: vi.fn(),
     }));
@@ -354,7 +354,7 @@ describe('RealtimeProviderFields', () => {
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
     const render = (providerId: string) => React.createElement(RealtimeProviderFields, {
       providerId, descriptor, owner: catalogOwner, config: catalogOwner.defaultConfig,
-      onConfigChange: vi.fn(), credentialExists: true, onRequestCatalog: vi.fn(),
+      onConfigChange: vi.fn(), credentialStatus: 'ready', onRequestCatalog: vi.fn(),
       catalog: { phase: 'ready' as const, rows: [{ id: 'voice_a', name: 'Voice A', previewUrl: 'https://example.test/a.mp3' }] },
     });
     const screen = await renderScreen(render('fixture_realtime'));
@@ -382,7 +382,7 @@ describe('RealtimeProviderFields', () => {
     const latest = { model: { kind: 'moving_alias', id: 'latest' }, resumptionEnabled: true, instructions: null };
     const render = (config: typeof initial) => React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner, config, onConfigChange,
-      credentialExists: true, catalog: { phase: 'idle' as const }, onRequestCatalog: vi.fn(),
+      credentialStatus: 'ready', catalog: { phase: 'idle' as const }, onRequestCatalog: vi.fn(),
     });
     const screen = await renderScreen(render(initial));
     act(() => screen.tree.findByProps({ testID: 'voice-realtime-field-instructions' }).props.onPress());
@@ -412,7 +412,7 @@ describe('RealtimeProviderFields', () => {
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner: vadOwner,
-      config: vadOwner.defaultConfig, onConfigChange: vi.fn(), credentialExists: true,
+      config: vadOwner.defaultConfig, onConfigChange: vi.fn(), credentialStatus: 'ready',
       catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
     }));
     expect(screen.tree.findAllByProps({ testID: 'voice-realtime-field-turnDetection-threshold' })).toHaveLength(0);
@@ -440,7 +440,7 @@ describe('RealtimeProviderFields', () => {
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner: catalogOwner,
-      config: catalogOwner.defaultConfig, onConfigChange: vi.fn(), credentialExists: true,
+      config: catalogOwner.defaultConfig, onConfigChange: vi.fn(), credentialStatus: 'ready',
       catalog: { phase: 'ready', rows: [{ id: 'voice_a', name: 'Voice A', previewUrl: 'https://example.test/a.mp3' }] },
       onRequestCatalog: vi.fn(),
     }));
@@ -465,7 +465,7 @@ describe('RealtimeProviderFields', () => {
     const render = (providerId: string) => React.createElement(RealtimeProviderFields, {
       providerId, descriptor, owner,
       config: { model: { kind: 'pinned', id: 'stable' }, resumptionEnabled: true },
-      onConfigChange: vi.fn(), credentialExists: true, catalog: { phase: 'idle' as const }, onRequestCatalog: vi.fn(),
+      onConfigChange: vi.fn(), credentialStatus: 'ready', catalog: { phase: 'idle' as const }, onRequestCatalog: vi.fn(),
     });
     const screen = await renderScreen(render('fixture_realtime'));
     act(() => screen.tree.findByProps({ testID: 'voice-realtime-forget-provider-conversation' }).props.onPress());
@@ -492,7 +492,7 @@ describe('RealtimeProviderFields', () => {
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner: speedOwner,
-      config: speedOwner.defaultConfig, onConfigChange, credentialExists: true,
+      config: speedOwner.defaultConfig, onConfigChange, credentialStatus: 'ready',
       catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
     }));
     act(() => screen.tree.findByProps({ testID: 'voice-realtime-field-speed' }).props.onPress());
@@ -515,7 +515,7 @@ describe('RealtimeProviderFields', () => {
     const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
     const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
       providerId: 'fixture_realtime', descriptor, owner: languageOwner,
-      config: languageOwner.defaultConfig, onConfigChange: vi.fn(), credentialExists: true,
+      config: languageOwner.defaultConfig, onConfigChange: vi.fn(), credentialStatus: 'ready',
       catalog: { phase: 'idle' }, onRequestCatalog: vi.fn(),
     }));
     const rows = screen.tree.findByProps({ testID: 'voice-realtime-field-language' }).props.items;

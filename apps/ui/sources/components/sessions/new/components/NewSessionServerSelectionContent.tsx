@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Platform, Pressable, View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -18,6 +17,7 @@ import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/s
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ServerSelectionParams = Readonly<{
     agentType?: string;
@@ -224,11 +224,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                     accessibilityRole="button"
                     accessibilityLabel={t('common.back')}
                 >
-                    {React.createElement(Ionicons, {
-                        name: 'close',
-                        size: 20,
-                        color: theme.colors.text.secondary,
-                    })}
+                    {<Icon name="x" size={20} color={theme.colors.text.secondary} />}
                 </Pressable>
             </View>
 
@@ -245,9 +241,9 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                                 title={target.name}
                                 subtitle={target.serverUrl}
                                 icon={(
-                                    <Ionicons
-                                        name="server-outline"
-                                        size={18}
+                                    <Icon
+                                        name="hard-drives"
+                                        size={16}
                                         color={theme.colors.text.secondary}
                                     />
                                 )}

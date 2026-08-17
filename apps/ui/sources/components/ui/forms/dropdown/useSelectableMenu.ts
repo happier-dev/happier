@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { TextInput } from 'react-native';
 import type { SelectableMenuCategory, SelectableMenuItem } from './selectableMenuTypes';
 import { t } from '@/text';
+import {
+    matchesHappierMenuQuery,
+    useHappierMenuInteraction,
+} from '@happier-dev/plugin-ui/presentation';
 
 function toCategoryId(title: string): string {
     return title.toLowerCase().replace(/\s+/g, '-');
@@ -36,10 +40,12 @@ export function useSelectableMenu(params: {
      * reads as a "selected" row even before the user interacts.
      */
     allowEmptySelection?: boolean;
+    /** Use shared prefix navigation when no search input owns typed text. */
+    enableTypeahead?: boolean;
+    /** Clears transient prefix navigation state while the controlled menu is closed. */
+    open?: boolean;
 }) {
     const [searchQuery, setSearchQuery] = useState('');
-    const allowEmptySelection = params.allowEmptySelection === true;
-    const [selectedIndex, setSelectedIndex] = useState<number>(() => (allowEmptySelection ? -1 : 0));
     const inputRef = useRef<TextInput>(null);
 
     const allItemsRaw = useMemo(() => params.items, [params.items]);
@@ -54,9 +60,11 @@ export function useSelectableMenu(params: {
         }
 
         const filtered = allItemsRaw.filter((item) => {
-            const titleMatch = item.title.toLowerCase().includes(query);
-            const subtitleMatch = item.subtitle?.toLowerCase().includes(query) ?? false;
-            return titleMatch || subtitleMatch;
+            return matchesHappierMenuQuery({
+                label: item.title,
+                description: item.subtitle,
+                query,
+            });
         });
 
         if (filtered.length === 0) {
@@ -79,81 +87,22 @@ export function useSelectableMenu(params: {
     const allItems = useMemo(() => {
         return filteredCategories.flatMap((c) => c.items);
     }, [filteredCategories]);
-
-    const firstEnabledIndex = useCallback((): number => {
-        for (let i = 0; i < allItems.length; i += 1) {
-            if (!allItems[i]?.disabled) return i;
-        }
-        return allowEmptySelection ? -1 : 0;
-    }, [allItems, allowEmptySelection]);
-
-    const lastEnabledIndex = useCallback((): number => {
-        for (let i = allItems.length - 1; i >= 0; i -= 1) {
-            if (!allItems[i]?.disabled) return i;
-        }
-        return allowEmptySelection ? -1 : 0;
-    }, [allItems, allowEmptySelection]);
-
-    const isEnabledIndex = useCallback((idx: number) => {
-        const item = allItems[idx];
-        return Boolean(item && !item.disabled);
-    }, [allItems]);
-
-    const clampToEnabled = useCallback((idx: number): number => {
-        if (allowEmptySelection && idx === -1) return -1;
-        if (allItems.length === 0) return allowEmptySelection ? -1 : 0;
-        if (idx < 0 || idx >= allItems.length) return firstEnabledIndex();
-        if (isEnabledIndex(idx)) return idx;
-        return firstEnabledIndex();
-    }, [allItems.length, allowEmptySelection, firstEnabledIndex, isEnabledIndex]);
-
-    // Initialize / reset selection when the query or available items change.
-    useEffect(() => {
-        const preferredId = params.initialSelectedId ?? null;
-        if (preferredId) {
-            const idx = allItems.findIndex((i) => i.id === preferredId);
-            if (idx >= 0 && isEnabledIndex(idx)) {
-                setSelectedIndex(idx);
-                return;
-            }
-        }
-        setSelectedIndex(allowEmptySelection ? -1 : firstEnabledIndex());
-    }, [allItems, allowEmptySelection, firstEnabledIndex, isEnabledIndex, params.initialSelectedId, searchQuery]);
-
-    const moveSelection = useCallback((dir: -1 | 1) => {
-        if (allItems.length === 0) return;
-        if (allowEmptySelection && selectedIndex === -1) {
-            setSelectedIndex(dir === 1 ? firstEnabledIndex() : lastEnabledIndex());
-            return;
-        }
-        let next = selectedIndex;
-        for (let step = 0; step < allItems.length; step += 1) {
-            next = Math.min(allItems.length - 1, Math.max(0, next + dir));
-            if (isEnabledIndex(next)) {
-                setSelectedIndex(next);
-                return;
-            }
-        }
-    }, [allItems.length, allowEmptySelection, firstEnabledIndex, isEnabledIndex, lastEnabledIndex, selectedIndex]);
-
-    const handleKeyPress = useCallback((key: string, onActivate: (item: SelectableMenuItem) => void) => {
-        switch (key) {
-            case 'Escape':
-                params.onRequestClose();
-                break;
-            case 'ArrowDown':
-                moveSelection(1);
-                break;
-            case 'ArrowUp':
-                moveSelection(-1);
-                break;
-            case 'Enter':
-                if (selectedIndex >= 0 && isEnabledIndex(selectedIndex) && allItems[selectedIndex]) {
-                    onActivate(allItems[selectedIndex]!);
-                }
-                break;
-        }
-    }, [allItems, isEnabledIndex, moveSelection, params, selectedIndex]);
+    const getItemLabel = useCallback((item: SelectableMenuItem) => item.title, []);
+    const {
+        selectedIndex,
+        setSelectedIndex,
+        handleKeyPress,
+    } = useHappierMenuInteraction({
+        items: allItems,
+        open: params.open,
+        initialSelectedId: params.initialSelectedId,
+        allowEmptySelection: params.allowEmptySelection,
+        enableTypeahead: params.enableTypeahead,
+        // Filtering is this adapter's concern; the portable owner performs the reset.
+        resetKey: allItems,
+        onRequestClose: params.onRequestClose,
+        getItemLabel,
+    });
 
     const handleSearchChange = useCallback((text: string) => setSearchQuery(text), []);
 
@@ -164,6 +113,6 @@ export function useSelectableMenu(params: {
         inputRef,
         handleSearchChange,
         handleKeyPress,
-        setSelectedIndex: (idx: number) => setSelectedIndex(clampToEnabled(idx)),
+        setSelectedIndex,
     };
 }

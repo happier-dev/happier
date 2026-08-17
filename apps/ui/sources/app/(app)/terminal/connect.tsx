@@ -15,6 +15,7 @@ import {
     buildTerminalConnectAuthRedirectHref,
     buildTerminalConnectDeepLink,
     parseTerminalConnectUrl,
+    type ParsedTerminalConnectUrl,
 } from '@/utils/path/terminalConnectUrl';
 import { consumeTerminalConnectWebBootstrapHash } from '@/utils/path/terminalConnectWebBootstrap';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -23,6 +24,8 @@ export default function TerminalConnectScreen() {
     const router = useRouter();
     const [publicKey, setPublicKey] = React.useState<string | null>(null);
     const [serverUrlFromHash, setServerUrlFromHash] = React.useState<string | null>(null);
+    const [pairing, setPairing] = React.useState<ParsedTerminalConnectUrl['pairing']>();
+    const [supportsTokenOnly, setSupportsTokenOnly] = React.useState(false);
     const [hashProcessed, setHashProcessed] = React.useState(false);
     const auth = useAuth();
     const authRedirectTriggeredRef = React.useRef(false);
@@ -54,6 +57,8 @@ export default function TerminalConnectScreen() {
 
         if (parsed?.publicKeyB64Url) {
             setPublicKey(parsed.publicKeyB64Url);
+            setPairing(parsed.pairing);
+            setSupportsTokenOnly(parsed.supportsTokenOnly === true);
 
             const activeServerUrl = normalizeServerUrl(getActiveServerUrl());
             const requestedServerUrl = normalizeServerUrl(parsed.serverUrl ?? '');
@@ -67,6 +72,8 @@ export default function TerminalConnectScreen() {
                 setPendingTerminalConnect({
                     publicKeyB64Url: parsed.publicKeyB64Url,
                     serverUrl: desiredServerUrl,
+                    ...(parsed.pairing ? { pairing: parsed.pairing } : {}),
+                    ...(parsed.supportsTokenOnly ? { supportsTokenOnly: true } : {}),
                 });
                 setServerUrlFromHash(desiredServerUrl);
             }
@@ -77,6 +84,8 @@ export default function TerminalConnectScreen() {
             if (pending?.publicKeyB64Url) {
                 setPublicKey(pending.publicKeyB64Url);
                 setServerUrlFromHash(pending.serverUrl);
+                setPairing(pending.pairing);
+                setSupportsTokenOnly(pending.supportsTokenOnly === true);
             }
         }
 
@@ -98,6 +107,8 @@ export default function TerminalConnectScreen() {
         setPendingTerminalConnect({
             publicKeyB64Url: publicKey,
             serverUrl: desiredServerUrl,
+            ...(pairing ? { pairing } : {}),
+            ...(supportsTokenOnly ? { supportsTokenOnly: true } : {}),
         });
 
         fireAndForget((async () => {
@@ -115,7 +126,7 @@ export default function TerminalConnectScreen() {
             }
             router.replace(buildTerminalConnectAuthRedirectHref({ serverUrl: desiredServerUrl }));
         })(), { tag: 'TerminalConnectScreen.redirectToAuth' });
-    }, [auth.isAuthenticated, auth.refreshFromActiveServer, hashProcessed, publicKey, router, serverUrlFromHash]);
+    }, [auth.isAuthenticated, auth.refreshFromActiveServer, hashProcessed, pairing, publicKey, router, serverUrlFromHash, supportsTokenOnly]);
 
     const handleConnect = React.useCallback(async () => {
         if (!publicKey) {
@@ -125,9 +136,11 @@ export default function TerminalConnectScreen() {
         const authUrl = buildTerminalConnectDeepLink({
             publicKeyB64Url: publicKey,
             serverUrl: serverUrlFromHash,
+            ...(pairing ? { pairing } : {}),
+            ...(supportsTokenOnly ? { supportsTokenOnly: true } : {}),
         });
         await processAuthUrl(authUrl);
-    }, [processAuthUrl, publicKey, serverUrlFromHash]);
+    }, [pairing, processAuthUrl, publicKey, serverUrlFromHash, supportsTokenOnly]);
 
     const handleReject = React.useCallback(() => {
         clearPendingTerminalConnect();

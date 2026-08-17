@@ -1,25 +1,29 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Platform, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { Automation } from '@/sync/domains/automations/automationTypes';
+import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
-import { ignoreNextRowPress } from '@/utils/ui/ignoreNextRowPress';
 import { t } from '@/text';
-import { formatAutomationNextRun, formatAutomationScheduleLabel } from './automationListFormatting';
+import { formatAutomationNextRun, formatAutomationTriggerLabel } from './automationListFormatting';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+
+const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 type Props = Readonly<{
     title: string;
-    automations: ReadonlyArray<Pick<Automation, 'id' | 'name' | 'enabled' | 'schedule' | 'nextRunAt'>>;
+    automations: ReadonlyArray<Pick<AutomationDefinition, 'id' | 'name' | 'enabled' | 'trigger' | 'nextRunAt'>>;
     onOpenAutomation?: (automationId: string) => void;
+    /** Parent read currentness gates only mutations; list navigation remains available. */
+    mutationsEnabled?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -29,9 +33,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 10,
     },
     runNowButton: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: minimumInteractiveTargetSize,
+        height: minimumInteractiveTargetSize,
+        borderRadius: minimumInteractiveTargetSize / 2,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: theme.colors.surface.elevated,
@@ -43,9 +47,13 @@ export const AutomationListGroup = React.memo((props: Props) => {
     const styles = stylesheet;
     const router = useRouter();
     const [runNowStateById, setRunNowStateById] = React.useState<Record<string, 'idle' | 'running' | 'queued'>>({});
-    const ignoreRowPressRef = React.useRef(false);
+    const runNowInFlightIdsRef = React.useRef(new Set<string>());
+    const mutationsEnabled = props.mutationsEnabled !== false;
 
     const handleRunNow = React.useCallback(async (automationId: string) => {
+        if (!mutationsEnabled) return;
+        if (runNowInFlightIdsRef.current.has(automationId)) return;
+        runNowInFlightIdsRef.current.add(automationId);
         try {
             setRunNowStateById((prev) => ({ ...prev, [automationId]: 'running' }));
             await sync.runAutomationNow(automationId);
@@ -66,10 +74,13 @@ export const AutomationListGroup = React.memo((props: Props) => {
                 const { [automationId]: _ignored, ...rest } = prev;
                 return rest;
             });
+        } finally {
+            runNowInFlightIdsRef.current.delete(automationId);
         }
-    }, []);
+    }, [mutationsEnabled]);
 
     const handleSetEnabled = React.useCallback(async (automationId: string, nextEnabled: boolean) => {
+        if (!mutationsEnabled) return;
         try {
             if (!nextEnabled) {
                 await sync.pauseAutomation(automationId);
@@ -82,7 +93,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
                 error instanceof Error ? error.message : t('automations.edit.updateFailed'),
             );
         }
-    }, []);
+    }, [mutationsEnabled]);
 
     const openAutomation = React.useCallback((automationId: string) => {
         if (props.onOpenAutomation) {
@@ -96,19 +107,15 @@ export const AutomationListGroup = React.memo((props: Props) => {
         <ItemGroup title={props.title}>
             {props.automations.map((automation) => {
                 const runState = runNowStateById[automation.id] ?? 'idle';
+                const runNowPending = runState === 'running';
+                const runNowDisabled = !mutationsEnabled || runNowPending;
                 const subtitle = [
-                    formatAutomationScheduleLabel({ schedule: automation.schedule }),
-                    formatAutomationNextRun(automation.nextRunAt ?? null),
+                    formatAutomationTriggerLabel(automation.trigger),
+                    ...(automation.trigger.kind === 'schedule'
+                        ? [formatAutomationNextRun(automation.nextRunAt ?? null)]
+                        : []),
                     ...(runState === 'queued' ? [t('automations.detail.runNowQueuedLine')] : []),
                 ].join('\n');
-
-                const onPress = () => {
-                    if (ignoreRowPressRef.current) {
-                        ignoreRowPressRef.current = false;
-                        return;
-                    }
-                    openAutomation(automation.id);
-                };
 
                 return (
                     <Item
@@ -116,33 +123,41 @@ export const AutomationListGroup = React.memo((props: Props) => {
                         title={automation.name}
                         subtitle={subtitle}
                         subtitleLines={0}
-                        onPress={onPress}
+                        onPress={() => openAutomation(automation.id)}
+                        rightElementOutsidePressable
                         rightElement={(
                             <View style={styles.rowRight}>
                                 <Pressable
-                                    onPressIn={() => ignoreNextRowPress(ignoreRowPressRef)}
-                                    onPress={() => void handleRunNow(automation.id)}
+                                    onPress={mutationsEnabled ? () => void handleRunNow(automation.id) : undefined}
                                     style={({ pressed }) => ([
                                         styles.runNowButton,
-                                        { opacity: pressed ? 0.7 : 1 },
+                                        { opacity: runNowDisabled ? 0.5 : pressed ? 0.7 : 1 },
                                     ])}
+                                    disabled={runNowDisabled}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('automations.detail.runNowTitle')}
+                                    accessibilityState={{ disabled: runNowDisabled, busy: runNowPending }}
                                 >
                                     {runState === 'running' ? (
                                         <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                     ) : runState === 'queued' ? (
-                                        <Ionicons name="checkmark" size={18} color={theme.colors.text.secondary} />
+                                        <Icon name="check" size={16} color={theme.colors.text.secondary} />
                                     ) : (
-                                        <Ionicons name="play" size={18} color={theme.colors.text.secondary} />
+                                        <Icon name="play" size={16} color={theme.colors.text.secondary} />
                                     )}
                                 </Pressable>
                                 <Switch
                                     value={automation.enabled}
-                                    onValueChange={(next) => {
-                                        ignoreNextRowPress(ignoreRowPressRef);
-                                        void handleSetEnabled(automation.id, next);
-                                    }}
+                                    onValueChange={mutationsEnabled
+                                        ? (next) => void handleSetEnabled(automation.id, next)
+                                        : undefined}
+                                    disabled={!mutationsEnabled}
+                                    accessibilityLabel={[
+                                        automation.name,
+                                        t(automation.enabled
+                                            ? 'automations.detail.pauseAutomation'
+                                            : 'automations.detail.resumeAutomation'),
+                                    ].join('. ')}
                                 />
                             </View>
                         )}

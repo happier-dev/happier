@@ -12,7 +12,10 @@ import { getDefaultModelPackId, listModelPackCatalogEntries } from '@happier-dev
 
 import { resolveVoiceProviderAvailability } from './resolveVoiceProviderAvailability';
 import {
+    projectVoiceDaemonExecutionMachineReadinessFact,
+    projectVoiceDaemonRuntimeReadinessFact,
     resolveVoiceDaemonDirectRouteAvailability,
+    resolveVoiceDaemonHeavyAudioReadiness,
     resolveVoiceDaemonModelAvailabilityFromCatalogState,
     resolveVoiceProviderLocalAvailability,
 } from './voiceProviderLocalAvailability';
@@ -32,6 +35,7 @@ function createFeatures(input: Readonly<{
     serverRoutedEnabled: boolean;
     caps: typeof relayCaps | null;
     disabledReason: MachineLiveStreamRelayDisabledReason | null;
+    directRpcEnabled?: boolean;
     directTunnelEnabled?: boolean;
     directTunnelAllowedPorts?: readonly number[];
 }>): FeaturesResponse {
@@ -40,6 +44,10 @@ function createFeatures(input: Readonly<{
         features: {
             machines: {
                 enabled: true,
+                rpc: {
+                    enabled: true,
+                    directPeer: { enabled: input.directRpcEnabled ?? false },
+                },
                 tunnel: {
                     enabled: true,
                     directPeer: { enabled: input.directTunnelEnabled ?? false },
@@ -106,6 +114,85 @@ function modelStatus(
 }
 
 describe('resolveVoiceProviderLocalAvailability', () => {
+    it.each([
+        ['unavailable', 'daemon_unreachable'],
+        ['relay_disabled', 'daemon_relay_disabled'],
+        ['relay_capped', 'daemon_relay_capped'],
+    ] as const)(
+        'projects selected-machine heavy-audio route %s as typed unavailable readiness',
+        (route, code) => {
+            expect(resolveVoiceDaemonHeavyAudioReadiness({
+                role: 'dictation_stt',
+                providerId: 'local_neural',
+                executionMachineId: 'machine-online',
+                daemon: {
+                    featureEnabled: true,
+                    route,
+                    modelState: 'ready',
+                    runtimeState: 'available',
+                    pcmCapture: 'available',
+                },
+            })).toMatchObject({
+                status: 'unavailable',
+                code,
+                recoveryAction: 'switch_provider',
+            });
+        },
+    );
+
+    it.each(['direct', 'relay'] as const)(
+        'keeps selected-machine heavy-audio route %s passively viable',
+        (route) => {
+            expect(resolveVoiceDaemonHeavyAudioReadiness({
+                role: 'conversation_stt',
+                providerId: 'local_conversation',
+                executionMachineId: 'machine-online',
+                daemon: {
+                    featureEnabled: true,
+                    route,
+                    modelState: 'ready',
+                    runtimeState: 'available',
+                    pcmCapture: 'available',
+                },
+            })).toBeNull();
+        },
+    );
+
+    it.each([
+        'unavailable',
+        'relay_disabled',
+        'relay_capped',
+    ] as const)(
+        'keeps an available daemon runtime ready when the independent route state is %s',
+        (route) => {
+            const daemon = {
+                featureEnabled: true,
+                route,
+                modelState: 'ready',
+                runtimeState: 'available',
+                pcmCapture: 'available',
+            } as const;
+            expect(projectVoiceDaemonRuntimeReadinessFact(daemon)).toBe('ready');
+            expect(projectVoiceDaemonExecutionMachineReadinessFact(
+                daemon,
+                'machine-online',
+            )).toBe('missing');
+        },
+    );
+
+    it.each(['direct', 'relay'] as const)(
+        'projects a selected daemon machine ready when its speech route is %s',
+        (route) => {
+            expect(projectVoiceDaemonExecutionMachineReadinessFact({
+                featureEnabled: true,
+                route,
+                modelState: 'ready',
+                runtimeState: 'available',
+                pcmCapture: 'available',
+            }, 'machine-online')).toBe('ready');
+        },
+    );
+
     it.each([
         ['available', 'available'],
         ['unavailable', 'unavailable'],
@@ -227,20 +314,19 @@ describe('resolveVoiceProviderLocalAvailability', () => {
         });
     });
 
-    it('prefers a passive direct daemon route over relay-disabled server policy when fixed target prerequisites are present', () => {
+    it('prefers a passive direct daemon route over relay-disabled server policy when machine-RPC prerequisites are present', () => {
         const serverFeatures = createFeatures({
             serverRoutedEnabled: false,
             caps: null,
             disabledReason: 'server_routed_live_stream_disabled',
+            directRpcEnabled: true,
             directTunnelEnabled: true,
             directTunnelAllowedPorts: [3005],
         });
         const directRoute = resolveVoiceDaemonDirectRouteAvailability({
             serverFeatures,
-            serverId: 'server-1',
-            machineId: 'machine-1',
             endpoint: directEndpoint,
-            daemonHttpPort: 3005,
+            credentials: { token: 'token-1', secret: 'secret-1' },
         });
 
         const localAvailability = resolveVoiceProviderLocalAvailability({
@@ -275,20 +361,19 @@ describe('resolveVoiceProviderLocalAvailability', () => {
         });
     });
 
-    it('keeps relay-disabled daemon diagnostics when fixed target direct route prerequisites are missing', () => {
+    it('fails closed before capture when tunnel direct is enabled but STT machine-RPC direct and relay are disabled', () => {
         const serverFeatures = createFeatures({
             serverRoutedEnabled: false,
             caps: null,
             disabledReason: 'server_routed_live_stream_disabled',
+            directRpcEnabled: false,
             directTunnelEnabled: true,
             directTunnelAllowedPorts: [3005],
         });
         const directRoute = resolveVoiceDaemonDirectRouteAvailability({
             serverFeatures,
-            serverId: 'server-1',
-            machineId: 'machine-1',
             endpoint: directEndpoint,
-            daemonHttpPort: null,
+            credentials: { token: 'token-1', secret: 'secret-1' },
         });
 
         const localAvailability = resolveVoiceProviderLocalAvailability({
@@ -315,6 +400,41 @@ describe('resolveVoiceProviderLocalAvailability', () => {
             runnable: false,
             reason: 'daemon_relay_disabled',
         });
+    });
+
+    it.each([
+        {
+            label: 'credentials are missing',
+            credentials: null,
+            endpoint: directEndpoint,
+        },
+        {
+            label: 'data-key credentials have no intersecting proof capability',
+            credentials: {
+                token: 'data-key-token',
+                encryption: {
+                    publicKey: 'public-key',
+                    machineKey: 'machine-key',
+                },
+            },
+            endpoint: directEndpoint,
+        },
+        {
+            label: 'the daemon endpoint is missing',
+            credentials: { token: 'token-1', secret: 'secret-1' },
+            endpoint: null,
+        },
+    ])('keeps passive machine-RPC direct unavailable when $label', ({ credentials, endpoint }) => {
+        expect(resolveVoiceDaemonDirectRouteAvailability({
+            serverFeatures: createFeatures({
+                serverRoutedEnabled: false,
+                caps: null,
+                disabledReason: 'server_routed_live_stream_disabled',
+                directRpcEnabled: true,
+            }),
+            credentials,
+            endpoint,
+        })).toBe('unavailable');
     });
 
     it('defaults passive web settings availability to unknown until the Web Speech probe resolves', () => {

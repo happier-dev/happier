@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -15,6 +14,7 @@ import { McpServerConfigureForm } from '@/components/settings/mcpServers/McpServ
 import { McpServerImportJsonTab } from '@/components/settings/mcpServers/McpServerImportJsonTab';
 import { McpServerQuickInstallTab } from '@/components/settings/mcpServers/McpServerQuickInstallTab';
 import { McpSegmentedHeader } from '@/components/settings/mcpServers/McpSegmentedHeader';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -22,6 +22,9 @@ import { Modal } from '@/modal';
 import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { randomUUID } from '@/platform/randomUUID';
 import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import { deleteMcpServerCatalogEntryV1, upsertMcpServerWithBindingsV1 } from '@/sync/domains/settings/mcpServers/mcpServerCrud';
 import {
     materializeImportedMcpServerDrafts,
@@ -29,12 +32,16 @@ import {
 } from '@/sync/domains/settings/mcpServers/materializeImportedMcpServerDrafts';
 import { getImportedMcpInputResolutionIssues } from '@/sync/domains/settings/mcpServers/importedMcpInputResolutionValidation';
 import { buildQuickInstallMcpDraft, type McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
-import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
+import {
+    normalizeMcpServersSettingsV1,
+    readWritableMcpServersSettingsV1,
+} from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { parseImportedMcpServerJson } from '@/sync/domains/settings/mcpServers/parseImportedMcpServerJson';
 import { t } from '@/text';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type NavigationLike = Readonly<{
     setOptions?: (options: Readonly<Record<string, unknown>>) => void;
@@ -115,6 +122,18 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const isDirtyRef = React.useRef(false);
     const machines = useAllMachines();
     const [secrets, setSecrets] = useSavedSecretsMutable();
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers,
+    );
+    const resolveFreshAdministrationTarget = React.useCallback(() => {
+        const expectedTarget = administrationTargetSelection.selectedTarget;
+        const resolved = administrationTargetSelection.resolveExecutionTarget();
+        return expectedTarget !== null
+            && resolved !== null
+            && machineAdministrationTargetsEqual(expectedTarget, resolved.target)
+            ? resolved
+            : null;
+    }, [administrationTargetSelection]);
 
     const {
         serverId: serverIdParam,
@@ -125,8 +144,12 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const addMode = typeof addModeParam === 'string' && addModeParam.trim() ? addModeParam.trim() : null;
     const presetId = typeof presetIdParam === 'string' && presetIdParam.trim() ? presetIdParam.trim() as McpQuickInstallPresetId : null;
 
-    const [mcpSettings, setMcpSettings] = useSettingMutable('mcpServersSettingsV1');
-    const normalizedSettings = React.useMemo(() => normalizeMcpServersSettingsV1(mcpSettings), [mcpSettings]);
+    const [mcpSettingsRaw, setMcpSettings] = useSettingMutable('mcpServersSettingsV1');
+    const normalizedSettings = React.useMemo(() => normalizeMcpServersSettingsV1(mcpSettingsRaw), [mcpSettingsRaw]);
+    const writableMcpSettings = React.useMemo(
+        () => readWritableMcpServersSettingsV1(mcpSettingsRaw),
+        [mcpSettingsRaw],
+    );
     const existingNames = React.useMemo(() => new Set(normalizedSettings.servers.map((server) => server.name)), [normalizedSettings.servers]);
 
     const existingServer: McpServerCatalogEntryV1 | null = React.useMemo(() => {
@@ -154,8 +177,6 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const [quickInstallInputMappingsByPreset, setQuickInstallInputMappingsByPreset] = React.useState<
         Partial<Record<McpQuickInstallPresetId, Record<string, ImportedMcpInputResolutionV1>>>
     >({});
-    const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
-    const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => machines[0]?.id ?? null);
 
     React.useEffect(() => {
         if (existingServer) {
@@ -183,11 +204,6 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             setOptions({ gestureEnabled: true });
         };
     }, [nav.setOptions]);
-
-    React.useEffect(() => {
-        if (selectedMachineId && machines.some((machine) => machine.id === selectedMachineId)) return;
-        setSelectedMachineId(machines[0]?.id ?? null);
-    }, [machines, selectedMachineId]);
 
     const importParseResult = React.useMemo(() => parseImportedMcpServerJson(importJsonText), [importJsonText]);
     const importMappingIssues = React.useMemo(
@@ -223,19 +239,11 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }, [quickInstallPresetIds, selectedQuickInstallDrafts]);
 
     const saveDisabled = React.useMemo(() => {
+        if (!writableMcpSettings) return true;
         const parsedServer = McpServerCatalogEntryV1Schema.safeParse(draftServer);
         if (!parsedServer.success) return true;
         return draftBindings.some((binding) => !McpServerBindingV1Schema.safeParse(binding).success);
-    }, [draftBindings, draftServer]);
-
-    const resolvedMachineItems = React.useMemo(() => {
-        return machines.map((machine) => ({
-            id: machine.id,
-            title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
-            subtitle: machine.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
-        }));
-    }, [machines, theme.colors.text.secondary]);
+    }, [draftBindings, draftServer, writableMcpSettings]);
 
     const closeToMcpServersSettings = React.useCallback(() => {
         // `router.replace` expects the public route (group segments like `/(app)` are not valid here on web).
@@ -243,6 +251,10 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }, [router]);
 
     const commitDraft = React.useCallback((): boolean => {
+        if (!writableMcpSettings) {
+            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+            return false;
+        }
         const parsedServer = McpServerCatalogEntryV1Schema.safeParse(draftServer);
         if (!parsedServer.success) {
             Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
@@ -259,7 +271,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         }
 
         try {
-            const next = upsertMcpServerWithBindingsV1(normalizedSettings, parsedServer.data, parsedBindings);
+            const next = upsertMcpServerWithBindingsV1(writableMcpSettings, parsedServer.data, parsedBindings);
             setMcpSettings(next);
             setIsDirty(false);
             return true;
@@ -267,7 +279,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
             return false;
         }
-    }, [draftBindings, draftServer, navigation, normalizedSettings, router, setMcpSettings]);
+    }, [draftBindings, draftServer, navigation, router, setMcpSettings, writableMcpSettings]);
 
     const saveAndClose = React.useCallback(() => {
         const didSave = commitDraft();
@@ -288,6 +300,10 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             closeToMcpServersSettings();
             return;
         }
+        if (!writableMcpSettings) {
+            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+            return;
+        }
 
         const confirmed = await Modal.confirm(
             t('settings.mcpServersDeleteTitle'),
@@ -296,23 +312,25 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         );
         if (!confirmed) return;
 
-        const next = deleteMcpServerCatalogEntryV1(normalizedSettings, serverId);
+        const next = deleteMcpServerCatalogEntryV1(writableMcpSettings, serverId);
         setMcpSettings(next);
         ignoreBeforeRemoveRef.current = true;
         closeToMcpServersSettings();
-    }, [closeToMcpServersSettings, draftServer.name, normalizedSettings, serverId, setMcpSettings]);
+    }, [closeToMcpServersSettings, draftServer.name, serverId, setMcpSettings, writableMcpSettings]);
 
     const handleImportJson = React.useCallback(() => {
-        if (!selectedMachineId) {
-            Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
+        if (!writableMcpSettings) {
+            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
             return;
         }
+        const executionTarget = resolveFreshAdministrationTarget();
+        if (!executionTarget) return;
         const materialized = materializeImportedMcpServerDrafts({
-            settings: normalizedSettings,
+            settings: writableMcpSettings,
             secrets,
             drafts: importParseResult.servers,
             inputMappings: importInputMappings,
-            defaultMachineId: selectedMachineId,
+            defaultMachineId: executionTarget.machine.id,
             nowMs: Date.now(),
             generateId: randomUUID,
         });
@@ -323,18 +341,20 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         setMcpSettings(materialized.nextSettings);
         ignoreBeforeRemoveRef.current = true;
         closeToMcpServersSettings();
-    }, [closeToMcpServersSettings, importInputMappings, importParseResult.servers, normalizedSettings, secrets, selectedMachineId, setMcpSettings, setSecrets]);
+    }, [closeToMcpServersSettings, importInputMappings, importParseResult.servers, resolveFreshAdministrationTarget, secrets, setMcpSettings, setSecrets, writableMcpSettings]);
 
     const handleQuickInstall = React.useCallback(() => {
-        if (!selectedMachineId) {
-            Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
+        if (!writableMcpSettings) {
+            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
             return;
         }
+        const executionTarget = resolveFreshAdministrationTarget();
+        if (!executionTarget) return;
         if (selectedQuickInstallDrafts.length === 0) {
             Modal.alert(t('common.error'), t('settings.mcpServersQuickInstallEmptyTitle'));
             return;
         }
-        let nextSettings = normalizedSettings;
+        let nextSettings = writableMcpSettings;
         let nextSecrets = secrets;
         const warnings: string[] = [];
         for (const draft of selectedQuickInstallDrafts) {
@@ -343,7 +363,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                 secrets: nextSecrets,
                 drafts: [draft.server],
                 inputMappings: quickInstallInputMappingsByPreset[draft.preset.id] ?? {},
-                defaultMachineId: selectedMachineId,
+                defaultMachineId: executionTarget.machine.id,
                 nowMs: Date.now(),
                 generateId: randomUUID,
             });
@@ -358,7 +378,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         setMcpSettings(nextSettings);
         ignoreBeforeRemoveRef.current = true;
         closeToMcpServersSettings();
-    }, [closeToMcpServersSettings, normalizedSettings, quickInstallInputMappingsByPreset, secrets, selectedMachineId, selectedQuickInstallDrafts, setMcpSettings, setSecrets]);
+    }, [closeToMcpServersSettings, quickInstallInputMappingsByPreset, resolveFreshAdministrationTarget, secrets, selectedQuickInstallDrafts, setMcpSettings, setSecrets, writableMcpSettings]);
 
     const requestUnsavedChangesDecision = React.useCallback(async () => {
         return await promptUnsavedChangesAlert(
@@ -418,7 +438,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     padding: 4,
                 })}
             >
-                <Ionicons name="checkmark" size={24} color={theme.colors.chrome.header.foreground} />
+                <Icon name="check" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }, [activeTab, isDirty, saveAndClose, saveDisabled, theme.colors.chrome.header.foreground]);
@@ -436,7 +456,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     <Item
                         title={t('common.error')}
                         subtitle={t('settings.mcpServersServerNotFound')}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                        icon={<Icon name="warning-circle" size={29} color={theme.colors.state.danger.foreground} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -445,6 +465,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     }
 
     const showAddFlowTabs = !serverId;
+    const canExecuteAdministrationTarget = writableMcpSettings !== null && resolveFreshAdministrationTarget() !== null;
 
     return (
         <ItemList keyboardShouldPersistTaps="handled">
@@ -468,6 +489,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     draftServer={draftServer}
                     draftBindings={draftBindings}
                     machines={machines}
+                    targetSelection={administrationTargetSelection}
                     secrets={secrets}
                     onChangeSecrets={setSecrets}
                     onChangeServer={(updater) => {
@@ -486,51 +508,55 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             ) : null}
 
             {showAddFlowTabs && activeTab === 'importJson' ? (
-                <McpServerImportJsonTab
-                    rawJson={importJsonText}
-                    onChangeRawJson={setImportJsonText}
-                    parseResult={importParseResult}
-                    machineItems={resolvedMachineItems}
-                    selectedMachineId={selectedMachineId}
-                    onSelectMachine={setSelectedMachineId}
-                    machineMenuOpen={machineMenuOpen}
-                    onMachineMenuOpenChange={setMachineMenuOpen}
-                    inputMappings={importInputMappings}
-                    onChangeInputMapping={(inputId, next) => setImportInputMappings((current) => ({ ...current, [inputId]: next }))}
-                    mappingIssues={importMappingIssues}
-                    onCancel={() => closeToMcpServersSettings()}
-                    onImport={handleImportJson}
-                />
+                <>
+                    <MachineAdministrationTargetSelector
+                        selection={administrationTargetSelection}
+                        testIDPrefix="settings.mcpServers.administration.target"
+                    />
+                    <McpServerImportJsonTab
+                        rawJson={importJsonText}
+                        onChangeRawJson={setImportJsonText}
+                        parseResult={importParseResult}
+                        canExecute={canExecuteAdministrationTarget}
+                        inputMappings={importInputMappings}
+                        onChangeInputMapping={(inputId, next) => setImportInputMappings((current) => ({ ...current, [inputId]: next }))}
+                        mappingIssues={importMappingIssues}
+                        onCancel={() => closeToMcpServersSettings()}
+                        onImport={handleImportJson}
+                    />
+                </>
             ) : null}
 
             {showAddFlowTabs && activeTab === 'quickInstall' ? (
-                <McpServerQuickInstallTab
-                    machineItems={resolvedMachineItems}
-                    selectedMachineId={selectedMachineId}
-                    onSelectMachine={setSelectedMachineId}
-                    machineMenuOpen={machineMenuOpen}
-                    onMachineMenuOpenChange={setMachineMenuOpen}
-                    selectedPresetIds={quickInstallPresetIds}
-                    onTogglePresetId={(presetId) => {
-                        setQuickInstallPresetIds((current) => (
-                            current.includes(presetId)
-                                ? current.filter((value) => value !== presetId)
-                                : [...current, presetId]
-                        ));
-                    }}
-                    inputMappingsByPreset={quickInstallInputMappingsByPreset}
-                    onChangeInputMapping={(presetId, inputId, next) =>
-                        setQuickInstallInputMappingsByPreset((current) => ({
-                            ...current,
-                            [presetId]: {
-                                ...(current[presetId] ?? {}),
-                                [inputId]: next,
-                            },
-                        }))}
-                    mappingIssuesByPreset={quickInstallMappingIssuesByPreset}
-                    onCancel={() => closeToMcpServersSettings()}
-                    onInstall={handleQuickInstall}
-                />
+                <>
+                    <MachineAdministrationTargetSelector
+                        selection={administrationTargetSelection}
+                        testIDPrefix="settings.mcpServers.administration.target"
+                    />
+                    <McpServerQuickInstallTab
+                        canExecute={canExecuteAdministrationTarget}
+                        selectedPresetIds={quickInstallPresetIds}
+                        onTogglePresetId={(presetId) => {
+                            setQuickInstallPresetIds((current) => (
+                                current.includes(presetId)
+                                    ? current.filter((value) => value !== presetId)
+                                    : [...current, presetId]
+                            ));
+                        }}
+                        inputMappingsByPreset={quickInstallInputMappingsByPreset}
+                        onChangeInputMapping={(presetId, inputId, next) =>
+                            setQuickInstallInputMappingsByPreset((current) => ({
+                                ...current,
+                                [presetId]: {
+                                    ...(current[presetId] ?? {}),
+                                    [inputId]: next,
+                                },
+                            }))}
+                        mappingIssuesByPreset={quickInstallMappingIssuesByPreset}
+                        onCancel={() => closeToMcpServersSettings()}
+                        onInstall={handleQuickInstall}
+                    />
+                </>
             ) : null}
         </ItemList>
     );

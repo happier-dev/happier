@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 
 import { renderScreen } from '@/dev/testkit';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -42,6 +43,26 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => reduceMotionSpy(),
 }));
 
+const ORIGINAL_PLATFORM = Platform.OS;
+
+afterEach(() => {
+    Platform.OS = ORIGINAL_PLATFORM;
+});
+
+function pointerEventsFromStyle(style: unknown): unknown {
+    if (Array.isArray(style)) {
+        for (let index = style.length - 1; index >= 0; index -= 1) {
+            const resolved = pointerEventsFromStyle(style[index]);
+            if (resolved !== undefined) return resolved;
+        }
+        return undefined;
+    }
+    if (style && typeof style === 'object' && 'pointerEvents' in style) {
+        return (style as { pointerEvents?: unknown }).pointerEvents;
+    }
+    return undefined;
+}
+
 describe('OverlayMotionFrame', () => {
     it('starts enter animations from hidden progress on first visible mount', async () => {
         const { OverlayMotionFrame } = await import('./overlayMotion');
@@ -62,5 +83,20 @@ describe('OverlayMotionFrame', () => {
             easing: motionTokens.easing.standard,
             useNativeDriver: false,
         }));
+    });
+
+    it('keeps native overlay responder routing on the React Native prop', async () => {
+        const { OverlayMotionFrame } = await import('./overlayMotion');
+        Platform.OS = 'ios';
+
+        const screen = await renderScreen(
+            <OverlayMotionFrame visible kind="popover">
+                <div />
+            </OverlayMotionFrame>,
+        );
+        const frame = screen.tree.root.findByType('AnimatedView' as never);
+
+        expect(frame.props.pointerEvents).toBe('auto');
+        expect(pointerEventsFromStyle(frame.props.style)).toBeUndefined();
     });
 });

@@ -20,6 +20,11 @@ export type ConnectedAccountDescriptorProjectionConflict =
       descriptorIdentity: string;
       serviceIds: readonly ConnectedAccountUiProjectionEntryV1['serviceId'][];
     }>
+  /**
+   * Compatibility input for a projection produced before Connected Account
+   * services were qualified. A local id is no longer an ownership key, so the
+   * UI registry deliberately does not use this fact to disable either owner.
+   */
   | Readonly<{
       kind: 'service_ownership';
       serviceId: ConnectedAccountUiProjectionEntryV1['serviceId'];
@@ -32,7 +37,18 @@ export type ConnectedAccountDescriptorProjectionResolution =
       descriptors: readonly ConnectedAccountUiProjectionEntryV1[];
       conflicts: readonly ConnectedAccountDescriptorProjectionConflict[];
     }>
-  | Readonly<{ kind: 'error'; reason: ConnectedAccountDescriptorProjectionErrorReason }>;
+  | Readonly<{
+      kind: 'error';
+      reason: ConnectedAccountDescriptorProjectionErrorReason;
+      /**
+       * Facts the machines that DID answer reported. A degraded read is not
+       * authoritative for absence, so these are adopted only when there is no
+       * last-known-good state to retain: one unrelated machine must never turn
+       * every working Connected Account into "no descriptor".
+       */
+      descriptors?: readonly ConnectedAccountUiProjectionEntryV1[];
+      conflicts?: readonly ConnectedAccountDescriptorProjectionConflict[];
+    }>;
 
 export type ConnectedAccountDescriptorProjectionState = Readonly<{
   scopeKey: string;
@@ -75,14 +91,31 @@ export function mergeConnectedAccountDescriptorProjections(
   projections: readonly ConnectedAccountDescriptorMachineProjection[],
 ): ConnectedAccountDescriptorProjectionResolution {
   if (projections.some((projection) => projection.kind === 'error')) {
+    const answering = projections.filter((projection) => projection.kind === 'ready');
+    if (answering.length === 0) {
+      return {
+        kind: 'error',
+        reason: projections.find((projection) => projection.kind === 'error')?.reason ?? 'transport',
+      };
+    }
+    // The union of the machines that answered is still a fact. Carry it so a
+    // cold read that hits one failing machine degrades to `stale` with real
+    // descriptors instead of collapsing to "no Connected Account exists".
+    const partial = unionReadyConnectedAccountDescriptorProjections(answering);
     return {
       kind: 'error',
-      reason: projections.some((projection) => projection.kind === 'ready')
-        ? 'partial_machine_failure'
-        : (projections.find((projection) => projection.kind === 'error')?.reason ?? 'transport'),
+      reason: 'partial_machine_failure',
+      descriptors: partial.descriptors,
+      conflicts: partial.conflicts,
     };
   }
 
+  return unionReadyConnectedAccountDescriptorProjections(projections);
+}
+
+function unionReadyConnectedAccountDescriptorProjections(
+  projections: readonly ConnectedAccountDescriptorMachineProjection[],
+): Extract<ConnectedAccountDescriptorProjectionResolution, { kind: 'ready' | 'conflict' }> {
   const variantsByIdentity = new Map<string, Map<string, ConnectedAccountUiProjectionEntryV1>>();
   for (const projection of projections) {
     if (projection.kind !== 'ready') continue;
@@ -109,23 +142,6 @@ export function mergeConnectedAccountDescriptorProjections(
     conflicts.push({ kind: 'identity_divergence', descriptorIdentity: identity, serviceIds });
   }
 
-  const identitiesByService = new Map<ConnectedAccountUiProjectionEntryV1['serviceId'], Set<string>>();
-  for (const [identity, variants] of variantsByIdentity) {
-    for (const entry of variants.values()) {
-      const identities = identitiesByService.get(entry.serviceId) ?? new Set<string>();
-      identities.add(identity);
-      identitiesByService.set(entry.serviceId, identities);
-    }
-  }
-  for (const [serviceId, identities] of [...identitiesByService.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    if (identities.size <= 1) continue;
-    conflicts.push({
-      kind: 'service_ownership',
-      serviceId,
-      descriptorIdentities: [...identities].sort((left, right) => left.localeCompare(right)),
-    });
-  }
-
   return {
     kind: conflicts.length > 0 ? 'conflict' : 'ready',
     descriptors,
@@ -148,9 +164,15 @@ export function advanceConnectedAccountDescriptorProjectionState(
   resolution: ConnectedAccountDescriptorProjectionResolution,
 ): ConnectedAccountDescriptorProjectionState {
   if (resolution.kind === 'error') {
+    // A degraded read may supply knowledge but must never retract it.
+    const retained = previous.descriptors.length > 0;
+    const descriptors = retained ? previous.descriptors : resolution.descriptors ?? [];
+    const conflicts = retained ? previous.conflicts : resolution.conflicts ?? [];
     return {
       ...previous,
-      status: previous.descriptors.length > 0 ? 'stale' : 'error',
+      status: descriptors.length > 0 ? 'stale' : 'error',
+      descriptors,
+      conflicts,
       errorReason: resolution.reason,
     };
   }

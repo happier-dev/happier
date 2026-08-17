@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -10,6 +9,7 @@ import { t } from '@/text';
 import type { MarkdownEditMode } from '@/components/ui/markdown/editor/markdownEditorTypes';
 import type { MarkdownRichIneligibleReason } from '@/components/ui/markdown/editor/core/eligibility/markdownRichEligibility';
 import { resolveMarkdownRichDisabledReasonCopy } from '@/components/ui/markdown/editor/core/eligibility/markdownRichDisabledReasonCopy';
+import { Icon } from '@/components/ui/icons/Icon';
 
 /**
  * Standalone Raw/Rich edit-mode dropdown (Lane A). Generalizes the file-pane's
@@ -44,13 +44,13 @@ export function MarkdownEditModeMenu(props: MarkdownEditModeMenuProps) {
                 id: 'raw',
                 testID: 'dropdown-option-raw',
                 title: t('settingsSourceControl.markdownEditMode.options.raw.title'),
-                icon: <Octicons name="code" size={ICON_SIZE} color={theme.colors.text.secondary} />,
+                icon: <Icon name="code" size={ICON_SIZE} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'rich',
                 testID: 'dropdown-option-rich',
                 title: t('settingsSourceControl.markdownEditMode.options.rich.title'),
-                icon: <Octicons name="markdown" size={ICON_SIZE} color={theme.colors.text.secondary} />,
+                icon: <Icon name="markdown-logo" size={ICON_SIZE} color={theme.colors.text.secondary} />,
                 disabled: richDisabled,
                 subtitle: richDisabled ? resolveMarkdownRichDisabledReasonCopy(props.richDisabledReason) : undefined,
             },
@@ -66,7 +66,7 @@ export function MarkdownEditModeMenu(props: MarkdownEditModeMenuProps) {
     const selectedLabel = effectiveMode === 'rich'
         ? t('settingsSourceControl.markdownEditMode.options.rich.title')
         : t('settingsSourceControl.markdownEditMode.options.raw.title');
-    const selectedIconName = effectiveMode === 'rich' ? 'markdown' : 'code';
+    const selectedIconName = effectiveMode === 'rich' ? 'markdown-logo' : 'code';
 
     return (
         <DropdownMenu
@@ -101,7 +101,7 @@ export function MarkdownEditModeMenu(props: MarkdownEditModeMenuProps) {
                     }}
                 >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Octicons name={selectedIconName} size={ICON_SIZE} color={theme.colors.text.secondary} />
+                        <Icon name={selectedIconName} size={ICON_SIZE} color={theme.colors.text.secondary} />
                         <Text
                             style={{
                                 fontSize: 13,
@@ -113,7 +113,7 @@ export function MarkdownEditModeMenu(props: MarkdownEditModeMenuProps) {
                         >
                             {selectedLabel}
                         </Text>
-                        <Octicons name="chevron-down" size={12} color={theme.colors.text.secondary} />
+                        <Icon name="caret-down" size={14} color={theme.colors.text.secondary} />
                     </View>
                 </Pressable>
             )}

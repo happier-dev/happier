@@ -91,7 +91,7 @@ export const RecapSection: React.FC<RecapSectionProps> = ({
                     <UsageActionChip
                         testID="usage-recap-play"
                         label={t('usage.recap.play')}
-                        iconName="play-outline"
+                        iconName="play"
                         onPress={playRecap}
                     />
                 ) : null}

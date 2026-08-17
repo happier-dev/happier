@@ -61,6 +61,16 @@ export class VoiceHistoryOperationSupersededError extends Error {
   }
 }
 
+export function isVoiceHistoryOperationSupersededError(error: unknown): boolean {
+  return error instanceof VoiceHistoryOperationSupersededError
+    || (
+      typeof error === 'object'
+      && error !== null
+      && 'code' in error
+      && error.code === 'voice_history_operation_superseded'
+    );
+}
+
 export class VoiceHistoryClearActiveCallError extends Error {
   readonly code = 'voice_history_clear_active_call';
 
@@ -99,6 +109,8 @@ export type VoiceHistoryConsumerDeps<
   refreshSessionMessages(sessionId: string, scope: TScope): Promise<void>;
   loadOlderMessages(sessionId: string, scope: TScope): Promise<VoiceHistoryPageResult>;
   readMessages(sessionId: string): readonly Message[];
+  /** Changes when provider labels/projections can change without new messages. */
+  readProjectionRevision?(): string | number;
   resolveProviderLabel(source: VoiceHistoryProviderSource | null): string;
   deleteSession(
     sessionId: string,
@@ -106,6 +118,7 @@ export type VoiceHistoryConsumerDeps<
   ): Promise<Readonly<{ success: boolean; message?: string }>>;
   canDeleteSession(sessionId: string): boolean;
   retireLocalSession(sessionId: string): void;
+  runCarrierOperation<T>(operation: () => Promise<T>): Promise<T>;
   now(): Date;
 }>;
 
@@ -136,8 +149,15 @@ export function projectVoiceHistoryRows(
         source,
       }];
     });
+  return filterVoiceHistoryRows(Object.freeze(rows), query);
+}
+
+function filterVoiceHistoryRows(
+  rows: readonly VoiceHistoryRow[],
+  query: string,
+): readonly VoiceHistoryRow[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  if (!normalizedQuery) return Object.freeze(rows);
+  if (!normalizedQuery) return rows;
   return Object.freeze(rows.filter((row) => (
     row.text.toLocaleLowerCase().includes(normalizedQuery)
     || row.providerLabel.toLocaleLowerCase().includes(normalizedQuery)
@@ -210,12 +230,24 @@ export function createVoiceHistoryConsumer<
   let capturedScope: TScope | null = null;
   let hasMore: boolean | null = null;
   let operationEpoch = 0;
+  let projectedSessionId: string | null = null;
+  let projectedMessages: readonly Message[] | null = null;
+  let projectedRevision: string | number | null = null;
+  let projectedRows: readonly VoiceHistoryRow[] = Object.freeze([]);
+
+  const resetProjection = (): void => {
+    projectedSessionId = null;
+    projectedMessages = null;
+    projectedRevision = null;
+    projectedRows = Object.freeze([]);
+  };
 
   const resetBinding = () => {
     sessionId = null;
     scopeKey = null;
     capturedScope = null;
     hasMore = null;
+    resetProjection();
   };
 
   const beginOperation = (): number => {
@@ -250,13 +282,21 @@ export function createVoiceHistoryConsumer<
   const read = (query = ''): VoiceHistorySnapshot => {
     if (!sessionId || !isScopeCurrent()) return empty();
     const messages = deps.readMessages(sessionId);
-    const loadedRows = projectVoiceHistoryRows(messages, deps.resolveProviderLabel);
+    const revision = deps.readProjectionRevision?.() ?? 0;
+    if (
+      projectedSessionId !== sessionId
+      || projectedMessages !== messages
+      || projectedRevision !== revision
+    ) {
+      projectedSessionId = sessionId;
+      projectedMessages = messages;
+      projectedRevision = revision;
+      projectedRows = projectVoiceHistoryRows(messages, deps.resolveProviderLabel);
+    }
     return {
       sessionId,
-      rows: query.trim()
-        ? projectVoiceHistoryRows(messages, deps.resolveProviderLabel, query)
-        : loadedRows,
-      loadedRowCount: loadedRows.length,
+      rows: filterVoiceHistoryRows(projectedRows, query),
+      loadedRowCount: projectedRows.length,
       hasMore,
     };
   };
@@ -295,6 +335,10 @@ export function createVoiceHistoryConsumer<
     }
     if (!isScopeCurrent()) return null;
     hasMore = result.hasMore;
+    // The canonical message owner may append into its existing array while
+    // paging. This operation is the mutation boundary, so invalidate here
+    // without imposing a second message-version owner on History.
+    resetProjection();
     return result;
   };
 
@@ -310,6 +354,7 @@ export function createVoiceHistoryConsumer<
         throw new VoiceHistoryOperationSupersededError();
       }
       if (!isScopeCurrent()) return empty();
+      resetProjection();
       return read(query);
     },
     read,
@@ -324,8 +369,12 @@ export function createVoiceHistoryConsumer<
     async exportHistory(input) {
       const epoch = beginOperation();
       const expectedSessionId = sessionId;
+      let snapshot: VoiceHistorySnapshot | null = null;
       if (input.range === 'all' && expectedSessionId && isScopeCurrent()) {
         let fetchedPages = 0;
+        snapshot = read();
+        let beforeCount = snapshot.loadedRowCount;
+        assertExportRowLimit(beforeCount);
         while (true) {
           if (fetchedPages >= VOICE_HISTORY_EXPORT_LIMITS.maxPages) {
             throw new VoiceHistoryExportLimitError(
@@ -333,13 +382,12 @@ export function createVoiceHistoryConsumer<
               VOICE_HISTORY_EXPORT_LIMITS.maxPages,
             );
           }
-          const beforeCount = read().loadedRowCount;
-          assertExportRowLimit(beforeCount);
           const page = await pageOnce(epoch, expectedSessionId);
           if (!page) break;
           fetchedPages += 1;
           assertOperationCurrent(epoch);
-          const afterCount = read().loadedRowCount;
+          snapshot = read();
+          const afterCount = snapshot.loadedRowCount;
           assertExportRowLimit(afterCount);
           if (page.status === 'no_more' || page.hasMore === false) break;
           if (page.status === 'not_ready' || page.status === 'in_flight') {
@@ -348,10 +396,11 @@ export function createVoiceHistoryConsumer<
           if (page.loaded === 0 && afterCount === beforeCount) {
             throw new Error('Voice History pagination made no progress');
           }
+          beforeCount = afterCount;
         }
       }
       assertOperationCurrent(epoch);
-      const snapshot = read();
+      snapshot ??= read();
       const now = deps.now();
       const content = buildExportContent({
         exportedAt: now.toISOString(),
@@ -368,51 +417,53 @@ export function createVoiceHistoryConsumer<
     },
     async clear() {
       const epoch = beginOperation();
-      if (!sessionId) {
-        await discover(epoch);
-      }
-      assertOperationCurrent(epoch);
-      if (!sessionId || !capturedScope || !isScopeCurrent()) return { cleared: false };
-      const deletingSessionId = sessionId;
-      const deletingScope = capturedScope;
-      if (!deps.canDeleteSession(deletingSessionId)) {
-        throw new VoiceHistoryClearActiveCallError();
-      }
-      const result = await deps.deleteSession(deletingSessionId, deletingScope);
-      if (!result.success) {
-        assertOperationCurrent(epoch);
-        throw new Error(result.message || 'Voice History could not be cleared');
-      }
-      const isExactDeletedBindingCurrent = () => (
-        sessionId === deletingSessionId
-        && scopeKey === deletingScope.key
-        && capturedScope?.key === deletingScope.key
-        && deps.readScopeKey() === deletingScope.key
-      );
-      const retireExactDeletedBinding = (): boolean => {
-        if (!isExactDeletedBindingCurrent()) return false;
-        try {
-          deps.retireLocalSession(deletingSessionId);
-        } finally {
-          if (isExactDeletedBindingCurrent()) {
-            resetBinding();
-          }
+      return await deps.runCarrierOperation(async () => {
+        if (!sessionId) {
+          await discover(epoch);
         }
-        return true;
-      };
-
-      if (epoch !== operationEpoch) {
-        retireExactDeletedBinding();
         assertOperationCurrent(epoch);
-      }
-      if (deps.readScopeKey() !== deletingScope.key) {
-        resetBinding();
+        if (!sessionId || !capturedScope || !isScopeCurrent()) return { cleared: false };
+        const deletingSessionId = sessionId;
+        const deletingScope = capturedScope;
+        if (!deps.canDeleteSession(deletingSessionId)) {
+          throw new VoiceHistoryClearActiveCallError();
+        }
+        const result = await deps.deleteSession(deletingSessionId, deletingScope);
+        if (!result.success) {
+          assertOperationCurrent(epoch);
+          throw new Error(result.message || 'Voice History could not be cleared');
+        }
+        const isExactDeletedBindingCurrent = () => (
+          sessionId === deletingSessionId
+          && scopeKey === deletingScope.key
+          && capturedScope?.key === deletingScope.key
+          && deps.readScopeKey() === deletingScope.key
+        );
+        const retireExactDeletedBinding = (): boolean => {
+          if (!isExactDeletedBindingCurrent()) return false;
+          try {
+            deps.retireLocalSession(deletingSessionId);
+          } finally {
+            if (isExactDeletedBindingCurrent()) {
+              resetBinding();
+            }
+          }
+          return true;
+        };
+
+        if (epoch !== operationEpoch) {
+          retireExactDeletedBinding();
+          assertOperationCurrent(epoch);
+        }
+        if (deps.readScopeKey() !== deletingScope.key) {
+          resetBinding();
+          return { cleared: true };
+        }
+        // The server-side carrier is already gone. Never retain authority to
+        // page, export, or delete that exact id if local cache cleanup fails.
+        retireExactDeletedBinding();
         return { cleared: true };
-      }
-      // The server-side carrier is already gone. Never retain authority to
-      // page, export, or delete that exact id if local cache cleanup fails.
-      retireExactDeletedBinding();
-      return { cleared: true };
+      });
     },
   });
 }

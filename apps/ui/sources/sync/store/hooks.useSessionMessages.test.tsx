@@ -968,4 +968,66 @@ describe('useSessionSubagentSourceMessages', () => {
             storage.setState(previousState);
         }
     });
+
+    // A teammate can enter the roster with no tool call ever naming it: launching one writes a
+    // `happier` envelope onto the USER's own message, and the team derivation reads exactly that.
+    // A projection that drops user turns therefore undercounts the roster for every surface that
+    // derives from it, while a surface reading the whole transcript shows the member — which is the
+    // two-surfaces-disagree defect a single roster owner exists to remove.
+    it('keeps a user turn that carries a subagent envelope and drops an ordinary one', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-launch': {
+                    id: 'm-launch',
+                    kind: 'user-text',
+                    localId: null,
+                    createdAt: 1,
+                    text: 'spawn a reviewer',
+                    meta: {
+                        happier: {
+                            kind: 'subagent_launch.v1',
+                            payload: { kind: 'agent_team_member_create', teamId: 'team-1', memberId: 'alpha' },
+                        },
+                    },
+                    children: [],
+                } as any,
+                'm-plain': {
+                    id: 'm-plain',
+                    kind: 'user-text',
+                    localId: null,
+                    createdAt: 2,
+                    text: 'thanks',
+                    children: [],
+                } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-launch', 'm-plain'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionSubagentSourceMessages('s-1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().map((message) => message.id)).toEqual(['m-launch']);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
 });

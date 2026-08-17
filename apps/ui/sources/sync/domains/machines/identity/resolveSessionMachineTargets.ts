@@ -1,6 +1,7 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import { normalizeKnownProjectMachineId } from '@/sync/runtime/orchestration/projectManager';
+import { findMachineInCollection, type MachineCollection } from './machineCollection';
 import { normalizeMachineIdentityString, type MachineTargetResolution } from './machineIdentityTypes';
 import { resolveCanonicalMachineId } from './resolveCanonicalMachineId';
 
@@ -48,7 +49,7 @@ export function resolveSessionDisplayTarget(input: Readonly<{
     sessionPath?: string | null;
     projectMachineId?: string | null;
     projectPath?: string | null;
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
 }>): MachineTargetResolution | null {
     const originMachineId = resolveStableOriginMachineId(input);
     if (!originMachineId) return null;
@@ -81,12 +82,12 @@ export function resolveSessionRpcTarget(input: Readonly<{
     sessionPath?: string | null;
     projectMachineId?: string | null;
     projectPath?: string | null;
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
 }>): MachineTargetResolution | null {
     const displayTarget = resolveSessionDisplayTarget(input);
     if (!displayTarget) return null;
 
-    const machine = input.machines.find((candidate) => candidate.id === displayTarget.machineId);
+    const machine = findMachineInCollection(input.machines, displayTarget.machineId);
     if (!machine) return null;
     if (machine.revokedAt && machine.revokedAt > 0) return null;
     if ('replacedByMachineId' in machine && machine.replacedByMachineId) return null;

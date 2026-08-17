@@ -1,4 +1,5 @@
 import {
+  isTokenOnlyAuthCredentials,
   TokenStorage,
   type AuthCredentials,
 } from '@/auth/storage/tokenStorage';
@@ -28,7 +29,7 @@ export type ResolvedServerSessionRpcContext =
       token: string;
       /** Present for contexts produced by the runtime; optional for injected adapters. */
       credentials?: AuthCredentials;
-      encryption: ScopedRpcSessionEncryptionContext;
+      encryption: ScopedRpcSessionEncryptionContext | null;
     }>;
 
 async function buildScopedContext(params: Readonly<{
@@ -41,7 +42,9 @@ async function buildScopedContext(params: Readonly<{
     throw new Error(`No authentication credentials for target server "${params.serverId}"`);
   }
 
-  const encryption = (await createEncryptionFromAuthCredentials(credentials)) as ScopedRpcSessionEncryptionContext;
+  const encryption = isTokenOnlyAuthCredentials(credentials)
+    ? null
+    : (await createEncryptionFromAuthCredentials(credentials)) as ScopedRpcSessionEncryptionContext;
   return {
     scope: 'scoped',
     timeoutMs: params.timeoutMs,

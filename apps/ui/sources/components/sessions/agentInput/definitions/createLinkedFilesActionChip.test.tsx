@@ -101,7 +101,7 @@ describe('createLinkedFilesActionChip', () => {
             </React.Fragment>,
         );
 
-        const icon = screen.findAllByType('Ionicons')[0];
+        const icon = screen.findAllByType('Icon')[0];
         expect(icon?.props.name).toBe('at');
     });
 });

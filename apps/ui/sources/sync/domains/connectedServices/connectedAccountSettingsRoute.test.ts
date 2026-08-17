@@ -1,21 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
-
 import type {
     ConnectedServiceRegistryEntry,
 } from './connectedServiceRegistry';
 import {
     buildConnectedAccountSettingsRoute,
-    resolveConnectedAccountOperationTarget,
     resolveConnectedAccountSettingsRoute,
+    resolveQualifiedConnectedAccountSettingsRoute,
 } from './connectedAccountSettingsRoute';
-
-type OperationTargetMachineFixture = Readonly<{
-    id: string;
-    active: boolean;
-    revokedAt?: number | null;
-}>;
 
 const entries: readonly ConnectedServiceRegistryEntry[] = [{
     serviceId: 'vault',
@@ -29,9 +21,10 @@ const entries: readonly ConnectedServiceRegistryEntry[] = [{
 }, {
     serviceId: 'github',
     service: {
-        pluginId: 'happier.scm.hosting.github',
+        pluginId: 'happier.scm.forge.github',
         localId: 'github-account',
     },
+    legacyServiceId: 'github',
     connectCommand: 'happier connect github',
     supportsOauth: true,
     executable: true,
@@ -58,6 +51,29 @@ describe('connectedAccountSettingsRoute', () => {
         });
     });
 
+    it('keeps a generated released qualified route reachable before its descriptor projects', () => {
+        const service = {
+            pluginId: 'happier.agent.codex',
+            localId: 'openai-codex',
+        };
+        const route = buildConnectedAccountSettingsRoute(service);
+
+        expect(resolveQualifiedConnectedAccountSettingsRoute(route.params, [])).toMatchObject({
+            service,
+            entry: {
+                serviceId: 'openai-codex',
+                service,
+                legacyServiceId: 'openai-codex',
+            },
+            legacyServiceId: 'openai-codex',
+            focus: null,
+        });
+        expect(resolveQualifiedConnectedAccountSettingsRoute({
+            pluginId: 'foreign.accounts',
+            localId: 'openai-codex',
+        }, [])).toBeNull();
+    });
+
     it.each([
         [{ kind: 'account', accountId: 'work' } as const],
         [{ kind: 'group', groupId: 'primary' } as const],
@@ -75,105 +91,22 @@ describe('connectedAccountSettingsRoute', () => {
         });
     });
 
-    it('round-trips the exact execution target with the selected account focus', () => {
+    it('keeps device-local machine routing out of the public settings route', () => {
         const route = buildConnectedAccountSettingsRoute(
             entries[0]!.service!,
             { kind: 'account', accountId: 'work' },
-            { serverId: 'server-selected', machineId: 'machine-selected' },
         );
 
-        expect(resolveConnectedAccountSettingsRoute(route.params, entries)).toMatchObject({
-            service: entries[0]!.service,
-            focus: { kind: 'account', accountId: 'work' },
-            executionTarget: {
-                serverId: 'server-selected',
-                machineId: 'machine-selected',
-            },
+        expect(route.params).toEqual({
+            pluginId: 'acme.connected-accounts-conformance',
+            localId: 'vault',
+            accountId: 'work',
         });
-    });
-
-    it('keeps an exact server-b recovery route actionable while server-a is active', () => {
-        const route = buildConnectedAccountSettingsRoute(
-            entries[0]!.service!,
-            { kind: 'account', accountId: 'work' },
-            { serverId: 'server-b', machineId: 'machine-b' },
-        );
-        const resolvedRoute = resolveConnectedAccountSettingsRoute(route.params, entries);
-        const machines = resolveServerScopedMachines<OperationTargetMachineFixture>({
-            serverId: resolvedRoute?.executionTarget?.serverId ?? '',
-            activeServerId: 'server-a',
-            activeMachines: [
-                { id: 'machine-a', active: true },
-            ],
-            machineListByServerId: {
-                'server-b': [
-                    { id: 'machine-b', active: true },
-                ],
-            },
-        });
-
-        expect(resolvedRoute?.executionTarget).toEqual({
-            serverId: 'server-b',
-            machineId: 'machine-b',
-        });
-        expect(resolveConnectedAccountOperationTarget({
-            activeServerId: 'server-a',
-            executionTarget: resolvedRoute?.executionTarget ?? null,
-            machines: machines ?? [],
-        })).toEqual({
-            serverId: 'server-b',
-            machineId: 'machine-b',
-        });
-    });
-
-    it('uses the exact online operation target and fails closed instead of roaming', () => {
-        const machines = [
-            { id: 'machine-other', active: true },
-            { id: 'machine-selected', active: true },
-            { id: 'machine-offline', active: false },
-        ];
-
-        expect(resolveConnectedAccountOperationTarget({
-            activeServerId: 'server-selected',
-            executionTarget: {
-                serverId: 'server-selected',
-                machineId: 'machine-selected',
-            },
-            machines,
-        })).toEqual({
-            serverId: 'server-selected',
-            machineId: 'machine-selected',
-        });
-        expect(resolveConnectedAccountOperationTarget({
-            activeServerId: 'server-selected',
-            executionTarget: {
-                serverId: 'server-selected',
-                machineId: 'machine-offline',
-            },
-            machines,
-        })).toBeNull();
-        expect(resolveConnectedAccountOperationTarget({
-            activeServerId: 'server-selected',
-            executionTarget: {
-                serverId: 'server-selected',
-                machineId: 'machine-missing',
-            },
-            machines,
-        })).toBeNull();
-    });
-
-    it('preserves the current active-machine behavior when no execution context is supplied', () => {
-        expect(resolveConnectedAccountOperationTarget({
-            activeServerId: 'server-active',
-            executionTarget: null,
-            machines: [
-                { id: 'machine-first', active: false },
-                { id: 'machine-active', active: true },
-            ],
-        })).toEqual({
-            serverId: 'server-active',
-            machineId: 'machine-active',
-        });
+        expect(resolveConnectedAccountSettingsRoute({
+            ...route.params,
+            serverId: 'server-local',
+            machineId: 'machine-local',
+        }, entries)).toBeNull();
     });
 
     it('translates only a valid built-in legacy scalar to its projected qualified owner', () => {
@@ -192,7 +125,7 @@ describe('connectedAccountSettingsRoute', () => {
             [foreignClaim, ...entries],
         )).toEqual({
             service: {
-                pluginId: 'happier.scm.hosting.github',
+                pluginId: 'happier.scm.forge.github',
                 localId: 'github-account',
             },
             entry: entries[1],

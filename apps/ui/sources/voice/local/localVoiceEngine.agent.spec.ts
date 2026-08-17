@@ -103,671 +103,13 @@ describe('local voice engine agent behavior', () => {
         targetState.setLastFocusedSessionId(null);
     });
 
-    it('agent mode (openai_compat) chats without persisting to the session when no tool actions are emitted', async () => {
-        const storage = await getStorage();
-        const readyMachine = {
-            ...storage.getState().machines['machine-1'],
-            active: true,
-            activeAt: Date.now(),
-        };
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.tts.openaiCompat,
-                                    baseUrl: 'http://localhost:8001',
-                                },
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-            },
-            machines: {
-                ...storage.getState().machines,
-                'machine-1': readyMachine,
-            },
-            machineListByServerId: {
-                ...storage.getState().machineListByServerId,
-                'server-a': [readyMachine],
-            },
-        });
 
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Voice agent reply' } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-            });
 
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
 
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        expect(sendMessage).not.toHaveBeenCalled();
-        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
-        expect((globalThis.fetch as any).mock.calls[1]?.[0]).toContain('/v1/chat/completions');
-    }, 60_000);
 
-    it('agent mode (openai_compat) sends a session message when the voice agent emits sendSessionMessage', async () => {
-        useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
 
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-            },
-        });
 
-        const actionBlock = [
-            '<voice_actions>',
-            JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'Please do X.' } }] }),
-            '</voice_actions>',
-        ].join('\n');
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Voice agent reply\n\n${actionBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Done.' } }] }),
-            });
-        sendSessionMessageWithServerScope.mockResolvedValue({ ok: true });
-
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        await stopPromise;
-
-        expect(sendSessionMessageWithServerScope).toHaveBeenCalledTimes(1);
-        expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 's1',
-            message: 'Please do X.',
-        }));
-        expect(sendMessage).not.toHaveBeenCalled();
-    });
-
-    it('agent mode can update tracked sessions via tool actions', async () => {
-        useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
-        useVoiceTargetStore.getState().setTrackedSessionIds([]);
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-                s2: { id: 's2', metadata: { path: '/tmp2', host: 'test' } },
-            },
-        });
-
-        const actionBlock = [
-            '<voice_actions>',
-            JSON.stringify({ actions: [{ t: 'setTrackedSessions', args: { sessionIds: ['s1', 's2'] } }] }),
-            '</voice_actions>',
-        ].join('\n');
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Voice agent reply\n\n${actionBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Done.' } }] }),
-            });
-
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        expect(useVoiceTargetStore.getState().trackedSessionIds).toEqual(['s1', 's2']);
-
-        const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) => String(call?.[0] ?? '').includes('/chat/completions'));
-        const hasToolResultsMessage = chatCalls.some((call: any[]) => {
-            const body = JSON.parse(String(call?.[1]?.body ?? '{}'));
-            const messages = Array.isArray(body?.messages) ? body.messages : [];
-            return messages.some((m: any) => typeof m?.content === 'string' && m.content.includes(VOICE_TOOL_RESULTS_JSON_PREFIX));
-        });
-        expect(hasToolResultsMessage).toBe(true);
-    });
-
-    it('agent mode can update tracked sessions from a comma-separated voice action list', async () => {
-        useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
-        useVoiceTargetStore.getState().setTrackedSessionIds([]);
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-                s2: { id: 's2', metadata: { path: '/tmp2', host: 'test' } },
-            },
-        });
-
-        const actionBlock = [
-            '<voice_actions>',
-            JSON.stringify({ actions: [{ t: 'setTrackedSessions', args: { sessionIds: 's1, s2' } }] }),
-            '</voice_actions>',
-        ].join('\n');
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Voice agent reply\n\n${actionBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Done.' } }] }),
-            });
-
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        expect(useVoiceTargetStore.getState().trackedSessionIds).toEqual(['s1', 's2']);
-    });
-
-    it('agent mode can answer structured user-action requests through the shared voice tool handlers', async () => {
-        useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-	            sessions: {
-	                ...storage.getState().sessions,
-	                s1: {
-	                    id: 's1',
-	                    serverId: 'server-a',
-	                    active: true,
-	                    presence: 'online',
-	                    metadata: { path: '/tmp', host: 'test' },
-	                    agentState: {
-	                        requests: {
-	                            req_question: {
-	                                id: 'req_question',
-	                                tool: 'AskUserQuestion',
-	                                kind: 'user_action',
-	                            },
-	                        },
-	                    },
-	                },
-	            },
-	            concurrentSessionListCacheByServerId: {
-	                ...(storage.getState() as any).concurrentSessionListCacheByServerId,
-	                'server-a': {
-	                    serverName: null,
-	                    sessions: {
-	                        s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-	                    },
-	                },
-	            },
-	        });
-
-        const actionBlock = [
-            '<voice_actions>',
-            JSON.stringify({
-                actions: [
-                    {
-                        t: 'answerUserActionRequest',
-                        args: {
-                            answers: [{ question: 'Continue?', values: ['Yes'] }],
-                        },
-                    },
-                ],
-            }),
-            '</voice_actions>',
-        ].join('\n');
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Voice agent reply\n\n${actionBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Done.' } }] }),
-            });
-
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
-            sessionId: 's1',
-            method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-            payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] } },
-            serverId: 'server-a',
-        });
-
-        const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) => String(call?.[0] ?? '').includes('/chat/completions'));
-        const toolResultsCarrier = chatCalls
-            .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
-            .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
-            .find(
-                (message: any) =>
-                    message?.role === 'user' &&
-                    typeof message?.content === 'string' &&
-                    message.content.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX),
-            );
-
-        expect(toolResultsCarrier?.content).toContain('"t":"answerUserActionRequest"');
-        expect(toolResultsCarrier?.content).toContain('"ok":true');
-    });
-
-    it('agent mode tells the model not to claim success when a voice tool result reports an error', async () => {
-        useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: {
-                    id: 's1',
-                    active: true,
-                    presence: 'online',
-                    metadata: { path: '/tmp', host: 'test' },
-                    agentState: {
-                        requests: {},
-                    },
-                },
-            },
-        });
-
-        const actionBlock = [
-            '<voice_actions>',
-            JSON.stringify({
-                actions: [
-                    {
-                        t: 'answerUserActionRequest',
-                        args: {
-                            answers: [{ question: 'Continue?', values: ['Yes'] }],
-                        },
-                    },
-                ],
-            }),
-            '</voice_actions>',
-        ].join('\n');
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Voice agent reply\n\n${actionBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Understood.' } }] }),
-            });
-
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        const chatCalls = (globalThis.fetch as any).mock.calls.filter((call: any[]) => String(call?.[0] ?? '').includes('/chat/completions'));
-        const toolResultsCarrier = chatCalls
-            .map((call: any[]) => JSON.parse(String(call?.[1]?.body ?? '{}')))
-            .flatMap((body: any) => (Array.isArray(body?.messages) ? body.messages : []))
-            .find(
-                (message: any) =>
-                    message?.role === 'user' &&
-                    typeof message?.content === 'string' &&
-                    message.content.startsWith(VOICE_TOOL_RESULTS_JSON_PREFIX),
-            );
-
-        expect(toolResultsCarrier?.content).toContain('"errorCode":"no_permission_request"');
-        expect(toolResultsCarrier?.content).toContain('Do not claim success');
-    });
-
-    it('agent mode includes buffered context updates in the next turn', async () => {
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-            },
-        });
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Voice agent reply' } }] }),
-            });
-
-        const { toggleLocalVoiceTurn, appendLocalVoiceAgentContextUpdate } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn('s1');
-        appendLocalVoiceAgentContextUpdate('s1', 'Session became focused: s1');
-        await toggleLocalVoiceTurn('s1');
-
-        const requestBody = (globalThis.fetch as any).mock.calls?.[1]?.[1]?.body;
-        expect(String(requestBody)).toContain('Session became focused: s1');
-    });
-
-    it('resets to idle with send_failed when agent turn request throws', async () => {
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-            },
-        });
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockRejectedValueOnce(new Error('agent turn failed'));
-
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = localVoiceEngine;
-        await toggleLocalVoiceTurn('s1');
-        await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
-
-        const nextState = getLocalVoiceState();
-        expect(nextState.status).toBe('idle');
-        // Keep the session active so the user can retry without re-starting voice.
-        expect(nextState.sessionId).toBe(VOICE_AGENT_GLOBAL_SESSION_ID);
-        expect(nextState.error).toBe('send_failed');
-    });
 
     it('keeps the selected daemon owner retryable when its execution run is unsupported', async () => {
         const storage = await getStorage();
@@ -794,17 +136,6 @@ describe('local voice engine agent behavior', () => {
                             tts: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.tts,
                                 autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
                             },
                         } },
                     },
@@ -875,7 +206,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                             },
                         } },
                     },
@@ -930,7 +260,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                             },
                             streaming: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
@@ -992,7 +321,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                                 prewarmOnConnect: true,
                             },
                             streaming: {
@@ -1042,7 +370,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                                 prewarmOnConnect: true,
                             },
                             streaming: {
@@ -1102,7 +429,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                                 prewarmOnConnect: true,
 
                             },
@@ -1165,7 +491,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                                 prewarmOnConnect: true,
                             },
                             streaming: {
@@ -1298,7 +623,6 @@ describe('local voice engine agent behavior', () => {
                             conversationMode: 'agent',
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                                 prewarmOnConnect: true,
                                 transcript: { persistenceMode: 'persistent', epoch: 1 },
                             },
@@ -1358,7 +682,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                             },
                             streaming: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
@@ -1397,6 +720,62 @@ describe('local voice engine agent behavior', () => {
         });
     });
 
+    it('rethrows a known before-effect streamed-turn rejection for durable delivery', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_conversation',
+                    providers: {
+                        ...storage.getState().settings.voice.providers,
+                        local_conversation: { schemaVersion: 1, config: {
+                            ...storage.getState().settings.voice.providers.local_conversation.config,
+                            conversationMode: 'agent',
+                            tts: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
+                                autoSpeakReplies: false,
+                            },
+                            agent: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
+                            },
+                            streaming: {
+                                ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
+                                enabled: true,
+                            },
+                        } },
+                    },
+                },
+            },
+            sessions: {
+                ...storage.getState().sessions,
+                s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+            },
+        });
+
+        daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
+        daemonVoiceAgentStartTurnStream.mockRejectedValueOnce(
+            Object.assign(new Error('Method not found'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }),
+        );
+        const onAccepted = vi.fn(async () => {});
+
+        await expect(localVoiceEngine.sendLocalVoiceAgentTextTurn(
+            's1',
+            'durable turn',
+            { localId: 'voice-local-before-effect', deliveryCommand: 'interrupt_and_send' },
+            onAccepted,
+        )).rejects.toMatchObject({
+            message: 'Method not found',
+            code: 'VOICE_TEXT_TURN_REJECTED_BEFORE_EFFECT',
+            pendingDeliveryBlockedReason: 'provider_unavailable_before_acceptance',
+        });
+
+        expect(daemonVoiceAgentStartTurnStream).toHaveBeenCalledTimes(1);
+        expect(daemonVoiceAgentSendTurn).not.toHaveBeenCalled();
+        expect(onAccepted).not.toHaveBeenCalled();
+    });
+
     it('cancels the stream and surfaces send_failed when daemon streaming read is unavailable', async () => {
         const storage = await getStorage();
         storage.__setState({
@@ -1420,7 +799,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                             },
                             streaming: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
@@ -1479,7 +857,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                             },
                             streaming: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
@@ -1578,7 +955,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                             },
                             streaming: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
@@ -1650,7 +1026,6 @@ describe('local voice engine agent behavior', () => {
                             },
                             agent: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'daemon',
                             },
                             streaming: {
                                 ...storage.getState().settings.voice.providers.local_conversation.config.streaming,
@@ -1697,176 +1072,5 @@ describe('local voice engine agent behavior', () => {
         expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
     });
 
-    it('agent mode (openai_compat) starts a review run when the voice agent emits startReview', async () => {
-        useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
-        sessionExecutionRunStart.mockReset();
-        sessionExecutionRunStart.mockResolvedValue({ runId: 'run_1', callId: 'c1', sidechainId: 's1' });
 
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.tts.openaiCompat,
-                                    baseUrl: 'http://localhost:8001',
-                                },
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-            },
-        });
-
-        const actionsBlock = [
-            '<voice_actions>',
-            JSON.stringify({ actions: [{ t: 'startReview', args: { engineIds: ['claude'], instructions: 'Review.', changeType: 'committed', base: { kind: 'none' } } }] }),
-            '</voice_actions>',
-        ].join('\n');
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Ok.\n\n${actionsBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Review started.' } }] }),
-            });
-
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        await stopPromise;
-
-        expect(sessionExecutionRunStart).toHaveBeenCalledWith(
-            's1',
-            expect.objectContaining({
-                intent: 'review',
-                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-                intentInput: expect.objectContaining({ engineId: 'claude' }),
-            }),
-        );
-    });
-
-    it('agent mode (openai_compat) opens a session when the voice agent emits openSession', async () => {
-        routerNavigate.mockReset();
-        setActiveServerAndSwitch.mockReset();
-        setActiveServerAndSwitch.mockResolvedValue(true);
-
-        const storage = await getStorage();
-        storage.__setState({
-            settings: {
-                ...storage.getState().settings,
-                voice: {
-                    ...storage.getState().settings.voice,
-                    providerId: 'local_conversation',
-                    providers: {
-                        ...storage.getState().settings.voice.providers,
-                        local_conversation: { schemaVersion: 1, config: {
-                            ...storage.getState().settings.voice.providers.local_conversation.config,
-                            conversationMode: 'agent',
-                            stt: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.stt,
-                                baseUrl: 'http://localhost:8000',
-                            },
-                            tts: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.tts,
-                                autoSpeakReplies: false,
-                            },
-                            agent: {
-                                ...storage.getState().settings.voice.providers.local_conversation.config.agent,
-                                backend: 'openai_compat',
-                                openaiCompat: {
-                                    ...storage.getState().settings.voice.providers.local_conversation.config.agent.openaiCompat,
-                                    chatBaseUrl: 'http://localhost:8002',
-                                    chatApiKey: null,
-                                    chatModel: 'fast-model',
-                                    commitModel: 'commit-model',
-                                },
-                            },
-                        } },
-                    },
-                },
-            },
-            concurrentSessionListCacheByServerId: {
-                ...(storage.getState() as any).concurrentSessionListCacheByServerId,
-                'server-b': {
-                    serverName: 'Server B',
-                    sessions: {
-                        s_other: { id: 's_other', active: false, updatedAt: 10, presence: 'offline', metadata: { path: '/tmp', host: 'b-host' } },
-                    },
-                },
-            },
-            sessions: {
-                ...storage.getState().sessions,
-                s1: { id: 's1', active: true, presence: 'online', metadata: { path: '/tmp', host: 'test' } },
-            },
-        });
-
-        const actionsBlock = [
-            '<voice_actions>',
-            JSON.stringify({ actions: [{ t: 'openSession', args: { sessionId: 's_other' } }] }),
-            '</voice_actions>',
-        ].join('\n');
-
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Ok.\n\n${actionsBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Opened session.' } }] }),
-            });
-
-        const { toggleLocalVoiceTurn } = localVoiceEngine;
-
-        await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-        const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
-
-        await stopPromise;
-
-        expect(setActiveServerAndSwitch).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'server-b' }));
-        expect(routerNavigate).toHaveBeenCalledWith('/session/s_other', expect.any(Object));
-    });
 });

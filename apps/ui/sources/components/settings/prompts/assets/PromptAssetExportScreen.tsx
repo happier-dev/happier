@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { TextInput, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
+  type MachineAdministrationTargetV1,
   type PromptAssetInstallModeV1,
   type PromptAssetScopeV1,
   type PromptAssetTypeDescriptorV1,
@@ -11,15 +11,22 @@ import {
 
 import { ContextBar } from '@/components/settings/contextBar/ContextBar';
 import { useContextBarSelection } from '@/components/settings/contextBar/useContextBarSelection';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SettingsActionFooter } from '@/components/ui/settingsSurface/SettingsActionFooter';
 import { Modal } from '@/modal';
-import { storage, useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import {
+  type FreshMachineAdministrationExecutionTargetV1,
+  useMachineAdministrationTargetSelection,
+} from '@/sync/domains/machines/administration/useTargetSelection';
 import { machinePromptAssetsDelete, machinePromptAssetsListTypes } from '@/sync/ops/machinePromptAssets';
 import { removePromptExternalLink } from '@/sync/ops/promptLibrary/promptDocs';
 import { readPromptLibraryArtifactForExport, writePromptLibraryArtifactToExternalAsset, type ExportablePromptLibraryArtifact } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
@@ -36,6 +43,7 @@ import {
 } from '@/components/settings/prompts/shared/promptAssetInstallModeSelection';
 
 import { defaultPromptAssetTargetInput } from './promptAssetExportDefaults';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -45,7 +53,6 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     padding: 16,
     paddingBottom: 64,
-    maxWidth: layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
@@ -62,18 +69,9 @@ const styles = StyleSheet.create((theme) => ({
 
 type PromptAssetExportInitialSelection = Readonly<{
   assetTypeId?: string | null;
-  machineId?: string | null;
   scope?: PromptAssetScopeV1 | null;
   workspacePath?: string | null;
 }>;
-
-function describeMachine(
-  machineId: string,
-  machines: ReadonlyArray<{ id: string; metadata?: { displayName?: string | null; host?: string | null; homeDir?: string | null } | null }>,
-): string {
-  const machine = machines.find((entry) => entry.id === machineId) ?? null;
-  return machine?.metadata?.displayName || machine?.metadata?.host || machineId;
-}
 
 function resolveProjectDirectory(
   workspacePath: string,
@@ -86,9 +84,44 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
   artifactId: string;
   initialSelection?: PromptAssetExportInitialSelection;
 }>) => {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const contentStyle = React.useMemo(() => [styles.content, contentMaxWidthStyle], [contentMaxWidthStyle]);
   const { theme } = useUnistyles();
   const machines = useAllMachines();
   const [promptExternalLinksV1, setPromptExternalLinksV1] = useSettingMutable('promptExternalLinksV1');
+  const administrationTargetSelection = useMachineAdministrationTargetSelection(
+    MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptAssets,
+  );
+  const selectedTarget = administrationTargetSelection.selectedTarget;
+  const selectionKey = selectedTarget
+    ? `${selectedTarget.serverIdentityId}\0${selectedTarget.machineId}`
+    : '';
+  const selectionKeyRef = React.useRef(selectionKey);
+  selectionKeyRef.current = selectionKey;
+  const resolveExecutionTargetRef = React.useRef(administrationTargetSelection.resolveExecutionTarget);
+  resolveExecutionTargetRef.current = administrationTargetSelection.resolveExecutionTarget;
+  const resolveExactExecutionTarget = React.useCallback((
+    expectedTarget: MachineAdministrationTargetV1 | null,
+  ): FreshMachineAdministrationExecutionTargetV1 | null => {
+    const resolved = resolveExecutionTargetRef.current();
+    return expectedTarget !== null
+      && resolved !== null
+      && machineAdministrationTargetsEqual(expectedTarget, resolved.target)
+      ? resolved
+      : null;
+  }, []);
+  const isExecutionTargetCurrent = React.useCallback((
+    requestedSelection: string,
+    executionTarget: FreshMachineAdministrationExecutionTargetV1,
+  ): boolean => {
+    if (selectionKeyRef.current !== requestedSelection) return false;
+    const current = resolveExactExecutionTarget(executionTarget.target);
+    return current !== null
+      && current.serverId === executionTarget.serverId
+      && current.machine.id === executionTarget.machine.id;
+  }, [resolveExactExecutionTarget]);
   const [types, setTypes] = React.useState<PromptAssetTypeDescriptorV1[]>([]);
   const [scope, setScope] = React.useState<PromptAssetScopeV1>(props.initialSelection?.scope ?? 'project');
   const [scopeMenuOpen, setScopeMenuOpen] = React.useState(false);
@@ -98,18 +131,19 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
   const [installModeMenuOpen, setInstallModeMenuOpen] = React.useState(false);
   const [artifactState, setArtifactState] = React.useState<ExportablePromptLibraryArtifact | null>(null);
   const [busy, setBusy] = React.useState(false);
-  const defaultMachineId = props.initialSelection?.machineId ?? machines[0]?.id ?? null;
   const {
-    machineId,
-    setMachineId,
     workspacePath,
     setWorkspacePath,
   } = useContextBarSelection({
     selectionKey: `promptAssets.export.${props.artifactId}`,
-    defaultMachineId,
+    // This legacy context entry carries only the workspace path. Its machine
+    // field is deliberately ignored so it cannot compete with the
+    // Administration-owned portable target.
+    defaultMachineId: null,
     defaultWorkspacePath: props.initialSelection?.workspacePath ?? '',
   });
   const [targetInput, setTargetInput] = React.useState('');
+  const previousSelectionKeyRef = React.useRef(selectionKey);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -125,30 +159,44 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
     };
   }, [props.artifactId]);
 
-  React.useEffect(() => {
-    if (machineId && machines.some((entry) => entry.id === machineId)) return;
-    const nextMachineId = defaultMachineId;
-    setMachineId(nextMachineId);
+  React.useLayoutEffect(() => {
+    const previousSelectionKey = previousSelectionKeyRef.current;
+    previousSelectionKeyRef.current = selectionKey;
+    if (!previousSelectionKey || previousSelectionKey === selectionKey) return;
     setWorkspacePath('');
-  }, [defaultMachineId, machineId, machines, setMachineId, setWorkspacePath]);
+  }, [selectionKey, setWorkspacePath]);
 
   React.useEffect(() => {
-    if (!machineId || !artifactState) return;
-
     let cancelled = false;
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!artifactState || !executionTarget) {
+      setTypes([]);
+      return () => {
+        cancelled = true;
+      };
+    }
     (async () => {
-      const listed = await machinePromptAssetsListTypes(machineId, undefined);
-      if (cancelled) return;
+      const listed = await machinePromptAssetsListTypes(executionTarget.machine.id, {
+        serverId: executionTarget.serverId,
+      });
+      if (cancelled || !isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
       const compatibleTypes = listed.types.filter((entry) => entry.libraryKind === artifactState.libraryKind);
       setTypes(compatibleTypes);
     })().catch(() => {
-      if (!cancelled) setTypes([]);
+      if (!cancelled && isExecutionTargetCurrent(requestedSelection, executionTarget)) setTypes([]);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [artifactState, machineId]);
+  }, [
+    artifactState,
+    isExecutionTargetCurrent,
+    resolveExactExecutionTarget,
+    selectedTarget,
+    selectionKey,
+  ]);
 
   const scopeCompatibleTypes = React.useMemo(
     () => listPromptAssetTypesForScope(types, scope),
@@ -176,18 +224,18 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
   );
 
   const currentLink = React.useMemo(() => {
-    if (!machineId || !selectedAssetTypeId) return null;
+    if (!selectedTarget || !selectedAssetTypeId) return null;
     const projectDirectory = scope === 'project'
       ? resolveProjectDirectory(workspacePath)
       : null;
     return (promptExternalLinksV1?.links ?? []).find((entry) => (
       entry.artifactId === props.artifactId
       && entry.assetTypeId === selectedAssetTypeId
-      && entry.machineId === machineId
+      && entry.machineId === selectedTarget.machineId
       && entry.scope === scope
       && (entry.workspacePath ?? null) === projectDirectory
     )) ?? null;
-  }, [machineId, promptExternalLinksV1, props.artifactId, scope, selectedAssetTypeId, workspacePath]);
+  }, [promptExternalLinksV1, props.artifactId, scope, selectedAssetTypeId, selectedTarget, workspacePath]);
 
   React.useEffect(() => {
     if (!artifactState) return;
@@ -207,27 +255,18 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
     }));
   }, [artifactState, currentLink]);
 
-  const machineItems = React.useMemo((): DropdownMenuItem[] => {
-    return machines.map((machine) => ({
-      id: machine.id,
-      title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
-      subtitle: machine.id,
-      icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
-    }));
-  }, [machines, theme.colors.text.secondary]);
-
   const scopeItems = React.useMemo((): DropdownMenuItem[] => ([
     {
       id: 'project',
       title: t('promptLibrary.externalAssetsProjectScope'),
       subtitle: t('promptLibrary.externalAssetsProjectScopeSubtitle'),
-      icon: <Ionicons name="folder-outline" size={22} color={theme.colors.accent.indigo} />,
+      icon: <Icon name="folder" size={20} color={theme.colors.accent.indigo} />,
     },
     {
       id: 'user',
       title: t('promptLibrary.externalAssetsUserScope'),
       subtitle: t('promptLibrary.externalAssetsUserScopeSubtitle'),
-      icon: <Ionicons name="person-outline" size={22} color={theme.colors.accent.blue} />,
+      icon: <Icon name="person" size={20} color={theme.colors.accent.blue} />,
     },
   ]), [theme.colors.accent.blue, theme.colors.accent.indigo]);
 
@@ -237,7 +276,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
         id: entry.id,
         title: entry.title,
         subtitle: entry.description,
-        icon: <Ionicons name="layers-outline" size={22} color={theme.colors.text.secondary} />,
+        icon: <Icon name="stack-simple" size={20} color={theme.colors.text.secondary} />,
       }));
   }, [scopeCompatibleTypes, theme.colors.text.secondary]);
 
@@ -250,7 +289,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
       subtitle: entry === 'symlink'
         ? t('promptLibrary.externalAssetsInstallMethodSymlinkSubtitle')
         : t('promptLibrary.externalAssetsInstallMethodCopySubtitle'),
-      icon: <Ionicons name={entry === 'symlink' ? 'git-branch-outline' : 'copy-outline'} size={22} color={theme.colors.text.secondary} />,
+      icon: <Icon name={entry === 'symlink' ? 'git-branch' : 'copy'} size={20} color={theme.colors.text.secondary} />,
     }));
   }, [availableInstallModes, theme.colors.text.secondary]);
 
@@ -263,7 +302,9 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
   );
 
   const exportAsset = React.useCallback(async () => {
-    if (!artifactState || !machineId || !currentType) return;
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!artifactState || !executionTarget || !currentType) return;
     if (scope === 'project' && !resolveProjectDirectory(workspacePath)) return;
     const resolvedInstallMode = artifactState.libraryKind === 'bundle'
       ? selectedInstallMode
@@ -273,7 +314,8 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
       setBusy(true);
       const preview = await writePromptLibraryArtifactToExternalAsset({
         artifactId: props.artifactId,
-        machineId,
+        machineId: executionTarget.machine.id,
+        serverId: executionTarget.serverId,
         assetTypeId: currentType.id,
         scope,
         workspacePath,
@@ -282,6 +324,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
         promptExternalLinks: promptExternalLinksV1,
         previewOnly: true,
       });
+      if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
       if (!preview.ok) {
         Modal.alert(t('common.error'), translatePromptLibraryMessage(preview.error));
         return;
@@ -294,9 +337,15 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
       );
       if (!confirmed) return;
 
+      const currentExecutionTarget = resolveExactExecutionTarget(selectedTarget);
+      if (
+        !currentExecutionTarget
+        || !isExecutionTargetCurrent(requestedSelection, currentExecutionTarget)
+      ) return;
       const committed = await writePromptLibraryArtifactToExternalAsset({
         artifactId: props.artifactId,
-        machineId,
+        machineId: currentExecutionTarget.machine.id,
+        serverId: currentExecutionTarget.serverId,
         assetTypeId: currentType.id,
         scope,
         workspacePath,
@@ -305,6 +354,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
         promptExternalLinks: promptExternalLinksV1,
         previewOnly: false,
       });
+      if (!isExecutionTargetCurrent(requestedSelection, currentExecutionTarget)) return;
       if (!committed.ok || !committed.nextPromptExternalLinks) {
         Modal.alert(t('common.error'), translatePromptLibraryMessage(committed.ok ? 'promptLibrary.saveError' : committed.error));
         return;
@@ -314,10 +364,24 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
     } finally {
       setBusy(false);
     }
-  }, [artifactState, currentType, machineId, promptExternalLinksV1, props.artifactId, scope, selectedInstallMode, setPromptExternalLinksV1, targetInput, workspacePath]);
+  }, [
+    artifactState,
+    currentType,
+    isExecutionTargetCurrent,
+    promptExternalLinksV1,
+    props.artifactId,
+    resolveExactExecutionTarget,
+    scope,
+    selectedInstallMode,
+    selectedTarget,
+    selectionKey,
+    setPromptExternalLinksV1,
+    targetInput,
+    workspacePath,
+  ]);
 
   const deleteExport = React.useCallback(async () => {
-    if (!machineId || !currentType || !currentLink) return;
+    if (!currentType || !currentLink) return;
 
     const directory = currentLink.scope === 'project'
       ? (currentLink.workspacePath ?? resolveProjectDirectory(workspacePath) ?? undefined)
@@ -330,16 +394,21 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
     );
     if (!confirmed) return;
 
+    const requestedSelection = selectionKey;
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    if (!executionTarget || executionTarget.machine.id !== currentLink.machineId) return;
+
     try {
       setBusy(true);
-      const result = await machinePromptAssetsDelete(machineId, {
+      const result = await machinePromptAssetsDelete(executionTarget.machine.id, {
         assetTypeId: currentType.id,
         scope: currentLink.scope,
         directory,
         externalRef: currentLink.externalRef,
         previewOnly: false,
         expectedDigest: currentLink.lastExternalDigest ?? null,
-      }, undefined);
+      }, { serverId: executionTarget.serverId });
+      if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
       if (!result.ok) {
         Modal.alert(t('common.error'), result.error);
         return;
@@ -348,31 +417,39 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
     } finally {
       setBusy(false);
     }
-  }, [currentLink, currentType, machineId, machines, promptExternalLinksV1, setPromptExternalLinksV1, workspacePath]);
+  }, [
+    currentLink,
+    currentType,
+    isExecutionTargetCurrent,
+    promptExternalLinksV1,
+    resolveExactExecutionTarget,
+    selectedTarget,
+    selectionKey,
+    setPromptExternalLinksV1,
+    workspacePath,
+  ]);
+
+  const executionTarget = resolveExactExecutionTarget(selectedTarget);
 
   return (
     <View style={styles.container}>
-      <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ItemList containerStyle={contentStyle} keyboardShouldPersistTaps="handled">
+        <MachineAdministrationTargetSelector
+          selection={administrationTargetSelection}
+          testIDPrefix="settings.promptAssetExport.administration.target"
+        />
         <ItemGroup title={t('promptLibrary.externalAssetsContext')}>
           <ContextBar
-            mode={scope === 'project' ? 'machine_and_workspace' : 'machine_only'}
-            machine={{
-              selectedId: machineId,
-              subtitle: machineId ? describeMachine(machineId, machines) : t('promptLibrary.externalAssetsNoMachine'),
-              items: machineItems,
-              onSelect: (nextMachineId) => {
-                setMachineId(nextMachineId);
-                setWorkspacePath('');
-              },
-            }}
+            mode="workspace_only"
             workspace={scope === 'project' ? {
               value: workspacePath,
               onChange: setWorkspacePath,
               placeholder: t('promptLibrary.externalAssetsProjectDirectory'),
               testID: 'promptAssetExport.directoryInput',
               browse: {
-                machineId,
-                enabled: true,
+                machineId: executionTarget?.machine.id ?? null,
+                serverId: executionTarget?.serverId ?? null,
+                enabled: executionTarget !== null,
               },
             } : undefined}
           />
@@ -388,7 +465,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
             itemTrigger={{
               title: t('promptLibrary.externalAssetsScope'),
               subtitle: scope === 'project' ? t('promptLibrary.externalAssetsProjectScope') : t('promptLibrary.externalAssetsUserScope'),
-              icon: <Ionicons name="albums-outline" size={29} color={theme.colors.accent.indigo} />,
+              icon: <Icon name="stack" size={29} color={theme.colors.accent.indigo} />,
             }}
             rowKind="item"
             connectToTrigger
@@ -404,7 +481,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
             itemTrigger={{
               title: t('promptLibrary.externalAssetsExportType'),
               subtitle: currentType?.title ?? t('promptLibrary.externalAssetsNoTypes'),
-              icon: <Ionicons name="layers-outline" size={29} color={theme.colors.text.secondary} />,
+              icon: <Icon name="stack-simple" size={29} color={theme.colors.text.secondary} />,
             }}
             rowKind="item"
             connectToTrigger
@@ -423,7 +500,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
                 subtitle: selectedInstallMode === 'symlink'
                   ? t('promptLibrary.externalAssetsInstallMethodSymlink')
                   : t('promptLibrary.externalAssetsInstallMethodCopy'),
-                icon: <Ionicons name={selectedInstallMode === 'symlink' ? 'git-branch-outline' : 'copy-outline'} size={29} color={theme.colors.text.secondary} />,
+                icon: <Icon name={selectedInstallMode === 'symlink' ? 'git-branch' : 'copy'} size={29} color={theme.colors.text.secondary} />,
               }}
               rowKind="item"
               connectToTrigger
@@ -446,7 +523,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
               />
             )}
             subtitleLines={0}
-            icon={<Ionicons name={artifactState?.libraryKind === 'bundle' ? 'sparkles-outline' : 'document-text-outline'} size={29} color={theme.colors.text.secondary} />}
+            icon={<Icon name={artifactState?.libraryKind === 'bundle' ? 'sparkle' : 'file-text'} size={29} color={theme.colors.text.secondary} />}
             mode="info"
             showChevron={false}
           />
@@ -462,7 +539,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
                   ? t('promptLibrary.externalAssetsProjectScope')
                   : t('promptLibrary.externalAssetsUserScope'),
               })}
-              icon={<Ionicons name="link-outline" size={29} color={theme.colors.text.secondary} />}
+              icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
               detail={describePromptExternalLinkTitle(currentLink)}
               showChevron={false}
             />
@@ -472,7 +549,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
         <SettingsActionFooter
           primaryLabel={t('promptLibrary.externalAssetsExportAction')}
           onPrimaryPress={() => { void exportAsset(); }}
-          primaryDisabled={busy || !artifactState || !machineId || !currentType || targetInput.trim().length === 0 || (scope === 'project' && !resolveProjectDirectory(workspacePath))}
+          primaryDisabled={busy || !artifactState || !executionTarget || !currentType || targetInput.trim().length === 0 || (scope === 'project' && !resolveProjectDirectory(workspacePath))}
           primaryTestID="promptAssetExport.export"
           secondaryLabel={currentLink ? t('common.delete') : undefined}
           onSecondaryPress={currentLink ? (() => { void deleteExport(); }) : undefined}

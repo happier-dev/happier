@@ -166,4 +166,46 @@ describe('useSessionListNavigationActions', () => {
 
         await hook.unmount();
     });
+
+    it('starts a project session from the owning machine workspace path', async () => {
+        rememberLastProjectSessionSelections.value = false;
+        sessionById.value = {
+            seed_sess: {
+                id: 'seed_sess',
+                active: false,
+                metadata: {
+                    machineId: 'machine_target',
+                    path: '/home/coder/repo',
+                    sessionWorkspaceLocationV1: {
+                        v: 1,
+                        machineId: 'machine_target',
+                        agentPath: '/home/coder/repo',
+                        machinePath: '/Users/alice/repo',
+                    },
+                },
+            },
+        };
+
+        const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
+        const hook = await renderHook(() => useSessionListNavigationActions());
+
+        await act(async () => {
+            hook.getCurrent().handleCreateSessionFromWorkspaceScope({
+                serverId: 'server_a',
+                machineId: 'machine_target',
+                rootPath: '/home/coder/repo',
+            }, { seedSessionId: 'seed_sess' });
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                machineId: 'machine_target',
+                directory: '/Users/alice/repo',
+                spawnServerId: 'server_a',
+            },
+        });
+
+        await hook.unmount();
+    });
 });

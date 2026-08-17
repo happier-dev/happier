@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TurnEndpointSignal } from '@/voice/runtime/input/TurnEndpointController';
 
@@ -61,9 +61,10 @@ async function registerControlSessionBinding(controlSessionId: string, conversat
     });
 }
 
-// The shared harness `beforeEach` runs `vi.doUnmock` + `vi.resetModules`, so the
-// capture-owner double is (re)registered per test via `vi.doMock` (registration
-// order keeps it after the harness hook) and re-read on the next engine import.
+// The shared harness `beforeEach` runs `vi.doUnmock`, so the capture-owner
+// double is registered after that hook and read on the first engine import.
+// This suite deliberately retains one engine module graph; subsequent tests
+// reuse the same double and reset its observable calls.
 function registerCaptureOwnerDouble(): void {
     vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
         createLocalVoiceCaptureOwner: (deps: { onEndpointSignal?: (signal: TurnEndpointSignal) => void }) => {
@@ -103,8 +104,7 @@ async function configureBargeInSpeakingSession(sessionId: string): Promise<void>
                         ...storage.getState().settings.voice.providers.local_direct.config,
                         stt: {
                             ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                            useDeviceStt: true,
-                            baseUrl: null,
+                            provider: 'device',
                         },
                         tts: {
                             ...storage.getState().settings.voice.providers.local_direct.config.tts,
@@ -150,18 +150,13 @@ async function configureReplySpeakingSession(): Promise<void> {
                         ...storage.getState().settings.voice.providers.local_direct.config,
                         stt: {
                             ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                            useDeviceStt: true,
-                            baseUrl: null,
+                            provider: 'device',
                         },
                         tts: {
                             ...storage.getState().settings.voice.providers.local_direct.config.tts,
                             autoSpeakReplies: true,
                             provider: 'device',
                             bargeInEnabled: true,
-                            openaiCompat: {
-                                ...storage.getState().settings.voice.providers.local_direct.config.tts.openaiCompat,
-                                baseUrl: null,
-                            },
                         },
                     } },
                 },
@@ -229,10 +224,39 @@ async function driveReplyToSpeaking(
 }
 
 describe('local voice engine live barge-in', () => {
-    registerLocalVoiceEngineHarnessHooks();
+    registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
     beforeEach(() => {
-        captureOwnerHooks.current = null;
-        registerCaptureOwnerDouble();
+        if (captureOwnerHooks.current) {
+            captureOwnerHooks.current.startCapture.mockClear();
+        } else {
+            registerCaptureOwnerDouble();
+        }
+    });
+
+    afterEach(async () => {
+        const [
+            localVoiceEngine,
+            { voiceConversationRuntimeMachine },
+            { resetVoiceSessionRuntimeStateForTests },
+            { voiceSessionBindingStore },
+            { __resetVoiceTurnInterruptions },
+        ] = await Promise.all([
+            import('./localVoiceEngine'),
+            import('@/voice/runtime/machine/VoiceConversationRuntimeMachine'),
+            import('@/voice/session/voiceSessionStore'),
+            import('@/voice/binding/voiceConversationBindingStore'),
+            import('@/voice/transcript/voiceTurnInterruption'),
+        ]);
+
+        await localVoiceEngine.stopLocalVoiceSession();
+        voiceConversationRuntimeMachine.reset();
+        await resetVoiceSessionRuntimeStateForTests();
+        __resetVoiceTurnInterruptions();
+
+        for (const binding of voiceSessionBindingStore.getState().list()) {
+            voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
+        }
+        voiceSessionBindingStore.getState().replacePersistedBindings([]);
     });
 
     it('a substantive endpoint signal while speaking aborts playback and rearms listening', async () => {
@@ -331,8 +355,7 @@ describe('local voice engine live barge-in', () => {
                             ...storage.getState().settings.voice.providers.local_direct.config,
                             stt: {
                                 ...storage.getState().settings.voice.providers.local_direct.config.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                             tts: {
                                 ...storage.getState().settings.voice.providers.local_direct.config.tts,

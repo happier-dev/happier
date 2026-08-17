@@ -29,7 +29,7 @@ export function modelCatalogStateLabel(state: ModelCatalogRowState): string {
 }
 
 /** Compact human-readable byte size (binary units). */
-export function formatResidentMemory(bytes: number): string {
+export function formatArtifactBytes(bytes: number): string {
     if (!Number.isFinite(bytes) || bytes <= 0) {
         return '0 B';
     }
@@ -46,7 +46,7 @@ export function formatResidentMemory(bytes: number): string {
 
 /**
  * Build the per-row detail string: the lifecycle state, plus download progress
- * while downloading, resident memory when the daemon reports it, and the last
+ * while downloading, declared artifact bytes when the daemon reports them, and the last
  * error message on failure. Pure (modulo `t`), so it is unit-testable.
  */
 export function formatModelCatalogRowDetail(row: ModelCatalogRow): string {
@@ -58,10 +58,10 @@ export function formatModelCatalogRowDetail(row: ModelCatalogRow): string {
         parts.push(row.lastError);
     }
     if (
-        typeof row.residentMemoryBytes === 'number'
+        typeof row.loadedArtifactBytes === 'number'
         && (row.state === 'ready' || row.state === 'warming' || row.state === 'evicted')
     ) {
-        parts.push(t('settingsVoice.local.models.memory', { size: formatResidentMemory(row.residentMemoryBytes) }));
+        parts.push(t('settingsVoice.local.models.modelFiles', { size: formatArtifactBytes(row.loadedArtifactBytes) }));
     }
     return parts.join(' • ');
 }

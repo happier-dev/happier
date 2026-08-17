@@ -58,7 +58,7 @@ export type MachineCapabilitiesDetectResult =
 export async function machineCapabilitiesDetect(
     machineId: string,
     request: CapabilitiesDetectRequest,
-    options?: { timeoutMs?: number; serverId?: string | null },
+    options?: { timeoutMs?: number; serverId?: string | null; signal?: AbortSignal },
 ): Promise<MachineCapabilitiesDetectResult> {
     if (isDemoModeActive()) {
         return { supported: false, reason: 'not-supported' };
@@ -72,6 +72,7 @@ export async function machineCapabilitiesDetect(
                 payload: request,
                 serverId: options?.serverId,
                 timeoutMs,
+                ...(options?.signal ? { signal: options.signal } : {}),
             }),
             new Promise<{ error: string }>((resolve) => {
                 setTimeout(() => resolve({ error: 'Timeout' }), timeoutMs);

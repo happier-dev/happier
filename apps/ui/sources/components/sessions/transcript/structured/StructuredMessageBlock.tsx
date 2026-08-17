@@ -1,29 +1,31 @@
 import React from 'react';
-import { Platform } from 'react-native';
 
-import type { DaemonPluginStructuredMessageResolveResponse, PluginJsonValueV2 } from '@happier-dev/protocol';
+import type { MessageStructuredPresentationV1 } from '@happier-dev/protocol';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import type { PluginUiProjectionModel, PluginUiStructuredMessageProjection } from '@/sync/domains/plugins/ui/projection';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
-import { Text } from '@/components/ui/text/Text';
+import { PluginUiBoundary } from '@/components/plugins/reactNative/PluginUiBoundary';
+import { openPluginContributedActionReference } from '@/components/plugins/actions/openPluginContributedAction';
 import {
-    machinePluginStructuredMessageActionExecute,
-    machinePluginStructuredMessageResolve,
-} from '@/sync/ops/machineContributionRegistryProjection';
-import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+    createPluginPersistedStructuredMessageActionController,
+    usePluginMessageActionHost,
+} from '@/components/sessions/transcript/messageActions/PluginMessageActions';
+import { readUnsupportedContentMeta } from '@/sync/domains/messages/unsupportedContentMeta';
+import { resolveUnsupportedContentPresentation } from '@/sync/domains/messages/unsupportedContentPresentation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     deriveTranscriptInteraction,
     type TranscriptInteraction,
 } from '@/utils/sessions/deriveTranscriptInteraction';
 
-import { DeclarativeStructuredMessageRenderer } from './DeclarativeStructuredMessageRenderer';
-import { parseHappierMetaEnvelope, type HappierMetaEnvelope } from './happierMetaEnvelope';
+import {
+    DeclarativeStructuredMessageRenderer,
+    type StructuredMessageActionSelection,
+} from './DeclarativeStructuredMessageRenderer';
+import { parseHappierMetaEnvelope } from './happierMetaEnvelope';
 import type { StructuredMessageRendererParams } from './structuredMessageRegistry';
 import {
     findBuiltInStructuredMessageEntry,
-    findPluginStructuredMessageDescriptor,
 } from './descriptorRegistry';
 
 const NON_STRUCTURED_HAPPIER_META_KINDS = new Set([
@@ -32,103 +34,85 @@ const NON_STRUCTURED_HAPPIER_META_KINDS = new Set([
 ]);
 const FAIL_CLOSED_STRUCTURED_MESSAGE_INTERACTION = deriveTranscriptInteraction({ kind: 'public' });
 
-type SuccessfulResolution = Extract<DaemonPluginStructuredMessageResolveResponse, { ok: true }>;
+type MessageWithStructuredPresentation = (
+    | Extract<Message, { kind: 'user-text' }>
+    | Extract<Message, { kind: 'agent-text' }>
+) & Readonly<{
+    structuredPresentation: MessageStructuredPresentationV1;
+}>;
 
-function renderDescriptorFallback(descriptor: PluginUiStructuredMessageProjection): React.ReactElement | null {
-    if (descriptor.fallback.kind === 'hidden') return null;
-    return <Text testID="structured-message-summary-fallback">{descriptor.fallback.template}</Text>;
+function hasStructuredPresentation(
+    message: Message,
+): message is MessageWithStructuredPresentation {
+    return (message.kind === 'user-text' || message.kind === 'agent-text')
+        && message.structuredPresentation !== undefined;
 }
 
-function PluginStructuredMessage(props: Readonly<{
-    descriptor: PluginUiStructuredMessageProjection;
-    envelope: HappierMetaEnvelope;
-    generation: number | null;
-    sessionId: string;
-    messageId?: string;
+function isUnavailableStructuredTranscriptRecord(
+    message: Message,
+    debugInformationEnabled: boolean,
+): boolean {
+    const kind = readUnsupportedContentMeta(message.meta);
+    return kind === 'unsupported-transcript-record'
+        && resolveUnsupportedContentPresentation({ kind, debugInformationEnabled }) === 'label';
+}
+
+function PersistedPluginStructuredMessage(props: Readonly<{
+    message: MessageWithStructuredPresentation;
     interaction: TranscriptInteraction;
-}>): React.ReactElement | null {
-    const [resolution, setResolution] = React.useState<SuccessfulResolution | null>(null);
+}>): React.ReactElement {
+    const structuredPresentation = props.message.structuredPresentation!;
+    const messageActionHost = usePluginMessageActionHost();
     const [actionPending, setActionPending] = React.useState(false);
     const actionPendingRef = React.useRef(false);
-    const canSendMessagesRef = React.useRef(props.interaction.canSendMessages === true);
-
-    React.useLayoutEffect(() => {
-        canSendMessagesRef.current = props.interaction.canSendMessages === true;
-    }, [props.interaction.canSendMessages]);
-
-    const handleAction = React.useCallback((action: Readonly<{ qualifiedId: string; input?: unknown }>) => {
-        if (!canSendMessagesRef.current || !resolution || actionPendingRef.current) return;
-        const machineId = readMachineControlTargetForSession(props.sessionId)?.machineId ?? '';
-        if (!machineId) return;
+    const controller = React.useMemo(() => (
+        createPluginPersistedStructuredMessageActionController({
+            host: messageActionHost,
+            messageActionReference: props.message.messageActionReference,
+        })
+    ), [messageActionHost, props.message.messageActionReference]);
+    const canDispatchActions = props.interaction.canSendMessages === true && controller !== null;
+    const isActionAvailable = React.useCallback((action: StructuredMessageActionSelection) => (
+        canDispatchActions && controller!.isReferenceAvailable(action.identity)
+    ), [canDispatchActions, controller]);
+    const handleAction = React.useCallback((action: StructuredMessageActionSelection) => {
+        if (
+            !canDispatchActions
+            || actionPendingRef.current
+            || !controller!.isReferenceAvailable(action.identity)
+        ) {
+            return;
+        }
         actionPendingRef.current = true;
         setActionPending(true);
-        void machinePluginStructuredMessageActionExecute(machineId, {
-            serverId: resolveServerIdForSessionIdFromLocalCache(props.sessionId),
-            expectedGeneration: resolution.model.identity.generation,
-            qualifiedActionId: action.qualifiedId,
-            input: (action.input ?? null) as PluginJsonValueV2,
-            sessionId: props.sessionId,
-            executionSurface: 'ui',
-        }).then((result) => {
-            if (!result.supported || !result.result.ok) {
-                setResolution((current) => current === resolution ? null : current);
-            }
+        fireAndForget(openPluginContributedActionReference({
+            controller: controller!,
+            action: action.identity,
+            // An immutable snapshot carries the input deliberately. Omitted
+            // input follows the existing Action default; explicit null remains
+            // an admitted author value through the canonical dispatcher.
+            input: action.input === undefined ? {} : action.input,
+            ...(messageActionHost?.signal ? { signal: messageActionHost.signal } : {}),
         }).finally(() => {
             actionPendingRef.current = false;
             setActionPending(false);
-        });
-    }, [props.sessionId, resolution]);
-
-    React.useEffect(() => {
-        let current = true;
-        const abortController = new AbortController();
-        setResolution(null);
-        const machineId = readMachineControlTargetForSession(props.sessionId)?.machineId ?? '';
-        if (!machineId || props.generation === null) return () => {
-            current = false;
-            abortController.abort();
-        };
-        void machinePluginStructuredMessageResolve(machineId, {
-            serverId: resolveServerIdForSessionIdFromLocalCache(props.sessionId),
-            expectedGeneration: String(props.generation),
-            kind: props.envelope.kind,
-            payload: props.envelope.payload as PluginJsonValueV2,
-            ...(props.envelope.resources ? { resourceRefs: props.envelope.resources } : {}),
-            facts: {
-                'plugin.enabled': true,
-                'session.exists': true,
-                'host.platform': Platform.OS === 'web' ? 'web' : Platform.OS,
-            },
-            signal: abortController.signal,
-        }).then((result) => {
-            if (!current) return;
-            if (result.supported && result.resolution.ok
-                && result.resolution.model.visible
-                && result.resolution.renderer.visible) {
-                setResolution(result.resolution);
-            }
-        });
-        return () => {
-            current = false;
-            abortController.abort();
-        };
-    }, [
-        props.descriptor.id,
-        props.envelope.kind,
-        props.envelope.payload,
-        props.envelope.resources,
-        props.generation,
-        props.messageId,
-        props.sessionId,
-    ]);
-
-    return resolution
-        ? <DeclarativeStructuredMessageRenderer
-            resolution={resolution}
-            onAction={props.interaction.canSendMessages === true ? handleAction : undefined}
-            actionPending={actionPending}
-        />
-        : renderDescriptorFallback(props.descriptor);
+        }), { tag: 'PersistedPluginStructuredMessage.openAction' });
+    }, [canDispatchActions, controller, messageActionHost?.signal]);
+    return (
+        <PluginUiBoundary
+            surfaceId={`persisted-structured-message:${structuredPresentation.owner.pluginId}/${structuredPresentation.owner.contributionLocalId}`}
+            resetKey={props.message.id}
+            fallback={<PluginSurfaceFallback testID="structured-message-unavailable" />}
+        >
+            <DeclarativeStructuredMessageRenderer
+                root={structuredPresentation.snapshot}
+                onAction={canDispatchActions ? handleAction : undefined}
+                isActionAvailable={isActionAvailable}
+                actionPending={actionPending}
+                showUnavailableActions
+            />
+        </PluginUiBoundary>
+    );
 }
 
 export function renderStructuredMessage(params: {
@@ -136,8 +120,22 @@ export function renderStructuredMessage(params: {
     sessionId: string;
     interaction: TranscriptInteraction;
     onJumpToAnchor: StructuredMessageRendererParams['onJumpToAnchor'];
-    pluginUiProjection?: PluginUiProjectionModel | null;
+    debugInformationEnabled?: boolean;
 }): React.ReactElement | null {
+    if (hasStructuredPresentation(params.message)) {
+        return (
+            <PersistedPluginStructuredMessage
+                message={params.message}
+                interaction={params.interaction}
+            />
+        );
+    }
+    // A normalized unavailable historical record may still carry a legacy
+    // `happier` envelope from an older writer. Its marked fallback is a
+    // terminal reader result, not permission to resolve present plugin code.
+    if (isUnavailableStructuredTranscriptRecord(params.message, params.debugInformationEnabled ?? false)) {
+        return <PluginSurfaceFallback testID="structured-message-unavailable" />;
+    }
     const envelope = parseHappierMetaEnvelope(params.message.meta);
     if (!envelope) return null;
     if (NON_STRUCTURED_HAPPIER_META_KINDS.has(envelope.kind)) return null;
@@ -155,23 +153,11 @@ export function renderStructuredMessage(params: {
             : <PluginSurfaceFallback testID="structured-message-unavailable" />;
     }
 
-    const descriptor = findPluginStructuredMessageDescriptor({
-        kind: envelope.kind,
-        pluginUiProjection: params.pluginUiProjection,
-    });
-    if (!descriptor) {
-        return <PluginSurfaceFallback testID="structured-message-unavailable" />;
-    }
-    return (
-        <PluginStructuredMessage
-            descriptor={descriptor}
-            envelope={envelope}
-            generation={params.pluginUiProjection?.generation ?? null}
-            sessionId={params.sessionId}
-            messageId={'id' in params.message ? String(params.message.id ?? '') : undefined}
-            interaction={params.interaction}
-        />
-    );
+    // Generic plugin envelopes are only renderable after the current CLI
+    // admission path has turned them into an immutable `structuredPresentation`.
+    // A replay must never resolve present daemon/plugin state to reinterpret an
+    // unpersisted payload from history.
+    return <PluginSurfaceFallback testID="structured-message-unavailable" />;
 }
 
 export const StructuredMessageBlock = React.memo(function StructuredMessageBlock(props: {
@@ -179,7 +165,7 @@ export const StructuredMessageBlock = React.memo(function StructuredMessageBlock
     sessionId: string;
     interaction?: TranscriptInteraction;
     onJumpToAnchor: StructuredMessageRendererParams['onJumpToAnchor'];
-    pluginUiProjection?: PluginUiProjectionModel | null;
+    debugInformationEnabled?: boolean;
 }): React.ReactElement | null {
     return renderStructuredMessage({
         ...props,

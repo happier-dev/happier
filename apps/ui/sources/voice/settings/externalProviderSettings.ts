@@ -3,15 +3,10 @@ import {
   isValidPluginJsonSchemaValue,
   PersistedConnectedServiceBindingsV1Schema,
   type ConnectedServiceId,
-  type PluginVoiceProviderContributionV1,
   type PluginSettingFieldV2,
+  type VoiceProviderSettings,
   type VoiceProviderSettingsJsonValueV1,
 } from '@happier-dev/protocol';
-
-type VoiceConversationSettings = NonNullable<Extract<
-  PluginVoiceProviderContributionV1,
-  Readonly<{ kind: 'conversation' }>
->['settings']>;
 
 export type ExternalVoiceProviderSettingsDescriptor = Readonly<{
   schemaVersion: 1 | 2;
@@ -28,6 +23,17 @@ export type ExternalVoiceProviderSettingsDescriptor = Readonly<{
   parseConfig(config: unknown): VoiceProviderSettingsJsonValueV1 | null;
 }>;
 
+function hasRequiredConnectedServicesBinding(
+  config: unknown,
+  settings: ExternalVoiceProviderSettingsDescriptor,
+): boolean {
+  const binding = settings.connectedServicesBinding;
+  if (!binding) return true;
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+  const selectedBinding = (config as Readonly<Record<string, unknown>>)[binding.id];
+  return selectedBinding !== null && selectedBinding !== undefined;
+}
+
 export function isExternalVoiceProviderConnectedServicesBindingReady(
   envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
   settings: ExternalVoiceProviderSettingsDescriptor,
@@ -36,9 +42,7 @@ export function isExternalVoiceProviderConnectedServicesBindingReady(
   if (!binding) return true;
   if (!envelope || envelope.schemaVersion !== settings.schemaVersion) return false;
   const config = settings.parseConfig(envelope.config);
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
-  const selectedBinding = (config as Readonly<Record<string, unknown>>)[binding.id];
-  return selectedBinding !== null && selectedBinding !== undefined;
+  return config !== null && hasRequiredConnectedServicesBinding(config, settings);
 }
 
 export function projectExternalVoiceProviderSettings(
@@ -50,8 +54,12 @@ export function projectExternalVoiceProviderSettings(
   if (envelope.schemaVersion !== settings.schemaVersion) {
     return { status: 'unsupported_version' as const, modeId: null };
   }
-  if (settings.parseConfig(envelope.config) === null) {
+  const config = settings.parseConfig(envelope.config);
+  if (config === null) {
     return { status: 'invalid' as const, modeId: null };
+  }
+  if (!hasRequiredConnectedServicesBinding(config, settings)) {
+    return { status: 'missing_required_setting' as const, modeId };
   }
   return { status: 'ready' as const, modeId };
 }
@@ -67,7 +75,7 @@ function deepFreeze<T>(value: T): T {
 }
 
 export function createExternalVoiceProviderSettingsDescriptor(
-  settings: VoiceConversationSettings | undefined,
+  settings: VoiceProviderSettings | undefined,
 ): ExternalVoiceProviderSettingsDescriptor {
   const fields = deepFreeze(cloneJson(settings?.fields ?? [])) as unknown as readonly PluginSettingFieldV2[];
   const privacyDisclosure = settings?.privacyDisclosure
@@ -78,19 +86,25 @@ export function createExternalVoiceProviderSettingsDescriptor(
         ExternalVoiceProviderSettingsDescriptor['connectedServicesBinding']
       >
     : null;
-  const includesHostMode = fields.length > 0 || !connectedServicesBinding;
-  const defaultConfig: Readonly<Record<string, VoiceProviderSettingsJsonValueV1>> = deepFreeze({
-    ...(includesHostMode ? { mode: 'default' } : {}),
-    ...Object.fromEntries(fields.map((field) => [field.id, field.default])),
-    ...(connectedServicesBinding ? { [connectedServicesBinding.id]: null } : {}),
-  });
+  const mutableDefaultConfig: Record<string, VoiceProviderSettingsJsonValueV1> = {};
+  for (const field of fields) {
+    if (field.default === undefined) {
+      throw new Error('invalid_external_voice_provider_settings_defaults');
+    }
+    mutableDefaultConfig[field.id] = field.default;
+  }
+  if (connectedServicesBinding) {
+    mutableDefaultConfig[connectedServicesBinding.id] = null;
+  }
+  const defaultConfig: Readonly<Record<string, VoiceProviderSettingsJsonValueV1>> = deepFreeze(
+    mutableDefaultConfig,
+  );
   const validate = compilePluginJsonSchema({
     type: 'object',
     properties: {
-      ...(includesHostMode ? { mode: { type: 'string', const: 'default' } } : {}),
       ...Object.fromEntries(fields.map((field) => [field.id, field.schema])),
     },
-    required: [...(includesHostMode ? ['mode'] : []), ...fields.map((field) => field.id)],
+    required: fields.map((field) => field.id),
     additionalProperties: false,
   });
   const defaultFieldConfig = connectedServicesBinding
@@ -118,7 +132,6 @@ export function createExternalVoiceProviderSettingsDescriptor(
       if (!isValidPluginJsonSchemaValue(validate, fieldConfig)) return null;
       if (!connectedServicesBinding) return cloneJson(config);
       const expectedKeys = new Set([
-        ...(includesHostMode ? ['mode'] : []),
         ...fields.map((field) => field.id),
         connectedServicesBinding.id,
       ]);

@@ -1,95 +1,130 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
-import type { DaemonPluginStructuredMessageResolveResponse } from '@happier-dev/protocol';
+import {
+    PluginContributionIdentityV1Schema,
+    buildQualifiedPluginContributionKey,
+    type PluginContributionIdentityV1,
+    type PluginDeclarativeNodeV2,
+} from '@happier-dev/protocol';
 
+import {
+    readDeclarativeRecord,
+    renderDeclarativeNode,
+    type DeclarativeActionAffordance,
+} from '@/components/plugins/shared/declarativeNodes';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import { Text } from '@/components/ui/text/Text';
 
-type ResolvedMessage = Extract<DaemonPluginStructuredMessageResolveResponse, { ok: true }>;
-type JsonRecord = Readonly<Record<string, unknown>>;
+export type StructuredMessageActionSelection = Readonly<{
+    identity: PluginContributionIdentityV1;
+    input?: unknown;
+}>;
 
-function record(value: unknown): JsonRecord | null {
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : null;
+// This is disconnected host-private renderer prework, not a public transcript
+// profile. Derive its dormant shape from the still-public declarative grammar
+// rather than importing the withdrawn transcript-profile type through a
+// Protocol subpath or recreating its schema locally.
+type PrivateTranscriptPresentationNode = Exclude<
+    PluginDeclarativeNodeV2,
+    Readonly<{ kind: 'field' | 'collectionList' | 'targetedSurface' }>
+>;
+
+/**
+ * Read the resolved action reference a declarative action node carries.
+ *
+ * The node carries BOTH a structured `identity` and its `qualifiedId`; the
+ * identity is authoritative and the qualified key must agree with it, so a
+ * resolution whose two spellings disagree is refused rather than dispatched.
+ */
+function readActionSelection(nodeAction: unknown): Readonly<{
+    identity: PluginContributionIdentityV1;
+    qualifiedId: string;
+}> | null {
+    const action = readDeclarativeRecord(nodeAction);
+    const identity = PluginContributionIdentityV1Schema.safeParse(action?.identity ?? action);
+    if (!identity.success) return null;
+    const qualifiedId = buildQualifiedPluginContributionKey(identity.data);
+    return action?.qualifiedId === undefined || action.qualifiedId === qualifiedId
+        ? { identity: identity.data, qualifiedId }
+        : null;
 }
 
-function localized(value: unknown): string {
-    if (typeof value === 'string') return value;
-    const valueRecord = record(value);
-    return typeof valueRecord?.fallback === 'string' ? valueRecord.fallback : '';
-}
-
-function renderNode(
-    nodeValue: unknown,
-    onAction?: (action: Readonly<{ qualifiedId: string; input?: unknown }>) => void,
-    actionPending = false,
-): React.ReactNode {
-    const node = record(nodeValue);
-    if (!node || typeof node.kind !== 'string' || typeof node.path !== 'string') return null;
-    if (node.kind === 'stack' || node.kind === 'group') {
-        const children = Array.isArray(node.children) ? node.children : [];
-        return (
-            <View key={node.path} testID={`plugin-declarative-${node.kind}`}>
-                {node.kind === 'group' && localized(node.title) ? <Text>{localized(node.title)}</Text> : null}
-                {localized(node.description) ? <Text>{localized(node.description)}</Text> : null}
-                {children.map((child) => renderNode(child, onAction, actionPending))}
-            </View>
-        );
-    }
-    if (node.kind === 'action') {
-        if (onAction === undefined) return null;
-        const action = record(node.action);
-        const qualifiedId = typeof action?.qualifiedId === 'string' ? action.qualifiedId : '';
-        const enabled = node.enabled === true
-            && qualifiedId.length > 0
-            && !actionPending;
-        const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-        return (
-            <Pressable
-                key={node.path}
-                testID={`plugin-declarative-action:${qualifiedId}`}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: !enabled, busy: actionPending }}
-                disabled={!enabled}
-                onPress={enabled ? () => onAction({
-                    qualifiedId,
-                    ...(node.input === undefined ? {} : { input: node.input }),
-                }) : undefined}
-                style={{
-                    minWidth: minimumInteractiveTargetSize,
-                    minHeight: minimumInteractiveTargetSize,
-                    justifyContent: 'center',
-                }}
-            >
-                <Text>{localized(node.label)}</Text>
-            </Pressable>
-        );
-    }
-    if (node.kind === 'field') {
-        return <Text key={node.path}>{localized(node.label)}</Text>;
-    }
-    if (node.kind === 'status') {
-        return (
-            <View key={node.path} testID="plugin-declarative-status">
-                <Text>{localized(node.label)}</Text>
-                <Text>{localized(node.value)}</Text>
-            </View>
-        );
-    }
-    if (node.kind === 'text' || node.kind === 'markdown') {
-        return <Text key={node.path}>{localized(node.text)}</Text>;
-    }
-    return null;
-}
-
+/**
+ * The transcript projection of a declarative document.
+ *
+ * The node vocabulary itself is rendered by the single owner in
+ * `@/components/plugins/shared/declarativeNodes`; this module supplies only the
+ * two facts a transcript block owns differently from a mounted surface: an
+ * action is dispatched through the block's `onAction` callback (and is not
+ * offered at all when the block is not interactive). The persisted profile
+ * excludes settings and Account Collection nodes; the empty callbacks below
+ * preserve that rejection if corrupt data reaches this shared renderer.
+ */
 export function DeclarativeStructuredMessageRenderer(props: Readonly<{
-    resolution: ResolvedMessage;
-    onAction?: (action: Readonly<{ qualifiedId: string; input?: unknown }>) => void;
+    root: PrivateTranscriptPresentationNode;
+    onAction?: (action: StructuredMessageActionSelection) => void;
+    /**
+     * An immutable transcript preserves the historical Action label and
+     * placement, while this predicate overlays only the current capability
+     * availability. It must not rewrite the node or resolve a live renderer.
+     */
+    isActionAvailable?: (action: StructuredMessageActionSelection) => boolean;
     actionPending?: boolean;
+    /** Persisted rows retain disabled Actions so unavailable current runtime is not silently hidden. */
+    showUnavailableActions?: boolean;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
+    const {
+        onAction,
+        isActionAvailable,
+        actionPending = false,
+        showUnavailableActions = false,
+    } = props;
+    const minimumTouchTarget = resolveMinimumInteractiveTargetSize(Platform.OS);
+
+    const resolveAction = React.useCallback((node: Readonly<Record<string, unknown>>): DeclarativeActionAffordance | null => {
+        const selection = readActionSelection(node.action);
+        if (selection === null) return null;
+        if (onAction === undefined && !showUnavailableActions) return null;
+        const currentActionAvailable = isActionAvailable?.(selection) ?? true;
+        const enabled = onAction !== undefined
+            && (showUnavailableActions ? node.enabled !== false : node.enabled === true)
+            && currentActionAvailable
+            && !actionPending;
+        return {
+            key: selection.qualifiedId,
+            disabled: !enabled,
+            busy: actionPending,
+            ...(enabled
+                ? {
+                    onPress: () => onAction({
+                        identity: selection.identity,
+                        ...(node.input === undefined ? {} : { input: node.input }),
+                    }),
+                }
+                : {}),
+        };
+    }, [actionPending, isActionAvailable, onAction, showUnavailableActions]);
+
+    const renderField = React.useCallback((): React.ReactNode => null, []);
+    // A persisted transcript has no captured Account Data client or query
+    // descriptor projection. It must not manufacture either one to render a
+    // live collection node.
+    const renderCollectionList = React.useCallback((): React.ReactNode => null, []);
+
     return (
         <View testID="plugin-structured-message-declarative">
-            {renderNode(props.resolution.renderer.root, props.onAction, props.actionPending)}
+            {renderDeclarativeNode(props.root, {
+                colors: theme.colors,
+                presentationTheme,
+                minimumTouchTarget,
+                resolveAction,
+                renderField,
+                renderCollectionList,
+            })}
         </View>
     );
 }

@@ -4,13 +4,15 @@ import { router, useLocalSearchParams } from 'expo-router';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCredentialsForToken';
 import { serverFetch } from '@/sync/http/client';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    presentFirstKeyCredentialLifecycle,
+} from '@/components/account/presentFirstKeyCredentialLifecycle';
 
 export default function MtlsCallbackScreen() {
     const auth = useAuth();
@@ -64,10 +66,16 @@ export default function MtlsCallbackScreen() {
                     }
 
                     const token = String(json.token);
-                    const credentials = await buildDataKeyCredentialsForToken(token);
-                    await auth.loginWithCredentials(credentials);
-                    if (!mounted) return;
-                    router.replace('/');
+                    await presentFirstKeyCredentialLifecycle({
+                        run: async () =>
+                            await auth.loginWithCredentials({
+                                token,
+                            }),
+                        onCompleted: () => {
+                            if (!mounted) return;
+                            router.replace('/');
+                        },
+                    });
                 } finally {
                     clearTimeout(timer);
                 }

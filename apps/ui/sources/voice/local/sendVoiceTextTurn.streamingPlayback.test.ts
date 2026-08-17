@@ -4,6 +4,7 @@ import { createLocalConversationVoiceAdapter } from '@/voice/adapters/localConve
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
+import { voiceOutputStatusStore } from '@/voice/runtime/outputStatus/voiceOutputStatusStore';
 import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
 import { sendVoiceTextTurn } from './sendVoiceTextTurn';
 
@@ -30,6 +31,17 @@ vi.mock('@/voice/transcript/voiceConversationTranscript', () => ({
   appendVoiceConversationUserText: vi.fn(),
   appendVoiceConversationAssistantText: vi.fn(),
   appendVoiceConversationNoteText: vi.fn(),
+  buildRealtimeConversationTurnMeta: () => ({
+    happier: {
+      kind: 'conversation_turn.v1',
+      payload: { v: 1 },
+      conversationTurnOriginV1: {
+        v: 1,
+        channel: 'realtime_conversation',
+        modality: 'voice',
+      },
+    },
+  }),
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -89,30 +101,40 @@ const onInterruptDuringStream: { current: (() => void) | null } = { current: nul
 function makeStreamingVoiceAgentSessions() {
   return {
     sendTurn: async (_sessionId: string, _userText: string, opts?: {
-      onOutputEvent?: (event: any) => void | Promise<void>;
+      onOutputEvent?: (output: any) => void | Promise<void>;
       signal?: AbortSignal;
+      onUserTranscriptAccepted?: () => void | Promise<void>;
     }) => {
+      await opts?.onUserTranscriptAccepted?.();
       let seq = 0;
       for (const [index, delta] of streamDeltas.current.entries()) {
         if (opts?.signal?.aborted) break;
-        await opts?.onOutputEvent?.({
-          v: 1,
-          kind: 'speech_segment',
+        const event = {
+          v: 1 as const,
+          kind: 'speech_segment' as const,
           turnId: 'stream-test',
           seq: seq++,
           segmentId: `stream-test:segment:${index}`,
           text: delta,
+        };
+        await opts?.onOutputEvent?.({
+          event,
+          effects: [{ kind: 'speak', segmentId: event.segmentId, text: delta }],
         });
         onInterruptDuringStream.current?.();
         onInterruptDuringStream.current = null;
         await Promise.resolve();
       }
+      const text = streamDeltas.current.join('');
       await opts?.onOutputEvent?.({
-        v: 1,
-        kind: 'turn_final',
-        turnId: 'stream-test',
-        seq,
-        text: streamDeltas.current.join(''),
+        event: {
+          v: 1,
+          kind: 'turn_final',
+          turnId: 'stream-test',
+          seq,
+          text,
+        },
+        effects: [{ kind: 'persist_final', text }],
       });
       return { assistantText: streamDeltas.current.join(''), actions: [] };
     },
@@ -122,29 +144,71 @@ function makeStreamingVoiceAgentSessions() {
 function makeCancelledStreamingVoiceAgentSessions() {
   return {
     sendTurn: async (_sessionId: string, _userText: string, opts?: {
-      onOutputEvent?: (event: any) => void | Promise<void>;
+      onOutputEvent?: (output: any) => void | Promise<void>;
       signal?: AbortSignal;
+      onUserTranscriptAccepted?: () => void | Promise<void>;
     }) => {
+      await opts?.onUserTranscriptAccepted?.();
       let seq = 0;
       for (const [index, delta] of streamDeltas.current.entries()) {
-        await opts?.onOutputEvent?.({
-          v: 1,
-          kind: 'speech_segment',
+        const event = {
+          v: 1 as const,
+          kind: 'speech_segment' as const,
           turnId: 'stream-test',
           seq: seq++,
           segmentId: `stream-test:segment:${index}`,
           text: delta,
+        };
+        await opts?.onOutputEvent?.({
+          event,
+          effects: [{ kind: 'speak', segmentId: event.segmentId, text: delta }],
         });
       }
       await opts?.onOutputEvent?.({
-        v: 1,
-        kind: 'turn_cancelled',
-        turnId: 'stream-test',
-        seq,
+        event: {
+          v: 1,
+          kind: 'turn_cancelled',
+          turnId: 'stream-test',
+          seq,
+        },
+        effects: [{ kind: 'cancel_turn' }],
       });
       throw Object.assign(new Error('stream_cancelled'), {
         rpcErrorCode: 'cancelled',
       });
+    },
+  };
+}
+
+function makeToolRoundStreamingVoiceAgentSessions() {
+  let turnIndex = 0;
+  return {
+    sendTurn: async (_sessionId: string, _userText: string, opts?: {
+      onOutputEvent?: (output: any) => void | Promise<void>;
+      onUserTranscriptAccepted?: () => void | Promise<void>;
+    }) => {
+      await opts?.onUserTranscriptAccepted?.();
+      const currentTurn = turnIndex++;
+      const turnId = `stream-tool-${currentTurn}`;
+      const text = currentTurn === 0 ? 'Checking sessions.' : 'Tool round complete.';
+      await opts?.onOutputEvent?.({
+        event: {
+          v: 1,
+          kind: 'speech_segment',
+          turnId,
+          seq: 0,
+          segmentId: `${turnId}:segment:0`,
+          text,
+        },
+        effects: [{ kind: 'speak', segmentId: `${turnId}:segment:0`, text }],
+      });
+      await opts?.onOutputEvent?.({
+        event: { v: 1, kind: 'turn_final', turnId, seq: 1, text },
+        effects: [{ kind: 'persist_final', text }],
+      });
+      return currentTurn === 0
+        ? { assistantText: text, actions: [{ t: 'listSessions', args: { limit: 1 } }] }
+        : { assistantText: text, actions: [] };
     },
   };
 }
@@ -180,7 +244,6 @@ function buildAccountSettings(ttsProvider = 'device') {
           schemaVersion: 1,
           config: {
             conversationMode: 'agent',
-            agent: { backend: 'openai_compat' },
             streaming: { enabled: true, ttsEnabled: true, ttsChunkChars: 120 },
             tts: { autoSpeakReplies: true, provider: ttsProvider },
           },
@@ -205,7 +268,7 @@ async function establishProductionBinding() {
     adapterId: 'local_conversation',
     controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
     conversationSessionId: 'carrier-s1',
-    transcriptMode: 'synthetic',
+    transcriptMode: 'native_session',
     targetSessionId: 's1',
   });
 }
@@ -258,7 +321,7 @@ describe('sendVoiceTextTurn streaming playback convergence', () => {
 
     await sendVoiceTextTurn({
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      settings: buildAccountSettings('google_cloud'),
+      settings: buildAccountSettings('happier.voice.google/google-cloud-tts'),
       userText: 'go',
       playbackController: makePlaybackController(),
       voiceAgentSessions: makeStreamingVoiceAgentSessions(),
@@ -266,6 +329,74 @@ describe('sendVoiceTextTurn streaming playback convergence', () => {
 
     const spoken = speakAssistantText.mock.calls.map((call) => call[0].text);
     expect(spoken.join(' ').replace(/\s+/g, ' ').trim()).toBe('Bundled first. Bundled second.');
+  });
+
+  it('plays accepted speech from every canonical tool round in order', async () => {
+    await establishProductionBinding();
+
+    await sendVoiceTextTurn({
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      settings: buildAccountSettings(),
+      userText: 'check sessions',
+      playbackController: makePlaybackController(),
+      voiceAgentSessions: makeToolRoundStreamingVoiceAgentSessions(),
+    });
+
+    expect(speakAssistantText.mock.calls.map((call) => call[0].text)).toEqual([
+      'Checking sessions.',
+      'Tool round complete.',
+    ]);
+  });
+
+  it('projects accepted display status even when streaming TTS and auto-speak are disabled', async () => {
+    await establishProductionBinding();
+    const settings = buildAccountSettings();
+    settings.voice.providers.local_conversation.config.streaming.ttsEnabled = false;
+    settings.voice.providers.local_conversation.config.tts.autoSpeakReplies = false;
+    const observedStatuses: unknown[] = [];
+    const voiceAgentSessions = {
+      sendTurn: async (_sessionId: string, _userText: string, opts?: {
+        onOutputEvent?: (output: any) => void | Promise<void>;
+        onUserTranscriptAccepted?: () => void | Promise<void>;
+      }) => {
+        await opts?.onUserTranscriptAccepted?.();
+        await opts?.onOutputEvent?.({
+          event: {
+            v: 1,
+            kind: 'display_status',
+            turnId: 'stream-status',
+            seq: 0,
+            statusId: 'status-1',
+            text: 'Checking safely',
+          },
+          effects: [{ kind: 'display_status', statusId: 'status-1', text: 'Checking safely' }],
+        });
+        observedStatuses.push(voiceOutputStatusStore.getSnapshot());
+        await opts?.onOutputEvent?.({
+          event: { v: 1, kind: 'turn_final', turnId: 'stream-status', seq: 1, text: 'Done' },
+          effects: [{ kind: 'persist_final', text: 'Done' }],
+        });
+        return { assistantText: 'Done', actions: [] };
+      },
+    };
+
+    await sendVoiceTextTurn({
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      settings,
+      userText: 'check',
+      playbackController: makePlaybackController(),
+      voiceAgentSessions,
+    });
+
+    expect(observedStatuses).toEqual([{
+      scope: 'turn',
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      turnId: 'stream-status',
+      statusId: 'status-1',
+      text: 'Checking safely',
+    }]);
+    expect(voiceOutputStatusStore.getSnapshot()).toBeNull();
+    expect(speakAssistantText).not.toHaveBeenCalled();
   });
 
   it('terminates streamed playback on the first provider failure without retrying later chunks', async () => {
@@ -278,7 +409,7 @@ describe('sendVoiceTextTurn streaming playback convergence', () => {
 
     const outcome = await sendVoiceTextTurn({
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      settings: buildAccountSettings('google_cloud'),
+      settings: buildAccountSettings('happier.voice.google/google-cloud-tts'),
       userText: 'go',
       playbackController: makePlaybackController(),
       voiceAgentSessions: makeStreamingVoiceAgentSessions(),
@@ -327,7 +458,7 @@ describe('sendVoiceTextTurn streaming playback convergence', () => {
     let turnSettled = false;
     const turn = sendVoiceTextTurn({
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      settings: buildAccountSettings('google_cloud'),
+      settings: buildAccountSettings('happier.voice.google/google-cloud-tts'),
       userText: 'go',
       playbackController: makePlaybackController(onInterrupt),
       voiceAgentSessions: makeCancelledStreamingVoiceAgentSessions(),

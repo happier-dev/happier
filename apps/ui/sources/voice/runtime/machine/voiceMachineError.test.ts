@@ -33,6 +33,25 @@ describe('createVoiceMachineError', () => {
         });
     });
 
+    it('projects temporary service unavailability as a retryable preflight failure', () => {
+        expect(createVoiceMachineError({
+            kind: 'service_temporarily_unavailable',
+            reason: 'connected_service_credential_refresh_unavailable',
+        })).toEqual({
+            kind: 'service_temporarily_unavailable',
+            reason: 'connected_service_credential_refresh_unavailable',
+            phase: 'preflight',
+            retryPolicy: 'user_action',
+            recoveryAction: 'retry',
+            // Visible like every other preflight refusal: a recoverable notice
+            // projects as a graceful disconnect and renders as plain idle, so a
+            // Start the host refused would tell the user nothing while this same
+            // policy demands a user retry.
+            presentation: 'error',
+            recoverable: false,
+        });
+    });
+
     it.each([
         ['provider_setup_required', 'user_action', 'open_settings'],
         ['authentication_required', 'user_action', 'connect_agent'],
@@ -119,6 +138,7 @@ describe('classifyMicSessionFailure', () => {
             'unsupported_runtime',
             'update_required',
             'feature_unavailable',
+            'service_temporarily_unavailable',
         ] as const;
         expect(kinds.map((kind) => createVoiceMachineError({ kind, reason: kind }).retryPolicy))
             .toEqual([
@@ -140,6 +160,7 @@ describe('classifyMicSessionFailure', () => {
                 'user_action',
                 'user_action',
                 'never',
+                'user_action',
             ]);
     });
 });

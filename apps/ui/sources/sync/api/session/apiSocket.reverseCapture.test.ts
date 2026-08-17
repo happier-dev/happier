@@ -72,7 +72,12 @@ async function bootApiSocket(params: Readonly<{
     socket: any;
     getMachineEncryption: (machineId: string) => unknown;
     connectedListeners: Set<() => void>;
+    requirePlainCompatibility?: () => Promise<void>;
 }>) {
+    vi.doMock('@/sync/api/capabilities/accountStoredContentCompatibility', () => ({
+        requireCurrentAccountStoredContentServerCompatibility:
+            params.requirePlainCompatibility ?? vi.fn(async () => {}),
+    }));
     vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', async (importOriginal) => {
         const actual = await importOriginal<typeof import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool')>();
         return {
@@ -143,6 +148,102 @@ afterEach(() => {
 });
 
 describe('apiSocket inbound machine-scoped reverse RPC (RU2 G1)', () => {
+    it('round-trips forward and reverse machine RPC in plaintext mode without a machine key', async () => {
+        const { socket } = createSocketStub();
+        const connectedListeners = new Set<() => void>();
+        socket.emitWithAck.mockImplementation(async (event: string, payload: unknown) => {
+            expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+            expect(payload).toMatchObject({
+                method: 'machine-plain:demo.forward',
+                params: { hello: 'daemon' },
+            });
+            return { ok: true, result: { hello: 'ui' } };
+        });
+        const apiSocket = await bootApiSocket({
+            socket,
+            getMachineEncryption: () => null,
+            connectedListeners,
+        });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([{
+            id: 'machine-plain',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+            storageMode: 'plain',
+        }], true);
+
+        await expect(apiSocket.machineRPC(
+            'machine-plain',
+            'demo.forward',
+            { hello: 'daemon' },
+        )).resolves.toEqual({ hello: 'ui' });
+
+        const handler = vi.fn(async (params: unknown) => ({ echoed: params }));
+        apiSocket.registerMachineScopedRpcHandler('machine-plain', 'demo.reverse', handler);
+        const requestHandler = getRegisteredHandler(socket, SOCKET_RPC_EVENTS.REQUEST)!;
+        const ack = await new Promise<unknown>((resolve) => {
+            void requestHandler(
+                {
+                    method: 'machine-plain:demo.reverse',
+                    params: { hello: 'world' },
+                },
+                resolve,
+            );
+        });
+
+        expect(handler).toHaveBeenCalledWith({ hello: 'world' });
+        expect(ack).toEqual({ echoed: { hello: 'world' } });
+        storage.getState().applyMachines([], true);
+    });
+
+    it('refuses plaintext Machine RPC before socket emission when the server compatibility is not active', async () => {
+        const { socket } = createSocketStub();
+        const connectedListeners = new Set<() => void>();
+        const upgradeRequired = Object.assign(new Error('upgrade required'), {
+            code: 'client-upgrade-required',
+            retryable: false as const,
+        });
+        const apiSocket = await bootApiSocket({
+            socket,
+            getMachineEncryption: () => null,
+            connectedListeners,
+            requirePlainCompatibility: vi.fn(async () => {
+                throw upgradeRequired;
+            }),
+        });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([{
+            id: 'machine-plain-old-server',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+            storageMode: 'plain',
+        }], true);
+
+        await expect(apiSocket.machineRPC(
+            'machine-plain-old-server',
+            'demo.forward',
+            { hello: 'daemon' },
+        )).rejects.toBe(upgradeRequired);
+        expect(socket.emitWithAck).not.toHaveBeenCalled();
+        storage.getState().applyMachines([], true);
+    });
+
     it('registers a machine-scoped handler and round-trips request -> handler -> encrypted ack', async () => {
         const { socket } = createSocketStub();
         const machineEnc = createFakeMachineEncryption();

@@ -10,8 +10,6 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const hoistedState = vi.hoisted(() => ({
-    mockPathname: '/' as string,
-    mockSegments: ['(app)'] as string[],
     mockWindowDimensions: { width: 1200, height: 900 },
 }));
 
@@ -45,8 +43,8 @@ installNavigationShellCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            pathname: () => hoistedState.mockPathname,
-            segments: () => hoistedState.mockSegments,
+            pathname: () => '/',
+            segments: () => ['(app)'],
         }).module;
     },
     storage: installPartialStorageModuleMock({

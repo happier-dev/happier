@@ -9,6 +9,7 @@ import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, Sou
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionResumeAction } from '@/components/sessions/model/SessionResumeContext';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
 import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
 import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
@@ -110,6 +111,11 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const { theme } = useUnistyles();
     const pane = useAppPaneScope(props.scopeId);
     const resumeSession = useSessionResumeAction();
+    const requestSessionResume = React.useCallback(() => {
+        fireAndForget(emitSessionResumeRequest(props.sessionId), {
+            tag: 'SessionRightPanelGitView.resumeSession',
+        });
+    }, [props.sessionId]);
     const { activeGitSubTab, commitDraftMessage, setCommitDraftMessage, setActiveGitSubTab } = useSessionRightPanelGitTabState(pane);
     const defaultOpenDetails = useSessionRightPanelGitOpenDetails(pane);
     const openFileInDetailsSource = props.onOpenFile ?? defaultOpenDetails.openFileInDetails;
@@ -389,7 +395,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         if (caps.writeRemoteFetch) {
             actions.push({
                 key: 'fetch',
-                iconName: 'sync',
+                iconName: 'arrows-clockwise',
                 label: t('files.sourceControlOperations.actions.fetch'),
                 disabled: busy,
                 onPress: onFetch,
@@ -688,7 +694,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             return (
                 <SourceControlSessionInactiveState
                     machineReachable={machineReachable}
-                    onOpenSession={resumeSession ?? (() => emitSessionResumeRequest(props.sessionId))}
+                    onOpenSession={resumeSession ?? requestSessionResume}
                 />
             );
         }

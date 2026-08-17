@@ -20,10 +20,13 @@ type MockMultiTextInputProps = Readonly<{
 
 const multiTextInputMockState = vi.hoisted(() => ({
     liveText: null as string | null,
+    /** Every selection the composer pushed into the input, in order. */
+    appliedSelections: [] as Array<Readonly<{ start: number; end: number }>>,
 }));
 
 const autocompleteMockState = vi.hoisted(() => ({
     suggestions: [] as Array<{
+        kind: 'skill' | 'slashCommand';
         key: string;
         text: string;
         label?: string;
@@ -195,6 +198,7 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => {
                 props.onStateChange?.({ text, selection });
             },
             setSelection: (selection: MockSelection) => {
+                multiTextInputMockState.appliedSelections.push(selection);
                 const text = readLiveText(props);
                 props.onStateChange?.({ text, selection });
             },
@@ -221,7 +225,8 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: Record<string, unknown>) => React.createElement('Switch', props, null),
 }));
 
-vi.mock('@/components/ui/commandMenu', () => ({
+vi.mock('@/components/ui/commandMenu', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/ui/commandMenu')>(),
     CommandMenu: () => null,
     useCommandMenuKeyboard: (args: Readonly<{
         open: boolean;
@@ -268,10 +273,6 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => null,
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: (query: string | null) => {
         autocompleteMockState.lastQuery = query;
@@ -300,18 +301,33 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 const reviewMention = {
     kind: 'skill',
     tokenText: '$review',
-    start: 4,
-    end: 11,
     name: 'review',
 } satisfies ComposerStructuredInputMention;
 
 const staleMention = {
     kind: 'skill',
     tokenText: '$gone',
-    start: 12,
-    end: 17,
     name: 'gone',
 } satisfies ComposerStructuredInputMention;
+
+const selectionRestoreBaseProps = {
+    onChangeText: () => {},
+    placeholder: 'p',
+    onSend: () => {},
+    autocompleteKinds: [],
+    autocompleteSuggestions: async () => [],
+    sessionId: 'session-a',
+    metadata: null,
+    disabled: false,
+    showAbortButton: false,
+};
+
+/** A stale word-range, exactly what a double-tap/autocorrect leaves behind. */
+const selectionRestorePersistence = {
+    initialSelection: { start: 4, end: 11 },
+    onScrollYChange: () => {},
+    onSelectionChangePersist: () => {},
+};
 
 function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const nodes = screen.findAll((node) => (node.type as unknown) === 'MultiTextInput');
@@ -327,6 +343,7 @@ describe('AgentInput structured input persistence', () => {
         autocompleteMockState.respectQuery = false;
         autocompleteMockState.lastQuery = null;
         multiTextInputMockState.liveText = null;
+        multiTextInputMockState.appliedSelections = [];
     });
 
     it('reconciles controlled structured mentions when the external value changes', async () => {
@@ -336,7 +353,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText: () => {},
             placeholder: 'p',
             onSend: () => {},
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             sessionId: 'session-a',
             metadata: null,
@@ -364,6 +381,7 @@ describe('AgentInput structured input persistence', () => {
 
     it('sends selected structured mention metadata before controlled props rerender', async () => {
         autocompleteMockState.suggestions = [{
+            kind: 'skill',
             key: 'skill-review',
             text: '$review',
             label: 'Review',
@@ -383,7 +401,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText,
             placeholder: 'p',
             onSend,
-            autocompletePrefixes: ['$'],
+            autocompleteKinds: ['skill'] as const,
             autocompleteSuggestions: async () => autocompleteMockState.suggestions,
             sessionId: 'session-a',
             metadata: null,
@@ -404,8 +422,6 @@ describe('AgentInput structured input persistence', () => {
             expect.objectContaining({
                 kind: 'skill',
                 tokenText: '$review',
-                start: 4,
-                end: 11,
                 name: 'review',
             }),
         ]);
@@ -429,6 +445,7 @@ describe('AgentInput structured input persistence', () => {
 
     it('keeps autocomplete available for large live input text without pushing the full text into render state', async () => {
         autocompleteMockState.suggestions = [{
+            kind: 'slashCommand',
             key: 'slash-run',
             text: '/run',
             label: 'Run',
@@ -445,7 +462,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText,
             placeholder: 'p',
             onSend,
-            autocompletePrefixes: ['/'],
+            autocompleteKinds: ['slashCommand'] as const,
             autocompleteSuggestions: async () => autocompleteMockState.suggestions,
             sessionId: 'session-a',
             metadata: null,
@@ -490,7 +507,7 @@ describe('AgentInput structured input persistence', () => {
             onChangeText,
             placeholder: 'p',
             onSend,
-            autocompletePrefixes: [],
+            autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
             sessionId: 'session-a',
             metadata: null,
@@ -511,6 +528,58 @@ describe('AgentInput structured input persistence', () => {
 
         expect(onChangeText).toHaveBeenCalledWith(liveText);
         expect(onSend).toHaveBeenCalledWith({ inputTextOverride: liveText });
+        await screen.unmount();
+    });
+
+    it('restores the persisted selection at open', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            ...selectionRestoreBaseProps,
+            value: 'Ask $review please',
+            inputPersistence: {
+                ...selectionRestorePersistence,
+                restoreToken: 'session-a:scope:0:pending',
+            },
+        }));
+
+        expect(multiTextInputMockState.appliedSelections).toEqual([{ start: 4, end: 11 }]);
+        await screen.unmount();
+    });
+
+    it('never re-applies the persisted selection once the user has edited the draft', async () => {
+        // The persisted value is whatever the input last reported, so it can be a
+        // RANGE (double-tap, autocorrect, spell-check). Re-applying it after the
+        // user types selects an existing word and the next keystroke replaces it,
+        // silently corrupting the draft. A later restore generation — the basis
+        // latch adopting after an async draft load, or a send-failure rollback —
+        // must not resurrect it.
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            ...selectionRestoreBaseProps,
+            value: 'Ask $review please',
+            inputPersistence: {
+                ...selectionRestorePersistence,
+                restoreToken: 'session-a:scope:0:pending',
+            },
+        }));
+
+        const input = findMultiTextInput(screen);
+        await act(async () => {
+            input.props.onChangeText?.('Ask $review please and more');
+        });
+
+        await act(async () => {
+            screen.tree.update(React.createElement(AgentInput, {
+                ...selectionRestoreBaseProps,
+                value: 'Ask $review please',
+                inputPersistence: {
+                    ...selectionRestorePersistence,
+                    restoreToken: 'session-a:scope:0:adopted',
+                },
+            }));
+        });
+
+        expect(multiTextInputMockState.appliedSelections).toEqual([{ start: 4, end: 11 }]);
         await screen.unmount();
     });
 });

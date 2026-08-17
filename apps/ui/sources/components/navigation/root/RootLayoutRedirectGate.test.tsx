@@ -61,8 +61,9 @@ vi.mock('@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverr
 vi.mock('@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction', () => ({
     resolveAuthenticatedWebServerUrlOverrideAction: () => ({ kind: 'none' as const }),
 }));
+const bootstrapActiveServerFromWebLocationSpy = vi.hoisted(() => vi.fn(() => null));
 vi.mock('@/sync/domains/server/url/bootstrapActiveServerFromWebLocation', () => ({
-    bootstrapActiveServerFromWebLocation: () => null,
+    bootstrapActiveServerFromWebLocation: bootstrapActiveServerFromWebLocationSpy,
 }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string | null) => value ?? null,
@@ -122,6 +123,23 @@ describe('RootLayoutRedirectGate', () => {
             expect(nav.n).toBe(navBefore + 1);
             // …but the gate preserved its stable child element, so the Stack subtree did NOT re-render.
             expect(shell.n).toBe(1);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
+    it('does not mutate the active server while the route module loads or the gate mounts', async () => {
+        const screen = await renderScreen(
+            React.createElement(
+                RootLayoutRedirectGate,
+                null,
+                React.createElement(React.Fragment, null),
+            ),
+        );
+
+        try {
+            expect(bootstrapActiveServerFromWebLocationSpy)
+                .not.toHaveBeenCalled();
         } finally {
             await screen.unmount();
         }

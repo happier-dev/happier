@@ -15,6 +15,26 @@ function buildUserMessage(seq: number) {
 }
 
 describe('voiceTranscriptSelectors', () => {
+    it('uses the canonical local id when a persisted acknowledgement also has a server id', () => {
+        const entries = selectVoiceTranscriptEntriesForConversationSession({
+            sessionMessages: {
+                'carrier-s1': {
+                    messages: [{
+                        id: 'store-key',
+                        realID: 'server-id',
+                        localId: 'voice-realtime:attempt-1:assistant:item-1',
+                        createdAt: 100,
+                        isSidechain: false,
+                        role: 'agent',
+                        content: [{ type: 'text', text: 'Persisted final' }],
+                    }],
+                },
+            },
+        }, 'carrier-s1');
+
+        expect(entries[0]?.id).toBe('voice-realtime:attempt-1:assistant:item-1');
+    });
+
     it('does not classify assistant transcript text as a note solely because it starts with the legacy [Voice] prefix', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession(
             {

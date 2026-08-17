@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -55,6 +56,7 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
+    initialWindowMetrics: null,
     useSafeAreaInsets: () => safeAreaInsetsMock,
 }));
 
@@ -114,26 +116,33 @@ vi.mock('@/components/plugins/surfaces', () => ({
     PluginSurfacePlacementHost: (props: Record<string, unknown>) => React.createElement('PluginSurfacePlacementHostStub', props),
     PluginSurfacePlacementStack: (props: Record<string, unknown>) => React.createElement('PluginSurfacePlacementStackStub', props),
 }));
+vi.mock('@/components/plugins/reactNative/PluginReactNativeUnavailable', () => ({
+    PluginReactNativeUnavailable: (props: Record<string, unknown>) => React.createElement('PluginReactNativeUnavailableStub', props),
+}));
+
+const REVIEW_PLUGIN_ID = 'acme.review';
 
 function createPluginProjection() {
+    const binding = normalizePluginUiDestinationBindingV1({
+        pluginId: REVIEW_PLUGIN_ID,
+        destinationId: 'review-panel',
+        rendererId: 'review-panel',
+        container: 'rightSidebarTab',
+        target: { kind: 'session', sessionIdPath: '/session/id' },
+    });
+    if (!binding) {
+        throw new Error('test fixture must use an admitted V2 destination binding');
+    }
     const placement = {
-        id: 'pluginUi:review:surfacePlacement:review-panel',
-        pluginId: 'review',
+        id: `surfacePlacement:${REVIEW_PLUGIN_ID}:review-panel`,
+        pluginId: REVIEW_PLUGIN_ID,
         contributionKind: 'surfacePlacement',
         descriptorId: 'review-panel',
-        placement: 'session.rightSidebarTab',
-        target: { kind: 'session' },
+        binding,
+        target: binding.target,
         renderer: { kind: 'host', rendererId: 'review.panel' },
         display: { developerFallback: 'Review' },
         availability: { state: 'available', reason: 'available', diagnostics: [] },
-        order: 70,
-        rightSidebar: {
-            tabId: 'review',
-            scope: 'session',
-            order: 70,
-            mobile: { enabled: true, surface: 'pluginTab' },
-            disabledPolicy: 'disable',
-        },
     };
     return Object.freeze({
         generation: 4,
@@ -143,9 +152,6 @@ function createPluginProjection() {
         hostedWebById: Object.freeze({}),
         reactNativeBundlesById: Object.freeze({}),
         surfacePlacementsById: Object.freeze({ [placement.id]: placement }),
-        surfacePlacementsByPlacement: Object.freeze({ 'session.rightSidebarTab': Object.freeze([placement]) }),
-        uiArtifactsById: Object.freeze({}),
-        digestsByPluginId: Object.freeze({}),
         unknownEntriesById: Object.freeze({}),
     });
 }
@@ -823,7 +829,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 <SessionCockpitSurfaceScreen
                     sessionId="s_1"
                     scopeId="session:s_1"
-                    surface="plugin:review:review"
+                    surface={`plugin:${REVIEW_PLUGIN_ID}:review-panel`}
                     routeServerId="server-b"
                     terminalTabAvailable
                 />
@@ -837,7 +843,37 @@ describe('SessionCockpitSurfaceScreen', () => {
         expect(host.props.serverId).toBe('server-1');
         expect(screen.tree.findByType('PaneScopeProbe' as never).props.scopeState?.right).toEqual(expect.objectContaining({
             isOpen: true,
-            activeTabId: 'plugin:review:review',
+            selectedDestination: {
+                kind: 'plugin',
+                destination: { pluginId: REVIEW_PLUGIN_ID, localId: 'review-panel' },
+            },
         }));
+    });
+
+    it('retains an unavailable plugin mobile surface as a tombstone instead of opening a built-in pane', async () => {
+        pluginProjectionState.value = {
+            pluginUiProjection: createPluginProjection(),
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            platform: 'web',
+        };
+
+        const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCockpitSurfaceScreen
+                    sessionId="s_1"
+                    scopeId="session:s_1"
+                    surface={`plugin:${REVIEW_PLUGIN_ID}:missing`}
+                    terminalTabAvailable
+                />
+                <PaneScopeProbe scopeId="session:s_1" />
+            </AppPaneProvider>,
+        );
+
+        expect(screen.tree.findByType('PluginReactNativeUnavailableStub' as never).props.diagnostics)
+            .toEqual(['plugin_destination_unavailable']);
+        expect(screen.tree.findByType('PaneScopeProbe' as never).props.scopeState?.right)
+            .toBeFalsy();
     });
 });

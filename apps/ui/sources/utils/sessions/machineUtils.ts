@@ -1,5 +1,3 @@
-import type { Machine } from '@/sync/domains/state/storageTypes';
-
 const DEFAULT_MACHINE_ONLINE_GRACE_MS = 60_000;
 const MAX_MACHINE_ONLINE_GRACE_MS = 5 * 60_000;
 
@@ -26,7 +24,14 @@ function readMachineOnlineGraceMsFromEnv(): number {
     return cachedGraceEnvMs;
 }
 
-export function isMachineOnline(machine: Machine, nowMs: number = Date.now()): boolean {
+export function isMachineOnline(
+    machine: Readonly<{
+        active: boolean;
+        activeAt?: number | null;
+        revokedAt?: number | null;
+    }>,
+    nowMs: number = Date.now(),
+): boolean {
     const revokedAt = machine.revokedAt;
     if (typeof revokedAt === 'number' && Number.isFinite(revokedAt) && revokedAt > 0) {
         return false;

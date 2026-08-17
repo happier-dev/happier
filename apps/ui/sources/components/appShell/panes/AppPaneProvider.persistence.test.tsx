@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { LOCAL_SETTING_DEFINITIONS } from '@/sync/domains/settings/registry/local/localSettingDefinitions';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -96,6 +97,7 @@ describe('AppPaneProvider persistence', () => {
             right: expect.objectContaining({
                 isOpen: true,
                 activeTabId: 'git',
+                selectedDestination: { kind: 'builtin', id: 'git' },
             }),
             details: expect.objectContaining({
                 isOpen: true,
@@ -111,6 +113,91 @@ describe('AppPaneProvider persistence', () => {
                 tabState: {
                     'file:/repo/src/a.ts': { draft: 'draft text' },
                 },
+            }),
+        }));
+    });
+
+    it('preserves own Details tab keys through the local-setting boundary and removes inherited-only group references', async () => {
+        const tabKey = '__proto__';
+        localSettingsMock = {
+            appPaneScopesV1: LOCAL_SETTING_DEFINITIONS.appPaneScopesV1.schema.parse(JSON.parse(JSON.stringify({
+                'project:wr_1': {
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: true,
+                        tabState: { [tabKey]: { scrollY: 240 } },
+                        tabsByKey: {
+                            [tabKey]: {
+                                key: tabKey,
+                                kind: 'file',
+                                title: 'prototype-safe.ts',
+                                resource: { kind: 'file', path: '/repo/prototype-safe.ts' },
+                                isPreview: false,
+                                isPinned: true,
+                            },
+                        },
+                        groupsById: {
+                            'group:1': {
+                                id: 'group:1',
+                                tabKeys: [tabKey, 'constructor'],
+                                activeTabKey: tabKey,
+                            },
+                        },
+                        root: {
+                            id: 'group:1',
+                            kind: 'leaf',
+                            leafKind: 'details-group',
+                            payload: { groupId: 'group:1' },
+                        },
+                        focusedGroupId: 'group:1',
+                        maximizedGroupId: null,
+                        nextGroupOrdinal: 2,
+                    },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                },
+            }))),
+        };
+
+        const { AppPaneProvider } = await import('./AppPaneProvider');
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <PaneScopeProbe />
+            </AppPaneProvider>,
+        );
+
+        const scopeState = screen.tree.findByType('PaneScopeProbe' as never).props.scopeState;
+        if (!scopeState) throw new Error('Expected hydrated pane scope state');
+
+        expect(scopeState.details.tabs).toEqual([
+            expect.objectContaining({ key: tabKey }),
+        ]);
+        expect(scopeState.details.groups).toEqual([
+            expect.objectContaining({
+                id: 'group:1',
+                tabKeys: [tabKey],
+                activeTabKey: tabKey,
+            }),
+        ]);
+        expect(Object.prototype.hasOwnProperty.call(scopeState.details.tabState, tabKey)).toBe(true);
+        expect(scopeState.details.tabState[tabKey]).toEqual({ scrollY: 240 });
+        expect(setLocalSettingSpy).toHaveBeenCalled();
+        const roundTrippedScopes = LOCAL_SETTING_DEFINITIONS.appPaneScopesV1.schema.parse(
+            localSettingsMock.appPaneScopesV1,
+        );
+        expect(roundTrippedScopes).toEqual(expect.objectContaining({
+            'project:wr_1': expect.objectContaining({
+                details: expect.objectContaining({
+                    tabsByKey: expect.objectContaining({
+                        [tabKey]: expect.objectContaining({ key: tabKey }),
+                    }),
+                    groupsById: {
+                        'group:1': {
+                            id: 'group:1',
+                            tabKeys: [tabKey],
+                            activeTabKey: tabKey,
+                        },
+                    },
+                }),
             }),
         }));
     });
@@ -209,6 +296,7 @@ describe('AppPaneProvider persistence', () => {
             right: expect.objectContaining({
                 isOpen: true,
                 activeTabId: 'git',
+                selectedDestination: { kind: 'builtin', id: 'git' },
             }),
             details: expect.objectContaining({
                 isOpen: true,

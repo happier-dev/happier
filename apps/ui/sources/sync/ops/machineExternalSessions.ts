@@ -56,7 +56,10 @@ import {
     type ExternalSessionTranscriptRefreshReadAfterResponseV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import {
+    isRpcMethodNotAvailableError,
+    isRpcMethodNotFoundError,
+} from '@happier-dev/protocol/rpcErrors';
 import type { ZodType } from 'zod';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -68,7 +71,7 @@ type MachineExternalSessionsOpts = Readonly<{
     signal?: AbortSignal;
 }>;
 
-type ExternalSessionTakeoverRequestWithoutForceStop = Readonly<{
+type LegacyExternalSessionTakeoverRequest = Readonly<{
     machineId: string;
     sessionId: string;
 }>;
@@ -107,6 +110,7 @@ async function callExternalSessionMachineRpc<Request, Response>(params: Readonly
         method: string;
         input: unknown;
         beforeCall?: () => void;
+        fallbackOnRelayMethodUnavailable?: true;
     }>;
     opts?: MachineExternalSessionsOpts;
 }>): Promise<Response> {
@@ -129,8 +133,12 @@ async function callExternalSessionMachineRpc<Request, Response>(params: Readonly
         // cli-v0.2.1 and cli-v0.2.2-preview.1775586717.26498 expose only
         // daemon.directSessions.*. METHOD_NOT_FOUND proves the canonical handler
         // was not invoked, so retrying the action-specific legacy method cannot
-        // duplicate an effect. Timeouts and ambiguous/domain failures never retry.
-        if (!params.legacy || !isRpcMethodNotFoundError(error)) {
+        // duplicate an effect. server-v0.2.1 instead returns METHOD_NOT_AVAILABLE
+        // before forwarding; only released read-only methods opt into that signal.
+        // Timeouts and ambiguous/domain failures never retry.
+        const legacyMethodUnavailable = params.legacy?.fallbackOnRelayMethodUnavailable === true
+            && isRpcMethodNotAvailableError(error);
+        if (!params.legacy || (!isRpcMethodNotFoundError(error) && !legacyMethodUnavailable)) {
             throw error;
         }
         params.legacy.beforeCall?.();
@@ -187,13 +195,33 @@ function mapLinkEnsureToReleasedShape(input: ExternalSessionLinkEnsureRequest): 
 }
 
 const EXTERNAL_SESSION_CURSOR_PREFIX = 'happier_external_cursor_v1:';
+const CURRENT_ONLY_CANDIDATE_CURSOR_PREFIXES = [
+    'plugin_external_sessions_v1_',
+    'happier_external_candidate_index_v1:',
+] as const;
 
 class ExternalSessionCursorResetRequiredError extends Error {
     readonly code = 'external_session_cursor_reset_required' as const;
 
-    constructor() {
-        super('Codex transcript cursor reset required before released-daemon fallback');
+    constructor(message = 'Codex transcript cursor reset required before released-daemon fallback') {
+        super(message);
         this.name = 'ExternalSessionCursorResetRequiredError';
+    }
+}
+
+function assertReleasedDaemonAcceptsCandidateCursor(
+    input: Readonly<{ cursor?: string | null }>,
+): void {
+    const cursor = input.cursor;
+    if (!cursor) return;
+
+    // cli-v0.2.1, cli-v0.2.2-preview.1775586717.26498, and remote-dev@72b9f5c
+    // decode unknown candidate cursors as offset zero. Fence only current CLI cursor
+    // prefixes at this legacy fallback; remove with the last supported legacy daemon.
+    if (CURRENT_ONLY_CANDIDATE_CURSOR_PREFIXES.some((prefix) => cursor.startsWith(prefix))) {
+        throw new ExternalSessionCursorResetRequiredError(
+            'External session candidate cursor reset required before released-daemon fallback',
+        );
     }
 }
 
@@ -227,22 +255,25 @@ function isCurrentRawCodexTranscriptCursor(cursor: string): boolean {
     }
 }
 
-function assertReleasedDaemonAcceptsCodexTranscriptCursor(
+function assertReleasedDaemonAcceptsTranscriptCursor(
     input: Readonly<{ agentId: string; cursor?: string | null }>,
 ): void {
-    if (input.agentId !== 'codex' || !input.cursor) return;
+    if (!input.cursor) return;
 
     // Current daemons wrap newly written leaf cursors in a host-owned envelope.
     // cli-v0.2.1 and the matching preview cannot decode that envelope; paging
     // silently restarts from newest, while read-after returns only its legacy
-    // truncated shape rather than the current typed outcome. Raw v4/v6 and
-    // anchored v5/v7 leaf cursors cover persisted cursors written before host
-    // qualification. The inspected remote-dev predecessor's backward v3 also
-    // cannot be sent to a released daemon because method fallback cannot
-    // identify the daemon revision.
+    // truncated shape rather than the current typed outcome. Raw Codex v4/v6
+    // and anchored v5/v7 leaf cursors cover persisted cursors written before
+    // host qualification. The inspected remote-dev predecessor's Codex
+    // backward v3 also cannot be sent to a released daemon because method
+    // fallback cannot identify the daemon revision.
     if (
         input.cursor.startsWith(EXTERNAL_SESSION_CURSOR_PREFIX)
-        || isCurrentRawCodexTranscriptCursor(input.cursor)
+        || (
+            input.agentId === 'codex'
+            && isCurrentRawCodexTranscriptCursor(input.cursor)
+        )
     ) {
         throw new ExternalSessionCursorResetRequiredError();
     }
@@ -261,6 +292,8 @@ export async function machineExternalSessionsCandidatesList(
         legacy: {
             method: RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY,
             input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+            beforeCall: () => assertReleasedDaemonAcceptsCandidateCursor(input),
+            fallbackOnRelayMethodUnavailable: true,
         },
         opts,
     });
@@ -288,18 +321,27 @@ export async function machineExternalSessionAttach(
     input: ExternalSessionAttachRequest,
     opts?: MachineExternalSessionsOpts,
 ): Promise<ExternalSessionAttachResponse> {
-    return callExternalSessionMachineRpc({
-        machineId: input.machineId,
-        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH,
-        input,
-        requestSchema: ExternalSessionAttachRequestSchema,
-        responseSchema: ExternalSessionAttachResponseSchema,
-        legacy: {
-            method: RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY,
-            input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
-        },
-        opts,
-    });
+    try {
+        return await callExternalSessionMachineRpc({
+            machineId: input.machineId,
+            method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH,
+            input,
+            requestSchema: ExternalSessionAttachRequestSchema,
+            responseSchema: ExternalSessionAttachResponseSchema,
+            opts,
+        });
+    } catch (error) {
+        if (!isRpcMethodNotFoundError(error)) throw error;
+        // The inspected predecessor's legacy attach succeeds by acquiring a
+        // transcript-bearing raw-delta follow lease. Current servers and UIs
+        // intentionally reject that retired data plane, so the lease would be
+        // silently inert. Fail before acquiring it instead.
+        return {
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'background_follow_not_supported',
+        };
+    }
 }
 
 export async function machineExternalSessionDetach(
@@ -375,6 +417,7 @@ export async function machineExternalSessionStatusGet(
         legacy: {
             method: RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY,
             input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
+            fallbackOnRelayMethodUnavailable: true,
         },
         opts,
     });
@@ -393,7 +436,11 @@ export async function machineExternalSessionTranscriptPage(
         legacy: {
             method: RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY,
             input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
-            beforeCall: () => assertReleasedDaemonAcceptsCodexTranscriptCursor(input),
+            beforeCall: () => assertReleasedDaemonAcceptsTranscriptCursor(input),
+            // server-v0.2.1 reports METHOD_NOT_AVAILABLE before forwarding when
+            // cli-v0.2.1 has registered only the released direct-session method.
+            // This retry is safe only for the read-only transcript operation.
+            fallbackOnRelayMethodUnavailable: true,
         },
         opts,
     });
@@ -412,7 +459,8 @@ export async function machineExternalSessionTranscriptReadAfter(
         legacy: {
             method: RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY,
             input: mapCanonicalAgentIdentityToReleasedProviderIdentity(input),
-            beforeCall: () => assertReleasedDaemonAcceptsCodexTranscriptCursor(input),
+            beforeCall: () => assertReleasedDaemonAcceptsTranscriptCursor(input),
+            fallbackOnRelayMethodUnavailable: true,
         },
         opts,
     });
@@ -435,7 +483,7 @@ export async function machineExternalSessionTranscriptRefreshReadAfter(
 }
 
 export async function machineExternalSessionTakeover(
-    input: ExternalSessionTakeoverRequestWithoutForceStop,
+    input: LegacyExternalSessionTakeoverRequest,
     opts?: MachineExternalSessionsOpts,
 ): Promise<ExternalSessionTakeoverResponse> {
     const actionInput = {

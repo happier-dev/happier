@@ -118,6 +118,7 @@ describe('createAttachmentActionChip', () => {
                 tint: '#000',
                 dismiss,
                 blurInput,
+                openCollapsedPopover: () => {},
             });
             assertSingleCollapsedAction(collapsed);
             if (typeof collapsed.onPress !== 'function') {

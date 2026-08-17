@@ -44,7 +44,7 @@ describe('stale session runner notice presentation', () => {
         });
 
         expect(presentation).toEqual(expect.objectContaining({
-            fingerprint: 'session-runner:s1:123:hash-old:runner-runtime-old:runner-runtime-new:eligible',
+            fingerprint: 'session-runner:s1:123:hash-old:runner-runtime-old:runner-runtime-new',
             banner: expect.objectContaining({
                 testID: 'session-staleRunner-version',
                 actionTestID: 'session-staleRunner-restart',
@@ -81,12 +81,33 @@ describe('stale session runner notice presentation', () => {
         expect(first?.fingerprint).not.toBe(second?.fingerprint);
     });
 
-    it('marks pending restarts as disabled and failed/busy restarts as still actionable', () => {
+    it('preserves collapse identity when restart availability changes for the same stale runner', () => {
+        const available = buildStaleSessionRunnerNoticePresentation({
+            runtimeState,
+            operationStatus: null,
+            translate,
+        });
+        const busy = buildStaleSessionRunnerNoticePresentation({
+            runtimeState: {
+                ...runtimeState,
+                plannedRestart: { supported: true, eligible: false, disabledReason: 'turn_in_progress' },
+            },
+            operationStatus: null,
+            translate,
+        });
+
+        expect(available?.fingerprint).toBe(busy?.fingerprint);
+    });
+
+    it('marks pending restarts as busy and disabled while failed/busy results remain actionable', () => {
         expect(buildStaleSessionRunnerNoticePresentation({
             runtimeState,
             operationStatus: { kind: 'pending' },
             translate,
-        })?.banner.disabled).toBe(true);
+        })?.banner).toEqual(expect.objectContaining({
+            actionBusy: true,
+            disabled: true,
+        }));
 
         const busy = buildStaleSessionRunnerNoticePresentation({
             runtimeState,
@@ -99,19 +120,40 @@ describe('stale session runner notice presentation', () => {
         expect(busy?.statusBadge.label).toBe('session.staleRunner.status.busy');
     });
 
-    it('fails closed for current or ineligible runtime states', () => {
+    it('keeps stale visible but disables restart while busy or unavailable', () => {
         expect(buildStaleSessionRunnerNoticePresentation({
             runtimeState: { ...runtimeState, versionState: 'current' },
             operationStatus: null,
             translate,
         })).toBeNull();
-        expect(buildStaleSessionRunnerNoticePresentation({
+        const busy = buildStaleSessionRunnerNoticePresentation({
             runtimeState: {
                 ...runtimeState,
                 plannedRestart: { supported: true, eligible: false, disabledReason: 'approval_pending' },
             },
             operationStatus: null,
             translate,
-        })).toBeNull();
+        });
+        expect(busy?.banner).toEqual(expect.objectContaining({
+            body: 'session.staleRunner.banner.busyBody',
+            actionLabel: 'session.staleRunner.actions.restart',
+            disabled: true,
+        }));
+        expect(busy?.statusBadge.label).toBe('session.staleRunner.status.busy');
+
+        const unavailable = buildStaleSessionRunnerNoticePresentation({
+            runtimeState: {
+                ...runtimeState,
+                plannedRestart: { supported: false, eligible: false, disabledReason: 'unsupported_backend' },
+            },
+            operationStatus: null,
+            translate,
+        });
+        expect(unavailable?.banner).toEqual(expect.objectContaining({
+            body: 'session.staleRunner.banner.unavailableBody',
+            actionLabel: 'common.unavailable',
+            disabled: true,
+        }));
+        expect(unavailable?.statusBadge.label).toBe('session.staleRunner.status.stale');
     });
 });

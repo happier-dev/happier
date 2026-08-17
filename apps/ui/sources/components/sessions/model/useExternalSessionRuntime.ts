@@ -21,6 +21,7 @@ import {
     replaceExternalSessionStatusDemandViewport,
 } from '@/sync/runtime/orchestration/externalSessions/externalSessionStatusDemandCoordinator';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 import { sync } from '@/sync/sync';
 import {
     createExternalSessionTranscriptLeaseScopeKeyFromLink,
@@ -301,6 +302,9 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
                 .then((response) => ({ ok: true as const, response }))
                 .catch((error: unknown) => ({ ok: false as const, error }));
             if (!statusResult.ok) {
+                if (isTerminalAuthError(statusResult.error)) {
+                    throw statusResult.error;
+                }
                 return null;
             }
             const response = statusResult.response;
@@ -335,6 +339,14 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         let renewTimeoutId: ReturnType<typeof setTimeout> | null = null;
         let attachInFlight = false;
         let attachPending = false;
+
+        const detachLease = (leaseId: string) => {
+            void machineExternalSessionDetach({
+                machineId: externalSessionTarget.machineId,
+                sessionId: normalizedSessionId,
+                leaseId,
+            }, { serverId: sessionServerId ?? undefined }).catch(() => {});
+        };
 
         const clearRenewTimeout = () => {
             if (renewTimeoutId) {
@@ -380,9 +392,26 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
                                 : {}),
                             ttlMs: readAttachLeaseTtlMsFromEnv(),
                         }, { serverId: sessionServerId ?? undefined });
-                        if (cancelled) return;
+                        if (cancelled) {
+                            // The lease outlived its viewer: nothing will renew
+                            // or release it, so it would idle until its TTL.
+                            if (response.ok) detachLease(response.leaseId);
+                            return;
+                        }
                         if (!response.ok) {
                             clearRenewTimeout();
+                            if (
+                                response.errorCode === 'agent_unavailable'
+                                && response.error === 'background_follow_not_supported'
+                            ) {
+                                return;
+                            }
+                            // A daemon that classified the failure as terminal
+                            // will answer the same way forever; released daemons
+                            // omit the field and stay on the retry path.
+                            if (response.retryable === false) {
+                                return;
+                            }
                             scheduleRetry();
                             return;
                         }
@@ -424,11 +453,7 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
             const leaseId = currentLeaseIdRef.current;
             currentLeaseIdRef.current = null;
             if (!leaseId) return;
-            void machineExternalSessionDetach({
-                machineId: externalSessionTarget.machineId,
-                sessionId: normalizedSessionId,
-                leaseId,
-            }, { serverId: sessionServerId ?? undefined }).catch(() => {});
+            detachLease(leaseId);
         };
     }, [externalSessionTarget, normalizedSessionId, runtimeActive, runtimeEnabled, sessionServerId]);
 

@@ -1,4 +1,10 @@
-import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
+import { Platform } from 'react-native';
+
+import {
+    isPermissionDeniedMicrophoneError,
+    requestMicrophonePermission,
+    showMicrophonePermissionDeniedAlert,
+} from '@/utils/platform/microphonePermissions';
 
 import type { MicSession } from './MicSession';
 import {
@@ -11,7 +17,10 @@ import {
 } from '@/voice/runtime/voiceAudioMode';
 
 type CreateNativeMicSessionOptions = Readonly<{
+    ensurePermission?: () => Promise<void>;
     ensureActive?: () => Promise<void>;
+    acquireStream?: () => Promise<MediaStream>;
+    releaseStream?: (stream: MediaStream) => Promise<void> | void;
     setMuted?: (muted: boolean) => Promise<void> | void;
     teardown?: () => Promise<void>;
 }>;
@@ -35,20 +44,63 @@ type CreateExpoAudioRecordingMicSessionOptions = Readonly<{
 
 export function createNativeMicSession(options: CreateNativeMicSessionOptions = {}): MicSession {
     let muted = false;
+    let stream: MediaStream | null = null;
+    let activation: Promise<void> | null = null;
+    let lifecycleEpoch = 0;
+
+    const releaseStream = async (activeStream: MediaStream): Promise<void> => {
+        if (options.releaseStream) {
+            await options.releaseStream(activeStream);
+            return;
+        }
+        for (const track of activeStream.getTracks()) track.stop();
+    };
+
+    const applyMutedState = (activeStream: MediaStream): void => {
+        for (const track of activeStream.getAudioTracks()) track.enabled = !muted;
+    };
+    const ensurePermission = options.ensurePermission ?? options.ensureActive;
 
     return {
+        ensurePermission: async () => {
+            await ensurePermission?.();
+        },
         ensureActive: async () => {
-            await options.ensureActive?.();
+            if (stream) return;
+            if (activation) return await activation;
+            const startEpoch = lifecycleEpoch;
+            const nextActivation = (async () => {
+                await ensurePermission?.();
+                const acquired = await options.acquireStream?.();
+                if (!acquired) return;
+                if (lifecycleEpoch !== startEpoch) {
+                    await releaseStream(acquired);
+                    return;
+                }
+                applyMutedState(acquired);
+                stream = acquired;
+            })();
+            activation = nextActivation;
+            try {
+                await nextActivation;
+            } finally {
+                if (activation === nextActivation) activation = null;
+            }
         },
         setMuted: (nextMuted) => {
             muted = nextMuted;
+            if (stream) applyMutedState(stream);
             void options.setMuted?.(nextMuted);
         },
         isMuted: () => muted,
         teardown: async () => {
+            lifecycleEpoch += 1;
+            const activeStream = stream;
+            stream = null;
+            if (activeStream) await releaseStream(activeStream);
             await options.teardown?.();
         },
-        getStream: () => null,
+        getStream: () => stream,
     };
 }
 
@@ -119,13 +171,15 @@ export function createExpoAudioRecordingMicSession(
         },
         getStream: () => null,
         beginRecording: async (signal) => {
-            const permission = await requestPermission();
-            if (signal?.aborted) {
-                return;
-            }
-            if (!permission.granted) {
-                showPermissionDenied(permission.canAskAgain === true);
-                throw new Error('mic_permission_denied');
+            if (Platform.OS !== 'web') {
+                const permission = await requestPermission();
+                if (signal?.aborted) {
+                    return;
+                }
+                if (!permission.granted) {
+                    showPermissionDenied(permission.canAskAgain === true);
+                    throw new Error('mic_permission_denied');
+                }
             }
             const nextRecorder = createRecorder();
             const nextAudioModeLease = await acquireAudioMode();
@@ -153,6 +207,10 @@ export function createExpoAudioRecordingMicSession(
                 }
             } catch (error) {
                 await nextAudioModeLease.release();
+                if (Platform.OS === 'web' && isPermissionDeniedMicrophoneError(error)) {
+                    showPermissionDenied(false);
+                    throw new Error('mic_permission_denied');
+                }
                 throw error;
             }
         },

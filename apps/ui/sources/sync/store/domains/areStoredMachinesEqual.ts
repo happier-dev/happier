@@ -31,6 +31,8 @@ export function areStoredMachinesEqual(
         && (previous.replacementActorUserId ?? null) === (next.replacementActorUserId ?? null)
         && (previous.installationId ?? null) === (next.installationId ?? null)
         && (previous.contentPublicKeyFingerprint ?? null) === (next.contentPublicKeyFingerprint ?? null)
+        && (previous.storageMode ?? null) === (next.storageMode ?? null)
+        && areSessionValuesDeepEqual(previous.availability ?? null, next.availability ?? null)
         && areSessionValuesDeepEqual(previous.metadata ?? null, next.metadata ?? null)
         && areSessionValuesDeepEqual(previous.daemonState ?? null, next.daemonState ?? null);
 }

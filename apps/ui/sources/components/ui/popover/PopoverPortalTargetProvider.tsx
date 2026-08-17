@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { OverlayPortalHost, OverlayPortalProvider } from './OverlayPortal';
 import { PopoverPortalTargetContextProvider } from './PopoverPortalTarget';
 
@@ -18,6 +19,7 @@ import { PopoverPortalTargetContextProvider } from './PopoverPortalTarget';
  */
 export function PopoverPortalTargetProvider(props: { children: React.ReactNode }) {
     if (Platform.OS === 'web') {
+        const rootPointerEvents = resolveOverlayPointerEvents('box-none');
         const webPortalTarget = React.useMemo(() => {
             if (typeof document === 'undefined') return null;
 
@@ -43,7 +45,11 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
             const resolveDialogContentTarget = (): HTMLElement | null => {
                 const anchor = anchorRef.current;
                 if (anchor && typeof (anchor as any).closest === 'function') {
-                    const dialogContent = anchor.closest('[data-radix-dialog-content]') as HTMLElement | null;
+                    // Expo Router web modals use Vaul for the dismissable boundary. Resolve it by
+                    // DOM ownership before style-based clipping heuristics, which can run before styles load.
+                    const dialogContent = anchor.closest(
+                        '[data-vaul-drawer], [data-radix-dialog-content]',
+                    ) as HTMLElement | null;
                     if (dialogContent) return dialogContent;
                 }
                 return null;
@@ -118,7 +124,10 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
 
         return (
             <ModalPortalTargetProvider target={webPortalTarget}>
-                <View style={{ flex: 1 }} pointerEvents="box-none">
+                <View
+                    pointerEvents={rootPointerEvents.nativePointerEvents}
+                    style={[{ flex: 1 }, rootPointerEvents.webStyle]}
+                >
                     {props.children}
                     <div
                         data-happy-popover-portal-anchor=""
@@ -143,6 +152,7 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
     const rootRef = React.useRef<any>(null);
     const [layout, setLayout] = React.useState(() => ({ width: 0, height: 0 }));
     const portalTarget = React.useMemo(() => ({ rootRef, layout }), [layout]);
+    const rootPointerEvents = resolveOverlayPointerEvents('box-none');
 
     return (
         <PopoverPortalTargetContextProvider value={portalTarget}>
@@ -152,8 +162,8 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
                     // Required on native: Popover measures the portal root to derive anchor-relative coordinates.
                     // Collapsable views can be optimized away, producing invalid measurements (e.g. y=0 in contained modals).
                     collapsable={false}
-                    style={{ flex: 1 }}
-                    pointerEvents="box-none"
+                    style={[{ flex: 1 }, rootPointerEvents.webStyle]}
+                    pointerEvents={rootPointerEvents.nativePointerEvents}
                     onLayout={(e) => {
                         const next = e?.nativeEvent?.layout;
                         if (!next) return;

@@ -6,11 +6,12 @@ import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { t } from '@/text';
-import { SidebarCollapseIcon } from './SidebarIcons';
+import { SidebarExpandIcon } from './SidebarIcons';
 import { SidebarLogoButton } from './SidebarLogoButton';
 import {
     DESKTOP_SIDEBAR_CHROME_COLLAPSED_HORIZONTAL_PADDING_PX,
     DESKTOP_SIDEBAR_CHROME_COLLAPSED_VERTICAL_GAP_PX,
+    DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX,
 } from './desktopChrome/desktopChromeMetrics';
 import { DesktopShellWindowControlsHost } from './desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from './desktopChrome/useResolvedDesktopWindowControls';
@@ -145,7 +146,14 @@ export const CollapsedSidebarView = React.memo((props: CollapsedSidebarViewProps
                         accessibilityRole="button"
                         accessibilityLabel={t('common.expand')}
                     >
-                        <SidebarCollapseIcon color={theme.colors.chrome.header.foreground} />
+                        {/* The rail IS the collapsed state, so this button expands. It used to
+                            take the collapse glyph and the component's default size, which made it
+                            both the wrong icon and a different size from the same control in the
+                            expanded chrome. */}
+                        <SidebarExpandIcon
+                            size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                            color={theme.colors.chrome.header.foreground}
+                        />
                     </Pressable>
                 ) : null}
             </View>

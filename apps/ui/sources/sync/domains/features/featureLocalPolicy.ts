@@ -14,7 +14,6 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'voice.agent': (settings) => resolveUiFeatureToggleEnabled(settings, 'voice.agent'),
     'voice.daemonInference': (settings) => resolveUiFeatureToggleEnabled(settings, 'voice.daemonInference'),
     'connectedServices.quotas': (settings) => resolveUiFeatureToggleEnabled(settings, 'connectedServices.quotas'),
-    channelBridges: (settings) => resolveUiFeatureToggleEnabled(settings, 'channelBridges'),
     'updates.ota': () => parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_UPDATES_OTA__ENABLED, true),
     'attachments.uploads': (settings) => resolveUiFeatureToggleEnabled(settings, 'attachments.uploads'),
     'social.friends': (settings) => resolveUiFeatureToggleEnabled(settings, 'social.friends'),
@@ -57,7 +56,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_BROWSER_AUTOMATION_INJECTED_PAGE__ENABLED, false),
     'browser.automation.eval': () =>
         parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_BROWSER_AUTOMATION_EVAL__ENABLED, false),
-    // The plugin UI tiers (hostedWeb / structuredMessages / reactNativeBundles)
+    // The plugin UI tiers (hostedWeb / reactNativeBundles)
     // are SERVER-represented + default-ALLOW kill-switches (§4.1/§13.5.3 — the server/build owns the
     // kill-switch and can disable a tier independently). The UI local policy must NOT force them
     // closed: a server-represented decision combines `localPolicyEnabled && serverEnabled`, so a

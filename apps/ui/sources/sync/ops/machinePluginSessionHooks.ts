@@ -35,7 +35,10 @@ function readParsedMachineId(payload: unknown): string {
     return machineId;
 }
 
-async function executeMachinePluginSessionHookAction<TInput, TOutput>(
+async function executeMachinePluginSessionHookAction<
+    TInput extends Readonly<{ machineId: string }>,
+    TOutput,
+>(
     actionId: PluginSessionHookActionId,
     input: MachinePluginSessionHookActionInput<TInput>,
 ): Promise<TOutput> {
@@ -44,10 +47,17 @@ async function executeMachinePluginSessionHookAction<TInput, TOutput>(
     if (!method || !spec.outputSchema) {
         throw new Error(`plugin_session_hook_action_spec_incomplete:${actionId}`);
     }
-    const { serverId, ...rawPayload } = input;
-    const payload = spec.inputSchema.parse(rawPayload);
+    const { serverId, machineId, ...rawActionInput } = input;
+    const actionInput = spec.inputSchema.parse(rawActionInput);
+    if (!actionInput || typeof actionInput !== 'object') {
+        throw new Error(`plugin_session_hook_action_input_invalid:${actionId}`);
+    }
+    const payload = {
+        machineId: readParsedMachineId({ machineId }),
+        ...actionInput,
+    };
     const response = await machineRpcWithServerScope<unknown, typeof payload>({
-        machineId: readParsedMachineId(payload),
+        machineId: payload.machineId,
         serverId,
         method,
         payload,

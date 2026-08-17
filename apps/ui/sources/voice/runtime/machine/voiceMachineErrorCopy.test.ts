@@ -22,6 +22,7 @@ const expectedTranslationKeys = {
     unsupported_runtime: 'settingsVoice.local.machineErrors.unsupported_runtime',
     update_required: 'settingsVoice.local.machineErrors.update_required',
     feature_unavailable: 'settingsVoice.local.machineErrors.feature_unavailable',
+    service_temporarily_unavailable: 'errors.voiceServiceUnavailable',
 } as const satisfies Readonly<Record<VoiceMachineErrorKind, string>>;
 
 describe('voiceMachineErrorCopy', () => {

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { Item } from '@/components/ui/lists/Item';
 import { useUnistyles } from 'react-native-unistyles';
@@ -11,6 +10,7 @@ import { getAgentCore } from '@/agents/catalog/catalog';
 import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 type Props = {
@@ -56,7 +56,7 @@ export function DetectedClisList({ state, layout = 'inline' }: Props) {
             <Item
                 title={t('common.loading')}
                 showChevron={false}
-                rightElement={<Ionicons name="time-outline" size={18} color={theme.colors.text.secondary} />}
+                rightElement={<Icon name="clock" size={16} color={theme.colors.text.secondary} />}
             />
         );
     }
@@ -152,7 +152,7 @@ export function DetectedClisList({ state, layout = 'inline' }: Props) {
                         subtitleLines={0}
                         showChevron={false}
                         showDivider={index !== entries.length - 1}
-                        leftElement={<Ionicons name={iconName as any} size={18} color={iconColor} />}
+                        leftElement={<Icon name={iconName as any} size={16} color={iconColor} />}
                     />
                 );
             })}

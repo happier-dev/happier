@@ -1,7 +1,7 @@
 import { getTrackingAnonymousUserId, tracking } from '@/track';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
-import { ACCOUNT_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/account/accountSettingArtifacts';
+import { ACCOUNT_SETTING_ANALYTICS_ARTIFACTS } from '@/sync/domains/settings/registry/account/accountSettingAnalytics';
 import { LOCAL_SETTING_ARTIFACTS } from '@/sync/domains/settings/registry/local/localSettingDefinitions';
 
 import { diffAnalyticsProperties } from './diffAnalyticsSnapshot';
@@ -51,7 +51,7 @@ function captureChange(params: {
 
 function buildTrackedAccountChangeProperties(record: Record<string, unknown>): Record<string, SettingsAnalyticsPropertyValue> {
     const properties = buildSettingsPropertiesFromArtifacts({
-        artifacts: ACCOUNT_SETTING_ARTIFACTS,
+        artifacts: ACCOUNT_SETTING_ANALYTICS_ARTIFACTS,
         record,
         currentPrefix: 'acct_setting__',
         derivedPrefix: 'derived__',
@@ -64,7 +64,7 @@ function buildTrackedAccountChangeProperties(record: Record<string, unknown>): R
 
 function buildTrackedAccountChangePropertyKinds(record: Record<string, unknown>) {
     const propertyKinds = buildSettingPropertyValueKindMapFromArtifacts({
-        artifacts: ACCOUNT_SETTING_ARTIFACTS,
+        artifacts: ACCOUNT_SETTING_ANALYTICS_ARTIFACTS,
         record,
         currentPrefix: 'acct_setting__',
         derivedPrefix: 'derived__',

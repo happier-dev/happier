@@ -131,6 +131,42 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
         expect(updated?.daemonState).toEqual(existingMachine.daemonState)
     })
 
+    it('preserves an existing locked availability during freshness-only socket updates', async () => {
+        const existingMachine = buildMachine({
+            active: false,
+            activeAt: 10,
+            metadata: null,
+            daemonState: null,
+            storageMode: 'e2ee',
+            availability: {
+                kind: 'locked',
+                reason: 'encryption_material_unavailable',
+            },
+        })
+
+        const updated = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: {
+                machineId: 'm1',
+                active: true,
+                activeAt: 100,
+            } as MachineUpdate,
+            updateSeq: 5,
+            updateCreatedAt: 100,
+            existingMachine,
+            getMachineEncryption: () => null,
+        })
+
+        expect(updated).toMatchObject({
+            active: true,
+            activeAt: 100,
+            storageMode: 'e2ee',
+            availability: {
+                kind: 'locked',
+                reason: 'encryption_material_unavailable',
+            },
+        })
+    })
+
     it('preserves replacement metadata when socket updates only carry freshness fields', async () => {
         const existingMachine = buildMachine({
             replacedByMachineId: 'm-current',

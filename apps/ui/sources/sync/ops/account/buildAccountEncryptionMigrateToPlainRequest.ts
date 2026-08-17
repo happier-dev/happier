@@ -8,6 +8,7 @@ import {
   assertConnectedServiceCredentialRecordBinding,
   openConnectedServiceCredentialCiphertext,
   type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceCredentialRevisionBoundaryV1,
   type ConnectedServiceId,
   type QualifiedConnectedAccountConfigurationSnapshotV4,
   type QualifiedConnectedAccountCredentialSnapshotV4,
@@ -19,10 +20,10 @@ import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domain
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';
 import {
-  AUTOMATION_TEMPLATE_ENVELOPE_KIND,
   encodeAutomationTemplateForTransport,
-  tryDecodeAutomationTemplateEnvelope,
+  resolveAutomationTemplatePayload,
 } from '@/sync/domains/automations/automationTemplateTransport';
+import { AutomationTemplateEncryptionMaterialUnavailableError } from '@/sync/domains/automations/automationTemplateAvailability';
 
 import {
   AccountEncryptionMigrateRequestSchema,
@@ -32,6 +33,9 @@ import {
   qualifiedConnectedAccountLegacyProjectionKeys,
   resealQualifiedConnectedAccountMigrationCredentials,
 } from './resealQualifiedConnectedAccountMigrationCredentials';
+import type {
+  AccountEncryptionMigrationStorageDirectives,
+} from './buildAccountEncryptionMigrationStorageDirectives';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -42,15 +46,19 @@ type ConnectedServiceCredentialMetadataInput = Readonly<{
 
 export async function buildAccountEncryptionMigrateToPlainRequest(params: Readonly<{
   credentials: AuthCredentials;
+  expectedAccountVersion: number;
+  expectedSigningKeyFingerprint: string | null;
+  expectedContentKeyFingerprint: string | null;
   expectedSettingsVersion: number;
   settings: Settings;
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
-  automations: ReadonlyArray<Readonly<{ id: string; templateCiphertext: string }>>;
+  automations: ReadonlyArray<Readonly<{ id: string; templateVersion: number; templateCiphertext: string }>>;
+  storageDirectives: AccountEncryptionMigrationStorageDirectives;
   fetchConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     sealed: Readonly<{ format: string; ciphertext: string }>;
     metadata: ConnectedServiceCredentialMetadataInput;
-  }>>;
+  }> & ConnectedServiceCredentialRevisionBoundaryV1>;
   fetchQualifiedConnectedAccountCredential?: (
     ref: QualifiedConnectedAccountRef,
   ) => Promise<QualifiedConnectedAccountCredentialSnapshotV4>;
@@ -94,6 +102,14 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
         continue;
       }
       const fetched = await params.fetchConnectedServiceCredentialSealed({ serviceId: profile.serviceId, profileId: profile.profileId });
+      if (
+        fetched.revisionSemantics !== 'revisioned'
+        || !fetched.credentialRevision
+      ) {
+        throw new Error(
+          `Connected service credential revision is unavailable (${profile.serviceId}/${profile.profileId})`,
+        );
+      }
       const opened = openConnectedServiceCredentialCiphertext({ material, ciphertext: fetched.sealed.ciphertext });
       if (!opened) {
         throw new Error(`Failed to open connected service credential (${profile.serviceId}/${profile.profileId})`);
@@ -112,6 +128,7 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
         kind: 'plain',
         record,
         metadata: fetched.metadata,
+        expectedCredentialRevision: fetched.credentialRevision,
       });
     }
     let qualifiedCredentials: Awaited<
@@ -154,21 +171,28 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
 
     const templates: any[] = [];
     for (const automation of params.automations) {
-      const envelope = tryDecodeAutomationTemplateEnvelope(automation.templateCiphertext);
-      if (!envelope) throw new Error(`Invalid automation template envelope (${automation.id})`);
-
-      const rawPayload = envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND
-        ? await params.decryptAutomationTemplateRaw(envelope.payloadCiphertext)
-        : envelope.payload;
-
-      const decoded = decodeAutomationTemplate(JSON.stringify(rawPayload));
+      const payload = await resolveAutomationTemplatePayload({
+        templateCiphertext: automation.templateCiphertext,
+        decryptRaw: params.decryptAutomationTemplateRaw,
+      });
+      if (payload.kind === 'invalid') {
+        throw new Error(`Invalid automation template envelope (${automation.id})`);
+      }
+      if (payload.kind === 'locked') {
+        throw new AutomationTemplateEncryptionMaterialUnavailableError();
+      }
+      const decoded = decodeAutomationTemplate(JSON.stringify(payload.payload));
       if (!decoded) throw new Error(`Invalid decrypted automation template payload (${automation.id})`);
 
       const requiresSensitiveEncryption =
         typeof (decoded as any).sessionEncryptionKeyBase64 === 'string' &&
         String((decoded as any).sessionEncryptionKeyBase64).trim().length > 0;
       if (requiresSensitiveEncryption) {
-        templates.push({ automationId: automation.id, templateCiphertext: automation.templateCiphertext });
+        templates.push({
+          automationId: automation.id,
+          expectedTemplateVersion: automation.templateVersion,
+          templateCiphertext: automation.templateCiphertext,
+        });
         continue;
       }
 
@@ -177,15 +201,25 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
         template: decoded,
       });
 
-      templates.push({ automationId: automation.id, templateCiphertext: plainTemplateCiphertext });
+      templates.push({
+        automationId: automation.id,
+        expectedTemplateVersion: automation.templateVersion,
+        templateCiphertext: plainTemplateCiphertext,
+      });
     }
     return { action: 'migrate' as const, templates };
   })();
   return AccountEncryptionMigrateRequestSchema.parse({
     toMode: 'plain',
+    expectedAccountVersion: params.expectedAccountVersion,
+    expectedSigningKeyFingerprint:
+      params.expectedSigningKeyFingerprint,
+    expectedContentKeyFingerprint:
+      params.expectedContentKeyFingerprint,
     expectedSettingsVersion: params.expectedSettingsVersion,
     settingsContent: { t: 'plain', v: plainSettings },
     connectedServices,
     automations,
+    ...params.storageDirectives,
   });
 }

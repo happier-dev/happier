@@ -24,10 +24,6 @@ const EMPTY_SURFACE_ENTRIES: readonly VoiceSurfaceTranscriptEntry[] = Object.fre
 const EMPTY_SESSIONS: Record<string, unknown> = {};
 const EMPTY_SESSION_MESSAGES: Record<string, unknown> = {};
 
-function selectPersistedSessions(state: any): Record<string, unknown> {
-    return state?.sessions ?? EMPTY_SESSIONS;
-}
-
 export function useVoiceSurfaceConversationState(params: Readonly<{
     providerId: string;
     activeControlSessionId: string | null;
@@ -36,8 +32,6 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
     voiceSettings: unknown;
 }>) {
     const transcriptEnabled = params.transcriptEnabled;
-    const bindingSnapshot = useStoreSnapshot(voiceSessionBindingStore);
-    const persistedSessions = useStoreSnapshot(storage as any, selectPersistedSessions);
     const surfaceCapabilities = resolveVoiceAdapterSurfaceCapabilities(
         params.providerId,
         params.voiceSettings,
@@ -57,7 +51,51 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
             params.voiceSettings,
         ],
     );
-    const openConversationSessionId = React.useMemo(() => {
+    /*
+     * The surface depends on the **resolved** conversation session id, not on the
+     * shape of either store behind it.
+     *
+     * Two subscriptions were publishing raw store identity here, and each one
+     * re-rendered the whole surface on every unrelated session write (M3 measured
+     * one render per write, from each):
+     *
+     *  - `state.sessions` by identity — a new map on every append, presence flip
+     *    or metadata patch anywhere in the app;
+     *  - the whole `voiceSessionBindingStore` state — which re-derives its
+     *    persisted layer from *every* registered storage change and always
+     *    allocates a new state object, even when the bindings are unchanged
+     *    (`voiceConversationBindingStore.ts:179-190,226-230`).
+     *
+     * Both are replaced by the same derived selector, so `useStoreSnapshot`'s
+     * `Object.is` bail-out ends the write: an unrelated session recomputes a
+     * string and stops there. Both stores stay subscribed because either can
+     * change the answer on its own — a runtime `bind()` never touches storage.
+     *
+     * The resolver reads both stores itself (`resolveVoiceBindingBySessionId` →
+     * `VoiceConversationBindingResolver.ts:38-84`) and walks every persisted
+     * session, so the read is cached on both store identities — a write that
+     * cannot change the answer costs one reference comparison.
+     */
+    const subscribeBindingSources = React.useCallback((notify: () => void) => {
+        const unsubscribeSessions = (storage as any).subscribe(notify);
+        const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
+        return () => {
+            unsubscribeSessions();
+            unsubscribeBindings();
+        };
+    }, []);
+    const resolvedBindingCache = React.useRef<
+        { sessions: unknown; bindings: unknown; value: string | null } | null
+    >(null);
+    const readOpenConversationSessionId = React.useCallback((): string | null => {
+        const sessions = (storage as any).getState()?.sessions ?? EMPTY_SESSIONS;
+        const bindings = voiceSessionBindingStore.getState();
+        const cached = resolvedBindingCache.current;
+        if (cached && cached.sessions === sessions && cached.bindings === bindings) {
+            return cached.value;
+        }
+
+        let value: string | null = null;
         for (const sessionId of controlSessionCandidates) {
             const binding =
                 resolveVoiceBindingBySessionId({
@@ -66,17 +104,22 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
                 })
                 ?? resolveVoiceBindingBySessionId({ sessionId });
             if (binding) {
-                return binding.conversationSessionId;
+                value = binding.conversationSessionId;
+                break;
             }
         }
 
-        return null;
+        resolvedBindingCache.current = { sessions, bindings, value };
+        return value;
     }, [
-        bindingSnapshot,
-        persistedSessions,
-        params.providerId,
         controlSessionCandidates,
+        params.providerId,
     ]);
+    const openConversationSessionId = React.useSyncExternalStore(
+        subscribeBindingSources,
+        readOpenConversationSessionId,
+        readOpenConversationSessionId,
+    );
     const fallbackOpenConversationControlSessionId = React.useMemo(
         () => controlSessionCandidates[0] ?? null,
         [controlSessionCandidates],
@@ -122,6 +165,8 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
             : mergedTranscriptEntries;
         return [...tail].reverse();
     }, [mergedTranscriptEntries]);
+
+
 
     return {
         openConversationSessionId,

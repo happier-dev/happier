@@ -32,6 +32,9 @@ export type UnauthenticatedSplitShellProps = Readonly<{
      */
     isWelcomeStep: boolean;
 
+    /** Compact server-owned retention disclosure shown above the welcome footer links. */
+    retentionSummary?: string | null;
+
     /**
      * Whether the one-time mobile brand hero may be shown on this step.
      * Defaults to `isWelcomeStep`. Must be `false` for restore, OAuth
@@ -111,6 +114,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 <WorkflowPanel
                     variant="desktop"
                     isWelcomeStep={props.isWelcomeStep}
+                    retentionSummary={props.retentionSummary}
                     onOpenRelayCustomFlow={props.onOpenRelayCustomFlow}
                     onBack={props.onBack}
                     transitionKey={props.stepId}
@@ -146,6 +150,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
             <WorkflowPanel
                 variant="mobile"
                 isWelcomeStep={props.isWelcomeStep}
+                retentionSummary={props.retentionSummary}
                 onOpenRelayCustomFlow={props.onOpenRelayCustomFlow}
                 onBack={props.onBack}
                 transitionKey={props.stepId}

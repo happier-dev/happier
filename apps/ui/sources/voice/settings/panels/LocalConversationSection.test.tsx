@@ -12,6 +12,7 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import { renderSettingsView, type SettingsViewHarness } from '@/dev/testkit';
 import { t } from '@/text';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 
 (
@@ -217,22 +218,143 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
-  it('renders the shared selected-machine endpoint and credential owners for OpenAI-compatible chat', async () => {
+  it('does not expose the retired Voice-owned Chat endpoint or credential controls', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    expect(screen.findAll((node) => String(node.type) === 'Item' && node.props?.title === t('settingsVoice.local.chatBaseUrl'))).toHaveLength(0);
+    expect(screen.findAll((node) => String(node.type) === 'Item' && node.props?.title === t('settingsVoice.local.chatApiKey'))).toHaveLength(0);
+  });
+
+  it('asks once for the compatible Agent and commits both Provider tuples together', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        providerChat: {
+          status: 'needs_selection',
+          providerConnectionId: ProviderConnectionIdSchema.parse('voice-openai-compatible-chat'),
+          chatModelId: 'qwen-chat',
+          commitModelId: 'qwen-commit',
+          configuration: { temperature: 0.25 },
+        },
+      },
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const prompts = screen.findAll((node) => (
+      String(node.type) === 'DropdownMenu'
+      && node.props?.itemTrigger?.title === t('settingsVoice.local.mediatorAgentId')
+      && node.props?.selectedId === ''
+    ));
+    expect(prompts).toHaveLength(1);
+
+    act(() => {
+      prompts[0]!.props.onSelect('opencode');
+    });
+
+    const nextVoice = setVoice.mock.calls[0]?.[0] as VoiceSettings;
+    expect(readLocalConversationVoiceSettings(nextVoice).agent).toMatchObject({
+      agentSource: 'agent',
+      agentId: 'opencode',
+      providerChat: {
+        status: 'configured',
+        chat: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: 'voice-openai-compatible-chat',
+          modelId: 'qwen-chat',
+        },
+        commit: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: 'voice-openai-compatible-chat',
+          modelId: 'qwen-commit',
+        },
+      },
+    });
+    act(() => {
+      screen.tree.update(<LocalConversationSection voice={nextVoice} setVoice={setVoice} />);
+    });
+    expect(screen.findAll((node) => (
+      String(node.type) === 'DropdownMenu'
+      && node.props?.itemTrigger?.title === t('settingsVoice.local.mediatorAgentId')
+      && node.props?.selectedId === ''
+    ))).toHaveLength(0);
+  });
+
+  it('hides competing Agent and model selectors for configured Provider Chat while retaining shared controls', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'openai_compat',
-        openaiCompat: {
-          ...readLocalConversationVoiceSettings(voiceSettingsDefaults).agent.openaiCompat,
-          chatBaseUrl: null,
+        agentSource: 'agent',
+        agentId: 'opencode',
+        chatModelSource: 'custom',
+        chatModelId: 'ignored-chat-model',
+        commitModelSource: 'custom',
+        commitModelId: 'ignored-commit-model',
+        providerChat: {
+          status: 'configured',
+          chat: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: ProviderConnectionIdSchema.parse('voice-openai-compatible-chat'),
+            modelId: 'provider-chat-model',
+          },
+          commit: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: ProviderConnectionIdSchema.parse('voice-openai-compatible-chat'),
+            modelId: 'provider-commit-model',
+          },
+          configuration: { temperature: 0.73 },
         },
       },
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
-    expect(screen.findAll((node) => String(node.type) === 'Item' && node.props?.title === t('settingsVoice.local.chatBaseUrl'))).toHaveLength(1);
-    expect(screen.findAll((node) => String(node.type) === 'Item' && node.props?.title === t('settingsVoice.local.chatApiKey'))).toHaveLength(1);
+    for (const title of [
+      t('settingsVoice.local.mediatorAgentSource'),
+      t('settingsVoice.local.mediatorAgentId'),
+      t('settingsVoice.local.mediatorChatModelSource'),
+      t('settingsVoice.local.conversation.chatModelId.title'),
+      t('settingsVoice.local.mediatorCommitModelSource'),
+      t('settingsVoice.local.conversation.commitModelId.title'),
+    ]) {
+      expect(findDropdownByItemTriggerTitle(screen, title)).toBeNull();
+    }
+
+    expect(findDropdownByItemTriggerTitle(
+      screen,
+      t('settingsVoice.local.mediatorPermissionPolicy'),
+    )).not.toBeNull();
+    expect(screen.findRowByTitle(t('settingsVoice.local.conversation.commitIsolation.title'))).toBeTruthy();
+    expect(screen.findRowByTitle(t('settingsVoice.local.mediatorIdleTtl'))).toBeTruthy();
+    expect(preflightModelsCallSpy).toHaveBeenLastCalledWith(expect.objectContaining({ backendTarget: null }));
+  });
+
+  it('offers the default session Agent model catalog while following the current session', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        agentSource: 'session',
+        chatModelSource: 'custom',
+        commitModelSource: 'custom',
+      },
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const chatModel = findDropdownByItemTriggerTitle(
+      screen,
+      t('settingsVoice.local.conversation.chatModelId.title'),
+    );
+
+    expect(chatModel?.props.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'm1' }),
+      expect.objectContaining({ id: '__custom__' }),
+    ]));
   });
 
   it('does not crash when providerId toggles away from local_conversation', async () => {
@@ -262,7 +384,7 @@ describe('LocalConversationSection', () => {
     act(() => {
       screen.tree.update(
         <LocalConversationSection
-          voice={withProvider(localVoice, 'realtime_elevenlabs')}
+          voice={withProvider(localVoice, 'happier.voice.elevenlabs/realtime-elevenlabs')}
           setVoice={() => {}}
         />,
       );
@@ -271,13 +393,12 @@ describe('LocalConversationSection', () => {
     expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversationMode'))).toBeFalsy();
   });
 
-  it('renders a backend dropdown for the voice agent when agentSource=agent', async () => {
+  it('renders the fixed Agent dropdown when agentSource=agent', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         chatModelSource: 'custom',
@@ -287,7 +408,7 @@ describe('LocalConversationSection', () => {
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     const backendDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorBackend'));
-    expect(backendDropdown?.props.selectedId).toBe('daemon');
+    expect(backendDropdown?.props.selectedId).toBe('codex');
   });
 
   it('renders a chat model dropdown for the voice agent when chatModelSource=custom', async () => {
@@ -296,7 +417,6 @@ describe('LocalConversationSection', () => {
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         chatModelSource: 'custom',
@@ -315,7 +435,6 @@ describe('LocalConversationSection', () => {
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         chatModelSource: 'custom',
@@ -343,7 +462,6 @@ describe('LocalConversationSection', () => {
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         chatModelSource: 'session',
@@ -363,7 +481,6 @@ describe('LocalConversationSection', () => {
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         chatModelSource: 'custom',
@@ -382,7 +499,6 @@ describe('LocalConversationSection', () => {
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         machineTargetMode: 'fixed',
@@ -402,7 +518,6 @@ describe('LocalConversationSection', () => {
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         machineTargetMode: 'auto',
@@ -423,7 +538,6 @@ describe('LocalConversationSection', () => {
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'daemon',
         agentSource: 'agent',
         agentId: 'codex',
         machineTargetMode: 'auto',
@@ -447,7 +561,6 @@ describe('LocalConversationSection', () => {
         provider: 'device',
       },
       agent: {
-        backend: 'daemon',
         resumabilityMode: 'provider_resume',
         transcript: {
           ...defaults.agent.transcript,
@@ -514,42 +627,34 @@ describe('LocalConversationSection', () => {
     expect(policyDropdown?.props.selectedId).toBe('keep_warm');
   });
 
-  it('disables the daemon mediator backend option when voice.agent is disabled', async () => {
+  it('hides Agent-only commit isolation when voice.agent is disabled', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     featureEnabledState['voice.agent'] = false;
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'openai_compat',
         agentSource: 'agent',
         agentId: 'codex',
       },
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const mediatorBackend = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorBackend'));
-    if (!mediatorBackend) throw new Error('Expected mediator backend dropdown to be rendered');
-    const daemonItem = (mediatorBackend.props.items ?? []).find((it: any) => it?.id === 'daemon');
-    expect(daemonItem?.disabled).toBe(true);
+    expect(screen.findRowByTitle(t('settingsVoice.local.conversation.commitIsolation.title'))).toBeFalsy();
   });
 
-  it('keeps the daemon mediator backend option enabled when voice.agent is enabled', async () => {
+  it('shows Agent-only commit isolation when voice.agent is enabled', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
-        backend: 'openai_compat',
         agentSource: 'agent',
         agentId: 'codex',
       },
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const mediatorBackend = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorBackend'));
-    if (!mediatorBackend) throw new Error('Expected mediator backend dropdown to be rendered');
-    const daemonItem = (mediatorBackend.props.items ?? []).find((it: any) => it?.id === 'daemon');
-    expect(daemonItem?.disabled).not.toBe(true);
+    expect(screen.findRowByTitle(t('settingsVoice.local.conversation.commitIsolation.title'))).toBeTruthy();
   });
 });

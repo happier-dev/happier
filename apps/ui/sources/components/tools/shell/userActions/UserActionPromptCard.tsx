@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -13,6 +12,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ToolInlineBody } from '@/components/tools/shell/views/ToolInlineBody';
 import { buildPermissionPromptModel } from '@/components/tools/shell/permissions/presentation/buildPermissionPromptModel';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const UserActionPromptCard = React.memo(function UserActionPromptCard(props: {
     request: PendingPermissionRequest;
@@ -46,7 +46,7 @@ export const UserActionPromptCard = React.memo(function UserActionPromptCard(pro
         <View testID="user-action-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
             <View style={styles.header}>
                 <View style={styles.icon}>
-                    <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.state.neutral.foreground} />
+                    <Icon name="chat-circle-dots" size={16} color={theme.colors.state.neutral.foreground} />
                 </View>
                 <View style={styles.headerText}>
                     <Text style={styles.title} numberOfLines={1}>
@@ -67,7 +67,7 @@ export const UserActionPromptCard = React.memo(function UserActionPromptCard(pro
                         accessibilityLabel={t('toolView.open')}
                         style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
                     >
-                        <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
             </View>

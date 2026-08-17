@@ -1,8 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HappierProgress } from '@happier-dev/plugin-ui/presentation';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useUnistyles } from 'react-native-unistyles';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { t } from '@/text';
 
 const TRACK_HEIGHT = 2;
 
@@ -34,18 +38,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function clampFraction(value: number): number {
-    if (!Number.isFinite(value)) return INDETERMINATE_WIDTH;
-    if (value <= 0) return MIN_VISIBLE_WIDTH;
-    if (value >= 1) return 1;
-    return Math.max(value, MIN_VISIBLE_WIDTH);
-}
-
-function resolveWidthPercent(progress: number | null): `${number}%` {
-    const fraction = progress == null ? INDETERMINATE_WIDTH : clampFraction(progress);
-    return `${Math.round(fraction * 100)}%`;
-}
-
 export function BrowserLoadProgressBar(props: Readonly<{
     progress: number | null;
     loading: boolean;
@@ -53,6 +45,8 @@ export function BrowserLoadProgressBar(props: Readonly<{
     testID?: string;
 }>): React.ReactElement | null {
     const detectedReducedMotion = useReducedMotionPreference();
+    const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const reducedMotion = props.reducedMotion ?? detectedReducedMotion;
     const testID = props.testID ?? 'browser-load-progress';
 
@@ -61,20 +55,26 @@ export function BrowserLoadProgressBar(props: Readonly<{
     }
 
     return (
-        <View
+        <HappierProgress
             testID={testID}
-            accessibilityRole="progressbar"
+            label={t('common.loading')}
+            value={props.progress ?? undefined}
+            theme={presentationTheme}
             pointerEvents="none"
             style={stylesheet.track}
-        >
-            <View
+            renderFill={(percentage) => (
+              <View
                 testID={`${testID}-fill`}
                 style={[
                     stylesheet.fill,
-                    { width: resolveWidthPercent(props.progress) },
+                    { width: `${Math.max(
+                        Math.round(MIN_VISIBLE_WIDTH * 100),
+                        props.progress === null ? Math.round(INDETERMINATE_WIDTH * 100) : percentage,
+                    )}%` },
                     reducedMotion ? null : stylesheet.glow,
                 ]}
-            />
-        </View>
+              />
+            )}
+        />
     );
 }

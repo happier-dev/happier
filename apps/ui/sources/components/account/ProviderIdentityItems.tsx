@@ -19,6 +19,7 @@ import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage'
 import { authProviderRegistry, normalizeProviderId } from '@/auth/providers/registry';
 import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ProviderIdentityItemsProps = Readonly<{
     profile: Profile;
@@ -144,7 +145,7 @@ function ProviderIdentityItem(props: Readonly<{
                 cachePolicy="memory-disk"
             />
         ) : (
-            <SafeIonicons name={iconName as any} size={29} color={iconColor} />
+            <Icon name={iconName as any} size={29} color={iconColor} />
         );
 
     if (!identity) {

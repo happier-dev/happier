@@ -1,4 +1,6 @@
 import {
+    sealTerminalProvisioningV3TokenOnlyPayload,
+    sealTerminalProvisioningV3Payload,
     sealTerminalProvisioningV2Payload,
 } from '@happier-dev/protocol';
 
@@ -15,6 +17,31 @@ export function decideTerminalProvisioningMode(params: Readonly<{
     if (params.supportsV2) return 'v2';
     if (params.allowLegacyFallback) return 'v1';
     return 'block';
+}
+
+export function buildTerminalResponseV3(params: Readonly<{
+    contentPrivateKey: Uint8Array;
+    terminalEphemeralPublicKey: Uint8Array;
+    pairingSecret: Uint8Array;
+    createdAtMs: number;
+    expiresAtMs: number;
+}>): Uint8Array {
+    return sealTerminalProvisioningV3Payload({
+        ...params,
+        randomBytes: getRandomBytes,
+    });
+}
+
+export function buildTerminalTokenOnlyResponseV3(params: Readonly<{
+    terminalEphemeralPublicKey: Uint8Array;
+    pairingSecret: Uint8Array;
+    createdAtMs: number;
+    expiresAtMs: number;
+}>): Uint8Array {
+    return sealTerminalProvisioningV3TokenOnlyPayload({
+        ...params,
+        randomBytes: getRandomBytes,
+    });
 }
 
 export function buildTerminalResponseV2(params: Readonly<{

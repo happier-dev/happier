@@ -1,4 +1,7 @@
-import { BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES } from './generatedBundledVoiceEntries';
+import {
+  BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
+  BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
+} from './generatedBundledVoiceEntries';
 import { BUILT_IN_VOICE_UI_ENTRIES } from './builtInEntries';
 import { createVoiceProviderRegistry, type VoiceProviderRegistry } from './providerRegistry';
 import {
@@ -12,7 +15,8 @@ export function createDefaultVoiceProviderRegistry(input: Readonly<{
 }> = {}): VoiceProviderRegistry {
   const base = createVoiceProviderRegistry({
     builtIn: BUILT_IN_VOICE_UI_ENTRIES,
-    bundled: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES,
+    bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
+    bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
     enabledPluginIds: input.enabledPluginIds ?? null,
   });
   const enabledPluginIds = input.enabledPluginIds ?? null;

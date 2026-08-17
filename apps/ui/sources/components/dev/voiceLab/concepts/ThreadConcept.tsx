@@ -5,12 +5,12 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from '
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { ControlRow, TactilePressable } from '../ConceptControls';
-import { Bloom, Grain } from '../VoiceLight';
-import { TranscriptStream } from '../TranscriptStream';
-import { useVoiceLabEnergy } from '../useVoiceLabEnergy';
-import { controlsForState } from '../voiceLabModel';
-import { VOICE_MOTION, light, useVoiceLabTokens } from '../voiceLabTokens';
+import { ControlRow, TactilePressable } from '@/components/voice/controls/VoiceControls';
+import { Bloom, Grain } from '@/components/voice/light/VoiceLight';
+import { TranscriptStream } from '@/components/voice/surface/VoiceTranscriptStream';
+import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
+import { controlsForState, VOICE_LAB_TRANSCRIPT } from '../voiceLabModel';
+import { VOICE_MOTION, light, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import type { VoiceConceptProps } from '../conceptTypes';
 
 const EASE_SPATIAL = Easing.bezier(...(VOICE_MOTION.spatial.bezier as [number, number, number, number]));
@@ -26,8 +26,8 @@ const SpeechEdge = React.memo(function SpeechEdge(props: Readonly<{
     stop: Parameters<typeof light>[0];
     active: boolean;
 }>) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
 
     const core = useAnimatedStyle(() => {
         'worklet';
@@ -77,8 +77,8 @@ const SpeechEdge = React.memo(function SpeechEdge(props: Readonly<{
  * composer was never replaced, so there is nothing to put back.
  */
 export function ThreadConcept(props: VoiceConceptProps) {
-    const tokens = useVoiceLabTokens();
-    const energy = useVoiceLabEnergy();
+    const tokens = useVoiceLightTokens();
+    const energy = useVoiceEnergy();
     const { state } = props;
     const dormant = state.id === 'ready' || state.id === 'unavailable';
     const controls = controlsForState(state.id, props.provider, props.surface === 'session');
@@ -111,7 +111,7 @@ export function ThreadConcept(props: VoiceConceptProps) {
     return (
         <View style={{ flex: 1, alignSelf: 'stretch' }}>
             <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 8 }}>
-                <TranscriptStream />
+                <TranscriptStream entries={VOICE_LAB_TRANSCRIPT} />
             </View>
 
             {/* The composer. Same geometry in both modes. */}

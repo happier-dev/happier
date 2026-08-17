@@ -8,6 +8,8 @@ type WorkspaceFileTransferRpcCallParams<TRequest> = Readonly<{
     request: TRequest;
     machineMethod: string;
     timeoutMs?: number | null;
+    /** The caller owns cancellation; this guarded boundary must preserve it. */
+    signal?: AbortSignal | null;
 }>;
 
 export type WorkspaceFileTransferRpcCaller = Readonly<{
@@ -44,6 +46,7 @@ export function createWorkspaceFileTransferRpcCaller(params: Readonly<{
                     machineId: params.machineId,
                     serverId: normalizeServerId(params.serverId),
                     timeoutMs: typeof callParams.timeoutMs === 'number' ? callParams.timeoutMs : undefined,
+                    ...(callParams.signal ? { signal: callParams.signal } : {}),
                     preferScoped: await getPreferScoped(),
                     method: callParams.machineMethod,
                     payload: callParams.request,

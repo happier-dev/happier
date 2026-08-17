@@ -1,9 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View, type View as RNView } from 'react-native';
 import { ResumeChip } from './ResumeChip';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 
 
 export type PathAndResumeRowStyles = {
@@ -58,11 +59,10 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                         ])}
                     >
                         {normalizeNodeForView(
-                            <Ionicons
-                                name="folder-outline"
-                                size={16}
-                                color={props.iconColor}
-                            />,
+                            <Icon
+                                name="folder"
+                                size={AGENT_INPUT_CHIP_ICON_SIZE_PX}
+                                color={props.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />,
                         )}
                         <Text
                             numberOfLines={1}

@@ -22,7 +22,7 @@ import { storage, useArtifact, useMachine, useSession } from '@/sync/domains/sta
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { ApprovalSessionContextCard } from './ApprovalSessionContextCard';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
 import { ApprovalPreviewCard } from './ApprovalPreviewCard';
@@ -37,7 +37,6 @@ const styles = StyleSheet.create((theme) => ({
   scrollContent: {
     padding: 16,
     paddingBottom: 64,
-    maxWidth: layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
@@ -109,10 +108,19 @@ function formatApprovalStatusLabel(status: string): string {
 }
 
 export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: string }>) => {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const scrollContentStyle = React.useMemo(
+    () => [styles.scrollContent, contentMaxWidthStyle],
+    [contentMaxWidthStyle],
+  );
   const router = useRouter();
   const { theme } = useUnistyles();
   const artifact = useArtifact(props.artifactId);
-  const [isLoading, setIsLoading] = React.useState(artifact?.body == null);
+  const [isLoading, setIsLoading] = React.useState(
+    artifact?.isDecrypted !== false && artifact?.body == null,
+  );
   const [error, setError] = React.useState<string | null>(null);
   const [isDeciding, setIsDeciding] = React.useState(false);
   const decisionInFlightRef = React.useRef(false);
@@ -125,7 +133,7 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
   );
 
   React.useEffect(() => {
-    if (artifact?.body != null) return;
+    if (artifact?.isDecrypted === false || artifact?.body != null) return;
 
     let cancelled = false;
 
@@ -318,6 +326,26 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
     );
   }
 
+  if (artifact?.isDecrypted === false) {
+    const lockedMessage = artifact.availability.reason === 'encryption_material_unavailable'
+      ? t('settingsAccount.secretKeyMissing')
+      : t('approvals.loadError');
+
+    return (
+      <View style={styles.container}>
+        <View style={styles.loading}>
+          <Text style={{ color: theme.colors.text.secondary }}>{lockedMessage}</Text>
+          <View style={{ height: 12 }} />
+          <RoundButton
+            size="normal"
+            title={t('common.back')}
+            onPress={() => router.back()}
+          />
+        </View>
+      </View>
+    );
+  }
+
   if (error || !parsed) {
     return (
       <View style={styles.container}>
@@ -341,8 +369,11 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={scrollContentStyle}>
         <Text style={styles.title}>{parsed.request.summary || t('approvals.untitled')}</Text>
+        {parsed.kind === 'target' && parsed.request.detail ? (
+          <Text testID="approvals.target-action-detail" style={styles.subtitle}>{parsed.request.detail}</Text>
+        ) : null}
         {actionTitle ? <Text style={styles.subtitle}>{actionTitle}</Text> : null}
         {targetActionParts ? <Text style={styles.subtitle}>{targetActionParts[0]} · {targetActionParts[1]}</Text> : null}
         {parsed.kind === 'host_action' ? (

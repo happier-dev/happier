@@ -55,7 +55,21 @@ vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useSession: () => sessionState.session,
+        storage: Object.assign(
+            (selector?: (state: any) => unknown) => {
+                const state = {
+                    sessions: sessionState.session ? { 'session-1': sessionState.session } : {},
+                };
+                return typeof selector === 'function' ? selector(state) : state;
+            },
+            {
+                getState: () => ({
+                    sessions: sessionState.session ? { 'session-1': sessionState.session } : {},
+                }),
+                setState: () => undefined,
+                subscribe: () => () => undefined,
+            },
+        ),
         useMachine: () => ({
             metadata: {
                 daemonTerminalSessionAttachSupported: machineState.sessionAttachSupported,

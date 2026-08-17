@@ -5,7 +5,7 @@ import {
     captureAssistantTextMessageBaseline,
     collectAssistantTextMessagesSinceBaseline,
 } from '@/voice/runtime/waitForNextAssistantTextMessage';
-import { isVoiceAgentBusyError, isVoiceAgentNotFoundError, isVoiceAgentRpcMethodUnavailable } from '@/voice/agent/voiceAgentErrorGuards';
+import { isVoiceAgentNotFoundError, isVoiceAgentRpcMethodUnavailable } from '@/voice/agent/voiceAgentErrorGuards';
 import { clearStaleDaemonRunState } from '@/voice/agent/voiceAgentRunState';
 import { streamVoiceAgentTurn } from '@/voice/agent/streamVoiceAgentTurn';
 import { buildVoiceAgentTurnPayload } from '@/voice/agent/buildVoiceAgentTurnPayload';
@@ -16,8 +16,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     getVoiceAgentHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
     interruptActiveTurn: (sessionId: string) => void;
     resetCachedHandle: (sessionId: string) => void;
-    runSerializedTurn: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>;
-    stop: (sessionId: string) => Promise<void>;
+    trackActiveTurn: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>;
     voiceAgentPendingContextBySessionId: Map<string, string[]>;
     voiceAgentTurnAbortControllerBySessionId: Map<string, AbortController>;
 }>): Readonly<{
@@ -97,6 +96,9 @@ export function createVoiceTurnStreaming(args: Readonly<{
                     displayUserText,
                     ...(options?.signal ? { signal: options.signal } : {}),
                     ...(options?.userTranscript ? { userTranscript: options.userTranscript } : {}),
+                    ...(options?.onUserTranscriptAccepted
+                        ? { onUserTranscriptAccepted: options.onUserTranscriptAccepted }
+                        : {}),
                 });
             const normalizedResponse = {
                 assistantText: response.assistantText,
@@ -104,7 +106,6 @@ export function createVoiceTurnStreaming(args: Readonly<{
             };
             if (
                 normalizedResponse.assistantText.trim().length === 0
-                && readLocalConversationSettingsFromAccountSettings((storage.getState() as any).settings).agent.backend === 'daemon'
             ) {
                 const recoveredAssistantTexts = collectAssistantTextMessagesSinceBaseline(
                     handle.rpcSessionId,
@@ -125,10 +126,6 @@ export function createVoiceTurnStreaming(args: Readonly<{
         try {
             return await sendWithHandle(userText);
         } catch (error) {
-            if (isVoiceAgentBusyError(error)) {
-                await args.stop(sessionId).catch(() => {});
-                return await sendWithHandle(userText);
-            }
             if (isVoiceAgentRpcMethodUnavailable(error)) {
                 await clearStaleDaemonRunState(sessionId, lastHandle).catch(() => {});
                 args.resetCachedHandle(sessionId);
@@ -145,7 +142,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
         userText: string,
         options?: VoiceAgentSendTurnOptions,
     ): Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>> =>
-        await args.runSerializedTurn(sessionId, async () => {
+        await args.trackActiveTurn(sessionId, async () => {
             const internalAbortController = new AbortController();
             args.voiceAgentTurnAbortControllerBySessionId.set(sessionId, internalAbortController);
             const mergedSignals = [options?.signal, internalAbortController.signal].filter(Boolean) as AbortSignal[];

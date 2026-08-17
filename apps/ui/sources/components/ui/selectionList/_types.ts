@@ -20,7 +20,13 @@ import type * as React from 'react';
  * (`apps/ui/sources/utils/path/browseSegments.ts`), NOT generic SelectionList types.
  */
 
-export type SelectionListAccessory = React.ReactNode | (() => React.ReactNode);
+/**
+ * A row visual may be supplied directly for small/static lists or through a
+ * render-time factory for virtualized lists. Factories are invoked only when
+ * the owning row renderer materializes that row.
+ */
+export type SelectionListLazyVisual = React.ReactNode | (() => React.ReactNode);
+export type SelectionListAccessory = SelectionListLazyVisual;
 export type SelectionListTextEllipsizeMode = 'head' | 'middle' | 'tail' | 'clip';
 
 export type SelectionListKeyboardHint = Readonly<{
@@ -55,7 +61,13 @@ type SelectionListOptionBase = Readonly<{
     id: string;
     /** Optional stable consumer-facing test id for compatibility adapters. */
     testID?: string;
+    /** Plain-text label used for matching and as the synchronous fallback. */
     label: string;
+    /**
+     * Render-time title for virtualized rows whose visible text is more
+     * expensive to derive than their plain-text matching label.
+     */
+    renderLabel?: () => string;
     /**
      * Called when pointer activation starts, before a focused input can blur.
      * Consumers use this only to coordinate interaction ordering; selection
@@ -70,12 +82,14 @@ type SelectionListOptionBase = Readonly<{
     content?: React.ReactNode;
     subtitle?: string;
     /** Rich visual subtitle; `subtitle` remains the searchable plain-text value. */
-    subtitleContent?: React.ReactNode;
+    subtitleContent?: SelectionListLazyVisual;
     /** Optional assistive label for rows whose visible label repeats across sections. */
     accessibilityLabel?: string;
+    /** Render-time assistive label for a virtualized row. */
+    renderAccessibilityLabel?: () => string;
     labelEllipsizeMode?: SelectionListTextEllipsizeMode;
     subtitleEllipsizeMode?: SelectionListTextEllipsizeMode;
-    icon?: React.ReactNode;
+    icon?: SelectionListLazyVisual;
     /** Right-side accessory (status pill, relative time, key chip, etc.) */
     rightAccessory?: SelectionListAccessory;
     /**
@@ -84,6 +98,15 @@ type SelectionListOptionBase = Readonly<{
      * one accessible row activation target beside the independent control.
      */
     rightAccessoryOutsidePressable?: boolean;
+    /**
+     * Extra body rendered directly BELOW the row, and only while the row is the
+     * selected option. It is mounted as a sibling of the row — outside every
+     * Pressable — so the controls it owns (segmented toggles, sliders, chips)
+     * activate independently and never nest a button inside the row's button on
+     * web. Use it for per-option controls that only make sense once the option
+     * is chosen; the row itself stays the single activation target.
+     */
+    expandedContent?: SelectionListLazyVisual;
     /**
      * When `true`, the navigation chevron is kept VISIBLE even though the row
      * also renders a `rightAccessory`. By default a right accessory suppresses
@@ -140,6 +163,54 @@ export type SelectionListOption =
         openStep: SelectionListStep;
         onSelect?: undefined;
     }>);
+
+/**
+ * Structural rows consumed by a direct virtualized option source. The source
+ * owns only the already-known ordering and section boundaries; SelectionList
+ * still owns option materialization, activation, focus, accessibility, and
+ * the one canonical virtualizer.
+ */
+export type SelectionListVirtualizedOptionSourceItem =
+    | Readonly<{
+        kind: 'section-header';
+        sectionIndex: number;
+    }>
+    | Readonly<{
+        kind: 'option';
+        /** Opaque source-local option position, not a public option id. */
+        optionIndex: number;
+        /** One-based listbox position, excluding section headers. */
+        positionInSet: number;
+    }>;
+
+export type SelectionListVirtualizedOptionSourceHeader = Readonly<{
+    id: string;
+    title?: string;
+    count?: number;
+}>;
+
+/**
+ * A direct structural source for a large, already-filtered option corpus.
+ *
+ * Use this only when the caller can provide the final visual order without
+ * eagerly constructing every `SelectionListOption`. `getOption` and
+ * `getHeader` run when their virtualized row is materialized. The source must
+ * expose its own focus traversal because its opaque option positions need not
+ * be dense or match visual-row indices.
+ */
+export type SelectionListVirtualizedOptionSource = Readonly<{
+    items: readonly SelectionListVirtualizedOptionSourceItem[];
+    optionCount: number;
+    /** Changes when mounted option state or focusability changes without a structural source rebuild. */
+    stateKey: string;
+    getOption: (optionIndex: number) => SelectionListOption;
+    getOptionId: (optionIndex: number) => string;
+    findOptionIndexById: (optionId: string) => number;
+    getFirstFocusableOptionIndex: () => number;
+    getNextFocusableOptionIndex: (currentOptionIndex: number, direction: -1 | 1) => number;
+    isFocusableOptionIndex: (optionIndex: number) => boolean;
+    getHeader: (sectionIndex: number) => SelectionListVirtualizedOptionSourceHeader;
+}>;
 
 /**
  * Per-section virtualization control. `'auto'` (the default) switches to
@@ -330,6 +401,13 @@ export type SelectionListStep = Readonly<{
     emptyStateLabel?: string;
     /** Ordered array of section descriptors; the array order IS the visual order. */
     sections: ReadonlyArray<SelectionListSectionDescriptor>;
+    /**
+     * Direct structural source for a large server-filtered corpus. It is
+     * mutually exclusive with authored sections: callers provide `sections: []`
+     * and let this source preserve their precomputed visual order through the
+     * canonical body virtualizer.
+     */
+    virtualizedOptionSource?: SelectionListVirtualizedOptionSource;
     /** Footer hints rendered for this step (suppressed when no hardware keyboard). */
     footerHints?: ReadonlyArray<SelectionListKeyboardHint>;
 }>;
@@ -434,6 +512,66 @@ export type SelectionListQuickActionShortcut = Readonly<{
     optionId: string;
 }>;
 
+/**
+ * Multi-column row layout for a SelectionList.
+ *
+ * Column count is decided from the list's OWN measured width, never from the
+ * window: a SelectionList commonly lives in a `flex: 1` pane beside a fixed
+ * rail inside a capped popover, where window width says nothing about the room
+ * a row actually gets. Until the first layout arrives the list renders one
+ * column, so the fallback is always the safe one.
+ *
+ * Everything else — filtering, ranking, sections, steps, keyboard navigation,
+ * virtualization, ARIA — is inherited unchanged. Only the visual arrangement
+ * and the meaning of ↑/↓/←/→ change.
+ */
+export type SelectionListColumnsLayout = Readonly<{
+    /** Upper bound on columns. The measured width may resolve fewer. */
+    max: number;
+    /**
+     * Narrowest a column may become before collapsing back to one column.
+     *
+     * Defaults to the shared list-column minimum (320px), which is tuned for
+     * FULL-WIDTH settings lists and needs ~652px to fit two columns. A popover
+     * pane is nowhere near that, so a popover-hosted list MUST pass its own
+     * (smaller) minimum or it will resolve to a single column forever.
+     */
+    minColumnWidthPx?: number;
+    /**
+     * Gutter between adjacent columns. Defaults to the shared list gutter.
+     *
+     * Used for BOTH halves of the decision: how much width the gutters consume
+     * when resolving the column count, and the gap actually painted between
+     * cells. (It previously only fed the resolver, so a caller widening the
+     * gutter got columns narrower than the `minColumnWidthPx` it declared.)
+     */
+    columnGapPx?: number;
+}>;
+
+/**
+ * How an option row presents itself.
+ *
+ * `'row'` — the default and the untouched path: flush rows whose selected fill
+ *   spans the full list width, exactly as every existing consumer renders
+ *   today.
+ *
+ * `'card'` — each option becomes its own rounded surface that OWNS its fill
+ *   and clips its children. Three things follow from that and none of them are
+ *   expressible at a call site:
+ *     - the card is the positioning context for the row's trailing accessory,
+ *       which becomes an absolute top-right overlay and therefore costs zero
+ *       layout height (in-flow stacking grew the row by ~20px);
+ *     - the card wraps BOTH the row and its `expandedContent`, so a selected
+ *       option and its inline controls read as ONE shape rather than a row
+ *       plus a separately-tinted panel;
+ *     - the card becomes the single owner of the selected fill, so the row
+ *       beneath must stop painting its own square one.
+ *
+ * Unselected cards paint `surface.base` and are therefore invisible on a base
+ * pane BY DESIGN — only the selected card is meant to read as an envelope.
+ */
+export type SelectionListOptionPresentation = 'row' | 'card';
+
 export type SelectionListProps = Readonly<{
     /** Root step. Pushes accumulate above this. */
     rootStep: SelectionListStep;
@@ -530,4 +668,32 @@ export type SelectionListProps = Readonly<{
      * guard.
      */
     quickActionShortcuts?: ReadonlyArray<SelectionListQuickActionShortcut>;
+    /**
+     * Arrange option rows into a responsive grid instead of a single stack.
+     * Omit for the classic one-row-per-option list.
+     */
+    columns?: SelectionListColumnsLayout;
+    /**
+     * Visual presentation for option rows. Defaults to `'row'` — the tree every
+     * existing consumer already renders. See {@link SelectionListOptionPresentation}.
+     */
+    optionPresentation?: SelectionListOptionPresentation;
+    /**
+     * DECLARE that option rows may host interactive `expandedContent` (inline
+     * segmented controls, switches) while this list is open.
+     *
+     * A popup whose rows hold interactive controls is a grid, not a listbox
+     * (WAI-ARIA APG, "combobox with grid popup"), and a composite widget may
+     * not change pattern mid-interaction. So this is a declaration and not
+     * something the list detects: whether an option carries `expandedContent`
+     * right now depends on the selection, and the shipped picker rebuilds its
+     * options from the selection on every change.
+     *
+     * Omit it — as every list without inline row controls does — and the list
+     * emits exactly the `listbox`/`option` markup it always has. Declaring it
+     * without ever rendering `expandedContent` is safe (a one-column grid);
+     * rendering `expandedContent` without declaring it is not, and is the one
+     * shape this contract asks callers to avoid.
+     */
+    optionsHostInlineControls?: boolean;
 }>;

@@ -1,103 +1,96 @@
 import type {
+  VoiceProviderSettingsEnvelopeV1,
   VoiceRuntimePlatform,
 } from '@happier-dev/protocol';
 
-import { resolveOpenAiCompatEndpointConsent } from '@/voice/local/openaiCompat/endpoint';
 import {
+  parseLocalVoiceSttSettings,
   resolveLocalSttProvider,
   resolveLocalVoiceAdapterSettings,
 } from '@/voice/local/localVoiceSettings';
 import {
+  projectVoiceProviderRequirements,
   resolveVoiceRoleReadiness,
-  type VoiceReadinessFact,
   type VoiceRoleReadiness,
 } from '@/voice/registry/readiness';
-import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
-import type {
-  VoiceDaemonModelAvailability,
-  VoiceDaemonRuntimeAvailability,
-} from '@/voice/settings/resolveVoiceProviderAvailability';
 import {
-  resolveVoiceProviderAvailability,
-} from '@/voice/settings/resolveVoiceProviderAvailability';
+  projectVoiceProviderSettings,
+  type VoiceProviderRegistry,
+  type VoiceProviderRegistryEntry,
+  type VoiceProviderSettingsProjection,
+} from '@/voice/registry/providerRegistry';
+import { projectVoiceSpeechCredentialReadiness } from '@/voice/registry/speechCredentialReadiness';
+import { projectVoiceSpeechEndpointReadiness } from '@/voice/registry/speechEndpointReadiness';
 import type {
   VoiceProviderLocalAvailability,
 } from '@/voice/settings/voiceProviderLocalAvailability';
+import {
+  projectVoiceDaemonModelReadinessFact,
+  projectVoiceDaemonRuntimeReadinessFact,
+  resolveVoiceDaemonHeavyAudioReadiness,
+} from '@/voice/settings/voiceProviderLocalAvailability';
+import {
+  resolveLocalNeuralExecutionPolicy,
+} from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 
 import {
   createVoiceDictationRuntimeSettingsSnapshot,
 } from './voiceDictationRuntimeSettings';
 
-type DictationDaemonFacts = Readonly<{
-  modelState: VoiceDaemonModelAvailability;
-  runtimeState?: VoiceDaemonRuntimeAvailability;
-}> | null;
+type VoiceDictationProviderProjection = Readonly<{
+  providerId: string;
+  providerEnvelope: VoiceProviderSettingsEnvelopeV1 | null;
+  entry: VoiceProviderRegistryEntry | null;
+  settingsProjection: VoiceProviderSettingsProjection | null;
+  usesDaemonLocalNeural: boolean;
+}>;
 
-function projectRuntimeFact(daemon: DictationDaemonFacts): VoiceReadinessFact {
-  if (daemon?.runtimeState === 'available') return 'ready';
-  if (daemon?.runtimeState === 'unavailable') return 'missing';
-  return 'unknown';
-}
-
-function projectModelFact(daemon: DictationDaemonFacts): VoiceReadinessFact {
-  if (daemon?.modelState === 'ready') return 'ready';
-  if (daemon?.modelState === 'missing') return 'missing';
-  if (daemon?.modelState === 'installing') return 'installing';
-  if (daemon?.modelState === 'error') return 'incompatible';
-  return 'unknown';
-}
-
-function projectOpenAiEndpointFact(
-  settings: any,
-  executionMachineId: string | null,
-): VoiceReadinessFact {
-  const stt = resolveLocalVoiceAdapterSettings(settings).config.stt;
-  const openAiCompat = stt?.openaiCompat;
-  const baseUrl = typeof openAiCompat?.baseUrl === 'string'
-    ? openAiCompat.baseUrl.trim()
-    : '';
-  if (!baseUrl) return 'missing';
-  try {
-    const endpoint = resolveOpenAiCompatEndpointConsent(
-      baseUrl,
-      openAiCompat.insecureLocalOriginConsent,
-      openAiCompat.insecureLocalConsentMachineId,
-      executionMachineId,
-    );
-    return endpoint.requiresInsecureConsent
-      && endpoint.insecureLocalOriginConsent === null
-      ? 'missing'
-      : 'ready';
-  } catch {
-    return 'incompatible';
-  }
-}
-
-function projectDeviceSttReadiness(input: Readonly<{
-  platform: VoiceRuntimePlatform;
-  localAvailability: VoiceProviderLocalAvailability;
-}>): VoiceRoleReadiness | null {
-  const local = resolveVoiceProviderAvailability({
-    happierVoiceSupported: true,
-    platformOs: input.platform,
-    local: input.localAvailability,
-  });
-  const path = input.platform === 'web'
-    ? local.local.paths.browserSpeech
-    : local.local.paths.nativeDevice;
-  if (path.runnable) return null;
-
-  const code = path.readiness === 'unknown'
-    ? 'device_stt_availability_unknown'
-    : 'device_stt_unavailable';
+function projectVoiceDictationProvider(input: Readonly<{
+  registry: VoiceProviderRegistry;
+  settings: any;
+  platform: VoiceRuntimePlatform | 'unknown';
+}>): VoiceDictationProviderProjection {
+  const runtimeSettings = createVoiceDictationRuntimeSettingsSnapshot(input.settings);
+  const providerId = resolveLocalSttProvider(runtimeSettings);
+  const localStt = parseLocalVoiceSttSettings(
+    resolveLocalVoiceAdapterSettings(runtimeSettings).config.stt,
+  );
+  const providerEnvelope = runtimeSettings.voice.providers[providerId] ?? null;
+  const entry = input.registry.get(providerId);
+  const settingsProjection = entry
+    ? projectVoiceProviderSettings(entry, providerEnvelope)
+    : null;
   return Object.freeze({
-    role: 'dictation_stt',
-    providerId: 'device',
-    status: 'unavailable',
-    code,
-    reasonKey: `voice.readiness.${code}`,
-    recoveryAction: 'switch_provider',
+    providerId,
+    providerEnvelope,
+    entry,
+    settingsProjection,
+    usesDaemonLocalNeural: providerId === 'local_neural'
+      && resolveLocalNeuralExecutionPolicy({
+        requestedExecution: localStt.localNeural.execution,
+        platformOs: input.platform,
+      }).preferredExecution === 'daemon',
   });
+}
+
+/**
+ * Sole Dictation projection for whether its selected STT path needs the shared
+ * execution-machine setting. Provider declarations own static requirements;
+ * Local Neural adds the canonical device/daemon execution policy.
+ */
+export function resolveVoiceDictationExecutionMachineRequirement(input: Readonly<{
+  registry: VoiceProviderRegistry;
+  settings: any;
+  platform: VoiceRuntimePlatform | 'unknown';
+}>): boolean {
+  const projection = projectVoiceDictationProvider(input);
+  if (projection.usesDaemonLocalNeural) return true;
+  if (!projection.entry) return false;
+  if (projection.settingsProjection !== null && projection.settingsProjection.status !== 'ready') return false;
+  return projectVoiceProviderRequirements(
+    projection.entry,
+    projection.settingsProjection?.modeId ?? null,
+  )?.includes('execution_machine') === true;
 }
 
 /**
@@ -110,35 +103,72 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
   settings: any;
   platform: VoiceRuntimePlatform | 'unknown';
   executionMachineId: string | null;
-  daemon: DictationDaemonFacts;
+  executionMachineSelectionKind?: 'resolved' | 'selected_unreachable' | 'none';
   localAvailability: VoiceProviderLocalAvailability;
 }>): VoiceRoleReadiness {
-  const runtimeSettings = createVoiceDictationRuntimeSettingsSnapshot(input.settings);
-  const providerId = resolveLocalSttProvider(runtimeSettings);
+  const projection = projectVoiceDictationProvider(input);
+  const { providerId, providerEnvelope, settingsProjection } = projection;
+  const daemonPrerequisiteReadiness = projection.usesDaemonLocalNeural
+    ? resolveVoiceDaemonHeavyAudioReadiness({
+        role: 'dictation_stt',
+        providerId,
+        daemon: input.localAvailability.daemon,
+        executionMachineId: input.executionMachineId,
+        executionMachineSelectionKind: input.executionMachineSelectionKind,
+      })
+    : null;
+  if (
+    daemonPrerequisiteReadiness?.code === 'server_feature_disabled'
+    || daemonPrerequisiteReadiness?.code === 'execution_machine_missing'
+    || daemonPrerequisiteReadiness?.code === 'execution_machine_incompatible'
+  ) {
+    return daemonPrerequisiteReadiness;
+  }
   const readiness = resolveVoiceRoleReadiness({
     registry: input.registry,
     role: 'dictation_stt',
     providerId,
     platform: input.platform,
+    modeId: settingsProjection?.modeId ?? null,
+    localAvailability: input.localAvailability,
     facts: {
-      settings: 'ready',
-      executionMachine: input.executionMachineId ? 'ready' : 'missing',
-      endpoint: providerId === 'openai_compat'
-        ? projectOpenAiEndpointFact(runtimeSettings, input.executionMachineId)
-        : 'unknown',
-      runtime: projectRuntimeFact(input.daemon),
-      model: projectModelFact(input.daemon),
-      // Credential stores intentionally do not expose secrets to this
-      // projection. Providers that require one stay unknown until their
-      // canonical credential owner reports a readiness fact.
-      credential: 'unknown',
+      settings: settingsProjection?.status ?? 'ready',
+      executionMachine: input.executionMachineSelectionKind === 'selected_unreachable'
+        ? 'incompatible'
+        : input.executionMachineId ? 'ready' : 'missing',
+      endpoint: projectVoiceSpeechEndpointReadiness({
+        registry: input.registry,
+        role: 'dictation_stt',
+        providerId,
+        providerEnvelope,
+        executionMachineId: input.executionMachineId,
+      }),
+      runtime: projection.usesDaemonLocalNeural
+        ? projectVoiceDaemonRuntimeReadinessFact(input.localAvailability.daemon)
+        : 'ready',
+      model: projection.usesDaemonLocalNeural
+        ? projectVoiceDaemonModelReadinessFact(input.localAvailability.daemon)
+        // Native Local Neural installation is currently component-local. Do
+        // not reinterpret daemon catalog facts as native state or claim ready
+        // until that owner exposes a passive shared projection.
+        : providerId === 'local_neural'
+          ? 'unknown'
+          : 'ready',
+      credential: projectVoiceSpeechCredentialReadiness({
+        registry: input.registry,
+        role: 'dictation_stt',
+        providerId,
+        settings: {
+          voiceSettingsV1: input.settings.voiceSettingsV1,
+          secrets: Array.isArray(input.settings?.secrets) ? input.settings.secrets : [],
+        },
+        executionMachineId: input.executionMachineId,
+        providerEnvelope,
+      }),
     },
   });
-  if (providerId !== 'device' || readiness.status !== 'ready' || input.platform === 'unknown') {
-    return readiness;
+  if (readiness.status === 'ready' && daemonPrerequisiteReadiness) {
+    return daemonPrerequisiteReadiness;
   }
-  return projectDeviceSttReadiness({
-    platform: input.platform,
-    localAvailability: input.localAvailability,
-  }) ?? readiness;
+  return readiness;
 }

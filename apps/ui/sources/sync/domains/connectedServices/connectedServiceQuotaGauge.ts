@@ -55,7 +55,8 @@ export type ConnectedServiceQuotaGaugeLabelFormatter = Readonly<{
 }>;
 
 export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
-    serviceId: string;
+    /** Legacy service identity when the snapshot carried one; null for qualified (V4) snapshots. */
+    serviceId: string | null;
     providerDisplayName: string | null;
     activeAccountDisplayLabel: string | null;
     remainingPct: number;
@@ -73,21 +74,6 @@ export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
     effectiveMeter: ConnectedServiceQuotaMeterV1;
     allMeterRows: readonly ConnectedServiceQuotaGaugeMeterRow[];
     recoveryCreditSummary: ConnectedServiceQuotaRecoveryCreditSummary | null;
-}>;
-
-export type ConnectedServiceQuotaGaugeSourceKind =
-    | 'connected_service_group'
-    | 'connected_service_profile'
-    | 'codex_app_server_native'
-    | 'native_runtime_evidence'
-    | 'native_auth'
-    | 'unsupported';
-
-export type ConnectedServiceQuotaGaugeSource = Readonly<{
-    providerId: string;
-    sourceKind: ConnectedServiceQuotaGaugeSourceKind;
-    snapshot: ConnectedServiceQuotaSnapshotV1;
-    checkNowSupported: boolean;
 }>;
 
 // Tone boundaries come from the single canonical owner (`resolveQuotaTone`); the
@@ -318,8 +304,20 @@ function buildMeterRow(
     };
 }
 
+/**
+ * The snapshot fields the gauge actually reads: everything except the legacy
+ * `serviceId`/`profileId` identity, which it only echoes back out.
+ *
+ * Accepting that identity as OPTIONAL lets the qualified (V4) snapshot — declared
+ * as `ConnectedServiceQuotaSnapshotV1.omit({ serviceId, profileId }).extend({ ref })`
+ * — flow through this one gauge owner instead of forking a parallel one.
+ */
+export type ConnectedServiceQuotaGaugeSnapshotInput =
+    Omit<ConnectedServiceQuotaSnapshotV1, 'serviceId' | 'profileId'>
+    & Partial<Pick<ConnectedServiceQuotaSnapshotV1, 'serviceId' | 'profileId'>>;
+
 export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
-    snapshot: ConnectedServiceQuotaSnapshotV1 | null;
+    snapshot: ConnectedServiceQuotaGaugeSnapshotInput | null;
     windowMode: ConnectedServiceQuotaGaugeWindowMode;
     nowMs: number;
     formatter: ConnectedServiceQuotaGaugeLabelFormatter;
@@ -363,7 +361,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     const staleAt = params.snapshot.fetchedAt + params.snapshot.staleAfterMs;
     const isStale = params.nowMs > staleAt;
     return {
-        serviceId: params.snapshot.serviceId,
+        serviceId: params.snapshot.serviceId ?? null,
         providerDisplayName: params.providerDisplayName ?? null,
         activeAccountDisplayLabel: params.activeAccountDisplayLabel ?? params.snapshot.accountLabel ?? null,
         remainingPct: effectiveRemainingPct,
@@ -381,29 +379,6 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         effectiveMeter,
         allMeterRows,
         recoveryCreditSummary: summarizeConnectedServiceQuotaRecoveryCredits(params.snapshot.recoveryCredits, params.nowMs),
-    };
-}
-
-export function resolveConnectedServiceQuotaGaugeSource(_params: Readonly<{
-    providerId: string;
-    sourceKind: ConnectedServiceQuotaGaugeSourceKind;
-    reason?: string;
-    snapshot: ConnectedServiceQuotaSnapshotV1 | null;
-}>): ConnectedServiceQuotaGaugeSource | null {
-    const params = _params;
-    if (!params.snapshot) return null;
-    if (params.sourceKind === 'unsupported') return null;
-
-    const checkNowSupported =
-        params.sourceKind === 'connected_service_group'
-        || params.sourceKind === 'connected_service_profile'
-        || params.sourceKind === 'codex_app_server_native';
-
-    return {
-        providerId: params.providerId,
-        sourceKind: params.sourceKind,
-        snapshot: params.snapshot,
-        checkNowSupported,
     };
 }
 

@@ -1,10 +1,10 @@
 import React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function ExistingSessionAutomationUnavailableNotice(props: Readonly<{
     reason: string;
@@ -17,7 +17,7 @@ export function ExistingSessionAutomationUnavailableNotice(props: Readonly<{
                 title={t('automations.create.cannotCreateForSession')}
                 subtitle={props.reason}
                 subtitleLines={0}
-                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                icon={<Icon name="warning-circle" size={29} color={theme.colors.state.danger.foreground} />}
                 showChevron={false}
             />
         </ItemGroup>

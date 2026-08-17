@@ -1,12 +1,16 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
+import { resolvePluginSessionHeaderActionPresentations } from '@/components/sessions/actions/pluginHeaderActions';
 import { SessionHeaderBrowserButton } from '@/components/sessions/actions/SessionHeaderBrowserButton';
+import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
 import { SessionHeaderInfoButton } from '@/components/sessions/actions/SessionHeaderInfoButton';
 import { SessionHeaderRightSidebarButton } from '@/components/sessions/actions/SessionHeaderRightSidebarButton';
-import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import {
+    SESSION_HEADER_ACTION_TAP_TARGET_PX,
+    SESSION_HEADER_ICON_SIZE_PX,
+} from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -17,10 +21,14 @@ import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRo
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
-import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, getSessionStatus } from '@/utils/sessions/sessionUtils';
+import { formatPathRelativeToHome, getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
 import { LruMap } from '@/utils/cache/lruMap';
 
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
+import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
+import { createPluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import { normalizePluginSurfacePlatform } from '@/components/plugins/surfaces/pluginSurfaceContext';
 
 import { resolveSessionViewBadges } from './resolveSessionViewBadges';
 import { resolveSessionViewHeaderActionItems } from './resolveSessionViewHeaderActionItems';
@@ -30,6 +38,9 @@ import {
 } from '../../presentation/externalSessionIdentityPresentation';
 import type { ExternalSessionRuntimePresentation } from '../../presentation/externalSessionRuntimePresentation';
 import { SessionRowAttentionIndicator } from '../row/SessionRowAttentionIndicator';
+import { resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import type { AgentId } from '@/agents/registry/registryCore';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type SessionViewHeaderProps = Readonly<{
     title: string;
@@ -38,6 +49,7 @@ export type SessionViewHeaderProps = Readonly<{
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     avatarId?: string;
+    agentId?: AgentId | null;
     rightElement?: React.ReactNode;
     /** The right-sidebar toggle. The header decides whether it fits the margin or joins the icons. */
     gutterElement?: React.ReactNode;
@@ -52,6 +64,7 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     isDataReady: boolean;
     routeHydrationState?: SessionRouteHydrationState | null;
     session: Session | null;
+    currentMachineId?: unknown;
     sessionId: string;
     sessionInfoHref: string;
     sessionRunsHref: string;
@@ -79,12 +92,15 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     /**
      * Plugin-UI projection + open handler for the session header-action menu
      * (Phase 2.2 / finding #11). When provided, plugin-contributed header actions
-     * are surfaced in the action menu and dispatched through the canonical
-     * `executePluginUiAction` executor.
+     * are surfaced in the action menu and dispatched through their canonical
+     * header-action owner.
      */
     pluginUiProjection?: PluginUiProjectionModel | null;
     pluginUiLocale?: string | null;
-    onOpenPluginSurface?: (surfaceId: string) => void;
+    pluginUiScopedLaunchFacts?: PluginSurfaceScopedLaunchFacts | null;
+    /** Existing Session Account-lifetime predicate for action execution. */
+    pluginUiScopeIsCurrent?: (() => boolean) | null;
+    onOpenPluginSurface?: PluginSurfaceOpenHandler;
 }>;
 
 const LOADING_HEADER_PROPS: SessionViewHeaderProps = {
@@ -109,6 +125,23 @@ const SESSION_VIEW_HEADER_PROPS_CACHE = new LruMap<string, SessionViewHeaderProp
     maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
 });
 
+// The compact breakpoint already owns when header chrome must fold. Outside it,
+// reserve exactly one existing direct-action hit target for plugin chrome. The
+// trailing row has no remaining-width callback and each additional direct action
+// consumes another fixed target, so more actions use the incumbent overflow menu
+// rather than competing with the session title or adding a plugin layout engine.
+const DIRECT_PLUGIN_HEADER_ACTION_WIDTH_BUDGET_PX = SESSION_HEADER_ACTION_TAP_TARGET_PX;
+
+function resolvePluginHeaderActionPlacement(input: Readonly<{
+    shouldFoldHeaderIconActions: boolean;
+    actionCount: number;
+}>): 'direct' | 'overflow' {
+    const directActionWidth = Math.max(0, input.actionCount) * SESSION_HEADER_ACTION_TAP_TARGET_PX;
+    return input.shouldFoldHeaderIconActions || directActionWidth > DIRECT_PLUGIN_HEADER_ACTION_WIDTH_BUDGET_PX
+        ? 'overflow'
+        : 'direct';
+}
+
 function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     sessionId: string;
     sessionServerId: string | null | undefined;
@@ -117,6 +150,9 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     subtitle: string | undefined;
     subtitleEllipsizeMode: 'head' | 'tail' | undefined;
     avatarId: string | undefined;
+    // Part of the key, not just the props: the header renders this, so a session whose agent
+    // changes must not be served the previous agent's cached header.
+    agentId: AgentId | null | undefined;
     sessionInfoHref: string;
     sessionRunsHref: string;
     sessionAutomationsHref: string;
@@ -137,7 +173,10 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     headerMenuExtraItemIdsKey: string;
     pluginUiProjectionGeneration: number | null;
     pluginUiLocale: string | null;
-    backgroundActivityStatusText: string | null;
+    pluginUiScopedServerId: string | null;
+    pluginUiScopedMachineId: string | null;
+    pluginUiScopedGeneration: number | null;
+    pluginUiInteractionEnabled: boolean;
     externalAgentState: ExternalSessionRuntimePresentation['externalAgent']['state'] | null;
 }>): string {
     return JSON.stringify([
@@ -168,7 +207,10 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
         input.headerMenuExtraItemIdsKey,
         input.pluginUiProjectionGeneration ?? '',
         input.pluginUiLocale ?? '',
-        input.backgroundActivityStatusText ?? '',
+        input.pluginUiScopedServerId ?? '',
+        input.pluginUiScopedMachineId ?? '',
+        input.pluginUiScopedGeneration ?? '',
+        input.pluginUiInteractionEnabled,
         input.externalAgentState ?? '',
     ]);
 }
@@ -188,7 +230,10 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
 
     const session = input.session;
     const ownerMetadata = readSessionOwnerMetadataView(session);
-    const externalSessionIdentity = resolveExternalSessionIdentityPresentation(ownerMetadata);
+    const externalSessionIdentity = resolveExternalSessionIdentityPresentation(
+        ownerMetadata,
+        input.currentMachineId,
+    );
     const shouldFoldHeaderIconActions = input.windowWidth < 520;
     const badgeLabel = input.sessionAutomationsEnabledCount > 99 ? '99+' : String(input.sessionAutomationsEnabledCount);
     const title = getSessionName(session);
@@ -203,14 +248,12 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         ? input.workspaceSubtitleEllipsizeMode ?? 'head' as const
         : undefined;
     const avatarId = getSessionAvatarId(session);
+    const agentId = resolveAgentIdFromSessionMetadata(session.metadata)
+        ?? resolveAgentIdFromFlavor(session.metadata?.flavor ?? null);
     const isConnected = session.presence === 'online';
     const flavor = readSessionPresentationAgentId(session) ?? ownerMetadata?.flavor ?? null;
     const resolvedStorageBadge = externalSessionIdentity.storageLabel;
-    const resolvedProviderBadge = externalSessionIdentity.headerBadgeLabel;
-    const sessionStatus = getSessionStatus(session, Date.now(), { workingTextMode: 'static' });
-    const backgroundActivityStatusText = sessionStatus.state === 'background_active'
-        ? sessionStatus.statusText
-        : null;
+    const resolvedProviderBadge = externalSessionIdentity.identityLabel;
     const cacheKey = buildSessionViewHeaderPropsCacheKey({
         sessionId: session.id,
         sessionServerId: session.serverId,
@@ -219,6 +262,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         subtitle,
         subtitleEllipsizeMode,
         avatarId,
+        agentId,
         sessionInfoHref: input.sessionInfoHref,
         sessionRunsHref: input.sessionRunsHref,
         sessionAutomationsHref: input.sessionAutomationsHref,
@@ -239,13 +283,23 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         headerMenuExtraItemIdsKey: (input.headerMenuExtraItems ?? []).map((item) => item.id).join('|'),
         pluginUiProjectionGeneration: input.pluginUiProjection?.generation ?? null,
         pluginUiLocale: input.pluginUiLocale ?? null,
-        backgroundActivityStatusText,
+        pluginUiScopedServerId: input.pluginUiScopedLaunchFacts?.serverId ?? null,
+        pluginUiScopedMachineId: input.pluginUiScopedLaunchFacts?.machineId ?? null,
+        pluginUiScopedGeneration: input.pluginUiScopedLaunchFacts?.generation ?? null,
+        pluginUiInteractionEnabled: input.pluginUiScopedLaunchFacts?.interactionEnabled === true,
         externalAgentState: input.externalSessionRuntime?.externalAgent.state ?? null,
     });
 
-    const cached = SESSION_VIEW_HEADER_PROPS_CACHE.get(cacheKey);
-    if (cached) {
-        return cached;
+    // A plugin projection makes the element carry live projection, navigation,
+    // and Account-lifetime authority. Scalar cache keys cannot distinguish a
+    // same-generation successor, so retain the LRU only for authority-free
+    // headers rather than adding a second identity/currentness registry.
+    const hasPluginUiAuthority = input.pluginUiProjection != null;
+    if (!hasPluginUiAuthority) {
+        const cached = SESSION_VIEW_HEADER_PROPS_CACHE.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
     }
 
     const resolvedBadges = resolveSessionViewBadges({
@@ -264,6 +318,19 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         ...resolvedFoldedHeaderItems,
         ...(input.headerMenuExtraItems ?? []),
     ];
+    const pluginHeaderActions = resolvePluginSessionHeaderActionPresentations({
+        projection: input.pluginUiProjection,
+        locale: input.pluginUiLocale,
+        scopedLaunchFacts: input.pluginUiScopedLaunchFacts,
+        policyContext: createPluginUiPolicyEvaluationContext({
+            platform: normalizePluginSurfacePlatform(Platform.OS),
+            channel: 'internal',
+        }),
+    });
+    const pluginHeaderActionPlacement = resolvePluginHeaderActionPlacement({
+        shouldFoldHeaderIconActions,
+        actionCount: pluginHeaderActions.length,
+    });
 
     // Keeps dev's web-blur wrapper: navigating away from a focused web control without blurring it
     // leaves the caret behind on the outgoing screen.
@@ -278,6 +345,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         subtitle,
         subtitleEllipsizeMode,
         avatarId,
+        agentId,
         gutterElement: shouldFoldHeaderIconActions
             ? undefined
             : <SessionHeaderRightSidebarButton scopeId={input.paneScopeId} />,
@@ -326,38 +394,17 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                         </Text>
                     </View>
                 ) : null}
-                {backgroundActivityStatusText ? (
-                    <View
-                        testID="session-header-background-activity-status"
-                        style={{
-                            maxWidth: 132,
-                            marginRight: 4,
-                            paddingHorizontal: 8,
-                            paddingVertical: 4,
-                            borderRadius: 999,
-                        }}
-                    >
-                        <Text
-                            numberOfLines={1}
-                            style={{
-                                color: input.actionIconColor,
-                                fontSize: 12,
-                                lineHeight: 16,
-                                fontWeight: '600',
-                            }}
-                        >
-                            {backgroundActivityStatusText}
-                        </Text>
-                    </View>
-                ) : null}
                 <SessionHeaderActionMenu
                     sessionId={input.sessionId}
                     session={session}
                     extraItems={resolvedHeaderMenuExtraItems.length > 0 ? resolvedHeaderMenuExtraItems : undefined}
                     onSelectExtraItem={input.handleHeaderExtraItemSelect}
                     pluginUiProjection={input.pluginUiProjection}
-                    pluginUiLocale={input.pluginUiLocale}
+                    pluginUiScopedLaunchFacts={input.pluginUiScopedLaunchFacts}
+                    pluginUiScopeIsCurrent={input.pluginUiScopeIsCurrent}
                     onOpenPluginSurface={input.onOpenPluginSurface}
+                    pluginHeaderActions={pluginHeaderActions}
+                    pluginHeaderActionPlacement={pluginHeaderActionPlacement}
                 />
                 {!shouldFoldHeaderIconActions ? (
                     <SessionHeaderSubagentsButton
@@ -367,9 +414,10 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                 ) : null}
                 <SessionHeaderTerminalButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
                 <SessionHeaderBrowserButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
-                {!shouldFoldHeaderIconActions ? (
-                    <SessionHeaderInfoButton onPress={openSessionInfo} />
-                ) : null}
+{/* Never folded. Session details used to be reachable by pressing the avatar, which was
+                shown on every width; moving that navigation to an icon that folds below 520pt would
+                delete the only path to it on phones rather than tidy the row. */}
+                <SessionHeaderInfoButton onPress={openSessionInfo} />
                 {!shouldFoldHeaderIconActions && input.showAutomations && input.sessionAutomationsEnabledCount > 0 ? (
                     <Pressable
                         onPress={() => input.navigateWithBlurOnWeb(() => input.router.push(input.sessionAutomationsHref as any))}
@@ -384,31 +432,16 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                         accessibilityRole="button"
                         accessibilityLabel={t('session.openAutomations')}
                     >
-                        <View style={{ position: 'relative', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                            <Ionicons name="timer-outline" size={SESSION_HEADER_ICON_SIZE_PX} color={input.headerTintColor} />
-                            {input.sessionAutomationsEnabledCount > 0 ? (
-                                <View style={{
-                                    position: 'absolute',
-                                    top: -2,
-                                    right: -6,
-                                    backgroundColor: input.statusErrorColor,
-                                    borderRadius: 8,
-                                    minWidth: 16,
-                                    height: 16,
-                                    paddingHorizontal: 4,
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                }}>
-                                    <Text style={{
-                                        color: input.headerTintColor,
-                                        fontSize: 10,
-                                        fontWeight: '600',
-                                    }}>
-                                        {badgeLabel}
-                                    </Text>
-                                </View>
-                            ) : null}
-                        </View>
+                        <SessionHeaderIconWithCount
+                            count={input.sessionAutomationsEnabledCount}
+                            badgeColor={input.statusErrorColor}
+                        >
+                            <Icon
+                                name="timer"
+                                size={SESSION_HEADER_ICON_SIZE_PX}
+                                color={input.headerTintColor}
+                            />
+                        </SessionHeaderIconWithCount>
                     </Pressable>
                 ) : null}
             </View>
@@ -418,6 +451,8 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         flavor,
     };
 
-    SESSION_VIEW_HEADER_PROPS_CACHE.set(cacheKey, next);
+    if (!hasPluginUiAuthority) {
+        SESSION_VIEW_HEADER_PROPS_CACHE.set(cacheKey, next);
+    }
     return next;
 }

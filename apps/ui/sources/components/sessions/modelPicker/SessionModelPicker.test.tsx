@@ -65,7 +65,7 @@ describe('SessionModelPicker', () => {
             ])}`,
         );
         expect(reportedIcon).toBeTruthy();
-        expect(reportedIcon?.findByProps({ name: 'time-outline' })).toBeTruthy();
+        expect(reportedIcon?.findByProps({ name: 'clock' })).toBeTruthy();
         expect(screen.findByTestId(
             `model-picker-overlay-option-icon:${JSON.stringify([
                 reported.agentTargetKey,

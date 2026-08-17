@@ -18,7 +18,8 @@ function isCollapsedExtraOverlay(
 
 function hasCollapsedExtraPopover(chip: AgentInputExtraActionChip): boolean {
     return Boolean(
-        (
+        chip.renderCollapsedPopover
+        || (
             chip.collapsedOptionsPopover
             && hasAgentInputCollapsedOptionsPopoverContent(chip.collapsedOptionsPopover)
         )

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
@@ -10,6 +9,8 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { getSessionSubagentLaunchCards } from '@/agents/registry/sessionSubagentUiBehavior';
 import { ExecutionRunLaunchCard } from '@/components/sessions/agents/launch/ExecutionRunLaunchCard';
 import { t } from '@/text';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -35,18 +36,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     subtitle: {
         color: theme.colors.text.secondary,
         fontSize: 12,
-    },
-    toggleButton: {
-        minHeight: 32,
-        paddingHorizontal: 10,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
     },
     toggleText: {
         color: theme.colors.text.primary,
@@ -87,18 +76,18 @@ export const SessionSubagentLaunchSection = React.memo((props: Readonly<{
                         <Text style={styles.subtitle}>{t('session.subagents.panel.launchSectionSubtitle')}</Text>
                     ) : null}
                 </View>
-                <Pressable
+                <ToolbarButton
                     testID="session-subagents-launch-section-toggle"
-                    accessibilityRole="button"
-                    accessibilityLabel={expanded ? t('common.collapse') : t('common.expand')}
+                    label={expanded ? t('common.collapse') : t('common.expand')}
                     onPress={() => {
                         setExpanded((previous) => !previous);
                     }}
-                    style={({ pressed }) => [styles.toggleButton, { opacity: pressed ? 0.75 : 1 }]}
-                >
-                    <Ionicons name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'} size={14} color={styles.toggleText.color} />
-                    <Text style={styles.toggleText}>{expanded ? t('common.collapse') : t('common.expand')}</Text>
-                </Pressable>
+                    icon={<Icon
+                        name={expanded ? 'caret-up' : 'caret-down'}
+                        size={14}
+                        color={styles.toggleText.color}
+                    />}
+                />
             </View>
             {expanded ? (
                 <View style={styles.cards}>

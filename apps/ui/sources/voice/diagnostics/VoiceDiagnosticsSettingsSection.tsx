@@ -4,6 +4,10 @@ import { resolveVoiceSpeechDiagnosticsHealthPresentation } from '@happier-dev/pr
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
+import {
+  useVoiceAttemptControl,
+  VOICE_ATTEMPT_IDLE_TARGET_GLOBAL,
+} from '@/components/voice/attempt/useVoiceAttemptControl';
 import { Modal } from '@/modal';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import {
@@ -18,6 +22,7 @@ import { createVoiceDiagnosticsClientForMachine } from './client';
 import { createVoiceDiagnosticArtifactExportTarget } from './artifactExportTarget';
 import { applyVoiceDiagnosticsMachinePolicy } from './runtimeRevocation';
 import { useVoiceDiagnosticsRuntimeStatus } from './runtimeStatus';
+import { VoiceDiagnosticsIndicator } from './VoiceDiagnosticsIndicator';
 
 type DiagnosticsClient = ReturnType<typeof createVoiceDiagnosticsClientForMachine>;
 type DiagnosticsStatus = Awaited<ReturnType<DiagnosticsClient['status']>>;
@@ -26,6 +31,14 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
 }>) {
+  // The app-level attempt projection is the single owner of the active Voice
+  // session. Settings reads it only to preserve the existing per-session
+  // diagnostics opt-out; it does not infer a route or own a second lifecycle.
+  const activeVoiceAttempt = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
+  // This Switch is a persistent, already meaningful Settings control. It is
+  // the local focus return owner when an acknowledged diagnostics action
+  // removes itself from the DOM.
+  const diagnosticsEnabledSwitchRef = React.useRef<React.ElementRef<typeof Switch> | null>(null);
   const diagnostics = React.useMemo(
     () => readVoiceDiagnosticsSettings(props.voice),
     [props.voice.diagnostics],
@@ -161,6 +174,7 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
         rightElementOutsidePressable
         rightElement={(
           <Switch
+            ref={diagnosticsEnabledSwitchRef}
             testID="settings-voice-diagnostics-enabled-switch"
             accessibilityLabel={tLoose('settingsVoice.diagnostics.enabled')}
             disabled={busy}
@@ -306,6 +320,10 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
                 }
               })(), { tag: 'VoiceDiagnosticsSettingsSection.deleteAll' });
             }}
+          />
+          <VoiceDiagnosticsIndicator
+            sessionId={activeVoiceAttempt.sessionId}
+            focusFallbackRef={diagnosticsEnabledSwitchRef}
           />
     </ItemGroup>
   );

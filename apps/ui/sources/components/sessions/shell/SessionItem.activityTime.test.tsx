@@ -538,8 +538,8 @@ describe('SessionItem activity time', () => {
                         agentLabel: 'agentInput.agent.codex',
                         machineLabel: 'MacBook Pro',
                         storageLabel: 'sessionsList.storageExternalFilter',
-                        headerBadgeLabel: 'agentInput.agent.codex · MacBook Pro',
-                        rowMetadataLabel: 'sessionsList.storageExternalFilter · MacBook Pro',
+                        identityLabel: 'agentInput.agent.codex · MacBook Pro',
+                        rowMetadataLabel: 'sessionsList.storageExternalFilter · agentInput.agent.codex · MacBook Pro',
                     },
                 }}
                 serverId="server_a"
@@ -555,6 +555,12 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.getTextContent()).toContain(labelKey);
+        expect(screen.getTextContent()).toContain(
+            `${labelKey} · sessionsList.storageExternalFilter · agentInput.agent.codex · MacBook Pro`,
+        );
+        expect(screen.getTextContent()).not.toContain(
+            'agentInput.agent.codex · sessionsList.storageExternalFilter · agentInput.agent.codex',
+        );
         if (indicator === 'none') {
             expect(screen.findByTestId('session-list-attention-indicator-sess_external_status-secondary-none')).toBeNull();
         } else {

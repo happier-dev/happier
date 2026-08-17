@@ -59,16 +59,16 @@ describe('useJourneyProgress', () => {
         await hook.unmount();
     });
 
-    it('moves to the first visible beat when a beat hidden on the surface is requested', async () => {
+    it('moves to the nearest visible beat when a beat hidden on the surface is requested', async () => {
         // A8 (review) is not part of the curated native subset, so requesting it
-        // on native normalizes to the first visible beat.
+        // on native lands on the nearest beat that cut kept rather than restarting.
         const hook = await renderHook(() => useJourneyProgress({
             surface: 'native',
             initialBeatId: 'A8',
             onComplete: vi.fn(),
         }));
 
-        expect(hook.getCurrent().currentBeat.id).toBe('A1');
+        expect(hook.getCurrent().currentBeat.id).toBe('A7');
         await hook.unmount();
     });
 });

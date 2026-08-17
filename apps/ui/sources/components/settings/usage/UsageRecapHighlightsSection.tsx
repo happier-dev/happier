@@ -33,7 +33,7 @@ export function UsageRecapHighlightsSection(props: Readonly<{
 
     return (
         <View testID="usage-recap-section">
-            <CardGrid columns={4} collapseBelow="medium" columnGap={12} rowGap={12}>
+            <CardGrid columns={4} columnGap={12} rowGap={12}>
                 {recapCards.map((card) => (
                     <CardGridColumn key={card.id} style={styles.recapColumn}>
                         <UsageRecapCard

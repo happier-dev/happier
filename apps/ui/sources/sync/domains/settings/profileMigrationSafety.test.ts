@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { applySettings, settingsParse } from './settings';
+import { readRetainedSecretBindingsByProfileId } from './secretBindings';
 
 describe('AI launch profile migration safety', () => {
     it('round-trips legacy, slim, malformed, and future rows with their bindings through unrelated writes', () => {
@@ -51,6 +52,6 @@ describe('AI launch profile migration safety', () => {
         const afterUnrelatedWrite = applySettings(parsed, { useProfiles: true });
 
         expect(afterUnrelatedWrite.profiles).toEqual(rawProfiles);
-        expect(afterUnrelatedWrite.secretBindingsByProfileId).toEqual(rawBindings);
+        expect(readRetainedSecretBindingsByProfileId(afterUnrelatedWrite)).toEqual(rawBindings);
     });
 });

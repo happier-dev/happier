@@ -198,7 +198,10 @@ describe('SelectionListSearchHeader web keydown bridge', () => {
     it('preserves native DOM Tab traversal for a populated search until Arrow navigation focuses a row', async () => {
         const { SelectionListSearchHeader } = await import('../SelectionListSearchHeader');
         const { createSelectionListKeyPressHandler } = await import('../SelectionListKeyboardInput');
-        const { useSelectionListKeyboardNav } = await import('../useSelectionListKeyboardNav');
+        const {
+            useSelectionListKeyboardNav,
+            useSelectionListRovingFocus,
+        } = await import('../useSelectionListKeyboardNav');
         const container = document.createElement('div');
         document.body.append(container);
         const root = createRoot(container);
@@ -208,7 +211,16 @@ describe('SelectionListSearchHeader web keydown bridge', () => {
             inputValue: string;
             visibleOptionIds: ReadonlyArray<string>;
         }>): React.ReactElement {
+            // The production composition (`SelectionList`): roving focus is
+            // owned once and resolved BEFORE the key dispatcher, which reads it
+            // at event time. The dispatcher never owns focus itself.
+            const focus = useSelectionListRovingFocus({
+                flatVisibleOptionIds: props.visibleOptionIds,
+                inputValue: props.inputValue,
+                inputMode: 'search',
+            });
             const keyboard = useSelectionListKeyboardNav({
+                focus,
                 flatVisibleOptionIds: props.visibleOptionIds,
                 onActivate,
                 canPopStep: false,
@@ -218,17 +230,18 @@ describe('SelectionListSearchHeader web keydown bridge', () => {
                 inputMode: 'search',
                 ghostSuffixPresent: false,
             });
+            const focusedOptionId = focus.focusedOptionId;
             const handleKeyPress = React.useMemo(
                 () => createSelectionListKeyPressHandler({
                     keyboard,
                     isComposing: false,
-                    focusedOptionId: null,
+                    focusedOptionId,
                     onActivate,
                     canPopStep: false,
                     inputValue: props.inputValue,
                     onRequestClose: () => {},
                 }),
-                [keyboard, props.inputValue],
+                [keyboard, focusedOptionId, props.inputValue],
             );
             return (
                 <SelectionListSearchHeader

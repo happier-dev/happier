@@ -2,122 +2,112 @@ import { describe, expect, it } from 'vitest';
 
 import { createPluginReactNativeWatchdog } from './watchdog';
 
-describe('React Native bundle watchdog', () => {
-    function createMemoryPersistence(initialSnapshot: unknown = null) {
-        let snapshot = initialSnapshot;
-        return {
-            readSnapshot: () => snapshot,
-            writeSnapshot: (nextSnapshot: unknown) => {
-                snapshot = nextSnapshot;
-            },
+const token = {
+    mount: {
+        kind: 'destination',
+        destination: { pluginId: 'acme.preview', localId: 'preview-destination' },
+    },
+    renderer: { pluginId: 'acme.preview', localId: 'native-preview' },
+    artifactDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    crashStateEpoch: 4,
+} as const;
+
+const composerToken = {
+    mount: {
+        kind: 'composer',
+        contribution: { pluginId: 'acme.composer', localId: 'review' },
+        immutableGenerationId: 'composer-generation',
+        role: 'attachmentPreview',
+    },
+    renderer: { pluginId: 'acme.composer', localId: 'review-native-preview' },
+    artifactDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    crashStateEpoch: 4,
+} as const;
+
+const scopeKey = 'server-a\u0000machine-a\u0000account-a';
+
+describe('Plugin React Native watchdog', () => {
+    it('durably keeps one pending occurrence when daemon receipt is lost', () => {
+        let persisted: unknown = null;
+        const persistence = {
+            readSnapshot: () => persisted,
+            writeSnapshot: (snapshot: unknown) => { persisted = snapshot; },
         };
-    }
-
-    it('records startup acknowledgment timeouts and resets them after a successful ack', () => {
-        let now = 1_000;
         const watchdog = createPluginReactNativeWatchdog({
-            ackTimeoutMs: 500,
-            crashThreshold: 2,
-            nowMs: () => now,
-        });
-
-        watchdog.start({ surfaceId: 'surface_1', cacheKey: 'cache_1' });
-        now = 1_600;
-        expect(watchdog.collectExpired()).toEqual([{
-            surfaceId: 'surface_1',
-            cacheKey: 'cache_1',
-            code: 'startup_ack_timeout',
-            diagnostics: ['startup_ack_timeout', 'js_thread_hard_hang_not_contained'],
-        }]);
-        expect(watchdog.readState('surface_1')).toMatchObject({ startupFailureCount: 1, disabled: false });
-
-        watchdog.start({ surfaceId: 'surface_1', cacheKey: 'cache_1' });
-        watchdog.acknowledge({ surfaceId: 'surface_1' });
-        expect(watchdog.readState('surface_1')).toMatchObject({ startupFailureCount: 0, disabled: false });
-    });
-
-    it('disables a surface after repeated render crashes', () => {
-        const watchdog = createPluginReactNativeWatchdog({
-            ackTimeoutMs: 500,
-            crashThreshold: 2,
-            nowMs: () => 1_000,
-        });
-
-        expect(watchdog.recordRenderError({ surfaceId: 'surface_1', cacheKey: 'cache_1' })).toMatchObject({
-            disabled: false,
-            crashCount: 1,
-        });
-        expect(watchdog.recordRenderError({ surfaceId: 'surface_1', cacheKey: 'cache_1' })).toMatchObject({
-            disabled: true,
-            crashCount: 2,
-            diagnostics: ['crash_threshold_reached'],
-        });
-    });
-
-    it('restores disabled state through the persistent watchdog store', () => {
-        const persistence = createMemoryPersistence();
-        const firstWatchdog = createPluginReactNativeWatchdog({
-            ackTimeoutMs: 500,
-            crashThreshold: 1,
-            nowMs: () => 1_000,
             persistence,
+            createFailureOccurrenceId: () => '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
         });
 
-        firstWatchdog.recordRenderError({ surfaceId: 'surface_1', cacheKey: 'cache_1' });
+        const pending = watchdog.recordFailure({ token, scopeKey, failure: 'render_error' });
+        expect(pending).toEqual({
+            token,
+            failureOccurrenceId: '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+            failure: 'render_error',
+        });
 
-        const secondWatchdog = createPluginReactNativeWatchdog({
-            ackTimeoutMs: 500,
-            crashThreshold: 1,
-            nowMs: () => 2_000,
+        const recovered = createPluginReactNativeWatchdog({
             persistence,
+            createFailureOccurrenceId: () => '4bbbf897-0fec-4d4a-8bdf-011a7e2c2a91',
         });
-
-        expect(secondWatchdog.readState('surface_1')).toMatchObject({
-            surfaceId: 'surface_1',
-            cacheKey: 'cache_1',
-            crashCount: 1,
-            disabled: true,
-        });
+        expect(recovered.readPending({ token, scopeKey })).toEqual([pending]);
     });
 
-    it('resets crash-disable state when the loadable artifact cache key changes', () => {
+    it('keeps concurrent current render failures distinct', () => {
+        const occurrenceIds = [
+            '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+            '4bbbf897-0fec-4d4a-8bdf-011a7e2c2a91',
+        ];
         const watchdog = createPluginReactNativeWatchdog({
-            ackTimeoutMs: 500,
-            crashThreshold: 1,
-            nowMs: () => 1_000,
+            createFailureOccurrenceId: () => occurrenceIds.shift()!,
         });
 
-        watchdog.recordRenderError({ surfaceId: 'surface_1', cacheKey: 'cache_1' });
-        expect(watchdog.readState('surface_1')).toMatchObject({ disabled: true });
+        const first = watchdog.recordFailure({ token, scopeKey, failure: 'render_error' });
+        const second = watchdog.recordFailure({ token, scopeKey, failure: 'render_error' });
 
-        watchdog.start({ surfaceId: 'surface_1', cacheKey: 'cache_2' });
-
-        expect(watchdog.readState('surface_1')).toMatchObject({
-            cacheKey: 'cache_2',
-            crashCount: 0,
-            startupFailureCount: 0,
-            disabled: false,
-        });
+        expect(watchdog.readPending({ token, scopeKey })).toEqual([first, second]);
     });
 
-    it('cancels pending startup acknowledgment tracking without recording a timeout', () => {
-        let now = 1_000;
+    it('does not let a prior artifact epoch quarantine the current token', () => {
         const watchdog = createPluginReactNativeWatchdog({
-            ackTimeoutMs: 500,
-            crashThreshold: 1,
-            nowMs: () => now,
+            createFailureOccurrenceId: () => '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+        });
+        watchdog.recordFailure({ token, scopeKey, failure: 'render_error' });
+
+        expect(watchdog.readPending({ token: { ...token, crashStateEpoch: 5 }, scopeKey })).toEqual([]);
+    });
+
+    it('preserves Composer crash bindings until a current real failure replaces them', () => {
+        const occurrenceIds = [
+            '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+            '4bbbf897-0fec-4d4a-8bdf-011a7e2c2a91',
+        ];
+        const watchdog = createPluginReactNativeWatchdog({
+            createFailureOccurrenceId: () => occurrenceIds.shift()!,
+        });
+        const pending = watchdog.recordFailure({ token: composerToken, scopeKey, failure: 'render_error' });
+
+        watchdog.acknowledgeReportedFailure({
+            token: {
+                ...composerToken,
+                mount: { ...composerToken.mount, immutableGenerationId: 'new-composer-generation' },
+            },
+            scopeKey,
+            failureOccurrenceId: pending.failureOccurrenceId,
+        });
+        expect(watchdog.readPending({ token: composerToken, scopeKey })).toEqual([pending]);
+
+        const replacementToken = {
+            ...composerToken,
+            artifactDigest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+            crashStateEpoch: 5,
+        } as const;
+        const replacement = watchdog.recordFailure({
+            token: replacementToken,
+            scopeKey,
+            failure: 'render_error',
         });
 
-        watchdog.start({ surfaceId: 'surface_1', cacheKey: 'cache_1' });
-        watchdog.cancel({ surfaceId: 'surface_1', cacheKey: 'cache_1' });
-        now = 1_600;
-
-        expect(watchdog.collectExpired()).toEqual([]);
-        expect(watchdog.readState('surface_1')).toMatchObject({
-            cacheKey: 'cache_1',
-            crashCount: 0,
-            startupFailureCount: 0,
-            disabled: false,
-        });
+        expect(watchdog.readPending({ token: composerToken, scopeKey })).toEqual([]);
+        expect(watchdog.readPending({ token: replacementToken, scopeKey })).toEqual([replacement]);
     });
 });

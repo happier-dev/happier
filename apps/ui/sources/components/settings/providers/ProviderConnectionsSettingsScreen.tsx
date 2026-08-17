@@ -36,6 +36,7 @@ import { useProviderConnections } from '@/providers/hooks/useProviderConnections
 import { useAllMachines, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     ProviderConnectionsCatalogSection,
     type ProviderConfiguredConnectionRow,
@@ -136,10 +137,10 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
                     ?? (connection.grants.effectiveState === undefined
                         ? connection.authorized
                         : connection.grants.effectiveState === 'valid'),
-                pending: mutation.pendingKey === connection.connectionId,
+                pending: mutation.isPending(connection.connectionId),
             };
         })
-    ), [mutation.pendingKey, optimisticEnabledByConnectionId, visibleConnections]);
+    ), [mutation.isPending, optimisticEnabledByConnectionId, visibleConnections]);
 
     const setConnectionEnabled = React.useCallback(async (
         connectionId: string,
@@ -296,8 +297,8 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
                                 key={`${candidate.contributionKey}:${candidate.normalizedEndpointUrl}`}
                                 title={candidate.providerName}
                                 subtitle={evidenceLabel}
-                                icon={<SafeIonicons name="hardware-chip-outline" size={29} color={theme.colors.text.secondary} />}
-                                rightElement={mutation.pendingKey === pendingKey
+                                icon={<Icon name="cpu" size={29} color={theme.colors.text.secondary} />}
+                                rightElement={mutation.isPending(pendingKey)
                                     ? <ActivitySpinner size="small" />
                                     : <Switch
                                         accessibilityLabel={`${candidate.providerName}, ${candidate.normalizedEndpointUrl}`}
@@ -331,10 +332,10 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
                             subtitle={installation.status === 'app_running_server_off'
                                 ? t('settingsProviders.local.appRunningServerOff')
                                 : t('settingsProviders.local.installedNotRunning')}
-                            icon={<SafeIonicons name="hardware-chip-outline" size={29} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="cpu" size={29} color={theme.colors.text.secondary} />}
                             rightElement={installation.managedStartAvailable ? (
-                                mutation.pendingKey === pendingKey ? <ActivitySpinner size="small" /> : <IconButton
-                                    iconName="play-outline"
+                                mutation.isPending(pendingKey) ? <ActivitySpinner size="small" /> : <IconButton
+                                    iconName="play"
                                     tone="primary"
                                     accessibilityLabel={t('settingsProviders.local.startManaged', { provider: installation.providerName })}
                                     tooltip={t('settingsProviders.local.startManaged', { provider: installation.providerName })}
@@ -368,7 +369,7 @@ export const ProviderConnectionsSettingsScreen = React.memo(function ProviderCon
                     testID="settings-provider-add-custom"
                     title={t('settingsProviders.addCustom')}
                     subtitle={t('settingsProviders.addCustomDescription')}
-                    icon={<SafeIonicons name="add-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="plus" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => navigateWithFocusReturn(() => {
                         router.push('/(app)/settings/providers/new' as never);
                     })}

@@ -10,8 +10,8 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { selectSessionViewShellSessionForRouteState } from '@/components/sessions/shell/sessionViewStableSession';
 import {
     readLocalConversationVoiceSettings,
+    readVoiceProviderSettingsConfig,
 } from '@/sync/domains/settings/voiceSettings';
-import { readBundledConversationProviderSettings } from '@/voice/credentials/bundledConversationClient';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { getVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
@@ -90,9 +90,9 @@ describe('useVoiceSurfaceE2eFixtureComposition', () => {
         expect(settings.featureToggles.voice).toBe(true);
         expect(settings.featureToggles['execution.runs']).toBe(true);
         expect(settings.featureToggles['voice.agent']).toBe(true);
-        expect(settings.voice.providerId).toBe('realtime_elevenlabs');
-        expect(readBundledConversationProviderSettings(settings.voice, 'realtime_elevenlabs')?.billingMode).toBe('byo');
-        expect(settings.voice.providers.realtime_elevenlabs).toMatchObject({
+        expect(settings.voice.providerId).toBe('happier.voice.elevenlabs/realtime-elevenlabs');
+        expect(readVoiceProviderSettingsConfig(settings.voice, 'happier.voice.elevenlabs/realtime-elevenlabs')?.billingMode).toBe('byo');
+        expect(settings.voice.providers['happier.voice.elevenlabs/realtime-elevenlabs']).toMatchObject({
             schemaVersion: 2,
             config: expect.objectContaining({ billingMode: 'byo' }),
         });
@@ -101,7 +101,7 @@ describe('useVoiceSurfaceE2eFixtureComposition', () => {
         expect(
             voiceConversationBindingResolver.resolveByControlSessionId({
                 controlSessionId: '__voice_agent__',
-                adapterId: 'realtime_elevenlabs',
+                adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             }),
         ).toMatchObject({
             conversationSessionId: 'voice-e2e-hidden-conversation',
@@ -122,7 +122,7 @@ describe('useVoiceSurfaceE2eFixtureComposition', () => {
 
         expect(useVoiceTargetStore.getState().scope).toBe('global');
         expect(getVoiceSessionSnapshot()).toMatchObject({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             sessionId: '__voice_agent__',
             status: 'connected',
             mode: 'idle',
@@ -280,7 +280,7 @@ describe('useVoiceSurfaceE2eFixtureComposition', () => {
         await flushHookEffects({ cycles: 6, turns: 4 });
 
         expect(getVoiceSessionSnapshot()).toMatchObject({
-            adapterId: 'realtime_elevenlabs',
+            adapterId: 'happier.voice.elevenlabs/realtime-elevenlabs',
             sessionId: '__voice_agent__',
             status: 'disconnected',
             mode: 'idle',

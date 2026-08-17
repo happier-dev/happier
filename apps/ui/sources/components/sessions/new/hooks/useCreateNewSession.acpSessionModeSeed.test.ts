@@ -1,11 +1,14 @@
 import React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
+import type { HandleCreateSessionOptions } from './useCreateNewSession';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,7 +29,21 @@ let storageState: StorageState = {
   updateSessionDraft: vi.fn(),
 };
 
+const modalAlertSpy = vi.hoisted(() => vi.fn());
+
 installNewSessionScreenModelCommonModuleMocks({
+  modal: async () => ({
+    Modal: {
+      alert: modalAlertSpy,
+      alertAsync: vi.fn(async () => {}),
+      confirm: vi.fn(async () => false),
+      hide: vi.fn(),
+      hideAll: vi.fn(),
+      prompt: vi.fn(async () => null),
+      show: vi.fn(),
+      update: vi.fn(),
+    },
+  }),
   storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
@@ -43,6 +60,7 @@ async function setupHarness(options?: Readonly<{
 }>) {
   const fixedServerNowMs = Date.parse('2026-02-05T00:00:00.000Z');
   const publishModeSpy = vi.fn(async (_params: any) => {});
+  const clearNewSessionDraftSpy = vi.fn();
   const sendMessageSpy = vi.fn(async (
     _sessionId: string,
     _text: string,
@@ -51,6 +69,17 @@ async function setupHarness(options?: Readonly<{
     _options?: Readonly<{ profileId?: string | null }>,
   ) => {});
   const machineSpawnNewSessionSpy = vi.fn(async (..._args: any[]) => ({ type: 'success', sessionId: 'sess_new' }));
+  const executeSessionSpawnNewActionSpy = vi.fn<(input: unknown, context: unknown) => Promise<unknown>>(async (_input, _context) => ({
+    ok: true as const,
+    result: {
+      type: 'success' as const,
+      disposition: 'created' as const,
+      sessionId: 'sess_new',
+      executionTarget: { serverId: 'server-a', machineId: 'm1' },
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'accepted' as const, localId: 'pending-1' },
+    },
+  }));
   const followUpSpawnedSessionWithServerScopeSpy = vi.fn(async (params: {
     sessionId: string;
     initialMessageText?: string | null;
@@ -91,7 +120,7 @@ async function setupHarness(options?: Readonly<{
     },
   }));
   vi.doMock('@/sync/domains/state/persistence', () => ({
-    clearNewSessionDraft: vi.fn(),
+    clearNewSessionDraft: clearNewSessionDraftSpy,
     loadSettings: () => ({ settings: {}, version: null }),
     loadDeviceAnalyticsId: () => null,
     saveDeviceAnalyticsId: vi.fn(),
@@ -180,6 +209,12 @@ async function setupHarness(options?: Readonly<{
   vi.doMock('@/agents/runtime/resumeCapabilities', () => ({ canAgentResume: vi.fn(() => false) }));
   vi.doMock('@/components/sessions/new/modules/formatResumeSupportDetailCode', () => ({ formatResumeSupportDetailCode: vi.fn(() => '') }));
   vi.doMock('@/sync/ops', () => ({ machineSpawnNewSession: machineSpawnNewSessionSpy }));
+  vi.doMock('@/sync/ops/actions/sessionSpawnNewAction', () => ({
+    executeSessionSpawnNewAction: (input: unknown, context: unknown) =>
+      executeSessionSpawnNewActionSpy(input, context),
+    resolveSessionSpawnNewActionFailureMessageKey: () => 'newSession.actionMethodUnavailable',
+    resolveSessionSpawnNewResultFailureMessageKey: () => 'newSession.failedToStart',
+  }));
   vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
     followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
   }));
@@ -193,13 +228,56 @@ async function setupHarness(options?: Readonly<{
     publishModeSpy,
     sendMessageSpy,
     machineSpawnNewSessionSpy,
+    executeSessionSpawnNewActionSpy,
     followUpSpawnedSessionWithServerScopeSpy,
+    clearNewSessionDraftSpy,
+  };
+}
+
+function buildCreateSessionHookParams(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const machineEnvPresence: UseMachineEnvPresenceResult = {
+    isPreviewEnvSupported: false,
+    isLoading: false,
+    meta: {},
+    refreshedAt: null,
+    refresh: () => {},
+  };
+
+  return {
+    launchIntentSignature: 'test-launch-intent',
+    router: { push: vi.fn(), replace: vi.fn() },
+    selectedMachineId: 'm1',
+    selectedPath: '/tmp',
+    selectedMachine: { metadata: {} },
+    setIsCreating: vi.fn(),
+    setIsResumeSupportChecking: vi.fn(),
+    settings: { experiments: false } as unknown as Settings,
+    useProfiles: false,
+    selectedProfileId: null,
+    profileMap: new Map(),
+    recentMachinePaths: [],
+    agentType: 'opencode' as any,
+    permissionMode: 'default' as PermissionMode,
+    modelMode: 'default' as ModelMode,
+    promptStore: createNewSessionPromptStore(''),
+    resumeSessionId: '',
+    agentNewSessionOptions: null,
+    machineEnvPresence,
+    secrets: [],
+    secretBindingsByProfileId: {},
+    selectedSecretIdByProfileIdByEnvVarName: {},
+    sessionOnlySecretValueByProfileIdByEnvVarName: {},
+    selectedMachineCapabilities: null,
+    targetServerId: null,
+    allowedTargetServerIds: ['server-a'],
+    ...overrides,
   };
 }
 
 describe('useCreateNewSession (ACP mode seeding)', () => {
   beforeEach(() => {
     vi.resetModules();
+    modalAlertSpy.mockReset();
   });
 
   afterEach(() => {
@@ -207,8 +285,15 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     vi.restoreAllMocks();
   });
 
-  it('passes agent mode through spawn options before sending the initial message', async () => {
-    const { useCreateNewSession, machineSpawnNewSessionSpy, publishModeSpy, sendMessageSpy } = await setupHarness();
+  it('creates through the strict V2 Action with its existing attempt identity and initial input', async () => {
+    const {
+      useCreateNewSession,
+      executeSessionSpawnNewActionSpy,
+      machineSpawnNewSessionSpy,
+      publishModeSpy,
+      sendMessageSpy,
+      followUpSpawnedSessionWithServerScopeSpy,
+    } = await setupHarness();
 
     let handleCreateSession: null | (() => Promise<void>) = null;
     const settings = { experiments: false } as unknown as Settings;
@@ -238,7 +323,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: 'plan',
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -262,14 +347,387 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     });
 
     expect(publishModeSpy).not.toHaveBeenCalled();
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      creationKey: expect.any(String),
+      executionTarget: { serverId: 'server-a', machineId: 'm1' },
+      directory: '/tmp',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+      },
       agentModeId: 'plan',
-    }));
-    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+      initialMessage: 'hello',
+    }), { surface: 'ui' });
+    expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+    expect(followUpSpawnedSessionWithServerScopeSpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it('passes agent mode through spawn options for staticAgentModes (Claude)', async () => {
-    const { useCreateNewSession, machineSpawnNewSessionSpy, publishModeSpy, sendMessageSpy } = await setupHarness();
+  it('projects accepted post-create follow-up settlement once without changing the create return contract', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy } = await setupHarness();
+    const afterCreated = vi.fn(async () => {});
+    const onAfterCreatedSettled = vi.fn();
+    let handleCreateSession: null | ((options?: Record<string, unknown>) => Promise<void>) = null;
+    const machineEnvPresence: UseMachineEnvPresenceResult = {
+      isPreviewEnvSupported: false,
+      isLoading: false,
+      meta: {},
+      refreshedAt: null,
+      refresh: () => {},
+    };
+
+    function Test() {
+      const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
+        router: { push: vi.fn(), replace: vi.fn() },
+        selectedMachineId: 'm1',
+        selectedPath: '/tmp',
+        selectedMachine: { metadata: {} },
+        setIsCreating: vi.fn(),
+        setIsResumeSupportChecking: vi.fn(),
+        settings: { experiments: false } as unknown as Settings,
+        useProfiles: false,
+        selectedProfileId: null,
+        profileMap: new Map(),
+        recentMachinePaths: [],
+        agentType: 'opencode' as any,
+        permissionMode: 'default' as PermissionMode,
+        modelMode: 'default' as ModelMode,
+        promptStore: createNewSessionPromptStore(''),
+        resumeSessionId: '',
+        agentNewSessionOptions: null,
+        machineEnvPresence,
+        secrets: [],
+        secretBindingsByProfileId: {},
+        selectedSecretIdByProfileIdByEnvVarName: {},
+        sessionOnlySecretValueByProfileIdByEnvVarName: {},
+        selectedMachineCapabilities: null,
+        targetServerId: null,
+        allowedTargetServerIds: ['server-a'],
+      } as any);
+
+      handleCreateSession = hook.handleCreateSession as (options?: Record<string, unknown>) => Promise<void>;
+      return React.createElement('View');
+    }
+
+    await renderScreen(React.createElement(Test));
+    await act(async () => {
+      await handleCreateSession?.({
+        initialMessage: 'skip',
+        afterCreated,
+        onAfterCreatedSettled,
+      });
+    });
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    expect(afterCreated).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess_new' }));
+    expect(onAfterCreatedSettled).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledWith({
+      status: 'accepted',
+      sessionId: 'sess_new',
+    });
+  });
+
+  it('leaves accepted draft clearing to the semantic document coordinator when requested', async () => {
+    const {
+      useCreateNewSession,
+      clearNewSessionDraftSpy,
+      executeSessionSpawnNewActionSpy,
+    } = await setupHarness({
+      storageState: { sessions: { sess_new: { id: 'sess_new' } } },
+    });
+    executeSessionSpawnNewActionSpy.mockResolvedValue({
+      ok: true as const,
+      result: {
+        type: 'success' as const,
+        disposition: 'created' as const,
+        sessionId: 'sess_new',
+        executionTarget: { serverId: 'server-a', machineId: 'm1' },
+        organizationPlacement: { folderId: null, tagIds: [] },
+        initialInput: { status: 'notRequested' as const },
+      },
+    });
+    const disableDraftPersistence = vi.fn();
+    const afterCreated = vi.fn(async () => {});
+    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams({
+      disableDraftPersistence,
+    }) as any));
+    const handleCreateSession = hook.getCurrent().handleCreateSession as unknown as (
+      options?: HandleCreateSessionOptions,
+    ) => Promise<void>;
+
+    await act(async () => {
+      await handleCreateSession({
+        initialMessage: 'skip',
+        afterCreated,
+        deferAcceptedDraftClearToDocument: true,
+      });
+    });
+
+    expect(afterCreated).toHaveBeenCalledTimes(1);
+    expect(disableDraftPersistence).not.toHaveBeenCalled();
+    expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
+    await hook.unmount();
+  });
+
+  it('projects one rejected settlement when its post-create follow-up fails terminally', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy } = await setupHarness();
+    const afterCreated = vi.fn(async () => {
+      throw new Error('attachment upload was rejected');
+    });
+    const onAfterCreatedSettled = vi.fn();
+    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams() as any));
+    const handleCreateSession = hook.getCurrent().handleCreateSession as unknown as (
+      options?: HandleCreateSessionOptions,
+    ) => Promise<void>;
+
+    await act(async () => {
+      await handleCreateSession({
+        initialMessage: 'skip',
+        afterCreated,
+        onAfterCreatedSettled,
+      });
+    });
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    expect(afterCreated).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledWith({ status: 'rejected' });
+    await hook.unmount();
+  });
+
+  it('settles accepted only after a retryable post-create follow-up retry succeeds', async () => {
+    const {
+      useCreateNewSession,
+      executeSessionSpawnNewActionSpy,
+      clearNewSessionDraftSpy,
+    } = await setupHarness({
+      storageState: { sessions: { sess_new: { id: 'sess_new' } } },
+    });
+    executeSessionSpawnNewActionSpy.mockResolvedValue({
+      ok: true as const,
+      result: {
+        type: 'success' as const,
+        disposition: 'created' as const,
+        sessionId: 'sess_new',
+        executionTarget: { serverId: 'server-a', machineId: 'm1' },
+        organizationPlacement: { folderId: null, tagIds: [] },
+        initialInput: { status: 'notRequested' as const },
+      },
+    });
+    const disableDraftPersistence = vi.fn();
+    const afterCreated = vi.fn()
+      .mockRejectedValueOnce({ code: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE })
+      .mockResolvedValueOnce(undefined);
+    const onAfterCreatedSettled = vi.fn();
+    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams({
+      disableDraftPersistence,
+    }) as any));
+    const handleCreateSession = hook.getCurrent().handleCreateSession as unknown as (
+      options?: HandleCreateSessionOptions,
+    ) => Promise<void>;
+    let createPromise: Promise<void> | null = null;
+
+    await act(async () => {
+      createPromise = handleCreateSession({
+        initialMessage: 'skip',
+        afterCreated,
+        onAfterCreatedSettled,
+        deferAcceptedDraftClearToDocument: true,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    });
+
+    const buttons = modalAlertSpy.mock.calls[0]?.[2] as Array<Readonly<{
+      text?: string;
+      onPress?: () => void;
+    }>>;
+    const retry = buttons.find((button) => button.text === 'common.retry');
+    expect(retry?.onPress).toBeTypeOf('function');
+
+    await act(async () => {
+      retry?.onPress?.();
+      await createPromise;
+    });
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    expect(afterCreated).toHaveBeenCalledTimes(2);
+    const firstAfterCreatedContext = afterCreated.mock.calls[0]?.[0] as
+      | Readonly<{ launchAttempt?: Readonly<{ firstTurnLocalId?: string }> }>
+      | undefined;
+    const retryAfterCreatedContext = afterCreated.mock.calls[1]?.[0] as
+      | Readonly<{ launchAttempt?: Readonly<{ firstTurnLocalId?: string }> }>
+      | undefined;
+    expect(retryAfterCreatedContext?.launchAttempt?.firstTurnLocalId)
+      .toBe(firstAfterCreatedContext?.launchAttempt?.firstTurnLocalId);
+    expect(onAfterCreatedSettled).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledWith({
+      status: 'accepted',
+      sessionId: 'sess_new',
+    });
+    expect(disableDraftPersistence).not.toHaveBeenCalled();
+    expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
+    await hook.unmount();
+  });
+
+  it('projects rejected when its New Session scope retires during the post-create follow-up', async () => {
+    const {
+      useCreateNewSession,
+      executeSessionSpawnNewActionSpy,
+      clearNewSessionDraftSpy,
+    } = await setupHarness();
+    const disableDraftPersistence = vi.fn();
+    let resolveAfterCreated: (() => void) | null = null;
+    const afterCreated = vi.fn(() => new Promise<void>((resolve) => {
+      resolveAfterCreated = resolve;
+    }));
+    const onAfterCreatedSettled = vi.fn();
+    const hook = await renderHook(
+      ({ selectedPath }: Readonly<{ selectedPath: string }>) => useCreateNewSession(buildCreateSessionHookParams({
+        selectedPath,
+        disableDraftPersistence,
+      }) as any),
+      { initialProps: { selectedPath: '/tmp' } },
+    );
+    const handleCreateSession = hook.getCurrent().handleCreateSession as unknown as (
+      options?: HandleCreateSessionOptions,
+    ) => Promise<void>;
+    let createPromise: Promise<void> | null = null;
+
+    await act(async () => {
+      createPromise = handleCreateSession({
+        initialMessage: 'skip',
+        afterCreated,
+        onAfterCreatedSettled,
+        deferAcceptedDraftClearToDocument: true,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(afterCreated).toHaveBeenCalledTimes(1);
+    });
+
+    await hook.rerender({ selectedPath: '/other' });
+    await act(async () => {
+      resolveAfterCreated?.();
+      await createPromise;
+    });
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledWith({ status: 'rejected' });
+    expect(disableDraftPersistence).not.toHaveBeenCalled();
+    expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
+    await hook.unmount();
+  });
+
+  it('projects rejected when unmounted during the post-create follow-up', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy } = await setupHarness();
+    let resolveAfterCreated: (() => void) | null = null;
+    const afterCreated = vi.fn(() => new Promise<void>((resolve) => {
+      resolveAfterCreated = resolve;
+    }));
+    const onAfterCreatedSettled = vi.fn();
+    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams() as any));
+    const handleCreateSession = hook.getCurrent().handleCreateSession as unknown as (
+      options?: HandleCreateSessionOptions,
+    ) => Promise<void>;
+    let createPromise: Promise<void> | null = null;
+
+    await act(async () => {
+      createPromise = handleCreateSession({
+        initialMessage: 'skip',
+        afterCreated,
+        onAfterCreatedSettled,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(afterCreated).toHaveBeenCalledTimes(1);
+    });
+
+    await hook.unmount();
+    await act(async () => {
+      resolveAfterCreated?.();
+      await createPromise;
+    });
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledTimes(1);
+    expect(onAfterCreatedSettled).toHaveBeenCalledWith({ status: 'rejected' });
+  });
+
+  it('shows typed update guidance when an older CLI does not implement session.spawn_new', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy, machineSpawnNewSessionSpy } = await setupHarness();
+    executeSessionSpawnNewActionSpy.mockResolvedValue({
+      ok: false,
+      errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+      error: 'RPC method not available',
+    });
+
+    let handleCreateSession: null | (() => Promise<void>) = null;
+    const machineEnvPresence: UseMachineEnvPresenceResult = {
+      isPreviewEnvSupported: false,
+      isLoading: false,
+      meta: {},
+      refreshedAt: null,
+      refresh: () => {},
+    };
+
+    function Test() {
+      const hook = useCreateNewSession({
+        launchIntentSignature: 'test-launch-intent',
+        router: { push: vi.fn(), replace: vi.fn() },
+        selectedMachineId: 'm1',
+        selectedPath: '/tmp',
+        selectedMachine: { metadata: {} },
+        setIsCreating: vi.fn(),
+        setIsResumeSupportChecking: vi.fn(),
+        settings: { experiments: false } as unknown as Settings,
+        useProfiles: false,
+        selectedProfileId: null,
+        profileMap: new Map(),
+        recentMachinePaths: [],
+        agentType: 'opencode' as any,
+        permissionMode: 'default' as PermissionMode,
+        modelMode: 'default' as ModelMode,
+        acpSessionModeId: null,
+        promptStore: createNewSessionPromptStore('hello'),
+        resumeSessionId: '',
+        agentNewSessionOptions: null,
+        machineEnvPresence,
+        secrets: [],
+        secretBindingsByProfileId: {},
+        selectedSecretIdByProfileIdByEnvVarName: {},
+        sessionOnlySecretValueByProfileIdByEnvVarName: {},
+        selectedMachineCapabilities: null,
+        targetServerId: null,
+        allowedTargetServerIds: ['server-a'],
+      } as any);
+
+      handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+      return React.createElement('View');
+    }
+
+    await renderScreen(React.createElement(Test));
+
+    await act(async () => {
+      await handleCreateSession?.();
+    });
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.error',
+      'newSession.actionMethodUnavailable',
+    );
+    expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it('carries agent mode through the strict V2 Action for staticAgentModes (Claude)', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy, machineSpawnNewSessionSpy, publishModeSpy, sendMessageSpy } = await setupHarness();
 
     const { getAgentCore } = await import('@/agents/catalog/catalog');
     (getAgentCore as any).mockReturnValue({ sessionModes: { kind: 'staticAgentModes' }, model: { supportsSelection: false } });
@@ -302,7 +760,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: 'plan',
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -326,14 +784,15 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     });
 
     expect(publishModeSpy).not.toHaveBeenCalled();
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
       agentModeId: 'plan',
-    }));
-    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+    }), { surface: 'ui' });
+    expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it('passes agent mode through spawn options for Codex appServer', async () => {
-    const { useCreateNewSession, machineSpawnNewSessionSpy, publishModeSpy, sendMessageSpy } = await setupHarness();
+  it('carries agent mode through the strict V2 Action for Codex', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy, machineSpawnNewSessionSpy, publishModeSpy, sendMessageSpy } = await setupHarness();
 
     let handleCreateSession: null | (() => Promise<void>) = null;
     const settings = { codexBackendMode: 'appServer' } as unknown as Settings;
@@ -363,7 +822,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: 'plan',
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -387,14 +846,15 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     });
 
     expect(publishModeSpy).not.toHaveBeenCalled();
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
       agentModeId: 'plan',
-    }));
-    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+    }), { surface: 'ui' });
+    expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it('passes transient ACP config option overrides through spawn options for Codex appServer', async () => {
-    const { useCreateNewSession, machineSpawnNewSessionSpy, sendMessageSpy } = await setupHarness();
+  it('carries transient ACP config option overrides through the strict V2 Action', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy, machineSpawnNewSessionSpy, sendMessageSpy } = await setupHarness();
 
     let handleCreateSession: null | (() => Promise<void>) = null;
     const settings = { codexBackendMode: 'appServer' } as unknown as Settings;
@@ -431,7 +891,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
             speed: { updatedAt: 123, value: 'fast' },
           },
         },
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -454,25 +914,36 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       await handleCreateSession?.();
     });
 
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      sessionConfigOptionOverrides: {
-        v: 1,
-        updatedAt: 123,
-        overrides: {
-          speed: { updatedAt: 123, value: 'fast' },
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: expect.objectContaining({
+        options: {
+          speed: { updatedAtMs: 123, value: 'fast' },
         },
-      },
-    }));
-    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+      }),
+    }), { surface: 'ui' });
+    expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+    expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it('prefers an explicit codex backend-mode override when spawning a seeded Codex session', async () => {
-    const { useCreateNewSession, machineSpawnNewSessionSpy } = await setupHarness();
+  it('carries the descriptor-owned Codex backend mode through strict V2 configuration', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy, machineSpawnNewSessionSpy } = await setupHarness();
 
     const { buildSpawnSessionExtrasFromUiState } = await import('@/agents/catalog/catalog');
-    (buildSpawnSessionExtrasFromUiState as any).mockImplementation(({ settings }: { settings: { codexBackendMode?: string } }) => ({
+    (buildSpawnSessionExtrasFromUiState as any).mockImplementation(({ settings, updatedAt }: {
+      settings: { codexBackendMode?: string };
+      updatedAt?: number;
+    }) => ({
       codexBackendMode: settings.codexBackendMode,
-      experimentalCodexAcp: settings.codexBackendMode === 'acp',
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: updatedAt ?? 0,
+        overrides: {
+          codexBackendMode: {
+            value: settings.codexBackendMode,
+            updatedAt: updatedAt ?? 0,
+          },
+        },
+      },
     }));
 
     let handleCreateSession: null | (() => Promise<void>) = null;
@@ -503,7 +974,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: null,
-        sessionPrompt: 'hello',
+        promptStore: createNewSessionPromptStore('hello'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -526,14 +997,21 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       await handleCreateSession?.();
     });
 
-    expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      codexBackendMode: 'acp',
-      experimentalCodexAcp: true,
-    }));
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: expect.objectContaining({
+        options: expect.objectContaining({
+          codexBackendMode: expect.objectContaining({
+            value: 'acp',
+            updatedAtMs: expect.any(Number),
+          }),
+        }),
+      }),
+    }), { surface: 'ui' });
+    expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
   });
 
-  it('expands prompt templates before sending the initial session message', async () => {
-    const { useCreateNewSession, sendMessageSpy } = await setupHarness({
+  it('expands prompt templates before admitting the initial input in the strict V2 Action', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy, sendMessageSpy } = await setupHarness({
       storageState: {
         settings: {
           promptInvocationsV1: {
@@ -593,7 +1071,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: null,
-        sessionPrompt: '/qa-check this is a UI QA check',
+        promptStore: createNewSessionPromptStore('/qa-check this is a UI QA check'),
         resumeSessionId: '',
         agentNewSessionOptions: null,
         machineEnvPresence,
@@ -616,22 +1094,14 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       await handleCreateSession?.();
     });
 
-    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-    const call = sendMessageSpy.mock.calls[0];
-    expect(call).toBeDefined();
-    if (!call) {
-      throw new Error('expected sendMessage to be called');
-    }
-    const [sessionId, initialMessageText, displayText, metaOverrides, options] = call;
-    expect(sessionId).toBe('sess_new');
-    expect(initialMessageText).toBe('Expanded QA Template\n\nthis is a UI QA check');
-    expect(displayText).toBeUndefined();
-    expect(metaOverrides).toBeUndefined();
-    expect(options).toBeUndefined();
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      initialMessage: 'Expanded QA Template\n\nthis is a UI QA check',
+    }), { surface: 'ui' });
+    expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
   it('inserts prompt templates without creating a new session when behavior is insert', async () => {
-    const { useCreateNewSession, sendMessageSpy, machineSpawnNewSessionSpy } = await setupHarness({
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy, sendMessageSpy, machineSpawnNewSessionSpy } = await setupHarness({
       storageState: {
         settings: {
           promptInvocationsV1: {
@@ -692,7 +1162,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         permissionMode: 'default' as PermissionMode,
         modelMode: 'default' as ModelMode,
         acpSessionModeId: null,
-        sessionPrompt: '/qa-check this is a UI QA check',
+        promptStore: createNewSessionPromptStore('/qa-check this is a UI QA check'),
         setSessionPrompt,
         resumeSessionId: '',
         agentNewSessionOptions: null,
@@ -717,6 +1187,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     });
 
     expect(setSessionPrompt).toHaveBeenCalledWith('Expanded QA Template\n\nthis is a UI QA check');
+    expect(executeSessionSpawnNewActionSpy).not.toHaveBeenCalled();
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });

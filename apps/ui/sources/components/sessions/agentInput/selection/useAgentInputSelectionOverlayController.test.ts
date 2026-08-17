@@ -222,6 +222,41 @@ describe('useAgentInputSelectionOverlayController', () => {
         await hook.unmount();
     });
 
+    it('treats a private dynamic collapsed-popover renderer as a supported overlay', async () => {
+        const extraActionChips: readonly AgentInputExtraActionChip[] = [{
+            key: 'dynamic-control',
+            controlId: 'recipient',
+            renderCollapsedPopover: () => null,
+            render: () => null,
+        }];
+        const hook = await renderHook(() =>
+            useAgentInputSelectionOverlayController({
+                shouldRenderSessionModeChip: true,
+                canChangePermission: true,
+                hasMachinePopover: false,
+                hasPathPopover: false,
+                hasResumePopover: false,
+                hasProfilePopover: true,
+                hasEnvVarsPopover: true,
+                hasAgentPickerOptions: true,
+                extraActionChips,
+            }),
+        );
+
+        await act(async () => {
+            hook.getCurrent().openSelectionOverlay('collapsedExtra', 'actionMenu', 'dynamic-control');
+        });
+
+        expect(hook.getCurrent().activeSelectionOverlay).toEqual({
+            id: 'collapsedExtra',
+            anchor: 'actionMenu',
+            chipKey: 'dynamic-control',
+        });
+        expect(hook.getCurrent().activeExtraCollapsedPopoverChip?.key).toBe('dynamic-control');
+
+        await hook.unmount();
+    });
+
     it('rejects malformed picker collapsed extra popovers that only provide a list root step', async () => {
         // Boundary fixture: models a dynamic descriptor that bypassed the
         // discriminated union before reaching the overlay controller.

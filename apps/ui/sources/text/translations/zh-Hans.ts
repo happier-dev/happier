@@ -3,8 +3,15 @@ import { providerSessionTranslations } from './providerSessionTranslations';
 import { externalSessionOperationTranslations } from './externalSessionOperationTranslations';
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
+import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
+import { voiceDiagnosticsConsentTranslations } from './voiceDiagnosticsConsentTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
+import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
+import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
+import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 
 /**
  * Chinese (Simplified) translations for the Happier app
@@ -109,7 +116,7 @@ const mcpServersUxTranslationExtension = {
   mcpServersDeliveryNativeTitle: '原生 MCP',
   mcpServersDeliveryNativeSubtitle: '此后端将 Happier 工具作为原生 MCP 服务器接收。',
   mcpServersDeliveryShellBridgeTitle: 'Happier Shell 桥接',
-  mcpServersDeliveryShellBridgeSubtitle: '此后端通过 `happier tools` 桥接调用 Happier 工具。',
+  mcpServersDeliveryShellBridgeSubtitle: '此后端通过 happier tools 桥接调用 Happier 工具。',
   mcpServersDeliveryUnsupportedTitle: '不支持',
   mcpServersDeliveryUnsupportedSubtitle: '此后端当前不接收 Happier 工具。',
 } as const;
@@ -605,7 +612,14 @@ export const zhHans = {
     },
     voice: voiceReadinessTranslations['zh-Hans'],
     pluginPermissions: pluginPermissionTranslations['zh-Hans'],
+    sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations['zh-Hans'],
     pluginSurfaces: {
+        state: {
+            loading: { title: '正在加载插件内容', reason: 'Happier 加载最新更新时，将显示当前可用内容。' },
+            refreshing: { title: '正在刷新插件内容', reason: 'Happier 检查更新时，将显示上次可用的内容。' },
+            stale: { title: '插件内容可能已过期', reason: '正在显示上次可用的内容。请重试以检查更新。' },
+            offline: { title: '插件内容处于离线状态', reason: '重新连接前，将以只读方式显示上次可用的内容。' },
+        },
         offlineSnapshot: {
             accessibilityLabel: ({ title }: { title: string }) =>
                 `${title} 的离线快照。重新连接前，内容为只读。`,
@@ -615,6 +629,12 @@ export const zhHans = {
                 accessibilityLabel: '插件面板',
                 untitled: '插件面板',
             },
+        },
+        appPage: {
+            title: '插件页面',
+            subtitle: '已安装插件提供的整页目的地。',
+            empty: '没有可用的插件页面。',
+            unknown: '此插件页面不可用。插件可能正在加载、已停用或已卸载。',
         },
         appScopeRightSidebar: {
             empty: '没有可用的应用插件标签页。',
@@ -1017,6 +1037,17 @@ export const zhHans = {
   },
 
   automations: {
+    list: {
+      interval: ({ minutes, timezone }: { minutes: number; timezone: string | null }) => `每 ${minutes} 分钟${timezone ? `（${timezone}）` : ""}`,
+      cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `：${expression}` : ""}${timezone ? `（${timezone}）` : ""}`,
+      schedule: "计划",
+      event: ({ eventId }: { eventId: string }) => `事件：${eventId}`,
+      manual: "手动",
+      conversationTrigger: "对话触发器",
+      noNextRun: "没有下次运行",
+      nextRun: ({ time }: { time: string }) => `下次：${time}`,
+      nextRunPending: "下次运行待定",
+    },
     openA11y: "打开自动化",
     gate: {
       disabledTitle: "自动化已禁用",
@@ -1140,6 +1171,10 @@ export const zhHans = {
         active: "启用",
         paused: "已暂停",
       },
+      event: {
+        watcherTitle: "事件观察器",
+        watcherUnwatched: "未设置观察器",
+      },
       actionsGroupTitle: "操作",
       runNowTitle: "立即运行",
       runNowQueuedBadge: "已排队",
@@ -1159,10 +1194,53 @@ export const zhHans = {
       deleteFailed: "删除自动化失败。",
       assignmentsUpdateFailed: "更新机器分配失败。",
       recentRunsTitle: "最近运行",
+      loadMoreRuns: "加载更多运行",
       runMeta: {
+        originTitle: "来源",
+        origin: {
+          scheduled: "计划",
+          manual: "手动",
+          pluginEvent: "事件",
+          conversation: "对话",
+        },
+        occurred: ({ time }: { time: string }) => `发生：${time}`,
+        invoked: ({ time }: { time: string }) => `调用：${time}`,
+        admitted: ({ time }: { time: string }) => `已接纳：${time}`,
+        occurrenceTitle: "事件标识",
+        sourceTitle: "观察来源",
         scheduled: ({ time }: { time: string }) => `计划：${time}`,
         updated: ({ time }: { time: string }) => `更新：${time}`,
         error: ({ message }: { message: string }) => `错误：${message}`,
+      },
+      runDetail: {
+        title: "已接纳详情",
+        recipe: "已接纳配方",
+        recipeAbsent: "未记录已接纳的私密详情。",
+        templateVersion: "模板版本",
+        event: "事件",
+        conversation: "对话",
+        sourceInstance: "来源实例",
+        filter: "筛选器",
+        filterMatched: "已匹配",
+        payload: "负载",
+        input: "输入",
+        target: "冻结目标",
+        outputCeiling: "输出上限",
+        existingSession: ({ sessionId }: { sessionId: string }) => `现有会话：${sessionId}`,
+        newSession: ({ machineId, directory }: { machineId: string; directory: string }) => `在 ${machineId} 上的新会话：${directory}`,
+        executionRun: ({ permissionMode }: { permissionMode: string }) => `执行运行 · ${permissionMode}`,
+        prompt: "冻结提示词",
+        result: "最终结果",
+        resultAbsent: "未记录最终结果。",
+        failureDetail: "失败详情",
+        failureDetailAbsent: "未记录私密失败详情。",
+        predecessorSummary: "存在前代摘要，但无法在此详情中读取。",
+        currentnessUnavailable: "账户加密正在更改，运行的私密详情暂时不可用。",
+        materialUnavailable: "此设备没有当前账户加密密钥。",
+        modeMismatch: "保留的私密详情使用了不同的账户加密模式。",
+        contentInvalid: "保留的私密详情无效。",
+        invalidTemplate: "已接纳的模板无效。此运行不会调度或重试。",
+        outcomeUnknown: "调度结果未知。Happier 不会再次调度冻结目标。",
       },
     },
     create: {
@@ -1208,7 +1286,9 @@ export const zhHans = {
     actions: "操作",
     moreActions: "更多操作",
     moreActionsHint: "打开包含更多操作的菜单",
+    destructiveActionHint: "此操作具有破坏性且无法撤销。",
     cancel: "取消",
+    submit: "提交",
     close: "关闭",
     open: "打开",
     authenticate: "认证",
@@ -1216,6 +1296,7 @@ export const zhHans = {
     saveAs: "另存为",
 		    error: "错误",
 		    success: "成功",
+		    warning: "警告",
 		    info: "信息",
 		    comingSoon: "即将推出",
 		    ok: "确定",
@@ -1224,6 +1305,7 @@ export const zhHans = {
         previous: "上一个",
         next: "下一个",
 	    start: "开始",
+	    run: "运行",
 	    create: "创建",
     rename: "重命名",
     remove: "移除",
@@ -1311,7 +1393,19 @@ export const zhHans = {
   ui: {
     resizableDockedPane: {
       resizeA11y: "调整面板大小",
-      resizeHint: "使用左右方向键调整大小",
+      resizeHint: "使用方向键或调整操作来调整大小",
+    },
+    modalPane: {
+      right: "右侧边栏",
+      details: "详情面板",
+      bottom: "底部面板",
+      dismiss: ({ pane }: { pane: string }) => `关闭${pane}`,
+    },
+    pluginUi: {
+      loading: "正在加载",
+      empty: "暂无可显示内容",
+      error: "出错了",
+      moreActions: "更多操作",
     },
   },
 
@@ -1350,6 +1444,7 @@ export const zhHans = {
         recentlyActive: '最近活跃',
         externalStatusUnknown: '外部状态未知',
     readyForReview: "已可审核",
+    canceled: "已取消",
     offline: "离线",
     lastSeen: ({ time }: { time: string }) => `最后活跃时间 ${time}`,
     actionRequired: "需要操作",
@@ -1441,6 +1536,7 @@ export const zhHans = {
       "这将创建一个新账户并重新绑定你的身份。旧的加密历史无法恢复。",
     lostAccessConfirmButton: "重置并继续",
     secretKeyPlaceholder: "XXXXX-XXXXX-XXXXX...",
+    secretKeyInputLabel: "密钥",
     linkNewDeviceTitle: "链接新设备",
     linkNewDeviceSubtitle: "扫描新设备上显示的二维码以将其链接到此账户",
     linkNewDeviceQrInstructions: "在新设备上打开 Happier 并显示二维码",
@@ -1479,7 +1575,7 @@ export const zhHans = {
         pasteDoctorJson: {
           title: "CLI doctor JSON（可选）",
           subtitle:
-            "如果 UI 无法访问你的机器，请在电脑上运行 `happier doctor --json` 并粘贴到这里。",
+            "如果 UI 无法访问你的机器，请在电脑上运行 happier doctor --json 并粘贴到这里。",
           placeholder: '{ "capturedAt": "...", ... }',
           invalid: ({ error }: { error: string }) => `doctor JSON 无效：${error}`,
           valid: "doctor JSON 看起来有效，将随报告一起提交。",
@@ -1893,6 +1989,7 @@ export const zhHans = {
 
   settings: {
     title: "设置",
+    overview: '概览',
 
     // Main settings hub category groups
     profileAndAccount: '个人资料与账号',
@@ -2033,8 +2130,6 @@ export const zhHans = {
     executionRunsSubtitle: "跨设备执行运行",
     connectedServices: "已连接服务",
     connectedServicesSubtitle: "Claude/Codex 订阅与 OAuth 配置",
-    channelBridges: "频道桥接",
-    channelBridgesSubtitle: "将外部聊天（Telegram）桥接到会话",
     featuresTitle: "功能",
     featuresSubtitle: "启用或禁用应用功能",
     pets: "宠物",
@@ -2603,7 +2698,7 @@ export const zhHans = {
       copyReportSubtitle: "复制已脱敏的 JSON 报告用于支持",
     },
     pasteDoctorJson: {
-      footer: "提示：在电脑上运行 `happier doctor --json` 并粘贴到这里。",
+      footer: "提示：在电脑上运行 happier doctor --json 并粘贴到这里。",
       placeholder: '{ "capturedAt": "...", ... }',
       parse: "验证粘贴的 JSON",
       ok: "粘贴的 doctor JSON 看起来有效。",
@@ -2790,6 +2885,7 @@ export const zhHans = {
                 provider_account_adoption_mismatch: '提供商未切换账号',
                 post_switch_verification_failed: '无法验证提供商账号',
                 connected_service_credential_reconnect_required: "已连接的账户需要重新连接",
+                connected_service_credential_refresh_unavailable: "已连接账户的刷新暂时不可用",
                 claude_subscription_missing_claude_code_scope: 'Claude Code 访问需要重新连接',
         claude_subscription_native_auth_materialization_failed: '无法准备 Claude Code 凭据',
         claude_subscription_setup_token_not_supported_for_unified: 'Claude 设置令牌无法启动 Unified 模式',
@@ -2811,17 +2907,16 @@ export const zhHans = {
                 provider_account_adoption_mismatch: '提供商停留在其他账号',
                 post_switch_verification_failed: '无法验证提供商账号',
                 connected_service_credential_reconnect_required: "已连接的账户需要重新连接",
+                connected_service_credential_refresh_unavailable: "已连接账户的刷新暂时失败",
                 claude_subscription_missing_claude_code_scope: '为 Claude Code 重新连接 Claude 订阅',
         claude_subscription_native_auth_materialization_failed: '无法准备 Claude Code 原生认证',
         claude_subscription_setup_token_not_supported_for_unified: '为 Unified 模式使用 OAuth 重新连接 Claude',
       },
       body: {
         default: "检查已连接账号后重试。",
-        provider_session_state_unavailable_for_resume: ({ reason, agentId }: { reason: string; agentId: string }) =>
-          `请检查已连接账号，然后使用所选账号重新开始，或继续使用当前账号。${agentId}: ${reason}。`,
+        provider_session_state_unavailable_for_resume: '请检查已连接账号，然后使用所选账号重新开始，或继续使用当前账号。',
         connected_service_materialization_identity_missing: '此会话缺少复用已物化提供商状态所需的已连接服务身份。请使用所选账号重新开始，或继续使用当前账号。',
-        resume_reachability_inputs_missing: ({ reason, agentId }: { reason: string; agentId: string }) =>
-          `守护进程无法验证提供商恢复状态，因为缺少必需的恢复输入。${agentId}: ${reason}。`,
+        resume_reachability_inputs_missing: '守护进程无法验证提供商恢复状态，因为缺少必需的恢复输入。',
         metadata_update_failed: '会话无法保存新的身份验证选择。请在会话同步完成后重试。',
         no_eligible_group_member: '此组中当前没有符合备用条件的账号。请检查已连接账号，并在需要时重新连接配置文件。',
         recovery_retry_scheduled: 'Happier 已计划重试提供商恢复。你可以立即重试或检查已连接账号。',
@@ -2829,6 +2924,7 @@ export const zhHans = {
                 provider_account_adoption_mismatch: '切换后提供商仍停留在其他账号。请检查已连接账号或重试切换。',
                 post_switch_verification_failed: 'Happier 无法验证提供商是否采用了所选账号。请检查已连接账号或重试切换。',
                 connected_service_credential_reconnect_required: "恢复此会话前，需要重新连接所选的已连接账户。请重新连接该配置，然后重试。",
+                connected_service_credential_refresh_unavailable: "Happier 无法刷新所选的已连接账户。请稍后重试。",
                 claude_subscription_missing_claude_code_scope: '此 Claude 配置是在授予 Claude Code 范围之前连接的。请重新连接它，然后重试会话或账号组切换。',
         claude_subscription_native_auth_materialization_failed: 'Happier 无法为此配置创建 Claude Code 原生凭据文件。请重新连接该配置，或选择账号组中的其他成员。',
         claude_subscription_setup_token_not_supported_for_unified: 'Claude Unified 模式必须使用原生 OAuth 凭据启动 Claude CLI。请使用 OAuth 重新连接此配置，而不是设置令牌。',
@@ -3092,7 +3188,6 @@ export const zhHans = {
       setDefaultProfileSubtitleChoose: "选择默认使用的配置",
       setProfileLabelTitle: "设置配置标签",
       setProfileLabelSubtitle: "在授权选择器中显示的可选标签",
-      addOauthProfileTitle: "添加 OAuth 配置",
       addOauthProfileSubtitle: "连接新的账号配置",
       addOauthProfileDeviceTitle: "通过设备认证添加",
       addOauthProfileDeviceSubtitle: "推荐用于 Web/远程环境",
@@ -3223,6 +3318,10 @@ export const zhHans = {
         removeMember: "移除成员",
         removeMemberConfirmTitle: "移除成员",
         removeMemberConfirmBody: ({ profileId }: { profileId: string }) => `从此组移除“${profileId}”？`,
+        runtimeFallbackUnsupported: '此已连接服务不支持自动切换。',
+        removeMembersConfirmBody: ({ count, members }: { count: number; members: string }) => `要从此池移除${count === 1 ? "这位成员" : `这 ${count} 位成员`}吗？\n\n${members}`,
+        manageMembersTitle: '管理成员',
+        manageMembersSubtitle: ({ count, total }: { count: number; total: number }) => `${total} 个账户中的 ${count} 个`,
       },
       groupDetail: {
         routeTitle: "组",
@@ -3281,6 +3380,7 @@ export const zhHans = {
       status: "状态",
       email: "邮箱",
       accountId: "账号 ID",
+      providerAccountId: "提供方账号 ID",
       quotaTitle: "配额",
       defaultSubtitle: "此配置默认选中",
       setDefaultSubtitle: "默认使用此配置",
@@ -3361,7 +3461,7 @@ export const zhHans = {
         promptMessage:
           "请输入工作区相对目录（不允许绝对路径，不允许 ..）。",
         invalidDirectoryTitle: "目录无效",
-        invalidDirectoryMessage: "请使用相对路径，例如 `.happier/uploads`。",
+        invalidDirectoryMessage: "请使用相对路径，例如 .happier/uploads。",
       },
     },
     sourceControlIgnore: {
@@ -4454,7 +4554,7 @@ export const zhHans = {
                     },
                     server: {
                         title: "服务器连接",
-                        footer: "留空即可使用 Happier 管理的 OpenCode 服务器生命周期。设置绝对 http(s) URL 以连接到现有 OpenCode 服务器。"
+                        footer: "留空即可使用 Happier 管理的 OpenCode 服务器生命周期。连接你自己运行的任意服务器时请设置绝对 HTTPS URL；HTTP 仅限 localhost。密码请填在下方字段，不要写入 URL。"
                     }
                 },
                 fields: {
@@ -4474,7 +4574,11 @@ export const zhHans = {
                     },
                     opencodeServerBaseUrl: {
                         title: "现有 OpenCode 服务器 URL",
-                        subtitle: "用户自管 OpenCode 服务器的可选覆盖地址。"
+                        subtitle: "你自己运行的服务器的可选覆盖地址。HTTPS 可使用任何主机；HTTP 仅限 localhost。"
+                    },
+                    opencodeServerPassword: {
+                        title: "现有 OpenCode 服务器密码",
+                        subtitle: "仅当你的 OpenCode 服务器使用 OPENCODE_SERVER_PASSWORD 运行时才需要设置。加密保存在本机，绝不同步。"
                     }
                 }
             },
@@ -4750,15 +4854,6 @@ export const zhHans = {
     settingsNavSidebar: "设置侧边栏",
     settingsNavSidebarDescription: "显示设置导航侧边栏（Web/平板）",},
 
-  settingsChannelBridges: {
-    unsupported: "此环境不支持频道桥接。",
-    enableInFeatures: "启用频道桥接",
-    enableInFeaturesSubtitle: "频道桥接为实验功能，默认关闭。",
-    description: "频道桥接可将外部聊天（Telegram）附加到会话，并将消息转发给代理。",
-    telegramTitle: "Telegram",
-    telegramFooter: "请通过 CLI 配置 Telegram，然后在 Telegram 中使用 /sessions、/attach、/detach、/help 管理绑定。",
-  },
-
   settingsFeatures: {
     // Features settings screen
     experiments: "实验功能",
@@ -4838,8 +4933,6 @@ export const zhHans = {
     expHomeScreenWidgetsSubtitle: '启用 Happier 活动的主屏幕小组件',
     expConnectedServicesQuotas: "已连接服务配额",
     expConnectedServicesQuotasSubtitle: "显示已连接服务的配额徽标与用量仪表",
-    expChannelBridges: "频道桥接",
-    expChannelBridgesSubtitle: "将 Telegram 等聊天渠道连接到 Happier 会话（实验性）",
     expMemorySearch: "记忆搜索",
     expMemorySearchSubtitle: "启用本地记忆搜索页面与设置",
     expSessionsDirect: "外部会话",
@@ -4914,6 +5007,7 @@ export const zhHans = {
       fileNotFound: "文件未找到",
       invalidFormat: "格式无效",
       operationFailed: "操作失败",
+      signupDisabled: "该服务器已禁用新账户注册。请使用现有账户登录，或联系服务器管理员开启注册。",
       failedToForkSession: "分叉会话失败",
       daemonUnavailableTitle: "守护进程不可用",
       daemonUnavailableBody:
@@ -5125,7 +5219,8 @@ export const zhHans = {
     sessionSpawningFailed: "会话生成失败 - 未返回会话 ID。",
     startingSession: "正在启动会话...",
     startNewSessionInFolder: "在此文件夹中启动新会话",
-    failedToStart: "启动会话失败。确保守护进程在目标设备上运行。",
+    failedToStart: "无法启动会话。请重试，或检查所选设备和会话设置。",
+    actionMethodUnavailable: "请在目标设备上更新 Happier 以创建新会话。",
     sessionTimeout: "会话启动超时。设备可能运行缓慢或守护进程可能无响应。",
     notConnectedToServer: "未连接到服务器。请检查您的网络连接。",
     daemonRpcUnavailableTitle: "守护进程不可用",
@@ -5135,9 +5230,6 @@ export const zhHans = {
     launchStillPendingBody:
       "Happier 尚未确认新会话。启动请求仍已保存。请重试以继续同一次启动，不会创建重复会话。",
     connectedServiceSwitchUnavailable: {
-      title: "无法切换",
-      body: ({ reason, agentId }: { reason: string; agentId: string }) =>
-        `此会话无法在新账户下继续，因为其之前的 ${agentId} 对话无法迁移（${reason}）。\n\n你可以改为在新账户下重新开始——这将开始一个不含之前历史记录的新对话。`,
       startFreshAction: "在新账户下重新开始",
     },
     noMachineSelected: "请选择一台设备以启动会话",
@@ -5365,6 +5457,8 @@ export const zhHans = {
       replyNotLoaded: "回复尚未加载",
       awaitingReply: "正在等待回复",
       loadingBody: "正在加载对话导航…",
+      railScrollUpA11y: "向上滚动导航",
+      railScrollDownA11y: "向下滚动导航",
       emptyPinnedHint: "将光标悬停在消息上并选择固定图标即可固定。",
       emptyPinnedPrivacy: "固定内容仅保存在此设备上。",
     },
@@ -5486,10 +5580,11 @@ export const zhHans = {
     staleRunner: {
       banner: {
         title: "会话运行器已过期",
-        body: "此会话仍在旧版 Happier CLI 上运行。重启运行器以使用当前 daemon runtime。",
+        body: "此会话仍在旧版运行时代码上运行。重启运行器以使用当前 daemon runtime。",
         pendingBody: "正在当前 daemon runtime 上重启会话运行器。",
         busyBody: "运行器当前正忙。请在当前工作结束后重试。",
         failedBody: "无法重启运行器。会话仍可通过现有运行器使用。",
+        unavailableBody: "此会话无法重启，但可以继续在现有运行器上运行。",
       },
       actions: {
         restart: "重启运行器",
@@ -5511,6 +5606,57 @@ export const zhHans = {
     },
     toolCalls: "工具调用",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
+    agentContinuation: {
+      currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。正在运行此会话。`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此会话上次使用。`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。此会话上次报告。`,
+      armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}。已选择用于你的下一条消息。`,
+      detailTitle: ({ agent }: { agent: string }) => `继续使用 ${agent}`,
+      sendLabel: ({ agent }: { agent: string }) => `继续使用 ${agent}`,
+      detailDescription: '对话会保留。在你发送下一条消息前不会发送任何内容。',
+      announcement: ({ agent }: { agent: string }) => `已选择 ${agent} 用于下一条消息，尚未发送任何内容。`,
+      dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `此会话已从 ${from_} 转由 ${to} 继续`,
+      checking: "正在检查可用性…",
+      unavailable: {
+        unsupportedSession: ({ agent }: { agent: string }) => `此会话无法由 ${agent} 继续。`,
+        updateCli: "请更新这台机器上的 CLI 以切换代理。",
+        updateOrReconnect: "请更新或重新连接 CLI 以切换代理。",
+        targetNoSessions: ({ agent }: { agent: string }) => `${agent} 无法运行会话。`,
+        targetNotProven: ({ agent }: { agent: string }) => `尚不支持切换到 ${agent}。`,
+        targetUnavailable: ({ agent }: { agent: string }) => `${agent} 在这台机器上不可用。`,
+      },
+      transition: {
+        rejected: {
+          unsupportedOperation: '此会话不支持切换代理。尚未发送任何内容。',
+          forbidden: '你没有权限切换此会话的代理。尚未发送任何内容。',
+          sameTarget: ({ agent }: { agent: string }) => `此会话已经在运行 ${agent}。尚未发送任何内容。`,
+          staleSelection: '你选择时此会话发生了变化。尚未发送任何内容，请重试。',
+          targetUnavailable: ({ agent }: { agent: string }) => `${agent} 在这台机器上不可用。尚未发送任何内容。`,
+          sourceNotIdle: ({ agent }: { agent: string }) => `${agent} 仍在工作。尚未发送任何内容，请在它完成后重试。`,
+          sourceStopFailed: ({ agent }: { agent: string }) => `无法停止 ${agent}，因此没有任何变化。尚未发送任何内容。`,
+        },
+        conflictingDestination: ({ agent }: { agent: string }) => `尚未发送任何内容。这条消息已经有另一个目标，因此不能同时把此会话切换到 ${agent}。请去掉其中之一后重新发送。`,
+        sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} 已停止，但切换到 ${agent} 未完成。你的消息未发送。`,
+        switched: ({ agent }: { agent: string }) => `此会话现在是 ${agent}，但你的消息未发送。请重新发送。`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: '切换 Agent',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: '恢复会话',
+        unknown: 'Happier 无法确认发生了什么。请先检查此会话再重新发送。',
+      },
+    },
+    sourceContext: {
+        chipLabel: ({ session }: { session: string }) => `来自${session}`,
+        unknownSession: "另一个会话",
+        detailTitle: "从另一个会话继续",
+        detailBodyLatest: ({ session }: { session: string }) => `${session}中的对话将作为这个新会话的上下文带过来。`,
+        detailBodyAtMessage: ({ session }: { session: string }) => `${session}中截至你所选消息的对话，将作为这个新会话的上下文带过来。`,
+        carriedOver: "对话将被带过来",
+        removeAction: "移除",
+        removeA11y: "移除来源对话",
+        keepAction: "保留",
+        serverMismatch: "该对话位于另一台 Happier 服务器上。请切换回那台服务器，或移除来源对话以重新开始。",
+    },
     forking: {
       dividerTitle: "从较早的上下文分叉",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `从${parent}分叉`,
@@ -5518,6 +5664,44 @@ export const zhHans = {
       openParent: "打开",
       openParentA11y: "打开父会话",
       forkFromMessageA11y: "从此消息分叉",
+      strategy: {
+          title: "分叉此会话",
+          subtitleLatest: "从这段对话当前的位置分叉。",
+          subtitleFromMessage: "从对话的这个位置分叉。",
+          recommended: "推荐",
+          native: {
+              title: "原生分叉",
+              subtitle: "由代理分叉它自己的对话，最接近原始状态。",
+          },
+          replay: {
+              title: "Replay 分叉",
+              subtitle: "Happier 会重放目前的对话，作为新会话的上下文。",
+          },
+          configure: {
+              title: "配置新会话",
+              subtitle: "选择其他代理、模型、机器或文件夹，并把这段对话带过去。",
+          },
+          progress: {
+              creatingNative: "正在创建原生分叉…",
+              creatingReplay: "正在创建 Replay 分叉…",
+              opening: "正在打开分叉…",
+              stalledTitle: "分叉已创建",
+              stalledBody: "它还没有出现在这里。请再试着打开一次。",
+              openAction: "打开分叉",
+          },
+          unknown: {
+              title: "Happier 无法确认分叉是否创建",
+              body: "请求已经发出，因此分叉可能已经存在。请先查找它，而不是再分叉一次，因为第二次尝试可能会创建重复项。",
+              checkAction: "查找分叉",
+              checking: "正在查找你的分叉…",
+              noneFound: "还没有匹配的分叉。它可能仍在启动，你可以再查一次。",
+              ambiguous: "出现了多个匹配的分叉。请打开会话列表选择正确的那个。",
+          },
+          failure: {
+              updateRequired: "请更新或重新连接这台机器上的 CLI，才能分叉此会话。",
+              generic: "Happier 无法创建分叉。",
+          },
+      },
 	    },
 	    transcriptGap: {
 	      earlierMessages: "更早的消息",
@@ -5851,6 +6035,7 @@ export const zhHans = {
           sendDiscardedFailed: "发送已丢弃消息失败",
           reorderFailed: "重新排序待发送消息失败",
           retryDeliveryFailed: "重试待投递失败",
+          actionConflict: "应用操作时，这条待处理消息的状态已发生变化。请检查其当前状态后重试。",
           discardFailed: "丢弃待投递失败",
           markHandledFailed: "无法将待投递标记为已处理",
         },
@@ -6021,6 +6206,7 @@ export const zhHans = {
     tapToEnd: "点击结束",
     startDictation: "开始听写",
     startVoice: "开始语音",
+    startGlobalVoice: "开始全局语音",
     endVoice: "结束语音",
     transcribing: "正在转写…",
     endDictation: "结束听写",
@@ -6036,6 +6222,16 @@ export const zhHans = {
     selectSessionToStart: "请选择一个会话以开始语音",
     targetSession: "目标会话",
     conversationalTranscriptUnavailable: "此语音会话的对话转录不可用",
+    orbLabel: "语音",
+    orbStartHint: "开始语音对话。向上滑动可打开对话。",
+    orbEndHint: "结束语音对话。已经开始的编码工作会继续运行。向上滑动可打开对话。",
+    orbMinimiseHint: "最小化语音",
+    orbExpand: "展开语音",
+    orbCollapse: "收起语音",
+    delegatedWorking: "正在处理…",
+    composerStartHint: "开始关于此会话的语音对话。",
+    composerGlobalStartHint: "开始不属于任何会话的语音对话。",
+    composerEndHint: "结束语音对话。已经开始的编码工作会继续运行。",
     noTarget: "未选择会话",
     clearTarget: "清除目标",
     a11y: {
@@ -6214,10 +6410,18 @@ export const zhHans = {
         title: "数据保留策略",
         summary: "摘要",
         keepForever: "不自动删除",
+        automaticDeletionEnabled: "已启用自动删除",
+        detailsUnavailable: "已启用自动删除，但此客户端无法显示所有生效的保留策略",
+        singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}：${policy}`,
+        relayCleanupSummary: ({ policies }: { policies: string }) => `此 Relay 会清理${policies}。`,
+        relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain}（${count} 天后）`,
+        relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `非活跃会话（${count} 天后）`,
         deleteInactiveSessionsDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}后删除非活跃会话。`,
         deleteOlderThanDays: ({ count }: { count: number }) => `在 ${count} ${plural({ count, singular: '天', plural: '天' })}后删除数据。`,
         sessionNotice: ({ count }: { count: number }) => `此 Relay 会在会话非活跃 ${count} ${plural({ count, singular: '天', plural: '天' })}后自动删除。`,
         sessions: "会话",
+        sidechainMessages: "子代理记录",
+        usageEvents: "使用事件",
         accountChanges: "账户变更",
         voiceSessionLeases: "语音会话租约",
         feedItems: "动态条目",
@@ -6596,6 +6800,17 @@ export const zhHans = {
   },
 
   agentInput: {
+      chipPicker: {
+          selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。已选择。`,
+      },
+    suggestionGroups: {
+      files: '文件',
+      plugins: '插件',
+      sessions: '会话',
+      references: '引用',
+      skills: '技能',
+      commands: '命令',
+    },
     stopCodingTurn: "停止编码轮次",
       nonSteerableSend: {
         title: '智能体正忙',
@@ -6692,6 +6907,8 @@ export const zhHans = {
       running: ({ model }: { model: string }) => `正在运行：${model}`,
       lastUsed: ({ model }: { model: string }) => `上次使用：${model}`,
       lastReported: ({ model }: { model: string }) => `上次报告：${model}`,
+      applyTimingNextMessage: "从你的下一条消息起生效",
+      applyTimingNewSession: "在你开始新会话时生效",
       selectedForResume: "恢复此会话时将使用所选模型。",
       configureInCli: "在 CLI 设置中配置模型",
       unavailable: "此机器上此提供商的模型发现不可用。",
@@ -6935,6 +7152,12 @@ export const zhHans = {
       updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `更新子代理 ${id} → ${status}`,
       updateTaskWithId: ({ id }: { id: string }) => `更新子代理 ${id}`,
       updateTask: "更新子代理",
+    },
+    taskOutputView: {
+      waitingForTask: "正在等待后台任务完成。",
+    },
+    taskStopView: {
+      stoppedCommandLabel: "已停止的命令",
     },
     taskView: {
       moreTools: ({ count }: { count: number }) => `+${count} 个更多工具`,
@@ -7474,6 +7697,7 @@ export const zhHans = {
           generatedVideoA11y: ({ name }: { name: string }) => `打开生成的视频 ${name}`,
           attachmentVideoA11y: ({ name }: { name: string }) => `打开附件视频 ${name}`,
           toolArtifactVideoA11y: ({ name }: { name: string }) => `打开工具产物视频 ${name}`,
+          previewImageA11y: ({ name, current, total }: { name: string; current: number; total: number }) => `第 ${current} 张，共 ${total} 张：${name}`,
 
           previewUnavailableA11y: "Media preview unavailable",
           unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,},
@@ -8725,6 +8949,14 @@ settingsSession: {
 	        identityDisplayAgentLogoSubtitle: '显示每个会话的代理标志。',
 	        identityDisplayNoneTitle: '无',
 	        identityDisplayNoneSubtitle: '隐藏会话行中的标识标记。',
+	        headerIdentityDisplayTitle: '会话页眉标识',
+	        headerIdentityDisplaySubtitle: '选择在会话内标题前显示的内容。',
+	        headerIdentityDisplayAvatarTitle: '头像',
+	        headerIdentityDisplayAvatarSubtitle: '显示会话生成的头像。',
+	        headerIdentityDisplayAgentLogoTitle: '智能体徽标',
+	        headerIdentityDisplayAgentLogoSubtitle: '显示运行该会话的智能体徽标。',
+	        headerIdentityDisplayNoneTitle: '无',
+	        headerIdentityDisplayNoneSubtitle: '页眉直接从会话标题开始。',
 	        activeColorTitle: '活跃标题颜色',
 	        activeColorSubtitle: '选择哪些会话使用活跃标题颜色。',
 	        activeColorActivityAndAttentionTitle: '活动和需注意',
@@ -9343,6 +9575,13 @@ settingsSession: {
     consoleSubtitle: "在标准的 Windows 控制台窗口中打开会话。",
   },
   settingsVoice: {
+    ...voiceDiagnosticsConsentTranslations['zh-Hans'],
+    intents: {
+      dictation: { title: '听写', subtitle: '将一次口述转换为输入框中的文本。' },
+      conversations: { title: '语音对话', subtitle: '选择提供商并配置其主要设置。' },
+      privacy: { title: '隐私与数据', subtitle: '查看提供商处理、上下文共享和语音历史。', processingTitle: '提供商数据处理' },
+      advanced: { title: '高级', subtitle: '配置语音界面、执行机器和诊断。' },
+    },
     history: {
       title: '语音历史',
       sectionTitle: '历史',
@@ -9380,6 +9619,8 @@ settingsSession: {
       clearFailed: '无法清除语音历史。',
       errorTitle: '语音历史不可用',
       errorBody: 'Happier 无法加载此账户的加密历史。请检查连接并重试。',
+      upgradeRequiredTitle: '需要更新才能加载语音历史',
+      upgradeRequiredBody: '此服务器不支持此账户使用的加密历史格式。请更新服务器上的 Happier，然后重新加载。',
       supersededTitle: '当前账户已更改',
       supersededBody: '此请求已在使用其他账户前停止。请重新加载以安全继续。',
       retry: '重试',
@@ -9431,6 +9672,11 @@ settingsSession: {
     },
     realtimeProviders: {
       ...voiceProviderPrivacyTranslations['zh-Hans'],
+      operationFailed: '无法更新该设置。请重试。',
+      operationFailedUnsaved: '无法更新该设置。你的更改未保存。',
+      operationFailedVoiceNotFound: '所选语音在已连接的账户中不可用。请选择其他语音，然后重新执行此操作。你的更改未保存。',
+      operationFailedStage: ({ stage }: { stage: string }) => `失败的步骤：${stage}`,
+      operationFailedStatus: ({ status }: { status: number }) => `提供方响应：HTTP ${status}`,
       codex: {
         sectionTitle: "Codex Live 账号",
         accountTitle: "全局语音账号",
@@ -9445,6 +9691,8 @@ settingsSession: {
       activityFeedEnabledSubtitle: "使用语音时显示最近的语音事件",
       activityFeedAutoExpandOnStart: "开始时自动展开",
       activityFeedAutoExpandOnStartSubtitle: "语音开始时自动展开活动流",
+      orbEnabled: "悬浮语音球",
+      orbEnabledSubtitle: "在此设备上显示可拖动的语音伙伴。关闭后仍可从侧栏和输入框使用语音。",
       scopeTitle: "默认语音范围",
       scopeSubtitle: "选择默认将语音视为全局（账号）或会话范围。",
       scopeGlobal: "全局（账号）",
@@ -9543,14 +9791,6 @@ settingsSession: {
         "输入您的 ElevenLabs API 密钥。此信息会在设备上加密存储。",
       apiKeyPlaceholder: "xi-api-key",
       voiceSearchPlaceholder: "搜索声音",
-      speakerBoostTitle: "说话人增强",
-      speakerBoostSubtitle: "提升清晰度和存在感（可选）。",
-      speakerBoostAuto: "自动",
-      speakerBoostAutoSubtitle: "使用 ElevenLabs 默认值。",
-      speakerBoostOn: "开启",
-      speakerBoostOnSubtitle: "强制开启说话人增强。",
-      speakerBoostOff: "关闭",
-      speakerBoostOffSubtitle: "强制关闭说话人增强。",
       voiceGroupTitle: "声音",
       voiceGroupFooter:
         "选择 ElevenLabs 代理的说话方式。更改会在更新代理后生效。",
@@ -9617,19 +9857,12 @@ settingsSession: {
             promptBody: "输入 0 到 1 之间的数字。留空使用默认值。",
             invalid: "请输入 0 到 1 之间的数字。",
           },
-          style: {
-            title: "风格",
-            subtitle: "0–1。留空使用默认值。",
-            promptTitle: "风格（0–1）",
-            promptBody: "输入 0 到 1 之间的数字。留空使用默认值。",
-            invalid: "请输入 0 到 1 之间的数字。",
-          },
           speed: {
             title: "语速",
-            subtitle: "0.5–2。留空使用默认值。",
-            promptTitle: "语速（0.5–2）",
-            promptBody: "输入 0.5 到 2 之间的数字。留空使用默认值。",
-            invalid: "请输入 0.5 到 2 之间的数字。",
+            subtitle: "0.7–1.2。留空使用默认值。",
+            promptTitle: "语速（0.7–1.2）",
+            promptBody: "输入 0.7 到 1.2 之间的数字。留空使用默认值。",
+            invalid: "请输入 0.7 到 1.2 之间的数字。",
           },
         },
         getStartedTitle: "开始使用",
@@ -9646,12 +9879,20 @@ settingsSession: {
       apiKeyTitle: "API 密钥",
       promptTitle: "连接此语音提供商",
       promptDescription: "粘贴提供商 API 密钥。密钥将保存到你的账户，并且只会发送到插件声明的提供商端点；插件运行时代码不会收到密钥。",
-      footer: "密钥保存在你的账户中。宿主会将其发送到声明的提供商端点；插件代码只会收到操作结果。",
+      footer: "已保存的密钥存储在你的账户中。宿主会将其发送到声明的提供商端点；插件代码只会收到操作结果。",
+      rawPromptDescription: "粘贴提供商 API 密钥。此提供商声明的运行时中的插件代码会直接接收所选凭据，并可使用或复制它。",
+      rawFooter: "原始凭据访问允许声明的运行时中的插件代码直接接收所选凭据并使用或复制它。使用前请检查访问权限。",
+      rawCredentialAccessReviewBody: ({ pluginId, localId, credentialSlot, source, realm, phase }: { pluginId: string; localId: string; credentialSlot: string; source: string; realm: string; phase: string }) =>
+        `${pluginId}/${localId} 的插件代码会在 ${realm} 运行时的 ${phase} 期间接收用于 ${credentialSlot} 的所选 ${source} 凭据。它可使用或复制该凭据。`,
       ready: "API 密钥已保存",
       missing: "需要 API 密钥",
       unavailable: "凭据设置不可用",
     },
     local: {
+      voiceCredential: {
+        useSavedSecretTitle: "使用已保存的密钥",
+        useSavedSecretSubtitle: "选择此账户中已保存的密钥。",
+      },
       title: "本地 OSS 语音",
       footer: "配置 OpenAI 兼容的语音转文字（STT）与文字转语音（TTS）端点。",
       localhostWarning:
@@ -10261,7 +10502,7 @@ settingsSession: {
           installSubtitle: "点按以安装到守护进程",
           setDefaultSubtitle: "点按以设为默认",
           unknownSubtitle: "状态不可用",
-          memory: ({ size }: { size: string }) => `${size} 常驻`,
+          modelFiles: ({ size }: { size: string }) => `模型文件 ${size}`,
           removeConfirmTitle: "移除模型包",
           removeConfirmBody: ({ name }: { name: string }) => `删除以下项的守护进程端文件 ${name}?`,
           state: {
@@ -11169,7 +11410,7 @@ settingsSession: {
     launchNewSessionInDirectory: "在目录中启动新会话",
     offlineUnableToSpawn: "设备离线时无法启动",
     offlineHelp:
-      "• 确保您的计算机在线\n• 运行 `happier daemon status` 进行诊断\n• 您是否在运行最新的 CLI 版本？请运行 `happier self update`",
+      "• 确保您的计算机在线\n• 运行 happier daemon status 进行诊断\n• 您是否在运行最新的 CLI 版本？请运行 happier self update",
     daemon: "守护进程",
     status: "状态",
     customPathPlaceholder: "输入自定义路径",
@@ -11338,9 +11579,12 @@ settingsSession: {
     },},
 
   message: {
+      sessionReferenceUnavailable: "会话不可用",
+      sessionReferenceOpen: ({ name }: { name: string }) => `打开会话 ${name}`,
     switchedToMode: ({ mode }: { mode: string }) => `已切换到 ${mode} 模式`,
     discarded: "已丢弃",
     recoveredHistory: "已恢复的历史记录",
+    pluginAttribution: ({ pluginId }: { pluginId: string }) => `来自插件 ${pluginId}`,
     unknownEvent: "未知事件",
     runtimeConfigOutcomeAppliesBeforeNextMessage: '将在你的下一条消息前生效',
     runtimeConfigOutcomeQueuedUntilReady: '已排队，待就绪后应用',
@@ -11407,11 +11651,6 @@ settingsSession: {
     directTakeoverDialogDirectBody: "在 Happier 中控制此会话，而不将会话记录导入 Happier。",
     directTakeoverDialogPersistTitle: "接管并导入",
     directTakeoverDialogPersistBody: "将会话记录导入 Happier，并继续使用完整的 Happier 会话功能。",
-    directTakeoverDialogForceStopTitle: "先尝试停止本地进程",
-    directTakeoverDialogForceStopBody: "Happier 找到了此会话对应的可信本地进程。如果你希望 Happier 在接管前先停止它，请启用此项。",
-    directTakeoverForceStopConfirmTitle: "先停止本地进程？",
-    directTakeoverForceStopConfirmBody: "Happier 找到了此直连会话对应的可信本地进程。要在这里接管前先停止它吗？",
-    directTakeoverForceStopConfirmAction: "停止并接管",
 
     externalSessionTakeoverAvailable:
       "此外部会话已准备好在 Happier 中接管。",
@@ -11440,7 +11679,7 @@ settingsSession: {
         yesForTool: "是，不再询问此工具",
         yesForCommandPrefix: "是，不再询问此命令前缀",
         yesForSubcommand: "是，不再询问此子命令",
-        yesForCommandName: "是，不再询问此命令",
+        yesForCommandName: "是，在此会话中允许所有匹配的命令",
         stop: "停止",
         noTellClaude: "否，提供反馈",
       },
@@ -11818,12 +12057,12 @@ settingsSession: {
       },
       claudeCode: {
         title: "Claude Code",
-        instructions: "运行 `claude`，然后输入 `/login` 登录。",
-        warning: "注意：设置 `ANTHROPIC_AUTH_TOKEN` 会覆盖 CLI 登录。",
+        instructions: "运行 claude，然后输入 /login 登录。",
+        warning: "注意：设置 ANTHROPIC_AUTH_TOKEN 会覆盖 CLI 登录。",
       },
       codex: {
         title: "Codex",
-        instructions: "运行 `codex login` 登录。",
+        instructions: "运行 codex login 登录。",
       },
     },
     requirements: {
@@ -12154,11 +12393,19 @@ settingsSession: {
       },
     },
   },
-    settingsPlugins: {
+   settingsPlugins: {
+      ...pluginWebhookAdministrationTranslations['zh-Hans'],
+      ...pluginAccountDataEraseTranslations['zh-Hans'],
+      ...pluginAccountReleaseSelectionTranslations['zh-Hans'],
+      ...pluginInvocationLogTranslations['zh-Hans'],
+      ...eventAutomationComposerTranslations['zh-Hans'],
     title: "插件目录",
     subtitle: "浏览精选的插件描述符，并管理此设备上的已安装插件。",
     appPanelsTitle: "插件面板",
     appPanelsSubtitle: "打开已安装插件提供的应用面板。",
+    executionOriginReleaseContentConflict: "发布内容不匹配。请发布新版本。",
+    readOnlyProjectionUnavailable: "缓存的插件详情为只读：可以连接到此设备，但无法加载其插件注册表。请重试以管理插件。",
+    readOnlyAccountRecovery: "插件的账户详细信息可用，但在兼容的插件安装可用之前，特定设备的详细信息不可用。",
     readOnlySnapshot: "此设备断开连接时，缓存的插件详情为只读。重新连接后即可管理插件。",
     viewSelectorLabel: "插件管理视图",
     views: { installed: "已安装", discover: "发现", development: "开发", diagnostics: "诊断" },
@@ -12169,12 +12416,26 @@ settingsSession: {
     developmentCreate: "创建插件",
     developmentCreateSubtitle: "在此机器上创建本地插件脚手架。",
     developmentCreateSucceeded: "插件脚手架已创建。",
+    developmentSourceInstall: "开发本地插件文件夹",
+    developmentSourceInstallSubtitle: "让此机器上的守护进程从你的文件夹构建并运行插件。你需要先批准该文件夹。",
+    developmentSourceInstallTitle: "插件文件夹",
+    developmentSourceInstallBody: "输入此机器上插件项目文件夹的完整路径。",
+    developmentSourceInstallSucceeded: "开发源已批准并投影。",
+    developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `未能安装开发源（${outcome}）。`,
+    developmentTrustSourceRootTitle: "信任此插件文件夹？",
+    developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier 将在以下位置安装依赖、构建并运行代码：\n\n${path}\n\n只有在你信任该文件夹中的全部内容以及它可能拉取的全部内容时才继续。下一步你将审阅插件本身。`,
+    developmentTrustSourceRootConfirm: "信任文件夹",
     developmentCreateDirectoryTitle: "插件文件夹",
     developmentCreateDirectoryBody: "输入所选机器上的新绝对文件夹。该文件夹必须尚不存在。",
     developmentCreateNameTitle: "插件名称",
     developmentCreateNameBody: "输入插件的显示名称。",
     developmentCreateIdTitle: "插件 ID",
     developmentCreateIdBody: "输入小写、点分隔且不属于 happier.* 的所有者命名空间。",
+    developmentCreateSurfaceTitle: "插件 UI 界面",
+    developmentCreateSurfaceBody: "选择该插件初始的 UI 界面。React Native 同样可在网页端渲染。",
+    developmentCreateSurfaceReactNative: "React Native",
+    developmentCreateSurfaceHostedWeb: "托管网页",
+    developmentCreateSurfaceNone: "无界面",
     developmentCreateConfirmTitle: "创建插件脚手架？",
     developmentCreateConfirmBody: ({ pluginId, targetDir }: { pluginId: string; targetDir: string }) => `在 ${targetDir} 中创建 ${pluginId}？`,
     developmentWatchConfigured: "已配置监视批准",
@@ -12213,6 +12474,7 @@ settingsSession: {
     unknownValue: ({ value }: { value: string }) => `其他：${value}`,
     emptySubtitle: "此目录没有返回任何描述符。",
     detailTitle: "插件详情",
+    managePlugin: "管理插件",
     provenanceTitle: "来源与信任",
     diagnosticsTitle: "插件诊断",
     registryDiagnosticsTitle: "注册表诊断",
@@ -12220,6 +12482,10 @@ settingsSession: {
     unsupportedDescriptorField: "此版本的 Happier 不支持该描述符字段。",
     noDescriptors: "此部分没有投影任何由主机渲染的描述符。",
     marketplaceInstallReviewTitle: ({ name, version }: { name: string; version: string }) => `安装并信任 ${name} ${version}？`,
+    marketplaceInstallReviewBlockedNewerVersions: '较新版本已在下载前被阻止：',
+    marketplaceInstallReviewRawCredentialAccess: ({ details }: { details: string }) => `原始 Voice 凭据访问：\n${details}`,
+    marketplaceInstallReviewRawCredentialAccessItem: ({ contribution, credential, source, realm, phase, request }: { contribution: string; credential: string; source: string; realm: string; phase: string; request: string }) =>
+      `${contribution}：${credential}；来源 ${source}；运行时 ${realm}；阶段 ${phase}；请求 ${request}。${realm} 运行时中的插件代码会直接接收所选凭据，并可使用或复制它。`,
     marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `身份：\n${identity}\n\n验证信号：\n${verification}\n\n可执行代码：${executableRealms}\n贡献：${contributions}\n界面构件：${uiArtifacts}\n\n受信任的守护程序和 React Native 代码会以应用或进程的权限运行，并可直接使用文件、网络、环境和进程。下面列出的主机访问权限描述由 Happier 中介的服务；它不是可执行插件代码的沙箱。\n\n必需的披露和协作服务：\n${requiredAccess}\n\n可选的主机资源（默认关闭）：\n${optionalAccess}\n\n兼容性和更新：\n${compatibility}`,
     marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `插件未安装（${outcome}）。`,
     marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action}失败（${outcome}）。`,
@@ -12366,13 +12632,44 @@ settingsSession: {
     unavailable: "插件 React Native UI 不可用",
     disabled: "插件 React Native UI 已禁用",
     fallback: "正在使用插件回退",
+    reset: {
+      requested: {
+        title: "正在重置插件界面",
+        reason: "Happier 正在等待重置确认。",
+      },
+      awaitingProjection: {
+        title: "正在等待插件重置",
+        reason: "Happier 正在等待更新后的插件状态。",
+      },
+      complete: {
+        title: "插件界面已重置",
+        reason: "插件界面现已恢复可用。",
+      },
+      failed: {
+        title: "无法重置插件界面",
+        reason: "请再次尝试重置。",
+      },
+    },
   },
     pluginRuntime: {
         unavailableGeneric: '此插件视图当前不可用。',
         crashLoop: '插件因反复崩溃已被停止。',
         disabledByPolicy: '当前设置或兼容性已禁用此插件视图。',
+        hostedWebUnavailableTitle: '托管插件视图不可用',
+        hostedWebPolicyDenied: '此插件视图无法在此界面中使用。请检查其可用性设置或使用受支持的界面。',
+        hostedWebSandboxUnavailable: '此插件未声明显示此视图所需的隔离设置。请更新插件后重试。',
+        hostedWebSecurityUnavailable: '无法在此视图中强制执行该插件的安全设置。请更新插件或使用受支持的宿主。',
+        hostedWebFrameOriginUnavailable: 'Happier 无法为此视图建立受信任的地址。请刷新后重试。',
+        hostedWebBridgeNonceUnavailable: 'Happier 无法与此视图建立安全连接。请刷新后重试。',
+        hostedWebBridgeTimeout: '此插件视图未能完成连接。请刷新后重试。',
+        hostedWebEndpointPolicyDenied: '此视图的地址被其安全策略阻止。请检查插件设置或使用受支持的宿主。',
         missingRequirement: '此设备缺少该插件视图所需的条件。',
     },
     settingsSearch: {
     placeholder: "搜索设置",
+  },
+    onboardingJourney: {
+        accessibility: {
+            skipToContent: "跳转到内容",
+        },
   },} as const;

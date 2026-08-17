@@ -1,11 +1,21 @@
+export type PendingTerminalPairing = Readonly<{
+    secretB64Url: string;
+    createdAtMs: number;
+    expiresAtMs: number;
+}>;
+
 export type PendingTerminalConnect = Readonly<{
     publicKeyB64Url: string;
     serverUrl: string;
+    pairing?: PendingTerminalPairing;
+    supportsTokenOnly?: true;
 }>;
 
 export type PendingTerminalConnectRecord = Readonly<{
     publicKeyB64Url: string;
     serverUrl: string;
+    pairing?: PendingTerminalPairing;
+    supportsTokenOnly?: true;
     createdAtMs: number;
 }>;
 
@@ -25,7 +35,26 @@ export function toRecord(value: PendingTerminalConnect): PendingTerminalConnectR
     const publicKeyB64Url = String(value?.publicKeyB64Url ?? '').trim();
     const serverUrl = String(value?.serverUrl ?? '').trim();
     if (!publicKeyB64Url || !serverUrl) return null;
-    return { publicKeyB64Url, serverUrl, createdAtMs: Date.now() };
+    const pairing =
+        value.pairing
+        && String(value.pairing.secretB64Url ?? '').trim()
+        && Number.isSafeInteger(value.pairing.createdAtMs)
+        && Number.isSafeInteger(value.pairing.expiresAtMs)
+        && value.pairing.createdAtMs >= 0
+        && value.pairing.expiresAtMs > value.pairing.createdAtMs
+            ? {
+                secretB64Url: value.pairing.secretB64Url.trim(),
+                createdAtMs: value.pairing.createdAtMs,
+                expiresAtMs: value.pairing.expiresAtMs,
+            }
+            : undefined;
+    return {
+        publicKeyB64Url,
+        serverUrl,
+        ...(pairing ? { pairing } : {}),
+        ...(pairing && value.supportsTokenOnly === true ? { supportsTokenOnly: true } : {}),
+        createdAtMs: Date.now(),
+    };
 }
 
 export function fromRecord(value: unknown): PendingTerminalConnect | null {
@@ -36,5 +65,29 @@ export function fromRecord(value: unknown): PendingTerminalConnect | null {
     const createdAtMs = Number(record.createdAtMs ?? 0);
     if (!publicKeyB64Url || !serverUrl || !Number.isFinite(createdAtMs) || createdAtMs <= 0) return null;
     if (Date.now() - createdAtMs > ttlMs) return null;
-    return { publicKeyB64Url, serverUrl };
+    const pairingRecord =
+        record.pairing && typeof record.pairing === 'object'
+            ? record.pairing as Record<string, unknown>
+            : null;
+    const pairingSecret = String(pairingRecord?.secretB64Url ?? '').trim();
+    const pairingCreatedAtMs = Number(pairingRecord?.createdAtMs);
+    const pairingExpiresAtMs = Number(pairingRecord?.expiresAtMs);
+    const pairing =
+        pairingSecret
+        && Number.isSafeInteger(pairingCreatedAtMs)
+        && Number.isSafeInteger(pairingExpiresAtMs)
+        && pairingCreatedAtMs >= 0
+        && pairingExpiresAtMs > pairingCreatedAtMs
+            ? {
+                secretB64Url: pairingSecret,
+                createdAtMs: pairingCreatedAtMs,
+                expiresAtMs: pairingExpiresAtMs,
+            }
+            : undefined;
+    return {
+        publicKeyB64Url,
+        serverUrl,
+        ...(pairing ? { pairing } : {}),
+        ...(pairing && record.supportsTokenOnly === true ? { supportsTokenOnly: true } : {}),
+    };
 }

@@ -58,10 +58,15 @@ export function useQualifiedConnectedAccountQuota(
         ),
         [assertAccountOperationAllowed, exactRef.service],
     );
+    // Composed exactly as `useConnectedServiceQuotaSnapshots` composes it: the
+    // list and detail readers must land on ONE store entry per account, so a
+    // divergent scope here would mean two poll loops, two network reads, and a
+    // refresh in one that never invalidates the other.
     const credentialScope =
         credentials && activeServer.serverId
             ? [
                 activeServer.serverId,
+                String(activeServer.generation),
                 resolveAuthCredentialsScopeKey(credentials),
             ].join('\u0000')
             : '';

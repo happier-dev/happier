@@ -153,7 +153,7 @@ function ServiceAddressFact(props: Readonly<{
             <Text style={styles.factText}>{t('localServices.inventory.address', { value: props.addressValue })}</Text>
             <IconButton
                 testID={`${props.testID}-copy-address`}
-                iconName="copy-outline"
+                iconName="copy"
                 accessibilityLabel={t('localServices.actions.copyAddressA11y')}
                 tooltip={t('localServices.actions.copyAddressA11y')}
                 size={28}
@@ -300,7 +300,7 @@ export function ServiceRowView(props: Readonly<{
                                 {canOpen ? (
                                     <IconButton
                                         testID={`${props.testID}-open`}
-                                        iconName="open-outline"
+                                        iconName="arrow-square-out"
                                         accessibilityLabel={t('localServices.launcher.openInBrowserA11y')}
                                         animationEnabled={props.animationEnabled}
                                         onPress={handleOpen}
@@ -309,7 +309,7 @@ export function ServiceRowView(props: Readonly<{
                                 {canStart ? (
                                     <IconButton
                                         testID={`${props.testID}-start`}
-                                        iconName="play-circle-outline"
+                                        iconName="play-circle"
                                         accessibilityLabel={t('common.start')}
                                         animationEnabled={props.animationEnabled}
                                         onPress={handleStart}
@@ -318,7 +318,7 @@ export function ServiceRowView(props: Readonly<{
                                 {canTerminate ? (
                                     <IconButton
                                         testID={`${props.testID}-terminate`}
-                                        iconName="close-circle-outline"
+                                        iconName="x-circle"
                                         accessibilityLabel={t('localServices.actions.terminateDetectedA11y')}
                                         tone="danger"
                                         animationEnabled={props.animationEnabled}
@@ -328,7 +328,7 @@ export function ServiceRowView(props: Readonly<{
                                 {canRestart ? (
                                     <IconButton
                                         testID={`${props.testID}-restart`}
-                                        iconName="refresh-outline"
+                                        iconName="arrow-clockwise"
                                         accessibilityLabel={t('localServices.managed.restartActionA11y')}
                                         animationEnabled={props.animationEnabled}
                                         onPress={handleRestart}
@@ -337,7 +337,7 @@ export function ServiceRowView(props: Readonly<{
                                 {canStop ? (
                                     <IconButton
                                         testID={`${props.testID}-stop`}
-                                        iconName="stop-circle-outline"
+                                        iconName="stop-circle"
                                         accessibilityLabel={t('localServices.managed.stopActionA11y')}
                                         tone="danger"
                                         animationEnabled={props.animationEnabled}

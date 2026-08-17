@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -12,6 +11,7 @@ import { t } from '@/text';
 import type { RepoWorktreeRow } from '../branches/buildWorkspaceScmBranchPopoverItems';
 import { filterVisibleRepoWorktreeRows } from './filterVisibleRepoWorktreeRows';
 import { sortRepoWorktreeRows } from './sortRepoWorktreeRows';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     searchContainer: {
@@ -97,7 +97,7 @@ export const WorkspaceWorktreeListSection = React.memo((props: Readonly<{
                         selected={props.selectedRootPath === worktree.path}
                         onPress={() => props.onSelectRootPath(worktree.path)}
                         rightElement={worktree.isCurrent ? (
-                            <Octicons name="check" size={14} color={theme.colors.text.secondary} />
+                            <Icon name="check" size={14} color={theme.colors.text.secondary} />
                         ) : null}
                     />
                 ))

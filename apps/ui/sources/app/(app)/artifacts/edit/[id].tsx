@@ -104,6 +104,11 @@ export default function EditArtifactScreen() {
             setIsLoading(false);
             return;
         }
+
+        if (artifact.isDecrypted === false) {
+            setIsLoading(false);
+            return;
+        }
         
         let cancelled = false;
         
@@ -242,6 +247,21 @@ export default function EditArtifactScreen() {
                     <Text style={styles.errorText}>
                         {t('artifacts.notFound')}
                     </Text>
+                </View>
+            </View>
+        );
+    }
+
+    if (artifact.isDecrypted === false) {
+        const lockedMessage = artifact.availability.reason === 'encryption_material_unavailable'
+            ? t('settingsAccount.secretKeyMissing')
+            : t('artifacts.error');
+
+        return (
+            <View style={styles.container}>
+                <Stack.Screen options={errorScreenOptions} />
+                <View style={styles.errorContainer}>
+                    <Text style={styles.errorText}>{lockedMessage}</Text>
                 </View>
             </View>
         );

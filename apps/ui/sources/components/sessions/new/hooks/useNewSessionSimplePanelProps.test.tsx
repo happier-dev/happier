@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
@@ -21,12 +22,12 @@ function createPanelProps(
         newSessionSidePadding: 0,
         newSessionBottomPadding: 0,
         containerStyle: {},
-        sessionPrompt: '',
+        promptStore: createNewSessionPromptStore(''),
         setSessionPrompt: vi.fn(),
         handleCreateSession: vi.fn(),
         canCreate: true,
         isCreating: false,
-        emptyAutocompletePrefixes: [],
+        emptyAutocompleteKinds: [],
         emptyAutocompleteSuggestions: async () => [],
         agentType: 'codex',
         handleAgentClick: vi.fn(),

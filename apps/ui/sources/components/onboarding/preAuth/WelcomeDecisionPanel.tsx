@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import Animated, {
     Easing,
     interpolate,
@@ -19,6 +18,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useLocalSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useReturningGreeting } from './useReturningGreeting';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 // Premium-feel hover affordances on the welcome buttons. The whole button
 // lifts 1px on hover and its content shifts:
@@ -65,7 +65,7 @@ type DecisionButtonProps = Readonly<{
     title: string;
     subtitle?: string;
     primary?: boolean;
-    iconName?: keyof typeof Ionicons.glyphMap;
+    iconName?: IconName;
     onPress: () => Promise<void> | void;
 }>;
 
@@ -159,7 +159,7 @@ function DecisionButton(props: DecisionButtonProps) {
             {props.iconName ? (
                 supportsHoverAnimation ? (
                     <Animated.View style={iconAnimatedStyle}>
-                        <Ionicons
+                        <Icon
                             testID={`${props.testID}-icon`}
                             name={props.iconName}
                             size={20}
@@ -168,7 +168,7 @@ function DecisionButton(props: DecisionButtonProps) {
                     </Animated.View>
                 ) : (
                     <View>
-                        <Ionicons
+                        <Icon
                             testID={`${props.testID}-icon`}
                             name={props.iconName}
                             size={20}
@@ -244,6 +244,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const showBlocked = options.serverAvailability === 'unavailable' || options.serverAvailability === 'incompatible';
     const providerId = options.providerId;
     const keylessProviderId = options.keylessProviderId;
+    const primaryAction = options.primaryAction;
     const showSecondaryKeylessProviderLogin = options.showKeylessProviderLogin && !options.keylessPrimary && !!keylessProviderId;
     const handleLogin = props.canScanQr && props.onStartScan ? props.onStartScan : props.onOpenRestore;
     // Returning users (those who have authenticated on this device before) get
@@ -317,7 +318,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     primary={!isReturningUser}
                     title={isReturningUser ? t('welcome.welcomeReturningStartFreshButton') : t('welcome.welcomePrimaryButton')}
                     subtitle={isReturningUser ? t('welcome.welcomeReturningStartFreshSubtitle') : t('welcome.welcomePrimarySubtitle')}
-                    iconName="arrow-forward"
+                    iconName="arrow-right"
                     onPress={props.onCreateAccount}
                 />
             );
@@ -327,7 +328,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     primary={isReturningUser}
                     title={isReturningUser ? t('welcome.welcomeReturningLoginButton') : t('welcome.welcomeSecondaryButton')}
                     subtitle={t('welcome.welcomeSecondarySubtitle')}
-                    iconName="qr-code-outline"
+                    iconName="qr-code"
                     onPress={handleLogin}
                 />
             );
@@ -341,18 +342,25 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                             onPress={() => props.onLoginWithKeylessProvider(keylessProviderId!)}
                         />
                     ) : null}
+                    {options.showProviderSignup && providerId ? (
+                        <DecisionButton
+                            testID="welcome-signup-provider"
+                            title={options.providerSignupTitle}
+                            onPress={() => props.onCreateAccountViaProvider(providerId)}
+                        />
+                    ) : null}
                     {isReturningUser ? startFreshButton : loginButton}
                 </View>
             );
         }
 
-        if (options.mtlsPrimary || (options.showMtlsLogin && !options.showProviderSignup && !options.showKeylessProviderLogin)) {
+        if (primaryAction?.kind === 'mtls') {
             return (
                 <View style={styles.actionStack}>
                     <DecisionButton
                         testID="welcome-mtls-primary"
                         primary
-                        title={options.primarySignupTitle || options.mtlsTitle}
+                        title={primaryAction.title}
                         onPress={props.onLoginWithMtls}
                     />
                     {showSecondaryKeylessProviderLogin ? (
@@ -366,40 +374,40 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                         testID="welcome-secondary-login"
                         title={t('welcome.welcomeSecondaryButton')}
                         subtitle={t('welcome.welcomeSecondarySubtitle')}
-                        iconName="qr-code-outline"
+                        iconName="qr-code"
                         onPress={handleLogin}
                     />
                 </View>
             );
         }
 
-        if (options.keylessPrimary && keylessProviderId) {
+        if (primaryAction?.kind === 'keyless' && keylessProviderId) {
             return (
                 <View style={styles.actionStack}>
                     <DecisionButton
                         testID="welcome-provider-primary"
                         primary
-                        title={options.primarySignupTitle || options.providerKeylessTitle}
+                        title={primaryAction.title}
                         onPress={() => props.onLoginWithKeylessProvider(keylessProviderId)}
                     />
                     <DecisionButton
                         testID="welcome-secondary-login"
                         title={t('welcome.welcomeSecondaryButton')}
                         subtitle={t('welcome.welcomeSecondarySubtitle')}
-                        iconName="qr-code-outline"
+                        iconName="qr-code"
                         onPress={handleLogin}
                     />
                 </View>
             );
         }
 
-        if (options.showProviderSignup && providerId) {
+        if (primaryAction?.kind === 'provider-keyed' && providerId) {
             return (
                 <View style={styles.actionStack}>
                     <DecisionButton
                         testID="welcome-provider-primary"
                         primary
-                        title={options.primarySignupTitle || options.providerSignupTitle}
+                        title={primaryAction.title}
                         onPress={() => props.onCreateAccountViaProvider(providerId)}
                     />
                     {showSecondaryKeylessProviderLogin ? (
@@ -413,7 +421,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                         testID="welcome-secondary-login"
                         title={t('welcome.welcomeSecondaryButton')}
                         subtitle={t('welcome.welcomeSecondarySubtitle')}
-                        iconName="qr-code-outline"
+                        iconName="qr-code"
                         onPress={handleLogin}
                     />
                 </View>
@@ -424,9 +432,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             <View style={styles.actionStack}>
                 <DecisionButton
                     testID="welcome-secondary-login"
+                    primary={primaryAction === null}
                     title={t('welcome.welcomeSecondaryButton')}
                     subtitle={t('welcome.welcomeSecondarySubtitle')}
-                    iconName="qr-code-outline"
+                    iconName="qr-code"
                     onPress={handleLogin}
                 />
             </View>
@@ -464,6 +473,11 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     </Text>
                 ) : null}
             </View>
+            {options.showAuthActions && primaryAction === null ? (
+                <Text testID="welcome-signup-disabled" style={[styles.statusText, styles.signupDisabledNotice]}>
+                    {t('errors.signupDisabled')}
+                </Text>
+            ) : null}
             {renderActions()}
         </View>
     );
@@ -561,6 +575,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 14,
         lineHeight: 20,
         color: theme.colors.text.secondary,
+    },
+    signupDisabledNotice: {
+        textAlign: 'center',
+        maxWidth: 440,
+        alignSelf: 'center',
     },
     statusActions: {
         gap: 10,

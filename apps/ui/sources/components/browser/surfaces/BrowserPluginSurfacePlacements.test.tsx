@@ -1,8 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BrowserLocalServicePreviewTargetV1 } from '@happier-dev/protocol';
+import {
+    type BrowserLocalServicePreviewTargetV1,
+} from '@happier-dev/protocol';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import {
@@ -16,6 +19,19 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync
 const endpointConnectivityState = vi.hoisted(() => ({
     status: 'online' as 'online' | 'offline',
 }));
+
+const pluginSurfaceAccountLifetime = vi.hoisted(() => Object.freeze({
+    scope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }),
+    isCurrent: () => true,
+    onRetire: () => Object.freeze({ dispose: () => {} }),
+}));
+
+const accountEncryptionModeCredentials = vi.hoisted(() => ({
+    value: { token: 'browser-placement-account-mode-test-token' } as Readonly<{ token: string }> | null,
+}));
+const accountEncryptionModeFetch = vi.hoisted(() => vi.fn<
+    typeof import('@/sync/api/account/apiAccountEncryptionMode').fetchAccountEncryptionMode
+>());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -45,12 +61,51 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => ({
     useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
 }));
 
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => pluginSurfaceAccountLifetime,
+}));
+
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>();
+    return {
+        ...original,
+        fetchAccountEncryptionMode: (...args: Parameters<typeof original.fetchAccountEncryptionMode>) => (
+            accountEncryptionModeFetch(...args)
+        ),
+    };
+});
+
+vi.mock('@/sync/sync', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/sync')>();
+    return {
+        ...original,
+        sync: new Proxy(original.sync, {
+            get(target, property) {
+                if (property === 'getCredentials') {
+                    return () => accountEncryptionModeCredentials.value;
+                }
+                const value = Reflect.get(target, property, target);
+                return typeof value === 'function' ? value.bind(target) : value;
+            },
+        }),
+    };
+});
+
 const focusedTarget: BrowserLocalServicePreviewTargetV1 = {
     kind: 'localServicePreview',
     targetId: 'preview_1',
     sessionId: 'session_1',
     machineId: 'machine_1',
 };
+
+const browserPanelBinding = normalizePluginUiDestinationBindingV1({
+    pluginId: 'acme.browser',
+    destinationId: 'hosted-panel',
+    rendererId: 'panel',
+    container: 'browserPanel',
+    target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
+});
+if (!browserPanelBinding) throw new Error('Browser panel binding fixture is required');
 
 function createPreviewState() {
     return applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), {
@@ -89,25 +144,29 @@ const browserPanelPlacement = {
     pluginId: 'acme.browser',
     contributionKind: 'surfacePlacement',
     descriptorId: 'hosted-panel',
-    placement: 'browser.panel',
+    binding: browserPanelBinding,
     target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
     renderer: { kind: 'hostedWeb', contributionId: 'panel' },
     display: { label: 'Browser panel' },
     availability: { state: 'available', reason: 'available', diagnostics: [] },
-    hostActions: [{
-        actionId: 'browser.automation.snapshot',
-        placement: 'browser.panel',
-        scope: {
-            kind: 'browserView',
-            browserViewIdPath: '/browser/viewId',
-            sessionIdPath: '/session/id',
-            profileIdPath: '/browser/profileId',
+    headerActions: [],
+    // The Browser target is `machine_1`, but effects must use this exact
+    // producer materialization. The controller rejects a plugin caller without
+    // it rather than downgrading to a host presentation action.
+    hostOrigin: {
+        machineId: 'machine-admitted',
+        serverId: 'server-admitted',
+        generation: 9,
+        interactionEnabled: true,
+        executionOrigin: {
+            serverIdentityId: 'srv_account_one',
+            materializationRef: {
+                pluginId: 'acme.browser',
+                machineId: 'machine-admitted',
+                materializationId: 'browser-panel-install-a',
+            },
         },
-        policyOwner: 'BRW-14',
-        effect: 'readOnly',
-        requiredFeatureIds: ['browser.automation'],
-        requiredPermissionIds: [],
-    }],
+    },
 } as const;
 
 const pluginUiProjection: PluginUiProjectionModel = {
@@ -120,7 +179,7 @@ const pluginUiProjection: PluginUiProjectionModel = {
             contributionId: 'panel',
             service: { kind: 'sessionEndpoint', endpointIdPath: '/endpointId' },
             entry: { routeMode: 'hostOrigin', path: '/' },
-            bridge: { allowedMessages: ['requestHostAction'] },
+            bridge: { allowedMessages: ['hostApi'] },
             sandbox: { scripts: true },
             security: {},
             runtime: {
@@ -136,9 +195,6 @@ const pluginUiProjection: PluginUiProjectionModel = {
     },
     surfacePlacementsById: {
         [browserPanelPlacement.id]: browserPanelPlacement,
-    },
-    surfacePlacementsByPlacement: {
-        'browser.panel': [browserPanelPlacement],
     },
 };
 
@@ -160,11 +216,17 @@ function createLegacyGrantActionsProbe(): LegacyGrantActionsProbe {
     };
 }
 
-async function dispatchHostActionRequest(params: Readonly<{
+/**
+ * Post the predecessor outer host-method envelope. The direct cut admits Host
+ * API traffic only inside `kind: 'hostApi'`, so this raw form must not reach
+ * the mounted action dispatcher.
+ */
+async function dispatchPredecessorExecuteActionEnvelope(params: Readonly<{
     sequence: number;
     nonce: string;
     iframeSource: WindowProxy;
-    actionId: string;
+    action: string;
+    sessionId?: string | null;
 }>) {
     await act(async () => {
         const event = new Event('message') as MessageEvent;
@@ -173,13 +235,17 @@ async function dispatchHostActionRequest(params: Readonly<{
             data: { value: {
                 version: 1,
                 pluginId: 'acme.browser',
-                contributionId: 'panel',
+                // The guest echoes the identity the host wrote into the frame
+                // query: the bound controller's surface context, whose
+                // `contributionId` is the DECLARING placement, not the renderer.
+                contributionId: 'hosted-panel',
                 surfaceId: 'surfacePlacement:acme.browser:hosted-panel',
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}),
                 nonce: params.nonce,
                 sequence: params.sequence,
-                kind: 'requestHostAction',
+                kind: 'executeAction',
                 payload: {
-                    actionId: params.actionId,
+                    action: params.action,
                     input: {
                         browserSessionId: 'browser_session_1',
                         viewId: 'browser_view:preview_1',
@@ -199,19 +265,24 @@ async function withBrowserPanelHarness(
     run: (ctx: Readonly<{
         screen: Awaited<ReturnType<typeof renderScreen>>;
         iframeSource: WindowProxy;
-        runtimeActionExecute: ReturnType<typeof vi.fn>;
+        executeAction: ReturnType<typeof vi.fn>;
         nonce: string;
+        sessionId: string;
     }>) => Promise<void>,
     options: Readonly<{
         projection?: PluginUiProjectionModel;
         isFeatureEnabled?: (featureId: string) => boolean;
         endpointStatus?: 'online' | 'offline';
+        executionMachineId?: string | null;
+        executionServerId?: string | null;
+        executionSessionId?: string | null;
     }> = {},
 ): Promise<void> {
     const { BrowserPluginSurfacePlacements } = await import('./BrowserPluginSurfacePlacements');
     const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
     const previousWindow = (globalThis as { window?: Window }).window;
-    const runtimeActionExecute = vi.fn(async () => runtimeResult());
+    const executeAction = vi.fn(async () => runtimeResult());
+    const executionSessionId = options.executionSessionId ?? 'session_1';
     endpointConnectivityState.status = options.endpointStatus ?? 'online';
     (globalThis as { window: unknown }).window = new EventTarget();
 
@@ -222,8 +293,10 @@ async function withBrowserPanelHarness(
                 platform="desktop"
                 pluginUiProjection={options.projection ?? pluginUiProjection}
                 localServicePreviewState={createPreviewState()}
-                localServicePreviewServerId="server_1"
-                runtimeActionExecute={runtimeActionExecute as never}
+                executionMachineId={options.executionMachineId ?? 'machine_1'}
+                executionServerId={options.executionServerId ?? 'server_1'}
+                executionSessionId={executionSessionId}
+                executeAction={executeAction as never}
                 isFeatureEnabled={options.isFeatureEnabled ?? (() => true)}
                 {...({ grantActions: legacyGrantActions } as Record<string, unknown>)}
             />,
@@ -239,7 +312,7 @@ async function withBrowserPanelHarness(
         await flushHookEffects({ cycles: 3 });
         const frame = screen.root.findByType('iframe');
         const nonce = new URL(String(frame?.props.src ?? 'https://unused.test/')).searchParams.get('happierBridgeNonce') ?? '';
-        await run({ screen, iframeSource, runtimeActionExecute, nonce });
+        await run({ screen, iframeSource, executeAction, nonce, sessionId: executionSessionId });
     } finally {
         endpointConnectivityState.status = 'online';
         if (previousWindow) {
@@ -250,6 +323,17 @@ async function withBrowserPanelHarness(
     }
 }
 
+beforeEach(async () => {
+    endpointConnectivityState.status = 'online';
+    accountEncryptionModeCredentials.value = { token: 'browser-placement-account-mode-test-token' };
+    accountEncryptionModeFetch.mockReset();
+    accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 1 });
+    const { invalidateAccountEncryptionModeCache } = await import(
+        '@/sync/api/account/apiAccountEncryptionMode'
+    );
+    invalidateAccountEncryptionModeCache();
+});
+
 describe('BrowserPluginSurfacePlacements', () => {
     it('uses browser host feature context when filtering renderable placements', async () => {
         const gatedProjection: PluginUiProjectionModel = {
@@ -259,12 +343,6 @@ describe('BrowserPluginSurfacePlacements', () => {
                     ...browserPanelPlacement,
                     featureGate: 'plugins.ui.hostedWeb',
                 },
-            },
-            surfacePlacementsByPlacement: {
-                'browser.panel': [{
-                    ...browserPanelPlacement,
-                    featureGate: 'plugins.ui.hostedWeb',
-                }],
             },
         };
 
@@ -285,83 +363,52 @@ describe('BrowserPluginSurfacePlacements', () => {
         await withBrowserPanelHarness(
             createLegacyGrantActionsProbe(),
             () => ({ state: 'available' }),
-            async ({ screen, iframeSource, runtimeActionExecute, nonce }) => {
+            async ({ screen, iframeSource, executeAction, nonce, sessionId }) => {
                 expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
+                // `inert`/`aria-hidden` are owned by the snapshot node inside the
+                // boundary, not by the boundary wrapper itself.
                 expect(
                     screen.findByTestId(
-                        'plugin-surface-interaction-boundary:surfacePlacement:acme.browser:hosted-panel',
+                        'plugin-surface-snapshot:surfacePlacement:acme.browser:hosted-panel',
                     )?.props,
                 ).toMatchObject({
                     inert: true,
                     'aria-hidden': true,
                 });
 
-                await dispatchHostActionRequest({
+                await dispatchPredecessorExecuteActionEnvelope({
                     sequence: 2,
                     nonce,
                     iframeSource,
-                    actionId: 'browser.automation.snapshot',
+                    action: 'browser.navigate',
+                    sessionId,
                 });
-                expect(runtimeActionExecute).not.toHaveBeenCalled();
-                expect(iframeSource.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-                    kind: 'error',
-                    requestSequence: 2,
-                    payload: expect.objectContaining({ code: 'unavailable' }),
-                }), 'https://preview.happier.test');
+                expect(executeAction).not.toHaveBeenCalled();
+                expect(iframeSource.postMessage).not.toHaveBeenCalled();
             },
             { endpointStatus: 'offline' },
         );
     });
 
-    it('does not consult legacy project grants and routes declared actions through the front door', async () => {
-        const legacyGrantActions = createLegacyGrantActionsProbe();
+    it('rejects a predecessor direct browser-panel action envelope', async () => {
         await withBrowserPanelHarness(
-            legacyGrantActions,
-            () => ({ state: 'available', snapshotId: 'snapshot_1' }),
-            async ({ iframeSource, runtimeActionExecute, nonce }) => {
-                expect(legacyGrantActions.list).not.toHaveBeenCalled();
-
-                await dispatchHostActionRequest({
+            createLegacyGrantActionsProbe(),
+            () => ({ ok: true, result: { state: 'available', snapshotId: 'snapshot_1' } }),
+            async ({ iframeSource, executeAction, nonce, sessionId }) => {
+                await dispatchPredecessorExecuteActionEnvelope({
                     sequence: 2,
                     nonce,
                     iframeSource,
-                    actionId: 'browser.automation.snapshot',
+                    action: 'browser.navigate',
+                    sessionId,
                 });
-
-                // Declared action reaches the front-door executor (no direct bypass).
-                expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
-                expect(runtimeActionExecute).toHaveBeenCalledWith(expect.objectContaining({
-                    actionId: 'browser.automation.snapshot',
-                    input: {
-                        browserSessionId: 'browser_session_1',
-                        viewId: 'browser_view:preview_1',
-                    },
-                    context: expect.objectContaining({ surface: 'ui', serverId: 'server_1' }),
-                }));
-                expect(iframeSource.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-                    kind: 'result',
-                    requestSequence: 2,
-                    payload: { state: 'available', snapshotId: 'snapshot_1' },
-                }), 'https://preview.happier.test');
-
-                await dispatchHostActionRequest({
-                    sequence: 3,
-                    nonce,
-                    iframeSource,
-                    actionId: 'browser.automation.click',
-                });
-
-                // Undeclared action never reaches the executor; fail-closed at the host-action seam.
-                expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
-                expect(iframeSource.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-                    kind: 'result',
-                    requestSequence: 3,
-                    payload: expect.objectContaining({
-                        state: 'unavailable',
-                        reason: 'browser_panel_host_action_not_declared',
-                        diagnostics: ['browser_panel_host_action_not_declared'],
-                    }),
-                }), 'https://preview.happier.test');
+                expect(executeAction).not.toHaveBeenCalled();
+                expect(iframeSource.postMessage).not.toHaveBeenCalled();
+            },
+            {
+                executionMachineId: 'machine-admitted',
+                executionServerId: 'server-admitted',
+                executionSessionId: 'session-admitted',
             },
         );
     });

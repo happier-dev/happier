@@ -2,6 +2,7 @@ import type { VoiceDictationFailureReason } from './VoiceDictationController';
 
 const FAILURE_TRANSLATION_KEYS = {
     capture_failed: 'voiceAssistant.dictationErrors.captureFailed',
+    provider_unavailable: 'voiceAssistant.dictationErrors.providerUnavailable',
     capture_start_deadline_exceeded: 'voiceAssistant.dictationErrors.captureStartDeadlineExceeded',
     capture_duration_exceeded: 'voiceAssistant.dictationErrors.captureDurationExceeded',
     transcription_deadline_exceeded: 'voiceAssistant.dictationErrors.transcriptionDeadlineExceeded',

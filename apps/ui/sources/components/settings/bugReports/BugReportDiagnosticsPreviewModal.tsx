@@ -1,12 +1,12 @@
 import React from 'react';
 import { ScrollView, View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type BugReportDiagnosticsPreviewArtifact = {
   filename: string;
@@ -83,7 +83,7 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
         accessibilityLabel={t('common.back')}
         hitSlop={10}
       >
-        <Ionicons name="arrow-back" size={18} color={theme.colors.text.secondary} />
+        <Icon name="arrow-left" size={16} color={theme.colors.text.secondary} />
       </Pressable>
     );
   }, [selected, theme.colors.text.secondary]);

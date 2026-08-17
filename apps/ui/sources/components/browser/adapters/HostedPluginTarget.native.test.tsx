@@ -184,7 +184,6 @@ describe('HostedPluginTarget native', () => {
                     pluginId: 'plugin.example',
                     contributionId: 'hosted-web',
                     surfaceId: 'surface-1',
-                    sessionId: 'session-1',
                     nonce: 'nonce-1',
                     sequence: 1,
                     kind: 'ready',
@@ -198,5 +197,51 @@ describe('HostedPluginTarget native', () => {
             kind: 'ready',
             nonce: 'nonce-1',
         }));
+    });
+
+    it('keeps a stable hook order while native hosted-plugin admission changes', async () => {
+        const { HostedPluginTarget } = await import('./HostedPluginTarget.native');
+        const element = (url: string) => (
+            <HostedPluginTarget
+                title="Hosted plugin"
+                url={url}
+                sandbox={{
+                    scripts: true,
+                    sameOrigin: false,
+                    popups: false,
+                    topNavigation: false,
+                    mixedContent: false,
+                }}
+                security={{
+                    allowedNavigationOrigins: [],
+                    allowedCallbackOrigins: [],
+                    allowedConnectOrigins: [],
+                    csp: {
+                        scriptSrc: 'selfOnly',
+                        styleSrc: 'selfOnly',
+                        imgSrc: 'selfOnly',
+                        fontSrc: 'selfOnly',
+                        connectSrc: 'selfOnly',
+                        allowDataUrls: false,
+                        allowBlobUrls: false,
+                        allowInlineStyles: false,
+                        allowEval: false,
+                    },
+                    sourceMaps: 'disabled',
+                    mixedContent: 'deny',
+                }}
+                testID="hosted-plugin"
+            />
+        );
+        lastWebViewProps = null;
+
+        const screen = await renderScreen(element('http://plugin.example.test/plugin'));
+        expect(screen.findByTestId('hosted-plugin-unavailable')).toBeTruthy();
+
+        await screen.update(element('https://preview.example.test/plugin'));
+        expect(lastWebViewProps).not.toBeNull();
+
+        await screen.update(element('http://plugin.example.test/plugin'));
+        expect(screen.findByTestId('hosted-plugin-unavailable')).toBeTruthy();
     });
 });

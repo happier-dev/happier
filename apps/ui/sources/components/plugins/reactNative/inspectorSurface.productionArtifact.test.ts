@@ -13,6 +13,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY } from '@happier-dev/protocol/plugins/ui';
 
+import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
+
 import {
     installPluginUiHostRuntimeExternalsGlobal,
     resetPluginUiHostRuntimeExternalsGlobalForTesting,
@@ -165,13 +167,35 @@ describe('inspector RN-web PRODUCTION artifact — real built bytes through the 
         const executed: unknown[] = [];
         const element = Reflect.apply(renderSurface, undefined, [{
             plugin: { id: 'happier.inspector', version: '0.0.0' },
-            view: { id: 'inspector-app', placement: 'app.rightSidebarTab' },
-            surface: { placement: 'app.rightSidebarTab', platform: 'web' },
+            // §3.2/§3.3: the canonical snapshot the host actually projects
+            // (`createPluginSurfaceContext` + `projectPluginUiTheme`), not a
+            // hand-built envelope. The Inspector renders entirely from
+            // `surface.theme` since its private palette was deleted (UI-D12),
+            // so a partial surface here would prove nothing about the real
+            // mount and would only crash the real production bytes.
+            surface: createPluginSurfaceContextFixture({
+                mount: {
+                    kind: 'destination',
+                    destination: { pluginId: 'happier.inspector', localId: 'inspector-app' },
+                    container: 'rightSidebarTab',
+                },
+                target: { kind: 'app' },
+                platform: 'web',
+            }),
             signal: new AbortController().signal,
             hostApi: {
+                // `version()` is a REQUIRED member of the public host API and the
+                // documented way a surface negotiates method availability
+                // (UI-T04), so a mount that omits it is not the public contract.
+                // The tab installs no `openSurface`, which is why the surface
+                // renders no page-navigation control here.
+                version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: ['executeAction'] }),
                 executeAction: async (action: unknown, input: unknown) => {
                     executed.push({ action, input });
                     return { ok: true, plugins: [] };
+                },
+                readResource: async () => {
+                    throw new Error('Inspector production artifact must not read plugin resources.');
                 },
             },
         }]) as React.ReactElement;

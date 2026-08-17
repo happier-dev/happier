@@ -1,7 +1,6 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
-import { Pressable } from 'react-native';
+import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -19,12 +18,15 @@ import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInferen
 import { getSherpaStreamingSttPackOptions } from '@/voice/sherpa/stt/sherpaStreamingSttPacks';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 type Progress = { loaded: number; total: number; file?: string };
 
+const ACCESSORY_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 const ACCESSORY_BUTTON_STYLE = {
-  width: 44,
-  height: 44,
+  width: ACCESSORY_TARGET_SIZE,
+  height: ACCESSORY_TARGET_SIZE,
   alignItems: 'center',
   justifyContent: 'center',
 } as const;
@@ -323,10 +325,10 @@ export function LocalNeuralSttSettings(props: {
                     cancelPrepare();
                   }}
                 >
-                  <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
+                  <Icon name="x" size={20} color={theme.colors.text.secondary} />
                 </Pressable>
               ) : (
-                <Ionicons name="download-outline" size={20} color={theme.colors.text.secondary} />
+                <Icon name="download" size={20} color={theme.colors.text.secondary} />
               )
             }
             rightElementOutsidePressable={modelStatus === 'downloading'}

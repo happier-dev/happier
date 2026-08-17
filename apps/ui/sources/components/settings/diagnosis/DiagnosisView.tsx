@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -29,6 +28,7 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 import { useMachineDoctorSnapshot } from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshot';
 import { buildDiagnosisReport, type DiagnosisFinding, type DiagnosisReport, type ServerDiagnosticsStatus } from './engine/diagnosisEngine';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type MachineRunStatus =
     | { status: 'idle' }
@@ -311,20 +311,20 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         title={t('diagnosis.overview.activeServer')}
                         subtitle={<Text style={{ color: theme.colors.text.secondary }}>{activeServerUrl || t('status.unknown')}</Text>}
                         detail={activeServerSnapshot.serverId}
-                        icon={<Ionicons name="server-outline" size={24} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="hard-drives" size={24} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/server')}
                     />
                     <Item
                         title={t('diagnosis.overview.account')}
                         detail={profile?.id ?? t('status.unknown')}
-                        icon={<Ionicons name="person-outline" size={24} color={theme.colors.accent.purple} />}
+                        icon={<Icon name="person" size={24} color={theme.colors.accent.purple} />}
                         copy={profile?.id ?? false}
                     />
                     <Item
                         title={t('diagnosis.overview.onlineMachines')}
                         detail={`${onlineMachinesActiveServer.length}`}
                         subtitle={t('diagnosis.overview.cachedAttribution', { count: cachedAttributionCount })}
-                        icon={<Ionicons name="laptop-outline" size={24} color={theme.colors.accent.indigo} />}
+                        icon={<Icon name="laptop" size={24} color={theme.colors.accent.indigo} />}
                     />
                 </ItemGroup>
 
@@ -333,7 +333,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         testID="diagnosis-run-button"
                         title={t('diagnosis.actions.run')}
                         subtitle={t('diagnosis.actions.runSubtitle')}
-                        icon={<Ionicons name="medkit-outline" size={24} color={theme.colors.accent.orange} />}
+                        icon={<Icon name="first-aid-kit" size={24} color={theme.colors.accent.orange} />}
                         onPress={runDiagnosis}
                         loading={running}
                         showChevron={false}
@@ -342,7 +342,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         testID="diagnosis-copy-button"
                         title={t('diagnosis.actions.copyReport')}
                         subtitle={t('diagnosis.actions.copyReportSubtitle')}
-                        icon={<Ionicons name="copy-outline" size={24} color={theme.colors.accent.indigo} />}
+                        icon={<Icon name="copy" size={24} color={theme.colors.accent.indigo} />}
                         onPress={copyReportJson}
                         rightElement={<CopiedPill visible={copyFeedback.isCopied('report')} testID="diagnosis-copy-feedback" />}
                         disabled={!report}
@@ -371,7 +371,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         />
                         <Item
                             title={t('diagnosis.pasteDoctorJson.parse')}
-                            icon={<Ionicons name="checkmark-outline" size={20} color={theme.colors.state.success.foreground} />}
+                            icon={<Icon name="check" size={20} color={theme.colors.state.success.foreground} />}
                             onPress={parsePasted}
                             loading={parsing}
                             density="compact"
@@ -391,7 +391,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                     {onlineMachinesActiveServer.slice(0, 3).length === 0 ? (
                         <Item
                             title={t('diagnosis.machineRuns.none')}
-                            icon={<Ionicons name="laptop-outline" size={24} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="laptop" size={24} color={theme.colors.text.secondary} />}
                             disabled
                         />
                     ) : onlineMachinesActiveServer.slice(0, 3).map((m) => {
@@ -416,7 +416,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                                 title={m.metadata?.displayName ?? m.metadata?.host ?? m.id}
                                 subtitle={subtitle}
                                 detail={detail}
-                                icon={<Ionicons name="laptop-outline" size={24} color={iconColor} />}
+                                icon={<Icon name="laptop" size={24} color={iconColor} />}
                             />
                         );
                     })}
@@ -427,7 +427,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         title={t('diagnosis.serverProbe.title')}
                         detail={serverDiagnostics.state}
                         subtitle={resolveServerDiagnosticsSubtitle(serverDiagnostics)}
-                        icon={<Ionicons name="cloud-outline" size={24} color={theme.colors.accent.blue} />}
+                        icon={<Icon name="cloud" size={24} color={theme.colors.accent.blue} />}
                     />
                 </ItemGroup>
 
@@ -436,14 +436,14 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         <Item
                             title={t('diagnosis.findings.notRun')}
                             subtitle={t('diagnosis.findings.notRunSubtitle')}
-                            icon={<Ionicons name="information-circle-outline" size={24} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="info" size={24} color={theme.colors.text.secondary} />}
                             disabled
                         />
                     ) : report.findings.length === 0 ? (
                         <Item
                             title={t('diagnosis.findings.none')}
                             subtitle={t('diagnosis.findings.noneSubtitle')}
-                            icon={<Ionicons name="checkmark-circle-outline" size={24} color={theme.colors.state.success.foreground} />}
+                            icon={<Icon name="check-circle" size={24} color={theme.colors.state.success.foreground} />}
                             disabled
                         />
                     ) : report.findings.map((finding, idx) => (
@@ -466,7 +466,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                                     </Text>
                                 </View>
                             }
-                            icon={<Ionicons name="alert-circle-outline" size={24} color={finding.severity === 'error' ? theme.colors.state.danger.foreground : theme.colors.accent.orange} />}
+                            icon={<Icon name="warning-circle" size={24} color={finding.severity === 'error' ? theme.colors.state.danger.foreground : theme.colors.accent.orange} />}
                             copy={finding.code}
                         />
                     ))}

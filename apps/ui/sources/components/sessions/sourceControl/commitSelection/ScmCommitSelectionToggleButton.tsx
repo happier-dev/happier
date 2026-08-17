@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -10,7 +9,9 @@ import { applyFileStageAction } from '@/scm/operations/applyFileStageAction';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type ScmCommitSelectionToggleButtonProps = Readonly<{
     sessionId: string;
@@ -24,6 +25,8 @@ export type ScmCommitSelectionToggleButtonProps = Readonly<{
     onAfterToggle?: () => void | Promise<void>;
 }>;
 
+const COMMIT_TOGGLE_ICON_SIZE_PX = 14;
+
 export const ScmCommitSelectionToggleButton = React.memo((props: ScmCommitSelectionToggleButtonProps) => {
     const { theme } = useUnistyles();
     const [busy, setBusy] = React.useState(false);
@@ -32,13 +35,17 @@ export const ScmCommitSelectionToggleButton = React.memo((props: ScmCommitSelect
     const iconColor = props.selectedForCommit ? theme.colors.state.success.foreground : theme.colors.text.secondary;
 
     return (
-        <Pressable
+        <IconButton
+            variant="plain"
+            size={28}
             testID={`scm-commit-selection-toggle-${toTestIdSafeValue(props.file.fullPath)}`}
-            accessibilityRole="button"
             accessibilityLabel={
                 props.selectedForCommit ? t('files.commitSelection.removeFromCommit') : t('files.commitSelection.addToCommit')
             }
             disabled={busy || !props.scmWriteEnabled}
+            icon={busy
+                ? <ActivitySpinner size={iconMatchedSpinnerSize(COMMIT_TOGGLE_ICON_SIZE_PX)} color={theme.colors.text.secondary} />
+                : <Icon name={iconName as any} size={COMMIT_TOGGLE_ICON_SIZE_PX} color={iconColor} />}
             onPress={(e: any) => {
                 e?.stopPropagation?.();
                 fireAndForget((async () => {
@@ -60,23 +67,6 @@ export const ScmCommitSelectionToggleButton = React.memo((props: ScmCommitSelect
                     }
                 })(), { tag: 'ScmCommitSelectionToggleButton.onPress' });
             }}
-            style={{
-                width: 28,
-                height: 28,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: theme.colors.border.default,
-                backgroundColor: theme.colors.surface.base,
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: (!props.scmWriteEnabled || busy) ? 0.55 : 1,
-            }}
-        >
-            {busy ? (
-                <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-            ) : (
-                <Octicons name={iconName as any} size={14} color={iconColor} />
-            )}
-        </Pressable>
+        />
     );
 });

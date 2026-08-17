@@ -139,6 +139,8 @@ vi.mock('@react-navigation/elements', () => ({
 }));
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
+    useLayoutMaxWidth: () => 1024,
+    useLayoutMaxWidthStyle: () => ({ maxWidth: 1024 }),
 }));
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     DEFAULT_PROFILES: [],
@@ -163,6 +165,9 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machineContributionRegistryProjectionDescribe(...args),
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 describe('ProfileEditScreen replace fallback', () => {

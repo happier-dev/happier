@@ -5,6 +5,7 @@ import { decodeUTF8, encodeUTF8 } from "@/encryption/text";
 import { decryptAESGCMString, encryptAESGCMString } from "@/encryption/aes";
 import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
+import { yieldToEventLoop } from './cryptoBatchYield';
 import {
     decryptAesGcmJsonBase64BatchWithNativeWorker,
     decryptAesGcmJsonBatchWithNativeWorker,
@@ -87,10 +88,6 @@ function shouldUseLargePayloadAesBase64Path(values: readonly string[]): boolean 
     const threshold = readAesBase64DecryptWorkerThresholdBytes();
     if (threshold <= 0) return values.length > 0;
     return values.some((value) => estimateBase64PayloadBytes(value) >= threshold);
-}
-
-async function yieldBetweenLargeAesPayloads(): Promise<void> {
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 async function mapWithConcurrency<T, R>(
@@ -359,7 +356,7 @@ export class AES256Encryption implements Encryptor, Decryptor {
         for (const item of data) {
             results.push(await decryptOne(item));
             if (estimateBase64PayloadBytes(item) >= readAesBase64DecryptWorkerThresholdBytes()) {
-                await yieldBetweenLargeAesPayloads();
+                await yieldToEventLoop();
             }
         }
         return results;

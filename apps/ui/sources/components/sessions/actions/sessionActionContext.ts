@@ -3,6 +3,11 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { isSessionTerminalPermanentlyAbsent } from '@happier-dev/protocol';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import {
+    canContinueSessionWithFreshSpawn,
+    canResumeSessionWithOptions,
+    type ResumeCapabilityOptions,
+} from '@/agents/runtime/resumeCapabilities';
 
 import type { SessionActionSession, SessionActionTarget } from './sessionActionTypes';
 
@@ -12,6 +17,7 @@ export function createSessionActionTarget(params: Readonly<{
     currentUserId?: string | null;
     isConnected?: boolean;
     isPinned?: boolean;
+    resumeCapabilityOptions?: ResumeCapabilityOptions;
 }>): SessionActionTarget {
     const session = params.session;
     const sessionOwnerId = typeof session.owner === 'string' ? session.owner : null;
@@ -36,6 +42,16 @@ export function createSessionActionTarget(params: Readonly<{
     );
     const canStop = isOwnedByCurrentUser;
     const canArchive = hasAdminAccess && !isArchived && (!isActive || canStop);
+    const ownerMetadata = 'agentState' in session
+        ? readSessionOwnerMetadataView(session)
+        : null;
+    const hasWriteAccess = !session.accessLevel || session.accessLevel === 'edit' || session.accessLevel === 'admin';
+    const canResume = !isActive
+        && hasWriteAccess
+        && (
+            canResumeSessionWithOptions(ownerMetadata, params.resumeCapabilityOptions)
+            || canContinueSessionWithFreshSpawn(ownerMetadata, params.resumeCapabilityOptions)
+        );
 
     return {
         session,
@@ -51,6 +67,7 @@ export function createSessionActionTarget(params: Readonly<{
         canStop,
         canArchive,
         canRename: hasAdminAccess,
+        canResume,
         canDelete:
             isOwnedByCurrentUser
             && !isActive

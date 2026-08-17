@@ -22,6 +22,12 @@ vi.mock('react-native-mmkv', () => {
         delete(key: string) {
             deleteKey(key);
         }
+
+        getAllKeys() {
+            return [...store.keys()];
+        }
+
+        trim() {}
     }
 
     return { MMKV };
@@ -37,9 +43,12 @@ import {
     scheduleWarmCacheBootHydration,
     setWarmCacheAccountScope,
 } from './warmCachePersistence';
+import { prepareWarmCacheEncryptionKey } from './warmCacheEncryptionKey';
 
 describe('warmCachePersistence', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        // Nothing reads or writes the cache until its at-rest key resolves, exactly as on a device.
+        await prepareWarmCacheEncryptionKey();
         store.clear();
         getString.mockClear();
         set.mockClear();
@@ -171,6 +180,12 @@ describe('warmCachePersistence', () => {
                 active: true,
                 activeAt: 22,
                 revokedAt: null,
+                replacedByMachineId: 'm2',
+                replacedAt: 23,
+                replacementReason: 'reinstalled',
+                replacementSource: 'automatic',
+                replacementActorUserId: 'user-1',
+                lockedReason: 'decryption_failed',
                 displayName: 'Work Mac',
                 host: 'mbp',
                 homeDir: '/home/u',
@@ -182,6 +197,12 @@ describe('warmCachePersistence', () => {
                 machineId: 'm1',
                 metadataVersion: 5,
                 displayName: 'Work Mac',
+                replacedByMachineId: 'm2',
+                replacedAt: 23,
+                replacementReason: 'reinstalled',
+                replacementSource: 'automatic',
+                replacementActorUserId: 'user-1',
+                lockedReason: 'decryption_failed',
             }),
         });
     });

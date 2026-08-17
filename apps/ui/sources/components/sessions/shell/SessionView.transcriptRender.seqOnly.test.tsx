@@ -3,10 +3,41 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { clearSessionSurfaceVisibilityForServerScopeReset } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+
+/**
+ * `installSessionShellCommonModuleMocks()` registers its React Native mock from
+ * inside a function. Static imports above can already load the shared
+ * presentation package before that factory executes, which would leave its
+ * spinner on the setup-level native branch while this screen uses the web
+ * branch. Hoist the same web boundary for the entire graph so this test covers
+ * the real standalone-spinner accessibility contract.
+ */
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        View: 'View',
+        Text: 'Text',
+        Pressable: 'Pressable',
+        ActivityIndicator: 'ActivityIndicator',
+        Platform: {
+            OS: 'web',
+            select: (spec: Record<string, unknown>) =>
+                spec && Object.prototype.hasOwnProperty.call(spec, 'web')
+                    ? (spec as any).web
+                    : (spec as any).default,
+        },
+    });
+});
+
+// The patched streaming package is an external renderer boundary and can be absent
+// before the UI postinstall lane materializes it; this composer test does not exercise it.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => [],
+}));
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,7 +53,29 @@ const chatListRenderSpy = vi.hoisted(() => vi.fn());
 const appPaneScopeHostRenderSpy = vi.hoisted(() => vi.fn());
 const agentContentViewRenderSpy = vi.hoisted(() => vi.fn());
 const agentInputRenderSpy = vi.hoisted(() => vi.fn());
-const sessionScreenFocusState = vi.hoisted(() => ({ current: true }));
+const nonSteerablePromptAlertAsyncSpy = vi.hoisted(() => vi.fn());
+// Route focus and pathname are reactive in production (React Navigation / expo-router re-render
+// their subscribers on a route change). These stores keep that property so a spec can move the
+// route on a mounted tree and observe what the surface does, not only what a fresh mount does.
+const createReactiveRouteState = vi.hoisted(() => <TValue,>(initialValue: TValue) => {
+    const listeners = new Set<() => void>();
+    const state = {
+        current: initialValue,
+        read: () => state.current,
+        set: (nextValue: TValue) => {
+            state.current = nextValue;
+            for (const listener of listeners) listener();
+        },
+        subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+            };
+        },
+    };
+    return state;
+});
+const sessionScreenFocusState = vi.hoisted(() => createReactiveRouteState(true));
 const pendingMessagesHookSpy = vi.hoisted(() => vi.fn());
 const transcriptIdsHookSpy = vi.hoisted(() => vi.fn());
 const subagentSourceMessagesHookSpy = vi.hoisted(() => vi.fn());
@@ -33,7 +86,7 @@ const approvalArtifactsSpy = vi.hoisted(() => vi.fn());
 const sendMessageSpy = vi.hoisted(() => vi.fn(async () => ({ localId: 'local-message-1' })));
 const enqueuePendingMessageSpy = vi.hoisted(() => vi.fn(async () => ({ localId: 'pending-message-1' })));
 const pendingOutboundSendPromises = vi.hoisted(() => [] as Promise<unknown>[]);
-const routerPathnameState = vi.hoisted(() => ({ current: '/' }));
+const routerPathnameState = vi.hoisted(() => createReactiveRouteState('/'));
 const themeColors = vi.hoisted(() => ({
     text: '#000',
     textSecondary: '#666',
@@ -80,9 +133,11 @@ function getStorageStateForTest() {
         sessionMessages: {},
         sessionPending: {},
         sessionListRenderables: {},
+        sessionTranscriptLoadIssues: {},
         settings: {
             sessionMessageSendMode: 'agent_queue',
             sessionBusySteerSendPolicy: 'steer_immediately',
+            sessionNonSteerableSendPrompt: 'on',
         },
         concurrentSessionListCacheByServerId: concurrentSessionListCacheByServerIdState,
     };
@@ -125,12 +180,25 @@ vi.mock('expo-linear-gradient', () => ({
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
+vi.mock('react-native-safe-area-context', () => {
+    const insets = { top: 0, bottom: 0, left: 0, right: 0 };
+    return {
+        initialWindowMetrics: {
+            frame: { x: 0, y: 0, width: 0, height: 0 },
+            insets,
+        },
+        SafeAreaInsetsContext: React.createContext(null),
+        SafeAreaProvider: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
+        useSafeAreaInsets: () => insets,
+    };
+});
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
-    useIsFocused: () => sessionScreenFocusState.current,
+    useIsFocused: () => React.useSyncExternalStore(
+        sessionScreenFocusState.subscribe,
+        sessionScreenFocusState.read,
+        sessionScreenFocusState.read,
+    ),
 }));
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authCredentials }),
@@ -162,11 +230,22 @@ installSessionShellCommonModuleMocks({
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
         translate: (key: string) => key,
     }),
-    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module,
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alertAsync: (...args) => nonSteerablePromptAlertAsyncSpy(...args),
+            },
+        }).module;
+    },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            pathname: () => routerPathnameState.current,
+            pathname: () => React.useSyncExternalStore(
+                routerPathnameState.subscribe,
+                routerPathnameState.read,
+                routerPathnameState.read,
+            ),
             router: {
                 push: vi.fn(),
                 back: vi.fn(),
@@ -547,6 +626,8 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         agentContentViewRenderSpy.mockClear();
         appPaneScopeHostRenderSpy.mockClear();
         agentInputRenderSpy.mockClear();
+        nonSteerablePromptAlertAsyncSpy.mockReset();
+        nonSteerablePromptAlertAsyncSpy.mockResolvedValue(undefined);
         pendingMessagesHookSpy.mockClear();
         transcriptIdsHookSpy.mockClear();
         subagentSourceMessagesHookSpy.mockClear();
@@ -825,6 +906,77 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await screen.unmount();
     });
 
+    it('keeps a previously presented same-session subtree mounted across transient surface hiding', async () => {
+        const { SessionView } = await import('./SessionView');
+        const mountedSpy = vi.fn();
+        const unmountedSpy = vi.fn();
+
+        function ContinuityProbe() {
+            React.useEffect(() => {
+                mountedSpy();
+                return () => {
+                    unmountedSpy();
+                };
+            }, []);
+            return React.createElement('ContinuityProbe');
+        }
+
+        const screen = await renderScreen(
+            <SessionView
+                id="s1"
+                contentOverride={<ContinuityProbe />}
+                surfaceFocusedOverride={true}
+                surfaceVisibleOverride={true}
+                routeAnchorOverride={true}
+            />,
+            {
+                wrapper: AppPaneProviderWrapper,
+                flushOptions: { cycles: 0, turns: 0 },
+            },
+        );
+
+        expect(mountedSpy).toHaveBeenCalledTimes(1);
+        expect(unmountedSpy).not.toHaveBeenCalled();
+
+        await screen.update(
+            <SessionView
+                id="s1"
+                contentOverride={<ContinuityProbe />}
+                surfaceFocusedOverride={false}
+                surfaceVisibleOverride={false}
+                routeAnchorOverride={false}
+            />,
+        );
+
+        expect(screen.findAllByType('ContinuityProbe')).toHaveLength(1);
+        expect(screen.findByTestId('session-view-retained-surface:s1')?.props).toMatchObject({
+            pointerEvents: 'none',
+            style: expect.objectContaining({ opacity: 0 }),
+        });
+        expect(mountedSpy).toHaveBeenCalledTimes(1);
+        expect(unmountedSpy).not.toHaveBeenCalled();
+
+        await screen.update(
+            <SessionView
+                id="s1"
+                contentOverride={<ContinuityProbe />}
+                surfaceFocusedOverride={true}
+                surfaceVisibleOverride={true}
+                routeAnchorOverride={true}
+            />,
+        );
+
+        expect(screen.findByTestId('session-view-retained-surface:s1')?.props).toMatchObject({
+            pointerEvents: 'auto',
+            style: expect.objectContaining({ opacity: 1 }),
+        });
+        expect(mountedSpy).toHaveBeenCalledTimes(1);
+        expect(unmountedSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+        expect(unmountedSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('marks a visible route-anchor surface as visible even while navigation focus is false', async () => {
         const { SessionView } = await import('./SessionView');
 
@@ -860,6 +1012,101 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(sessionSubagentsHookSpy).not.toHaveBeenCalled();
         expect(sessionExecutionRunsSupportedHookSpy).not.toHaveBeenCalled();
         expect(approvalArtifactsSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it.each([
+        ['/new', 'new-session modal'],
+        ['/new/pick/machine', 'new-session sub-route'],
+        ['/direct/browse', 'browse existing session modal'],
+    ] as const)('keeps the session surface presented and mounted while the %s overlay route is open (%s)', async (modalPathname, _label) => {
+        routerPathnameState.current = '/session/s1';
+        const { SessionView } = await import('./SessionView');
+        const mountedSpy = vi.fn();
+        const unmountedSpy = vi.fn();
+
+        function ContinuityProbe() {
+            React.useEffect(() => {
+                mountedSpy();
+                return () => {
+                    unmountedSpy();
+                };
+            }, []);
+            return React.createElement('ContinuityProbe');
+        }
+
+        const screen = await renderScreen(
+            <SessionView id="s1" contentOverride={<ContinuityProbe />} />,
+            {
+                wrapper: AppPaneProviderWrapper,
+            },
+        );
+
+        expect(mountedSpy).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('session-view-retained-surface:s1')?.props).toMatchObject({
+            pointerEvents: 'auto',
+            style: expect.objectContaining({ opacity: 1 }),
+        });
+
+        // The overlay opens over the session route: the stack blurs the session screen, but the
+        // navigator keeps that screen painted behind the modal, so the surface must stay presented.
+        await act(async () => {
+            sessionScreenFocusState.set(false);
+            routerPathnameState.set(modalPathname);
+        });
+        await flushHookEffects();
+
+        expect(screen.findAllByType('ContinuityProbe')).toHaveLength(1);
+        expect(screen.findByTestId('session-view-retained-surface:s1')?.props).toMatchObject({
+            pointerEvents: 'auto',
+            style: expect.objectContaining({ opacity: 1 }),
+        });
+        expect(mountedSpy).toHaveBeenCalledTimes(1);
+        expect(unmountedSpy).not.toHaveBeenCalled();
+
+        // Closing the overlay restores the surface without remounting it.
+        await act(async () => {
+            sessionScreenFocusState.set(true);
+            routerPathnameState.set('/session/s1');
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('session-view-retained-surface:s1')?.props).toMatchObject({
+            pointerEvents: 'auto',
+            style: expect.objectContaining({ opacity: 1 }),
+        });
+        expect(mountedSpy).toHaveBeenCalledTimes(1);
+        expect(unmountedSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('stops presenting a session surface anchored to a different session route when an overlay route opens', async () => {
+        routerPathnameState.current = '/session/other-session';
+        const { SessionView } = await import('./SessionView');
+
+        const screen = await renderScreen(
+            <SessionView id="s1" />,
+            {
+                wrapper: AppPaneProviderWrapper,
+            },
+        );
+
+        expect(screen.findByTestId('session-view-retained-surface:s1')?.props).toMatchObject({
+            style: expect.objectContaining({ opacity: 1 }),
+        });
+
+        await act(async () => {
+            sessionScreenFocusState.set(false);
+            routerPathnameState.set('/new');
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('session-view-retained-surface:s1')?.props).toMatchObject({
+            pointerEvents: 'none',
+            style: expect.objectContaining({ opacity: 0 }),
+        });
 
         await screen.unmount();
     });
@@ -1257,6 +1504,93 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(markSessionLiveTailIntentSpy).not.toHaveBeenCalled();
         expect(nextFollowBottomIntentKey).not.toBe(initialFollowBottomIntentKey);
 
+        await screen.unmount();
+    });
+
+    it('admits one same-tick composer send and releases after its outbound handoff', async () => {
+        const screen = await renderSessionView();
+        const firstOutboundHandoff = createDeferred<void>();
+        const firstText = 'first same-tick composer send';
+        const secondText = 'second composer send after handoff';
+        enqueuePendingMessageSpy.mockImplementationOnce(async () => {
+            await firstOutboundHandoff.promise;
+            return { localId: 'pending-message-1' };
+        });
+
+        let agentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        await act(async () => {
+            agentInputProps.onChangeText(firstText);
+        });
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        agentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        await act(async () => {
+            agentInputProps.onSend({ inputTextOverride: firstText });
+            agentInputProps.onSend({ inputTextOverride: firstText });
+            await Promise.resolve();
+        });
+
+        try {
+            expect(enqueuePendingMessageSpy).toHaveBeenCalledOnce();
+        } finally {
+            firstOutboundHandoff.resolve(undefined);
+            await act(async () => {
+                await Promise.all(pendingOutboundSendPromises.splice(0));
+            });
+        }
+
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        agentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        await act(async () => {
+            agentInputProps.onChangeText(secondText);
+        });
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        agentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        await act(async () => {
+            agentInputProps.onSend({ inputTextOverride: secondText });
+            await Promise.all(pendingOutboundSendPromises.splice(0));
+        });
+
+        expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(2);
+        await screen.unmount();
+    });
+
+    it('reserves before an active-turn non-steerable prompt', async () => {
+        const promptDismissal = createDeferred<void>();
+        const text = '/compact same-tick prompt';
+        nonSteerablePromptAlertAsyncSpy.mockImplementationOnce(async () => await promptDismissal.promise);
+        sessionState = {
+            ...sessionState,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: Date.now(),
+        };
+        const screen = await renderSessionView();
+
+        let agentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        await act(async () => {
+            agentInputProps.onChangeText(text);
+        });
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        agentInputProps = agentInputRenderSpy.mock.calls.at(-1)?.[0];
+        await act(async () => {
+            agentInputProps.onSend({ inputTextOverride: text });
+            agentInputProps.onSend({ inputTextOverride: text });
+            await Promise.resolve();
+        });
+
+        try {
+            expect(nonSteerablePromptAlertAsyncSpy).toHaveBeenCalledOnce();
+            expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+        } finally {
+            promptDismissal.resolve(undefined);
+            await act(async () => {
+                await Promise.all(pendingOutboundSendPromises.splice(0));
+            });
+        }
+
+        expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
         await screen.unmount();
     });
 

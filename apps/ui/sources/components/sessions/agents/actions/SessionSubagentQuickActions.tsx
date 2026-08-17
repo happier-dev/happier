@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -11,6 +10,7 @@ import { resolveSubagentStructuredSend } from '@/sync/domains/input/subagents/re
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const SessionSubagentQuickActions = React.memo((props: Readonly<{
     sessionId: string;
@@ -92,7 +92,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     }}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="paper-plane-outline" size={16} color={theme.colors.text.secondary} />
+                    <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
 
@@ -108,7 +108,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     disabled={pendingAction !== null}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pendingAction !== null ? 0.6 : pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="stop-circle-outline" size={16} color={theme.colors.text.secondary} />
+                    <Icon name="stop-circle" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
 
@@ -124,7 +124,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     disabled={pendingAction !== null}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pendingAction !== null ? 0.6 : pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} />
+                    <Icon name="trash" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
 
@@ -139,7 +139,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     }}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="open-outline" size={16} color={theme.colors.text.secondary} />
+                    <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
         </View>

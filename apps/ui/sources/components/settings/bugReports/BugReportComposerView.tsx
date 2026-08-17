@@ -1,6 +1,5 @@
 import React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -25,6 +24,7 @@ import { BugReportSimilarIssuesSection } from './BugReportSimilarIssuesSection';
 import { bugReportComposerStyles } from './bugReportComposerStyles';
 import { DEFAULT_BUG_REPORT_CAPABILITIES, type BugReportsFeature } from './bugReportFeatureDefaults';
 import { useBugReportComposerModel } from './hooks/useBugReportComposerModel';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const BugReportComposerView = React.memo(function BugReportComposerView() {
   const styles = bugReportComposerStyles;
@@ -163,7 +163,7 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
             >
               {model.submitting
                 ? <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
-                : <Ionicons name="paper-plane-outline" size={18} color={theme.colors.button.primary.tint} />}
+                : <Icon name="paper-plane" size={16} color={theme.colors.button.primary.tint} />}
                 <Text style={styles.submitButtonText}>
                   {model.submitting
                     ? t('bugReports.composer.submit.submitting')

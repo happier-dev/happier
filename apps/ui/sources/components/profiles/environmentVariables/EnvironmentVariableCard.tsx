@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Pressable, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -10,6 +9,7 @@ import { formatEnvVarTemplate, parseEnvVarTemplate, type EnvVarTemplateOperator 
 import { t } from '@/text';
 import type { EnvPreviewSecretsPolicy, PreviewEnvValue } from '@/sync/ops';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 export interface EnvironmentVariableCardProps {
@@ -283,7 +283,7 @@ export function EnvironmentVariableCard({
                         <Text style={[styles.secondaryText, styles.vaultRowValue]}>
                             {defaultSecretNameForSourceVar ?? t('secrets.noneTitle')}
                         </Text>
-                        <Ionicons name="chevron-forward" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
                     </View>
                 </View>
             </View>
@@ -378,8 +378,8 @@ export function EnvironmentVariableCard({
                 rightElement={(
                     <View style={styles.titleRowActions}>
                         {hideValueInUi && (
-                            <Ionicons
-                                name="lock-closed"
+                            <Icon
+                                name="lock"
                                 size={theme.iconSize.small}
                                 color={theme.colors.state.danger.foreground}
                             />
@@ -388,13 +388,13 @@ export function EnvironmentVariableCard({
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             onPress={() => onDelete(index)}
                         >
-                            <Ionicons name="trash-outline" size={theme.iconSize.large} color={theme.colors.state.danger.foreground} />
+                            <Icon name="trash" size={theme.iconSize.large} color={theme.colors.state.danger.foreground} />
                         </Pressable>
                         <Pressable
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             onPress={() => onDuplicate(index)}
                         >
-                            <Ionicons name="copy-outline" size={theme.iconSize.large} color={theme.colors.button.secondary.tint} />
+                            <Icon name="copy" size={theme.iconSize.large} color={theme.colors.button.secondary.tint} />
                         </Pressable>
                     </View>
                 )}

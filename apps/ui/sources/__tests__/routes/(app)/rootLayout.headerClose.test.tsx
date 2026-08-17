@@ -4,11 +4,15 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 const routerBackSpy = vi.hoisted(() => vi.fn());
 const safeRouterBackSpy = vi.hoisted(() => vi.fn());
+const stackNavigationState = vi.hoisted(() => ({
+    index: 0,
+    routes: [{ key: 'current-route' }],
+}));
 const stackNavigationMock = vi.hoisted(() => ({
     navigate: vi.fn(),
     canGoBack: vi.fn(() => false),
     goBack: vi.fn(),
-    getState: vi.fn(() => ({ index: 0, routes: [{ key: 'current-route' }] })),
+    getState: vi.fn(() => stackNavigationState),
 }));
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web',
@@ -176,6 +180,13 @@ vi.mock('@/components/appShell/runtime/AuthenticatedAppRuntimeMounts', () => ({
     AuthenticatedAppRuntimeMounts: () => React.createElement('AuthenticatedAppRuntimeMounts'),
 }));
 
+// The single app-shell Voice announcer is a real runtime mounted outside the runtime-mounts
+// gate, so this stack-options suite gets the same treatment the gate already has: this file
+// is about Stack.Screen presentation, not about standing up the Voice lifecycle.
+vi.mock('@/components/voice/surface/VoiceAnnouncer', () => ({
+    VoiceAnnouncer: () => React.createElement('VoiceAnnouncer'),
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     useEndpointConnectivity: () => ({ status: 'connected' }),
     useSyncError: () => null,
@@ -215,15 +226,55 @@ describe('app stack modal header close buttons', () => {
         platformState.os = 'ios';
         settingState.newSessionPresentationModeV1 = 'auto';
         deviceTypeState.value = 'tablet';
+        stackNavigationState.index = 0;
+        stackNavigationState.routes = [{ key: 'current-route' }];
     });
 
-    it('does not render a header close button for the new-session modal (dismissed via backdrop/gesture)', async () => {
-        for (const os of ['ios', 'web'] as const) {
-            platformState.os = os;
-            const { default: RootLayout } = await import('@/app/(app)/_layout');
-            const screen = await renderScreen(<RootLayout />);
-            expect(getStackScreenOptions(screen, 'new/index').headerRight).toBeUndefined();
-        }
+    it('keeps the native new-session modal dismissal contract unchanged', async () => {
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(<RootLayout />);
+
+        const options = getStackScreenOptions(screen, 'new/index');
+        expect(options.gestureEnabled).toBe(true);
+        expect(options.headerRight).toBeUndefined();
+    });
+
+    it('prevents a direct web modal backdrop dismissal and exposes a deterministic close', async () => {
+        platformState.os = 'web';
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(<RootLayout />);
+
+        const options = getStackScreenOptions(screen, 'new/index');
+        expect(options.presentation).toBe('modal');
+        expect(options.gestureEnabled).toBe(false);
+
+        const headerRight = options.headerRight as (() => React.ReactNode) | undefined;
+        expect(headerRight).toBeTypeOf('function');
+        const renderedHeader = await renderScreen(<>{headerRight?.()}</>);
+        const closeButton = renderedHeader.tree.root
+            .findAllByProps({ testID: 'new-session-cancel' })
+            .find((node) => node.props.accessibilityRole === 'button');
+        expect(closeButton).toBeTruthy();
+
+        await pressTestInstanceAsync(closeButton!);
+        expect(safeRouterBackSpy).toHaveBeenCalledWith({
+            router: expect.objectContaining({ back: routerBackSpy }),
+            navigation: stackNavigationMock,
+            fallbackHref: '/',
+        });
+    });
+
+    it('keeps web modal backdrop dismissal enabled when /new has a prior stack route', async () => {
+        platformState.os = 'web';
+        stackNavigationState.index = 1;
+        stackNavigationState.routes = [{ key: 'index-route' }, { key: 'new-route' }];
+        stackNavigationMock.canGoBack.mockReturnValue(true);
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(<RootLayout />);
+
+        const options = getStackScreenOptions(screen, 'new/index');
+        expect(options.presentation).toBe('modal');
+        expect(options.gestureEnabled).toBe(true);
     });
 
     it('presents the new-session route as a stack modal on web by default', async () => {
@@ -294,6 +345,31 @@ describe('app stack modal header close buttons', () => {
             .find((node) => node.props.accessibilityRole === 'button');
 
         expect(closeButton).toBeTruthy();
+        await pressTestInstanceAsync(closeButton!);
+        expect(safeRouterBackSpy).toHaveBeenCalledWith({
+            router: expect.objectContaining({ back: routerBackSpy }),
+            navigation: stackNavigationMock,
+            fallbackHref: '/',
+        });
+    });
+
+    it('always exposes one accessible deterministic exit for Session Info', async () => {
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+        const screen = await renderScreen(<RootLayout />);
+        const options = getStackScreenOptions(screen, 'session/[id]/info');
+
+        expect(options.headerBackVisible).toBe(false);
+        expect((options.headerLeft as (() => React.ReactNode) | undefined)?.()).toBeNull();
+
+        const headerRight = options.headerRight as (() => React.ReactNode) | undefined;
+        expect(headerRight).toBeTypeOf('function');
+        const renderedHeader = await renderScreen(<>{headerRight?.()}</>);
+        const closeButton = renderedHeader.tree.root
+            .findAllByProps({ testID: 'session-info-close' })
+            .find((node) => node.props.accessibilityRole === 'button');
+
+        expect(closeButton).toBeTruthy();
+        expect(closeButton?.props.accessibilityLabel).toBe('common.close');
         await pressTestInstanceAsync(closeButton!);
         expect(safeRouterBackSpy).toHaveBeenCalledWith({
             router: expect.objectContaining({ back: routerBackSpy }),

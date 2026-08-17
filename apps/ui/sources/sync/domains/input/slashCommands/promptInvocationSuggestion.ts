@@ -1,6 +1,5 @@
 import type { PromptInvocationBehaviorV1 } from '@happier-dev/protocol';
 
-import type { ActiveWord } from '@/components/autocomplete/findActiveWord';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { shouldInsertPromptInvocationOnAutocompleteSelect } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
 
@@ -15,7 +14,11 @@ export type PromptInvocationSuggestionMetadata = Readonly<{
 export async function resolvePromptInvocationAutocompleteSelection(params: Readonly<{
     input: string;
     selection: Readonly<{ start: number; end: number }>;
-    activeWord: ActiveWord | undefined;
+    /**
+     * Only the token span is read. Kept structural so the composer-suggestion
+     * registry can hand over its own span without importing `ActiveWord`.
+     */
+    activeWord: Readonly<{ offset: number; endOffset: number }> | undefined;
     suggestion: Readonly<{
         text: string;
         promptInvocation?: PromptInvocationSuggestionMetadata;

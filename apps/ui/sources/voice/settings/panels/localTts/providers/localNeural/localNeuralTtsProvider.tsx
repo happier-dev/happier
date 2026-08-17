@@ -34,7 +34,7 @@ export const localNeuralTtsProviderSpec: LocalTtsProviderSpec = {
   id: 'local_neural',
   title: t('settingsVoice.local.localNeuralTts.provider.title'),
   subtitle: t('settingsVoice.local.localNeuralTts.provider.subtitle'),
-  iconName: 'sparkles-outline',
+  iconName: 'sparkle',
   detail: t('settingsVoice.local.localNeuralTts.provider.detail'),
   Settings: LocalNeuralProviderSettings,
   test: async ({ cfgTts, networkTimeoutMs, sample }) => {

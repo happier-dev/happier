@@ -135,10 +135,7 @@ describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
         const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
         return renderScreen(
             <WorkspaceRepositoryTreeBrowserView
-                workspaceCacheKey="server:m1:/repo"
-                serverId="server"
-                machineId="m1"
-                rootPath="/repo"
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
                 onOpenFile={vi.fn()}
             />,
         );

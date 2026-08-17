@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -12,6 +11,7 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { buildProjectRouteHref } from './projectRouteState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type ProjectDetailsMainPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
@@ -51,7 +51,7 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                     accessibilityRole="button"
                     accessibilityLabel={t('settings.sourceControl')}
                 >
-                    <Octicons name="git-branch" size={16} color={params.iconColor} />
+                    <Icon name="git-branch" size={16} color={params.iconColor} />
                 </Pressable>
                 <Pressable
                     onPress={() => routerRef.current.push(buildProjectRouteHref({
@@ -65,7 +65,7 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
                     accessibilityRole="button"
                     accessibilityLabel={t('common.files')}
                 >
-                    <Ionicons name="folder-outline" size={18} color={params.iconColor} />
+                    <Icon name="folder" size={16} color={params.iconColor} />
                 </Pressable>
             </>
         );
@@ -93,7 +93,6 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
             showFocusModeToggle={false}
             onRequestClose={props.onRequestClose}
             pluginUiProjection={props.pluginUiProjection}
-            pluginSurfacePlacementScope="project"
             platform={props.platform}
             renderHeaderActionsPrefix={renderHeaderActionsPrefix}
             renderEmptyStateSupplementaryContent={renderEmptyStateSupplementaryContent}

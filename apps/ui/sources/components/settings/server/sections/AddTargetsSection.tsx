@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
@@ -18,6 +17,7 @@ import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { Typography } from '@/constants/Typography';
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type AddTargetsSectionProps = Readonly<{
     // Add server form
@@ -185,11 +185,11 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                 testID="server-settings-add-server-toggle"
                 title={t('server.addServerTitle')}
                 subtitle={t('server.addServerSubtitle')}
-                icon={<Ionicons name="server-outline" size={20} color={theme.colors.text.secondary} />}
+                icon={<Icon name="hard-drives" size={20} color={theme.colors.text.secondary} />}
                 rightElement={(
-                    <Ionicons
-                        name={expanded === 'server' ? 'chevron-up' : 'chevron-down'}
-                        size={18}
+                    <Icon
+                        name={expanded === 'server' ? 'caret-up' : 'caret-down'}
+                        size={16}
                         color={theme.colors.text.secondary}
                     />
                 )}
@@ -296,11 +296,11 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
             <Item
                 title={t('server.addServerGroupTitle')}
                 subtitle={t('server.addServerGroupSubtitle')}
-                icon={<Ionicons name="albums-outline" size={20} color={theme.colors.text.secondary} />}
+                icon={<Icon name="stack" size={20} color={theme.colors.text.secondary} />}
                 rightElement={(
-                    <Ionicons
-                        name={expanded === 'group' ? 'chevron-up' : 'chevron-down'}
-                        size={18}
+                    <Icon
+                        name={expanded === 'group' ? 'caret-up' : 'caret-down'}
+                        size={16}
                         color={theme.colors.text.secondary}
                     />
                 )}
@@ -332,11 +332,11 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                                 key={`group-add-${server.id}`}
                                 title={server.name}
                                 subtitle={toServerUrlDisplay(server.serverUrl)}
-                                icon={<Ionicons name="server-outline" size={18} color={theme.colors.text.secondary} />}
+                                icon={<Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />}
                                 rightElement={(
-                                    <Ionicons
-                                        name={selected ? 'checkmark-circle' : 'ellipse-outline'}
-                                        size={18}
+                                    <Icon
+                                        name={selected ? 'check-circle' : 'circle'}
+                                        size={16}
                                         color={selected ? theme.colors.status.connected : theme.colors.text.secondary}
                                     />
                                 )}

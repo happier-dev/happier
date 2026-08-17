@@ -101,6 +101,9 @@ export function runUserAndTextPhase(params: Readonly<{
                 tool: null,
                 event: null,
                 meta: msg.meta,
+                ...(msg.structuredPresentation !== undefined
+                    ? { structuredPresentation: msg.structuredPresentation }
+                    : {}),
             });
 
             // Track both localId and messageId
@@ -112,6 +115,33 @@ export function runUserAndTextPhase(params: Readonly<{
             changed.add(mid);
             clearAllCursors('user-message');
         } else if (msg.role === 'agent') {
+            if (msg.structuredPresentation !== undefined) {
+                if (state.messageIds.has(msg.id)) {
+                    restoreLiveMergeCursors();
+                    continue;
+                }
+                const mid = allocateId();
+                state.messages.set(mid, {
+                    id: mid,
+                    realID: msg.id,
+                    seq: normalizeTranscriptSeq(msg.seq),
+                    transcriptBlockIndex: 0,
+                    localId: msg.localId ?? null,
+                    role: 'agent',
+                    createdAt: msg.createdAt,
+                    text: '',
+                    isThinking: false,
+                    tool: null,
+                    event: null,
+                    meta: msg.meta,
+                    structuredPresentation: msg.structuredPresentation,
+                });
+                state.messageIds.set(msg.id, mid);
+                changed.add(mid);
+                clearAllCursors('structured-presentation-message');
+                continue;
+            }
+
             // Process usage data if present
             if (msg.usage && !isRecoveredHistory) {
                 processUsageData(state, msg.usage, msg.createdAt);

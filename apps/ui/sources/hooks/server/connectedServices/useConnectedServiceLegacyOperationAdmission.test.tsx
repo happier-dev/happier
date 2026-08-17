@@ -32,7 +32,7 @@ describe('useConnectedServiceLegacyOperationAdmission', () => {
         runControlMock.mockResolvedValue({
             status: 'described',
             service: {
-                pluginId: 'happier.scm.hosting.github',
+                pluginId: 'happier.scm.forge.github',
                 localId: 'github-account',
             },
             operationTransport: {
@@ -62,7 +62,7 @@ describe('useConnectedServiceLegacyOperationAdmission', () => {
             command: {
                 operation: 'describeService',
                 service: {
-                    pluginId: 'happier.scm.hosting.github',
+                    pluginId: 'happier.scm.forge.github',
                     localId: 'github-account',
                 },
                 requiredOperation: 'quota_refresh',
@@ -91,7 +91,7 @@ describe('useConnectedServiceLegacyOperationAdmission', () => {
         runControlMock.mockResolvedValueOnce({
             status: 'described',
             service: {
-                pluginId: 'happier.scm.hosting.github',
+                pluginId: 'happier.scm.forge.github',
                 localId: 'github-account',
             },
             operationTransport: { kind: 'v4' },

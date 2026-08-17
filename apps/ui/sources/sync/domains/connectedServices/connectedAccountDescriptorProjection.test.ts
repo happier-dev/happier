@@ -99,20 +99,18 @@ describe('connectedAccountDescriptorProjection', () => {
     ]);
   });
 
-  it('keeps every claimant visible when descriptor owners conflict on one service id', () => {
-    const left = descriptor({ id: 'left', pluginId: 'acme.left' });
-    const right = descriptor({ id: 'right', pluginId: 'acme.right' });
+  it('keeps same-local-id descriptors from different plugins independently qualified', () => {
+    const left = descriptor({ id: 'shared-service', pluginId: 'acme.left' });
+    const right = descriptor({ id: 'shared-service', pluginId: 'acme.right' });
     const merged = mergeConnectedAccountDescriptorProjections([
       { kind: 'ready', descriptors: [left] },
       { kind: 'ready', descriptors: [right] },
     ]);
 
-    expect(merged.kind).toBe('conflict');
-    if (merged.kind === 'error') throw new Error('expected a conflict projection');
+    expect(merged.kind).toBe('ready');
+    if (merged.kind === 'error') throw new Error('expected a ready projection');
     expect(merged.descriptors).toEqual(expect.arrayContaining([left, right]));
-    expect(merged.conflicts).toEqual([
-      expect.objectContaining({ kind: 'service_ownership', serviceId: 'bitbucket' }),
-    ]);
+    expect(merged.conflicts).toEqual([]);
   });
 
   it('retains last-known-good as stale for one or all machine failures and recovers in place', () => {
@@ -137,6 +135,41 @@ describe('connectedAccountDescriptorProjection', () => {
     });
     expect(recovered).toMatchObject({ status: 'ready', descriptors: [projected] });
     expect(recovered.descriptors).toBe(stale.descriptors);
+  });
+
+  it('keeps the answering machines descriptors when another machine fails before any good load', () => {
+    const projected = descriptor();
+    const merged = mergeConnectedAccountDescriptorProjections([
+      { kind: 'ready', descriptors: [projected] },
+      { kind: 'error', reason: 'unsupported' },
+    ]);
+
+    expect(merged).toMatchObject({ kind: 'error', reason: 'partial_machine_failure' });
+    expect(merged.kind === 'error' ? merged.descriptors : null).toEqual([projected]);
+
+    const state = advanceConnectedAccountDescriptorProjectionState(
+      createConnectedAccountDescriptorProjectionLoadingState('server-a'),
+      merged,
+    );
+    expect(state).toMatchObject({
+      status: 'stale',
+      errorReason: 'partial_machine_failure',
+      descriptors: [projected],
+    });
+  });
+
+  it('never retracts last-known-good descriptors on a degraded partial read', () => {
+    const projected = descriptor();
+    const ready = advanceConnectedAccountDescriptorProjectionState(
+      createConnectedAccountDescriptorProjectionLoadingState('server-a'),
+      { kind: 'ready', descriptors: [projected], conflicts: [] },
+    );
+    const degraded = advanceConnectedAccountDescriptorProjectionState(ready, {
+      kind: 'error', reason: 'partial_machine_failure', descriptors: [], conflicts: [],
+    });
+
+    expect(degraded).toMatchObject({ status: 'stale', descriptors: [projected] });
+    expect(degraded.descriptors).toBe(ready.descriptors);
   });
 
   it('clears last-known-good only on authoritative successful absence', () => {

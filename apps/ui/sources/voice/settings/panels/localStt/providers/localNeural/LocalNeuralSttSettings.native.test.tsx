@@ -118,19 +118,11 @@ describe('LocalNeuralSttSettings native model download accessory', () => {
     const { tree } = await renderScreen(<LocalNeuralSttSettings
       cfg={{
         provider: 'local_neural',
-        openaiCompat: {
-          baseUrl: null,
-          insecureLocalOriginConsent: null,
-          insecureLocalConsentMachineId: null,
-          apiKey: null,
-          model: 'whisper-1',
-        },
         localNeural: {
           assetId: 'stt-pack',
           language: null,
           execution: 'device',
         },
-        providers: {},
       }}
       setCfg={setCfg}
       popoverBoundaryRef={null}

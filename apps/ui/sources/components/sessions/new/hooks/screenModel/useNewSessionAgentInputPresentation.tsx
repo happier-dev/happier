@@ -5,6 +5,7 @@ import type { ActionId, BackendTargetRefV2, WindowsRemoteSessionLaunchMode } fro
 import type { Router } from 'expo-router';
 
 import type { AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
+import type { PluginEventAutomationComposerModel } from '@/components/automations/editor/usePluginEventAutomationComposer';
 import { useNewSessionCheckoutActionChip } from '@/components/sessions/new/hooks/screenModel/useNewSessionCheckoutActionChip';
 import { useNewSessionAgentInputExtraActionChips } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentInputExtraActionChips';
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
@@ -23,6 +24,7 @@ import { t } from '@/text';
 import { createNewSessionLinkedFilesActionChip } from '@/components/sessions/agentInput/definitions/createLinkedFilesActionChip';
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import type { NewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 
 type ThemeLike = Readonly<{
     colors: Readonly<{
@@ -52,8 +54,6 @@ function buildExtraActionChipsSignature(params: Readonly<{
                 collapsedOptionsLabel: chip.collapsedOptionsPopover?.label ?? null,
                 collapsedContentTitle: chip.collapsedContentPopover?.title ?? null,
                 collapsedContentLabel: chip.collapsedContentPopover?.label ?? null,
-                attachmentBadgeKey: chip.composerAttachmentBadge?.key ?? null,
-                attachmentBadgeLabel: chip.composerAttachmentBadge?.label ?? null,
             })),
         }) ?? 'null';
     } catch {
@@ -80,6 +80,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     automationDraft: NewSessionAutomationDraft;
     effectiveAutomationDraft: AutomationSettingsValue;
     setAutomationDraft: React.Dispatch<React.SetStateAction<NewSessionAutomationDraft>>;
+    eventComposer?: PluginEventAutomationComposerModel | null;
     repoScmSnapshot: ScmWorkingSnapshot | null;
     checkoutChipModel: NewSessionCheckoutChipModel;
     checkoutPickerOpen: boolean;
@@ -93,7 +94,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     pendingGitWorktreeSourceKindRef: React.MutableRefObject<'current' | 'local' | 'remote'>;
     shouldReconcileInitialHydratedCheckoutCreationDraftRef: React.MutableRefObject<boolean>;
     router: Router;
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     backendTarget: BackendTargetRefV2;
@@ -164,17 +165,15 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         params.theme.colors.state.danger.foreground,
     ]);
 
-    const sessionPromptRef = React.useRef('');
-    sessionPromptRef.current = String(params.sessionPrompt ?? '');
     const handleAutomationSettingsChange = React.useCallback((next: AutomationSettingsValue) => {
         params.setAutomationDraft(sanitizeNewSessionAutomationDraft(next));
     }, [params.setAutomationDraft]);
 
     const handleAppendLinkedPath = React.useCallback((path: string) => {
-        const base = sessionPromptRef.current;
+        const base = params.promptStore.getPrompt();
         const spacer = base.length === 0 || base.endsWith(' ') || base.endsWith('\n') ? '' : ' ';
         params.setSessionPrompt(`${base}${spacer}@${path} `);
-    }, [params.setSessionPrompt]);
+    }, [params.promptStore, params.setSessionPrompt]);
 
     const linkFileChip = React.useMemo<AgentInputExtraActionChip>(() => {
         return createNewSessionLinkedFilesActionChip({
@@ -210,7 +209,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     });
 
     const handleActionShortcutPress = React.useCallback((actionId: ActionId) => {
-        const instructions = String(params.sessionPrompt ?? '');
+        const instructions = params.promptStore.getPrompt();
         params.handleCreateSession({
             initialMessage: 'skip',
             afterCreated: async ({ sessionId }) => {
@@ -227,7 +226,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
                 });
             },
         });
-    }, [params.agentType, params.backendTarget, params.handleCreateSession, params.sessionPrompt]);
+    }, [params.agentType, params.backendTarget, params.handleCreateSession, params.promptStore]);
 
     const agentInputExtraActionChips = useNewSessionAgentInputExtraActionChips({
         agentId: params.agentType,
@@ -238,6 +237,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         automationDraft: params.effectiveAutomationDraft,
         automationLabel: getAutomationChipLabel(params.automationDraft),
         onAutomationChange: handleAutomationSettingsChange,
+        eventComposer: params.eventComposer,
         checkoutActionChip,
         showServerPickerChip: params.showServerPickerChip,
         targetServerId: params.targetServerId,

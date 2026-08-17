@@ -11,11 +11,123 @@ import { renderScreen } from '@/dev/testkit';
  * and tooltip content on hover/focus.
  */
 describe('IconButton', () => {
+    function flattenStyle(styleProp: unknown, state?: Partial<Record<string, boolean>>): Record<string, unknown> {
+        const resolved = typeof styleProp === 'function'
+            ? (styleProp as (s: Record<string, boolean>) => unknown)({
+                pressed: false,
+                hovered: false,
+                focused: false,
+                selected: false,
+                highlighted: false,
+                busy: false,
+                disabled: false,
+                ...state,
+            })
+            : styleProp;
+        const entries = Array.isArray(resolved)
+            ? (resolved as unknown[]).flat(Infinity)
+            : [resolved];
+        return Object.assign({}, ...entries.filter(Boolean) as object[]);
+    }
+
+    it('keeps the visible control at the requested size while the press frame carries the required target', async () => {
+        const { IconButton } = await import('./IconButton');
+        const screen = await renderScreen(
+            <IconButton
+                testID="icon-btn"
+                iconName="copy"
+                accessibilityLabel="Copy address"
+                size={28}
+                minimumInteractiveTargetSize={44}
+                interactiveTargetGapPx={16}
+                onPress={() => {}}
+            />,
+        );
+
+        const pressable = screen.findByTestId('icon-btn');
+        const frame = flattenStyle(pressable?.props.style);
+        // The press box is real box model — padding-equivalent growth plus an equal
+        // negative margin — because `hitSlop` is inert on react-native-web.
+        expect(frame.width).toBe(44);
+        expect(frame.height).toBe(44);
+        expect(frame.marginHorizontal).toBe(-8);
+        expect(frame.marginVertical).toBe(-8);
+        // A declared target is never delegated to hit slop.
+        expect(pressable?.props.hitSlop).toBe(0);
+
+        const surface = flattenStyle(screen.findByTestId('icon-btn-surface')?.props.style);
+        expect(surface.width).toBe(28);
+        expect(surface.height).toBe(28);
+    });
+
+    it('caps horizontal press-frame growth at half the neighbour gap so adjacent targets never overlap', async () => {
+        const { IconButton } = await import('./IconButton');
+        const screen = await renderScreen(
+            <IconButton
+                testID="icon-btn"
+                iconName="copy"
+                accessibilityLabel="Copy address"
+                size={28}
+                minimumInteractiveTargetSize={44}
+                interactiveTargetGapPx={4}
+                onPress={() => {}}
+            />,
+        );
+
+        const frame = flattenStyle(screen.findByTestId('icon-btn')?.props.style);
+        expect(frame.width).toBe(32);
+        expect(frame.marginHorizontal).toBe(-2);
+        // The free axis still reaches the platform floor.
+        expect(frame.height).toBe(44);
+        // WCAG 2.2 AA SC 2.5.8 remains satisfied on the constrained axis.
+        expect(frame.width as number).toBeGreaterThanOrEqual(24);
+    });
+
+    it('does not grow the press frame when no minimum target is declared', async () => {
+        const { IconButton } = await import('./IconButton');
+        const screen = await renderScreen(
+            <IconButton testID="icon-btn" iconName="copy" accessibilityLabel="Copy address" size={28} onPress={() => {}} />,
+        );
+
+        const frame = flattenStyle(screen.findByTestId('icon-btn')?.props.style);
+        expect(frame.width).toBe(28);
+        expect(frame.height).toBe(28);
+        expect(frame.marginHorizontal).toBe(0);
+        expect(frame.marginVertical).toBe(0);
+    });
+
+    it('keeps the outlined border on the visible surface and the interaction tint on the press frame', async () => {
+        const { IconButton } = await import('./IconButton');
+        const screen = await renderScreen(
+            <IconButton testID="icon-btn" iconName="copy" accessibilityLabel="Copy address" onPress={() => {}} />,
+        );
+
+        const surface = flattenStyle(screen.findByTestId('icon-btn-surface')?.props.style);
+        expect(surface.borderWidth).toBe(1);
+
+        const pressed = flattenStyle(screen.findByTestId('icon-btn')?.props.style, { pressed: true });
+        const idle = flattenStyle(screen.findByTestId('icon-btn')?.props.style);
+        expect(pressed.backgroundColor).toBeTruthy();
+        expect(pressed.backgroundColor).not.toBe(idle.backgroundColor);
+    });
+
+    it('renders a plain control with no border and no background fill', async () => {
+        const { IconButton } = await import('./IconButton');
+        const screen = await renderScreen(
+            <IconButton testID="icon-btn" iconName="copy" accessibilityLabel="Copy address" variant="plain" onPress={() => {}} />,
+        );
+
+        const surface = flattenStyle(screen.findByTestId('icon-btn-surface')?.props.style);
+        expect(surface.borderWidth).toBeUndefined();
+        expect(surface.backgroundColor).toBeUndefined();
+        expect(flattenStyle(screen.findByTestId('icon-btn')?.props.style).backgroundColor).toBeUndefined();
+    });
+
     it('renders the required accessibility label and fires onPress', async () => {
         const { IconButton } = await import('./IconButton');
         const onPress = vi.fn();
         const screen = await renderScreen(
-            <IconButton testID="icon-btn" iconName="copy-outline" accessibilityLabel="Copy address" onPress={onPress} />,
+            <IconButton testID="icon-btn" iconName="copy" accessibilityLabel="Copy address" onPress={onPress} />,
         );
         const pressable = screen.findByTestId('icon-btn');
         expect(pressable).toBeTruthy();
@@ -28,11 +140,28 @@ describe('IconButton', () => {
     it('hides the decorative icon from the accessibility tree', async () => {
         const { IconButton } = await import('./IconButton');
         const screen = await renderScreen(
-            <IconButton testID="icon-btn" iconName="copy-outline" accessibilityLabel="Copy address" onPress={() => {}} />,
+            <IconButton testID="icon-btn" iconName="copy" accessibilityLabel="Copy address" onPress={() => {}} />,
         );
         const icon = screen.findByTestId('icon-btn-icon');
         expect(icon?.props.accessibilityElementsHidden).toBe(true);
         expect(icon?.props.importantForAccessibility).toBe('no-hide-descendants');
+    });
+
+    it('exposes explicit toggle semantics for icon-only actions', async () => {
+        const { IconButton } = await import('./IconButton');
+        const screen = await renderScreen(
+            <IconButton
+                testID="icon-btn"
+                iconName="arrows-out"
+                accessibilityLabel="Exit focus mode"
+                selected
+                accessibilityRole="checkbox"
+                checked
+                onPress={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('icon-btn')?.props.accessibilityState?.checked).toBe(true);
     });
 
     it('shows a pending spinner while an async onPress promise is unresolved, then restores the icon', async () => {
@@ -43,7 +172,7 @@ describe('IconButton', () => {
         const screen = await renderScreen(
             <IconButton
                 testID="icon-btn"
-                iconName="stop-outline"
+                iconName="stop"
                 accessibilityLabel="Stop service"
                 animationEnabled={false}
                 onPress={onPress}
@@ -79,7 +208,7 @@ describe('IconButton', () => {
         const screen = await renderScreen(
             <IconButton
                 testID="icon-btn"
-                iconName="stop-outline"
+                iconName="stop"
                 accessibilityLabel="Stop service"
                 animationEnabled={false}
                 onPress={onPress}
@@ -103,7 +232,7 @@ describe('IconButton', () => {
         const { IconButton } = await import('./IconButton');
         const onPress = vi.fn();
         const screen = await renderScreen(
-            <IconButton testID="icon-btn" iconName="play-outline" accessibilityLabel="Start" disabled onPress={onPress} />,
+            <IconButton testID="icon-btn" iconName="play" accessibilityLabel="Start" disabled onPress={onPress} />,
         );
         const pressable = screen.findByTestId('icon-btn');
         expect(pressable?.props.accessibilityState?.disabled).toBe(true);
@@ -121,7 +250,7 @@ describe('IconButton', () => {
         const screen = await renderScreen(
             <IconButton
                 testID="icon-btn"
-                iconName="globe-outline"
+                iconName="globe"
                 accessibilityLabel="Open preview"
                 disabled
                 disabledReason="Preview registration is unavailable."
@@ -136,7 +265,7 @@ describe('IconButton', () => {
         const screen = await renderScreen(
             <IconButton
                 testID="icon-btn"
-                iconName="camera-outline"
+                iconName="camera"
                 accessibilityLabel="Snapshot"
                 tooltip="Take a snapshot"
                 onPress={() => {}}
@@ -160,7 +289,7 @@ describe('IconButton', () => {
         const screen = await renderScreen(
             <IconButton
                 testID="icon-btn"
-                iconName="globe-outline"
+                iconName="globe"
                 accessibilityLabel="Open preview"
                 tooltip="Open in preview pane"
                 disabled
@@ -180,7 +309,7 @@ describe('IconButton', () => {
         const screen = await renderScreen(
             <IconButton
                 testID="icon-btn"
-                iconName="camera-outline"
+                iconName="camera"
                 accessibilityLabel="Snapshot"
                 tooltip="Take a snapshot"
                 onPress={() => {}}

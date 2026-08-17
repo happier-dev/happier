@@ -9,7 +9,7 @@ import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { Pressable } from 'react-native';
 import { t } from '@/text';
@@ -30,7 +30,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     contentContainer: {
         flex: 1,
-        maxWidth: layout.maxWidth,
     },
     dateHeader: {
         backgroundColor: theme.colors.background.canvas,
@@ -163,6 +162,13 @@ function groupSessionsByDate(sessions: Session[]): SessionHistoryItem[] {
 
 export default function SessionHistory() {
     const safeArea = useSafeAreaInsets();
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+    const contentContainerStyle = React.useMemo(
+        () => [styles.contentContainer, contentMaxWidthStyle],
+        [contentMaxWidthStyle],
+    );
     const allSessions = useAllSessions();
     const navigateToSession = useNavigateToSession();
     
@@ -234,7 +240,7 @@ export default function SessionHistory() {
     if (!allSessions) {
         return (
             <View style={styles.container}>
-                <View style={styles.contentContainer} />
+                <View style={contentContainerStyle} />
             </View>
         );
     }
@@ -242,7 +248,7 @@ export default function SessionHistory() {
     if (groupedItems.length === 0) {
         return (
             <View style={styles.container}>
-                <View style={styles.contentContainer}>
+                <View style={contentContainerStyle}>
                     <View style={styles.emptyContainer}>
                         <Text style={styles.emptyText}>
                             {t('sessionHistory.empty')}
@@ -255,7 +261,7 @@ export default function SessionHistory() {
     
     return (
         <View style={styles.container}>
-            <View style={styles.contentContainer}>
+            <View style={contentContainerStyle}>
                 <VirtualizedList
                     data={groupedItems}
                     renderItem={renderItem}

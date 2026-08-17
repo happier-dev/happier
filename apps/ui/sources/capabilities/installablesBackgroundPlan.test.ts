@@ -11,7 +11,7 @@ const baseEntry: InstallableRegistryEntry = {
     enabledWhen: () => true,
     capabilityId: CODEX_ACP_DEP_ID,
     title: 'Codex ACP',
-    iconName: 'swap-horizontal-outline',
+    iconName: 'arrows-left-right',
     groupTitleKey: 'newSession.codexAcpBanner.title',
     supportsManagedOverrideInstall: false,
     defaultPolicy: { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' },

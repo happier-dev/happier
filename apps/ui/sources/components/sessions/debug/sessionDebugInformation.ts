@@ -1,5 +1,7 @@
-import { readNormalizedRuntimeDescriptor } from '@happier-dev/agents';
-import { resolveProviderSessionArtifactPathFromUiBehavior } from '@/agents/registry/registryUiBehavior';
+import {
+    readNormalizedRuntimeDescriptor,
+    resolveSessionArtifactPathFromMetadata,
+} from '@happier-dev/agents';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
@@ -49,7 +51,7 @@ export function resolveProviderSessionIdForDebug(params: Readonly<{
 export function resolveProviderSessionArtifactPath(metadata: SessionDebugMetadata): string | null {
     const record = asRecord(metadata);
     return normalizeString(record?.claudeTranscriptPath)
-        ?? resolveProviderSessionArtifactPathFromUiBehavior(metadata);
+        ?? resolveSessionArtifactPathFromMetadata(metadata);
 }
 
 export function buildSessionDebugInformation(params: Readonly<{

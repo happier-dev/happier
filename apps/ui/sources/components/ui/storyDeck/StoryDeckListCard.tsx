@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { ScrollView } from 'react-native-gesture-handler';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -15,6 +14,7 @@ import type { StoryDeckListCard as ListCardData } from '@/changelog/releaseNotes
 
 import { resolveStoryDeckIconName } from './storyDeckIconRegistry';
 import type { StoryDeckCardLayout } from './storyDeckPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     STORY_DECK_WIDE_CONTENT_BOTTOM_PADDING,
     STORY_DECK_WIDE_CONTENT_HORIZONTAL_PADDING,
@@ -190,9 +190,9 @@ function renderRow(
     return (
         <View key={`${row.iconId}-${index}`} style={[styles.row, isWide ? styles.rowWide : null]}>
             <View style={styles.iconWrapper}>
-                <Ionicons
+                <Icon
                     name={resolveStoryDeckIconName(row.iconId)}
-                    size={30}
+                    size={29}
                     color={iconColor}
                 />
             </View>

@@ -28,6 +28,20 @@ function joinBaseAndPath(baseUrl: string, path: string): string {
     return `${base}${normalizedPath}`;
 }
 
+/**
+ * `GET /v1/auth/ping` is a JSON-only route (`registerAuthPingRoute`: 200 → `{ ok: true }`). An HTML document is
+ * therefore positive evidence that something other than this server answered — a captive portal, a transparent
+ * proxy, or a sign-in interstitial. We deliberately do not *require* `application/json`, because reverse proxies
+ * and other intermediaries can strip or rewrite the content type on an otherwise genuine response; absence of
+ * evidence must not manufacture an outage.
+ */
+function isInterceptedHtmlResponse(response: Response): boolean {
+    const contentType = response.headers?.get?.('Content-Type');
+    if (typeof contentType !== 'string') return false;
+    const normalized = contentType.toLowerCase();
+    return normalized.includes('text/html') || normalized.includes('application/xhtml+xml');
+}
+
 export async function probeAuthenticatedServerAuthPingEndpoint(params: Readonly<{
     endpoint: string;
     token: string;
@@ -55,6 +69,24 @@ export async function probeAuthenticatedServerAuthPingEndpoint(params: Readonly<
 
         if (authResponse.status === 429 || authResponse.status >= 500) {
             return buildRetryLaterProbeResultFromResponse(authResponse, `Authenticated probe returned ${authResponse.status}`);
+        }
+
+        // Readiness needs positive evidence that this server answered this route. Anything else — a 404 from a
+        // host that does not serve it, a redirect, an interception page — is not reachability, and treating it as
+        // ready sends the socket into a connect/fail/re-probe loop against a server that will never accept it.
+        // This matches the sibling readiness probe (`createEndpointReadinessProbe`), which already required 200.
+        if (authResponse.status !== 200) {
+            return {
+                status: 'server_unreachable',
+                errorMessage: `Authenticated probe returned ${authResponse.status}`,
+            };
+        }
+
+        if (isInterceptedHtmlResponse(authResponse)) {
+            return {
+                status: 'server_unreachable',
+                errorMessage: 'Authenticated probe was answered with an HTML document',
+            };
         }
 
         return { status: 'ready' };

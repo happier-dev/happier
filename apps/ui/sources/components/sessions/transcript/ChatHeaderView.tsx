@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { View, Platform, Pressable, type LayoutChangeEvent } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import type { AgentId } from '@/agents/registry/registryCore';
+import { useSetting } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
@@ -11,10 +13,17 @@ import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
-/** A 44pt control plus breathing room on both sides. */
+/** The gutter control's tap target, matching every other header action. */
+const GUTTER_TAP_TARGET_PX = 44;
+
+/** That tap target plus breathing room on both sides. */
 const GUTTER_MIN_WIDTH_PX = 60;
+
+/** The header's own horizontal inset — the margin every other control in it is measured from. */
+const HEADER_HORIZONTAL_PADDING_PX = Platform.OS === 'ios' ? 8 : 16;
 
 interface ChatHeaderViewProps {
     title: string;
@@ -23,6 +32,8 @@ interface ChatHeaderViewProps {
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     avatarId?: string;
+    /** Resolved agent for this session, when there is one. Shown in place of the avatar on request. */
+    agentId?: AgentId | null;
     rightElement?: React.ReactNode;
     backgroundColor?: string;
     tintColor?: string;
@@ -51,6 +62,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     badges,
     onBackPress,
     avatarId,
+    agentId,
     rightElement,
     isConnected = true,
     flavor,
@@ -68,6 +80,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     const backButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-back');
     const avatarButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-avatar');
     const shouldUseWebSubtitleStartEllipsis = subtitleEllipsizeMode === 'head' && Platform.OS === 'web';
+    const identityMode = useSetting('sessionHeaderIdentityDisplay');
 
     // The header content is centred and width-capped, so on a wide window there is an empty margin
     // on each side. Measure the trailing one: if it can hold a 44pt control with air around it, the
@@ -80,6 +93,24 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
         ? Math.max(0, (wrapperWidth - Math.min(wrapperWidth, maxWidth)) / 2)
         : 0;
     const gutterHoldsElement = gutterElement != null && trailingGutterWidth >= GUTTER_MIN_WIDTH_PX;
+    // Half the leftover once the tap target is centred in `headerHeight` — which is also the gap the
+    // control leaves above itself. Using it horizontally makes the icon's distance to the window's
+    // top and right edges identical (this inset plus the icon's own centring inside the tap target),
+    // so the control reads as sitting in the corner rather than pinned to one side of it. Raising it
+    // to the header's content padding looks like more breathing room but breaks that symmetry.
+    const cornerInset = Math.max(0, (headerHeight - GUTTER_TAP_TARGET_PX) / 2);
+    // Which identity leads the header is the user's call. `agentLogo` with no resolvable agent
+    // renders nothing rather than silently falling back to the avatar — that would answer a question
+    // the user already answered.
+    const leadingIdentity = React.useMemo(() => {
+        if (identityMode === 'none') return null;
+        if (identityMode === 'agentLogo') {
+            return agentId ? <AgentIcon agentId={agentId} size={26} /> : null;
+        }
+        return avatarId
+            ? <Avatar id={avatarId} size={32} monochrome={!isConnected} flavor={flavor} />
+            : null;
+    }, [agentId, avatarId, flavor, identityMode, isConnected]);
 
     const handleBackPress = () => {
         if (onBackPress) {
@@ -105,22 +136,17 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                         style={styles.backButton}
                         hitSlop={15}
                     >
-                        <Ionicons
-                            name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+                        <Icon
+                            name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                             size={Platform.select({ ios: 28, default: 24 })}
                             color={theme.colors.chrome.header.foreground}
                         />
                     </Pressable>
                 ) : null}
 
-                {avatarId ? (
+                {leadingIdentity ? (
                     <View style={styles.avatarLeading} testID={avatarButtonTestId}>
-                        <Avatar
-                            id={avatarId}
-                            size={32}
-                            monochrome={!isConnected}
-                            flavor={flavor}
-                        />
+                        {leadingIdentity}
                     </View>
                 ) : null}
 
@@ -201,7 +227,17 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                         pointerEvents="box-none"
                         // `top: 0` is the wrapper's own origin, which already sits below the
                         // container's safe-area padding — adding the inset here would count it twice.
-                        style={[styles.trailingGutter, { width: trailingGutterWidth, height: headerHeight, top: 0 }]}
+                        style={[
+                            styles.trailingGutter,
+                            {
+                                width: trailingGutterWidth,
+                                height: headerHeight,
+                                top: 0,
+                                // Equal to the gap the centred tap target already leaves above
+                                // itself, so the corner reads as a corner.
+                                paddingRight: cornerInset,
+                            },
+                        ]}
                     >
                         {gutterElement}
                     </View>
@@ -224,7 +260,7 @@ const styles = StyleSheet.create(() => ({
     content: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: Platform.OS === 'ios' ? 8 : 16,
+        paddingHorizontal: HEADER_HORIZONTAL_PADDING_PX,
         width: '100%',
     },
     backButton: {
@@ -284,7 +320,10 @@ const styles = StyleSheet.create(() => ({
     trailingGutter: {
         position: 'absolute',
         right: 0,
-        alignItems: 'center',
+        // Right-aligned so the control sits in the window corner instead of floating mid-margin,
+        // and vertically centred so it lands on the same line as the header icons — both are
+        // centred in the same `headerHeight`, so they agree without a hand-tuned offset.
+        alignItems: 'flex-end',
         justifyContent: 'center',
     },
     rightElementContainer: {

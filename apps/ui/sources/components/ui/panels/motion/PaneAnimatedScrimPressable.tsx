@@ -4,6 +4,8 @@ import { Animated, Pressable } from 'react-native';
 export const PaneAnimatedScrimPressable = React.memo((props: Readonly<{
     testID: string;
     accessibilityRole: 'button';
+    accessibilityLabel?: string;
+    accessibilityHint?: string;
     onPress: () => void;
     animatedStyle: React.ComponentProps<typeof Animated.View>['style'];
 }>) => {
@@ -12,6 +14,8 @@ export const PaneAnimatedScrimPressable = React.memo((props: Readonly<{
             <Pressable
                 testID={props.testID}
                 accessibilityRole={props.accessibilityRole}
+                accessibilityLabel={props.accessibilityLabel}
+                accessibilityHint={props.accessibilityHint}
                 onPress={props.onPress}
                 style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
             />

@@ -23,6 +23,8 @@ export type CreateMicSessionOptions = Readonly<{
 }>;
 
 export type MicSession = Readonly<{
+    /** Request microphone permission without allocating a transport-specific stream. */
+    ensurePermission?: () => Promise<void>;
     ensureActive: () => Promise<void>;
     setMuted: (muted: boolean) => void;
     isMuted: () => boolean;

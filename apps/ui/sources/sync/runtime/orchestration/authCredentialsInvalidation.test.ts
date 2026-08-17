@@ -4,25 +4,54 @@ import {
     notifyAuthCredentialsInvalidated,
     subscribeAuthCredentialsInvalidation,
 } from './authCredentialsInvalidation';
+import type {
+    AccountEncryptionFirstKeyRecoveryHandle,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 
 describe('authCredentialsInvalidation', () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    it('delivers only the minimal invalidation payload to subscribers', async () => {
+    it('delivers the credential-removal outcome without the rejected bearer', async () => {
         const listener = vi.fn();
         const unsubscribe = subscribeAuthCredentialsInvalidation(listener);
         try {
             notifyAuthCredentialsInvalidated({
+                kind: 'credentials_removed',
                 serverId: 'server-a',
                 serverUrl: 'http://localhost:3012',
-                token: 'sensitive-token',
             });
             await Promise.resolve();
             expect(listener).toHaveBeenCalledWith({
+                kind: 'credentials_removed',
                 serverId: 'server-a',
                 serverUrl: 'http://localhost:3012',
+            });
+        } finally {
+            unsubscribe();
+        }
+    });
+
+    it('delivers the opaque first-key recovery handle for degraded auth presentation', async () => {
+        const listener = vi.fn();
+        const recovery = {
+            pending: {},
+        } as unknown as AccountEncryptionFirstKeyRecoveryHandle;
+        const unsubscribe = subscribeAuthCredentialsInvalidation(listener);
+        try {
+            notifyAuthCredentialsInvalidated({
+                kind: 'first_key_recovery_required',
+                serverId: 'server-a',
+                serverUrl: 'http://localhost:3012',
+                recovery,
+            });
+            await Promise.resolve();
+            expect(listener).toHaveBeenCalledWith({
+                kind: 'first_key_recovery_required',
+                serverId: 'server-a',
+                serverUrl: 'http://localhost:3012',
+                recovery,
             });
         } finally {
             unsubscribe();
@@ -37,9 +66,9 @@ describe('authCredentialsInvalidation', () => {
         });
         try {
             notifyAuthCredentialsInvalidated({
+                kind: 'credentials_removed',
                 serverId: 'server-a',
                 serverUrl: 'http://localhost:3012',
-                token: 'sensitive-token',
             });
             await new Promise<void>((resolve) => {
                 setTimeout(resolve, 0);

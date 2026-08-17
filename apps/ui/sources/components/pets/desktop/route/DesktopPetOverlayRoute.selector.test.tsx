@@ -97,6 +97,8 @@ type TestDesktopPetOverlayWindowStatePayload = Readonly<{
     layout?: unknown;
 }>;
 const serverFetchMock = vi.hoisted(() => vi.fn());
+const getCredentialsMock = vi.hoisted(() => vi.fn());
+const fetchAccountEncryptionCurrentnessMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const startDesktopPetOverlayDragSessionMock = vi.hoisted(() => vi.fn());
 const applyDesktopPetOverlayDragDeltaMock = vi.hoisted(() => vi.fn());
@@ -179,6 +181,21 @@ vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: serverFetchMock,
+}));
+
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+    return {
+        ...actual,
+        TokenStorage: {
+            ...actual.TokenStorage,
+            getCredentials: getCredentialsMock,
+        },
+    };
+});
+
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+    fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -398,6 +415,14 @@ describe('DesktopPetOverlayRoute selectors', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(12_000);
+        getCredentialsMock.mockResolvedValue({ token: 'pet-token' });
+        fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+            mode: 'plain',
+            version: 1,
+            signingKeyFingerprint: null,
+            contentKeyFingerprint: null,
+            updatedAt: 1,
+        });
     });
 
     afterEach(() => {
@@ -419,6 +444,8 @@ describe('DesktopPetOverlayRoute selectors', () => {
         sessionsState.current = [];
         sessionSignalsState.current = {};
         serverFetchMock.mockReset();
+        getCredentialsMock.mockReset();
+        fetchAccountEncryptionCurrentnessMock.mockReset();
         machineRpcWithServerScopeMock.mockReset();
         startDesktopPetOverlayDragSessionMock.mockReset();
         applyDesktopPetOverlayDragDeltaMock.mockReset();
@@ -2314,7 +2341,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         expect(showMainWindowFromDesktopPetOverlayMock).toHaveBeenCalledTimes(1);
     });
 
-    it('renders the selected account pet spritesheet instead of hardcoded Blink', async () => {
+    it('renders the synced account-selected pet spritesheet instead of hardcoded Blink', async () => {
         settingsState.current = {
             petsEnabled: true,
             petsSelectedPetRef: { kind: 'accountPet', accountPetId: accountPet.accountPetId },
@@ -2325,15 +2352,79 @@ describe('DesktopPetOverlayRoute selectors', () => {
         serverFetchMock.mockResolvedValue(responseWithAsset('image/webp', [1, 2, 3]));
 
         const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
-        const screen = await renderScreen(<DesktopPetOverlayRoute />);
+        const screen = await renderScreen(
+            <DesktopPetOverlayRoute
+                activitySource="native"
+                activityModel={{
+                    state: 'idle',
+                    reason: 'idle',
+                    sessionId: null,
+                    trayItems: [],
+                }}
+            />,
+        );
         await flushHookEffects();
 
         expect(serverFetchMock).toHaveBeenCalledWith(
             `/v1/account/pets/${accountPet.accountPetId}/spritesheet`,
-            undefined,
-            { retry: 'none' },
+            {
+                headers: {
+                    Authorization: 'Bearer pet-token',
+                },
+            },
+            { includeAuth: false, retry: 'none' },
         );
+        expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledWith({ token: 'pet-token' });
         expect(screen.root.findAllByType('Image')[0]?.props.source).toBe('data:image/webp;base64,AQID');
+    });
+
+    it('does not request a predecessor account-pet asset when currentness reports e2ee', async () => {
+        settingsState.current = {
+            petsEnabled: true,
+            petsSelectedPetRef: { kind: 'accountPet', accountPetId: accountPet.accountPetId },
+        };
+        accountPetsState.current = {
+            [accountPet.accountPetId]: accountPet,
+        };
+        fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
+            mode: 'e2ee',
+            version: 2,
+            signingKeyFingerprint: 'signing-fingerprint',
+            contentKeyFingerprint: 'content-fingerprint',
+            updatedAt: 2,
+        });
+
+        const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
+        const screen = await renderScreen(<DesktopPetOverlayRoute />);
+        await flushHookEffects();
+
+        expect(fetchAccountEncryptionCurrentnessMock).toHaveBeenCalledWith({ token: 'pet-token' });
+        expect(serverFetchMock).not.toHaveBeenCalled();
+        expect(screen.root.findAllByType('Image')[0]?.props.source).toBe(
+            resolveBuiltInPetPackage('blink').spritesheetSource,
+        );
+    });
+
+    it('does not request a predecessor account-pet asset when strict currentness is unavailable', async () => {
+        settingsState.current = {
+            petsEnabled: true,
+            petsSelectedPetRef: { kind: 'accountPet', accountPetId: accountPet.accountPetId },
+        };
+        accountPetsState.current = {
+            [accountPet.accountPetId]: accountPet,
+        };
+        fetchAccountEncryptionCurrentnessMock.mockRejectedValue(
+            new Error('account-encryption-currentness-unavailable'),
+        );
+
+        const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
+        const screen = await renderScreen(<DesktopPetOverlayRoute />);
+        await flushHookEffects();
+
+        expect(serverFetchMock).not.toHaveBeenCalled();
+        expect(screen.root.findAllByType('Image')[0]?.props.source).toBe(
+            resolveBuiltInPetPackage('blink').spritesheetSource,
+        );
     });
 
     it('falls back to Blink when the account pet spritesheet media type is not allowed', async () => {

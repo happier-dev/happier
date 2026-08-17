@@ -1,16 +1,18 @@
 import * as React from 'react';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
 import { Platform, Pressable, useWindowDimensions, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type AttachmentImagePreviewModalImage =
     | Readonly<{
@@ -26,6 +28,12 @@ export type AttachmentImagePreviewModalImage =
         mimeType?: string;
         sizeBytes?: number;
         cacheKey?: string | null;
+    }>
+    | Readonly<{
+        /** Draft-only opaque stage; the preview hook owns any temporary URI. */
+        kind: 'composer-staged-image';
+        title: string;
+        handle: ComposerContentHandleV1;
     }>;
 
 type AttachmentImagePreviewModalProps = CustomModalInjectedProps & Readonly<{
@@ -80,26 +88,34 @@ const stylesheet = StyleSheet.create((theme) => ({
     navButtonDisabled: {
         opacity: 0.35,
     },
+    navButtonIdle: {
+        opacity: 0.65,
+    },
 }));
 
 function AttachmentImagePreviewCurrentImage(props: Readonly<{
     image: AttachmentImagePreviewModalImage;
+    accessibilityLabel: string;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const sessionImage = props.image.kind === 'session-image' ? props.image : null;
+    const composerStagedImage = props.image.kind === 'composer-staged-image' ? props.image : null;
     const preview = useSessionImagePreview({
-        sessionId: props.image.kind === 'session-image' ? props.image.sessionId : '',
-        filePath: props.image.kind === 'session-image' ? props.image.filePath : '',
-        enabled: props.image.kind === 'session-image',
-        cacheKey: props.image.kind === 'session-image' ? props.image.cacheKey ?? null : null,
-        mimeType: props.image.kind === 'session-image' ? props.image.mimeType ?? null : null,
-        sizeBytes: props.image.kind === 'session-image' ? props.image.sizeBytes ?? null : null,
+        sessionId: sessionImage?.sessionId ?? '',
+        filePath: sessionImage?.filePath ?? composerStagedImage?.handle.name ?? '',
+        enabled: sessionImage !== null || composerStagedImage !== null,
+        cacheKey: sessionImage?.cacheKey ?? composerStagedImage?.handle.sha256 ?? null,
+        mimeType: sessionImage?.mimeType ?? composerStagedImage?.handle.mimeType ?? null,
+        sizeBytes: sessionImage?.sizeBytes ?? composerStagedImage?.handle.sizeBytes ?? null,
+        composerStagedMedia: composerStagedImage?.handle ?? null,
     });
 
     if (props.image.kind === 'direct') {
         return (
             <Image
                 accessibilityRole="image"
+                accessibilityLabel={props.accessibilityLabel}
                 source={{ uri: props.image.uri }}
                 style={[{ width: '100%', height: '100%' }, styles.image]}
                 contentFit="contain"
@@ -111,6 +127,7 @@ function AttachmentImagePreviewCurrentImage(props: Readonly<{
         return (
             <Image
                 accessibilityRole="image"
+                accessibilityLabel={props.accessibilityLabel}
                 source={{ uri: preview.uri }}
                 style={[{ width: '100%', height: '100%' }, styles.image]}
                 contentFit="contain"
@@ -121,7 +138,7 @@ function AttachmentImagePreviewCurrentImage(props: Readonly<{
     if (preview.status === 'error') {
         return (
             <View style={styles.centeredState}>
-                <Ionicons name="alert-circle-outline" size={28} color={theme.colors.text.secondary} />
+                <Icon name="warning-circle" size={29} color={theme.colors.text.secondary} />
                 <Text style={styles.centeredStateText}>{t('common.error')}</Text>
             </View>
         );
@@ -132,6 +149,18 @@ function AttachmentImagePreviewCurrentImage(props: Readonly<{
             <ActivitySpinner size="small" color={theme.colors.text.secondary} />
         </View>
     );
+}
+
+function resolvePreviewImageAccessibilityLabel(
+    image: AttachmentImagePreviewModalImage,
+    index: number,
+    total: number,
+): string {
+    return t('files.sessionMedia.previewImageA11y', {
+        name: image.title,
+        current: index + 1,
+        total,
+    });
 }
 
 export const AttachmentImagePreviewModal = React.memo(function AttachmentImagePreviewModal(props: AttachmentImagePreviewModalProps) {
@@ -156,9 +185,14 @@ export const AttachmentImagePreviewModal = React.memo(function AttachmentImagePr
     const hasMultipleImages = props.images.length > 1;
     const canGoPrevious = currentIndex > 0;
     const canGoNext = currentIndex < props.images.length - 1;
-    const shouldShowNavigation = hasMultipleImages && (Platform.OS === 'web' ? isHovered : true);
 
     if (!currentImage) return null;
+
+    const currentImageAccessibilityLabel = resolvePreviewImageAccessibilityLabel(
+        currentImage,
+        currentIndex,
+        props.images.length,
+    );
 
     const maxHeightRatio = height > 0 ? (containerHeight / height) : 0.92;
     const chromeDimensions = React.useMemo(() => ({
@@ -186,48 +220,67 @@ export const AttachmentImagePreviewModal = React.memo(function AttachmentImagePr
                 onHoverIn={Platform.OS === 'web' ? () => setIsHovered(true) : undefined}
                 onHoverOut={Platform.OS === 'web' ? () => setIsHovered(false) : undefined}
             >
-                <AttachmentImagePreviewCurrentImage image={currentImage} />
+                <AttachmentImagePreviewCurrentImage
+                    image={currentImage}
+                    accessibilityLabel={currentImageAccessibilityLabel}
+                />
 
-                {shouldShowNavigation ? (
+                {hasMultipleImages ? (
                     <>
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel={t('common.previous')}
                             disabled={!canGoPrevious}
+                            accessibilityState={{ disabled: !canGoPrevious }}
                             hitSlop={10}
                             onPress={() => {
                                 if (!canGoPrevious) return;
-                                setCurrentIndex((value) => Math.max(0, value - 1));
+                                const nextIndex = currentIndex - 1;
+                                setCurrentIndex(nextIndex);
+                                announceAccessibilityMessage(resolvePreviewImageAccessibilityLabel(
+                                    props.images[nextIndex]!,
+                                    nextIndex,
+                                    props.images.length,
+                                ));
                             }}
                             style={({ pressed }) => [
                                 styles.navButton,
                                 styles.navButtonLeft,
+                                Platform.OS === 'web' && !isHovered ? styles.navButtonIdle : null,
                                 !canGoPrevious ? styles.navButtonDisabled : null,
                                 pressed && canGoPrevious ? { opacity: 0.85 } : null,
                             ]}
                             testID="attachment-image-preview-previous"
                         >
-                            <Ionicons name="chevron-back" size={24} color={theme.colors.overlay.foreground} />
+                            <Icon name="caret-left" size={24} color={theme.colors.overlay.foreground} />
                         </Pressable>
 
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel={t('common.next')}
                             disabled={!canGoNext}
+                            accessibilityState={{ disabled: !canGoNext }}
                             hitSlop={10}
                             onPress={() => {
                                 if (!canGoNext) return;
-                                setCurrentIndex((value) => Math.min(props.images.length - 1, value + 1));
+                                const nextIndex = currentIndex + 1;
+                                setCurrentIndex(nextIndex);
+                                announceAccessibilityMessage(resolvePreviewImageAccessibilityLabel(
+                                    props.images[nextIndex]!,
+                                    nextIndex,
+                                    props.images.length,
+                                ));
                             }}
                             style={({ pressed }) => [
                                 styles.navButton,
                                 styles.navButtonRight,
+                                Platform.OS === 'web' && !isHovered ? styles.navButtonIdle : null,
                                 !canGoNext ? styles.navButtonDisabled : null,
                                 pressed && canGoNext ? { opacity: 0.85 } : null,
                             ]}
                             testID="attachment-image-preview-next"
                         >
-                            <Ionicons name="chevron-forward" size={24} color={theme.colors.overlay.foreground} />
+                            <Icon name="caret-right" size={24} color={theme.colors.overlay.foreground} />
                         </Pressable>
                     </>
                 ) : null}

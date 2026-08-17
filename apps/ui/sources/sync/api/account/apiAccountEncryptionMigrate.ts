@@ -4,6 +4,9 @@ import { backoff } from '@/utils/timing/time';
 import { serverFetch } from '@/sync/http/client';
 import { invalidateAccountEncryptionModeCache } from './apiAccountEncryptionMode';
 import {
+  requireCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
+import {
   AccountEncryptionMigrateSuccessResponseSchema,
   AccountEncryptionMigrateAnyErrorResponseSchema,
   type AccountEncryptionMigrateRequest,
@@ -14,8 +17,12 @@ export { AccountEncryptionMigrateRequestSchema, type AccountEncryptionMigrateReq
 export async function migrateAccountEncryptionMode(
   credentials: AuthCredentials,
   request: AccountEncryptionMigrateRequest,
+  options: Readonly<{
+    retry?: 'default' | 'none';
+  }> = {},
 ): Promise<import('@happier-dev/protocol').AccountEncryptionMigrateSuccessResponse> {
-  return await backoff(async () => {
+  await requireCurrentAccountStoredContentServerCompatibility();
+  const migrateOnce = async () => {
     const response = await serverFetch(
       '/v1/account/encryption/migrate',
       {
@@ -26,7 +33,9 @@ export async function migrateAccountEncryptionMode(
         },
         body: JSON.stringify(request),
       },
-      { includeAuth: false },
+      options.retry === 'none'
+        ? { includeAuth: false, retry: 'none' }
+        : { includeAuth: false },
     );
 
     const data: unknown = await response.json().catch(() => null);
@@ -34,6 +43,18 @@ export async function migrateAccountEncryptionMode(
     if (response.ok && success.success) {
       invalidateAccountEncryptionModeCache();
       return success.data;
+    }
+    if (response.ok) {
+      throw new HappyError(
+        'This server returned an incompatible account encryption migration response',
+        false,
+        {
+          status: response.status,
+          kind: 'server',
+          code:
+            'account-encryption-migration-response-incompatible',
+        },
+      );
     }
 
     const parsedError = AccountEncryptionMigrateAnyErrorResponseSchema.safeParse(data);
@@ -68,5 +89,9 @@ export async function migrateAccountEncryptionMode(
     }
 
     throw new HappyError('Failed to update encryption setting', false, { status: response.status, kind: 'server' });
-  });
+  };
+  if (options.retry === 'none') {
+    return await migrateOnce();
+  }
+  return await backoff(migrateOnce);
 }

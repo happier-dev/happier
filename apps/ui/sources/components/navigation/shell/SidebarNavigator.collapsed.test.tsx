@@ -251,7 +251,7 @@ vi.mock('./CollapsedSidebarView', () => ({
           testID: 'sidebar-expand-button',
           onPress: () => props.onRequestExpand?.() ?? mockLocalSettingsStore.setSidebarCollapsed(false),
         },
-        React.createElement('SidebarCollapseIcon', {}, null)
+        React.createElement('SidebarExpandIcon', {}, null)
       )
     ),
 }));
@@ -414,8 +414,10 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
     tree = (await renderScreen(<SidebarNavigator />)).tree;
 
-    const expandButton = tree.findByProps({ testID: 'sidebar-expand-button' });
-    expect(expandButton.findByType('SidebarCollapseIcon' as any)).toBeDefined();
+    // CollapsedSidebarView is mocked here, so this can only pin the navigator's own wiring: that
+    // the collapsed rail mounts with its two affordances. Which GLYPH the expand button draws is a
+    // contract of the real component, covered in SidebarIcons.test.tsx and the collapsed-view test.
+    expect(tree.findByProps({ testID: 'sidebar-expand-button' })).toBeDefined();
     expect(tree.findByProps({ testID: 'collapsed-sidebar-home-button' })).toBeDefined();
   });
 

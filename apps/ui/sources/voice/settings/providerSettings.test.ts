@@ -1,14 +1,36 @@
 import { describe, expect, it } from 'vitest';
+import {
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+} from '@happier-dev/protocol';
 
-import { getBundledVoiceUiEntry } from '@/voice/registry/internalContributions';
-import { BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES } from '@/voice/registry/generatedBundledVoiceEntries';
+import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
+import {
+  BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
+  BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
+} from '@/voice/registry/generatedBundledVoiceEntries';
+import { VoiceLocalConversationSchema } from '@/voice/adapters/localConversation/settings';
 import { createVoiceProviderSettingsCatalog } from './providerSettings';
 
 describe('voice provider settings catalog', () => {
+  const codexProviderId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+    pluginId: 'happier.agent.codex',
+    localId: 'realtime-codex',
+  }));
+  const elevenLabsProviderId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+  const bundledCatalogInput = Object.freeze({
+    bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
+    bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
+  });
+  const emptyBundledCatalogInput = Object.freeze({
+    bundledContributions: Object.freeze([]),
+    bundledPresentations: Object.freeze([]),
+  });
   it('uses public bundled settings for current parsing while retaining only legacy migration behavior', () => {
     const catalog = createVoiceProviderSettingsCatalog({
-      bundledEntries: [{
-        providerId: 'public_settings_fixture',
+      bundledContributions: [{
+        pluginId: 'happier.voice.fixture',
+        providerId: 'happier.voice.fixture/public-settings-fixture',
         declaration: {
           id: 'public-settings-fixture',
           title: 'Public settings fixture',
@@ -16,7 +38,6 @@ describe('voice provider settings catalog', () => {
           roles: ['realtime_conversation'],
           platforms: ['web'],
           capabilities: {
-            readiness: { requirements: [] },
             turn: { cancelResponse: false, bargeIn: false },
           },
           settings: {
@@ -41,50 +62,88 @@ describe('voice provider settings catalog', () => {
             exportName: 'activate',
           },
         },
-        internal: {
-          legacySettingsMigration: {
+      }],
+      bundledPresentations: [{
+        providerId: 'happier.voice.fixture/public-settings-fixture',
+        settingsSectionId: 'voice.fixture.public-settings-fixture',
+        legacySettingsMigration: {
             defaultLegacyConfig: { legacy: true },
             legacyDefaultSelection: true,
-            migrateLegacy: () => ({ config: { mode: 'default', billingMode: 'byo' }, root: {} }),
+            migrateLegacy: () => ({ config: { billingMode: 'byo' }, root: {} }),
             projectLegacy: () => null,
             mergeLegacy: () => null,
-          },
         },
       }],
     });
-    const owner = catalog.get('public_settings_fixture')!;
+    const owner = catalog.get('happier.voice.fixture/public-settings-fixture')!;
 
-    expect(owner.defaultConfig).toEqual({ mode: 'default', billingMode: 'hosted' });
-    expect(owner.parseConfig({ billingMode: 'byo' })).toBeNull();
+    expect(owner.defaultConfig).toEqual({ billingMode: 'hosted' });
+    expect(owner.parseConfig({ billingMode: 'byo' })).toEqual({ billingMode: 'byo' });
     expect(owner.parseConfig({ mode: 'default', billingMode: 'byo', extra: true })).toBeNull();
-    expect(owner.parseConfig({ mode: 'default', billingMode: 'byo' })).toEqual({
-      mode: 'default',
-      billingMode: 'byo',
-    });
+    expect(owner.parseConfig({ mode: 'default', billingMode: 'byo' })).toBeNull();
     expect(owner.migrateLegacy({ legacy: true })).toEqual({
-      config: { mode: 'default', billingMode: 'byo' },
+      config: { billingMode: 'byo' },
       root: {},
     });
   });
 
   it('removes bundled settings behavior when disabled and restores it without retaining stale state', () => {
-    const enabled = createVoiceProviderSettingsCatalog({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES });
-    const disabled = createVoiceProviderSettingsCatalog({ bundledEntries: [] });
-    const reEnabled = createVoiceProviderSettingsCatalog({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES });
+    const enabled = createVoiceProviderSettingsCatalog(bundledCatalogInput);
+    const disabled = createVoiceProviderSettingsCatalog(emptyBundledCatalogInput);
+    const reEnabled = createVoiceProviderSettingsCatalog(bundledCatalogInput);
 
-    expect(enabled.get('realtime_elevenlabs')?.defaultConfig).toMatchObject({ billingMode: 'happier' });
-    expect(disabled.get('realtime_elevenlabs')).toBeNull();
-    expect(disabled.defaultEnvelopes()).not.toHaveProperty('realtime_elevenlabs');
-    expect(reEnabled.get('realtime_elevenlabs')?.defaultConfig).toEqual(
-      enabled.get('realtime_elevenlabs')?.defaultConfig,
+    expect(enabled.get(elevenLabsProviderId)?.defaultConfig).toMatchObject({ billingMode: 'happier' });
+    expect(disabled.get(elevenLabsProviderId)).toBeNull();
+    expect(disabled.defaultEnvelopes()).not.toHaveProperty(elevenLabsProviderId);
+    expect(reEnabled.get(elevenLabsProviderId)?.defaultConfig).toEqual(
+      enabled.get(elevenLabsProviderId)?.defaultConfig,
     );
-    expect(reEnabled.get('realtime_elevenlabs')).not.toBe(enabled.get('realtime_elevenlabs'));
+    expect(reEnabled.get(elevenLabsProviderId)).not.toBe(enabled.get(elevenLabsProviderId));
   });
 
   it('keeps built-in settings owners available independently of bundled packages', () => {
-    const disabled = createVoiceProviderSettingsCatalog({ bundledEntries: [] });
+    const disabled = createVoiceProviderSettingsCatalog(emptyBundledCatalogInput);
     expect(disabled.get('local_direct')).not.toBeNull();
     expect(disabled.get('local_conversation')).not.toBeNull();
+  });
+
+  it('retains canonical Provider Chat state while applying a predecessor Local Conversation write', () => {
+    const catalog = createVoiceProviderSettingsCatalog(emptyBundledCatalogInput);
+    const owner = catalog.get('local_conversation');
+    if (!owner) throw new Error('expected_local_conversation_owner');
+    const canonical = VoiceLocalConversationSchema.parse({
+      agent: {
+        agentSource: 'session',
+        agentId: 'claude',
+        providerChat: {
+          status: 'migration_required',
+          reason: 'invalid_legacy_configuration',
+        },
+      },
+    });
+    const predecessor = owner.migrateLegacy({
+      conversationMode: 'agent',
+      networkTimeoutMs: 32_000,
+      agent: {
+        // `providerChat` is absent from the released predecessor shape.
+        // Its declared agent selection remains predecessor-owned, however.
+        agentSource: 'agent',
+        agentId: 'opencode',
+      },
+    });
+    if (!predecessor) throw new Error('expected_predecessor_local_conversation_config');
+
+    expect(owner.mergeLegacy(canonical, predecessor.config)).toMatchObject({
+      networkTimeoutMs: 32_000,
+      agent: {
+        agentSource: 'agent',
+        agentId: 'opencode',
+        providerChat: {
+          status: 'migration_required',
+          reason: 'invalid_legacy_configuration',
+        },
+      },
+    });
   });
 
   it.each([
@@ -107,9 +166,9 @@ describe('voice provider settings catalog', () => {
   ])('persists the bundled Codex global $selection binding as the sole version-two provider config', ({
     selectedBinding,
   }) => {
-    const catalog = createVoiceProviderSettingsCatalog({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES });
-    const owner = catalog.get('realtime_codex');
-    const bundledEntry = getBundledVoiceUiEntry('realtime_codex');
+    const catalog = createVoiceProviderSettingsCatalog(bundledCatalogInput);
+    const owner = catalog.get(codexProviderId);
+    const bundledEntry = getBundledVoiceProviderEntry(codexProviderId);
     const binding = {
       v: 1 as const,
       bindingsByServiceId: {
@@ -122,9 +181,8 @@ describe('voice provider settings catalog', () => {
       defaultConfig: { globalConnectedServices: null },
     });
     expect(bundledEntry?.kind === 'voice.conversation-provider.v1'
-      && 'providerSettings' in bundledEntry.internal
-      ? bundledEntry.internal.providerSettings
-      : undefined).toBeUndefined();
+      ? bundledEntry.presentation
+      : null).not.toHaveProperty('providerSettings');
     expect(owner?.migrateLegacy({})).toBeNull();
     expect(owner?.parseConfig({ globalConnectedServices: binding })).toEqual({
       globalConnectedServices: binding,
@@ -157,8 +215,8 @@ describe('voice provider settings catalog', () => {
   ])('rejects a bundled Codex $selection binding with a nested non-canonical secret field', ({
     selectedBinding,
   }) => {
-    const catalog = createVoiceProviderSettingsCatalog({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES });
-    const owner = catalog.get('realtime_codex');
+    const catalog = createVoiceProviderSettingsCatalog(bundledCatalogInput);
+    const owner = catalog.get(codexProviderId);
 
     expect(owner?.parseConfig({
       globalConnectedServices: {
@@ -170,41 +228,46 @@ describe('voice provider settings catalog', () => {
     })).toBeNull();
   });
 
-  it('projects current local settings into the pinned remote-dev adapter shape', () => {
-    const catalog = createVoiceProviderSettingsCatalog({ bundledEntries: [] });
-    const credential = { _isSecretValue: true as const, encryptedValue: { t: 'enc-v1' as const, c: 'ciphertext' } };
+  it('projects predecessor-supported local settings and the exact OpenAI-compatible sidecar into the pinned remote-dev adapter shape', () => {
+    const catalog = createVoiceProviderSettingsCatalog(emptyBundledCatalogInput);
     const localDirect = catalog.get('local_direct');
     const localConversation = catalog.get('local_conversation');
 
     const direct = localDirect?.projectLegacy({
       ...localDirect.defaultConfig as Record<string, unknown>,
       stt: {
-        provider: 'google_gemini',
-        openaiCompat: { baseUrl: null, model: 'whisper-1' },
+        provider: 'happier.voice.google/gemini-stt',
         localNeural: {},
-        providers: { google_gemini: { schemaVersion: 2, config: { model: 'gemini-custom', language: 'de' } } },
       },
+      tts: { provider: 'device', localNeural: {} },
     }, {
       root: {},
-      resolveCredential: (providerId, slotId) => providerId === 'google_gemini' && slotId === 'api_key'
-        ? credential
+      resolveCredential: () => null,
+      resolveProviderConfig: (providerId) => providerId === 'happier.voice.google/gemini-stt'
+        ? { model: 'gemini-custom', language: 'de' }
         : null,
     }) as Readonly<{
-      stt: Readonly<{ googleGemini: unknown; providers?: unknown }>;
+      stt: Readonly<{ googleGemini: unknown; openaiCompat: unknown; providers?: unknown }>;
     }>;
     expect(direct.stt.googleGemini).toEqual({
       model: 'gemini-custom',
       language: 'de',
-      apiKey: credential,
+      apiKey: null,
     });
     expect(direct.stt).not.toHaveProperty('providers');
+    expect(direct.stt.openaiCompat).toEqual({ apiKey: null });
 
-    const conversation = localConversation?.projectLegacy(localConversation.defaultConfig, {
+    const conversation = localConversation?.projectLegacy({
+      ...localConversation.defaultConfig as Record<string, unknown>,
+      stt: { provider: 'device', localNeural: {} },
+      tts: { provider: 'device', localNeural: {} },
+    }, {
       root: {
         welcome: { enabled: true, mode: 'on_first_turn', templateId: 'welcome-1' },
         executionMachine: { mode: 'fixed', machineId: 'machine-1', autoMachineId: null },
       },
       resolveCredential: () => null,
+      resolveProviderConfig: () => null,
     }) as Readonly<{ agent: unknown }>;
     expect(conversation.agent).toMatchObject({
       welcome: { enabled: true, mode: 'on_first_turn', templateId: 'welcome-1' },
@@ -214,15 +277,15 @@ describe('voice provider settings catalog', () => {
     });
   });
 
-  it('projects provider analytics only while the owning bundled contribution is present', () => {
-    const enabled = createVoiceProviderSettingsCatalog({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES });
-    const disabled = createVoiceProviderSettingsCatalog({ bundledEntries: [] });
-    const owner = enabled.get('realtime_elevenlabs');
+  it('does not admit provider-owned analytics semantics through presentation', () => {
+    const enabled = createVoiceProviderSettingsCatalog(bundledCatalogInput);
+    const disabled = createVoiceProviderSettingsCatalog(emptyBundledCatalogInput);
+    const owner = enabled.get(elevenLabsProviderId);
     expect(owner).not.toBeNull();
     const envelope = { schemaVersion: owner!.currentSchemaVersion, config: owner!.defaultConfig };
 
-    expect(enabled.projectAnalytics({ realtime_elevenlabs: envelope })).toHaveProperty('realtimeElevenLabsBillingMode');
-    expect(disabled.projectAnalytics({ realtime_elevenlabs: envelope })).toEqual({});
+    expect(enabled.projectAnalytics({ [elevenLabsProviderId]: envelope })).toEqual({});
+    expect(disabled.projectAnalytics({ [elevenLabsProviderId]: envelope })).toEqual({});
   });
 
   it('keeps a version-one secret envelope as migration input instead of admitting it as canonical config', async () => {
@@ -238,10 +301,10 @@ describe('voice provider settings catalog', () => {
       },
     });
 
-    expect(parsed.providers.realtime_elevenlabs).toMatchObject({ schemaVersion: 1 });
-    expect(parsed.providers.realtime_elevenlabs.config).toMatchObject({ byo: { apiKey: legacySecret } });
-    expect(createVoiceProviderSettingsCatalog({ bundledEntries: BUNDLED_FIRST_PARTY_VOICE_UI_ENTRIES })
-      .get('realtime_elevenlabs')?.parseConfig(parsed.providers.realtime_elevenlabs.config)).toBeNull();
+    expect(parsed.providers[elevenLabsProviderId]).toMatchObject({ schemaVersion: 1 });
+    expect(parsed.providers[elevenLabsProviderId].config).toMatchObject({ byo: { apiKey: legacySecret } });
+    expect(createVoiceProviderSettingsCatalog(bundledCatalogInput)
+      .get(elevenLabsProviderId)?.parseConfig(parsed.providers[elevenLabsProviderId].config)).toBeNull();
   });
 
   it('preserves a pre-envelope adapter secret only as a version-one migration input', async () => {
@@ -257,7 +320,7 @@ describe('voice provider settings catalog', () => {
       },
     });
 
-    expect(parsed.providers.realtime_elevenlabs).toMatchObject({
+    expect(parsed.providers[elevenLabsProviderId]).toMatchObject({
       schemaVersion: 1,
       config: { byo: { apiKey: legacySecret } },
     });

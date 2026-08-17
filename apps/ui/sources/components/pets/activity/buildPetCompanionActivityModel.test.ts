@@ -292,4 +292,24 @@ describe('buildPetCompanionActivityModel', () => {
             nowMs,
         })).toMatchObject({ state: 'running', sessionId: foreground.id });
     });
+
+    it('does not report an archived session as running activity', () => {
+        const nowMs = 1_000_000;
+        const session = createSessionFixture({
+            id: 'archived-running-session',
+            active: true,
+            presence: 'online',
+            activeAt: nowMs - 1,
+            archivedAt: nowMs - 10_000,
+            thinking: true,
+            thinkingAt: nowMs - 1,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: nowMs - 1,
+        });
+
+        expect(buildPetCompanionActivityModel({
+            sessions: [session],
+            nowMs,
+        })).toMatchObject({ state: 'idle', reason: 'idle', trayItems: [] });
+    });
 });

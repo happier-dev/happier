@@ -31,7 +31,7 @@ export const storage = create<StorageState>()((set, get) => {
     const pendingDomain = createPendingDomain<StorageState>({ set, get });
     const messagesDomain = createMessagesDomain<StorageState>({ set, get });
     const transcriptLoadingDomain = createTranscriptLoadingDomain<StorageState>({ set, get });
-    const realtimeDomain = createRealtimeDomain<StorageState>({ set, get });
+    const realtimeDomain = createRealtimeDomain<StorageState>({ set });
     const artifactsDomain = createArtifactsDomain<StorageState>({ set, get });
     const automationsDomain = createAutomationsDomain<StorageState>({ set, get });
     const petsDomain = createPetsDomain<StorageState>({ set, get });

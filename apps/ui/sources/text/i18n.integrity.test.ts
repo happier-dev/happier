@@ -4,6 +4,7 @@ import { en } from './translations/en';
 import { ru } from './translations/ru';
 import { pl } from './translations/pl';
 import { es } from './translations/es';
+import { fr } from './translations/fr';
 import { it as itLocale } from './translations/it';
 import { pt } from './translations/pt';
 import { ca } from './translations/ca';
@@ -11,7 +12,7 @@ import { zhHans } from './translations/zh-Hans';
 import { zhHant } from './translations/zh-Hant';
 import { ja } from './translations/ja';
 
-import { auditTranslations, flattenTranslationLeaves } from '../../tools/i18n/translationAudit';
+import { auditTranslations, findMissingKeys, flattenTranslationLeaves } from '../../tools/i18n/translationAudit';
 
 const IGNORED_UNTRANSLATED_KEYS = new Set([
     'promptLibrary.supportingFilePathPlaceholder',
@@ -46,6 +47,357 @@ const IGNORED_UNTRANSLATED_KEYS = new Set([
     'settingsSession.sessionList.workingIndicatorSpinnerTitle',
     'settingsSession.sessionList.identityDisplayAvatarTitle',
 ]);
+// French is the only locale that needs per-(locale, key) exemptions: it shares a large amount of
+// vocabulary with English, so a literal match is frequently the correct French rather than a gap.
+// Three groups, no accidents:
+//   product, provider and preset nouns (Happier, React Native, tmux, GitHub CLI, model ids),
+//   the English technical vocabulary French developers actually speak and which the ratified
+//   glossary pins (prompt, worktree, workspace, token, provider, pool, backend, daemon, relay),
+//   and true cognates that are simply the same word in French (Actions, Options, Description,
+//   Sources, Machines, Notifications, Diagnostics, Archive, Session, Installation).
+// A key listed here is a decision, not a gap: translating it would make the French UI read worse.
+// Consulted by the whole-app untranslated budget AND by the zero-tolerance namespace assertions
+// below, so there is a single owner for "identical to English on purpose".
+const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<string>>> = {
+    fr: new Set([
+        'agentInput.acp.modeSectionTitle',
+        'agentInput.acp.optionsSectionTitle',
+        'agentInput.mode.build',
+        'agentInput.mode.plan',
+        'agentInput.mode.sectionTitle',
+        'agentInput.suggestionGroups.plugins',
+        'agentInput.suggestionGroups.sessions',
+        'agentInput.suggestionGroups.skills',
+        'approvals.fieldAction',
+        'automations.detail.actionsGroupTitle',
+        'automations.detail.runDetail.conversation',
+        'automations.detail.runDetail.payload',
+        'automations.detail.runMeta.occurrenceTitle',
+        'automations.detail.runMeta.origin.conversation',
+        'automations.detail.status.active',
+        'automations.form.schedule.cronTitle',
+        'automations.form.sentence.cronFieldGuide.minute',
+        'automations.form.sentence.intervalUnits.minutes',
+        'automations.form.sentence.minutes',
+        'browserDiagnostics.host.families.console',
+        'browserDiagnostics.host.families.other',
+        'browserDiagnostics.host.families.performance',
+        'browserDiagnostics.host.fields.arguments',
+        'browserDiagnostics.host.fields.domContentLoaded',
+        'browserDiagnostics.host.fields.message',
+        'browserDiagnostics.host.fields.messages',
+        'browserDiagnostics.host.fields.readyState',
+        'browserDiagnostics.host.fields.rect',
+        'browserDiagnostics.host.fields.serviceWorker',
+        'browserDiagnostics.host.fields.socket',
+        'browserDiagnostics.host.fields.type',
+        'browserDiagnostics.host.fields.webgl',
+        'browserDiagnostics.host.fields.webrtc',
+        'browserDiagnostics.host.interaction.eval.title',
+        'browserShell.devtools.section.console',
+        'browserShell.devtools.section.info',
+        'browserShell.devtools.section.performance',
+        'browserShell.devtools.title',
+        'browserShell.profile.mode.plugin',
+        'browserShell.profile.mode.session',
+        'browserShell.profile.modeLabel',
+        'browserShell.profile.permissions.prompt',
+        'browserShell.profile.permissionsLabel',
+        'browserShell.profile.storage.plugin',
+        'browserShell.profile.storage.session',
+        'bugReports.composer.diagnostics.title',
+        'bugReports.composer.environment.deploymentType.cloud',
+        'commandPalette.pets.category',
+        'common.actions',
+        'common.inactive',
+        'common.info',
+        'common.logs',
+        'common.machine',
+        'common.message',
+        'common.version',
+        'connectedServices.account.poolsLabel',
+        'connectedServices.authChip.label',
+        'connectedServices.authChip.nativeLabel',
+        'connectedServices.detail.actionsGroupTitle',
+        'connectedServices.detail.groupDetail.optionsTitle',
+        'connectedServices.detail.prompts.apiKeyPlaceholder',
+        'connectedServices.detail.prompts.apiTokenPlaceholder',
+        'connectedServices.detail.prompts.personalAccessTokenPlaceholder',
+        'connectedServices.detail.prompts.setupTokenPlaceholder',
+        'connectedServices.detail.prompts.setupTokenTitle',
+        'connectedServices.detail.segments.pools',
+        'connectedServices.pools.autoBadge',
+        'connectedServices.pools.title',
+        'connectedServices.profile.poolsGroupTitle',
+        'connectedServices.profile.quotaTitle',
+        'connectedServices.serviceNames.gemini',
+        'connectedServices.serviceNames.openaiCodex',
+        'connectionStatus.labels.socket',
+        'deps.installable.gh.title',
+        'devVoiceQa.actionsTitle',
+        'devVoiceQa.configurationTitle',
+        'devVoiceQa.promptLabel',
+        'diagnosis.sections.actions',
+        'directSessions.browseAgents',
+        'directSessions.browseMachines',
+        'directSessions.browseSources',
+        'executionRuns.newRun.intents.plan',
+        'executionRuns.newRun.sections.backends',
+        'executionRuns.newRun.sections.instructions',
+        'executionRuns.newRun.sections.permissions',
+        'externalSessions.browseAgents',
+        'externalSessions.browseMachines',
+        'externalSessions.browseSources',
+        'externalSessions.settingsMachineTitle',
+        'externalSessions.settingsNotificationsTitle',
+        'files.branchMenu.category.actions',
+        'files.branchMenu.category.branches',
+        'files.branchMenu.category.local',
+        'files.branchMenu.category.options',
+        'files.branchMenu.category.remote',
+        'files.branchMenu.category.worktrees',
+        'files.commitDetails.commitLabel',
+        'files.diff',
+        'files.sourceControlOperations.actions.fetch',
+        'files.sourceControlOperations.actions.pull',
+        'files.sourceControlOperations.actions.push',
+        'files.sourceControlOperations.update.branchIntegration.merge',
+        'files.sourceControlOperations.update.branchIntegration.rebase',
+        'files.sourceControlOperations.update.publish.visibility.public',
+        'files.sourceControlOperations.update.publishRepository.public',
+        'files.sourceControlOperations.update.publishRepository.repositoryNamePlaceholder',
+        'files.sourceControlOperations.update.pullRequest.title',
+        'files.sourceControlOperations.update.pullRequests.title',
+        'files.sourceControlOperations.update.remotes.title',
+        'inbox.permissions',
+        'localServices.band.suggestions',
+        'localServices.launcher.title',
+        'localServices.session.workspaceTitle',
+        'machine.architecture',
+        'machine.daemon',
+        'machine.installables.autoUpdateModes.auto',
+        'machine.installables.screenTitle',
+        'machine.machineGroup',
+        'machine.runtimeInventoryInstallations',
+        'machine.runtimeInventoryServices',
+        'machine.tools.installablesTitle',
+        'markdown.codeLabel',
+        'markdown.diffLabel',
+        'memorySearchSettings.backfill.title',
+        'memorySearchSettings.embeddings.groupTitle',
+        'memorySearchSettings.embeddings.openAi.dimensionsTitle',
+        'memorySearchSettings.embeddings.provider.title',
+        'memorySearchSettings.indexMode.triggerTitle',
+        'memorySearchSettings.machine.title',
+        'newSession.checkout.actionsSectionTitle',
+        'newSession.ghCliBanner.title',
+        'newSession.sessionType.simple',
+        'newSession.sessionType.worktree',
+        'newSession.worktree.nameStep.backLabel',
+        'notifications.activity.defaultSessionTitle',
+        'pluginPermissions.identifiers.installation',
+        'pluginPermissions.identifiers.machine',
+        'pluginPermissions.identifiers.session',
+        'pluginPermissions.requester.plugin',
+        'pluginPermissions.scope.workspace',
+        'profiles.aiBackend.claudeSubtitle',
+        'profiles.aiBackend.codexSubtitle',
+        'profiles.aiBackend.opencodeSubtitle',
+        'profiles.environmentVariables.previewModal.detail.machine',
+        'profiles.requirements.secretRequired',
+        'projects.detail.fields.machine',
+        'promptLibrary.actions',
+        'promptLibrary.externalAssetsMachine',
+        'promptLibrary.prompts',
+        'promptLibrary.registriesSources',
+        'promptLibrary.sections',
+        'promptLibrary.skills',
+        'promptLibrary.tagsLabel',
+        'promptLibrary.templates',
+        'promptLibrary.templateTargetPromptLabel',
+        'runs.delivery.promptLabel',
+        'runs.machinesSubtitle',
+        'secrets.badgeReady',
+        'server.retention.sessions',
+        'server.serverGroupServersLabel',
+        'session.inactiveNotResumable',
+        'session.planOutput.title',
+        'session.sharing.session',
+        'session.subagents.intent.plan',
+        'session.subagents.intent.review',
+        'session.subagents.kind.execution_run',
+        'session.subagents.kind.subagent_sidechain',
+        'session.subagents.panel.teamIdPlaceholder',
+        'session.subagents.panel.title',
+        'session.workState.goal.pause',
+        'session.workState.workflow.bare',
+        'sessionGettingStarted.steps.authLogin.copyLabel',
+        'sessionInfo.checkoutLabel',
+        'sessionInfo.happyHome',
+        'sessionInfo.workspaceLabel',
+        'sessionInfo.workspaceTitle',
+        'settings.accessEndpoints.recommendedUse.diagnostic',
+        'settings.acpCatalogFieldDescription',
+        'settings.machines',
+        'settings.mcpServersBindingMachine',
+        'settings.mcpServersBindingTargetMachineTitle',
+        'settings.mcpServersBindingTargetWorkspaceTitle',
+        'settings.mcpServersBindingTitle',
+        'settings.mcpServersDetectedDirectoryPlaceholder',
+        'settings.mcpServersDetectedMachineTitle',
+        'settings.mcpServersEditorBindings',
+        'settings.mcpServersEditorRemote',
+        'settings.mcpServersEditorStdio',
+        'settings.mcpServersFieldArgs',
+        'settings.mcpServersFieldTransport',
+        'settings.mcpServersPreviewAgentTitle',
+        'settings.mcpServersPreviewDirectoryPlaceholder',
+        'settings.mcpServersPreviewMachineTitle',
+        'settings.mcpServersScopeMachine',
+        'settings.mcpServersScopeWorkspace',
+        'settings.mcpServersTestTitle',
+        'settings.notifications',
+        'settings.permissions',
+        'settings.secrets',
+        'settings.servers',
+        'settings.session',
+        'settings.sessions',
+        'settings.social',
+        'settings.terminal',
+        'settings.transcript',
+        'settings.workspaces',
+        'settingsActions.families.plugins.title',
+        'settingsActions.families.session.title',
+        'settingsActions.spawnPolicy.permissionCeiling.options.plan.title',
+        'settingsActions.spawnPolicy.permissionCeiling.options.safe-yolo.title',
+        'settingsActions.spawnPolicy.permissionCeiling.options.yolo.title',
+        'settingsAgents.channelPlugin',
+        'settingsAgents.channelStable',
+        'settingsAgents.configuration',
+        'settingsAgents.dynamicModelProbeAuto',
+        'settingsAgents.plugins.antigravity.fields.antigravityRuntimeMode.options.auto.title',
+        'settingsAgents.plugins.antigravity.sections.runtime.title',
+        'settingsAgents.plugins.claude.fields.claudeRemoteSettingSourcesV2.options.local.title',
+        'settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.auto.title',
+        'settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.tmux.title',
+        'settingsAgents.plugins.claude.fields.claudeUnifiedTerminalHost.options.zellij.title',
+        'settingsAgents.plugins.codex.fields.codexBackendMode.options.appServer.title',
+        'settingsAgents.runtimeSwitchAcpSetSessionMode',
+        'settingsAgents.title',
+        'settingsAppearance.agentInputActionBarLayoutOptions.auto',
+        'settingsAppearance.agentInputChipDensityOptions.auto',
+        'settingsAppearance.contentWidthOptions.compact',
+        'settingsAppearance.itemDensityOptions.compact',
+        'settingsAppearance.tabBarAppearance.sizeCompact',
+        'settingsFeatures.expExecutionRuns',
+        'settingsFeatures.historyScopeGlobalOption',
+        'settingsFeatures.sessionListGrouping.dateTitle',
+        'settingsNotifications.activitySurfaces.liveActivities.attentionTitle',
+        'settingsNotifications.activitySurfaces.widgets.attentionTitle',
+        'settingsNotifications.badges.title',
+        'settingsNotifications.pushTroubleshooting.actions.title',
+        'settingsNotifications.pushTroubleshooting.permission.title',
+        'settingsNotifications.types.title',
+        'settingsPets.title',
+        'settingsPlugins.accountDataErase.promptPlaceholder',
+        'settingsPlugins.developmentCreateSurfaceReactNative',
+        'settingsPlugins.diagnosticsSnapshotTitle',
+        'settingsPlugins.invocationLogs.level.diagnostic',
+        'settingsPlugins.invocationLogs.level.info',
+        'settingsPlugins.registriesScopesPlaceholder',
+        'settingsPlugins.sourceKind.archive',
+        'settingsPlugins.sourceKind.marketplace',
+        'settingsPlugins.views.diagnostics',
+        'settingsProviders.authoring.providerTitle',
+        'settingsProviders.authoring.publicHeadersPlaceholder',
+        'settingsProviders.compatibility.incompatible',
+        'settingsProviders.detail.actionsTitle',
+        'settingsProviders.detail.machinesTitle',
+        'settingsProviders.migration.actionsTitle',
+        'settingsProviders.title',
+        'settingsSession.mobileWorkspaceExperience.options.cockpitTitle',
+        'settingsSession.permissions.title',
+        'settingsSession.providerUsageGauge.windowSessionTitle',
+        'settingsSession.replayResume.summaryRunner.backendTitle',
+        'settingsSession.sessionList.headerIdentityDisplayAvatarTitle',
+        'settingsSession.toolDetailLevel.compactTitle',
+        'settingsSession.toolRendering.cardDensity.compactTitle',
+        'settingsSession.transcript.advanced.performanceTitle',
+        'settingsSession.transcript.messageActions.template.placeholder',
+        'settingsSession.transcript.motionPickerTitle',
+        'settingsSession.transcript.title',
+        'settingsSession.usageLimitRecovery.resumePromptStandardTitle',
+        'settingsVoice.byo.realtime.modelPicker.detailAuto',
+        'settingsVoice.byo.realtime.modelPicker.options.autoTitle',
+        'settingsVoice.history.roleAssistant',
+        'settingsVoice.local.conversation.streaming.title',
+        'settingsVoice.local.daemonInference.execution.options.auto',
+        'settingsVoice.local.daemonInference.execution.options.daemon',
+        'settingsVoice.local.googleCloudTts.format.title',
+        'settingsVoice.local.googleCloudTts.provider.detail',
+        'settingsVoice.local.googleCloudTts.provider.title',
+        'settingsVoice.local.googleGeminiStt.language.autoTitle',
+        'settingsVoice.local.googleGeminiStt.provider.detail',
+        'settingsVoice.local.googleGeminiStt.provider.title',
+        'settingsVoice.local.localNeuralStt.provider.detail',
+        'settingsVoice.local.mediatorBackendDaemon',
+        'settingsVoice.local.openaiCompatStt.provider.detail',
+        'settingsVoice.local.openaiCompatTts.provider.detail',
+        'settingsVoice.ui.scopeSession',
+        'settingsVoice.ui.surfaceLocation.autoTitle',
+        'settingsVoice.ui.surfaceLocation.sessionTitle',
+        'settingsVoice.ui.updates.otherSessionsSnippetsMode.autoTitle',
+        'setupOnboarding.handoffPlatformLinuxLabel',
+        'setupOnboarding.handoffPlatformMacosLabel',
+        'setupOnboarding.handoffPlatformPosixLabel',
+        'setupOnboarding.relayAccessCloudflareTitle',
+        'simulatorPreview.sidebands.fields.message',
+        'simulatorPreview.sidebands.fields.route',
+        'simulatorPreview.sidebands.logs',
+        'simulatorPreview.sidebands.route',
+        'simulatorPreview.sidebands.title',
+        'subAgentGuidance.ruleEditor.exampleToolCalls.placeholder',
+        'subAgentGuidance.ruleEditor.intent.options.plan.title',
+        'subAgentGuidance.settings.groupTitle',
+        'subAgentGuidance.settings.overview.happierStatusTitle',
+        'subAgentGuidance.settings.related.providersTitle',
+        'systemStatus.sections.actions',
+        'systemStatus.sections.application',
+        'systemStatus.ui.socket',
+        'tabs.sessions',
+        'terminalEmbedded.quickKeys.ctrlC',
+        'terminalEmbedded.quickKeys.ctrlD',
+        'terminalEmbedded.quickKeys.esc',
+        'terminalEmbedded.quickKeys.tab',
+        'terminalEmbedded.settings.rendererXtermWebView',
+        'tools.agentTeamView.description',
+        'tools.agentTeamView.type',
+        'tools.fullView.description',
+        'tools.names.question',
+        'tools.names.subAgent',
+        'tools.names.terminal',
+        'tools.names.viewDiff',
+        'tools.structuredResult.diff',
+        'tools.structuredResult.stderr',
+        'tools.structuredResult.stdout',
+        'tools.subAgentRunView.planTitle',
+        'tools.workflowActivityView.phaseUntitled',
+        'tools.workflowActivityView.untitled',
+        'tools.workflowView.description',
+        'tools.workspaceIndexingPermission.optionFallback',
+        'usage.auto',
+        'usage.source',
+        'usage.summary.export.session',
+        'usage.tokens',
+        'voiceActivity.format.action',
+        'voiceActivity.format.assistant',
+        'voiceActivity.format.assistantStreaming',
+        'welcome.welcomeFooterDocsAction',
+        'windowsRemoteSessionLaunchMode.console',
+        'windowsRemoteSessionLaunchMode.shortConsole',
+    ]),
+};
+
 const IGNORED_UNTRANSLATED_KEY_PREFIXES = [
     'settingsAppearance.themeProfiles.',
     'settingsKeyboard.',
@@ -128,6 +480,15 @@ const UNTRANSLATED_PREFIX_BASELINE_COUNTS: Record<string, Record<string, number>
         'releaseNotes.onboardingShowcase.': 0,
         'sessionsList.': 22,
     },
+    fr: {
+        'settingsAppearance.themeProfiles.': 26,
+        'settingsKeyboard.': 2,
+        'settingsSession.sessionCreation.': 3,
+        'settingsSession.promptPersonalization.': 0,
+        'commandPalette.commands.': 3,
+        'releaseNotes.onboardingShowcase.': 0,
+        'sessionsList.': 6,
+    },
     ja: {
         'settingsAppearance.themeProfiles.': 106,
         'settingsKeyboard.': 33,
@@ -173,7 +534,7 @@ const SAMPLED_FUNCTION_SAME_VALUE_BY_LOCALE: Readonly<Record<string, ReadonlySet
     'session.providerBinding.launchDefaultLabel': new Set(['it']),
     'session.providerBinding.launchNamedLabel': new Set(['it']),
     // “Local” has the same spelling in these locales.
-    'settingsProviders.local.defaultConnectionName': new Set(['es', 'pt', 'ca']),
+    'settingsProviders.local.defaultConnectionName': new Set(['es', 'pt', 'ca', 'fr']),
 };
 
 const EXTERNAL_SESSION_FUNCTION_TRANSLATIONS: Readonly<Record<string, readonly unknown[]>> = {
@@ -219,8 +580,6 @@ const EXTERNAL_SESSION_NEIGHBORING_STRING_KEYS = [
     'chatFooter.directTakeoverDialogDirectBody',
     'chatFooter.directTakeoverDialogPersistTitle',
     'chatFooter.directTakeoverDialogPersistBody',
-    'chatFooter.directTakeoverDialogForceStopTitle',
-    'chatFooter.directTakeoverDialogForceStopBody',
     'status.workingExternally',
     'status.needsInputExternally',
     'status.retryingExternally',
@@ -253,6 +612,93 @@ function callSampledTranslation(value: unknown, args: readonly unknown[]): strin
 }
 
 describe('i18n integrity', () => {
+    it('does not grow the known Voice translation-key backlog', () => {
+        const locales = [
+            { code: 'ru', root: ru },
+            { code: 'pl', root: pl },
+            { code: 'es', root: es },
+            { code: 'fr', root: fr },
+            { code: 'it', root: itLocale },
+            { code: 'pt', root: pt },
+            { code: 'ca', root: ca },
+            { code: 'zh-Hans', root: zhHans },
+            { code: 'zh-Hant', root: zhHant },
+            { code: 'ja', root: ja },
+        ];
+        const missing = locales.flatMap((locale) => findMissingKeys(en, locale))
+            .filter(({ key }) => key === 'settingsVoice' || key.startsWith('settingsVoice.'));
+
+        // Voice still has a separately tracked localization batch. Ratchet the
+        // observed backlog so new English-only Voice copy cannot make it worse.
+        expect(missing.length).toBeLessThanOrEqual(2_060);
+    });
+
+    it('keeps the Voice diagnostic-recording consent complete in every supported locale', () => {
+        const locales = [
+            { code: 'ru', root: ru },
+            { code: 'pl', root: pl },
+            { code: 'es', root: es },
+            { code: 'fr', root: fr },
+            { code: 'it', root: itLocale },
+            { code: 'pt', root: pt },
+            { code: 'ca', root: ca },
+            { code: 'zh-Hans', root: zhHans },
+            { code: 'zh-Hant', root: zhHant },
+            { code: 'ja', root: ja },
+        ];
+        const requiredKeys = new Set([
+            'settingsVoice.diagnostics.consentTitle',
+            'settingsVoice.diagnostics.consentBody',
+            'settingsVoice.diagnostics.consentAction',
+        ]);
+        const missing = locales.flatMap((locale) => findMissingKeys(en, locale))
+            .filter(({ key }) => requiredKeys.has(key));
+
+        expect(missing).toEqual([]);
+    });
+
+    // A settings-action alert is composed from a headline plus optional fact
+    // lines, so a single missing leaf renders one alert in two languages.
+    it('keeps voice provider settings-action failure copy complete in every supported locale', () => {
+        const keys = [
+            'operationFailed',
+            'operationFailedUnsaved',
+            'operationFailedVoiceNotFound',
+            'operationFailedStage',
+            'operationFailedStatus',
+        ] as const;
+        const sampleArgs = [{ stage: 'validate_voice', status: 500 }];
+        const locales = [
+            { code: 'ru', root: ru },
+            { code: 'pl', root: pl },
+            { code: 'es', root: es },
+            { code: 'fr', root: fr },
+            { code: 'it', root: itLocale },
+            { code: 'pt', root: pt },
+            { code: 'ca', root: ca },
+            { code: 'zh-Hans', root: zhHans },
+            { code: 'zh-Hant', root: zhHant },
+            { code: 'ja', root: ja },
+        ];
+
+        const failures = locales.flatMap(({ code, root }) => keys.flatMap((key) => {
+            const englishValue = readTranslationLeaf(en, `settingsVoice.realtimeProviders.${key}`);
+            const value = readTranslationLeaf(root, `settingsVoice.realtimeProviders.${key}`);
+            const english = typeof englishValue === 'function'
+                ? callSampledTranslation(englishValue, sampleArgs)
+                : englishValue;
+            const localized = typeof englishValue === 'function'
+                ? callSampledTranslation(value, sampleArgs)
+                : value;
+            if (typeof localized !== 'string' || localized.trim().length === 0) {
+                return [`${code}: ${key} is missing`];
+            }
+            return localized === english ? [`${code}: ${key} falls back to English`] : [];
+        }));
+
+        expect(failures).toEqual([]);
+    });
+
     it('keeps the Codex Live account and privacy namespace complete in every supported locale', () => {
         const expected = flattenTranslationLeaves(en.settingsVoice.realtimeProviders.codex)
             .map((leaf) => ({ key: leaf.key, kind: leaf.kind }))
@@ -261,6 +707,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },
@@ -291,12 +738,22 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru, idToken: 'идентификатор', negativeToken: 'не' },
             { code: 'pl', root: pl, idToken: 'identyfikator', negativeToken: 'nie' },
             { code: 'es', root: es, idToken: 'identificador', negativeToken: 'no' },
+            { code: 'fr', root: fr, idToken: 'identifiant', negativeToken: 'non' },
             { code: 'it', root: itLocale, idToken: 'identificatore', negativeToken: 'non' },
             { code: 'pt', root: pt, idToken: 'identificador', negativeToken: 'não' },
             { code: 'ca', root: ca, idToken: 'identificador', negativeToken: 'no' },
             { code: 'zh-Hans', root: zhHans, idToken: '标识符', negativeToken: '不会' },
             { code: 'zh-Hant', root: zhHant, idToken: '識別碼', negativeToken: '不會' },
             { code: 'ja', root: ja, idToken: 'ID', negativeToken: '削除しません' },
+        ];
+        const englishResumption = en.settingsVoice?.realtimeProviders?.resumption;
+        const englishResumptionField = en.settingsVoice?.realtimeProviders?.fields?.resumption;
+        const englishOptInCopy = [
+            englishResumptionField?.title,
+            englishResumptionField?.subtitle,
+            englishResumption?.confirmTitle,
+            englishResumption?.confirmBody,
+            englishResumption?.confirmAction,
         ];
 
         const failures = locales.flatMap(({ code, root, idToken, negativeToken }) => {
@@ -308,6 +765,7 @@ describe('i18n integrity', () => {
                 realtimeProviders?.codex?.privacyDisclosure,
             ];
             const resumption = realtimeProviders?.resumption;
+            const resumptionField = realtimeProviders?.fields?.resumption;
             const forgetCopy = [
                 resumption?.forgetTitle,
                 resumption?.forgetSubtitle,
@@ -315,15 +773,32 @@ describe('i18n integrity', () => {
                 resumption?.unsupported,
                 resumption?.failed,
             ];
+            const optInCopy = [
+                resumptionField?.title,
+                resumptionField?.subtitle,
+                resumption?.confirmTitle,
+                resumption?.confirmBody,
+                resumption?.confirmAction,
+            ];
             const combinedForgetCopy = forgetCopy.filter((value) => typeof value === 'string').join(' ');
+            const combinedOptInCopy = optInCopy.filter((value) => typeof value === 'string').join(' ');
             const subtitle = typeof resumption?.forgetSubtitle === 'string' ? resumption.forgetSubtitle : '';
+            const confirmBody = typeof resumption?.confirmBody === 'string' ? resumption.confirmBody : '';
             return [
                 ...(disclosures.every((value) => typeof value === 'string' && value.trim().length > 0)
                     ? [] : [`${code}: missing provider disclosure`]),
                 ...(forgetCopy.every((value) => typeof value === 'string' && value.trim().length > 0)
                     ? [] : [`${code}: incomplete forget copy`]),
+                ...(optInCopy.every((value) => typeof value === 'string' && value.trim().length > 0)
+                    ? [] : [`${code}: incomplete resumption opt-in copy`]),
+                ...(code === 'en' || optInCopy.every((value, index) => value !== englishOptInCopy[index])
+                    ? [] : [`${code}: resumption opt-in copy falls back to English`]),
                 ...(combinedForgetCopy.includes('Happier') && combinedForgetCopy.includes(idToken)
                     ? [] : [`${code}: forget copy does not identify Happier's saved id`]),
+                ...(combinedOptInCopy.includes('Happier') && combinedOptInCopy.includes('xAI') && combinedOptInCopy.includes(idToken)
+                    ? [] : [`${code}: resumption opt-in copy does not identify Happier's saved xAI id`]),
+                ...(confirmBody.includes('{minutes}')
+                    ? [] : [`${code}: resumption confirmation lost its retention placeholder`]),
                 ...(subtitle.includes('xAI') && subtitle.toLocaleLowerCase().includes(negativeToken.toLocaleLowerCase())
                     ? [] : [`${code}: forget subtitle does not disclaim xAI deletion`]),
             ];
@@ -340,6 +815,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },
@@ -368,6 +844,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },
@@ -393,6 +870,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },
@@ -413,7 +891,8 @@ describe('i18n integrity', () => {
         });
         const untranslated = Object.values(auditTranslations({ en, locales }))
             .flatMap((report) => report.untranslatedStrings)
-            .filter((entry) => entry.key.startsWith('settingsPlugins.'));
+            .filter((entry) => entry.key.startsWith('settingsPlugins.'))
+            .filter((entry) => !IGNORED_UNTRANSLATED_KEYS_BY_LOCALE[entry.locale]?.has(entry.key));
 
         expect(mismatches).toEqual([]);
         expect(untranslated).toEqual([]);
@@ -424,6 +903,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },
@@ -455,6 +935,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },
@@ -476,6 +957,7 @@ describe('i18n integrity', () => {
         const untranslatedStrings = Object.values(auditTranslations({ en, locales }))
             .flatMap((report) => report.untranslatedStrings)
             .filter((entry) => entry.key.startsWith('pluginPermissions.'))
+            .filter((entry) => !IGNORED_UNTRANSLATED_KEYS_BY_LOCALE[entry.locale]?.has(entry.key))
             .map((entry) => `${entry.locale}: ${entry.key} = ${JSON.stringify(entry.value)}`);
         const englishSummary = en.pluginPermissions.accessibilitySummary({ details: 'DETAILS_MARKER' });
         const untranslatedSummaries = locales.flatMap(({ code, root }) => {
@@ -495,6 +977,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },
@@ -529,6 +1012,7 @@ describe('i18n integrity', () => {
                 )
             ))
             .filter((entry) => !EXTERNAL_SESSION_SAME_VALUE_BY_LOCALE[entry.key]?.has(entry.locale))
+            .filter((entry) => !IGNORED_UNTRANSLATED_KEYS_BY_LOCALE[entry.locale]?.has(entry.key))
             .map((entry) => `${entry.locale}: ${entry.key} = ${JSON.stringify(entry.value)}`);
         const untranslatedFunctions = Object.entries(EXTERNAL_SESSION_FUNCTION_TRANSLATIONS)
             .flatMap(([key, args]) => {
@@ -570,6 +1054,7 @@ describe('i18n integrity', () => {
                 { code: 'ru', root: ru },
                 { code: 'pl', root: pl },
                 { code: 'es', root: es },
+                { code: 'fr', root: fr },
                 { code: 'it', root: itLocale },
                 { code: 'pt', root: pt },
                 { code: 'ca', root: ca },
@@ -601,6 +1086,7 @@ describe('i18n integrity', () => {
         const untranslated = allUntranslated
             .filter((entry) => {
                 if (IGNORED_UNTRANSLATED_KEYS.has(entry.key)) return false;
+                if (IGNORED_UNTRANSLATED_KEYS_BY_LOCALE[entry.locale]?.has(entry.key)) return false;
                 return !IGNORED_UNTRANSLATED_KEY_PREFIXES.some((prefix) => entry.key.startsWith(prefix));
             });
 
@@ -629,6 +1115,7 @@ describe('i18n integrity', () => {
             { code: 'ru', root: ru },
             { code: 'pl', root: pl },
             { code: 'es', root: es },
+            { code: 'fr', root: fr },
             { code: 'it', root: itLocale },
             { code: 'pt', root: pt },
             { code: 'ca', root: ca },

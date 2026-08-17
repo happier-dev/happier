@@ -96,10 +96,17 @@ describe('McpWorkspaceRootPickerModal openers', () => {
         );
 
         const targetTypeDropdown = screen.findAllByType('DropdownMenu')
-            .find((dropdown) => dropdown.props.selectedId === 'machine');
+            .find((dropdown) => dropdown.props.selectedId === 'allMachines');
         expect(targetTypeDropdown).toBeTruthy();
         await act(async () => {
             targetTypeDropdown?.props.onSelect?.('workspace');
+        });
+
+        const machineDropdown = screen.findAllByType('DropdownMenu')
+            .find((dropdown) => dropdown.props.title === 'settings.mcpServersBindingMachine');
+        expect(machineDropdown?.props.selectedId).toBeNull();
+        await act(async () => {
+            machineDropdown?.props.onSelect?.('machine-win');
         });
 
         const workspaceRootRow = screen.findAllByType('Item')

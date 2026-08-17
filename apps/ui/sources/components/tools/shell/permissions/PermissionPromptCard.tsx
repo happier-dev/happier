@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -23,6 +22,7 @@ import {
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -113,7 +113,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
         <View testID="permission-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
             <View style={styles.header}>
                 <View style={styles.icon}>
-                    <Ionicons name="lock-closed-outline" size={16} color={theme.colors.state.neutral.foreground} />
+                    <Icon name="lock" size={16} color={theme.colors.state.neutral.foreground} />
                 </View>
                 <View style={styles.headerText}>
                     <Text style={styles.title} numberOfLines={1}>
@@ -141,7 +141,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
                             pressed && styles.viewButtonPressed,
                         ]}
                     >
-                        <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
+                        <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
             </View>

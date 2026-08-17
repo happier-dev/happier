@@ -1,15 +1,13 @@
 import * as React from "react";
 import { View, Pressable, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { t } from '@/text';
 import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/sync/domains/messages/messageTypes";
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { Metadata } from "@/sync/domains/state/storageTypes";
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
-import { layout } from "@/components/ui/layout/layout";
+import { useLayoutMaxWidthStyle } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
@@ -40,8 +38,10 @@ import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
-import { LinkedWorkspaceFilesRow } from '@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow';
+import { useMessageStructuredReferences } from '@/components/sessions/transcript/references/messageStructuredReferences';
+import { StructuredReferencesRow } from '@/components/sessions/transcript/references/StructuredReferencesRow';
+import { ComposerAttachmentFallbackRow } from '@/components/sessions/transcript/composerAttachments/ComposerAttachmentFallbackRow';
+import { useMessageComposerAttachments } from '@/components/sessions/transcript/composerAttachments/messageComposerAttachments';
 import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
@@ -53,14 +53,15 @@ import { AttachmentsInlineImages } from '@/components/sessions/attachments/messa
 import { parseSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 import { SessionMediaInlineImages } from '@/components/sessions/media/SessionMediaInlineImages';
 import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';
-import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
+import { readSessionMessageProvenanceV1 } from '@happier-dev/protocol';
 import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import { MessageActionRow } from '@/components/sessions/transcript/messageActions/MessageActionRow';
+import { PluginMessageActions } from '@/components/sessions/transcript/messageActions/PluginMessageActions';
 import { MessagePinButton } from '@/components/sessions/transcript/messageActions/MessagePinButton';
 import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
@@ -74,9 +75,8 @@ import { readStreamSegmentMetaV1 } from '@/sync/reducer/helpers/streamSegmentMet
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { completeSessionForkNavigation } from '@/sync/domains/sessionFork/completeSessionForkNavigation';
+import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
 import { resolveTranscriptMarkdownFileLink } from '@/components/sessions/transcript/resolveTranscriptMarkdownFileLink';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
 import { executeTranscriptRollbackAction } from '@/components/sessions/transcript/transcriptRollbackActionRunner';
@@ -93,12 +93,14 @@ import {
   deriveTranscriptInteractionFromSession,
   type TranscriptInteraction,
 } from '@/utils/sessions/deriveTranscriptInteraction';
-import { useSession } from '@/sync/domains/state/storage';
+import { useSessionInteractionSource } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { isRecoveredHistoryTranscriptObservation } from '@/sync/domains/messages/transcriptObservationProvenance';
 import type { TranscriptEventEmphasis } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
+import { Icon } from '@/components/ui/icons/Icon';
+import { Typography } from '@/constants/Typography';
 
 const FAIL_CLOSED_TRANSCRIPT_INTERACTION = deriveTranscriptInteraction({ kind: 'public' });
 const TRANSCRIPT_SELECTION_CHECKBOX_ANCHOR_TOP = 0;
@@ -177,6 +179,29 @@ function RecoveredHistoryIndicator(props: Readonly<{ message: Message }>) {
       style={styles.recoveredHistoryIndicator}
     >
       {accessibleText}
+    </Text>
+  );
+}
+
+function PluginMessageAttribution(props: Readonly<{ message: Message }>) {
+  const pluginProvenance = React.useMemo(() => {
+    if (props.message.kind !== 'user-text') return null;
+    const provenance = readSessionMessageProvenanceV1(props.message.meta);
+    return provenance?.kind === 'pluginSession' ? provenance : null;
+  }, [props.message]);
+  if (!pluginProvenance) return null;
+
+  const label = t('message.pluginAttribution', { pluginId: pluginProvenance.pluginId });
+  return (
+    <Text
+      testID={`transcript-plugin-attribution:${props.message.id}`}
+      accessibilityRole="text"
+      accessibilityLabel={label}
+      numberOfLines={1}
+      ellipsizeMode="tail"
+      style={styles.pluginMessageAttribution}
+    >
+      {label}
     </Text>
   );
 }
@@ -271,21 +296,18 @@ type MessageViewProps = {
   onToggleToolPin?: SessionMessagePinToggleHandler;
   historical?: boolean;
   eventEmphasis?: TranscriptEventEmphasis;
-  pluginUiProjection?: PluginUiProjectionModel | null;
   interaction?: TranscriptInteraction;
 };
 
 export const MessageView = React.memo(function MessageView(props: MessageViewProps) {
   const transcriptSessionCommon = useTranscriptSessionCommon(props.sessionId);
-  const session = useSession(props.sessionId);
-  const sessionInteraction = React.useMemo(() => session
-    ? deriveTranscriptInteractionFromSession({
-        accessLevel: session.accessLevel,
-        canApprovePermissions: session.canApprovePermissions,
-        active: session.active,
-        presence: session.presence,
-      })
-    : undefined, [session]);
+  // Subscription width: this is a per-row hook, so a whole-record subscription made every
+  // mounted row re-render on turn-lifecycle churn. `presence` was passed but
+  // `deriveTranscriptInteractionFromSession` never reads it, so the narrow source drops it.
+  const interactionSource = useSessionInteractionSource(props.sessionId);
+  const sessionInteraction = React.useMemo(() => interactionSource
+    ? deriveTranscriptInteractionFromSession(interactionSource)
+    : undefined, [interactionSource]);
   return (
     <MessageViewWithSessionCommon
       {...props}
@@ -315,6 +337,14 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
     () => deriveTranscriptForkCommonForInteraction(props.forkCommon, interaction),
     [interaction, props.forkCommon],
   );
+  // Read at render time: the row stylesheet evaluates once, so a baked-in
+  // `layout.maxWidth` would pin the transcript to whatever content-width mode was
+  // active at first evaluation.
+  const messageContentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const messageContentStyle = React.useMemo(
+    () => [styles.messageContent, messageContentMaxWidthStyle],
+    [messageContentMaxWidthStyle],
+  );
   if (shouldHideVoiceAgentTurnMessage(props.message)) return null;
   // Placeholders for content we could not render are dropped here rather than inside the message
   // blocks, so toggling developer diagnostics never changes the hook order of a mounted row.
@@ -324,8 +354,9 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
   ) === 'hidden') return null;
   return (
     <View style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
-      <View style={styles.messageContent}>
+      <View style={messageContentStyle}>
         <RecoveredHistoryIndicator message={props.message} />
+        <PluginMessageAttribution message={props.message} />
         <RenderBlock
           message={props.message}
           metadata={props.metadata}
@@ -344,7 +375,6 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
           onToggleToolPin={props.onToggleToolPin}
           historical={props.historical}
           eventEmphasis={props.eventEmphasis}
-          pluginUiProjection={props.pluginUiProjection}
           interaction={interaction}
           canFork={canFork}
           forkCommon={forkCommon}
@@ -379,7 +409,6 @@ function RenderBlock(props: {
   onToggleToolPin?: SessionMessagePinToggleHandler;
   historical?: boolean;
   eventEmphasis?: TranscriptEventEmphasis;
-  pluginUiProjection?: PluginUiProjectionModel | null;
   forkCommon: TranscriptForkCommon;
   isForkAllowed: () => boolean;
   messageDisplayCommon: TranscriptMessageDisplayCommon;
@@ -403,7 +432,6 @@ function RenderBlock(props: {
           messageRevision={props.messageRevision}
           onToggleMessagePin={props.onToggleMessagePin}
           historical={props.historical}
-          pluginUiProjection={props.pluginUiProjection}
           forkCommon={props.forkCommon}
           isForkAllowed={props.isForkAllowed}
           messageDisplayCommon={props.messageDisplayCommon}
@@ -429,7 +457,6 @@ function RenderBlock(props: {
           messageRevision={props.messageRevision}
           onToggleMessagePin={props.onToggleMessagePin}
           historical={props.historical}
-          pluginUiProjection={props.pluginUiProjection}
           forkCommon={props.forkCommon}
           isForkAllowed={props.isForkAllowed}
           messageDisplayCommon={props.messageDisplayCommon}
@@ -449,7 +476,6 @@ function RenderBlock(props: {
         interaction={props.interaction}
         rollbackAction={props.rollbackAction}
         historical={props.historical}
-        pluginUiProjection={props.pluginUiProjection}
         messagePins={props.messagePins}
         onToggleToolPin={props.onToggleToolPin}
         messageDisplayCommon={props.messageDisplayCommon}
@@ -496,7 +522,6 @@ function UserTextBlock(props: {
   messageRevision?: number | null;
   onToggleMessagePin?: SessionMessagePinToggleHandler;
   historical?: boolean;
-  pluginUiProjection?: PluginUiProjectionModel | null;
   forkCommon: TranscriptForkCommon;
   isForkAllowed: () => boolean;
   messageDisplayCommon: TranscriptMessageDisplayCommon;
@@ -521,7 +546,7 @@ function UserTextBlock(props: {
 	    sessionId: props.sessionId,
         interaction: props.interaction,
 	    onJumpToAnchor: handleJumpToAnchor,
-        pluginUiProjection: props.pluginUiProjection,
+	    debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
 	  });
   const sessionMediaMeta = React.useMemo(() => {
     const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
@@ -583,10 +608,13 @@ function UserTextBlock(props: {
   }, [attachmentsMeta, isVoiceAgentTurn, props.message.displayText, props.message.text, unsupportedContentText]);
   const renderedMarkdownText = markdownText ?? props.message.displayText ?? props.message.text;
 
-  const linkedWorkspaceFiles = React.useMemo(
-    () => extractWorkspaceFileMentions(renderedMarkdownText),
-    [renderedMarkdownText],
-  );
+  // One projection for both branches (D-6). Sessions come only from the envelope (INV-5);
+  // files additionally keep the permanent text scan (D-5).
+  const structuredReferences = useMessageStructuredReferences({
+    meta: props.message.meta,
+    text: renderedMarkdownText,
+  });
+  const composerAttachments = useMessageComposerAttachments(props.message.meta);
 
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
@@ -744,6 +772,10 @@ function UserTextBlock(props: {
                 onOpenPath={props.canOpenFiles ? handleOpenAttachmentPath : undefined}
               />
             ) : null}
+            <ComposerAttachmentFallbackRow
+              messageId={props.message.id}
+              attachments={composerAttachments}
+            />
             {isDiscarded ? (
               <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
             ) : null}
@@ -812,6 +844,10 @@ function UserTextBlock(props: {
                 invertedActionsLayout={timestampPresentation.invertTimestampAndActions}
               />
             ) : null}
+            <PluginMessageActions
+              messageActionReference={props.message.messageActionReference}
+              invertedActionsLayout={timestampPresentation.invertTimestampAndActions}
+            />
             <CopyMessageButton
               markdown={copyText}
               testID={`transcript-message-copy:${props.message.id}`}
@@ -865,7 +901,7 @@ function UserTextBlock(props: {
 	              sessionId={props.sessionId}
                   interaction={props.interaction}
 	              onJumpToAnchor={handleJumpToAnchor}
-                  pluginUiProjection={props.pluginUiProjection}
+	              debugInformationEnabled={props.messageDisplayCommon.debugInformationEnabled}
 	            />
             <MarkdownView markdown={renderedMarkdownText} renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)} onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} />
             {attachmentsMeta ? (
@@ -892,10 +928,14 @@ function UserTextBlock(props: {
                 onOpenPath={props.canOpenFiles ? handleOpenAttachmentPath : undefined}
               />
             ) : null}
-            {linkedWorkspaceFiles.length > 0 ? (
-              <LinkedWorkspaceFilesRow
+            <ComposerAttachmentFallbackRow
+              messageId={props.message.id}
+              attachments={composerAttachments}
+            />
+            {structuredReferences.length > 0 ? (
+              <StructuredReferencesRow
                 sessionId={props.sessionId}
-                paths={linkedWorkspaceFiles}
+                references={structuredReferences}
                 fileOpenEnabled={props.canOpenFiles}
               />
             ) : null}
@@ -968,6 +1008,10 @@ function UserTextBlock(props: {
                 invertedActionsLayout={timestampPresentation.invertTimestampAndActions}
               />
             ) : null}
+            <PluginMessageActions
+              messageActionReference={props.message.messageActionReference}
+              invertedActionsLayout={timestampPresentation.invertTimestampAndActions}
+            />
             <CopyMessageButton
               markdown={copyText}
               testID={`transcript-message-copy:${props.message.id ?? props.message.localId}`}
@@ -999,7 +1043,6 @@ function AgentTextBlock(props: {
   messageRevision?: number | null;
   onToggleMessagePin?: SessionMessagePinToggleHandler;
   historical?: boolean;
-  pluginUiProjection?: PluginUiProjectionModel | null;
   forkCommon: TranscriptForkCommon;
   isForkAllowed: () => boolean;
   messageDisplayCommon: TranscriptMessageDisplayCommon;
@@ -1041,7 +1084,7 @@ function AgentTextBlock(props: {
 	    sessionId: props.sessionId,
         interaction: props.interaction,
 	    onJumpToAnchor: handleJumpToAnchor,
-        pluginUiProjection: props.pluginUiProjection,
+	    debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
 	  });
   const isStructuredOnly = structuredNode != null;
   const agentUnsupportedContentMeta = readUnsupportedContentMeta(props.message.meta);
@@ -1306,10 +1349,11 @@ function AgentTextBlock(props: {
         'aria-atomic': false,
       }
     : null;
-  const linkedWorkspaceFilesDeferred = React.useMemo(() => {
-      if (shouldRenderStreamingPlain) return [];
-      return extractWorkspaceFileMentions(markdown);
-  }, [markdown, shouldRenderStreamingPlain]);
+  const structuredReferencesDeferred = useMessageStructuredReferences({
+    meta: props.message.meta,
+    text: markdown,
+    enabled: !shouldRenderStreamingPlain,
+  });
   const handleOpenAgentSessionMediaPath = React.useCallback((filePath: string) => {
     pushSessionFileDeepLink(router, { sessionId: props.sessionId, filePath });
   }, [props.sessionId, router]);
@@ -1392,6 +1436,7 @@ function AgentTextBlock(props: {
                   <MarkdownView
                     testID="transcript-thinking-body-markdown"
                     markdown={thinkingRenderMarkdown}
+                    agentTexMath
                     renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
                     onOptionPress={handleOptionPress}
                     onOptionLongPress={handleOptionLongPress}
@@ -1412,6 +1457,7 @@ function AgentTextBlock(props: {
               shouldRenderStreamingMarkdown ? (
                   <MarkdownView
                       markdown={streamingMarkdownText}
+                      agentTexMath
                       renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
                       onOptionPress={handleOptionPress}
                       onOptionLongPress={handleOptionLongPress}
@@ -1434,6 +1480,7 @@ function AgentTextBlock(props: {
               ) : (
                   <MarkdownView
                       markdown={markdown}
+                      agentTexMath
                       renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
                       onOptionPress={handleOptionPress}
                       onOptionLongPress={handleOptionLongPress}
@@ -1447,10 +1494,10 @@ function AgentTextBlock(props: {
             )
           )
         )}
-        {linkedWorkspaceFilesDeferred.length > 0 && !isStructuredOnly ? (
-          <LinkedWorkspaceFilesRow
+        {structuredReferencesDeferred.length > 0 && !isStructuredOnly ? (
+          <StructuredReferencesRow
             sessionId={props.sessionId}
-            paths={linkedWorkspaceFilesDeferred}
+            references={structuredReferencesDeferred}
             fileOpenEnabled={props.canOpenFiles}
           />
         ) : null}
@@ -1527,6 +1574,10 @@ function AgentTextBlock(props: {
               invertedActionsLayout={timestampPresentation.invertTimestampAndActions}
             />
           ) : null}
+          <PluginMessageActions
+            messageActionReference={props.message.messageActionReference}
+            invertedActionsLayout={timestampPresentation.invertTimestampAndActions}
+          />
           <CopyMessageButton
             markdown={copyText}
             testID={`transcript-message-copy:${props.message.id}`}
@@ -1571,55 +1622,63 @@ function ForkMessageButton(props: {
   const sessionForkOwnerMetadata = sessionForkSupportSource
     ? readSessionOwnerMetadataView(sessionForkSupportSource)
     : null;
-  const [isForking, setIsForking] = React.useState(false);
   const executionRunsEnabled = props.forkCommon.executionRunsEnabled;
+  const sessionReplayEnabled = props.forkCommon.sessionReplayEnabled;
   const sessionReplayStrategy = props.forkCommon.sessionReplayStrategy;
   const sessionReplaySummaryRunner = props.forkCommon.sessionReplaySummaryRunnerV1;
   const sessionReplayMaxSeedChars = props.forkCommon.sessionReplayMaxSeedChars;
 
-  const handlePress = React.useCallback(async () => {
-    if (isForking || !props.isForkAllowed()) return;
-    setIsForking(true);
-    try {
-      const reachableMachineTarget = readMachineTargetForSession(props.sessionId);
-      const replaySummaryRunner =
-        executionRunsEnabled && sessionReplayStrategy === 'summary_plus_recent' && sessionReplaySummaryRunner
-          ? sessionReplaySummaryRunner
-          : undefined;
-      const serverId = resolveMessageServerId(props.sessionId, sessionForkSupportSource?.serverId) ?? undefined;
-      const result = await forkSession({
-        machineId: reachableMachineTarget?.machineId ?? sessionForkOwnerMetadata?.machineId,
-        serverId,
-        parentSessionId: props.sessionId,
-        forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
-        ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
-        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
-      });
-      if (result.ok !== true) {
-        Modal.alert(t('common.error'), result.errorMessage || t('errors.failedToForkSession'));
-        return;
-      }
-      const restored = typeof props.restoredDraftText === 'string' ? props.restoredDraftText : null;
-      await completeSessionForkNavigation({
-        childSessionId: result.childSessionId,
-        parentSessionId: props.sessionId,
-        serverId,
-        navigate: (childSessionId, options) => {
-          router.push(buildScopedSessionRouteHref({
-            sessionId: childSessionId,
-            serverId: options?.serverId,
-          }) as any);
-        },
-        restoredDraftText: restored,
-        sourceMessageId: props.messageId,
-        writeForkInitialPrompt: true,
-      });
-    } catch (e) {
-      Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToForkSession'));
-    } finally {
-      setIsForking(false);
-    }
-  }, [executionRunsEnabled, isForking, props.isForkAllowed, props.messageId, props.restoredDraftText, props.sessionId, props.upToSeqInclusive, router, sessionForkOwnerMetadata?.machineId, sessionForkSupportSource?.serverId, sessionReplayMaxSeedChars, sessionReplayStrategy, sessionReplaySummaryRunner]);
+  // A launcher only. Choosing Native, Replay or Configure happens before any
+  // fork effect is issued, and the modal — not this button — owns the progress
+  // of the operation it starts.
+  const handlePress = React.useCallback(() => {
+    if (!props.isForkAllowed()) return;
+    const reachableMachineTarget = readMachineTargetForSession(props.sessionId);
+    const serverId = resolveMessageServerId(props.sessionId, sessionForkSupportSource?.serverId) ?? null;
+    const restored = typeof props.restoredDraftText === 'string' ? props.restoredDraftText : null;
+    openSessionForkStrategyFlow({
+      sessionId: props.sessionId,
+      forkSupportSource: sessionForkSupportSource,
+      serverId,
+      machineId: reachableMachineTarget?.machineId ?? sessionForkOwnerMetadata?.machineId ?? null,
+      forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
+      settings: {
+        sessionReplayEnabled,
+        sessionReplayMaxSeedChars,
+        sessionReplayStrategy,
+        sessionReplaySummaryRunnerV1: sessionReplaySummaryRunner,
+      },
+      replayEnabled: sessionReplayEnabled,
+      executionRunsEnabled,
+      restoredDraftText: restored,
+      sourceMessageId: props.messageId,
+      sourcePreview: restored,
+      writeForkInitialPrompt: true,
+      navigateToSession: (childSessionId, options) => {
+        router.push(buildScopedSessionRouteHref({
+          sessionId: childSessionId,
+          serverId: options?.serverId ?? serverId,
+        }) as any);
+      },
+      navigateToNewSession: (route) => {
+        router.push(route as any);
+      },
+    });
+  }, [
+    executionRunsEnabled,
+    props.isForkAllowed,
+    props.messageId,
+    props.restoredDraftText,
+    props.sessionId,
+    props.upToSeqInclusive,
+    router,
+    sessionForkOwnerMetadata?.machineId,
+    sessionForkSupportSource,
+    sessionReplayEnabled,
+    sessionReplayMaxSeedChars,
+    sessionReplayStrategy,
+    sessionReplaySummaryRunner,
+  ]);
 
   if (!sessionForkSupportSource) return null;
 
@@ -1643,18 +1702,13 @@ function ForkMessageButton(props: {
         props.invertedActionsLayout ? styles.webActionButtonInverted : null,
         props.invertedActionsLayout ? styles.messageActionButtonInvertedSpacing : null,
         pressed && styles.copyMessageButtonPressed,
-        isForking && styles.copyMessageButtonPressed,
       ]}
     >
-      {isForking ? (
-        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-      ) : (
-        <Ionicons
-          name="git-branch-outline"
-          size={12}
-          color={theme.colors.text.secondary}
-        />
-      )}
+      <Icon
+        name="git-branch"
+        size={14}
+        color={theme.colors.text.secondary}
+      />
     </Pressable>
   );
 }
@@ -1723,9 +1777,9 @@ function CopyMessageButton(props: { markdown: string; testID?: string; invertedA
         pressed && styles.copyMessageButtonPressed,
       ]}
     >
-      <Ionicons
-        name={copied ? "checkmark-outline" : "copy-outline"}
-        size={12}
+      <Icon
+        name={copied ? "check" : "copy"}
+        size={14}
         color={copied ? theme.colors.state.success.foreground : theme.colors.text.secondary}
       />
     </Pressable>
@@ -1746,7 +1800,6 @@ function ToolCallBlock(props: {
   messagePins?: readonly PersistedSessionMessagePinV1[];
   onToggleToolPin?: SessionMessagePinToggleHandler;
   historical?: boolean;
-  pluginUiProjection?: PluginUiProjectionModel | null;
   messageDisplayCommon: TranscriptMessageDisplayCommon;
   toolChromeCommon: TranscriptToolChromeCommon;
   toolRouteCommon: TranscriptToolRouteCommon;
@@ -1768,7 +1821,7 @@ function ToolCallBlock(props: {
 	    sessionId: props.sessionId,
         interaction: props.interaction,
 	    onJumpToAnchor: handleJumpToAnchor,
-        pluginUiProjection: props.pluginUiProjection,
+	    debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
 	  });
   const toolForSession = resolveInactiveSessionToolCallFailure({
     tool: props.message.tool,
@@ -1907,13 +1960,20 @@ const styles = StyleSheet.create((theme) => ({
     flexGrow: 1,
     flexBasis: 0,
     minWidth: 0,
-    maxWidth: layout.maxWidth,
   },
   recoveredHistoryIndicator: {
     marginHorizontal: 16,
     marginBottom: 6,
     fontSize: 12,
     color: theme.colors.message.event.foreground,
+  },
+  pluginMessageAttribution: {
+    ...Typography.rowMeta(),
+    alignSelf: 'stretch',
+    marginHorizontal: 16,
+    marginBottom: 4,
+    color: theme.colors.text.secondary,
+    textAlign: 'right',
   },
   userMessageContainer: {
     maxWidth: '100%',

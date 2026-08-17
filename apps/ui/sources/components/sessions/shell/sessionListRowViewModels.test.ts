@@ -242,9 +242,15 @@ describe('buildSessionListRowViewModels', () => {
             groupKind: 'date',
         } satisfies SessionListIndexItem;
         const session = createRenderableSession(item.sessionId);
+        const currentMachineDisplay = new Map([[item.sessionId, {
+            machineId: 'machine-a',
+            machineLabel: 'test.local',
+            workspaceSubtitle: '~/stable',
+            workspaceSubtitleEllipsizeMode: 'head' as const,
+        }]]);
         const rows = buildSessionListRowViewModels({
             listItems: [item],
-            reachableSessionDisplayById: new Map(),
+            reachableSessionDisplayById: currentMachineDisplay,
             rowRenderableByKey: new Map([[rowKey(item), {
                 ...session,
                 presence: 900,
@@ -303,6 +309,8 @@ describe('buildSessionListRowViewModels', () => {
             agentId: 'opencode',
             storageLabel: t('sessionsList.storageExternalFilter'),
             machineLabel: 'test.local',
+            identityLabel: 'OpenCode',
+            rowMetadataLabel: `${t('sessionsList.storageExternalFilter')} · OpenCode`,
         });
         expect(rows[0]?.nextRuntimeFreshnessAtMs).toBe(1_100);
         expect(rows[0]?.sessionStatus).toMatchObject({
@@ -312,7 +320,7 @@ describe('buildSessionListRowViewModels', () => {
 
         const expiredRows = buildSessionListRowViewModels({
             listItems: [item],
-            reachableSessionDisplayById: new Map(),
+            reachableSessionDisplayById: currentMachineDisplay,
             rowRenderableByKey: new Map([[rowKey(item), rows[0]!.session!]]),
             relativeNowMs: 1_101,
             runtimeNowMs: 1_101,

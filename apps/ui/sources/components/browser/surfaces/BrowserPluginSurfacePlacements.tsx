@@ -1,99 +1,70 @@
 import type {
-    ActionExecutorContext,
     BrowserPlatformV1,
     BrowserViewTargetV1,
-    RuntimeActionExecute,
 } from '@happier-dev/protocol';
+import type { PluginUiChannelV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { PluginSurfacePlacementHost, type PluginSurfaceHostApi } from '@/components/plugins/surfaces';
+import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import {
-    canRenderPluginUiProjectionEntry,
     createPluginUiPolicyEvaluationContext,
-    type PluginUiPolicyEvaluationContext,
 } from '@/sync/domains/plugins/ui/policy';
 import type {
     PluginUiProjectionModel,
-    PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
-import { selectPluginSurfacePlacementsForPlacement } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
-import { useEndpointStatus } from '@/sync/domains/state/storage';
-import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import {
-    createBrowserPanelPluginSurfaceHostApi,
-    toLocalServicePreviewPlatform,
-} from './browserPluginHostActions';
-
-function readTargetMachineId(target: BrowserViewTargetV1 | null | undefined): string | null {
-    return target?.kind === 'localServicePreview' ? target.machineId : null;
-}
-
-function isRenderableBrowserPanelPlacement(
-    placement: PluginUiSurfacePlacementProjection,
-    policyContext: PluginUiPolicyEvaluationContext,
-): boolean {
-    return placement.placement === 'browser.panel'
-        && placement.target.kind === 'browser'
-        && placement.availability.state === 'available'
-        && canRenderPluginUiProjectionEntry(placement, policyContext);
-}
+import { selectRenderablePluginSurfacePlacementsForBinding } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import type { PluginSurfaceHostActionExecute } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 
 export function BrowserPluginSurfacePlacements(props: Readonly<{
     focusedTarget?: BrowserViewTargetV1 | null;
     platform: BrowserPlatformV1;
+    channel?: PluginUiChannelV1;
     pluginUiProjection?: PluginUiProjectionModel | null;
     projectionInteractionEnabled?: boolean;
     localServicePreviewState?: LocalServicePreviewState | null;
-    localServicePreviewServerId?: string | null;
-    hostApi?: PluginSurfaceHostApi;
     /**
-     * Canonical runtime-action dispatch bridge for browser-panel host actions
-     * (FINALIZATION-PLAN §3.1/§3.6/§12.6). Defaults to the front-door executor so every dispatch
-     * routes through `ActionExecutor.execute` (enablement + approval routing). Overridable for tests.
+     * The exact admitted execution binding. The Browser target is public subject
+     * context only and never decides where host effects execute.
      */
-    runtimeActionExecute?: RuntimeActionExecute;
+    executionMachineId?: string | null;
+    executionServerId?: string | null;
+    executionSessionId?: string | null;
+    /**
+     * The canonical `ActionExecutor.execute` front door to inject. Omitted in
+     * production: the bound controller resolves the same canonical front door, so
+     * every dispatch carries ActionsSettings enablement and approval routing.
+     */
+    executeAction?: PluginSurfaceHostActionExecute;
     isFeatureEnabled?: (featureId: string) => boolean;
     nowMs?: () => number;
     testID?: string;
 }>): React.ReactElement | null {
-    const endpointStatus = useEndpointStatus();
-    const candidateBrowserPanelPlacements = React.useMemo(
-        () => props.pluginUiProjection && props.focusedTarget
-            ? selectPluginSurfacePlacementsForPlacement(props.pluginUiProjection, 'browser.panel')
-                .filter((placement) => placement.placement === 'browser.panel'
-                    && placement.target.kind === 'browser'
-                    && placement.availability.state === 'available')
-            : [],
-        [props.focusedTarget, props.pluginUiProjection],
-    );
-
+    const channel = props.channel ?? 'internal';
     const browserPanelPlacements = React.useMemo(
-        () => candidateBrowserPanelPlacements.filter((placement) => {
-            const policyContext = createPluginUiPolicyEvaluationContext({
-                platform: toLocalServicePreviewPlatform(props.platform),
-                channel: props.hostApi?.channel ?? 'internal',
+        () => props.pluginUiProjection && props.focusedTarget
+            ? selectRenderablePluginSurfacePlacementsForBinding(props.pluginUiProjection, {
+                container: 'browserPanel',
+                targetKind: 'browser',
+            }, createPluginUiPolicyEvaluationContext({
+                platform: props.platform,
+                channel,
                 ...(props.isFeatureEnabled ? { isFeatureEnabled: props.isFeatureEnabled } : {}),
-            });
-            return isRenderableBrowserPanelPlacement(placement, policyContext);
-        }),
-        [candidateBrowserPanelPlacements, props.hostApi?.channel, props.isFeatureEnabled, props.platform],
+            }))
+            : [],
+        [channel, props.focusedTarget, props.isFeatureEnabled, props.platform, props.pluginUiProjection],
     );
 
-    // Single front door (FINALIZATION-PLAN §3.1/§12.6): browser-panel host actions dispatch through
-    // ActionExecutor.execute via the canonical bridge so ActionsSettings enablement and approval
-    // routing apply. This is a user-driven UI surface, so dispatches carry surface 'ui'.
-    const runtimeActionExecute = React.useMemo(
-        () => props.runtimeActionExecute ?? createFrontDoorRuntimeActionExecutor(),
-        [props.runtimeActionExecute],
-    );
-    const actionExecutorContext = React.useMemo<ActionExecutorContext>(
-        () => ({
-            surface: 'ui',
-            ...(props.localServicePreviewServerId ? { serverId: props.localServicePreviewServerId } : {}),
-        }),
-        [props.localServicePreviewServerId],
+    // §3.1: the panel supplies facts only. The host-ActionSpec front door, the
+    // contributed-action branch, the resource snapshot authority, the surface
+    // context and every method's lifetime belong to the bound controller inside
+    // `PluginSurfacePlacementHost`.
+    const binding = React.useMemo<BoundPluginSurfaceBinding | undefined>(
+        () => (props.executeAction ? { executeHostAction: props.executeAction } : undefined),
+        [props.executeAction],
     );
 
     if (browserPanelPlacements.length === 0) {
@@ -101,7 +72,7 @@ export function BrowserPluginSurfacePlacements(props: Readonly<{
     }
 
     return (
-        <>
+        <PluginSurfaceFocusEligibilityProvider active>
             {browserPanelPlacements.map((placement) => (
                 <View
                     key={placement.id}
@@ -109,33 +80,25 @@ export function BrowserPluginSurfacePlacements(props: Readonly<{
                 >
                     <PluginSurfacePlacementHost
                         placement={placement}
-                        resourceBrowserTarget={props.focusedTarget}
-                        machineId={readTargetMachineId(props.focusedTarget)}
-                        serverId={props.localServicePreviewServerId}
-                        pluginUiProjection={props.pluginUiProjection}
+                        resourceBrowserTarget={props.focusedTarget ?? null}
+                        machineId={props.executionMachineId ?? null}
+                        serverId={props.executionServerId ?? null}
+                        sessionId={props.executionSessionId ?? null}
+                        pluginUiProjection={props.pluginUiProjection ?? null}
                         projectionInteractionEnabled={props.projectionInteractionEnabled}
-                        localServicePreviewState={props.localServicePreviewState}
-                        platform={toLocalServicePreviewPlatform(props.platform)}
+                        localServicePreviewState={props.localServicePreviewState ?? null}
+                        platform={props.platform}
+                        channel={channel}
                         nowMs={props.nowMs}
                         policyContext={createPluginUiPolicyEvaluationContext({
-                            platform: toLocalServicePreviewPlatform(props.platform),
-                            channel: props.hostApi?.channel ?? 'internal',
+                            platform: props.platform,
+                            channel,
                             ...(props.isFeatureEnabled ? { isFeatureEnabled: props.isFeatureEnabled } : {}),
                         })}
-                        hostApi={endpointStatus === 'online'
-                            ? createBrowserPanelPluginSurfaceHostApi({
-                                focusedTarget: props.focusedTarget,
-                                fallbackHostApi: props.hostApi,
-                                placement,
-                                platform: props.platform,
-                                runtimeActionExecute,
-                                actionExecutorContext,
-                                ...(props.isFeatureEnabled ? { isFeatureEnabled: props.isFeatureEnabled } : {}),
-                            })
-                            : undefined}
+                        binding={binding}
                     />
                 </View>
             ))}
-        </>
+        </PluginSurfaceFocusEligibilityProvider>
     );
 }

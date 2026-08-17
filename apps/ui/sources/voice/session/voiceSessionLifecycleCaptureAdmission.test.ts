@@ -5,6 +5,9 @@ import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/Voi
 import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 import type { VoiceAdapterController, VoiceSessionSnapshot } from './types';
 
+const logSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/log', () => ({ log: { log: logSpy } }));
+
 function createRealtimeAdapter(input?: Readonly<{
     startError?: Error;
 }>) {
@@ -84,6 +87,7 @@ describe('Voice session lifecycle capture admission', () => {
         const { adapter, captureAdmission, lifecycle } = createHarness();
         const dictation = captureAdmission.acquire('dictation');
         if (dictation.status !== 'acquired') throw new Error('expected Dictation admission');
+        logSpy.mockClear();
 
         await expect(lifecycle.toggle('session-1')).rejects.toMatchObject({
             name: 'VoiceCaptureBusyError',
@@ -91,6 +95,12 @@ describe('Voice session lifecycle capture admission', () => {
             activeOwner: 'dictation',
         });
         expect(adapter.start).not.toHaveBeenCalled();
+        // The rejection is swallowed by the surface's fire-and-forget dispatch,
+        // so this refusal is invisible unless the owner names it.
+        const record = logSpy.mock.calls
+            .map((call) => String(call[0]))
+            .find((line) => line.includes('[voiceRuntimeFailure]'));
+        expect(record).toContain('voice_capture_busy_dictation');
     });
 
     it('retains admission through the realtime session and releases after End Voice', async () => {

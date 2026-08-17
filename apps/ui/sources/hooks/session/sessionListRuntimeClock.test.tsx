@@ -4,6 +4,8 @@ import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 import {
     createSessionListRuntimeClock,
+    SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS,
+    useSessionListRelativeNowMs,
     useSessionListRuntimeNowMs,
     useSessionListRuntimeWake,
 } from './sessionListRuntimeClock';
@@ -186,5 +188,71 @@ describe('sessionListRuntimeClock', () => {
         expect(consumer.getCurrent()).toBe(10_000);
 
         await consumer.unmount();
+    });
+
+    describe('useSessionListRelativeNowMs', () => {
+        it('renders every row from one timer and one instant', async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(1_000);
+            const clock = createSessionListRuntimeClock();
+
+            const firstRow = await renderHook(() => useSessionListRelativeNowMs(true, clock));
+            // A row mounted later must not carry a clock of its own reading a
+            // different `Date.now()`: a list of N rows costs one timer, not N.
+            vi.setSystemTime(1_500);
+            const secondRow = await renderHook(() => useSessionListRelativeNowMs(true, clock));
+
+            expect(vi.getTimerCount()).toBe(1);
+            expect(firstRow.getCurrent()).toBe(1_000);
+            expect(secondRow.getCurrent()).toBe(1_000);
+
+            await flushHookEffects({
+                advanceTimersMs: SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS,
+                cycles: 1,
+                turns: 2,
+            });
+
+            // One tick moved both rows to the SAME new instant. Under a
+            // per-row timer each row ticks on its own mount offset and the two
+            // labels disagree about "now" for the rest of the minute.
+            expect(firstRow.getCurrent()).toBe(1_500 + SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS);
+            expect(secondRow.getCurrent()).toBe(firstRow.getCurrent());
+            expect(vi.getTimerCount()).toBe(1);
+
+            await firstRow.unmount();
+            await secondRow.unmount();
+        });
+
+        it('stops the cadence while disabled and re-syncs to wall time on re-enable', async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(1_000);
+            const clock = createSessionListRuntimeClock();
+
+            const row = await renderHook(
+                (props: { enabled: boolean }) => useSessionListRelativeNowMs(props.enabled, clock),
+                { initialProps: { enabled: false } },
+            );
+
+            expect(row.getCurrent()).toBe(1_000);
+
+            vi.setSystemTime(400_000);
+            await flushHookEffects({ advanceTimersMs: 0, cycles: 1, turns: 2 });
+
+            // Disabled: no timer was armed while the surface was inactive.
+            expect(vi.getTimerCount()).toBe(0);
+            expect(row.getCurrent()).toBe(1_000);
+
+            await row.rerender({ enabled: true });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            await flushHookEffects({ advanceTimersMs: 2, cycles: 1, turns: 2 });
+
+            // Re-enabling re-syncs to current wall time rather than resuming
+            // from the instant the surface was frozen at: the horizon carried
+            // over from the frozen instant is already in the past, so the
+            // shared clock catches up on the first tick after re-enable.
+            expect(row.getCurrent()).toBe(400_000);
+
+            await row.unmount();
+        });
     });
 });

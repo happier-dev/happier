@@ -15,9 +15,29 @@ const modalSpies = vi.hoisted(() => ({
     show: vi.fn(),
 }));
 
+const credentialLifecycleSpies = vi.hoisted(() => ({
+    present: vi.fn(async (params: {
+        run: () => Promise<
+            | { kind: 'completed' }
+            | { kind: 'finish_encryption_setup'; recovery: unknown }
+            | { kind: 'recovery_failed' }
+        >;
+        onCompleted?: () => void | Promise<void>;
+    }) => {
+        const result = await params.run();
+        if (result.kind === 'completed') {
+            await params.onCompleted?.();
+        }
+    }),
+}));
+
 installServerSettingsHooksCommonModuleMocks({
     modal: () => createModalModuleMock({ spies: modalSpies }).module,
 });
+
+vi.mock('@/components/account/presentFirstKeyCredentialLifecycle', () => ({
+    presentFirstKeyCredentialLifecycle: credentialLifecycleSpies.present,
+}));
 
 const pendingTerminalConnectMock = vi.hoisted(() => ({
     current: null as { publicKeyB64Url: string; serverUrl: string } | null,
@@ -56,6 +76,7 @@ async function renderHook<T>(useValue: () => T): Promise<T> {
 afterEach(() => {
     vi.unstubAllGlobals();
     pendingTerminalConnectMock.current = null;
+    credentialLifecycleSpies.present.mockClear();
     vi.clearAllMocks();
     vi.resetModules();
 });
@@ -66,9 +87,7 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
         const localStorageHandle = installLocalStorageMock();
 
         const { Modal } = await import('@/modal');
-        // Current behavior prompts twice: "remove" then optionally "also sign out".
-        // This test asserts we clear credentials even if the second prompt is declined.
-        (Modal.confirm as any).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        (Modal.confirm as any).mockResolvedValueOnce(true);
 
         const profiles = await import('@/sync/domains/server/serverProfiles');
         const profile = profiles.upsertServerProfile({
@@ -93,7 +112,7 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
         const actions = await renderHook(() =>
             useServerSettingsServerProfileActions({
                 authStatusByServerId: {},
-                onSwitchServerById: vi.fn(async () => {}),
+                onSwitchServerById: vi.fn(async () => true),
                 onAfterSignedOutSwitch: vi.fn(),
                 setRevision: setRevision as any,
             }),
@@ -109,12 +128,85 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
         localStorageHandle.restore();
     });
 
+    it('routes marked nonactive profile removal through shared recovery without mutating credentials or profile', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        const localStorageHandle = installLocalStorageMock();
+
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        const targetProfile = profiles.upsertServerProfile({
+            serverUrl: 'https://marked.example.test',
+            name: 'Marked',
+        });
+        const activeProfile = profiles.upsertServerProfile({
+            serverUrl: 'https://active.example.test',
+            name: 'Active',
+        });
+        profiles.setActiveServerId(targetProfile.id, { scope: 'device' });
+
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        await expect(TokenStorage.setCredentials({
+            token: 'marked-token',
+            secret: 'marked-secret',
+        })).resolves.toBe(true);
+        const createdAt = Date.now();
+        await expect(TokenStorage.setPendingExternalAuth({
+            provider: 'github',
+            proof: 'proof',
+            secret: 'marked-secret',
+            serverId: targetProfile.id,
+            serverUrl: targetProfile.serverUrl,
+            returnTo: '/settings/account',
+            accountEncryptionFirstKey: {
+                accountId: 'account-1',
+                requestDigest: `aemrb1_${'A'.repeat(43)}`,
+                requestJson: '{"toMode":"e2ee"}',
+                createdAt,
+                expiresAt: createdAt + 10 * 60 * 1000,
+                pending: 'oauth-pending',
+                migrationSubmissionAttempted: true,
+            },
+        })).resolves.toBe(true);
+        profiles.setActiveServerId(activeProfile.id, { scope: 'device' });
+        const { Modal } = await import('@/modal');
+        (Modal.confirm as any).mockResolvedValueOnce(true);
+
+        let revision = 0;
+        const { useServerSettingsServerProfileActions } = await import('./useServerSettingsServerProfileActions');
+        const actions = await renderHook(() =>
+            useServerSettingsServerProfileActions({
+                authStatusByServerId: {},
+                onSwitchServerById: vi.fn(async () => true),
+                onAfterSignedOutSwitch: vi.fn(),
+                setRevision: ((next: React.SetStateAction<number>) => {
+                    revision = typeof next === 'function'
+                        ? next(revision)
+                        : next;
+                }) as React.Dispatch<React.SetStateAction<number>>,
+            }),
+        );
+
+        await actions.onRemoveServer(targetProfile);
+
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(revision).toBe(0);
+        expect(profiles.getServerProfileById(targetProfile.id)).not.toBeNull();
+        await expect(TokenStorage.getCredentialsForServerUrl(
+            targetProfile.serverUrl,
+            { serverId: targetProfile.id },
+        )).resolves.toEqual({
+            token: 'marked-token',
+            secret: 'marked-secret',
+        });
+
+        localStorageHandle.restore();
+    });
+
     it('retargets a pending terminal connect when the user manually switches relays', async () => {
         pendingTerminalConnectMock.current = {
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://wrong.example.test',
         };
-        const onSwitchServerById = vi.fn(async () => {});
+        const onSwitchServerById = vi.fn(async () => true);
         const setRevision = vi.fn();
         const profile = {
             id: 'server-correct',
@@ -144,12 +236,45 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
         expect(onSwitchServerById).toHaveBeenCalledWith('server-correct');
     });
 
+    it('does not retarget pending terminal state when custody blocks the server switch', async () => {
+        pendingTerminalConnectMock.current = {
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://active.example.test',
+        };
+        const onSwitchServerById = vi.fn(async () => false);
+        const setRevision = vi.fn();
+        const profile = {
+            id: 'server-blocked',
+            name: 'Blocked',
+            serverUrl: 'https://blocked.example.test',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+        };
+
+        const { useServerSettingsServerProfileActions } = await import('./useServerSettingsServerProfileActions');
+        const actions = await renderHook(() =>
+            useServerSettingsServerProfileActions({
+                authStatusByServerId: { 'server-blocked': 'signedIn' },
+                onSwitchServerById,
+                onAfterSignedOutSwitch: vi.fn(),
+                setRevision: setRevision as any,
+            }),
+        );
+
+        await actions.onSwitchServer(profile);
+
+        expect(onSwitchServerById).toHaveBeenCalledWith('server-blocked');
+        expect(pendingTerminalConnectMock.set).not.toHaveBeenCalled();
+        expect(setRevision).not.toHaveBeenCalled();
+    });
+
     it('switches by server identity id after the profile learns a stable server identity', async () => {
         pendingTerminalConnectMock.current = {
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://wrong.example.test',
         };
-        const onSwitchServerById = vi.fn(async () => {});
+        const onSwitchServerById = vi.fn(async () => true);
         const setRevision = vi.fn();
         const profile = {
             id: 'server-host-derived',

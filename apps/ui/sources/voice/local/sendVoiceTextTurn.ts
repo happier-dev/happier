@@ -25,12 +25,10 @@ import {
 } from '@/voice/binding/sendVoiceSessionComposerText';
 import { parseLocalVoiceTtsSettings, resolveLocalVoiceAdapterSettings } from './localVoiceSettings';
 import { runVoiceAgentTurnWithTools, type LocalVoiceAgentToolResultEntry } from './runVoiceAgentTurnWithTools';
-import {
-  createVoiceAgentOutputTurnV1,
-  ingestVoiceAgentOutputEventV1,
-  type VoiceAgentOutputEventV1,
-} from '@happier-dev/protocol';
-import type { VoiceAgentSendTurnOptions } from '@/voice/agent/types';
+import type {
+  VoiceAgentAcceptedOutputV1,
+  VoiceAgentSendTurnOptions,
+} from '@/voice/agent/types';
 
 type VoicePlaybackControllerLike = Readonly<{
   registerStopper: VoicePlaybackStopperRegistrar;
@@ -78,6 +76,7 @@ export async function sendVoiceTextTurn(params: {
     localId: string;
     deliveryCommand: 'interrupt_and_send';
   }>;
+  onUserTranscriptAccepted?: () => Promise<void>;
 }): Promise<void> {
   const sessionId = normalizeNonEmptyString(params.sessionId);
   if (!sessionId) {
@@ -103,16 +102,17 @@ export async function sendVoiceTextTurn(params: {
       conversationSessionId: projectedConversationSessionId,
       text: userText,
       pendingPort: params.pendingPort,
-      dispatch: async (durableDispatch) => {
-        await sendVoiceTextTurn({ ...params, durableDispatch });
+      dispatch: async ({ localId, deliveryCommand, onAccepted }) => {
+        await sendVoiceTextTurn({
+          ...params,
+          durableDispatch: { localId, deliveryCommand },
+          onUserTranscriptAccepted: onAccepted,
+        });
       },
     });
     if (!result.ok) throw new Error(result.message ?? result.reason);
     if (result.disposition === 'settled') return;
-    if (result.disposition !== 'handoff_acknowledged') {
-      throw new Error(result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
-    }
-    return;
+    throw new Error(result.disposition === 'ambiguous' ? 'voice_turn_dispatch_ambiguous' : 'voice_turn_pending');
   }
 
   const transitionVoiceRuntimeToIdleIfCurrent = (idleParams: Parameters<typeof transitionVoiceRuntimeToIdle>[0]) => {
@@ -200,16 +200,34 @@ export async function sendVoiceTextTurn(params: {
     // Cleanup for the streaming playback queue's interrupt stopper. Hoisted so the
     // outer `finally` releases it on any exit path (success, abort, or failure).
     let releaseStreamingQueueStopper = () => {};
-    let canonicalOutputTurn: ReturnType<typeof createVoiceAgentOutputTurnV1> | null = null;
-    let canonicalOutputTurnId: string | null = null;
+    const canonicalOutputTurnIds = new Set<string>();
     let streamingPlaybackError: unknown = null;
     try {
       throwIfAborted();
-      const chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
       const playbackEpoch = params.playbackController.captureEpoch();
+      let currentOutputTurnId: string | null = null;
+      let chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
       let canonicalTurnFinalized = false;
       let canonicalTurnCancelled = false;
       let speakHandle: TtsSpeakHandle | null = null;
+      let streamingGroupId = '';
+      let queuedChunkCount = 0;
+      let nextChunkIndex = 0;
+      const pendingChunks: string[] = [];
+
+      const beginOutputTurn = (turnId: string) => {
+        if (currentOutputTurnId === turnId) return;
+        currentOutputTurnId = turnId;
+        canonicalOutputTurnIds.add(turnId);
+        chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
+        canonicalTurnFinalized = false;
+        canonicalTurnCancelled = false;
+        speakHandle = null;
+        streamingGroupId = `${sessionId}#${playbackEpoch}#${turnId}`;
+        queuedChunkCount = 0;
+        nextChunkIndex = 0;
+        pendingChunks.splice(0, pendingChunks.length);
+      };
 
       // Canonical ordered ack'd TTS queue (D10/L4.T2): chunks for one assistant
       // turn share a `groupId`, advance only on a contiguous `chunkIndex` run,
@@ -217,7 +235,6 @@ export async function sendVoiceTextTurn(params: {
       // the single ordering owner — the previous ad-hoc serial promise chain is
       // gone, and every provider TTS controller converges on `speakAssistantText`
       // inside `playChunk` below.
-      const streamingGroupId = `${sessionId}#${playbackEpoch}`;
       const playbackQueue = createTtsPlaybackController<{ text: string }>({
         playChunk: async (chunk) => {
           // The terminal sentinel carries empty text purely to mark the group's
@@ -259,11 +276,8 @@ export async function sendVoiceTextTurn(params: {
         });
       };
 
-      let queuedChunkCount = 0;
-      let nextChunkIndex = 0;
       // When the assistant text ends we mark the latest enqueued chunk as the
       // final one so the queue can retire the group and resolve `done`.
-      const pendingChunks: string[] = [];
       const flushPendingChunks = (markLast: boolean) => {
         if (params.signal?.aborted) return;
         if (pendingChunks.length === 0) return;
@@ -325,6 +339,7 @@ export async function sendVoiceTextTurn(params: {
         } finally {
           releaseStreamingQueueStopper();
           releaseStreamingQueueStopper = () => {};
+          speakHandle = null;
         }
       };
 
@@ -343,13 +358,14 @@ export async function sendVoiceTextTurn(params: {
         releaseStreamingQueueStopper = () => {};
       };
 
-      const consumeCanonicalOutputEvent = async (event: VoiceAgentOutputEventV1) => {
-        canonicalOutputTurnId ??= event.turnId;
-        canonicalOutputTurn ??= createVoiceAgentOutputTurnV1(event.turnId);
-        const result = ingestVoiceAgentOutputEventV1(canonicalOutputTurn, event);
-        canonicalOutputTurn = result.state;
-        for (const effect of result.effects) {
+      const consumeCanonicalOutputEvent = async ({ event, effects }: VoiceAgentAcceptedOutputV1) => {
+        beginOutputTurn(event.turnId);
+        let finalAccepted = false;
+        for (const effect of effects) {
           if (effect.kind === 'speak') {
+            if (!streamingSpeechEnabled) {
+              continue;
+            }
             if (chunker) {
               chunker.push(effect.text).forEach((chunk) => queueSpokenChunk(chunk));
             } else {
@@ -363,13 +379,14 @@ export async function sendVoiceTextTurn(params: {
               text: effect.text,
             });
           } else if (effect.kind === 'persist_final') {
+            finalAccepted = true;
             voiceOutputStatusStore.clear({ sessionId, turnId: event.turnId });
           } else if (effect.kind === 'cancel_turn') {
             voiceOutputStatusStore.clear({ sessionId, turnId: event.turnId });
             await cancelStreamedTurn();
           }
         }
-        if (event.kind === 'turn_final' && !canonicalTurnFinalized) {
+        if (finalAccepted && !canonicalTurnFinalized) {
           canonicalTurnFinalized = true;
           chunker?.flush().forEach((chunk) => queueSpokenChunk(chunk));
           await finalizeStreamedTurn();
@@ -378,12 +395,12 @@ export async function sendVoiceTextTurn(params: {
 
       const speakAssistantReply = async (
         assistantText: string,
-        turnIndex: number,
+        _turnIndex: number,
         assistantEntryId: string | null,
       ) => {
         if (!autoSpeak || !assistantText.trim()) return;
         noteAssistantFinal(assistantEntryId);
-        if (turnIndex === 0 && chunker) {
+        if (streamingSpeechEnabled && currentOutputTurnId && chunker) {
           if (canonicalTurnFinalized) return;
           chunker.flush().forEach((chunk) => queueSpokenChunk(chunk));
           if (queuedChunkCount === 0) {
@@ -414,7 +431,8 @@ export async function sendVoiceTextTurn(params: {
         currentToolSessionId,
         voiceAgentSessions: params.voiceAgentSessions,
         signal: params.signal,
-        onOutputEvent: streamingSpeechEnabled ? consumeCanonicalOutputEvent : undefined,
+        onUserTranscriptAccepted: params.onUserTranscriptAccepted,
+        onOutputEvent: consumeCanonicalOutputEvent,
         onAssistantTurn: async ({ assistantText, turnIndex }) => {
           throwIfAborted();
           let assistantEntryId: string | null = null;
@@ -456,8 +474,8 @@ export async function sendVoiceTextTurn(params: {
       });
       throw error instanceof Error ? error : new Error('send_failed');
     } finally {
-      if (canonicalOutputTurnId) {
-        voiceOutputStatusStore.clear({ sessionId, turnId: canonicalOutputTurnId });
+      for (const turnId of canonicalOutputTurnIds) {
+        voiceOutputStatusStore.clear({ sessionId, turnId });
       }
       // Clear the echo guard + protected-head window for every reply exit
       // (success, abort, failure, or barge-in interrupt) so no stale window
@@ -480,9 +498,11 @@ export async function sendVoiceTextTurn(params: {
 
   voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
   try {
+    throwIfAborted();
     await sync.submitMessage(sessionId, userText, undefined, undefined, {
       callerSurface: 'voice_turn',
       forceImmediate: true,
+      hostAdmissionOrigin: 'voice',
     });
   } catch (error) {
     transitionVoiceRuntimeToIdleIfCurrent({

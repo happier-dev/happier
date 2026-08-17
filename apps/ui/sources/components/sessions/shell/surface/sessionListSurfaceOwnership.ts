@@ -1,3 +1,5 @@
+import { isOverlaySurfaceRoutePathname } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
+
 export type SessionListSurfaceOwnership = Readonly<{
     ownerKey: string;
     visible: boolean;
@@ -27,9 +29,12 @@ export function resolvePhoneRootSessionListSurfaceDataActive(pathname: string): 
     return pathname === '/';
 }
 
+/**
+ * An overlay route blocks what is behind it, so the sidebar list must stop taking clicks while one
+ * is open. It stays visible and data-active — only interaction is withheld.
+ */
 export function resolveSidebarSessionListSurfaceInteractive(pathname: string): boolean {
-    const routePathname = pathname.trim().split('?')[0]?.replace(/\/+$/, '') || '/';
-    return routePathname !== '/new' && !routePathname.startsWith('/new/');
+    return !isOverlaySurfaceRoutePathname(pathname);
 }
 
 export function normalizeSessionListSurfaceOwnership(

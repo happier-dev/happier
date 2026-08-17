@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import type {
     AttentionDeliveryPolicyV1,
@@ -13,6 +12,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import { buildLiveActivityRemoteUpdateDiagnosticsRows } from './liveActivityRemoteUpdateDiagnostics';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 type NotificationLiveActivityRemoteUpdatesSectionProps = Readonly<{
     policy: AttentionDeliveryPolicyV1;
@@ -65,8 +65,8 @@ export function NotificationLiveActivityRemoteUpdatesSection({
                     subtitle={t(row.subtitleKey)}
                     detail={rowDetailText(row)}
                     icon={(
-                        <Ionicons
-                            name={row.icon as keyof typeof Ionicons.glyphMap}
+                        <Icon
+                            name={row.icon as IconName}
                             size={29}
                             color={row.detailKey.endsWith('.available') || row.detailKey.endsWith('.bestEffort')
                                 ? theme.colors.state.success.foreground

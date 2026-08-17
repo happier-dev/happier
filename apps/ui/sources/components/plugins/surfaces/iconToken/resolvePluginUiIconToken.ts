@@ -1,80 +1,59 @@
-import type { Ionicons, Octicons } from '@expo/vector-icons';
+import {
+    PLUGIN_UI_ICON_TOKENS_V1,
+    type PluginUiIconTokenV1,
+} from '@happier-dev/protocol/plugins/ui';
+
+import type { IconName } from '@/components/ui/icons/Icon';
 
 /**
  * Single canonical resolver for the plugin-UI icon-token vocabulary
  * (`PluginUiIconTokenV1`, declared in
  * `packages/protocol/src/plugins/contributions/ui/tokens.ts`).
  *
- * Plugin display descriptors only carry a semantic `iconToken`; each host
- * surface renders with a different icon font (right-sidebar tabs + session
- * header actions use Ionicons; session-surface detail tabs use Octicons). This
- * module owns the token → glyph mapping for BOTH fonts so the projection has one
- * source of truth instead of the three drifting re-implementations that used to
- * live in `rightSidebarPluginTabs.ts`, `pluginHeaderActions.tsx`, and the
- * session-surface render path.
+ * Plugin display descriptors carry a semantic `iconToken`; this app-private
+ * adapter owns the one exhaustive projection into the generated renderer
+ * catalog. Icon fonts and their historical glyph spellings never leave this
+ * owner.
  */
 
-export type PluginUiIoniconName = keyof typeof Ionicons.glyphMap;
-export type PluginUiOcticonName = keyof typeof Octicons.glyphMap;
-
-/** Canonical `PluginUiIconTokenV1` enum values (kept in lockstep with the protocol schema). */
-export const PLUGIN_UI_ICON_TOKENS = [
-    'action',
-    'browser',
-    'copy',
-    'file',
-    'globe',
-    'info',
-    'preview',
-    'refresh',
-    'settings',
-    'terminal',
-    'warning',
-] as const;
-
-export type PluginUiIconTokenName = (typeof PLUGIN_UI_ICON_TOKENS)[number];
-
-type PluginUiIconGlyphs = Readonly<{
-    ionicon: PluginUiIoniconName;
-    octicon: PluginUiOcticonName;
-}>;
-
-const PLUGIN_UI_ICON_TOKEN_GLYPHS: Readonly<Record<PluginUiIconTokenName, PluginUiIconGlyphs>> = Object.freeze({
-    action: { ionicon: 'flash-outline', octicon: 'zap' },
-    browser: { ionicon: 'globe-outline', octicon: 'browser' },
-    copy: { ionicon: 'copy-outline', octicon: 'copy' },
-    file: { ionicon: 'document-outline', octicon: 'file' },
-    globe: { ionicon: 'globe-outline', octicon: 'globe' },
-    info: { ionicon: 'information-circle-outline', octicon: 'info' },
-    preview: { ionicon: 'eye-outline', octicon: 'eye' },
-    refresh: { ionicon: 'refresh-outline', octicon: 'sync' },
-    settings: { ionicon: 'settings-outline', octicon: 'gear' },
-    terminal: { ionicon: 'terminal-outline', octicon: 'terminal' },
-    warning: { ionicon: 'warning-outline', octicon: 'alert' },
+const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, IconName>> = Object.freeze({
+    action: 'lightning',
+    browser: 'globe',
+    copy: 'copy',
+    file: 'file',
+    globe: 'globe',
+    info: 'info',
+    preview: 'eye',
+    refresh: 'arrow-clockwise',
+    settings: 'gear',
+    terminal: 'terminal',
+    warning: 'warning',
+    add: 'plus',
+    back: 'arrow-left',
+    check: 'check',
+    close: 'x',
+    error: 'x-circle',
+    external: 'arrow-square-out',
+    forward: 'arrow-right',
+    more: 'dots-three',
+    search: 'magnifying-glass',
 });
 
-/** Glyphs rendered for a missing or non-canonical icon token (generic "plugin" affordance). */
-export const PLUGIN_UI_ICON_FALLBACK_IONICON: PluginUiIoniconName = 'extension-puzzle-outline';
-export const PLUGIN_UI_ICON_FALLBACK_OCTICON: PluginUiOcticonName = 'apps';
+/** Glyph rendered for a missing or non-canonical semantic icon token. */
+export const PLUGIN_UI_ICON_FALLBACK: IconName = 'puzzle-piece';
 
-const PLUGIN_UI_ICON_TOKEN_SET: ReadonlySet<string> = new Set(PLUGIN_UI_ICON_TOKENS);
+const PLUGIN_UI_ICON_TOKEN_SET: ReadonlySet<string> = new Set(PLUGIN_UI_ICON_TOKENS_V1);
 
-function normalizeIconToken(token: string | null | undefined): PluginUiIconTokenName | null {
+function normalizeIconToken(token: string | null | undefined): PluginUiIconTokenV1 | null {
     if (typeof token !== 'string') {
         return null;
     }
     const trimmed = token.trim();
-    return PLUGIN_UI_ICON_TOKEN_SET.has(trimmed) ? (trimmed as PluginUiIconTokenName) : null;
+    return PLUGIN_UI_ICON_TOKEN_SET.has(trimmed) ? (trimmed as PluginUiIconTokenV1) : null;
 }
 
-/** Resolve a plugin icon token to an Ionicons glyph name (fail-soft to the generic plugin glyph). */
-export function resolvePluginUiIoniconName(token: string | null | undefined): PluginUiIoniconName {
+/** Resolve a semantic plugin icon to the app's generated private renderer catalog. */
+export function resolvePluginUiIconName(token: string | null | undefined): IconName {
     const normalized = normalizeIconToken(token);
-    return normalized ? PLUGIN_UI_ICON_TOKEN_GLYPHS[normalized].ionicon : PLUGIN_UI_ICON_FALLBACK_IONICON;
-}
-
-/** Resolve a plugin icon token to an Octicons glyph name (fail-soft to the generic plugin glyph). */
-export function resolvePluginUiOcticonName(token: string | null | undefined): PluginUiOcticonName {
-    const normalized = normalizeIconToken(token);
-    return normalized ? PLUGIN_UI_ICON_TOKEN_GLYPHS[normalized].octicon : PLUGIN_UI_ICON_FALLBACK_OCTICON;
+    return normalized ? PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME[normalized] : PLUGIN_UI_ICON_FALLBACK;
 }

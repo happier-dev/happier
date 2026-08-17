@@ -11,7 +11,6 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { useMachine } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
 import { resolveMachineCliLogoDisplay } from './machineCliLogoDisplay';
 
@@ -65,12 +64,12 @@ export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, aut
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const enabledAgents = useEnabledAgentIds();
-    const machine = useMachine(machineId);
 
+    // The daemon-scoped cache owns the machine subscription (narrow + reference-stable). Reading
+    // the whole machine record here as well would re-render every picker row on every heartbeat.
     const { state } = useDaemonScopedMachineCapabilitiesCache({
         machineId,
         serverId,
-        daemonStateVersion: machine?.daemonStateVersion ?? 0,
         enabled: autoDetect && isOnline,
         request: CAPABILITIES_REQUEST_NEW_SESSION,
     });

@@ -225,7 +225,7 @@ describe('CodeLineRow', () => {
         });
         expect(buttons).toBeTruthy();
 
-        const icon = findTestInstanceByTypeWithProps(screen.tree, 'Ionicons' as any, {
+        const icon = findTestInstanceByTypeWithProps(screen.tree, 'Icon' as any, {
             testID: 'review-comment-line-affordance-icon',
         });
         expect(icon?.props.name).toBe('chatbox-ellipses-outline');

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const storageState = vi.hoisted(() => ({
@@ -48,6 +48,7 @@ const takeoverStartRequest = {
     },
     plan: 'takeover' as const,
     targetStorageMode: 'persisted' as const,
+    targetDirectory: '/local/selected/workspace',
     targetRuntimeMode: 'terminal' as const,
 };
 const externalLinkedTakeoverStartRequest = {
@@ -218,6 +219,98 @@ describe('machine direct sessions ops server-scoped routing', () => {
         }));
     });
 
+    it('falls back to the released candidate-list method after the released relay reports method unavailable', async () => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(createRpcCallError({
+                error: 'RPC method not available',
+                errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+            }))
+            .mockResolvedValueOnce({
+                ok: true,
+                candidates: [],
+                nextCursor: null,
+            });
+        const { machineExternalSessionsCandidatesList } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionsCandidatesList({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            source: directSource,
+            limit: 20,
+        })).resolves.toEqual({
+            ok: true,
+            candidates: [],
+            nextCursor: null,
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: 'daemon.directSessions.candidates.list',
+            payload: expect.objectContaining({ providerId: 'codex' }),
+        }));
+    });
+
+    it.each([
+        'plugin_external_sessions_v1_current-snapshot',
+        'happier_external_candidate_index_v1:current-index-page',
+    ])('rejects current-only candidate cursor %s before released fallback', async (cursor) => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
+            .mockResolvedValueOnce({
+                ok: true,
+                candidates: [],
+                nextCursor: null,
+            });
+        const { machineExternalSessionsCandidatesList } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionsCandidatesList({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            source: directSource,
+            cursor,
+            limit: 20,
+        })).rejects.toMatchObject({
+            code: 'external_session_cursor_reset_required',
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues a released candidate cursor through the released fallback', async () => {
+        const releasedCandidateCursor = encodeRawCodexCursor({
+            v: 1,
+            kind: 'index',
+            offset: 20,
+        });
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
+            .mockResolvedValueOnce({
+                ok: true,
+                candidates: [],
+                nextCursor: null,
+            });
+        const { machineExternalSessionsCandidatesList } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionsCandidatesList({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            source: directSource,
+            cursor: releasedCandidateCursor,
+            limit: 20,
+        })).resolves.toMatchObject({ ok: true });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: 'daemon.directSessions.candidates.list',
+            payload: {
+                machineId: 'machine-1',
+                providerId: 'codex',
+                source: directSource,
+                cursor: releasedCandidateCursor,
+                limit: 20,
+            },
+        }));
+    });
+
     it('normalizes the released provider-unavailable response after legacy fallback', async () => {
         machineRpcWithServerScopeMock
             .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
@@ -244,10 +337,9 @@ describe('machine direct sessions ops server-scoped routing', () => {
 
     it.each([
         new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN),
-        new RpcError('Method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE),
         Object.assign(new Error('Machine RPC timed out'), { code: 'MACHINE_RPC_TIMEOUT' }),
         new Error('ambiguous transport failure'),
-    ])('does not retry legacy RPC after any non-method-not-found failure', async (canonicalError) => {
+    ])('does not retry the candidate-list legacy RPC after a non-method-unavailable failure', async (canonicalError) => {
         machineRpcWithServerScopeMock.mockRejectedValueOnce(canonicalError);
         const { machineExternalSessionsCandidatesList } = await import('./machineExternalSessions');
 
@@ -258,6 +350,48 @@ describe('machine direct sessions ops server-scoped routing', () => {
             limit: 20,
         })).rejects.toBe(canonicalError);
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the released status method after the released relay reports method unavailable', async () => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(createRpcCallError({
+                error: 'RPC method not available',
+                errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+            }))
+            .mockResolvedValueOnce({
+                ok: true,
+                machineOnline: true,
+                runnerActive: false,
+                activity: 'idle',
+                canTakeOverDirect: true,
+                canTakeOverPersist: true,
+                canForceStop: false,
+                trustedPid: null,
+            });
+        const { machineExternalSessionStatusGet } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionStatusGet({
+            machineId: 'machine-1',
+            sessionId: 'happy-session-1',
+            agentId: 'codex',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+        })).resolves.toMatchObject({
+            ok: true,
+            machineOnline: true,
+            activity: 'idle',
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: 'daemon.directSessions.status.get',
+            payload: {
+                machineId: 'machine-1',
+                sessionId: 'happy-session-1',
+                providerId: 'codex',
+                remoteSessionId: 'vendor-session-1',
+                source: directSource,
+            },
+        }));
     });
 
     it('routes direct session linking hints through server-scoped machine rpc', async () => {
@@ -407,31 +541,15 @@ describe('machine direct sessions ops server-scoped routing', () => {
         }));
     });
 
-    it('retries released attach, detach, and follow-policy methods with their legacy request shapes', async () => {
+    it('fails attach closed when an older daemon lacks the canonical follow data plane', async () => {
         machineRpcWithServerScopeMock
             .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
             .mockResolvedValueOnce({
-                ok: false,
-                errorCode: 'provider_unavailable',
-                error: 'direct_session_provider_unavailable',
-            })
-            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
-            .mockResolvedValueOnce({
                 ok: true,
-                detached: true,
-            })
-            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
-            .mockResolvedValueOnce({
-                ok: true,
-                enabled: true,
-                leaseActive: true,
-                updatedAtMs: 42,
+                leaseId: 'legacy-lease-that-must-not-be-used',
+                expiresAtMs: 45_000,
             });
-        const {
-            machineExternalSessionAttach,
-            machineExternalSessionDetach,
-            machineExternalSessionFollowPolicySet,
-        } = await import('./machineExternalSessions');
+        const { machineExternalSessionAttach } = await import('./machineExternalSessions');
 
         await expect(machineExternalSessionAttach({
             machineId: 'machine-1',
@@ -443,8 +561,55 @@ describe('machine direct sessions ops server-scoped routing', () => {
         })).resolves.toEqual({
             ok: false,
             errorCode: 'agent_unavailable',
-            error: 'direct_session_provider_unavailable',
+            error: 'background_follow_not_supported',
         });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            method: 'daemon.externalSessions.attach',
+        }));
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalledWith(expect.objectContaining({
+            method: 'daemon.directSessions.attach',
+        }));
+    });
+
+    it.each([
+        new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN),
+        new RpcError('Method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE),
+        Object.assign(new Error('Machine RPC was aborted'), { name: 'AbortError', code: 'MACHINE_RPC_ABORTED' }),
+        new Error('ambiguous transport failure'),
+    ])('preserves non-method-not-found attach failures without trying the legacy data plane', async (canonicalError) => {
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(canonicalError);
+        const { machineExternalSessionAttach } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionAttach({
+            machineId: 'machine-1',
+            sessionId: 'happy-session-1',
+            agentId: 'codex',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+            ttlMs: 30_000,
+        })).rejects.toBe(canonicalError);
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalledWith(expect.objectContaining({
+            method: 'daemon.directSessions.attach',
+        }));
+    });
+
+    it('retains predecessor detach cleanup but does not downgrade background-follow enable', async () => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
+            .mockResolvedValueOnce({
+                ok: true,
+                detached: true,
+            })
+            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND));
+        const {
+            machineExternalSessionDetach,
+            machineExternalSessionFollowPolicySet,
+        } = await import('./machineExternalSessions');
+
         await expect(machineExternalSessionDetach({
             machineId: 'machine-1',
             sessionId: 'happy-session-1',
@@ -464,17 +629,6 @@ describe('machine direct sessions ops server-scoped routing', () => {
         });
 
         expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            method: 'daemon.directSessions.attach',
-            payload: {
-                machineId: 'machine-1',
-                sessionId: 'happy-session-1',
-                providerId: 'codex',
-                remoteSessionId: 'vendor-session-1',
-                source: directSource,
-                ttlMs: 30_000,
-            },
-        }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(4, expect.objectContaining({
             method: 'daemon.directSessions.detach',
             payload: {
                 machineId: 'machine-1',
@@ -482,7 +636,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
                 leaseId: 'lease-1',
             },
         }));
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(5);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(3);
         expect(machineRpcWithServerScopeMock).not.toHaveBeenCalledWith(expect.objectContaining({
             method: 'daemon.directSessions.followPolicy.set',
         }));
@@ -592,6 +746,162 @@ describe('machine direct sessions ops server-scoped routing', () => {
                 direction: 'older',
             }),
         }));
+    });
+
+    it.each(['page', 'readAfter'] as const)(
+        'falls back for legacy-linked transcript %s after the released relay reports method unavailable',
+        async (operation) => {
+            // server-v0.2.1 returns this exact envelope when cli-v0.2.1 has not
+            // registered the canonical daemon.externalSessions.* method.
+            machineRpcWithServerScopeMock
+                .mockRejectedValueOnce(createRpcCallError({
+                    error: 'RPC method not available',
+                    errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+                }))
+                .mockResolvedValueOnce(operation === 'page'
+                    ? {
+                        ok: true,
+                        items: [],
+                        nextCursor: null,
+                        tailCursor: null,
+                        hasMore: false,
+                        truncated: false,
+                    }
+                    : {
+                        ok: true,
+                        items: [],
+                        nextCursor: null,
+                        truncated: false,
+                    });
+            const {
+                machineExternalSessionTranscriptPage,
+                machineExternalSessionTranscriptReadAfter,
+            } = await import('./machineExternalSessions');
+
+            const result = operation === 'page'
+                ? await machineExternalSessionTranscriptPage({
+                    machineId: 'machine-1',
+                    agentId: 'codex',
+                    remoteSessionId: 'vendor-session-1',
+                    source: directSource,
+                    direction: 'older',
+                })
+                : await machineExternalSessionTranscriptReadAfter({
+                    machineId: 'machine-1',
+                    agentId: 'codex',
+                    remoteSessionId: 'vendor-session-1',
+                    source: directSource,
+                    cursor: 'released-daemon-cursor',
+                });
+
+            expect(result).toMatchObject({ ok: true, items: [] });
+            expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+            expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+                method: operation === 'page'
+                    ? 'daemon.directSessions.transcript.page'
+                    : 'daemon.directSessions.transcript.readAfter',
+            }));
+        },
+    );
+
+    it.each([
+        new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN),
+        Object.assign(new Error('Machine RPC timed out'), { code: 'MACHINE_RPC_TIMEOUT' }),
+        Object.assign(new Error('Machine RPC was aborted'), { name: 'AbortError', code: 'MACHINE_RPC_ABORTED' }),
+        new Error('ambiguous transport failure'),
+    ])('does not turn a non-method transcript failure into a legacy read', async (canonicalError) => {
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(canonicalError);
+        const { machineExternalSessionTranscriptReadAfter } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionTranscriptReadAfter({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+            cursor: 'released-daemon-cursor',
+        })).rejects.toBe(canonicalError);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not use relay method-unavailable to downgrade link creation', async () => {
+        const relayError = createRpcCallError({
+            error: 'RPC method not available',
+            errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+        });
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(relayError);
+        const { machineExternalSessionLinkEnsure } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionLinkEnsure({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+        })).rejects.toBe(relayError);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes a non-Codex opaque cursor through unchanged even when its payload resembles a Codex vector', async () => {
+        const opaqueCursor = encodeRawCodexCursor({
+            v: 5,
+            kind: 'codexForwardStreamVector',
+            streams: [{
+                fileRelPath: 'agent-owned/opaque-resource',
+                nextOffsetBytes: 123,
+                subIndex: 0,
+                fingerprintOffsetBytes: 123,
+                fileIdentity: 'a'.repeat(64),
+                contentFingerprint: 'b'.repeat(64),
+            }],
+        });
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [],
+                nextCursor: null,
+                truncated: false,
+            });
+        const { machineExternalSessionTranscriptReadAfter } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionTranscriptReadAfter({
+            machineId: 'machine-1',
+            agentId: 'opencode',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+            cursor: opaqueCursor,
+        })).resolves.toMatchObject({ ok: true });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            method: 'daemon.directSessions.transcript.readAfter',
+            payload: expect.objectContaining({
+                providerId: 'opencode',
+                cursor: opaqueCursor,
+            }),
+        }));
+    });
+
+    it('rejects the canonical host cursor envelope for non-Codex legacy fallback', async () => {
+        machineRpcWithServerScopeMock
+            .mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [],
+                nextCursor: null,
+                truncated: false,
+            });
+        const { machineExternalSessionTranscriptReadAfter } = await import('./machineExternalSessions');
+
+        await expect(machineExternalSessionTranscriptReadAfter({
+            machineId: 'machine-1',
+            agentId: 'opencode',
+            remoteSessionId: 'vendor-session-1',
+            source: directSource,
+            cursor: 'happier_external_cursor_v1:opaque-agent-cursor',
+        })).rejects.toMatchObject({
+            code: 'external_session_cursor_reset_required',
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
     });
 
     it('rejects predecessor raw Codex forward v5 and backward v3 while preserving released cursor fallbacks', async () => {

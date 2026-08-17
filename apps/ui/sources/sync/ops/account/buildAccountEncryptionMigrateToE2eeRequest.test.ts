@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
@@ -6,6 +6,7 @@ import {
   deriveAccountMachineKeyFromRecoverySecret,
   deriveSettingsSecretsKeyV1,
   encryptSecretStringV1,
+  createAccountEncryptionMigrateProofSigningInputV1,
   openAccountScopedBlobCiphertext,
   openConnectedServiceCredentialCiphertext,
 } from '@happier-dev/protocol';
@@ -16,6 +17,24 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 
 import { buildAccountEncryptionMigrateToE2eeRequest } from './buildAccountEncryptionMigrateToE2eeRequest';
 
+const EMPTY_STORAGE_DIRECTIVES = {
+  machines: { action: 'assert_empty' as const },
+  todos: { action: 'assert_empty' as const },
+  artifacts: { action: 'assert_empty' as const },
+  sessions: { action: 'assert_empty' as const },
+  reviewComments: { action: 'assert_empty' as const },
+  sessionOrganization: { action: 'assert_empty' as const },
+  pets: { action: 'assert_empty' as const },
+};
+const CREDENTIAL_REVISION =
+  'csr_0123456789ABCDEFGHJKMNPQRS';
+const CURRENTNESS = {
+  accountId: 'account-1',
+  expectedAccountVersion: 4,
+  expectedSigningKeyFingerprint: null,
+  expectedContentKeyFingerprint: null,
+} as const;
+
 function createLegacyCredentials(): Extract<AuthCredentials, { secret: string }> {
   return {
     token: 't',
@@ -24,11 +43,11 @@ function createLegacyCredentials(): Extract<AuthCredentials, { secret: string }>
 }
 
 const CONTENT_KEY_PROOF = {
-  publicKey: 'account-public-key',
-  challenge: 'challenge',
-  signature: 'challenge-signature',
-  contentPublicKey: 'content-public-key',
+  v: 1 as const,
+  publicKey: Buffer.from(new Uint8Array(32).fill(1)).toString('base64'),
+  contentPublicKey: Buffer.from(new Uint8Array(32).fill(2)).toString('base64'),
   contentPublicKeySig: 'content-public-key-signature',
+  sign: () => 'request-signature',
 } as const;
 
 function assertObject(value: unknown, name: string): asserts value is Record<string, unknown> {
@@ -46,10 +65,16 @@ function assertString(value: unknown, name: string): asserts value is string {
 describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
   it('builds assert_empty directives when no connected services or automations exist', async () => {
     const credentials = createLegacyCredentials();
+    const sign = vi.fn(() => 'request-signature');
 
     const request = await buildAccountEncryptionMigrateToE2eeRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
-      keyProof: CONTENT_KEY_PROOF,
+      keyProof: {
+        ...CONTENT_KEY_PROOF,
+        sign,
+      },
       expectedSettingsVersion: 1,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
       connectedServiceProfiles: [],
@@ -63,9 +88,22 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     expect(request.connectedServices).toEqual({ action: 'assert_empty' });
     expect(request.automations).toEqual({ action: 'assert_empty' });
     expect(request.settingsContent?.t).toBe('encrypted');
-    expect(request.keyProof).toEqual(CONTENT_KEY_PROOF);
+    expect(request.keyProof).toEqual({
+      v: 1,
+      publicKey: CONTENT_KEY_PROOF.publicKey,
+      signature: 'request-signature',
+      contentPublicKey: CONTENT_KEY_PROOF.contentPublicKey,
+      contentPublicKeySig: CONTENT_KEY_PROOF.contentPublicKeySig,
+    });
     expect(typeof (request.settingsContent as any).c).toBe('string');
-    expect(request).not.toHaveProperty('sessions');
+    expect(request.sessions).toEqual({ action: 'assert_empty' });
+    expect(sign).toHaveBeenCalledWith(
+      createAccountEncryptionMigrateProofSigningInputV1({
+        request,
+        accountId: CURRENTNESS.accountId,
+        sourceMode: 'plain',
+      }),
+    );
   });
 
   it('includes the released legacy Voice adapter projection in encrypted full-settings migrations', async () => {
@@ -75,12 +113,15 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     const settingsSecretsKey = deriveSettingsSecretsKeyV1(
       deriveAccountMachineKeyFromRecoverySecret(recoverySecret),
     );
-    const elevenLabsDefaults = settingsParse({}).voice.providers.realtime_elevenlabs;
+    const elevenLabsDefaults = settingsParse({}).voice.providers[
+      'happier.voice.elevenlabs/realtime-elevenlabs'
+    ];
     if (!elevenLabsDefaults) throw new Error('expected ElevenLabs defaults');
     assertObject(elevenLabsDefaults.config, 'ElevenLabs default config');
-    assertObject(elevenLabsDefaults.config.byo, 'ElevenLabs default BYO config');
 
     const request = await buildAccountEncryptionMigrateToE2eeRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       keyProof: CONTENT_KEY_PROOF,
       expectedSettingsVersion: 1,
@@ -107,12 +148,12 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
             credentialBindings: { account: { api_key: 'voice-elevenlabs-secret' } },
           }],
           providers: {
-            realtime_elevenlabs: {
+            'happier.voice.elevenlabs/realtime-elevenlabs': {
               schemaVersion: 2,
               config: {
                 ...elevenLabsDefaults.config,
                 billingMode: 'byo',
-                byo: { ...elevenLabsDefaults.config.byo, agentId: 'agent_1' },
+                agentId: 'agent_1',
               },
             },
           },
@@ -149,7 +190,9 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     );
 
     expect(openedSettings.value.voiceSettingsV1).toEqual(
-      expect.objectContaining({ providerId: 'realtime_elevenlabs' }),
+      expect.objectContaining({
+        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+      }),
     );
     expect(openedSettings.value.voice.adapters.realtime_elevenlabs.byo.apiKey).toHaveProperty(
       'encryptedValue',
@@ -185,13 +228,19 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     });
 
     const request = await buildAccountEncryptionMigrateToE2eeRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       keyProof: CONTENT_KEY_PROOF,
       expectedSettingsVersion: 1,
       settings: { schemaVersion: 2, backendEnabledById: {}, pushEnabled: true } as any,
       connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
-      automations: [{ id: 'auto_1', templateCiphertext: plainTemplateCiphertext }],
-      fetchConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain', v: record } }),
+      automations: [{ id: 'auto_1', templateVersion: 6, templateCiphertext: plainTemplateCiphertext }],
+      fetchConnectedServiceCredentialPlain: async () => ({
+        revisionSemantics: 'revisioned',
+        credentialRevision: CREDENTIAL_REVISION,
+        content: { t: 'plain', v: record },
+      }),
     });
 
     expect(request.connectedServices.action).toBe('migrate');
@@ -200,6 +249,9 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     const cred = request.connectedServices.credentials[0];
     assertObject(cred, 'connected service credential');
     expect(cred.kind).toBe('sealed');
+    expect(cred.expectedCredentialRevision).toBe(
+      CREDENTIAL_REVISION,
+    );
     assertObject(cred.sealed, 'sealed connected service credential');
     expect(cred.sealed.format).toBe('account_scoped_v1');
     assertString(cred.sealed.ciphertext, 'sealed ciphertext');
@@ -224,6 +276,7 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     if (request.automations.action !== 'migrate') throw new Error('expected migrate');
     const template = request.automations.templates[0];
     assertObject(template, 'automation template');
+    expect(template.expectedTemplateVersion).toBe(6);
     assertString(template.templateCiphertext, 'automation templateCiphertext');
     const envelope = JSON.parse(template.templateCiphertext);
     expect(envelope.kind).toBe('happier_automation_template_encrypted_v1');
@@ -240,13 +293,19 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     });
 
     await expect(buildAccountEncryptionMigrateToE2eeRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
       credentials,
       keyProof: CONTENT_KEY_PROOF,
       expectedSettingsVersion: 1,
       settings: { schemaVersion: 2, backendEnabledById: {} } as any,
       connectedServiceProfiles: [{ serviceId: 'openai-codex', profileId: 'work' }],
       automations: [],
-      fetchConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain', v: misboundRecord } }),
+      fetchConnectedServiceCredentialPlain: async () => ({
+        revisionSemantics: 'revisioned',
+        credentialRevision: CREDENTIAL_REVISION,
+        content: { t: 'plain', v: misboundRecord },
+      }),
     })).rejects.toMatchObject({ code: 'connected_service_credential_binding_mismatch' });
   });
 });

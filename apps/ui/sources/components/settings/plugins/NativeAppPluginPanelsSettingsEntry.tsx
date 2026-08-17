@@ -3,19 +3,16 @@ import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { t } from '@/text';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { selectRenderablePluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import { Icon } from '@/components/ui/icons/Icon';
+import { useCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 
 export type NativeAppPluginPanelsSettingsEntryProps = Readonly<{
     platform?: LocalServicePreviewPlatform;
-    pluginUiProjection?: PluginUiProjectionModel | null;
 }>;
 
 export function NativeAppPluginPanelsSettingsEntry(
@@ -23,18 +20,17 @@ export function NativeAppPluginPanelsSettingsEntry(
 ): React.ReactElement | null {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const appShellProjection = useAppShellPluginUiProjection();
     const platform = props.platform ?? (
         Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'web'
     );
-    const pluginUiProjection = props.pluginUiProjection ?? appShellProjection.pluginUiProjection;
-    const placements = React.useMemo(() => (
-        pluginUiProjection
-            ? selectRenderablePluginRightSidebarTabPlacements(pluginUiProjection, 'app')
-            : []
-    ), [pluginUiProjection]);
+    const compactDestinations = useCompactAppDestinations({ browseExistingSessionsEnabled: false });
+    const hasAvailableAppPanel = compactDestinations.some((destination) => (
+        destination.kind === 'plugin'
+        && destination.container === 'rightSidebarTab'
+        && destination.availability === 'available'
+    ));
 
-    if ((platform !== 'ios' && platform !== 'android') || placements.length === 0) {
+    if ((platform !== 'ios' && platform !== 'android') || !hasAvailableAppPanel) {
         return null;
     }
 
@@ -46,8 +42,8 @@ export function NativeAppPluginPanelsSettingsEntry(
                 title={t('settingsPlugins.appPanelsTitle')}
                 subtitle={t('settingsPlugins.appPanelsSubtitle')}
                 icon={(
-                    <SafeIonicons
-                        name="extension-puzzle-outline"
+                    <Icon
+                        name="puzzle-piece"
                         size={29}
                         color={theme.colors.accent.indigo}
                     />

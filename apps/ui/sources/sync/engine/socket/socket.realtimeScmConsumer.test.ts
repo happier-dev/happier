@@ -165,7 +165,7 @@ function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'u
       decryptEncryptionKey: vi.fn(async () => null as Uint8Array | null),
       initializeMachines: vi.fn(async () => {}),
     } as unknown as HandleUpdateContainerParams['encryption'],
-    artifactDataKeys: new Map<string, Uint8Array>(),
+    artifactDataKeys: new Map(),
     applySessions: vi.fn((sessions: Parameters<HandleUpdateContainerParams['applySessions']>[0]) => {
       const normalizedSessions: Session[] = sessions.map((session) => ({
         ...session,

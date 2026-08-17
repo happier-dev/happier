@@ -147,6 +147,65 @@ describe('useDaemonVoiceModelCatalogState', () => {
         });
     });
 
+    it('echoes the exact tagged artifact binding from a license review to the daemon', async () => {
+        const review = {
+            pluginId: 'acme.speech',
+            packId: 'english-small',
+            pluginVersion: '1.2.3',
+            packVersion: '2026.7.0',
+            licenseId: 'acme-model-license-v1',
+            licenseTitle: 'Acme model license',
+            licenseText: 'Review these exact model terms.',
+            licenseSourceUrl: 'https://example.test/licenses/acme-v1',
+            licenseTextDigest: `sha256:${'a'.repeat(64)}`,
+            artifactBinding: {
+                kind: 'materialization' as const,
+                immutableGenerationId: 'generation-local-1',
+            },
+            accepted: false,
+        };
+        const acceptModelPackLicense = vi.fn(async (
+            _input: Parameters<DaemonVoiceInferenceClient['acceptModelPackLicense']>[0],
+        ) => status(`${review.pluginId}/${review.packId}`));
+        const client = {
+            listModels: vi.fn(async () => []),
+            getModelsStatus: vi.fn(async () => []),
+            installModel: vi.fn(async () => status(STT_PACK)),
+            acceptModelPackLicense,
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        function LicenseHarness(): React.ReactElement {
+            const { acceptLicense } = useDaemonVoiceModelCatalogState({ client });
+            return React.createElement('AcceptLicenseButton', {
+                onPress: () => acceptLicense(review),
+            });
+        }
+
+        const { tree } = await renderScreen(<LicenseHarness />);
+        await act(async () => {
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await tree.root.findByType('AcceptLicenseButton').props.onPress();
+        });
+
+        const input = acceptModelPackLicense.mock.calls[0]?.[0];
+        if (!input) throw new Error('Expected license acceptance input');
+        expect(input).toEqual({
+            qualifiedPackId: 'acme.speech/english-small',
+            pluginId: review.pluginId,
+            packId: review.packId,
+            pluginVersion: review.pluginVersion,
+            packVersion: review.packVersion,
+            licenseId: review.licenseId,
+            licenseSourceUrl: review.licenseSourceUrl,
+            licenseTextDigest: review.licenseTextDigest,
+            artifactBinding: review.artifactBinding,
+        });
+        expect(input.artifactBinding).toBe(review.artifactBinding);
+    });
+
     it('does not open a daemon model status request while disabled', async () => {
         const getModelsStatus = vi.fn(
             async (_packIds?: readonly string[] | null): Promise<DaemonVoiceInferenceModelStatus[]> => [],

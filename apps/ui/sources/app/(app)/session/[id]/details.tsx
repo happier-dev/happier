@@ -173,6 +173,7 @@ export default function SessionDetailsScreenRoute() {
     usePersistSessionMobileSurface({
         sessionId,
         surface: cockpitEnabled ? 'tabs' : null,
+        serverId: routeScope.serverId,
     });
 
     if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {

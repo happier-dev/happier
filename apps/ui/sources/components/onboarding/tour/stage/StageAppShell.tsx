@@ -4,8 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { MainAppTabBar } from '@/components/navigation/mobile/chrome/bars/MainAppTabBar';
 import { SidebarView } from '@/components/navigation/shell/SidebarView';
-import { SessionView } from '@/components/sessions/shell/SessionView';
-import { DEMO_RICH_SESSION_ID } from '@/demoMode/world/buildDemoWorld';
 
 import type { StageDevice } from './DeviceFrame';
 import { stageVisualTokens } from './stageVisualTokens';
@@ -22,9 +20,9 @@ export type StageAppShellProps = Readonly<{
     surface: AppShellStageSurfaceId;
     // Feature beats reuse the real desktop split (sidebar + detail) but swap the
     // detail owner: a different seeded session (review) or a real feature pane
-    // (voice). Defaults preserve the canonical rich-session cockpit exactly.
-    sessionId?: string;
-    detail?: React.ReactNode;
+    // (voice). The detail is always supplied by the surface loader so this shell
+    // never drags the session cockpit's import graph into a list-only beat.
+    detail: React.ReactNode;
     detailTestID?: string;
 }>;
 
@@ -65,33 +63,18 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function RichSessionDetail(props: Readonly<{ sessionId?: string }>): React.ReactElement {
-    return (
-        <SessionView
-            id={props.sessionId ?? DEMO_RICH_SESSION_ID}
-            surfaceFocusedOverride
-            surfaceVisibleOverride
-            routeAnchorOverride
-            safeAreaTopMode="external"
-            headerSafeAreaTopMode="external"
-            chatBottomSpacing="none"
-        />
-    );
-}
-
 /**
  * The stage reuses the real sidebar/list and session-detail owners. It only
  * composes them into the desktop split that normally surrounds those screens.
  */
 export function StageAppShell(props: StageAppShellProps): React.ReactElement {
     const styles = stylesheet;
-    const detail = props.detail ?? <RichSessionDetail sessionId={props.sessionId} />;
 
     if (props.device === 'phone') {
         return (
             <View testID={`demo-stage-app-shell-phone-${props.surface}`} style={styles.phone}>
                 {props.surface === 'session-view' ? (
-                    detail
+                    props.detail
                 ) : (
                     <SidebarView desktopWindowControls={null} desktopUpdateIndicator={null} />
                 )}
@@ -112,7 +95,7 @@ export function StageAppShell(props: StageAppShellProps): React.ReactElement {
                 />
             </View>
             <View testID={props.detailTestID ?? 'demo-stage-app-shell-detail'} style={styles.detail}>
-                {detail}
+                {props.detail}
             </View>
         </View>
     );

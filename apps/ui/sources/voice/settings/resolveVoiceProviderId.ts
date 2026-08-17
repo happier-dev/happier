@@ -4,6 +4,7 @@ import {
     projectVoiceProviderSettings,
     type VoiceProviderRegistry,
 } from '@/voice/registry/providerRegistry';
+import { projectExternalVoiceProviderSettings } from '@/voice/settings/externalProviderSettings';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 /** @deprecated Use the open conversation-provider id returned by the registry. */
@@ -40,13 +41,61 @@ export function resolveVoiceProviderIdFromSettings(
     settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
     registry: VoiceProviderRegistry = getDefaultRegistry(),
 ): KnownVoiceProviderId | null {
+    return resolveVoiceProviderIdForBindingScope(settings, 'global', registry);
+}
+
+export function resolveVoiceProviderIdForBindingScope(
+    settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
+    bindingScope: 'global' | 'session',
+    registry: VoiceProviderRegistry = getDefaultRegistry(),
+): KnownVoiceProviderId | null {
     const providerId = resolveVoiceProviderId(settings.providerId, registry);
     if (!providerId) return null;
     const contribution = registry.get(providerId);
     if (!contribution || contribution.kind !== 'voice.conversation-provider.v1') return null;
     const envelope = settings.providers?.[providerId];
     const settingsProjection = projectVoiceProviderSettings(contribution, envelope ?? null);
-    return settingsProjection?.status === 'ready' ? providerId : null;
+    if (settingsProjection?.status === 'ready') return providerId;
+    if (
+        bindingScope !== 'session'
+        || settingsProjection?.status !== 'missing_required_setting'
+        || contribution.declaration?.kind !== 'conversation'
+        || contribution.declaration.execution?.kind !== 'experimental_agent_session_realtime'
+        || !contribution.providerSettings?.connectedServicesBinding
+    ) {
+        return null;
+    }
+    const declaredSettingsProjection = projectExternalVoiceProviderSettings(
+        envelope ?? null,
+        contribution.providerSettings,
+    );
+    return declaredSettingsProjection.status === 'missing_required_setting'
+        ? providerId
+        : null;
+}
+
+/**
+ * Keeps a selected provider with a declarative global binding visible so the
+ * surface can present the missing/invalid binding and its remediation. Runtime
+ * admission remains exclusively owned by resolveVoiceProviderIdForBindingScope.
+ */
+export function resolveVoiceProviderIdForSurface(
+    settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
+    registry: VoiceProviderRegistry = getDefaultRegistry(),
+): KnownVoiceProviderId | null {
+    const directProviderId = resolveVoiceProviderIdForBindingScope(
+        settings,
+        'session',
+        registry,
+    );
+    if (directProviderId) return directProviderId;
+    const providerId = resolveVoiceProviderId(settings.providerId, registry);
+    if (!providerId) return null;
+    const contribution = registry.get(providerId);
+    return contribution?.kind === 'voice.conversation-provider.v1'
+        && contribution.providerSettings?.connectedServicesBinding
+        ? providerId
+        : null;
 }
 
 export function resetVoiceProviderResolverRegistryForTests(): void {

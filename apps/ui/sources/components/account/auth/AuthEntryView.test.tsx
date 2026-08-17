@@ -21,7 +21,10 @@ describe('AuthEntryView', () => {
         providerKeylessTitle: '',
         anonymousSignupTitle: 'Create account',
         mtlsTitle: 'Sign in with certificate',
-        primarySignupTitle: 'Create account',
+        primaryAction: {
+            kind: 'anonymous' as const,
+            title: 'Create account',
+        },
         mtlsPrimary: false,
         keylessPrimary: false,
         autoRedirect: {
@@ -57,7 +60,10 @@ describe('AuthEntryView', () => {
                     providerKeylessTitle: '',
                     anonymousSignupTitle: 'Create account',
                     mtlsTitle: 'Sign in with certificate',
-                    primarySignupTitle: 'Create account',
+                    primaryAction: {
+                        kind: 'anonymous',
+                        title: 'Create account',
+                    },
                     mtlsPrimary: false,
                     keylessPrimary: false,
                     autoRedirect: {
@@ -116,7 +122,10 @@ describe('AuthEntryView', () => {
                     providerKeylessTitle: '',
                     anonymousSignupTitle: 'Create account',
                     mtlsTitle: 'Sign in with certificate',
-                    primarySignupTitle: 'Create account',
+                    primaryAction: {
+                        kind: 'anonymous',
+                        title: 'Create account',
+                    },
                     mtlsPrimary: false,
                     keylessPrimary: false,
                     autoRedirect: {
@@ -168,7 +177,10 @@ describe('AuthEntryView', () => {
                     providerKeylessTitle: 'Continue with GitHub',
                     anonymousSignupTitle: 'Create account',
                     mtlsTitle: 'Sign in with certificate',
-                    primarySignupTitle: 'Create account',
+                    primaryAction: {
+                        kind: 'anonymous',
+                        title: 'Create account',
+                    },
                     mtlsPrimary: false,
                     keylessPrimary: false,
                     autoRedirect: {
@@ -202,6 +214,35 @@ describe('AuthEntryView', () => {
         expect(onLoginWithKeylessProvider).toHaveBeenCalledWith('github');
     });
 
+    it('shows policy guidance and never invents a create-account action when signup is unavailable', async () => {
+        const onCreateAccount = vi.fn();
+
+        const screen = await renderScreen(
+            <AuthEntryView
+                layout="portrait"
+                isDesktopShell={false}
+                options={{
+                    ...readyOptions,
+                    showAnonymousSignup: false,
+                    showProviderSignup: false,
+                    primaryAction: null,
+                }}
+                onOpenSetup={vi.fn()}
+                onChangeRelay={vi.fn()}
+                onRestore={vi.fn()}
+                onCreateAccount={onCreateAccount}
+                onCreateAccountViaProvider={vi.fn()}
+                onLoginWithKeylessProvider={vi.fn()}
+                onLoginWithMtls={vi.fn()}
+            />,
+        );
+
+        expect(screen.findByTestId('welcome-signup-disabled')).toBeTruthy();
+        expect(screen.findByTestId('welcome-restore')).toBeTruthy();
+        expect(screen.findAllByTestId('welcome-create-account')).toHaveLength(0);
+        expect(onCreateAccount).not.toHaveBeenCalled();
+    });
+
     it('hides the setup affordance when desktop setup is explicitly unavailable', async () => {
         const screen = await renderScreen(
             React.createElement(AuthEntryView, {
@@ -221,4 +262,5 @@ describe('AuthEntryView', () => {
 
         expect(screen.findByTestId('welcome-open-setup')).toBeNull();
     });
+
 });

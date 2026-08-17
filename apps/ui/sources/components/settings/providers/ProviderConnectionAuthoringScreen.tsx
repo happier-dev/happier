@@ -499,7 +499,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 preview={authoringPreview}
                 previewLoading={authoringPreviewLoading}
                 enableAfterSaving={enableAfterSaving}
-                savePending={mutation.pendingKey === 'save'}
+                savePending={mutation.isPending('save')}
                 error={displayError}
                 errorRetry={displayErrorRetry}
                 secondaryTextColor={theme.colors.text.secondary}
@@ -539,7 +539,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 manualModelsError,
                 draftHasProbe,
                 probeState,
-                savePending: mutation.pendingKey === 'save',
+                savePending: mutation.isPending('save'),
                 error: displayError,
                 errorRetry: displayErrorRetry,
                 probeError,

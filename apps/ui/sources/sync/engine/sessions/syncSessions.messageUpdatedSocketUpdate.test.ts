@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';
+import { advanceSessionReceivedMessageCurrentness } from './sessionMessageCurrentness';
 
 type TestAttentionImpact = {
     affectsUnread: boolean;
@@ -130,9 +131,194 @@ describe('handleMessageUpdatedSocketUpdate', () => {
 
         const normalized = applyMessages.mock.calls?.[0]?.[1]?.[0] as NormalizedMessage | undefined;
         expect(normalized?.seq).toBe(2);
+        expect(normalized).toMatchObject({ isAuthoritativeUpdate: true });
 
         const updatedSession = applySessions.mock.calls?.[0]?.[0]?.[0] as Session | undefined;
         expect(updatedSession?.seq).toBe(2);
+    });
+
+    it('does not advance row currentness when a message update cannot be decrypted', async () => {
+        const sessionReceivedMessages = new Map<string, Map<string, number>>([
+            ['s1', new Map([['m2', 3_000]])],
+        ]);
+        const { params, applyMessages } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                messageUpdatedAt: 2_000,
+            }),
+            getSessionEncryption: () => ({ decryptMessage: async () => null }),
+            sessionReceivedMessages,
+        });
+
+        await handleMessageUpdatedSocketUpdate(params);
+
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBe(3_000);
+    });
+
+    it('does not let an older authoritative socket row regress a newer currentness watermark', async () => {
+        const sessionReceivedMessages = new Map<string, Map<string, number>>([
+            ['s1', new Map([['m2', 3_000]])],
+        ]);
+        const { params, applyMessages, applySessions } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                messageUpdatedAt: 2_000,
+            }),
+            sessionReceivedMessages,
+        });
+
+        await handleMessageUpdatedSocketUpdate(params);
+
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBe(3_000);
+    });
+
+    it('drops an older socket row when a newer page advances currentness during decryption', async () => {
+        const sessionReceivedMessages = new Map<string, Map<string, number>>([
+            ['s1', new Map([['m2', 2_000]])],
+        ]);
+        type DecryptedMessage = {
+            id: string;
+            localId: string | null;
+            createdAt: number;
+            content: unknown;
+        };
+        let releaseDecryption!: (message: DecryptedMessage | null) => void;
+        const pendingDecryption = new Promise<DecryptedMessage | null>((resolve) => {
+            releaseDecryption = resolve;
+        });
+        const decryptMessage = vi.fn(() => pendingDecryption);
+        const { params, applyMessages, applySessions } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                messageUpdatedAt: 2_001,
+            }),
+            getSessionEncryption: () => ({ decryptMessage }),
+            sessionReceivedMessages,
+        });
+
+        const pendingResult = handleMessageUpdatedSocketUpdate(params);
+        await vi.waitFor(() => expect(decryptMessage).toHaveBeenCalledTimes(1));
+        advanceSessionReceivedMessageCurrentness(sessionReceivedMessages, 's1', 'm2', 2_002);
+        releaseDecryption({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'older socket row' } },
+        });
+
+        await pendingResult;
+
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBe(2_002);
+    });
+
+    it('drops a held direct update after its caller scope retires during decryption', async () => {
+        type DecryptedMessage = {
+            id: string;
+            localId: string | null;
+            createdAt: number;
+            content: unknown;
+        };
+        let releaseDecryption!: (message: DecryptedMessage | null) => void;
+        const pendingDecryption = new Promise<DecryptedMessage | null>((resolve) => {
+            releaseDecryption = resolve;
+        });
+        const decryptMessage = vi.fn(() => pendingDecryption);
+        const sessionReceivedMessages = new Map<string, Map<string, number>>();
+        const onNormalizedMessagesApplied = vi.fn();
+        let scopeCurrent = true;
+        const {
+            params,
+            applyMessages,
+            applySessions,
+            markSessionMaterializedMaxSeq,
+        } = buildHarness({
+            getSessionEncryption: () => ({ decryptMessage }),
+            sessionReceivedMessages,
+            onNormalizedMessagesApplied,
+        });
+        // `shouldContinue` is intentionally added through the public handler's
+        // structural test boundary: the RED proves that the handler itself must
+        // own the post-decrypt fence rather than trusting callback no-ops.
+        const paramsWithScopeFence = params as typeof params & {
+            shouldContinue?: () => boolean;
+        };
+        paramsWithScopeFence.shouldContinue = () => scopeCurrent;
+
+        const pendingResult = handleMessageUpdatedSocketUpdate(paramsWithScopeFence);
+        await vi.waitFor(() => expect(decryptMessage).toHaveBeenCalledTimes(1));
+        scopeCurrent = false;
+        releaseDecryption({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'retired scope row' } },
+        });
+
+        await pendingResult;
+
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(sessionReceivedMessages.get('s1')).toBeUndefined();
+    });
+
+    it('allows an equal-timestamp authoritative socket repair', async () => {
+        const sessionReceivedMessages = new Map<string, Map<string, number>>([
+            ['s1', new Map([['m2', 2_000]])],
+        ]);
+        const { params, applyMessages } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                messageUpdatedAt: 2_000,
+            }),
+            sessionReceivedMessages,
+        });
+
+        await handleMessageUpdatedSocketUpdate(params);
+
+        expect(applyMessages).toHaveBeenCalledWith('s1', [
+            expect.objectContaining({ id: 'm2', isAuthoritativeUpdate: true }),
+        ]);
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBe(2_000);
+    });
+
+    it('does not publish row currentness on message-update queue admission', async () => {
+        const sessionReceivedMessages = new Map<string, Map<string, number>>([
+            ['s1', new Map([['m2', 2_000]])],
+        ]);
+        const enqueueMessages = vi.fn();
+        const { params, applyMessages } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                messageUpdatedAt: 2_001,
+            }),
+            enqueueMessages,
+            sessionReceivedMessages,
+        });
+
+        await handleMessageUpdatedSocketUpdate(params);
+
+        expect(enqueueMessages).toHaveBeenCalledWith('s1', [
+            expect.objectContaining({ id: 'm2', isAuthoritativeUpdate: true }),
+        ]);
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(sessionReceivedMessages.get('s1')?.get('m2')).toBe(2_000);
     });
 
     it('applies plaintext message updates when the session is plain and session encryption is unavailable', async () => {
@@ -342,18 +528,44 @@ describe('handleMessageUpdatedSocketUpdate', () => {
         ]);
     });
 
-    it('applies decrypted message updates even when the session is not yet hydrated, while still refreshing sessions', async () => {
-        const { params, applyMessages, applySessions, markSessionMaterializedMaxSeq, fetchSessions } = buildHarness({
+    it('does not materialize a message update for an absent carrier even with a full-content consumer', async () => {
+        const sessionReceivedMessages = new Map<string, Map<string, number>>();
+        const markSessionTranscriptDeferred = vi.fn();
+        const markSessionTranscriptStale = vi.fn();
+        const {
+            params,
+            applyMessages,
+            applySessions,
+            markSessionMaterializedMaxSeq,
+            fetchSessions,
+        } = buildHarness({
             getSession: () => undefined,
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                content: {
+                    t: 'plain',
+                    v: { role: 'user', content: { type: 'text', text: 'retired carrier update' } },
+                },
+            }),
+            sessionReceivedMessages,
+            isSessionActivelyViewed: () => true,
+            isSessionFullContentConsumerActive: () => true,
+            realtimeProjectionMode: 'enabled',
+            markSessionTranscriptDeferred,
+            markSessionTranscriptStale,
         });
 
         await handleMessageUpdatedSocketUpdate(params);
 
         expect(fetchSessions).toHaveBeenCalledTimes(1);
-        expect(applyMessages).toHaveBeenCalledTimes(1);
-        expect(applyMessages.mock.calls[0]?.[0]).toBe('s1');
-        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
         expect(applySessions).not.toHaveBeenCalled();
+        expect(markSessionTranscriptDeferred).not.toHaveBeenCalled();
+        expect(markSessionTranscriptStale).not.toHaveBeenCalled();
+        expect(sessionReceivedMessages.get('s1')).toBeUndefined();
     });
 
     it('triggers catch-up when a gap is detected for a loaded transcript', async () => {

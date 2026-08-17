@@ -27,27 +27,44 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
                 tint: params.tint,
                 dismiss: params.dismiss,
                 blurInput: params.blurInput,
+                openCollapsedPopover: params.openCollapsedOptionsPopover,
             });
         } else if (
             chip.collapsedOptionsPopover
             && hasAgentInputCollapsedOptionsPopoverContent(chip.collapsedOptionsPopover)
         ) {
+            const isDisabled = (): boolean => chip.collapsedOptionsPopover!.disabled === true
+                || chip.collapsedOptionsPopover!.isEnabled?.() === false;
+            const disabled = isDisabled();
             actions = {
                 id: chip.controlId,
                 label: chip.collapsedOptionsPopover.label ?? chip.collapsedOptionsPopover.title,
+                ...(chip.collapsedOptionsPopover.accessibilityLabel === undefined
+                    ? {}
+                    : { accessibilityLabel: chip.collapsedOptionsPopover.accessibilityLabel }),
                 icon: chip.collapsedOptionsPopover.icon?.(params.tint) ?? null,
+                ...(disabled ? { disabled: true } : {}),
                 onPress: () => {
+                    if (isDisabled()) return;
                     params.dismiss();
                     params.resetCorePopovers?.();
                     params.openCollapsedOptionsPopover(chip.key);
                 },
             };
         } else if (chip.collapsedContentPopover) {
+            const isDisabled = (): boolean => chip.collapsedContentPopover!.disabled === true
+                || chip.collapsedContentPopover!.isEnabled?.() === false;
+            const disabled = isDisabled();
             actions = {
                 id: chip.controlId,
                 label: chip.collapsedContentPopover.label ?? chip.collapsedContentPopover.title,
+                ...(chip.collapsedContentPopover.accessibilityLabel === undefined
+                    ? {}
+                    : { accessibilityLabel: chip.collapsedContentPopover.accessibilityLabel }),
                 icon: chip.collapsedContentPopover.icon?.(params.tint) ?? null,
+                ...(disabled ? { disabled: true } : {}),
                 onPress: () => {
+                    if (isDisabled()) return;
                     params.dismiss();
                     params.resetCorePopovers?.();
                     params.openCollapsedOptionsPopover(chip.key);

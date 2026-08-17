@@ -15,7 +15,17 @@ function normalizeStrategy(value: unknown): HappierReplayStrategy {
   return value === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
 }
 
-export function resolveHappierReplayConfig(settings: Settings): Readonly<{
+/**
+ * The exact settings this resolver reads. It is narrower than `Settings` on
+ * purpose: transcript rows subscribe to only these four fields to keep render
+ * locality, and requiring the whole settings object would force them to widen.
+ */
+export type HappierReplayConfigSource = Partial<Pick<
+  Settings,
+  'sessionReplayEnabled' | 'sessionReplayStrategy' | 'sessionReplayRecentMessagesCount' | 'sessionReplayMaxSeedChars'
+>>;
+
+export function resolveHappierReplayConfig(settings: HappierReplayConfigSource): Readonly<{
   enabled: boolean;
   strategy: HappierReplayStrategy;
   recentMessagesCount: number;

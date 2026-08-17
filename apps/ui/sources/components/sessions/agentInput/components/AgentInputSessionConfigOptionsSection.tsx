@@ -117,6 +117,12 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                         : null;
 
                 const isSelect = option.type === 'select' && choices.length > 0;
+                // While overridden, highlight what the agent is ACTUALLY running rather than the
+                // stored intent. With no matching choice, highlight nothing instead of pointing
+                // at a pill the forced value does not correspond to.
+                const highlightedValue = isDisabled
+                    ? control.overriddenEffectiveValue ?? null
+                    : effectiveValue;
 
                 return (
                     <View
@@ -156,7 +162,7 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                                         <Text accessibilityRole="header" style={styles.groupLabel}>{group.name}</Text>
                                         <View style={styles.choiceRow}>
                                             {group.options.map((choice) => {
-                                                const isSelected = choice.value === effectiveValue;
+                                                const isSelected = choice.value === highlightedValue;
                                                 const identity = choiceIdentity([option.id, group.id, choice.value]);
                                                 return (
                                                     <Pressable
@@ -174,7 +180,7 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                                     </View>
                                 ))}
                                 {option.options?.map((choice) => {
-                                    const isSelected = choice.value === effectiveValue;
+                                    const isSelected = choice.value === highlightedValue;
                                     const identity = choiceIdentity([option.id, choice.value]);
                                     return (
                                         <Pressable

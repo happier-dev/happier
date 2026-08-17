@@ -12,6 +12,7 @@ import { createPartialStorageModuleMock } from '@/dev/testkit/createPartialStora
 import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
+import type { AccountSettingsDefaults } from '@happier-dev/protocol';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,29 +37,24 @@ const navigationPreventRemove = vi.hoisted(() => ({
 const promptUnsavedChangesAlertSpy = vi.hoisted(
     () => vi.fn<typeof promptUnsavedChangesAlert>(),
 );
-let navigationCanGoBack = false;
-let liveMcpSettings: {
-    v: 1;
-    strictMode: boolean;
-    servers: Array<{
-        id: string;
-        name: string;
-        transport: 'stdio' | 'http' | 'sse';
-        stdio?: { command: string; args: string[] };
-        remote?: { url: string; headers: Record<string, unknown> };
-        env: Record<string, unknown>;
-        createdAt: number;
-        updatedAt: number;
-    }>;
-    bindings: Array<{
-        id: string;
+const administrationTargetState = vi.hoisted(() => ({
+    current: {
+        target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+        serverId: 'server-1',
+        machine: {
+            id: 'machine-1',
+            metadata: { displayName: 'Machine 1', host: 'machine-1.local' },
+        },
+    } as {
+        target: { serverIdentityId: string; machineId: string };
         serverId: string;
-        enabled: boolean;
-        target: { t: 'machine'; machineId: string };
-        createdAt: number;
-        updatedAt: number;
-    }>;
-};
+        machine: { id: string; metadata: { displayName: string; host: string } };
+    } | null,
+}));
+let navigationCanGoBack = false;
+type McpServersSettingsRaw = AccountSettingsDefaults['mcpServersSettingsV1'];
+
+let liveMcpSettings: McpServersSettingsRaw;
 let liveSecrets: SavedSecret[] = [];
 let liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
 const liveSettingListeners = new Set<() => void>();
@@ -75,7 +71,7 @@ function resetLiveSettings() {
         strictMode: false,
         servers: [{
             id: 'server-1',
-            name: 'server',
+            name: 'hard-drives',
             transport: 'stdio',
             stdio: { command: 'node', args: ['server.js'] },
             env: {},
@@ -103,6 +99,14 @@ function resetLiveSettings() {
     navigationPreventRemove.callback = null;
     promptUnsavedChangesAlertSpy.mockReset();
     promptUnsavedChangesAlertSpy.mockResolvedValue('discard');
+    administrationTargetState.current = {
+        target: { serverIdentityId: 'identity-1', machineId: 'machine-1' },
+        serverId: 'server-1',
+        machine: {
+            id: 'machine-1',
+            metadata: { displayName: 'Machine 1', host: 'machine-1.local' },
+        },
+    };
 }
 
 function updateLiveSecrets(next: SavedSecret[]) {
@@ -213,6 +217,18 @@ vi.mock('@/components/settings/mcpServers/McpServerBindingEditor', () => ({
 
 vi.mock('@/components/settings/mcpServers/McpServerTestPanel', () => ({
     McpServerTestPanel: () => React.createElement('McpServerTestPanel'),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: any) => React.createElement('MachineAdministrationTargetSelector', props),
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.current?.target ?? null,
+        canExecute: administrationTargetState.current !== null,
+        resolveExecutionTarget: () => administrationTargetState.current,
+    }),
 }));
 
 vi.mock('@/components/settings/mcpServers/McpValueRefMapEditor', () => ({
@@ -361,6 +377,34 @@ describe('McpServerEditorScreen', () => {
         });
         expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp');
         expect(routerBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite an additive MCP settings root when saving an editor draft', async () => {
+        liveMcpSettings = {
+            v: 1,
+            strictMode: false,
+            servers: [{
+                id: 'server-1',
+                name: 'hard-drives',
+                transport: 'stdio',
+                stdio: { command: 'node', args: ['server.js'] },
+                env: {},
+                createdAt: 1,
+                updatedAt: 1,
+            }],
+            bindings: [],
+            futureV2: { retained: true },
+        };
+
+        const screen = await renderEditorScreen();
+        await act(async () => {
+            screen.changeTextByTestId('mcp.server.editor.name', 'hard-drives-updated');
+        });
+        await act(async () => {
+            screen.pressByTestId('mcp.server.editor.save');
+        });
+
+        expect(setMcpSettingsSpy).not.toHaveBeenCalled();
     });
 
     it('preserves a new server draft when unrelated secrets settings change', async () => {

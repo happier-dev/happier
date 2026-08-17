@@ -116,6 +116,49 @@ describe('SubAgentRunView', () => {
         expect(text).toContain('TICK 3');
     });
 
+    it('renders sidechain text messages when an interrupted call settled as completed', async () => {
+        // Same shape as the error case above, only the lifecycle state differs — which is an
+        // accident of when the interrupt landed. The status owner reads both as ambiguous, so the
+        // renderer must not show one of them as a finished run while the sidechain still streams.
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<SubAgentRunView
+                    tool={{
+                        state: 'completed',
+                        input: { intent: 'delegate' },
+                        result: { error: 'Request interrupted' },
+                    } as any}
+                    metadata={null as any}
+                    messages={[
+                        { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'TICK 4', isThinking: false },
+                    ] as any}
+                    detailLevel="full"
+                />)).tree;
+
+        const text = collectHostText(tree).join('\n');
+        expect(text).toContain('TICK 4');
+        expect(structuredResultViewPropsSpy).not.toHaveBeenCalled();
+    });
+
+    it('still renders a reported outcome that carries an interruption marker beside it', async () => {
+        // The execution-run manager reported `succeeded`, so the run is terminal however torn down
+        // the parent call was. Deferring to the status owner is what keeps this from becoming a
+        // second, drifting copy of that precedence rule.
+        await renderScreen(<SubAgentRunView
+            tool={{
+                state: 'completed',
+                input: { intent: 'delegate' },
+                result: { status: 'succeeded', summary: 'Delegated output.', error: 'Request interrupted' },
+            } as any}
+            metadata={null as any}
+            messages={[
+                { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'TICK 5', isThinking: false },
+            ] as any}
+            detailLevel="full"
+        />);
+
+        expect(structuredResultViewPropsSpy).toHaveBeenCalled();
+    });
+
     it('renders a review digest from findingsDigest v2 shape', async () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<SubAgentRunView

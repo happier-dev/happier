@@ -15,6 +15,7 @@ import { t } from '@/text';
 import { ProviderErrorItems } from '../ProviderErrorItems';
 import { ProviderExternalLinkItem } from '../ProviderExternalLinkItem';
 import { ProviderMachineSelector } from '../ProviderMachineSelector';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type PreviewCredential = Readonly<{ required: boolean }>;
 
@@ -66,7 +67,7 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                         mode="info"
                         title={t('settingsProviders.compatibility.experimental')}
                         subtitle={t('settingsProviders.compatibility.experimentalDescription')}
-                        icon={<SafeIonicons name="warning-outline" size={29} color={props.warningColor} />}
+                        icon={<Icon name="warning" size={29} color={props.warningColor} />}
                     />
                 ) : null}
                 {props.websiteUrl ? (
@@ -81,7 +82,7 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                             : props.previewCredential.required
                                 ? t('settingsProviders.authoring.apiKeyDescription')
                                 : t('settingsProviders.authoring.apiKeyOptionalDescription')}
-                        icon={<SafeIonicons name="key-outline" size={29} color={props.secondaryTextColor} />}
+                        icon={<Icon name="key" size={29} color={props.secondaryTextColor} />}
                         onPress={props.onPickSecret}
                     />
                 ) : null}

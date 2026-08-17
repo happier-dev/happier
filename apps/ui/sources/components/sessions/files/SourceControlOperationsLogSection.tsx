@@ -5,6 +5,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 import { t } from '@/text';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 
 type SourceControlOperationsLogSectionProps = Readonly<{
     theme: any;
@@ -49,42 +50,16 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
             </Text>
             {hasCrossSessionLogEntries && (
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                    <Pressable
+                    <ToolbarButton
                         onPress={() => setOperationLogScope('all')}
-                        style={{
-                            paddingHorizontal: 8,
-                            paddingVertical: 5,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: theme.colors.border.default,
-                            backgroundColor:
-                                operationLogScope === 'all'
-                                    ? theme.colors.surface.inset
-                                    : theme.colors.surface.base,
-                        }}
-                    >
-                        <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                            {t('files.sourceControlOperationsLog.allSessions')}
-                        </Text>
-                    </Pressable>
-                    <Pressable
+                        active={operationLogScope === 'all'}
+                        label={t('files.sourceControlOperationsLog.allSessions')}
+                    />
+                    <ToolbarButton
                         onPress={() => setOperationLogScope('session')}
-                        style={{
-                            paddingHorizontal: 8,
-                            paddingVertical: 5,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: theme.colors.border.default,
-                            backgroundColor:
-                                operationLogScope === 'session'
-                                    ? theme.colors.surface.inset
-                                    : theme.colors.surface.base,
-                        }}
-                    >
-                        <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
-                            {t('files.sourceControlOperationsLog.thisSession')}
-                        </Text>
-                    </Pressable>
+                        active={operationLogScope === 'session'}
+                        label={t('files.sourceControlOperationsLog.thisSession')}
+                    />
                 </View>
             )}
             {visibleOperationLog.length === 0 ? (

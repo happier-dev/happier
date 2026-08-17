@@ -1,20 +1,27 @@
 import * as React from 'react';
 
-import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
 import {
     getMachineCapabilitiesCacheState,
     prefetchMachineCapabilities,
     useMachineCapabilitiesCache,
 } from '@/hooks/server/useMachineCapabilitiesCache';
 import { useMachineCapabilityInvokeWithAlerts } from '@/hooks/machine/useMachineCapabilityInvokeWithAlerts';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import {
-    machinePluginStructuredMessageActionExecute,
+    MACHINE_ADMINISTRATION_SELECTION_KEYS_V1,
+} from '@/sync/domains/machines/administration/selectionPreferences';
+import {
+    useMachineAdministrationTargetSelection,
+    type FreshMachineAdministrationExecutionTargetV1,
+    type MachineAdministrationTargetSelectionV1,
+} from '@/sync/domains/machines/administration/useTargetSelection';
+import {
     publishMachineContributionRegistryProjectionInvalidation,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { machinePluginInstallDecision } from '@/sync/ops/machinePluginInstallDecision';
-import { useEndpointStatus, useMachineCliDetectionTarget } from '@/sync/store/hooks';
+import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
+import type { ScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
 import {
     machineMarketplaceSourceRegistryGet,
     machineMarketplaceSourceRegistrySet,
@@ -22,7 +29,8 @@ import {
     resolvePreferredMachineMarketplaceSource,
     upsertMachineMarketplaceSourceRegistrySource,
 } from '@/sync/ops/machineMarketplaceSources';
-import { type MarketplaceSourceRegistryV1 } from '@happier-dev/protocol';
+import { type PluginProjectionV2, type PluginScaffoldUiMode } from '@happier-dev/protocol';
+import type { MarketplaceSourceRegistryV1 } from '@happier-dev/protocol/marketplace';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 
@@ -31,23 +39,38 @@ import { showPluginInstallationReviewDialog } from '../PluginInstallationReviewD
 import {
     MARKETPLACE_CAPABILITY_ID,
     readDevelopmentCreateAvailable,
+    readDevelopmentSourceInstallAvailable,
     readDevelopmentPlugins,
     readInstalledPlugins,
     formatPluginInstallationReviewBody,
     isPluginMutationVisibleAfterRefresh,
     readPluginChangeKind,
     readPendingPluginChangeReview,
+    readPluginDevelopChange,
+    readPluginInstallationReviewChange,
     resolvePluginMarketplaceErrorMessage,
-    shouldShowPluginReadOnlySnapshotNotice,
+    resolvePluginReadOnlySnapshotNotice,
     type DevelopmentPluginEntry,
     type InstalledPluginEntry,
+    type PendingPluginChangeReview,
     type PluginMarketplaceActionRequest,
+    type PluginReadOnlySnapshotNoticeState,
     type PluginSettingsViewId,
 } from './pluginMarketplaceModel';
 
 type ConfirmedPluginChangeAction = 'update' | 'rollback' | 'uninstall' | 'forgetTrust';
 type CommitIntendedPluginChangeAction = 'install' | ConfirmedPluginChangeAction;
 type PluginActionCountsByAuthority = Readonly<Record<string, Readonly<Record<string, number>>>>;
+
+function sameExecutionTarget(
+    left: FreshMachineAdministrationExecutionTargetV1,
+    right: FreshMachineAdministrationExecutionTargetV1,
+): boolean {
+    return left.target.serverIdentityId === right.target.serverIdentityId
+        && left.machine.id === right.machine.id
+        && left.serverId === right.serverId
+        && left.machine.daemonStateVersion === right.machine.daemonStateVersion;
+}
 
 function resolvePluginChangeActionLabel(action: ConfirmedPluginChangeAction): string {
     if (action === 'update') return t('common.update');
@@ -58,9 +81,14 @@ function resolvePluginChangeActionLabel(action: ConfirmedPluginChangeAction): st
 
 export type PluginSettingsScreenState = Readonly<{
     activeView: PluginSettingsViewId;
+    administrationTargetSelection: MachineAdministrationTargetSelectionV1;
     currentDiagnostics: readonly { code: string; message: string }[];
-    activeServerId: string;
-    primaryMachineId: string | null;
+    accountServerIdentityId: string | null;
+    executionServerIdentityId: string | null;
+    executionServerId: string | null;
+    executionMachineId: string | null;
+    /** Rejects renderer-originated writes once this exact daemon target retires. */
+    isDaemonSettingsTargetCurrent: (target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>) => boolean;
     catalog: PluginMarketplaceCatalog | null;
     catalogError: string | null;
     catalogUrl: string;
@@ -69,10 +97,12 @@ export type PluginSettingsScreenState = Readonly<{
     canRefreshInstalledPlugins: boolean;
     daemonOperationsAvailable: boolean;
     developmentCreateAvailable: boolean;
+    developmentSourceInstallAvailable: boolean;
     developmentPlugins: readonly DevelopmentPluginEntry[];
     installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
     installedPlugins: readonly InstalledPluginEntry[];
-    isReadOnlySnapshot: boolean;
+    readOnlySnapshotNotice: PluginReadOnlySnapshotNoticeState | null;
+    refreshPluginTruth: () => void;
     isPluginActionInFlight: (pluginId: string) => boolean;
     loadCatalog: () => Promise<void>;
     loadedCatalogFooter: string;
@@ -84,6 +114,8 @@ export type PluginSettingsScreenState = Readonly<{
             ? TProjectionById
             : Record<string, never>
         : Record<string, never>;
+    /** Current exact daemon projection only; stale cache never authorizes execution. */
+    pluginProjectionV2: PluginProjectionV2 | null;
     registryDiagnostics: ReturnType<typeof useDaemonMergedProjectionInputs>['inputs'] extends infer TInputs
         ? TInputs extends { registryDiagnostics: infer TDiagnostics }
             ? TDiagnostics
@@ -91,24 +123,38 @@ export type PluginSettingsScreenState = Readonly<{
         : readonly [];
     resolvedCatalogUrl: string;
     runCatalogAction: (params: PluginMarketplaceActionRequest) => void;
-    runDevelopmentCreate: (params: Readonly<{ targetDir: string; displayName: string; pluginId: string }>) => void;
+    runDevelopmentCreate: (params: Readonly<{ targetDir: string; displayName: string; pluginId: string; ui?: PluginScaffoldUiMode }>) => void;
+    runDevelopmentSourceInstall: (sourceRootPath: string) => void;
     runDevelopmentAction: (action: 'test' | 'pack', pluginId: string) => void;
     runInstalledPluginAction: (action: 'enable' | 'disable' | 'rollback' | 'uninstall' | 'forgetTrust', pluginId: string) => void;
-    runProjectedPluginAction: (pluginId: string, actionId: string) => void;
     setActiveView: (view: PluginSettingsViewId) => void;
     setCatalogUrl: (value: string) => void;
     setMarketplaceSourceProfile: (sourceId: string, profileId: string | null) => Promise<void>;
 }>;
 
 export function usePluginSettingsScreenState(): PluginSettingsScreenState {
-    const primaryMachineId = usePrimaryMachineFromActiveSelection();
-    const activeServerId = getActiveServerId();
+    const activeServer = useActiveServerSnapshot();
+    const administrationTargetSelection = useMachineAdministrationTargetSelection(
+        MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins,
+    );
+    const accountServerIdentityId = React.useMemo(
+        () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
+        [activeServer.serverId],
+    );
+    const executionTarget = administrationTargetSelection.resolveExecutionTarget();
+    const executionMachineId = executionTarget?.machine.id ?? null;
+    const executionServerId = executionTarget?.serverId ?? null;
+    const executionServerIdentityId = executionTarget?.target.serverIdentityId ?? null;
     const { invokeWithAlerts } = useMachineCapabilityInvokeWithAlerts();
-    const selectedMachineScopeKey = primaryMachineId ? `${activeServerId}:${primaryMachineId}` : null;
-    const endpointStatus = useEndpointStatus();
-    const machineCliDetectionTarget = useMachineCliDetectionTarget(primaryMachineId);
-    const daemonTransportOnline = endpointStatus === 'online'
-        && machineCliDetectionTarget.isOnline;
+    /**
+     * This is a cache identity only. It deliberately uses the portable target,
+     * so an offline exact selection retains its own last-known snapshot without
+     * falling back to the active server or another machine.
+     */
+    const selectedMachineScopeKey = administrationTargetSelection.selectedTarget
+        ? `${administrationTargetSelection.selectedTarget.serverIdentityId}:${administrationTargetSelection.selectedTarget.machineId}`
+        : null;
+    const daemonTransportOnline = executionTarget !== null;
     const [daemonReconnectFreshness, setDaemonReconnectFreshness] = React.useState(() => ({
         scopeKey: selectedMachineScopeKey,
         isOnline: daemonTransportOnline,
@@ -128,7 +174,29 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                     : daemonReconnectFreshness.reconnectSequence,
         });
     }
-    const daemonCacheFreshnessKey = `${machineCliDetectionTarget.daemonStateVersion}:${daemonReconnectFreshness.reconnectSequence}`;
+    const daemonCacheFreshnessKey = `${executionTarget?.machine.daemonStateVersion ?? 0}:${daemonReconnectFreshness.reconnectSequence}`;
+
+    /**
+     * Every asynchronous daemon boundary re-resolves the portable target. A
+     * rendered target is presentation state; this guard rejects a stale or
+     * retired target before it can route an effect or mutation.
+     */
+    const resolveCurrentExecutionTarget = React.useCallback((
+        expected: FreshMachineAdministrationExecutionTargetV1 | null,
+    ): FreshMachineAdministrationExecutionTargetV1 | null => {
+        if (!expected) return null;
+        const current = administrationTargetSelection.resolveExecutionTarget();
+        return current && sameExecutionTarget(current, expected) ? current : null;
+    }, [administrationTargetSelection]);
+    const isDaemonSettingsTargetCurrent = React.useCallback((
+        target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>,
+    ): boolean => {
+        const current = resolveCurrentExecutionTarget(executionTarget);
+        return current !== null
+            && current.target.serverIdentityId === target.serverIdentityId
+            && current.machine.id === target.machineId
+            && current.serverId === target.serverId;
+    }, [executionTarget, resolveCurrentExecutionTarget]);
 
     const [activeView, setActiveView] = React.useState<PluginSettingsViewId>('installed');
     const [catalogUrl, setCatalogUrlState] = React.useState('');
@@ -153,17 +221,17 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
     }), []);
 
     const machineCapabilities = useMachineCapabilitiesCache({
-        machineId: primaryMachineId ?? null,
-        serverId: activeServerId,
+        machineId: executionMachineId,
+        serverId: executionServerId,
         cacheKeySalt: daemonCacheFreshnessKey,
-        enabled: Boolean(primaryMachineId) && daemonTransportOnline,
+        enabled: executionTarget !== null,
         request: capabilityRequest,
         timeoutMs: 12_000,
     });
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
-        machineId: primaryMachineId ?? null,
-        serverId: activeServerId,
-        enabled: Boolean(primaryMachineId) && daemonTransportOnline,
+        machineId: executionMachineId,
+        serverId: executionServerId,
+        enabled: executionTarget !== null,
         refreshKey: `${projectionRefreshKey}:${daemonCacheFreshnessKey}`,
     });
 
@@ -223,14 +291,15 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         ? currentDevelopmentPlugins
         : lastKnownDevelopmentPluginsRef.current.developmentPlugins;
     const developmentCreateAvailable = readDevelopmentCreateAvailable(machineCapabilities.state);
-    const currentDaemonCapabilitiesState = primaryMachineId
+    const developmentSourceInstallAvailable = readDevelopmentSourceInstallAvailable(machineCapabilities.state);
+    const currentDaemonCapabilitiesState = executionMachineId && executionServerId
         ? getMachineCapabilitiesCacheState(
-            primaryMachineId,
-            activeServerId,
+            executionMachineId,
+            executionServerId,
             daemonCacheFreshnessKey,
         )
         : null;
-    const daemonOperationsAvailable = Boolean(primaryMachineId)
+    const daemonOperationsAvailable = executionTarget !== null
         && daemonTransportOnline
         && machineCapabilities.state.status === 'loaded'
         && currentDaemonCapabilitiesState === machineCapabilities.state
@@ -259,13 +328,21 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
     }
     const projectionInputs = daemonMergedProjection.inputs ?? lastKnownProjectionInputsRef.current.inputs;
     const pluginProjectionById = projectionInputs?.pluginProjectionById ?? {};
+    // Account release selection may use an exact Account-hosted source while
+    // offline. A daemon execution path, however, is valid only from the live
+    // raw projection for this exact administration target.
+    const pluginProjectionV2 = daemonOperationsAvailable
+        ? daemonMergedProjection.inputs?.pluginProjectionV2 ?? null
+        : null;
     const registryDiagnostics = projectionInputs?.registryDiagnostics ?? [];
     const currentDiagnostics = React.useMemo(() => [
         ...registryDiagnostics,
         ...Object.values(pluginProjectionById).flatMap((plugin) => plugin.diagnostics),
     ], [pluginProjectionById, registryDiagnostics]);
-    const isReadOnlySnapshot = shouldShowPluginReadOnlySnapshotNotice({
+    const readOnlySnapshotNotice = resolvePluginReadOnlySnapshotNotice({
         daemonOperationsAvailable,
+        daemonTransportOnline,
+        projectionPhase: daemonMergedProjection.phase,
         hasCapabilitySnapshot,
         installedPluginCount: installedPlugins.length,
         developmentPluginCount: developmentPlugins.length,
@@ -273,6 +350,20 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         hasMarketplaceSourceRegistry: marketplaceSourceRegistry !== null,
         hasProjectionInputs: projectionInputs !== null,
     });
+    /**
+     * Re-reads daemon-owned plugin truth: the projection cache holds a failure
+     * until something invalidates it, so both a completed mutation and the
+     * projection-failure notice's retry go through this one owner.
+     */
+    const refreshPluginTruth = React.useCallback(() => {
+        setProjectionRefreshKey((prev) => prev + 1);
+        const currentTarget = resolveCurrentExecutionTarget(executionTarget);
+        if (!currentTarget) return;
+        publishMachineContributionRegistryProjectionInvalidation({
+            machineId: currentTarget.machine.id,
+            serverId: currentTarget.serverId,
+        });
+    }, [executionTarget, resolveCurrentExecutionTarget]);
     const preferredMarketplaceSource = React.useMemo(() => {
         if (!marketplaceSourceRegistry) return null;
         return resolvePreferredMachineMarketplaceSource(marketplaceSourceRegistry);
@@ -310,7 +401,8 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
     }, [selectedMachineScopeKey]);
 
     React.useEffect(() => {
-        if (!daemonOperationsAvailable || !primaryMachineId) {
+        const requestedTarget = resolveCurrentExecutionTarget(executionTarget);
+        if (!daemonOperationsAvailable || !requestedTarget) {
             marketplaceSourceRegistryRequestIdRef.current += 1;
             return;
         }
@@ -318,17 +410,23 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         const requestId = ++marketplaceSourceRegistryRequestIdRef.current;
         void (async () => {
             try {
-                const nextRegistry = await machineMarketplaceSourceRegistryGet(primaryMachineId, {
-                    serverId: activeServerId,
+                const nextRegistry = await machineMarketplaceSourceRegistryGet(requestedTarget.machine.id, {
+                    serverId: requestedTarget.serverId,
                 });
-                if (marketplaceSourceRegistryRequestIdRef.current !== requestId) return;
+                if (
+                    marketplaceSourceRegistryRequestIdRef.current !== requestId
+                    || !resolveCurrentExecutionTarget(requestedTarget)
+                ) return;
                 setMarketplaceSourceRegistry(nextRegistry);
             } catch {
-                if (marketplaceSourceRegistryRequestIdRef.current !== requestId) return;
+                if (
+                    marketplaceSourceRegistryRequestIdRef.current !== requestId
+                    || !resolveCurrentExecutionTarget(requestedTarget)
+                ) return;
                 setMarketplaceSourceRegistry(null);
             }
         })();
-    }, [activeServerId, daemonOperationsAvailable, primaryMachineId]);
+    }, [daemonOperationsAvailable, executionTarget, resolveCurrentExecutionTarget]);
 
     React.useEffect(() => {
         if (catalogUrlTouchedRef.current) return;
@@ -344,10 +442,11 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
     }, []);
 
     const setMarketplaceSourceProfile = React.useCallback(async (sourceId: string, profileId: string | null) => {
+        const currentTarget = resolveCurrentExecutionTarget(executionTarget);
         if (
             !mutationAuthorityKey
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
-            || !primaryMachineId
+            || !currentTarget
             || !marketplaceSourceRegistry
         ) {
             throw new Error('Marketplace source registry is unavailable');
@@ -363,13 +462,16 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
             registryProfileId: profileId,
         }).registry;
         const requestId = ++marketplaceSourceRegistryRequestIdRef.current;
-        const saved = await machineMarketplaceSourceRegistrySet(primaryMachineId, next, { serverId: activeServerId });
+        const saved = await machineMarketplaceSourceRegistrySet(currentTarget.machine.id, next, {
+            serverId: currentTarget.serverId,
+        });
         if (
             marketplaceSourceRegistryRequestIdRef.current !== requestId
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+            || !resolveCurrentExecutionTarget(currentTarget)
         ) return;
         setMarketplaceSourceRegistry(saved);
-    }, [activeServerId, marketplaceSourceRegistry, mutationAuthorityKey, primaryMachineId]);
+    }, [executionTarget, marketplaceSourceRegistry, mutationAuthorityKey, resolveCurrentExecutionTarget]);
 
     const markPluginActionStarted = React.useCallback((authorityKey: string, pluginId: string) => {
         const authorityCounts = pluginActionCountByAuthorityRef.current[authorityKey] ?? {};
@@ -418,10 +520,11 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
     }, [mutationAuthorityKey, pluginActionCountByAuthority]);
 
     const runCatalogAction = React.useCallback((params: PluginMarketplaceActionRequest) => {
+        const initialTarget = resolveCurrentExecutionTarget(executionTarget);
         if (
             !mutationAuthorityKey
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
-            || !primaryMachineId
+            || !initialTarget
             || isPluginActionInFlight(params.pluginId)
         ) {
             return;
@@ -453,6 +556,10 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         void (async () => {
             markPluginActionStarted(mutationAuthorityKey, params.pluginId);
             try {
+                const isAuthorityCurrent = () => (
+                    mutationAuthorityKeyRef.current === mutationAuthorityKey
+                    && resolveCurrentExecutionTarget(initialTarget) !== null
+                );
                 const commitAction: CommitIntendedPluginChangeAction | null = params.method === 'install'
                     || params.method === 'update'
                     || params.method === 'rollback'
@@ -472,19 +579,12 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                             }),
                     );
                 };
-                const publishPluginTruthRefresh = () => {
-                    setProjectionRefreshKey((prev) => prev + 1);
-                    publishMachineContributionRegistryProjectionInvalidation({
-                        machineId: primaryMachineId,
-                        serverId: activeServerId,
-                    });
-                };
                 const reconcileAmbiguousMutation = async (targetVersion: string | null) => {
                     if (!commitAction) return;
                     try {
                         await prefetchMachineCapabilities({
-                            machineId: primaryMachineId,
-                            serverId: activeServerId,
+                            machineId: initialTarget.machine.id,
+                            serverId: initialTarget.serverId,
                             cacheKeySalt: daemonCacheFreshnessKey,
                             request: {
                                 ...capabilityRequest,
@@ -493,20 +593,20 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                             timeoutMs: 12_000,
                         });
                     } catch {
-                        if (mutationAuthorityKeyRef.current === mutationAuthorityKey) {
-                            publishPluginTruthRefresh();
+                        if (isAuthorityCurrent()) {
+                            refreshPluginTruth();
                             showMutationFailure('outcomeUnknown');
                         }
                         return;
                     }
-                    if (mutationAuthorityKeyRef.current !== mutationAuthorityKey) return;
+                    if (!isAuthorityCurrent()) return;
 
                     const refreshedState = getMachineCapabilitiesCacheState(
-                        primaryMachineId,
-                        activeServerId,
+                        initialTarget.machine.id,
+                        initialTarget.serverId,
                         daemonCacheFreshnessKey,
                     );
-                    publishPluginTruthRefresh();
+                    refreshPluginTruth();
                     if (refreshedState?.status !== 'loaded') {
                         showMutationFailure('outcomeUnknown');
                         return;
@@ -526,8 +626,8 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                     }
                 };
                 const response = await invokeWithAlerts({
-                    machineId: primaryMachineId,
-                    serverId: activeServerId,
+                    machineId: initialTarget.machine.id,
+                    serverId: initialTarget.serverId,
                     request: {
                         id: MARKETPLACE_CAPABILITY_ID,
                         method: params.method,
@@ -537,7 +637,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                         },
                     },
                     timeoutMs: 5 * 60_000,
-                    isAuthorityCurrent: () => mutationAuthorityKeyRef.current === mutationAuthorityKey,
+                    isAuthorityCurrent,
                     alerts: {
                         errorTitle: t('common.error'),
                         successTitle: t('common.success'),
@@ -548,7 +648,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                             : t('common.done'),
                     },
                 });
-                if (mutationAuthorityKeyRef.current !== mutationAuthorityKey) return;
+                if (!isAuthorityCurrent()) return;
 
                 if (!('response' in response)) {
                     if (commitAction && response.reason === 'error') {
@@ -568,11 +668,11 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                     : null;
                 if (pendingReview) {
                     const decisionResponse = await machinePluginInstallDecision(
-                        primaryMachineId,
+                        initialTarget.machine.id,
                         {
-                            serverId: activeServerId,
+                            serverId: initialTarget.serverId,
                             timeoutMs: 5 * 60_000,
-                            isAuthorityCurrent: () => mutationAuthorityKeyRef.current === mutationAuthorityKey,
+                            isAuthorityCurrent,
                             decision: {
                                 pendingChangeId: pendingReview.pendingChangeId,
                                 decision: 'installAndTrust',
@@ -592,7 +692,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                             },
                         },
                     );
-                    if (mutationAuthorityKeyRef.current !== mutationAuthorityKey) return;
+                    if (!isAuthorityCurrent()) return;
                     if (!decisionResponse.supported) {
                         if (decisionResponse.reason === 'error') {
                             await reconcileAmbiguousMutation(pendingReview.review.version);
@@ -605,7 +705,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                     if (outcome.kind === 'committed') {
                         Modal.alert(t('common.success'), t('common.done'));
                         machineCapabilities.refresh({ bypassCache: true });
-                        publishPluginTruthRefresh();
+                        refreshPluginTruth();
                         return;
                     }
                     if (outcome.kind === 'cancelled') {
@@ -632,12 +732,12 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                     Modal.alert(t('common.success'), t('common.done'));
                 }
                 machineCapabilities.refresh({ bypassCache: true });
-                publishPluginTruthRefresh();
+                refreshPluginTruth();
             } finally {
                 markPluginActionFinished(mutationAuthorityKey, params.pluginId);
             }
         })();
-    }, [activeServerId, capabilityRequest, catalog, catalogAuthorityKey, daemonCacheFreshnessKey, invokeWithAlerts, isPluginActionInFlight, machineCapabilities, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, primaryMachineId]);
+    }, [capabilityRequest, catalog, catalogAuthorityKey, daemonCacheFreshnessKey, executionTarget, invokeWithAlerts, isPluginActionInFlight, machineCapabilities, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, refreshPluginTruth, resolveCurrentExecutionTarget]);
 
     const runInstalledPluginAction = React.useCallback((
         action: 'enable' | 'disable' | 'rollback' | 'uninstall' | 'forgetTrust',
@@ -685,10 +785,11 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
 
     const runDevelopmentAction = React.useCallback((action: 'test' | 'pack', pluginId: string) => {
         const development = developmentPlugins.find((entry) => entry.installed.pluginId === pluginId) ?? null;
+        const initialTarget = resolveCurrentExecutionTarget(executionTarget);
         if (
             !mutationAuthorityKey
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
-            || !primaryMachineId
+            || !initialTarget
             || !development
             || development.actions[action] !== true
             || isPluginActionInFlight(pluginId)
@@ -700,15 +801,18 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
             markPluginActionStarted(mutationAuthorityKey, pluginId);
             try {
                 await invokeWithAlerts({
-                    machineId: primaryMachineId,
-                    serverId: activeServerId,
+                    machineId: initialTarget.machine.id,
+                    serverId: initialTarget.serverId,
                     request: {
                         id: MARKETPLACE_CAPABILITY_ID,
                         method: action,
                         params: { pluginId },
                     },
                     timeoutMs: 5 * 60_000,
-                    isAuthorityCurrent: () => mutationAuthorityKeyRef.current === mutationAuthorityKey,
+                    isAuthorityCurrent: () => (
+                        mutationAuthorityKeyRef.current === mutationAuthorityKey
+                        && resolveCurrentExecutionTarget(initialTarget) !== null
+                    ),
                     alerts: {
                         errorTitle: t('common.error'),
                         successTitle: t('common.success'),
@@ -722,18 +826,20 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                 markPluginActionFinished(mutationAuthorityKey, pluginId);
             }
         })();
-    }, [activeServerId, developmentPlugins, invokeWithAlerts, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, primaryMachineId]);
+    }, [developmentPlugins, executionTarget, invokeWithAlerts, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, resolveCurrentExecutionTarget]);
 
     const runDevelopmentCreate = React.useCallback((params: Readonly<{
         targetDir: string;
         displayName: string;
         pluginId: string;
+        ui?: PluginScaffoldUiMode;
     }>) => {
+        const initialTarget = resolveCurrentExecutionTarget(executionTarget);
         if (
             !mutationAuthorityKey
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
             || !developmentCreateAvailable
-            || !primaryMachineId
+            || !initialTarget
             || isPluginActionInFlight(params.pluginId)
         ) {
             return;
@@ -743,15 +849,18 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
             markPluginActionStarted(mutationAuthorityKey, params.pluginId);
             try {
                 await invokeWithAlerts({
-                    machineId: primaryMachineId,
-                    serverId: activeServerId,
+                    machineId: initialTarget.machine.id,
+                    serverId: initialTarget.serverId,
                     request: {
                         id: MARKETPLACE_CAPABILITY_ID,
                         method: 'create',
                         params,
                     },
                     timeoutMs: 5 * 60_000,
-                    isAuthorityCurrent: () => mutationAuthorityKeyRef.current === mutationAuthorityKey,
+                    isAuthorityCurrent: () => (
+                        mutationAuthorityKeyRef.current === mutationAuthorityKey
+                        && resolveCurrentExecutionTarget(initialTarget) !== null
+                    ),
                     alerts: {
                         errorTitle: t('common.error'),
                         successTitle: t('common.success'),
@@ -763,56 +872,173 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                 markPluginActionFinished(mutationAuthorityKey, params.pluginId);
             }
         })();
-    }, [activeServerId, developmentCreateAvailable, invokeWithAlerts, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, primaryMachineId]);
+    }, [developmentCreateAvailable, executionTarget, invokeWithAlerts, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, resolveCurrentExecutionTarget]);
 
-    const runProjectedPluginAction = React.useCallback((pluginId: string, actionId: string) => {
-        const projection = pluginProjectionById[pluginId] ?? null;
-        const action = projection?.actions.find((entry) => entry.id === actionId) ?? null;
+    /**
+     * Adopts a local folder as a development source.
+     *
+     * Two authorizations happen, in this order, and neither is ever answered on
+     * the user's behalf: first the **source root** — the daemon is not allowed
+     * to read, install dependencies in, or evaluate code from that folder until
+     * the user has seen the exact path — and only then the ordinary
+     * install-and-trust review for the plugin the daemon derived from it. The
+     * daemon may answer the first decision with the second, so the two steps
+     * share one pending change and one authority fence.
+     */
+    const runDevelopmentSourceInstall = React.useCallback((sourceRootPath: string) => {
+        const trimmedSourceRootPath = sourceRootPath.trim();
+        const initialTarget = resolveCurrentExecutionTarget(executionTarget);
         if (
             !mutationAuthorityKey
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
-            || !primaryMachineId
-            || projection?.generation === null
-            || projection?.generation === undefined
-            || action?.available !== true
-            || isPluginActionInFlight(pluginId)
+            || !initialTarget
+            || !trimmedSourceRootPath
+            || isPluginActionInFlight(trimmedSourceRootPath)
         ) {
             return;
         }
 
         void (async () => {
-            markPluginActionStarted(mutationAuthorityKey, pluginId);
+            markPluginActionStarted(mutationAuthorityKey, trimmedSourceRootPath);
             try {
-                const result = await machinePluginStructuredMessageActionExecute(primaryMachineId, {
-                    serverId: activeServerId,
-                    expectedGeneration: String(projection.generation),
-                    qualifiedActionId: actionId,
-                    input: null,
-                    executionSurface: 'ui',
-                });
-                if (
+                const isAuthorityCurrent = () => (
                     mutationAuthorityKeyRef.current === mutationAuthorityKey
-                    && result.supported
-                    && result.result.ok
-                ) {
-                    machineCapabilities.refresh({ bypassCache: true });
-                    setProjectionRefreshKey((prev) => prev + 1);
-                    publishMachineContributionRegistryProjectionInvalidation({
-                        machineId: primaryMachineId,
-                        serverId: activeServerId,
+                    && resolveCurrentExecutionTarget(initialTarget) !== null
+                );
+                const decideInstallationReview = async (
+                    pendingReview: PendingPluginChangeReview,
+                ): Promise<void> => {
+                    const decisionResponse = await machinePluginInstallDecision(initialTarget.machine.id, {
+                        serverId: initialTarget.serverId,
+                        timeoutMs: 5 * 60_000,
+                        isAuthorityCurrent,
+                        decision: {
+                            pendingChangeId: pendingReview.pendingChangeId,
+                            decision: 'installAndTrust',
+                            confirmPresentUser: async () => {
+                                const resolution = await showPluginInstallationReviewDialog({
+                                    title: t('settingsPlugins.marketplaceInstallReviewTitle', {
+                                        name: pendingReview.review.displayName,
+                                        version: pendingReview.review.version,
+                                    }),
+                                    body: formatPluginInstallationReviewBody(pendingReview.review),
+                                    optionalHostAccess: pendingReview.review.optionalHostAccess,
+                                });
+                                return resolution.approved ? resolution.optionalSelections : null;
+                            },
+                        },
                     });
+                    if (!isAuthorityCurrent()) return;
+                    if (!decisionResponse.supported) {
+                        Modal.alert(t('common.error'), t('common.unavailable'));
+                        return;
+                    }
+                    if (decisionResponse.outcome.kind === 'cancelled') return;
+                    if (decisionResponse.outcome.kind !== 'committed') {
+                        Modal.alert(
+                            t('common.error'),
+                            t('settingsPlugins.developmentSourceInstallFailed', {
+                                outcome: decisionResponse.outcome.detail ?? decisionResponse.outcome.kind,
+                            }),
+                        );
+                        return;
+                    }
+                    Modal.alert(t('common.success'), t('settingsPlugins.developmentSourceInstallSucceeded'));
+                    machineCapabilities.refresh({ bypassCache: true });
+                    refreshPluginTruth();
+                };
+
+                const response = await invokeWithAlerts({
+                    machineId: initialTarget.machine.id,
+                    serverId: initialTarget.serverId,
+                    request: {
+                        id: MARKETPLACE_CAPABILITY_ID,
+                        method: 'develop',
+                        params: { sourceRootPath: trimmedSourceRootPath },
+                    },
+                    timeoutMs: 5 * 60_000,
+                    isAuthorityCurrent,
+                    alerts: {
+                        errorTitle: t('common.error'),
+                        successTitle: t('common.success'),
+                        unsupportedMessage: (reason) => reason === 'not-supported' ? t('common.unavailable') : t('common.requestFailed'),
+                        successMessage: null,
+                    },
+                });
+                if (!isAuthorityCurrent() || !('response' in response) || !response.response.ok) return;
+
+                const developChange = readPluginDevelopChange(response.response.result);
+                if (!developChange) return;
+                if (developChange.kind === 'committed') {
+                    // The daemon commits without a review only when both the root
+                    // and the derived plugin were already trusted.
+                    Modal.alert(t('common.success'), t('settingsPlugins.developmentSourceInstallSucceeded'));
+                    machineCapabilities.refresh({ bypassCache: true });
+                    refreshPluginTruth();
+                    return;
                 }
+                if (developChange.kind === 'reviewRequired') {
+                    await decideInstallationReview(developChange.installationReview);
+                    return;
+                }
+                const sourceRootReview = developChange.sourceRootReview;
+
+                const trustResponse = await machinePluginInstallDecision(initialTarget.machine.id, {
+                    serverId: initialTarget.serverId,
+                    timeoutMs: 10 * 60_000,
+                    isAuthorityCurrent,
+                    decision: {
+                        pendingChangeId: sourceRootReview.pendingChangeId,
+                        decision: 'trustSourceRoot',
+                        confirmPresentUser: async () => await Modal.confirm(
+                            t('settingsPlugins.developmentTrustSourceRootTitle'),
+                            t('settingsPlugins.developmentTrustSourceRootBody', {
+                                path: sourceRootReview.review.source.locator,
+                            }),
+                            {
+                                confirmText: t('settingsPlugins.developmentTrustSourceRootConfirm'),
+                                cancelText: t('common.cancel'),
+                            },
+                        ),
+                    },
+                });
+                if (!isAuthorityCurrent()) return;
+                if (!trustResponse.supported) {
+                    Modal.alert(t('common.error'), t('common.unavailable'));
+                    return;
+                }
+                if (trustResponse.outcome.kind === 'cancelled') return;
+                if (trustResponse.outcome.kind === 'committed') {
+                    Modal.alert(t('common.success'), t('settingsPlugins.developmentSourceInstallSucceeded'));
+                    machineCapabilities.refresh({ bypassCache: true });
+                    refreshPluginTruth();
+                    return;
+                }
+                const packageReview = trustResponse.outcome.kind === 'reviewRequired'
+                    ? readPluginInstallationReviewChange(trustResponse.outcome.change, null)
+                    : null;
+                if (!packageReview) {
+                    Modal.alert(
+                        t('common.error'),
+                        t('settingsPlugins.developmentSourceInstallFailed', {
+                            outcome: trustResponse.outcome.detail ?? trustResponse.outcome.kind,
+                        }),
+                    );
+                    return;
+                }
+                await decideInstallationReview(packageReview);
             } finally {
-                markPluginActionFinished(mutationAuthorityKey, pluginId);
+                markPluginActionFinished(mutationAuthorityKey, trimmedSourceRootPath);
             }
         })();
-    }, [activeServerId, isPluginActionInFlight, machineCapabilities, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, pluginProjectionById, primaryMachineId]);
+    }, [executionTarget, invokeWithAlerts, isPluginActionInFlight, machineCapabilities, markPluginActionFinished, markPluginActionStarted, mutationAuthorityKey, refreshPluginTruth, resolveCurrentExecutionTarget]);
 
     const loadCatalog = React.useCallback(async () => {
+        const initialTarget = resolveCurrentExecutionTarget(executionTarget);
         if (
             !mutationAuthorityKey
             || mutationAuthorityKeyRef.current !== mutationAuthorityKey
-            || !primaryMachineId
+            || !initialTarget
             || loadingCatalog
         ) {
             return;
@@ -826,7 +1052,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
             if (!selectedMarketplaceSource) {
                 throw new Error('Select a configured marketplace source before loading');
             }
-            const result = await machineMarketplaceIndexQuery(primaryMachineId, {
+            const result = await machineMarketplaceIndexQuery(initialTarget.machine.id, {
                 text: '',
                 cursor: null,
                 limit: 100,
@@ -835,13 +1061,14 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                     includeUnavailable: true,
                 },
             }, {
-                serverId: activeServerId,
+                serverId: initialTarget.serverId,
                 timeoutMs: 130_000,
             });
             const nextCatalog = projectDaemonMarketplaceIndex(result);
             if (
                 catalogRequestIdRef.current !== requestId
                 || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+                || !resolveCurrentExecutionTarget(initialTarget)
             ) return;
             setCatalog(nextCatalog);
             setCatalogAuthorityKey(mutationAuthorityKey);
@@ -849,23 +1076,29 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
             if (
                 catalogRequestIdRef.current !== requestId
                 || mutationAuthorityKeyRef.current !== mutationAuthorityKey
+                || !resolveCurrentExecutionTarget(initialTarget)
             ) return;
             setCatalogError(resolvePluginMarketplaceErrorMessage(error));
         } finally {
             if (
                 catalogRequestIdRef.current === requestId
                 && mutationAuthorityKeyRef.current === mutationAuthorityKey
+                && resolveCurrentExecutionTarget(initialTarget) !== null
             ) {
                 setLoadingCatalog(false);
             }
         }
-    }, [activeServerId, loadingCatalog, mutationAuthorityKey, primaryMachineId, selectedMarketplaceSource]);
+    }, [executionTarget, loadingCatalog, mutationAuthorityKey, resolveCurrentExecutionTarget, selectedMarketplaceSource]);
 
     return {
         activeView,
+        administrationTargetSelection,
         currentDiagnostics,
-        activeServerId,
-        primaryMachineId,
+        accountServerIdentityId,
+        executionServerIdentityId,
+        executionServerId,
+        executionMachineId,
+        isDaemonSettingsTargetCurrent,
         catalog,
         catalogError,
         catalogUrl,
@@ -874,10 +1107,12 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         canRefreshInstalledPlugins,
         daemonOperationsAvailable,
         developmentCreateAvailable,
+        developmentSourceInstallAvailable,
         developmentPlugins,
         installedPluginById,
         installedPlugins,
-        isReadOnlySnapshot,
+        readOnlySnapshotNotice,
+        refreshPluginTruth,
         isPluginActionInFlight,
         loadCatalog,
         loadedCatalogFooter,
@@ -885,13 +1120,14 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         loadingCatalog,
         marketplaceSourceRegistry,
         pluginProjectionById,
+        pluginProjectionV2,
         registryDiagnostics,
         resolvedCatalogUrl,
         runCatalogAction,
         runDevelopmentCreate,
+        runDevelopmentSourceInstall,
         runDevelopmentAction,
         runInstalledPluginAction,
-        runProjectedPluginAction,
         setActiveView,
         setCatalogUrl,
         setMarketplaceSourceProfile,

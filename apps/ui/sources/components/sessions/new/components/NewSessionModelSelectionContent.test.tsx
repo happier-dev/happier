@@ -312,6 +312,44 @@ describe('NewSessionModelSelectionContent', () => {
         vi.useRealTimers();
     });
 
+    it('projects a unique unqualified native alias to its advertised structured selection', async () => {
+        captured.pickerProps = null;
+        const onSelectSelection = vi.fn();
+        await renderScreen(
+            <NewSessionModelSelectionContent
+                providerProjectionAuthoritative
+                modelOptions={[{
+                    value: 'openai-codex/gpt-5.6-luna',
+                    label: 'GPT-5.6 Luna',
+                    description: 'OpenAI Codex',
+                }]}
+                selectedModelId="gpt-5.6-luna"
+                selectedIndicatorColor="#fff"
+                selectedBackendEntry={CODEX_BACKEND_ENTRY}
+                onSelectModel={() => {}}
+                onSelectSelection={onSelectSelection}
+            />,
+        );
+
+        expect(requirePickerProps().selected).toEqual({
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'openai-codex/gpt-5.6-luna',
+        });
+
+        act(() => requirePickerProps().onSelect({
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'gpt-5.6-luna',
+        }));
+
+        expect(onSelectSelection).toHaveBeenCalledWith({
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'openai-codex/gpt-5.6-luna',
+        });
+    });
+
     it('keeps native and Provider same-id favorites distinct and delegates exact toggles to the stored owner', async () => {
         captured.pickerProps = null;
         const onFavoriteModelSelectionsChange = vi.fn();

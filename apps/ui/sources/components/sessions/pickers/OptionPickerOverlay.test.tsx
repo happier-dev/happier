@@ -32,6 +32,16 @@ vi.mock('@/text', async () => {
 });
 
 describe('OptionPickerOverlay', () => {
+    /**
+     * Flattens NESTED style arrays, like `StyleSheet.flatten` does.
+     *
+     * A one-level reduce is not enough: the app `Text` primitive hands its host
+     * `[Typography.default(), callerStyle]`, so a caller that itself passed an
+     * array (every themed component does) lands as `[{…}, [{…}, {…}]]`. Spread
+     * one level and the inner array becomes numeric keys while the primitive's
+     * REGULAR default is the last real `fontFamily` seen — which reported a
+     * semiBold active segment as `Inter-Regular` and looked like a lost weight.
+     */
     function flattenStyle(style: unknown): Record<string, unknown> {
         if (!Array.isArray(style)) {
             return (style ?? {}) as Record<string, unknown>;
@@ -39,7 +49,7 @@ describe('OptionPickerOverlay', () => {
 
         return style.reduce<Record<string, unknown>>((acc, entry) => ({
             ...acc,
-            ...(entry ?? {}),
+            ...flattenStyle(entry),
         }), {});
     }
 
@@ -343,29 +353,157 @@ describe('OptionPickerOverlay', () => {
         }
     });
 
-    it('uses the canonical selection list instead of a local column renderer on narrow screens', async () => {
-        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
-        mockEnv.windowWidth = 390;
+    describe('multiColumn', () => {
+        /**
+         * Count the visual row wrappers the SelectionList `columns` variant
+         * introduces — the `flex-start` flex rows. Matched by LAYOUT rather than
+         * by role: a columned pane is a grid, so these carry `role="row"`, and
+         * keying on the role would make this count agree with whatever the a11y
+         * resolver decided. Restricted to HOST elements, since the composite that
+         * renders them carries the same props and would otherwise double every
+         * count.
+         */
+        function countColumnRows(screen: Awaited<ReturnType<typeof renderScreen>>): number {
+            return (screen.root as any).findAll((node: any) => {
+                if (typeof node.type !== 'string') return false;
+                // Either role a SelectionList column row can carry — `row` under
+                // the grid pattern a columned pane resolves, `presentation`
+                // otherwise. Accepting both keeps the count from agreeing with
+                // the resolver while still excluding the overlay's own
+                // `flex-start` rows.
+                if (node.props.role !== 'row' && node.props.role !== 'presentation') return false;
+                const style = node.props.style;
+                const flat = Array.isArray(style)
+                    ? Object.assign({}, ...style.filter(Boolean))
+                    : (style as Record<string, unknown> | undefined) ?? {};
+                return flat.flexDirection === 'row' && flat.alignItems === 'flex-start';
+            }).length;
+        }
 
-        const screen = await renderScreen(<OptionPickerOverlay
-                    title="Model"
-                    effectiveLabel="Default"
-                    notes={[]}
-                    options={[
-                        { value: 'default', label: 'Default', description: 'd' },
-                        { value: 'fast', label: 'Fast', description: 'f' },
-                        { value: 'balanced', label: 'Balanced', description: 'b' },
-                        { value: 'deep', label: 'Deep', description: 'x' },
-                    ]}
-                    selectedValue="default"
-                    emptyText="empty"
-                    canEnterCustomValue={false}
-                    onSelect={() => {}}
-                />);
+        /**
+         * Column count is decided from the list's OWN measured width, so the
+         * container's `onLayout` is the only signal that moves it. The window
+         * width is deliberately irrelevant here: this list lives in a `flex: 1`
+         * detail pane beside a fixed 190px rail inside a capped popover.
+         */
+        async function measureSelectionList(
+            screen: Awaited<ReturnType<typeof renderScreen>>,
+            widthPx: number,
+        ): Promise<void> {
+            const list = screen.findByTestId('model-picker-overlay-selection-list') as any;
+            const onLayout = list?.props?.onLayout as ((event: unknown) => void) | undefined;
+            if (typeof onLayout !== 'function') {
+                throw new Error('expected the columned selection list to measure its own width');
+            }
+            await act(async () => {
+                onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: widthPx, height: 400 } } });
+            });
+        }
 
-        expect(screen.findByTestId('model-picker-overlay-selection-list')).toBeTruthy();
-        expect(screen.findByTestId('model-picker-overlay-column:0')).toBeNull();
-        expect(screen.findByTestId('model-picker-overlay-column:1')).toBeNull();
+        async function renderPicker(multiColumn: boolean) {
+            const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+            return renderScreen(<OptionPickerOverlay
+                title="Model"
+                effectiveLabel="Default"
+                notes={[]}
+                multiColumn={multiColumn}
+                options={[
+                    { value: 'default', label: 'Default', description: 'd' },
+                    { value: 'fast', label: 'Fast', description: 'f' },
+                    { value: 'balanced', label: 'Balanced', description: 'b' },
+                    { value: 'deep', label: 'Deep', description: 'x' },
+                ]}
+                selectedValue="default"
+                emptyText="empty"
+                canEnterCustomValue={false}
+                onSelect={() => {}}
+            />);
+        }
+
+        it('stays on one column when the pane is too narrow for two cards', async () => {
+            mockEnv.windowWidth = 1280;
+            const screen = await renderPicker(true);
+
+            await measureSelectionList(screen, 400);
+
+            expect(countColumnRows(screen)).toBe(0);
+            for (const value of ['default', 'fast', 'balanced', 'deep']) {
+                expect(screen.findByTestId(`model-picker-overlay-option:${value}`)).toBeTruthy();
+            }
+        });
+
+        it('resolves two columns at the engine pane width beside the agent rail', async () => {
+            mockEnv.windowWidth = 390;
+            const screen = await renderPicker(true);
+
+            // 506px is the real detail-pane width: the 720px popover cap minus the
+            // 190px rail minus the pane's 12px horizontal insets. A minimum tuned
+            // for full-width settings lists resolves to one column here forever.
+            await measureSelectionList(screen, 506);
+
+            expect(countColumnRows(screen)).toBe(2);
+            for (const value of ['default', 'fast', 'balanced', 'deep']) {
+                expect(screen.findByTestId(`model-picker-overlay-option:${value}`)).toBeTruthy();
+            }
+        });
+
+        /**
+         * The card and the grid are one delivery: without a card each cell has
+         * no edge, and the two columns read as two flush lists sharing a
+         * gutter. This asserts the OPT-IN reaches the row — the card's own
+         * geometry and fill are pinned in
+         * `selectionList/__tests__/SelectionListOptionRow.cardPresentation.test.tsx`.
+         */
+        it('gives every option a card, with the selected one filled, when multiColumn is on', async () => {
+            mockEnv.windowWidth = 390;
+            const screen = await renderPicker(true);
+            await measureSelectionList(screen, 506);
+
+            const wrapperOf = (value: string) => screen.findByTestId(
+                `model-picker-overlay-selection-list:options:option-wrapper:${value}`,
+            );
+            const fillOf = (value: string) => {
+                const style = wrapperOf(value)?.props.style;
+                const flat = Array.isArray(style)
+                    ? Object.assign({}, ...(style.flat(Infinity) as unknown[]).filter(Boolean))
+                    : (style as Record<string, unknown> | undefined) ?? {};
+                return flat as Record<string, unknown>;
+            };
+
+            expect(fillOf('default').borderRadius).toBeGreaterThan(0);
+            expect(fillOf('default').overflow).toBe('hidden');
+            // Selected and unselected cards must not resolve to the same ink,
+            // or the selection would be invisible.
+            expect(fillOf('default').backgroundColor)
+                .not.toBe(fillOf('fast').backgroundColor);
+
+            // The selection mark rides in the card's corner overlay.
+            expect(screen.findByTestId(
+                'model-picker-overlay-selection-list:options:option-card-accessory:default',
+            )).toBeTruthy();
+        });
+
+        it('leaves rows flush — no card — when the caller has not opted in', async () => {
+            mockEnv.windowWidth = 1280;
+            const screen = await renderPicker(false);
+
+            expect(screen.findByTestId(
+                'model-picker-overlay-selection-list:options:option-wrapper:default',
+            )?.props.style).toBeUndefined();
+            expect(screen.findAllByTestId(
+                'model-picker-overlay-selection-list:options:option-card-accessory:default',
+            )).toHaveLength(0);
+        });
+
+        it('never columnizes — or even measures — unless the caller opts in', async () => {
+            mockEnv.windowWidth = 1280;
+            const screen = await renderPicker(false);
+
+            const list = screen.findByTestId('model-picker-overlay-selection-list') as any;
+            expect(list).toBeTruthy();
+            expect(list.props.onLayout).toBeUndefined();
+            expect(countColumnRows(screen)).toBe(0);
+        });
     });
 
     it('selects a named option', async () => {
@@ -907,6 +1045,108 @@ describe('OptionPickerOverlay', () => {
         expect(screen.findByProps({ accessibilityLabel: 'modelPickerOverlay.loadingModelsA11y' })).toBeTruthy();
     });
 
+    it('renders the catalog refresh control as an icon only, with no border and no background fill', async () => {
+        const onRefresh = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[{ value: 'default', label: 'Default', description: '' }]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    onSelect={() => {}}
+                    probe={{ phase: 'idle', onRefresh }}
+                />);
+
+        const surface = flattenStyle(screen.findByTestId('model-picker-overlay-refresh-surface')?.props.style);
+        expect(surface.borderWidth).toBeUndefined();
+        expect(surface.backgroundColor).toBeUndefined();
+        expect(surface.width).toBe(24);
+        expect(surface.height).toBe(24);
+
+        // The drawn box shrank, but the press box did not: the frame reaches the
+        // platform floor on the free (vertical) axis.
+        const frame = resolveInteractiveStyle(screen.findByTestId('model-picker-overlay-refresh')?.props.style);
+        expect(frame.height).toBe(44);
+        expect(frame.width as number).toBeGreaterThanOrEqual(24);
+    });
+
+    it('keeps the refresh slot at the same drawn size while the catalog is loading', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    effectiveLabel="Default"
+                    notes={[]}
+                    options={[{ value: 'default', label: 'Default', description: '' }]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    onSelect={() => {}}
+                    probe={{ phase: 'refreshing', onRefresh: () => {} }}
+                />);
+
+        const slot = flattenStyle(screen.findByTestId('model-picker-overlay-refresh-progress')?.props.style);
+        expect(slot.width).toBe(24);
+        expect(slot.height).toBe(24);
+        expect(slot.borderWidth).toBeUndefined();
+    });
+
+    it('draws the favourite star at its compact glyph size in list presentation', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    options={[{ value: 'default', label: 'Default', description: '' }]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    favoriteOptions={{ values: new Set<string>(), onToggle: () => {} }}
+                    favoriteActionVisibility="all"
+                    onSelect={() => {}}
+                />);
+
+        const surface = flattenStyle(screen.findByTestId('model-picker-overlay-option-favorite:default-surface')?.props.style);
+        expect(surface.width).toBe(20);
+        expect(surface.height).toBe(20);
+
+        // The star is corner art paired with the selection check, so it is drawn at
+        // the SAME glyph size — a bigger star inside the same 20px box only reads as
+        // a cramped, heavier twin of the mark it sits beside.
+        const star = screen.findByTestId('model-picker-overlay-option-favorite:default')
+            ?.findAll((node) => node.props?.name === 'star')[0];
+        expect(star?.props.size).toBe(14);
+
+        const frame = resolveInteractiveStyle(screen.findByTestId('model-picker-overlay-option-favorite:default')?.props.style);
+        expect(frame.height).toBe(44);
+    });
+
+    it('draws the favourite star and the selection check at one glyph size in a card corner', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    multiColumn
+                    options={[{ value: 'default', label: 'Default', description: '' }]}
+                    selectedValue="default"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    favoriteOptions={{ values: new Set<string>(['default']), onToggle: () => {} }}
+                    favoriteActionVisibility="all"
+                    onSelect={() => {}}
+                />);
+
+        const indicators = screen.findByTestId('model-picker-overlay-option-selection-status:default');
+        const check = indicators?.findAll((node) => node.props?.name === 'check')[0];
+        const star = screen.findByTestId('model-picker-overlay-option-favorite:default')
+            ?.findAll((node) => node.props?.name === 'star')[0];
+        expect(check?.props.size).toBe(14);
+        expect(star?.props.size).toBe(check?.props.size);
+    });
+
     it('calls refresh handler from the picker when provided', async () => {
         const onRefresh = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
@@ -991,7 +1231,7 @@ describe('OptionPickerOverlay', () => {
         expect(titleRow).toBeTruthy();
     });
 
-    it('renders selected model controls beside the selected row and routes option changes without nested actions', async () => {
+    it('renders selected model controls inside the selected row card and routes option changes without nested actions', async () => {
         const onSelectOptionControlValue = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 
@@ -1045,7 +1285,22 @@ describe('OptionPickerOverlay', () => {
         expect(selectedCard).not.toBeNull();
         const selectedControls = screen.findByTestId('model-picker-overlay-selected-controls');
         expect(selectedControls).toBeTruthy();
+
+        // The controls belong to the selected model, so they render inside that row's
+        // wrapper — not in a detached panel that floats below the whole list.
+        const selectedWrapper = screen.findByTestId('model-picker-overlay-selection-list:options:option-wrapper:gpt-5.4');
+        expect(selectedWrapper).toBeTruthy();
+        expect(hasAncestor(selectedControls, selectedWrapper)).toBe(true);
+
+        // …but never inside the row's own Pressable: nesting them there would make every
+        // switch flip and segment tap also re-commit the model selection.
         expect(hasAncestor(selectedControls, selectedCard)).toBe(false);
+        expect(findInteractiveAncestor(selectedControls)).toBeNull();
+
+        // And they belong to the SELECTED row alone.
+        const unselectedWrapper = screen.findByTestId('model-picker-overlay-selection-list:options:option-wrapper:gpt-5.4-mini');
+        expect(unselectedWrapper).toBeTruthy();
+        expect(hasAncestor(selectedControls, unselectedWrapper)).toBe(false);
 
         const selectedReasoningLabel = screen
             .findByTestId('model-picker-overlay-selected-option-control-option:reasoning_effort:medium')
@@ -1084,6 +1339,104 @@ describe('OptionPickerOverlay', () => {
         });
 
         expect(onSelectOptionControlValue).toHaveBeenCalledWith('speed', 'fast');
+    });
+
+    // The picker used to read only `option.disabled`, so an overridden control rendered as a
+    // live, fully interactive segmented bar highlighting the STORED value while the agent ran
+    // something else entirely.
+    it('shows the forced running value, names the overriding option, and refuses interaction', async () => {
+        const onSelectOptionControlValue = vi.fn();
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    options={[{ value: 'claude-opus-5', label: 'Opus 5' }]}
+                    selectedValue="claude-opus-5"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    selectedOptionControls={[
+                        {
+                            option: {
+                                id: 'reasoning_effort',
+                                name: 'Thinking',
+                                description: 'How hard the model thinks.',
+                                type: 'select',
+                                currentValue: 'low',
+                                options: [
+                                    { value: 'low', name: 'Low' },
+                                    { value: 'high', name: 'High' },
+                                    { value: 'xhigh', name: 'XHigh' },
+                                ],
+                            },
+                            effectiveValue: 'low',
+                            isPending: false,
+                            disabled: true,
+                            disabledByOptionName: 'Ultracode',
+                            overriddenEffectiveValue: 'xhigh',
+                        },
+                        {
+                            option: { id: 'ultracode', name: 'Ultracode', type: 'boolean', currentValue: 'true' },
+                            effectiveValue: 'true',
+                            isPending: false,
+                        },
+                    ]}
+                    onSelectOptionControlValue={onSelectOptionControlValue}
+                    onSelect={() => {}}
+                />);
+
+        // The override note takes the description's place.
+        const overriddenNote = screen.findByTestId('model-picker-overlay-selected-option-control-overridden:reasoning_effort');
+        expect(overriddenNote?.props.children).toBe('agentInput.acp.optionOverriddenBy');
+        expect(screen.getTextContent()).not.toContain('How hard the model thinks.');
+
+        // The FORCED value is highlighted, not the stored one.
+        const forcedTab = screen.findByTestId('model-picker-overlay-selected-option-control-option:reasoning_effort:xhigh');
+        const storedTab = screen.findByTestId('model-picker-overlay-selected-option-control-option:reasoning_effort:low');
+        expect(forcedTab?.props.accessibilityState).toEqual({ selected: true, disabled: true });
+        expect(storedTab?.props.accessibilityState).toEqual({ selected: false, disabled: true });
+
+        // Every segment announces as disabled and none of them can be selected.
+        await screen.pressByTestIdAsync('model-picker-overlay-selected-option-control-option:reasoning_effort:high');
+        expect(onSelectOptionControlValue).not.toHaveBeenCalled();
+
+        // The overriding toggle itself stays live.
+        const ultracodeSwitch = screen.findByTestId('model-picker-overlay-selected-option-control-switch:ultracode');
+        expect(ultracodeSwitch?.props.disabled).not.toBe(true);
+    });
+
+    it('dims without highlighting any segment when the forced value has no matching choice', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+                    title="Model"
+                    options={[{ value: 'claude-opus-5', label: 'Opus 5' }]}
+                    selectedValue="claude-opus-5"
+                    emptyText="empty"
+                    canEnterCustomValue={false}
+                    selectedOptionControls={[{
+                        option: {
+                            id: 'reasoning_effort',
+                            name: 'Thinking',
+                            type: 'select',
+                            currentValue: 'low',
+                            options: [
+                                { value: 'low', name: 'Low' },
+                                { value: 'high', name: 'High' },
+                            ],
+                        },
+                        effectiveValue: 'low',
+                        isPending: false,
+                        disabled: true,
+                        disabledByOptionName: 'Ultracode',
+                    }]}
+                    onSelectOptionControlValue={vi.fn()}
+                    onSelect={() => {}}
+                />);
+
+        for (const value of ['low', 'high'] as const) {
+            const tab = screen.findByTestId(`model-picker-overlay-selected-option-control-option:reasoning_effort:${value}`);
+            expect(tab?.props.accessibilityState).toEqual({ selected: false, disabled: true });
+        }
     });
 
     it('renders option icons beside the model title and provider subtitle', async () => {
@@ -1208,7 +1561,45 @@ describe('OptionPickerOverlay', () => {
         expect(onSelect).not.toHaveBeenCalled();
     });
 
-    it('uses sibling 44px favorite and refresh actions with translated names and focus tooltips', async () => {
+    // Favorite state used to be carried by the button TONE alone, and the two tones resolve to
+    // the SAME ink in the dark theme (`button.secondary.tint` === `text.primary` === #EFEFEF) —
+    // so a favorited model and a merely favoritable one drew an identical outline star. The
+    // glyph weight is the state, per the icon seam's filled/outline contract.
+    it('draws a favorited model with a filled star and a merely favoritable one outlined', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            options={[
+                { value: 'gpt-5.4', label: 'GPT 5.4' },
+                { value: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
+            ]}
+            selectedValue="gpt-5.4"
+            emptyText="empty"
+            canEnterCustomValue={false}
+            favoriteOptions={{ values: new Set(['gpt-5.4-mini']), onToggle: vi.fn() }}
+            onSelect={vi.fn()}
+        />);
+
+        function findStarGlyph(value: string) {
+            const action = screen.findByTestId(`model-picker-overlay-option-favorite:${value}`);
+            expect(action).toBeTruthy();
+            // Outermost match is the element this component authored; deeper phosphor nodes
+            // receive the seam's defaulted weight and would mask a missing declaration.
+            const glyph = action?.findAll((node) => node.props?.name === 'star')[0];
+            expect(glyph).toBeTruthy();
+            return glyph!;
+        }
+
+        const favorited = findStarGlyph('gpt-5.4-mini');
+        const favoritable = findStarGlyph('gpt-5.4');
+
+        expect(favorited.props.weight).toBe('fill');
+        expect(favoritable.props.weight).toBe('regular');
+        expect(favorited.props.color).not.toBe(favoritable.props.color);
+    });
+
+    it('uses sibling favorite and refresh actions with real press targets, translated names and focus tooltips', async () => {
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
         const screen = await renderScreen(<OptionPickerOverlay
             title="Model"
@@ -1235,8 +1626,12 @@ describe('OptionPickerOverlay', () => {
 
         for (const action of [favoriteAction, screen.findByTestId('model-picker-overlay-refresh')]) {
             const targetStyle = resolveInteractiveStyle(action?.props.style);
-            expect(targetStyle.width ?? targetStyle.minWidth).toBeGreaterThanOrEqual(44);
+            // The press frame, not the drawn box, is the target. Vertical is the free
+            // axis in these clusters so it reaches the platform floor; horizontal is
+            // capped at half the neighbour gap so two targets never overlap, and the
+            // governing requirement there is WCAG 2.2 AA SC 2.5.8 (24×24 CSS px).
             expect(targetStyle.height ?? targetStyle.minHeight).toBeGreaterThanOrEqual(44);
+            expect(targetStyle.width ?? targetStyle.minWidth).toBeGreaterThanOrEqual(24);
             expect(typeof action?.props.onFocus).toBe('function');
             await act(async () => {
                 action?.props.onFocus?.();

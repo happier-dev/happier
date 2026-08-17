@@ -23,9 +23,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         marginTop: Platform.select({ ios: 8, default: 8 }),
     },
-    segmentedDisabled: {
-        opacity: 0.56,
-    },
     unavailable: {
         color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 13 }),
@@ -92,12 +89,11 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
             style={[
                 styles.segmentedContainer,
                 props.layout === 'stacked' ? styles.segmentedContainerStacked : null,
-                props.disabled ? styles.segmentedDisabled : null,
             ]}
-            pointerEvents={props.disabled ? 'none' : 'auto'}
         >
             <SegmentedTabBar
                 compact
+                disabled={props.disabled}
                 testIDPrefix={`${props.testIDPrefix}:mode`}
                 tabs={approvalTabs}
                 activeTabId={props.controlState.value}

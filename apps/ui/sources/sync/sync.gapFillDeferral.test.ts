@@ -74,11 +74,14 @@ import type { Session } from './domains/state/storageTypes';
 type SyncGapFillDeferralTestAccess = {
     encryption: {
         getSessionEncryption: (sessionId: string) => null;
+        removeSessionEncryption: (sessionId: string) => void;
     };
     activeServerSessionIds: Set<string>;
     hasFetchedSessionsSnapshotForActiveServer: boolean;
     sessionMessagesBeforeSeqByKey: Map<string, number>;
     sessionMessagesHasMoreOlderByKey: Map<string, boolean>;
+    deferredMessagesFetchSessionIds: Set<string>;
+    retireLocalSession(sessionId: string): void;
     getOrCreateMessagesSync: (sessionId: string) => { awaitQueue: (opts?: { timeoutMs?: number }) => Promise<void> };
 };
 
@@ -168,6 +171,7 @@ async function seedPagedSession(): Promise<SyncGapFillDeferralTestAccess> {
 
     syncForTest.encryption = {
         getSessionEncryption: () => null,
+        removeSessionEncryption: () => {},
     };
     syncForTest.activeServerSessionIds = new Set<string>([SESSION_ID]);
     syncForTest.hasFetchedSessionsSnapshotForActiveServer = true;
@@ -214,6 +218,31 @@ describe('sync gap-fill deferral during user older pagination', () => {
         await sync.loadOlderMessages(SESSION_ID);
         await syncForTest.getOrCreateMessagesSync(SESSION_ID).awaitQueue({ timeoutMs: 2_000 });
         expect(catchUpRequestPaths()).toHaveLength(1);
+    });
+
+    it('keeps pagination and deferred state empty when local retirement wins a held older page', async () => {
+        const syncForTest = await seedPagedSession();
+        const { sync } = await import('./sync');
+        const { resolveOlderPage } = deferOlderPageRequests();
+
+        const olderLoad = sync.loadOlderMessages(SESSION_ID);
+        await waitFor(() => olderPageRequestPaths().length === 1);
+
+        // This creates the exact replay deferral that must disappear with the
+        // deleted transcript, rather than being replayed after the held page.
+        await sync.refreshSessionMessages(SESSION_ID);
+        expect(syncForTest.deferredMessagesFetchSessionIds.has(SESSION_ID)).toBe(true);
+
+        syncForTest.retireLocalSession(SESSION_ID);
+        expect(syncForTest.deferredMessagesFetchSessionIds.has(SESSION_ID)).toBe(false);
+
+        resolveOlderPage();
+        await expect(olderLoad).resolves.toEqual({ loaded: 0, hasMore: true, status: 'not_ready' });
+
+        expect(storage.getState().sessions[SESSION_ID]).toBeUndefined();
+        expect(storage.getState().sessionMessages[SESSION_ID]).toBeUndefined();
+        expect(syncForTest.sessionMessagesBeforeSeqByKey.has(`${SESSION_ID}:main`)).toBe(false);
+        expect(syncForTest.sessionMessagesHasMoreOlderByKey.has(`${SESSION_ID}:main`)).toBe(false);
     });
 
     it('fetches immediately when no older load is in flight', async () => {

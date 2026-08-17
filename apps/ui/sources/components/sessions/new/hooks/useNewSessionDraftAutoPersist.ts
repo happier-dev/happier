@@ -53,10 +53,21 @@ export function resolveNewSessionDraftAutoPersistDelayMs(params: Readonly<{
         : baseDelayMs;
 }
 
+/**
+ * Out-of-render view of the draft's live text. The new-session composer owns its text in a
+ * store rather than screen-model state, so text changes must re-arm the debounce without
+ * rendering the owner: `subscribe` delivers the change, `getLength` feeds the large-text
+ * delay policy.
+ */
+export type NewSessionDraftTextSource = Readonly<{
+    getLength: () => number;
+    subscribe: (listener: () => void) => () => void;
+}>;
+
 export function useNewSessionDraftAutoPersist(params: Readonly<{
     persistDraftNow: () => void;
     persistenceEnabled?: boolean;
-    draftTextLength?: number | null;
+    draftText?: NewSessionDraftTextSource;
     /** Stable semantic identity for the current draft, independent of text length. */
     draftChangeKey?: string;
     /**
@@ -74,7 +85,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
     const cancelIdlePersistRef = React.useRef<(() => void) | null>(null);
     const persistDraftNowRef = React.useRef(params.persistDraftNow);
     const persistenceEnabledRef = React.useRef(params.persistenceEnabled ?? true);
-    const draftTextLengthRef = React.useRef(params.draftTextLength ?? 0);
+    const draftTextRef = React.useRef(params.draftText);
     const focused = params.focused ?? true;
     React.useEffect(() => {
         persistDraftNowRef.current = params.persistDraftNow;
@@ -83,8 +94,8 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         persistenceEnabledRef.current = params.persistenceEnabled ?? true;
     }, [params.persistenceEnabled]);
     React.useEffect(() => {
-        draftTextLengthRef.current = params.draftTextLength ?? 0;
-    }, [params.draftTextLength]);
+        draftTextRef.current = params.draftText;
+    }, [params.draftText]);
 
     const cancelPendingIdlePersist = React.useCallback(() => {
         const cancelIdlePersist = cancelIdlePersistRef.current;
@@ -103,7 +114,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         // Persisting uses synchronous storage under the hood (MMKV). Large web
         // drafts can still be expensive to serialize, so wait for idle time once
         // the large-text debounce has elapsed.
-        if (Platform.OS === 'web' && isLargeTextInputValueLength(draftTextLengthRef.current)) {
+        if (Platform.OS === 'web' && isLargeTextInputValueLength(draftTextRef.current?.getLength() ?? 0)) {
             let cancelCurrentIdlePersist: (() => void) | null = null;
             cancelCurrentIdlePersist = scheduleWebIdlePersist(() => {
                 if (cancelIdlePersistRef.current === cancelCurrentIdlePersist) {
@@ -123,8 +134,15 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
             return;
         }
 
-        // Persisting uses synchronous storage under the hood (MMKV), which can block the JS thread on iOS.
-        // Run after interactions so taps/animations stay responsive.
+        // Persisting uses synchronous storage under the hood (MMKV), which blocks the JS thread
+        // while it serializes. This gets the write off the CURRENT synchronous block — and that
+        // is all it does. On the React Native version this app ships, `InteractionManager` is a
+        // deprecated stub whose `runAfterInteractions` defers through `setImmediate`, which is
+        // shimmed onto `queueMicrotask`: the callback runs at this task's microtask checkpoint,
+        // before any timer and without yielding a frame. It does not wait for touches, scrolls or
+        // animations, so nothing here protects an in-flight gesture — see the disproof in
+        // `@/utils/timing/runAfterInteractionsWithFallback`. Web is handled above because there
+        // the persist is already scheduled by the idle/large-draft policy.
         InteractionManager.runAfterInteractions(() => {
             if (!persistenceEnabledRef.current) {
                 return;
@@ -152,12 +170,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         persistAfterCurrentPolicy();
     }, [focused, persistAfterCurrentPolicy]);
 
-    React.useEffect(() => {
-        if (!focused) {
-            // The blur-flush effect above already flushed any pending debounce; leave an
-            // in-flight idle persist alone so the flush completes with the live value.
-            return;
-        }
+    const armDebouncedPersist = React.useCallback(() => {
         if (draftSaveTimerRef.current !== null) {
             clearTimeout(draftSaveTimerRef.current);
             draftSaveTimerRef.current = null;
@@ -168,25 +181,44 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         }
         const delayMs = resolveNewSessionDraftAutoPersistDelayMs({
             platformOS: Platform.OS,
-            draftTextLength: params.draftTextLength,
+            draftTextLength: draftTextRef.current?.getLength() ?? 0,
         });
         draftSaveTimerRef.current = setTimeout(() => {
             draftSaveTimerRef.current = null;
             persistAfterCurrentPolicy();
         }, delayMs);
+    }, [cancelPendingIdlePersist, params.persistenceEnabled, persistAfterCurrentPolicy]);
+
+    React.useEffect(() => {
+        if (!focused) {
+            // The blur-flush effect above already flushed any pending debounce; leave an
+            // in-flight idle persist alone so the flush completes with the live value.
+            return;
+        }
+        armDebouncedPersist();
         return () => {
             if (draftSaveTimerRef.current !== null) {
                 clearTimeout(draftSaveTimerRef.current);
             }
         };
     }, [
-        cancelPendingIdlePersist,
+        armDebouncedPersist,
         focused,
         params.draftChangeKey,
-        params.draftTextLength,
         params.persistenceEnabled,
-        persistAfterCurrentPolicy,
     ]);
+
+    // Typing re-arms the debounce without rendering this hook's owner: the composer text
+    // lives in a store, so a keystroke is a store notification rather than a state update.
+    React.useEffect(() => {
+        const draftText = params.draftText;
+        if (!draftText) {
+            return;
+        }
+        return draftText.subscribe(() => {
+            armDebouncedPersist();
+        });
+    }, [armDebouncedPersist, params.draftText]);
 
     // Flush pending work on unmount so fast navigation / modal close doesn't drop draft state.
     React.useEffect(() => {

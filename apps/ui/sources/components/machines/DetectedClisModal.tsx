@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, ScrollView } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
@@ -10,6 +9,7 @@ import type { CustomModalInjectedProps } from '@/modal';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 type Props = CustomModalInjectedProps & {
@@ -52,7 +52,7 @@ export function DetectedClisModal({ onClose, setChrome, machineId, isOnline, ser
         >
             {state.status === 'loading'
                 ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-                : <Ionicons name="refresh" size={20} color={isOnline ? theme.colors.text.secondary : theme.colors.border.default} />}
+                : <Icon name="arrow-clockwise" size={20} color={isOnline ? theme.colors.text.secondary : theme.colors.border.default} />}
         </Pressable>
     ), [isOnline, refresh, state.status, styles.headerActionButton, theme.colors.border.default, theme.colors.text.secondary]);
 

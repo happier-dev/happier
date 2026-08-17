@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View, type ScrollViewProps } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import type { useUnistyles } from 'react-native-unistyles';
 
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
@@ -19,8 +18,10 @@ import { formatByteSize } from '@/utils/files/formatByteSize';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import type { LazyDirectoryTreeNode } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type WorkspaceRepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -34,10 +35,8 @@ type AppTheme = ReturnType<typeof useUnistyles>['theme'];
 
 type WorkspaceRepositoryTreeListProps = Readonly<{
     theme: AppTheme;
-    workspaceCacheKey: string;
-    machineId: string;
-    rootPath: string;
-    serverId?: string | null;
+    /** The workspace, as one identity: what the tree is keyed by AND read through. */
+    scope: WorkspaceScopeBase;
     reloadToken?: number;
     detailsMode?: boolean;
     onRequestRefresh?: (() => void) | null;
@@ -80,18 +79,18 @@ function buildWebDropTarget(node: WorkspaceRepositoryTreeNode): WorkspaceReposit
 function renderEntryIcon(node: WorkspaceRepositoryTreeNode, theme: AppTheme) {
     if (node.type === 'directory') {
         return (
-            <Ionicons
-                name={node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
+            <Icon
+                name={node.isExpanded ? 'folder-open' : 'folder'}
                 size={16}
                 color={theme.colors.text.link}
             />
         );
     }
     if (node.type === 'error') {
-        return <Ionicons name="alert-circle-outline" size={16} color={theme.colors.text.secondary} />;
+        return <Icon name="warning-circle" size={16} color={theme.colors.text.secondary} />;
     }
     if (node.type === 'info') {
-        return <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.secondary} />;
+        return <Icon name="info" size={16} color={theme.colors.text.secondary} />;
     }
     return <FileIcon fileName={node.name} size={16} />;
 }
@@ -101,10 +100,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const detailsMode = props.detailsMode === true;
 
     const { rootLoading, rootError, nodes, toggleDirectory, retryRoot, retryDirectory } = useWorkspaceRepositoryTreeBrowser({
-        workspaceCacheKey: props.workspaceCacheKey,
-        machineId: props.machineId,
-        rootPath: props.rootPath,
-        serverId: props.serverId,
+        scope: props.scope,
         enabled: true,
         expandedPaths,
         onExpandedPathsChange,
@@ -367,7 +363,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             rootError={rootError}
             retryRoot={retryRoot}
             emptyLabel={t('files.noFilesInProject')}
-            emptyIconName="folder-outline"
+            emptyIconName="folder"
             loadingLabel={t('common.loading')}
             inlineRetryLabel={t('errors.tryAgain')}
             renderRow={renderRow}

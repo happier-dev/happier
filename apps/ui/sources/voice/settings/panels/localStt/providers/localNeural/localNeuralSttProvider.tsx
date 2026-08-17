@@ -22,7 +22,7 @@ export const localNeuralSttProviderSpec: LocalSttProviderSpec = {
   id: 'local_neural',
   title: t('settingsVoice.local.localNeuralStt.provider.title'),
   subtitle: t('settingsVoice.local.localNeuralStt.provider.subtitle'),
-  iconName: 'sparkles-outline',
+  iconName: 'sparkle',
   detail: t('settingsVoice.local.localNeuralStt.provider.detail'),
   Settings: LocalNeuralProviderSettings,
 };

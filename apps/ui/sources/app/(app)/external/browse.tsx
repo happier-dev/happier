@@ -85,6 +85,7 @@ const ExternalSessionsBrowseRouteContent = React.memo(function ExternalSessionsB
                     ? 'external-sessions-browse-route-loading'
                     : 'external-sessions-browse-route-unavailable'}
                 kind={loading ? 'loading' : 'unavailable'}
+                accessibilitySemantics={loading ? 'status' : 'alert'}
                 title={loading
                     ? t('common.loading')
                     : t('externalSessions.settingsIntegrationsUnavailableTitle')}

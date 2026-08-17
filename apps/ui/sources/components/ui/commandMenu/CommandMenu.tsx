@@ -14,6 +14,7 @@ import { t } from '@/text';
 import { CommandMenuSurface } from './CommandMenuSurface';
 import { CommandMenuRow } from './CommandMenuRow';
 import type { CommandMenuItem, CommandMenuProps } from './commandMenuTypes';
+import { COMMAND_MENU_ROOT_STEP_ID } from './commandMenuAccessibility';
 
 const DEFAULT_MAX_HEIGHT = 280;
 
@@ -89,7 +90,7 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
     }, [items, testID]);
 
     const rootStep = React.useMemo<SelectionListStep>(() => ({
-        id: 'command-menu-root',
+        id: COMMAND_MENU_ROOT_STEP_ID,
         sections,
         emptyStateLabel: emptyStateLabel ?? t('commandMenu.empty'),
     }), [sections, emptyStateLabel]);

@@ -23,13 +23,21 @@ import {
 import { makeSettings } from './registryUiBehavior.testHelpers';
 
 describe('buildSpawnSessionExtrasFromUiState', () => {
-    it('enables codex ACP only when backend mode is acp', () => {
+    it('projects the normalized Codex backend mode into strict V2 configuration', () => {
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'acp' }),
             resumeSessionId: '',
+            updatedAt: 123,
         })).toEqual({
             codexBackendMode: 'acp',
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 123,
+                overrides: {
+                    codexBackendMode: { value: 'acp', updatedAt: 123 },
+                },
+            },
         });
     });
 
@@ -46,8 +54,16 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'mcp' }),
             resumeSessionId: 'x1',
+            updatedAt: 456,
         })).toEqual({
             codexBackendMode: 'appServer',
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 456,
+                overrides: {
+                    codexBackendMode: { value: 'appServer', updatedAt: 456 },
+                },
+            },
         });
     });
 
@@ -56,8 +72,16 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'appServer' as any }),
             resumeSessionId: 'x1',
+            updatedAt: 789,
         })).toEqual({
             codexBackendMode: 'appServer',
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 789,
+                overrides: {
+                    codexBackendMode: { value: 'appServer', updatedAt: 789 },
+                },
+            },
         });
     });
 
@@ -71,42 +95,6 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
 });
 
 describe('provider behavior runtime diagnostics', () => {
-    it('exposes Pi session artifact paths through the provider behavior surface', () => {
-        const debugBehavior = (resolveAgentUiBehavior('pi') as any).debug;
-
-        expect(debugBehavior?.resolveProviderSessionArtifactPath?.({
-            metadata: {
-                runtimeDescriptorV1: {
-                    v: 1,
-                    agentId: 'pi',
-                    provider: {
-                        resumeStrategy: 'sessionFileAbsolutePreferred',
-                        providerSessionId: 'pi-session-1',
-                        sessionFile: ' /tmp/pi/from-runtime.jsonl ',
-                    },
-                },
-                piSessionFile: '/tmp/pi/legacy.jsonl',
-            },
-        })).toBe('/tmp/pi/from-runtime.jsonl');
-    });
-
-    it('fails closed when Pi debug metadata carries a foreign runtime descriptor', () => {
-        const debugBehavior = (resolveAgentUiBehavior('pi') as any).debug;
-
-        expect(debugBehavior?.resolveProviderSessionArtifactPath?.({
-            metadata: {
-                runtimeDescriptorV1: {
-                    v: 1,
-                    agentId: 'codex',
-                    provider: {
-                        backendMode: 'appServer',
-                        sessionFile: '/tmp/not-pi.jsonl',
-                    },
-                },
-            },
-        })).toBeNull();
-    });
-
     it('exposes Codex app-server transport synthesis through provider behavior', () => {
         const transportBehavior = (resolveAgentUiBehavior('codex').payload as any)?.buildBackendTransportFields;
 

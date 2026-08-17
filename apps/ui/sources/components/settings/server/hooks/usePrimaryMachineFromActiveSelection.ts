@@ -11,15 +11,13 @@ import {
 import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
 
 /**
- * Returns the ID of the primary machine from the active server selection.
- * 
- * This hook respects the user's active server selection (single server or multi-server group)
- * and returns the first non-revoked machine from the first visible server.
- * 
- * Use this instead of `useAllMachines()[0]` in settings screens to ensure machine-backed
- * operations target the correct machine relative to the user's active server selection.
- * 
- * @returns The machine ID of the primary machine, or null if no machines are available
+ * Returns an order-based display/default machine from the active server selection.
+ *
+ * @deprecated This is a legacy presentation convenience, not an execution-target
+ * owner. It must not authorize daemon mutations or Machine Administration actions;
+ * those use the exact, fresh Administration target selection instead.
+ *
+ * @returns The first visible machine ID, or null when no machines are available.
  */
 export function usePrimaryMachineFromActiveSelection(): string | null {
     const allMachines = useAllMachines();

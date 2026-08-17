@@ -7,7 +7,7 @@ import { installApprovalCommonModuleMocks } from '../../approvals/approvalsTestH
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-function createApprovalArtifact(): DecryptedArtifact {
+function createApprovalArtifact(): Extract<DecryptedArtifact, { isDecrypted: true }> {
     return {
         id: 'artifact-1',
         title: 'Approval',

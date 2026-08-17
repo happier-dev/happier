@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { createTwoFilesPatch } from 'diff';
-import { Ionicons } from '@expo/vector-icons';
 
 import { getSingularPatch } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffMetadata, FileDiffOptions, OnDiffLineClickProps } from '@pierre/diffs';
@@ -21,6 +20,7 @@ import { resolvePierreLanguageOverride } from './resolvePierreLanguageOverride.w
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { HAPPIER_UI_FONT_SCALE_CSS_VAR } from '@/components/ui/text/webUnistylesFontOverrides';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     REVIEW_COMMENT_LINE_AFFORDANCE_ICON_NAME,
     REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID,
@@ -120,10 +120,10 @@ function PierreReviewCommentHoverAffordance(props: {
             }}
             type="button"
         >
-            <Ionicons
+            <Icon
                 color={props.color}
-                name={props.active ? 'close-circle-outline' : REVIEW_COMMENT_LINE_AFFORDANCE_ICON_NAME}
-                size={15}
+                name={props.active ? 'x-circle' : REVIEW_COMMENT_LINE_AFFORDANCE_ICON_NAME}
+                size={14}
                 testID={REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID}
             />
         </button>

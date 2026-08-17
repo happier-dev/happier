@@ -18,15 +18,19 @@ import {
     useDesktopPetOverlayMeasuredLayout,
 } from '@/components/pets/desktop/layout/useDesktopPetOverlayMeasuredLayout';
 import { DesktopPetOverlayTray } from '@/components/pets/desktop/tray/DesktopPetOverlayTray';
-import { PET_VELOCITY_SAMPLE_WINDOW_MS } from '@/components/pets/interaction/petPointerDragConfig';
+import { COMPANION_VELOCITY_SAMPLE_WINDOW_MS } from '@/components/companion/interaction/companionPointerDragConfig';
 import {
-    type PetPointerDragEnd,
-    type PetPointerDragMove,
-    type PetPointerDragRelease,
-    type PetPointerDragStart,
-    usePetPointerDragSession,
-} from '@/components/pets/interaction/usePetPointerDragSession';
+    type CompanionPointerDragEnd,
+    type CompanionPointerDragMove,
+    type CompanionPointerDragRelease,
+    type CompanionPointerDragStart,
+    useCompanionPointerDragSession,
+} from '@/components/companion/interaction/useCompanionPointerDragSession';
+import { PET_POINTER_DRAG_SELECTORS } from '@/components/pets/interaction/petPointerDragBindings';
+import { resolvePetDragAnimationState } from '@/components/pets/interaction/resolvePetDragAnimationState';
 import { PetCompanionSurface } from '@/components/pets/render/PetCompanionSurface';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useRuntimeActive } from '@/hooks/runtime/useRuntimeActive';
 import { usePetSpritesheetSourceResult } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
 import type { PetCompanionActivityState } from '@/components/pets/state/buildPetCompanionActivityState';
@@ -271,6 +275,10 @@ function DesktopPetOverlayRouteWithLocalActivity(props: DesktopPetOverlayRoutePr
 }
 
 function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps): React.ReactElement {
+    // Same lifecycle/accessibility rule as the app-shell companion: an OS reduced-motion
+    // preference stops the ambient chain and the frame ticker.
+    const reducedMotion = useReducedMotionPreference();
+    const runtimeActive = useRuntimeActive();
     const [nativeLayoutState, setNativeLayoutState] = React.useState<DesktopPetOverlayNativeLayoutState | null>(
         () => props.nativeLayoutState ?? null,
     );
@@ -324,7 +332,7 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
         () => resolveDesktopPetOverlayGeometry(localSettings.petsCompanionSizeScale),
         [localSettings.petsCompanionSizeScale],
     );
-    const handleDragStart = React.useCallback((start: PetPointerDragStart) => {
+    const handleDragStart = React.useCallback((start: CompanionPointerDragStart) => {
         enqueueDragCommand(() => startDesktopPetOverlayDragSession({
             pointerId: start.pointerId,
             screenX: start.screenX,
@@ -332,7 +340,7 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
             startedAtMs: start.startedAtMs,
         }));
     }, [enqueueDragCommand]);
-    const handleDragMove = React.useCallback((move: PetPointerDragMove) => {
+    const handleDragMove = React.useCallback((move: CompanionPointerDragMove) => {
         if (move.coordinateSpace !== 'screen') return;
         enqueueDragCommand(() => applyDesktopPetOverlayDragDelta({
             pointerId: move.pointerId,
@@ -341,7 +349,7 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
             coordinateSpace: 'screen',
         }));
     }, [enqueueDragCommand]);
-    const handleDragEnd = React.useCallback((end: PetPointerDragEnd) => {
+    const handleDragEnd = React.useCallback((end: CompanionPointerDragEnd) => {
         enqueueDragCommand(() => endDesktopPetOverlayDragSession({
             pointerId: end.pointerId,
             cancelled: end.cancelled,
@@ -349,19 +357,21 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
             screenY: end.screenY,
         }));
     }, [enqueueDragCommand]);
-    const handleDragRelease = React.useCallback((release: PetPointerDragRelease) => {
+    const handleDragRelease = React.useCallback((release: CompanionPointerDragRelease) => {
         enqueueDragCommand(() => releaseDesktopPetOverlayDragVelocity({
             pointerId: release.pointerId,
             vx: release.velocityX,
             vy: release.velocityY,
-            sampleWindowMs: PET_VELOCITY_SAMPLE_WINDOW_MS,
+            sampleWindowMs: COMPANION_VELOCITY_SAMPLE_WINDOW_MS,
         }));
     }, [enqueueDragCommand]);
     const handleActivate = React.useCallback(() => {
         void showMainWindowFromDesktopPetOverlay({ reason: 'mascot-click' });
     }, []);
-    const drag = usePetPointerDragSession({
+    const drag = useCompanionPointerDragSession({
         coordinateSpace: 'screen',
+        selectors: PET_POINTER_DRAG_SELECTORS,
+        resolveDragState: resolvePetDragAnimationState,
         onDragStart: handleDragStart,
         onDragMove: handleDragMove,
         onDragEnd: handleDragEnd,
@@ -487,6 +497,8 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
         >
             {petVisible ? (
                 <PetCompanionSurface
+                    reducedMotion={reducedMotion}
+                    active={runtimeActive}
                     state={drag.dragState ?? activity.state}
                     stateStyle={mascotStyle}
                     hitboxTestID="desktop-pet-overlay-hitbox"

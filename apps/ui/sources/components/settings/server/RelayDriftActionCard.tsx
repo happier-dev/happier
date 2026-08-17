@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SystemTaskProgressCard } from '@/components/systemTasks';
 import { ActionCard } from '@/components/ui/cards/ActionCard';
 import { t } from '@/text';
 import type { RelayDriftBanner } from './relayDriftTypes';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create(() => ({
     container: {
@@ -32,7 +32,7 @@ export const RelayDriftActionCard = React.memo(function RelayDriftActionCard(pro
                 description={description}
                 loading={props.banner.isRepairStarting}
                 disabled={props.banner.actionDisabled || props.banner.isRepairStarting || isRepairRunning}
-                icon={<Ionicons name="swap-horizontal-outline" size={24} color={theme.colors.state.danger.foreground} />}
+                icon={<Icon name="arrows-left-right" size={24} color={theme.colors.state.danger.foreground} />}
                 primaryAction={{
                     label: props.banner.actionLabel,
                     onPress: props.banner.onPress,

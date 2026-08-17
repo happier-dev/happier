@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 
 import { Shaker, type ShakeInstance } from '@/components/ui/feedback/Shaker';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from './agentInputChipIconMetrics';
 
 export function createAbortActionButton(params: Readonly<{
     shakerRef: React.RefObject<ShakeInstance | null>;
@@ -31,7 +32,7 @@ export function createAbortActionButton(params: Readonly<{
                 {params.isAborting ? (
                     <ActivitySpinner size="small" color={params.tint} />
                 ) : (
-                    <Octicons name="stop" size={16} color={params.tint} />
+                    <Icon name="octagon-x" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={params.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />
                 )}
             </Pressable>
         </Shaker>

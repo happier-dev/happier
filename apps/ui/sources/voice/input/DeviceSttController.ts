@@ -142,9 +142,9 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     const lease = target.audioSessionLease;
     const attempt = lease.release();
     target.audioSessionReleaseAttempt = attempt;
+    if (target.audioSessionLease === lease) target.audioSessionLease = null;
     try {
       await attempt;
-      if (target.audioSessionLease === lease) target.audioSessionLease = null;
     } finally {
       if (target.audioSessionReleaseAttempt === attempt) target.audioSessionReleaseAttempt = null;
     }
@@ -481,6 +481,14 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
           }),
         };
       }
+      if (!nextHandle.recognizerStopRequested) {
+        return {
+          error: createVoiceMachineError({
+            kind: 'provider_error',
+            reason: 'device_stt_error',
+          }),
+        };
+      }
       return { finalText: '' };
     };
 
@@ -509,6 +517,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('speechstart', () => {
         if (!acceptsRecognizerEvent()) return;
+        if (micSession.isMuted()) return;
         markSpeechCandidateStarted();
       })
     );
@@ -527,6 +536,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         const transcript = typeof results?.[0]?.transcript === 'string' ? results[0].transcript.trim() : '';
         markAudioStarted();
         if (!transcript) return;
+        if (micSession.isMuted()) return;
         markSpeechCandidateStarted();
 
         if (event?.isFinal) {
@@ -544,12 +554,11 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       ExpoSpeechRecognitionModule.addListener('end', () => {
         if (!acceptsRecognizerEvent()) return;
         nextHandle.acceptsRecognizerEvents = false;
-        let shouldPublishFinalizationFailure = false;
+        let shouldPublishTerminalFailure = false;
         try {
           if (!nextHandle.terminalResult) {
             nextHandle.terminalResult = resolveTerminalResult();
-            shouldPublishFinalizationFailure = 'error' in nextHandle.terminalResult
-              && nextHandle.terminalResult.error.reason === 'device_stt_finalization_failed';
+            shouldPublishTerminalFailure = 'error' in nextHandle.terminalResult;
           }
           if (!committedTranscript()) {
             resolveSpeechCandidateFalseAlarm();
@@ -559,7 +568,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         } finally {
           void releaseAudioSessionLease(nextHandle).catch(() => {}).then(() => {
             const terminalResult = nextHandle.terminalResult;
-            if (!shouldPublishFinalizationFailure || !terminalResult || !('error' in terminalResult)) {
+            if (!shouldPublishTerminalFailure || !terminalResult || !('error' in terminalResult)) {
               return;
             }
             safelyNotifyObserver(() => sink.onError(terminalResult.error));
@@ -577,7 +586,13 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         resolveSpeechCandidateFalseAlarm();
         const finalText = committedTranscript();
         const providerError = createVoiceMachineError({ kind: 'provider_error', reason });
-        const shouldPublishProviderError = !finalText && !isEmptyRecognitionTerminalReason(reason);
+        // A no-speech/speech-timeout event is only a benign empty result when
+        // the product already asked the recognizer to stop. When the provider
+        // terminates an otherwise active capture on its own, the Voice owner
+        // must receive the failure instead of continuing with a dead recognizer.
+        const isExpectedEmptyStop = nextHandle.recognizerStopRequested
+          && isEmptyRecognitionTerminalReason(reason);
+        const shouldPublishProviderError = !finalText && !isExpectedEmptyStop;
         nextHandle.terminalResult ??= finalText
           ? { finalText }
           : shouldPublishProviderError

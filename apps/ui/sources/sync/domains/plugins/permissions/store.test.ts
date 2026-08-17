@@ -23,6 +23,18 @@ async function loadStore(): Promise<StoreModule | null> {
 const workspaceScope = { kind: 'workspace', workspaceId: 'workspace-1' } as const;
 const projectScope = { kind: 'project', projectId: 'project-1' } as const;
 const capability = 'reviews.comments.write.direct';
+const subjectA = { kind: 'general' } as const;
+const subjectB = {
+    kind: 'credential_access_disclosure',
+    contribution: { pluginId: 'review-coderabbit', localId: 'voice' },
+    credentialSlotId: 'api_key',
+    purpose: 'voice.realtime',
+    accessDeclarationDigest: 'a'.repeat(64),
+    selectedAuthorityDigest: 'c'.repeat(64),
+    selectedRawAccessDigest: 'd'.repeat(64),
+    installedGenerationId: 'generation-1',
+    installReviewPrincipalDigest: 'b'.repeat(64),
+} as const;
 
 function pendingRequest(overrides: Record<string, unknown> = {}) {
     return {
@@ -172,5 +184,21 @@ describe('plugin permission grant UI state', () => {
             targetScope: workspaceScope,
         })).toBe(false);
         expect(store.selectPluginPermissionPendingRequests(loaded, { capability })).toHaveLength(0);
+    });
+
+    it('matches the exact permission subject so changed credential disclosure authority requires review', async () => {
+        const store = await loadStore();
+        expect(store).not.toBeNull();
+        if (!store) return;
+
+        const loaded = store.applyPluginPermissionGrantList(store.createEmptyPluginPermissionGrantState(), {
+            grants: [grant({ targetScope: { kind: 'account' }, subject: subjectA })],
+            pendingRequests: [pendingRequest({ targetScope: { kind: 'account' }, subject: subjectA })],
+        });
+
+        expect(store.hasPluginPermissionGrant(loaded, { subject: subjectA })).toBe(true);
+        expect(store.hasPluginPermissionGrant(loaded, { subject: subjectB })).toBe(false);
+        expect(store.selectPluginPermissionPendingRequests(loaded, { subject: subjectA })).toHaveLength(1);
+        expect(store.selectPluginPermissionPendingRequests(loaded, { subject: subjectB })).toHaveLength(0);
     });
 });

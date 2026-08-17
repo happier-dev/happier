@@ -5,8 +5,10 @@ import type {
   AgentSessionRealtimeStartInput,
   AgentSessionRealtimeStartResult,
   AgentSessionRealtimeStopResult,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
   PluginVoiceAgentSessionRealtimeService,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+} from '@happier-dev/plugin-sdk/voice/client';
 import {
   AgentSessionRealtimeInspectResultV1Schema,
   AgentSessionRealtimeStartRequestV1Schema,

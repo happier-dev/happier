@@ -1,38 +1,53 @@
 import type {
   BundledRealtimeProviderRuntimeConfig,
   BundledRealtimeProviderRuntimeHost,
-  BundledVoiceRuntimeContribution,
-  VoiceRealtimeConnection,
-  VoiceRealtimeProtocolAdapter,
-} from '@happier-dev/bundled-voice-runtime-contract';
+} from './bundledConversationRuntimeContract';
 import {
   buildQualifiedPluginContributionKey,
   ConnectedServiceBindingsV1Schema,
   createRecipientContractDigestV1,
   createPluginContributionIdentity,
+  deriveVoiceCredentialBindingIdentityV1,
   normalizeRecipientContractV1,
-  PluginVoiceProviderContributionV1Schema,
-  listVoiceToolActionSpecs,
+  VoiceProviderContributionSchema,
+  readVoiceProviderCredentialRemediationCode,
   VoiceRealtimeJsonValueSchema,
   type VoiceRealtimeJsonValue,
-  type PluginVoiceProviderContributionV1,
+  type VoiceProviderContribution,
   type RecipientContractV1,
+  type DaemonPluginReactNativeBundleCacheIdentityV1,
 } from '@happier-dev/protocol';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import type {
-  PluginVoiceAccountOperationService,
-  PluginVoiceHostedConversationService,
-  PluginVoiceProviderSettingsOperations,
-  PluginVoiceProviderRuntimeRegistration,
-  PluginVoiceRuntimePlatform,
-} from '@happier-dev/plugin-sdk/runtime';
+  VoiceAccountOperationService,
+  VoiceCredentialAccess,
+  VoiceProviderRuntime,
+  VoiceSettingsActionContext,
+} from '@happier-dev/plugin-sdk/voice';
+import type {
+  RealtimeVoiceProviderProtocol,
+  RealtimeVoiceProviderSettingsOperations,
+  VoiceHostedConversationService,
+  VoiceRealtimeConnection,
+  VoiceRuntimePlatform,
+} from '@happier-dev/plugin-sdk/voice/client';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type {
+  PluginSettingsActionInput,
+  PluginSettingsActionRuntime,
+} from '@happier-dev/plugin-sdk/settings';
+import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
 
 import type { PluginUiExecutableActivationScope } from '@/components/plugins/reactNative/executableModuleHost';
 import {
   readVoiceSettingsInput,
   voiceSettingsParse,
 } from '@/sync/domains/settings/voiceSettings';
-import type { VoiceAdapterController } from '@/voice/session/types';
+import type {
+  BundledVoiceRuntimeContribution,
+  VoiceAdapterController,
+} from '@/voice/session/types';
+import type { VoiceRealtimeProtocolAdapter } from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
 import {
   createExternalVoiceProviderSettingsDescriptor,
   projectExternalVoiceProviderSettings,
@@ -43,19 +58,29 @@ import { bindVoiceClientToolsToAttempt } from './attemptVoiceClientTools';
 import {
   getCurrentBundledConversationRuntimeHost,
 } from './bundledConversationRuntimeHost';
-import { createAccountVoiceOperationService } from '@/voice/credentials/accountVoiceOperationService';
+import {
+  createAccountVoiceCredentialAuthorityLease,
+  createAccountVoiceOperationService,
+} from '@/voice/credentials/accountVoiceOperationService';
 import { subscribeBundledConversationRuntimeGeneration } from './bundledConversationRuntimeGeneration';
 import { createBundledRealtimeProviderRuntime } from './createBundledRealtimeProviderRuntime';
-import type { VoiceProviderRegistryEntry } from './providerRegistry';
+import {
+  projectVoiceProviderDeclarationRequirements,
+  type VoiceProviderRegistryEntry,
+} from './providerRegistry';
 import {
   commitExternalVoiceProviderRegistration,
   removeExternalVoiceProviderRegistration,
 } from './externalVoiceProviderRegistrations';
 import { getProviderConversationServiceFactory } from './providerConversationService';
+import { createVoiceClientRawCredentialAccess } from '@/voice/credentials/rawCredentialClient';
+import { createVoiceClientMediatedCredentialHeadersMaterializer } from '@/voice/credentials/mediatedCredentialClient';
+import { resolveVoiceExecutionMachineId } from '@/voice/settings/executionMachine';
+import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
 
-type ExternalVoiceProviderProtocolLeaf = PluginVoiceProviderRuntimeRegistration['protocol'];
-export type PluginVoiceConversationProviderContributionV1 = Extract<
-  PluginVoiceProviderContributionV1,
+type ExternalVoiceProviderProtocolLeaf = RealtimeVoiceProviderProtocol;
+export type VoiceConversationProviderContribution = Extract<
+  VoiceProviderContribution,
   Readonly<{ kind: 'conversation' }>
 >;
 
@@ -64,10 +89,16 @@ export type PluginVoiceConversationProviderContributionV1 = Extract<
  * provider-native protocol and connection leaves; the app host retains voice
  * lifecycle, mic, transcript, tools, privacy, cancellation, and persistence.
  */
-export type ExternalVoiceProviderRuntimeRegistration = PluginVoiceProviderRuntimeRegistration;
+export type ExternalVoiceProviderRuntimeRegistration = Extract<
+  VoiceProviderRuntime,
+  Readonly<{ kind: 'conversation' }>
+>;
 
 type BoundVoiceProviderSettingsOperations = NonNullable<
   import('./externalVoiceProviderRegistrations').ExternalVoiceProviderRegistration['settingsOperations']
+>;
+type BoundVoiceProviderSettingsActions = NonNullable<
+  import('./externalVoiceProviderRegistrations').ExternalVoiceProviderRegistration['settingsActions']
 >;
 
 function settingsOperationCancelled(): Error {
@@ -83,21 +114,9 @@ function assertSettingsOperationCurrent(
   if (signal.aborted || !isCurrent()) throw settingsOperationCancelled();
 }
 
-const VOICE_ACTION_IDS: ReadonlySet<string> = new Set(
-  listVoiceToolActionSpecs().map((spec) => spec.id),
-);
-const MAX_VOICE_PROMPT_BLOCKS = 16;
-const MAX_VOICE_PROMPT_BLOCK_BYTES = 16_384;
-const MAX_VOICE_PROMPT_BLOCKS_TOTAL_BYTES = 65_536;
 const MAX_VOICE_PROVIDER_CATALOG_ITEMS = 1_000;
 const MAX_VOICE_PROVIDER_CATALOG_BYTES = 1_048_576;
 const MAX_VOICE_PROVIDER_PREVIEW_URL_LENGTH = 16_384;
-
-function settingsOperationContextInvalid(): Error {
-  return Object.assign(new Error('voice_provider_settings_context_invalid'), {
-    code: 'voice_provider_settings_context_invalid',
-  });
-}
 
 function settingsOperationResponseInvalid(): Error {
   return Object.assign(new Error('voice_provider_settings_response_invalid'), {
@@ -165,60 +184,25 @@ function parseBoundedVoiceProviderCatalog(
   return Object.freeze(items);
 }
 
-export function projectVoiceProviderProvisioningContext(input: Readonly<{
-  disabledActionIds: readonly string[];
-  extraSystemAppendBlocks: readonly string[];
-}>): Readonly<{
-  disabledActionIds: readonly string[];
-  extraSystemAppendBlocks: readonly string[];
-}> {
-  if (input.disabledActionIds.length > VOICE_ACTION_IDS.size
-    || input.extraSystemAppendBlocks.length > MAX_VOICE_PROMPT_BLOCKS) {
-    throw settingsOperationContextInvalid();
-  }
-  const disabledActionIds: string[] = [];
-  const seen = new Set<string>();
-  for (const id of input.disabledActionIds) {
-    if (!VOICE_ACTION_IDS.has(id)) throw settingsOperationContextInvalid();
-    if (!seen.has(id)) disabledActionIds.push(id);
-    seen.add(id);
-  }
-  const encoder = new TextEncoder();
-  const extraSystemAppendBlocks: string[] = [];
-  let totalBytes = 0;
-  for (const raw of input.extraSystemAppendBlocks) {
-    if (typeof raw !== 'string') throw settingsOperationContextInvalid();
-    const block = raw.trim();
-    if (!block) continue;
-    const byteLength = encoder.encode(block).byteLength;
-    totalBytes += byteLength;
-    if (byteLength > MAX_VOICE_PROMPT_BLOCK_BYTES
-      || totalBytes > MAX_VOICE_PROMPT_BLOCKS_TOTAL_BYTES) {
-      throw settingsOperationContextInvalid();
-    }
-    extraSystemAppendBlocks.push(block);
-  }
-  return Object.freeze({
-    disabledActionIds: Object.freeze(disabledActionIds),
-    extraSystemAppendBlocks: Object.freeze(extraSystemAppendBlocks),
-  });
-}
-
-async function withSettingsInvocationSignal<T>(input: Readonly<{
+async function withVoiceProviderInvocationLifetime<T>(input: Readonly<{
   callerSignal: AbortSignal;
-  revocationSignal: AbortSignal;
+  revocationSignal?: AbortSignal;
   run(signal: AbortSignal): Promise<T>;
 }>): Promise<T> {
   const controller = new AbortController();
   const abort = () => controller.abort();
-  if (input.callerSignal.aborted || input.revocationSignal.aborted) abort();
+  if (input.callerSignal.aborted || input.revocationSignal?.aborted) abort();
   input.callerSignal.addEventListener('abort', abort, { once: true });
-  input.revocationSignal.addEventListener('abort', abort, { once: true });
+  input.revocationSignal?.addEventListener('abort', abort, { once: true });
   try {
     return await input.run(controller.signal);
   } finally {
     input.callerSignal.removeEventListener('abort', abort);
-    input.revocationSignal.removeEventListener('abort', abort);
+    input.revocationSignal?.removeEventListener('abort', abort);
+    // Raw materialization is an invocation capability, not an attempt-wide
+    // credential handle. Retire every retained capability as its host leaf
+    // returns, including successful returns.
+    if (!controller.signal.aborted) controller.abort();
   }
 }
 
@@ -228,8 +212,8 @@ async function withSettingsInvocationSignal<T>(input: Readonly<{
  * the provider leaf and every account request in the invocation.
  */
 export function bindVoiceProviderSettingsOperations(input: Readonly<{
-  operations: PluginVoiceProviderSettingsOperations;
-  createAccountOperations(signal: AbortSignal): PluginVoiceAccountOperationService;
+  operations: RealtimeVoiceProviderSettingsOperations;
+  createCredentials(signal: AbortSignal): VoiceCredentialAccess<'settings'>;
   isCurrent(): boolean;
   revocationSignal?: AbortSignal;
 }>): BoundVoiceProviderSettingsOperations {
@@ -240,7 +224,7 @@ export function bindVoiceProviderSettingsOperations(input: Readonly<{
       async listCatalog(
         request: Parameters<NonNullable<BoundVoiceProviderSettingsOperations['listCatalog']>>[0],
       ) {
-        return await withSettingsInvocationSignal({
+        return await withVoiceProviderInvocationLifetime({
           callerSignal: request.signal,
           revocationSignal,
           async run(signal) {
@@ -250,7 +234,7 @@ export function bindVoiceProviderSettingsOperations(input: Readonly<{
               result = await operations.listCatalog!({
                 ...request,
                 signal,
-                accountOperations: input.createAccountOperations(signal),
+                credentials: input.createCredentials(signal),
               });
             } catch (error) {
               if (revocationSignal.aborted || !input.isCurrent()) throw settingsOperationCancelled();
@@ -262,34 +246,65 @@ export function bindVoiceProviderSettingsOperations(input: Readonly<{
         });
       },
     } : {}),
-    ...(operations.provision ? {
-      async provision(
-        request: Parameters<NonNullable<BoundVoiceProviderSettingsOperations['provision']>>[0],
-      ) {
-        const context = projectVoiceProviderProvisioningContext(request);
-        return await withSettingsInvocationSignal({
-          callerSignal: request.signal,
-          revocationSignal,
-          async run(signal) {
-            assertSettingsOperationCurrent(signal, input.isCurrent);
-            let result: VoiceRealtimeJsonValue;
-            try {
-              result = await operations.provision!({
-                ...request,
-                ...context,
+  });
+}
+
+/** Bind declared generic settings actions to current credential/currentness authority. */
+export function bindVoiceProviderSettingsActions(input: Readonly<{
+  actions: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
+  declaredActions: readonly Readonly<{ id: string; patchFieldIds: readonly string[] }>[];
+  createCredentials(signal: AbortSignal): VoiceCredentialAccess<'settings'>;
+  createInteractions(input: Readonly<{
+    signal: AbortSignal;
+    isCurrent(): boolean;
+  }>): VoiceSettingsActionContext['interactions'];
+  getRealtimeClientToolDefinitions(): VoiceSettingsActionContext['tools'];
+  isCurrent(): boolean;
+  revocationSignal?: AbortSignal;
+}>): BoundVoiceProviderSettingsActions {
+  if (typeof input.createInteractions !== 'function') {
+    throw activationError('voice_settings_interaction_host_required');
+  }
+  const declaredActions = new Map(input.declaredActions.map((action) => [action.id, action]));
+  const revocationSignal = input.revocationSignal ?? new AbortController().signal;
+  return Object.freeze({
+    async execute(request) {
+      const declaration = declaredActions.get(request.actionId);
+      if (!declaration) {
+        throw activationError('undeclared_voice_provider_settings_action');
+      }
+      return await withVoiceProviderInvocationLifetime({
+        callerSignal: request.signal,
+        revocationSignal,
+        async run(signal) {
+          assertSettingsOperationCurrent(signal, input.isCurrent);
+          let result: Awaited<ReturnType<typeof input.actions.execute>>;
+          try {
+            const actionInput: PluginSettingsActionInput = Object.freeze({
+              actionId: request.actionId,
+              settings: request.settings,
+            });
+            result = await input.actions.execute(actionInput, Object.freeze({
+              credentials: input.createCredentials(signal),
+              interactions: input.createInteractions({
                 signal,
-                accountOperations: input.createAccountOperations(signal),
-              });
-            } catch (error) {
-              if (revocationSignal.aborted || !input.isCurrent()) throw settingsOperationCancelled();
-              throw error;
-            }
-            assertSettingsOperationCurrent(signal, input.isCurrent);
-            return VoiceRealtimeJsonValueSchema.parse(result);
-          },
-        });
-      },
-    } : {}),
+                isCurrent: input.isCurrent,
+              }),
+              signal,
+              tools: input.getRealtimeClientToolDefinitions(),
+            }));
+          } catch (error) {
+            if (revocationSignal.aborted || !input.isCurrent()) throw settingsOperationCancelled();
+            throw error;
+          }
+          assertSettingsOperationCurrent(signal, input.isCurrent);
+          // The generic host settings-action invoker is the single patch
+          // allowlist/bounds/JSON normalization owner. This binding owns only
+          // manifest admission, credentials, cancellation, and generation.
+          return result;
+        },
+      });
+    },
   });
 }
 
@@ -300,120 +315,25 @@ export type ExternalVoiceProviderActivationApi = Readonly<{
 }>;
 
 export type VoiceProviderActivationHostBinding = Readonly<{
-  providerId: string;
   recipientContract?: RecipientContractV1 | null;
-  inspectInvocationAccountOperations?(
-    signal: AbortSignal,
-    isCurrent: () => boolean,
-  ): Promise<void>;
   createInvocationAccountOperations?(
     signal: AbortSignal,
     conversationSessionId: string | null,
     isCurrent: () => boolean,
-  ): PluginVoiceAccountOperationService;
+    phase: 'settings' | 'prepare' | 'connection',
+  ): VoiceAccountOperationService;
   createInvocationHostedConversation?(
     signal: AbortSignal,
     isCurrent: () => boolean,
-  ): PluginVoiceHostedConversationService;
+  ): VoiceHostedConversationService;
   resolveSurfaceCapabilities?: BundledRealtimeProviderRuntimeConfig['resolveSurfaceCapabilities'];
   descriptor: 'external' | 'bundled';
 }>;
-
-const REGISTRATION_KEYS = new Set([
-  'protocol',
-  'settingsOperations',
-  'createConnection',
-  'encodeToolResults',
-  'encodeToolContinuation',
-  'beforeToolContinuation',
-  'beforeInterrupt',
-  'forgetProviderConversation',
-  'dispose',
-  'encodePostCancelControls',
-  'encodePostBargeInControls',
-  'requiresMicForConnection',
-  'setInputMuted',
-  'encodeContextUpdate',
-  'encodeTextTurn',
-  'outputLevelMeter',
-]);
-
-const SETTINGS_OPERATION_KEYS = new Set(['listCatalog', 'provision']);
-
-const PROTOCOL_KEYS = new Set([
-  'preflight',
-  'prepare',
-  'decodeControl',
-  'encodeTurnControl',
-  'refreshAuth',
-  'releasePrepared',
-]);
-
-const OPTIONAL_REGISTRATION_FUNCTIONS = [
-  'beforeToolContinuation',
-  'beforeInterrupt',
-  'forgetProviderConversation',
-  'dispose',
-  'encodePostCancelControls',
-  'encodePostBargeInControls',
-  'setInputMuted',
-] as const;
-
-const OPTIONAL_PROTOCOL_FUNCTIONS = [
-  'preflight',
-  'refreshAuth',
-  'releasePrepared',
-] as const;
-
-function hasOnlyKeys(value: Readonly<Record<string, unknown>>, allowed: ReadonlySet<string>): boolean {
-  return Object.keys(value).every((key) => allowed.has(key));
-}
 
 function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
   for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
   return Object.freeze(value);
-}
-
-function hasValidOptionalFunctions(
-  value: Readonly<Record<string, unknown>>,
-  keys: readonly string[],
-): boolean {
-  return keys.every((key) => value[key] === undefined || typeof value[key] === 'function');
-}
-
-export function isVoiceProviderRuntimeRegistration(value: unknown): value is ExternalVoiceProviderRuntimeRegistration {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const runtime = value as Readonly<Record<string, unknown>>;
-  if (!hasOnlyKeys(runtime, REGISTRATION_KEYS)) return false;
-  if (runtime.settingsOperations !== undefined) {
-    if (!runtime.settingsOperations
-      || typeof runtime.settingsOperations !== 'object'
-      || Array.isArray(runtime.settingsOperations)) return false;
-    const settingsOperations = runtime.settingsOperations as Readonly<Record<string, unknown>>;
-    if (!hasOnlyKeys(settingsOperations, SETTINGS_OPERATION_KEYS)
-      || !hasValidOptionalFunctions(settingsOperations, ['listCatalog', 'provision'])
-      || (settingsOperations.listCatalog === undefined && settingsOperations.provision === undefined)) return false;
-  }
-  if (!runtime.protocol || typeof runtime.protocol !== 'object' || Array.isArray(runtime.protocol)) return false;
-  const protocol = runtime.protocol as Readonly<Record<string, unknown>>;
-  return hasOnlyKeys(protocol, PROTOCOL_KEYS)
-    && protocol.id === undefined
-    && protocol.turnControls === undefined
-    && typeof protocol.prepare === 'function'
-    && typeof protocol.decodeControl === 'function'
-    && typeof protocol.encodeTurnControl === 'function'
-    && hasValidOptionalFunctions(protocol, OPTIONAL_PROTOCOL_FUNCTIONS)
-    && typeof runtime.createConnection === 'function'
-    && typeof runtime.encodeToolResults === 'function'
-    && typeof runtime.encodeToolContinuation === 'function'
-    && typeof runtime.encodeContextUpdate === 'function'
-    && typeof runtime.encodeTextTurn === 'function'
-    && hasValidOptionalFunctions(runtime, OPTIONAL_REGISTRATION_FUNCTIONS)
-    && (runtime.requiresMicForConnection === undefined || typeof runtime.requiresMicForConnection === 'boolean')
-    && (runtime.outputLevelMeter === undefined
-      || runtime.outputLevelMeter === 'measured'
-      || runtime.outputLevelMeter === 'unavailable');
 }
 
 function isVoiceRealtimeConnection(value: unknown): value is VoiceRealtimeConnection {
@@ -439,13 +359,33 @@ function activationError(code: string): Error {
 function createUnavailableInvocationUi(): PluginUiHostApi {
   const unavailable = (): never => { throw activationError('plugin_ui_action_host_unavailable'); };
   return Object.freeze({
-    version: () => Object.freeze({ apiVersion: '1.0.0', wireVersion: 1, methods: Object.freeze([]) }),
+    version: () => Object.freeze({
+      apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
+      wireVersion: 1,
+      methods: Object.freeze([]),
+    }),
     context: async () => unavailable(),
     watchContext: unavailable,
+    activeComposer: async () => unavailable(),
+    readComposer: async () => unavailable(),
+    watchComposer: async () => unavailable(),
+    applyComposer: async () => unavailable(),
+    focusComposer: async () => unavailable(),
+    setComposerDecorations: async () => unavailable(),
+    acquireComposerInputLock: async () => unavailable(),
+    pickComposerMedia: async () => unavailable(),
+    inspectComposerContent: async () => unavailable(),
+    releaseComposerContent: async () => unavailable(),
     executeAction: async () => unavailable(),
+    selectActionInput: async () => unavailable(),
     readResource: async () => unavailable(),
-    watchResource: unavailable,
+    statOpenableContent: async () => unavailable(),
+    readOpenableContent: async () => unavailable(),
+    watchResource: async () => unavailable(),
     openSurface: async () => unavailable(),
+    replacePageLocation: async () => unavailable(),
+    notify: async () => unavailable(),
+    confirm: async () => unavailable(),
     diagnostic: () => {},
     readClipboard: async () => unavailable(),
     writeClipboard: async () => unavailable(),
@@ -472,30 +412,21 @@ function createVoiceAttemptInvocationUi(input: Readonly<{
   });
 }
 
-function createUnavailableAccountOperations(): PluginVoiceAccountOperationService {
-  return Object.freeze({
-    async request(): Promise<never> {
-      throw activationError('voice_account_operation_unavailable');
-    },
-  });
-}
-
-function declarationTitle(declaration: PluginVoiceProviderContributionV1): string {
+function declarationTitle(declaration: VoiceProviderContribution): string {
   return typeof declaration.title === 'string' ? declaration.title : declaration.title.fallback;
 }
 
 function projectExternalAccountCredentialSlot(
-  declaration: PluginVoiceConversationProviderContributionV1,
+  declaration: VoiceConversationProviderContribution,
   recipientContract: RecipientContractV1 | null,
 ): NonNullable<VoiceProviderRegistryEntry['accountCredentialSlot']> | null {
-  if (declaration.capabilities.readiness.requirements.length !== 1
-    || declaration.capabilities.readiness.requirements[0] !== 'credential') return null;
-  const mediation = declaration.accountMediation;
-  if (!mediation || mediation.credentialSlots.length !== 1 || !recipientContract) return null;
-  const slot = mediation.credentialSlots[0]!;
+  const credentials = declaration.credentials;
+  if (!credentials?.hostMediated || !recipientContract) return null;
+  const savedSecret = credentials.sources.find((source) => source.kind === 'savedSecret');
+  if (!savedSecret?.secretKinds.includes('apiKey')) return null;
+  const slot = credentials.slot;
   const normalizedRecipientContract = normalizeRecipientContractV1(recipientContract);
-  if (slot.scope !== 'account'
-    || mediation.operations.some((operation) => operation.credentialSlotId !== slot.id)
+  if (credentials.hostMediated.operations.some((operation) => operation.credentialSlotId !== slot.id)
     || normalizedRecipientContract.credentialSlot.id !== slot.id) return null;
   return Object.freeze({
     id: slot.id,
@@ -506,18 +437,98 @@ function projectExternalAccountCredentialSlot(
   });
 }
 
+function createVoiceCredentialAccess<P extends 'settings' | 'prepare' | 'connection'>(input: Readonly<{
+  declaration: VoiceConversationProviderContribution;
+  phase: P;
+  createMediated?: () => VoiceAccountOperationService;
+  raw: VoiceCredentialAccess<P>['raw'];
+}>): VoiceCredentialAccess<P> {
+  const permitsMediatedAccess = input.declaration.credentials?.sources.some((source) => (
+    source.operationProjections?.some((projection) => projection.phase === input.phase) === true
+  )) === true;
+  return Object.freeze({
+    phase: input.phase,
+    mediated: permitsMediatedAccess ? input.createMediated?.() ?? null : null,
+    raw: input.raw,
+  });
+}
+
+export function createDeclaredVoiceClientRawCredentialAccess(input: Readonly<{
+  pluginId: string;
+  declaration: VoiceConversationProviderContribution;
+  identity: DaemonPluginReactNativeBundleCacheIdentityV1;
+  hostPlatform: 'web' | 'ios' | 'android';
+  phase: 'settings' | 'prepare' | 'connection';
+  generation: string;
+  signal: AbortSignal;
+  isCurrent(): boolean;
+}>): VoiceCredentialAccess<'connection'>['raw'] {
+  if (
+    input.identity.pluginId !== input.pluginId
+    || input.identity.contributionId !== input.declaration.id
+    || input.identity.platform !== input.hostPlatform
+    || String(input.identity.projectionGeneration) !== input.generation
+  ) return null;
+  const declared = input.declaration.credentials?.sources.some((source) => (
+    source.rawGrants?.some((grant) => (
+      grant.realm === input.hostPlatform
+      && grant.phase === input.phase
+      && grant.request.kind === 'httpHeaders'
+    )) === true
+  )) === true;
+  if (!declared) return null;
+  let credentialBinding: ReturnType<typeof deriveVoiceCredentialBindingIdentityV1>;
+  try {
+    credentialBinding = deriveVoiceCredentialBindingIdentityV1({
+      pluginId: input.pluginId,
+      contribution: input.declaration,
+    });
+  } catch {
+    return null;
+  }
+  if (!credentialBinding) return null;
+  // The selected daemon is part of this credential authority: both source
+  // selection and raw RPC dispatch must stay on the same captured target for
+  // this one provider invocation.
+  const machineId = resolveVoiceExecutionMachineId();
+  const sourceLease = createAccountVoiceCredentialAuthorityLease({
+    contribution: credentialBinding.contribution,
+    providerId: buildQualifiedPluginContributionKey(credentialBinding.contribution),
+    credentialSlotId: credentialBinding.credentialSlotId,
+    purpose: credentialBinding.purpose,
+    machineId,
+    isCurrent: input.isCurrent,
+  });
+  return createVoiceClientRawCredentialAccess({
+    identity: input.identity,
+    phase: input.phase,
+    signal: input.signal,
+    isCurrent: input.isCurrent,
+    machineId,
+    isInvocationCurrent: () => (
+      machineId !== null
+      && resolveVoiceExecutionMachineId() === machineId
+      && sourceLease.isCurrent()
+    ),
+  });
+}
+
 export function createExternalProtocol(
   host: BundledRealtimeProviderRuntimeHost,
   providerId: string,
-  platform: PluginVoiceRuntimePlatform,
-  declaration: PluginVoiceConversationProviderContributionV1,
+  platform: VoiceRuntimePlatform,
+  declaration: VoiceConversationProviderContribution,
   leaf: ExternalVoiceProviderProtocolLeaf,
   createInvocationAccountOperations?: (
     signal: AbortSignal,
     conversationSessionId: string | null,
-  ) => PluginVoiceAccountOperationService,
-  createInvocationHostedConversation?: (signal: AbortSignal) => PluginVoiceHostedConversationService,
-  inspectInvocationAccountOperations?: (signal: AbortSignal) => Promise<void>,
+    phase: 'prepare' | 'connection',
+  ) => VoiceAccountOperationService,
+  createInvocationHostedConversation?: (signal: AbortSignal) => VoiceHostedConversationService,
+  createInvocationRawCredentials?: (
+    phase: 'prepare' | 'connection',
+    signal: AbortSignal,
+  ) => VoiceCredentialAccess<'prepare' | 'connection'>['raw'],
 ): VoiceRealtimeProtocolAdapter {
   const providerConfigByAttemptId = new Map<number, VoiceRealtimeJsonValue>();
   const providerConversationFactory = declaration.capabilities.turn.resumption === 'resume'
@@ -557,10 +568,13 @@ export function createExternalProtocol(
           providerConfigByAttemptId.delete(preflightInput.attemptId);
           return result;
         }
-        await inspectInvocationAccountOperations?.(preflightInput.signal);
         return result;
       } catch (error) {
         providerConfigByAttemptId.delete(preflightInput.attemptId);
+        const remediationCode = readVoiceProviderCredentialRemediationCode(error);
+        if (remediationCode) {
+          return { kind: 'declined', code: remediationCode };
+        }
         throw error;
       }
     },
@@ -570,34 +584,46 @@ export function createExternalProtocol(
         : readProviderConfig();
       providerConfigByAttemptId.delete(prepareInput.attemptId);
       if (providerConfig === null) return { kind: 'declined', code: 'invalid_provider_settings' };
-      const conversationSessionId = host.resolveConversationSessionId(
-        prepareInput.controlSessionId,
-        providerId,
-      );
-      const providerConversationPersistenceAvailable = Boolean(
-        conversationSessionId
-        && providerConversationFactory
-        && host.canPersistProviderConversationState?.({
-          providerId,
-          conversationSessionId,
-        }) === true,
-      );
-      return await leaf.prepare(Object.freeze({
-        ...prepareInput,
-        platform,
-        providerConfig,
-        accountOperations: createInvocationAccountOperations?.(
-          prepareInput.signal,
-          conversationSessionId,
-        )
-          ?? createUnavailableAccountOperations(),
-        providerConversation: conversationSessionId
-          && providerConversationFactory
-          && providerConversationPersistenceAvailable
-          ? providerConversationFactory.createAttempt(conversationSessionId)
-          : null,
-        hostedConversation: createInvocationHostedConversation?.(prepareInput.signal) ?? null,
-      }));
+      return await withVoiceProviderInvocationLifetime({
+        callerSignal: prepareInput.signal,
+        async run(signal) {
+          const conversationSessionId = host.resolveConversationSessionId(
+            prepareInput.controlSessionId,
+            providerId,
+          );
+          const providerConversationPersistenceAvailable = Boolean(
+            conversationSessionId
+            && providerConversationFactory
+            && host.canPersistProviderConversationState?.({
+              providerId,
+              conversationSessionId,
+            }) === true,
+          );
+          return await leaf.prepare(Object.freeze({
+            ...prepareInput,
+            platform,
+            providerConfig,
+            credentials: createVoiceCredentialAccess({
+              declaration,
+              phase: 'prepare',
+              ...(createInvocationAccountOperations ? {
+                createMediated: () => createInvocationAccountOperations(
+                  signal,
+                  conversationSessionId,
+                  'prepare',
+                ),
+              } : {}),
+              raw: createInvocationRawCredentials?.('prepare', signal) ?? null,
+            }),
+            providerConversation: conversationSessionId
+              && providerConversationFactory
+              && providerConversationPersistenceAvailable
+              ? providerConversationFactory.createAttempt(conversationSessionId)
+              : null,
+            hostedConversation: createInvocationHostedConversation?.(signal) ?? null,
+          }));
+        },
+      });
     },
     async releasePrepared(releaseInput) {
       providerConfigByAttemptId.delete(releaseInput.attemptId);
@@ -609,18 +635,22 @@ export function createExternalProtocol(
 /** Compose an external leaf through the same host-owned controller as bundled providers. */
 export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
   host: BundledRealtimeProviderRuntimeHost;
-  platform: PluginVoiceRuntimePlatform;
+  platform: VoiceRuntimePlatform;
   providerId: string;
   providerRef?: Readonly<{ pluginId: string; localId: string }>;
-  declaration: PluginVoiceConversationProviderContributionV1;
+  declaration: VoiceConversationProviderContribution;
   runtime: ExternalVoiceProviderRuntimeRegistration;
   providerSettings?: ExternalVoiceProviderSettingsDescriptor;
   createInvocationAccountOperations?(
     signal: AbortSignal,
     conversationSessionId: string | null,
-  ): PluginVoiceAccountOperationService;
-  inspectInvocationAccountOperations?(signal: AbortSignal): Promise<void>;
-  createInvocationHostedConversation?(signal: AbortSignal): PluginVoiceHostedConversationService;
+    phase: 'prepare' | 'connection',
+  ): VoiceAccountOperationService;
+  createInvocationHostedConversation?(signal: AbortSignal): VoiceHostedConversationService;
+  createInvocationRawCredentials?(
+    phase: 'prepare' | 'connection',
+    signal: AbortSignal,
+  ): VoiceCredentialAccess<'prepare' | 'connection'>['raw'];
   createInvocationUi?(signal: AbortSignal): PluginUiHostApi;
   resolveSurfaceCapabilities?: BundledRealtimeProviderRuntimeConfig['resolveSurfaceCapabilities'];
 }>): BundledVoiceRuntimeContribution {
@@ -639,29 +669,32 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
             })
           : declaration.execution.agent;
         const connectedServicesBinding = providerSettings.connectedServicesBinding;
-        if (!connectedServicesBinding) {
-          throw activationError('voice_agent_realtime_connected_services_binding_required');
-        }
-        const bindingAgent = typeof connectedServicesBinding.agent === 'string'
-          ? Object.freeze({
-              pluginId: provider.pluginId,
-              localId: connectedServicesBinding.agent,
-            })
-          : connectedServicesBinding.agent;
-        if (bindingAgent.pluginId !== agent.pluginId || bindingAgent.localId !== agent.localId) {
-          throw activationError('voice_agent_realtime_binding_agent_mismatch');
+        if (connectedServicesBinding) {
+          const bindingAgent = typeof connectedServicesBinding.agent === 'string'
+            ? Object.freeze({
+                pluginId: provider.pluginId,
+                localId: connectedServicesBinding.agent,
+              })
+            : connectedServicesBinding.agent;
+          if (bindingAgent.pluginId !== agent.pluginId || bindingAgent.localId !== agent.localId) {
+            throw activationError('voice_agent_realtime_binding_agent_mismatch');
+          }
         }
         return Object.freeze({
           kind: 'experimental_agent_session_realtime' as const,
           provider,
           agent,
-          connectedServicesBinding,
+          ...(connectedServicesBinding ? { connectedServicesBinding } : {}),
         });
       })()
     : null;
   const supportsProviderConversationForget = declaration.capabilities.turn.resumption === 'resume';
   if (supportsProviderConversationForget !== (runtime.forgetProviderConversation !== undefined)) {
     throw activationError('voice_provider_resumption_registration_mismatch');
+  }
+  const forgetProviderConversationState = input.host.forgetProviderConversationState;
+  if (supportsProviderConversationForget && !forgetProviderConversationState) {
+    throw activationError('voice_provider_resumption_forget_host_unavailable');
   }
   const config: BundledRealtimeProviderRuntimeConfig = Object.freeze({
     providerId,
@@ -688,32 +721,53 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
       runtime.protocol,
       input.createInvocationAccountOperations,
       input.createInvocationHostedConversation,
-      input.inspectInvocationAccountOperations,
+      input.createInvocationRawCredentials,
     ),
     async createConnection(connectionInput) {
-      const {
-        controlSessionId,
-        ...providerConnectionInput
-      } = connectionInput;
-      const baseUi =
-        input.createInvocationUi?.(connectionInput.signal) ?? createUnavailableInvocationUi();
-      const connection = await runtime.createConnection(Object.freeze({
-        ...providerConnectionInput,
-        tools: bindVoiceClientToolsToAttempt(
-          input.host.getRealtimeClientToolDefinitions(),
-          connectionInput.signal,
-        ),
-        ui: createVoiceAttemptInvocationUi({
-          base: baseUi,
-          host: input.host,
-          controlSessionId,
-          attemptId: connectionInput.attemptId,
-        }),
-      }));
-      if (!isVoiceRealtimeConnection(connection)) {
-        throw activationError('invalid_external_voice_provider_connection');
-      }
-      return connection;
+      return await withVoiceProviderInvocationLifetime({
+        callerSignal: connectionInput.signal,
+        async run(signal) {
+          const {
+            controlSessionId,
+            ...providerConnectionInput
+          } = connectionInput;
+          const conversationSessionId = input.host.resolveConversationSessionId(
+            controlSessionId,
+            providerId,
+          );
+          const baseUi =
+            input.createInvocationUi?.(connectionInput.signal) ?? createUnavailableInvocationUi();
+          const connection = await runtime.createConnection(Object.freeze({
+            ...providerConnectionInput,
+            credentials: createVoiceCredentialAccess({
+              declaration,
+              phase: 'connection',
+              ...(input.createInvocationAccountOperations ? {
+                createMediated: () => input.createInvocationAccountOperations!(
+                  signal,
+                  conversationSessionId,
+                  'connection',
+                ),
+              } : {}),
+              raw: input.createInvocationRawCredentials?.('connection', signal) ?? null,
+            }),
+            tools: bindVoiceClientToolsToAttempt(
+              input.host.getRealtimeClientToolDefinitions(),
+              connectionInput.signal,
+            ),
+            ui: createVoiceAttemptInvocationUi({
+              base: baseUi,
+              host: input.host,
+              controlSessionId,
+              attemptId: connectionInput.attemptId,
+            }),
+          }));
+          if (!isVoiceRealtimeConnection(connection)) {
+            throw activationError('invalid_external_voice_provider_connection');
+          }
+          return connection;
+        },
+      });
     },
     encodeToolResults: (results) => runtime.encodeToolResults(results),
     encodeToolContinuation: (responseId) => runtime.encodeToolContinuation(responseId),
@@ -721,7 +775,14 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
       ? { beforeToolContinuation: (responseId: string, signal: AbortSignal) => runtime.beforeToolContinuation!(responseId, signal) }
       : {}),
     ...(runtime.forgetProviderConversation
-      ? { runtimeActions: Object.freeze({ forget_provider_conversation: () => runtime.forgetProviderConversation!() }) }
+      ? {
+          runtimeActions: Object.freeze({
+            forget_provider_conversation: async () => {
+              await runtime.forgetProviderConversation!();
+              await forgetProviderConversationState!({ providerId });
+            },
+          }),
+        }
       : {}),
     ...(declaration.capabilities.turn.cancelResponse && runtime.beforeInterrupt
       ? { beforeInterrupt: () => runtime.beforeInterrupt!() }
@@ -732,9 +793,7 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
     ...(declaration.capabilities.turn.bargeIn && runtime.encodePostBargeInControls
       ? { encodePostBargeInControls: () => runtime.encodePostBargeInControls!() }
       : {}),
-    ...(runtime.requiresMicForConnection !== undefined
-      ? { requiresMicForConnection: runtime.requiresMicForConnection }
-      : {}),
+    microphoneMode: runtime.microphoneMode,
     ...(runtime.setInputMuted
       ? { setInputMuted: (muted: boolean) => runtime.setInputMuted!(muted) }
       : {}),
@@ -752,6 +811,13 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
               throw activationError('agent_realtime_voice_binding_host_unavailable');
             }
             if (bindingInput.controlSessionId !== input.host.globalVoiceSessionId) {
+              return await resolveBinding({
+                ...bindingInput,
+                provider: execution.provider,
+                agent: execution.agent,
+              });
+            }
+            if (!execution.connectedServicesBinding) {
               return await resolveBinding({
                 ...bindingInput,
                 provider: execution.provider,
@@ -815,21 +881,53 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
 
 function projectExternalAdapter(
   contribution: BundledVoiceRuntimeContribution,
-  declaration: PluginVoiceConversationProviderContributionV1,
+  declaration: VoiceConversationProviderContribution,
 ): VoiceAdapterController {
   if (declaration.capabilities.turn.bargeIn) return contribution.adapter;
   const { bargeIn: _bargeIn, ...adapter } = contribution.adapter;
   return Object.freeze(adapter);
 }
 
+type CommittedVoiceRuntimeCleanupOwner = Readonly<{
+  transferToContribution(contribution: BundledVoiceRuntimeContribution): void;
+  dispose(): Promise<void>;
+}>;
+
+function createCommittedVoiceRuntimeCleanupOwner(
+  runtime: ExternalVoiceProviderRuntimeRegistration,
+): CommittedVoiceRuntimeCleanupOwner {
+  let ownedCleanup: (() => Promise<void> | void) | null = runtime.dispose ?? null;
+  let transferred = false;
+  let disposed = false;
+  return Object.freeze({
+    transferToContribution(contribution: BundledVoiceRuntimeContribution) {
+      if (disposed || transferred) {
+        throw activationError('external_voice_provider_cleanup_ownership_transfer_invalid');
+      }
+      transferred = true;
+      ownedCleanup = () => contribution.dispose();
+    },
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      const cleanup = ownedCleanup;
+      ownedCleanup = null;
+      await cleanup?.();
+    },
+  });
+}
+
 export function createExternalVoiceProviderActivationScope(input: Readonly<{
   pluginId: string;
   generation?: string;
-  declarations: readonly PluginVoiceConversationProviderContributionV1[];
+  declarations: readonly VoiceConversationProviderContribution[];
   hostPlatform: string;
   runtimeHost?: BundledRealtimeProviderRuntimeHost;
   isRuntimeHostCurrent?(): boolean;
   recipientContractsByLocalId?: Readonly<Record<string, RecipientContractV1>>;
+  clientRuntimeIdentitiesByLocalId?: Readonly<
+    Record<string, DaemonPluginReactNativeBundleCacheIdentityV1>
+  >;
   hostBindingsByLocalId?: Readonly<Record<string, VoiceProviderActivationHostBinding>>;
   createInvocationUi?(input: Readonly<{
     pluginId: string;
@@ -841,7 +939,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
 }>): PluginUiExecutableActivationScope<ExternalVoiceProviderActivationApi> {
   if (input.declarations.length === 0) throw activationError('external_voice_provider_declaration_required');
   const declarations = input.declarations.map((declaration) => {
-    const parsed = PluginVoiceProviderContributionV1Schema.safeParse(declaration);
+    const parsed = VoiceProviderContributionSchema.safeParse(declaration);
     if (!parsed.success || parsed.data.kind !== 'conversation') {
       throw activationError('invalid_external_voice_provider_declaration');
     }
@@ -860,19 +958,38 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
   if (declarations.some((declaration) => !declaration.platforms.includes(hostPlatform))) {
     throw activationError('external_voice_provider_platform_unavailable');
   }
-  const declarationsById = new Map(declarations.map((declaration) => [declaration.id, declaration] as const));
-  if (declarationsById.size !== declarations.length) {
-    throw activationError('duplicate_voice_provider_declaration');
-  }
+  const clientTarget = declarations[0]!.client;
+  const registrationScope = createPluginRegistrationScope({
+    pluginId: input.pluginId,
+    target: Object.freeze({
+      realm: 'client' as const,
+      artifactId: clientTarget.artifactId,
+      modulePath: clientTarget.modulePath,
+      exportName: clientTarget.exportName,
+      platform: hostPlatform,
+    }),
+    rights: declarations.map((declaration) => Object.freeze({
+      family: 'voiceProviders',
+      localId: declaration.id,
+      target: Object.freeze({
+        realm: 'client' as const,
+        artifactId: declaration.client.artifactId,
+        modulePath: declaration.client.modulePath,
+        exportName: declaration.client.exportName,
+        platforms: declaration.platforms,
+      }),
+      voiceProviderDeclaration: declaration,
+    })),
+  });
   const token = Object.freeze({});
-  const stagedById = new Map<string, ExternalVoiceProviderRuntimeRegistration>();
-  let committedRuntimes: readonly BundledVoiceRuntimeContribution[] = Object.freeze([]);
+  let committedRuntimeCleanups: readonly CommittedVoiceRuntimeCleanupOwner[] = Object.freeze([]);
   let committedHost: BundledRealtimeProviderRuntimeHost | null = null;
   let committed = false;
   let unwound = false;
   let unsubscribeRuntimeGeneration: (() => void) | null = null;
   let disposalPromise: Promise<void> | null = null;
   const settingsOperationsRevocation = new AbortController();
+  let nextSettingsActionInvocationId = 0;
   const readCurrentHost = (): BundledRealtimeProviderRuntimeHost | null => (
     input.runtimeHost && input.isRuntimeHostCurrent
       ? input.isRuntimeHostCurrent() ? input.runtimeHost : null
@@ -890,11 +1007,11 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
     unsubscribeRuntimeGeneration?.();
     unsubscribeRuntimeGeneration = null;
     if (disposalPromise) return await disposalPromise;
-    const retiringRuntimes = committedRuntimes;
-    committedRuntimes = Object.freeze([]);
-    disposalPromise = Promise.all(retiringRuntimes.map(async (runtime) => {
+    const retiringCleanups = committedRuntimeCleanups;
+    committedRuntimeCleanups = Object.freeze([]);
+    disposalPromise = Promise.all(retiringCleanups.map(async (cleanup) => {
       try {
-        await runtime.dispose?.();
+        await cleanup.dispose();
       } catch {
         // A plugin cleanup failure cannot retain registration authority.
       }
@@ -903,82 +1020,128 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
   };
   return Object.freeze({
     api: Object.freeze({
-      voiceProviders: Object.freeze({
-        register(localId: string, runtime: ExternalVoiceProviderRuntimeRegistration) {
-          if (unwound || committed) throw activationError('external_voice_provider_registration_closed');
-          if (!declarationsById.has(localId)) throw activationError('undeclared_voice_provider_registration');
-          if (stagedById.has(localId)) throw activationError('duplicate_voice_provider_registration');
-          if (!isVoiceProviderRuntimeRegistration(runtime)) {
-            throw activationError('invalid_external_voice_provider_leaf_registration');
-          }
-          stagedById.set(localId, runtime);
-        },
-      }),
+      voiceProviders: registrationScope.api.voiceProviders,
     }),
     isCurrent,
+    /**
+     * SYNCHRONY INVARIANT — do not insert an `await` before the registry
+     * publish/withdrawal below.
+     *
+     * `createBundledConversationRuntimes` reads
+     * `getExternalVoiceProviderRegistration(providerId)` SYNCHRONOUSLY right
+     * after calling this, and only fire-and-forgets the returned promise. That
+     * is safe solely because every rejection path here runs its withdrawal
+     * (`disposeCommittedRuntimes`, whose first statements abort the settings
+     * operations and remove the registration) inside this function's
+     * synchronous prefix — so a failed leaf is already absent by the time the
+     * caller looks.
+     *
+     * Deferring that teardown by even one microtask reintroduces a stale
+     * runtime escaping to a consumer that believes the leaf is healthy. A
+     * regression test in `bundledConversationRuntimes.test.ts` covers this by
+     * rejecting a registration observer; it was verified to fail when the
+     * teardown is deferred.
+     */
     async commit() {
       if (unwound || committed) throw activationError('external_voice_provider_registration_closed');
-      if (stagedById.size !== declarationsById.size) throw activationError('missing_voice_provider_registration');
       const host = readCurrentHost();
       if (!host) throw activationError('voice_runtime_host_unavailable');
+      const committedById = new Map<string, Readonly<{
+        runtime: ExternalVoiceProviderRuntimeRegistration;
+        cleanup: CommittedVoiceRuntimeCleanupOwner;
+      }>>();
+      for (const registration of registrationScope.commit()) {
+        if (registration.family !== 'voiceProviders' || registration.value.kind !== 'conversation') {
+          throw activationError('invalid_external_voice_provider_leaf_registration');
+        }
+        committedById.set(registration.localId, Object.freeze({
+          runtime: registration.value,
+          cleanup: createCommittedVoiceRuntimeCleanupOwner(registration.value),
+        }));
+      }
+      committedRuntimeCleanups = Object.freeze(
+        [...committedById.values()].map((registration) => registration.cleanup),
+      );
       committedHost = host;
       committed = true;
       const registrations: Array<Readonly<{
-        declaration: PluginVoiceConversationProviderContributionV1;
+        declaration: VoiceConversationProviderContribution;
         providerId: string;
         providerSettings: ExternalVoiceProviderSettingsDescriptor;
         runtime: ExternalVoiceProviderRuntimeRegistration;
         contribution: BundledVoiceRuntimeContribution;
         adapter: VoiceAdapterController;
+        createInvocationAccountOperations: ((
+          signal: AbortSignal,
+          conversationSessionId: string | null,
+          phase: 'settings' | 'prepare' | 'connection',
+        ) => VoiceAccountOperationService) | null;
       }>> = [];
       try {
         for (const declaration of declarations) {
-          const runtime = stagedById.get(declaration.id);
-          if (!runtime) throw activationError('missing_voice_provider_registration');
+          const committedRuntime = committedById.get(declaration.id);
+          if (!committedRuntime) throw activationError('missing_voice_provider_registration');
+          const { runtime } = committedRuntime;
           const hostBinding = input.hostBindingsByLocalId?.[declaration.id];
-          const providerId = hostBinding?.providerId
-            ?? buildQualifiedPluginContributionKey(createPluginContributionIdentity({
-              pluginId: input.pluginId,
-              localId: declaration.id,
-            }));
+          const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+            pluginId: input.pluginId,
+            localId: declaration.id,
+          }));
           const providerSettings = createExternalVoiceProviderSettingsDescriptor(declaration.settings);
           const recipientContract = hostBinding?.recipientContract
             ?? input.recipientContractsByLocalId?.[declaration.id]
             ?? null;
-          if (runtime.settingsOperations && !recipientContract) {
-            throw activationError('voice_provider_settings_account_operations_unavailable');
-          }
+          const clientRuntimeIdentity = input.clientRuntimeIdentitiesByLocalId?.[declaration.id] ?? null;
+          const createInvocationRawCredentials = clientRuntimeIdentity
+            ? (phase: 'prepare' | 'connection', signal: AbortSignal) => createDeclaredVoiceClientRawCredentialAccess({
+                declaration,
+                pluginId: input.pluginId,
+                identity: clientRuntimeIdentity,
+                hostPlatform,
+                phase,
+                generation: input.generation ?? '',
+                signal,
+                isCurrent,
+              })
+            : null;
           const createInvocationAccountOperations = hostBinding?.createInvocationAccountOperations
-            ? (signal: AbortSignal, conversationSessionId: string | null) =>
+            ? (
+                signal: AbortSignal,
+                conversationSessionId: string | null,
+                phase: 'settings' | 'prepare' | 'connection',
+              ) =>
                 hostBinding.createInvocationAccountOperations!(
                   signal,
                   conversationSessionId,
                   isCurrent,
+                  phase,
                 )
             : recipientContract
-            ? (signal: AbortSignal) => createAccountVoiceOperationService({
+            ? (
+                signal: AbortSignal,
+                _conversationSessionId: string | null,
+                phase: 'settings' | 'prepare' | 'connection',
+              ) => createAccountVoiceOperationService({
                 providerId,
+                contribution: {
+                  pluginId: input.pluginId,
+                  localId: declaration.id,
+                },
                 recipientContract,
                 signal,
                 isCurrent,
-                requireRecipientApproval: true,
+                materializeConnectedAccountHeaders:
+                  createVoiceClientMediatedCredentialHeadersMaterializer({
+                    contribution: {
+                      pluginId: input.pluginId,
+                      localId: declaration.id,
+                    },
+                    platform: hostPlatform,
+                    phase,
+                    isCurrent,
+                  }),
               })
             : null;
-          const inspectInvocationAccountOperations =
-            hostBinding?.inspectInvocationAccountOperations
-              ? (signal: AbortSignal) =>
-                  hostBinding.inspectInvocationAccountOperations!(signal, isCurrent)
-              : recipientContract
-                ? async (signal: AbortSignal) => {
-                    await createAccountVoiceOperationService({
-                      providerId,
-                      recipientContract,
-                      signal,
-                      isCurrent,
-                      requireRecipientApproval: true,
-                    }).inspectAvailability();
-                  }
-                : null;
           const contribution = createExternalVoiceProviderRuntimeContribution({
             host,
             platform: hostPlatform,
@@ -995,15 +1158,13 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                   createInvocationAccountOperations,
                 }
               : {}),
-            ...(inspectInvocationAccountOperations
-              ? { inspectInvocationAccountOperations }
-              : {}),
             ...(hostBinding?.createInvocationHostedConversation
               ? {
                   createInvocationHostedConversation: (signal) =>
                     hostBinding.createInvocationHostedConversation!(signal, isCurrent),
                 }
               : {}),
+            ...(createInvocationRawCredentials ? { createInvocationRawCredentials } : {}),
             ...(hostBinding?.resolveSurfaceCapabilities
               ? { resolveSurfaceCapabilities: hostBinding.resolveSurfaceCapabilities }
               : {}),
@@ -1017,6 +1178,10 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
               }),
             } : {}),
           });
+          // Every committed runtime starts scope-owned. Once construction
+          // succeeds, transfer that exact owner to the composite contribution,
+          // which cleans up both host resources and the captured runtime.
+          committedRuntime.cleanup.transferToContribution(contribution);
           registrations.push(Object.freeze({
             declaration,
             providerId,
@@ -1024,11 +1189,8 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
             runtime,
             contribution,
             adapter: projectExternalAdapter(contribution, declaration),
+            createInvocationAccountOperations,
           }));
-          // Construction allocates host-owned resources synchronously. Transfer
-          // ownership immediately so a later declaration failure can dispose all
-          // already-created contributions.
-          committedRuntimes = Object.freeze(registrations.map((registration) => registration.contribution));
         }
         for (const registration of registrations) {
           const {
@@ -1037,32 +1199,69 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
             providerSettings,
             runtime,
             adapter,
+            createInvocationAccountOperations,
           } = registration;
           const hostBinding = input.hostBindingsByLocalId?.[declaration.id];
           const recipientContract = hostBinding?.recipientContract
             ?? input.recipientContractsByLocalId?.[declaration.id]
             ?? null;
           const accountCredentialSlot = projectExternalAccountCredentialSlot(declaration, recipientContract);
-          const settingsOperations = runtime.settingsOperations && recipientContract
+          const createSettingsCredentials = (signal: AbortSignal) => createVoiceCredentialAccess({
+            declaration,
+            phase: 'settings',
+            ...(createInvocationAccountOperations
+              ? {
+                  createMediated: () => createInvocationAccountOperations(
+                    signal,
+                    null,
+                    'settings',
+                  ),
+                }
+              : {}),
+            raw: input.clientRuntimeIdentitiesByLocalId?.[declaration.id]
+              ? createDeclaredVoiceClientRawCredentialAccess({
+                  declaration,
+                  pluginId: input.pluginId,
+                  identity: input.clientRuntimeIdentitiesByLocalId[declaration.id]!,
+                  hostPlatform,
+                  phase: 'settings',
+                  generation: input.generation ?? '',
+                  signal,
+                  isCurrent,
+                })
+              : null,
+          });
+          const settingsOperations = runtime.settingsOperations
             ? bindVoiceProviderSettingsOperations({
                 operations: runtime.settingsOperations,
-                createAccountOperations: hostBinding?.createInvocationAccountOperations
-                  ? (signal) => hostBinding.createInvocationAccountOperations!(
-                      signal,
-                      null,
-                      isCurrent,
-                    )
-                  : (signal) => createAccountVoiceOperationService({
-                      providerId,
-                      recipientContract,
-                      signal,
-                      isCurrent,
-                      requireRecipientApproval: true,
-                    }),
+                createCredentials: createSettingsCredentials,
                 isCurrent,
                 revocationSignal: settingsOperationsRevocation.signal,
               })
             : undefined;
+          const settingsActions = runtime.settingsActions
+            ? bindVoiceProviderSettingsActions({
+                actions: runtime.settingsActions,
+                declaredActions: declaration.settings?.actions ?? [],
+                createCredentials: createSettingsCredentials,
+                createInteractions: ({ signal, isCurrent: isInvocationCurrent }) => (
+                  createAppShellTransientInteractions({
+                    requester: Object.freeze({
+                      pluginId: input.pluginId,
+                      contributionId: declaration.id,
+                      generationId: input.generation ?? 'bundled',
+                      invocationId: `settings-${++nextSettingsActionInvocationId}`,
+                    }),
+                    signal,
+                    isCurrent: isInvocationCurrent,
+                  })
+                ),
+                getRealtimeClientToolDefinitions: () => host.getRealtimeClientToolDefinitions(),
+                isCurrent,
+                revocationSignal: settingsOperationsRevocation.signal,
+              })
+            : undefined;
+          const requirements = projectVoiceProviderDeclarationRequirements(declaration);
           commitExternalVoiceProviderRegistration(Object.freeze({
             token,
             pluginId: input.pluginId,
@@ -1074,7 +1273,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
               settingsSectionId: providerId,
               kind: 'voice.conversation-provider.v1' as const,
               roles: declaration.roles,
-              requirements: declaration.capabilities.readiness.requirements,
+              requirements,
               supportedPlatforms: declaration.platforms,
               selectionOptions: [Object.freeze({
                 id: 'default', modeId: 'default', order: 10_000,
@@ -1086,6 +1285,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                 envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
               ) => projectExternalVoiceProviderSettings(envelope, providerSettings),
               providerSettings,
+              declaration,
               ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
               source: Object.freeze({
                 kind: 'external' as const,
@@ -1095,6 +1295,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
             }),
             adapter,
             ...(settingsOperations ? { settingsOperations } : {}),
+            ...(settingsActions ? { settingsActions } : {}),
           }));
         }
         unsubscribeRuntimeGeneration = subscribeBundledConversationRuntimeGeneration(() => {
@@ -1117,7 +1318,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
       if (unwound) return;
       unwound = true;
       await disposeCommittedRuntimes();
-      stagedById.clear();
+      await registrationScope.dispose();
     },
   });
 }

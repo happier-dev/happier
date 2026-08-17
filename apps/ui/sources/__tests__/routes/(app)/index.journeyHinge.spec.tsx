@@ -105,7 +105,7 @@ vi.mock('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry', async ()
                 providerKeylessTitle: '',
                 anonymousSignupTitle: '',
                 mtlsTitle: '',
-                primarySignupTitle: '',
+                primaryAction: null,
                 mtlsPrimary: false,
                 keylessPrimary: false,
                 autoRedirect: {

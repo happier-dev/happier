@@ -9,7 +9,7 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated';
 
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { INSTRUMENT_SHIMMER, useMotionPreferences } from '@/components/instrument';
 
 /**
@@ -24,7 +24,6 @@ const styles = StyleSheet.create((theme) => ({
     wrap: {
         alignSelf: 'center',
         width: '100%',
-        maxWidth: layout.maxWidth,
         paddingHorizontal: 16,
         paddingTop: 16,
         gap: 16,
@@ -56,6 +55,9 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const UsageLoadingSkeleton: React.FC<{ testID?: string }> = ({ testID }) => {
+    // Composed at render time: the module-scope stylesheet evaluates once, so a
+    // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+    const wrapMaxWidthStyle = useLayoutMaxWidthStyle();
     const motion = useMotionPreferences();
     const shimmer = motion.level !== 'minimal';
     const pulse = useSharedValue(0.55);
@@ -77,7 +79,7 @@ export const UsageLoadingSkeleton: React.FC<{ testID?: string }> = ({ testID }) 
     }));
 
     return (
-        <Animated.View testID={testID ?? 'usage-loading-skeleton'} style={[styles.wrap, shimmerStyle]}>
+        <Animated.View testID={testID ?? 'usage-loading-skeleton'} style={[styles.wrap, wrapMaxWidthStyle, shimmerStyle]}>
             <View style={[styles.block, styles.filters]} />
             <View style={[styles.block, styles.hero]} />
             <View style={styles.chipRow}>

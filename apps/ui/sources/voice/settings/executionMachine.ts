@@ -4,26 +4,33 @@ import { storage } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import {
   VoiceExecutionMachineSettingsSchema,
   voiceSettingsParse,
 } from '@/sync/domains/settings/voiceSettings';
 
 export type VoiceExecutionMachineOverride = Readonly<{ machineId: string }>;
+export type VoiceExecutionMachineSelection =
+  | Readonly<{ kind: 'resolved'; machineId: string }>
+  | Readonly<{ kind: 'selected_unreachable'; machineId: string }>
+  | Readonly<{ kind: 'none' }>;
 
-function resolveActiveReplacementAwareTarget(state: any, requestedMachineId: unknown): string | null {
+function resolveReplacementAwareSelection(state: any, requestedMachineId: unknown): VoiceExecutionMachineSelection {
   const originMachineId = normalizeNonEmptyString(requestedMachineId);
-  if (!originMachineId) return null;
+  if (!originMachineId) return { kind: 'none' };
 
   const machines = resolveVisibleMachinesForActiveServerFromState(state);
   const target = resolveReplacementAwareMachineRpcTarget({
     machineId: originMachineId,
     machines,
   });
-  if (!target) return null;
+  if (!target) return { kind: 'selected_unreachable', machineId: originMachineId };
 
   const machine = resolveMachineForActiveServerFromState(state, target.machineId);
-  return machine?.active === true ? target.machineId : null;
+  return machine && isMachineOnline(machine)
+    ? { kind: 'resolved', machineId: target.machineId }
+    : { kind: 'selected_unreachable', machineId: target.machineId };
 }
 
 /**
@@ -31,11 +38,11 @@ function resolveActiveReplacementAwareTarget(state: any, requestedMachineId: unk
  * auto selection, sticky/fixed behavior, replacement following, and fail-closed
  * reachability. It deliberately has no directory dependency.
  */
-export function resolveVoiceExecutionMachineIdFromState(
+export function resolveVoiceExecutionMachineSelectionFromState(
   state: any,
   override?: VoiceExecutionMachineOverride | null,
-): string | null {
-  if (override) return resolveActiveReplacementAwareTarget(state, override.machineId);
+): VoiceExecutionMachineSelection {
+  if (override) return resolveReplacementAwareSelection(state, override.machineId);
 
   const rawVoice = state?.settings?.voice;
   if (
@@ -44,7 +51,7 @@ export function resolveVoiceExecutionMachineIdFromState(
     && Object.prototype.hasOwnProperty.call(rawVoice, 'executionMachine')
     && !VoiceExecutionMachineSettingsSchema.safeParse(rawVoice.executionMachine).success
   ) {
-    return null;
+    return { kind: 'none' };
   }
   const target = voiceSettingsParse(state?.settings?.voice).executionMachine;
   const mode = target?.mode === 'fixed' ? 'fixed' : 'auto';
@@ -52,8 +59,8 @@ export function resolveVoiceExecutionMachineIdFromState(
     ? normalizeNonEmptyString(target?.machineId)
     : normalizeNonEmptyString(target?.autoMachineId);
 
-  if (persistedMachineId) return resolveActiveReplacementAwareTarget(state, persistedMachineId);
-  if (mode === 'fixed') return null;
+  if (persistedMachineId) return resolveReplacementAwareSelection(state, persistedMachineId);
+  if (mode === 'fixed') return { kind: 'none' };
 
   const visibleMachines = resolveVisibleMachinesForActiveServerFromState(state);
   const preferredMachineIds = listPreferredMachineIds({
@@ -65,10 +72,18 @@ export function resolveVoiceExecutionMachineIdFromState(
   });
 
   for (const candidateMachineId of preferredMachineIds) {
-    const resolved = resolveActiveReplacementAwareTarget(state, candidateMachineId);
-    if (resolved) return resolved;
+    const resolved = resolveReplacementAwareSelection(state, candidateMachineId);
+    if (resolved.kind === 'resolved') return resolved;
   }
-  return null;
+  return { kind: 'none' };
+}
+
+export function resolveVoiceExecutionMachineIdFromState(
+  state: any,
+  override?: VoiceExecutionMachineOverride | null,
+): string | null {
+  const selection = resolveVoiceExecutionMachineSelectionFromState(state, override);
+  return selection.kind === 'resolved' ? selection.machineId : null;
 }
 
 export function resolveVoiceExecutionMachineId(

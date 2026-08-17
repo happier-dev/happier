@@ -47,13 +47,23 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
     const CAPTURED_CEILING_PX = 20_000;
 
     /**
-     * This module's own text flow is 72 chars per wrapped line at 22px plus a 32px base, so 992
-     * lines model a message whose estimate lands within one wrapped line of row A's real
-     * 21,849px. The content model already knew this row's height; the ceiling threw it away.
+     * The capture recorded row A's painted HEIGHT, never its character count, so the line count
+     * below is a FIXTURE derived from this module's own text flow — 72 chars per wrapped line —
+     * chosen so the estimate lands within one wrapped line of row A's real 21,849px. It is not a
+     * measurement, and F1 (2026-08-10) re-derived it when the per-line term became the row's real
+     * `transcriptMarkdownTextStyle.lineHeight`: `22 + 910 x 24 = 21,862`, 13px over the capture,
+     * where the previous `32 + 992 x 22` landed 7px over. The contract these cases pin is
+     * unchanged — no ceiling, successor at or below the true bottom, monotone in content.
      */
-    const GIANT_MARKDOWN_LINES = 992;
-    const GIANT_MARKDOWN_CHARS = 72 * GIANT_MARKDOWN_LINES;
-    const UNCEILED_ROW_A_ESTIMATE_PX = 32 + (GIANT_MARKDOWN_LINES * 22);
+    const GIANT_MARKDOWN_LINES = 910;
+    /** `ESTIMATE_CHARS_PER_LINE` — the estimator's flat, width-blind wrap. */
+    const ESTIMATE_CHARS_PER_LINE = 72;
+    const GIANT_MARKDOWN_CHARS = ESTIMATE_CHARS_PER_LINE * GIANT_MARKDOWN_LINES;
+    /** `agentMessageContainer.paddingBottom` — an agent reply paints no bubble (`MessageView.tsx`). */
+    const AGENT_ROW_CHROME_PX = 22;
+    /** `transcriptMarkdownTextStyle.lineHeight`. */
+    const TRANSCRIPT_MARKDOWN_LINE_PX = 24;
+    const UNCEILED_ROW_A_ESTIMATE_PX = AGENT_ROW_CHROME_PX + (GIANT_MARKDOWN_LINES * TRANSCRIPT_MARKDOWN_LINE_PX);
 
     function agentText(id: string, text: string): Message {
         return {
@@ -80,7 +90,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
         expect(estimate).not.toBe(CAPTURED_CEILING_PX);
         expect(estimate).toBe(UNCEILED_ROW_A_ESTIMATE_PX);
         // Within a wrapped line of the row's real painted height.
-        expect(Math.abs(estimate - MEASURED_ROW_A_PX)).toBeLessThanOrEqual(22);
+        expect(Math.abs(estimate - MEASURED_ROW_A_PX)).toBeLessThanOrEqual(TRANSCRIPT_MARKDOWN_LINE_PX);
     });
 
     it('places the next row at or below the giant row\'s real bottom', () => {
@@ -93,7 +103,7 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
         expect(rowBTopPx).not.toBe(CAPTURED_ROW_B_TOP_PX);
         expect(gapPx).toBeGreaterThanOrEqual(0);
         // ...and the accommodation is a wrapped line, not a second phantom.
-        expect(gapPx).toBeLessThanOrEqual(22);
+        expect(gapPx).toBeLessThanOrEqual(TRANSCRIPT_MARKDOWN_LINE_PX);
         expect(rowBTopPx + MEASURED_ROW_B_PX).toBeGreaterThan(rowABottomPx);
     });
 
@@ -102,10 +112,10 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
         // information exactly where its error is largest. Two rows differing by ~400 wrapped
         // lines must not be handed to the renderer as the same position-bearing size.
         const tallerLines = GIANT_MARKDOWN_LINES + 400;
-        const taller = estimateMessageRowPx('x'.repeat(72 * tallerLines));
+        const taller = estimateMessageRowPx('x'.repeat(ESTIMATE_CHARS_PER_LINE * tallerLines));
         const giant = estimateMessageRowPx('x'.repeat(GIANT_MARKDOWN_CHARS));
         expect(taller).toBeGreaterThan(giant);
-        expect(taller).toBe(32 + (tallerLines * 22));
+        expect(taller).toBe(AGENT_ROW_CHROME_PX + (tallerLines * TRANSCRIPT_MARKDOWN_LINE_PX));
     });
 
     it('carries a giant turn body on the decomposed message row, not on a whole-turn estimate', () => {
@@ -140,9 +150,14 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
         expect(decomposedRow).toBe(UNCEILED_ROW_A_ESTIMATE_PX);
     });
 
-    it('does not ceiling a giant pending-queue row either', () => {
-        // The row a SEND creates: a long paste is a legitimate multi-thousand-px row, and it is
-        // the row the user is looking at when it is mis-placed.
+    it('DOES bound a giant pending-queue row — that row has its own painted ceiling', () => {
+        // The C-1 no-ceiling rule is about rows whose painted height is unbounded. The pending
+        // queue is not one: `PendingMessagesTranscriptBlock` renders its messages inside a
+        // `ScrollView` carrying `maxHeight: transcriptPendingQueueMaxHeightPx` (default 80), so a
+        // giant paste is SCROLLED inside a ~95px row, never painted at multi-thousand px. Modelling
+        // it unbounded put a ~340px phantom gap under the tail row on every multi-message send
+        // (J/D2, 2026-07-30); the measured painted heights live in
+        // `estimateTranscriptRowHeightFromCache.pendingChrome.test.ts`.
         const estimate = estimateTranscriptRowHeightFromContent({
             toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null,
@@ -155,11 +170,17 @@ describe('C-1 · a giant row must position its successor at its TRUE bottom', ()
                     createdAt: 1,
                     updatedAt: 1,
                     text: 'x'.repeat(GIANT_MARKDOWN_CHARS),
+                }, {
+                    id: 'p2',
+                    localId: null,
+                    createdAt: 2,
+                    updatedAt: 2,
+                    text: 'another queued message',
                 }],
                 discardedMessages: [],
             } as unknown as TranscriptRowShellItem,
         }) as number;
-        expect(estimate).toBeGreaterThan(CAPTURED_CEILING_PX);
-        expect(estimate).toBe(UNCEILED_ROW_A_ESTIMATE_PX);
+        expect(estimate).toBeLessThan(200);
+        expect(estimate).toBeGreaterThan(80);
     });
 });

@@ -26,12 +26,22 @@ export function createSelectedVoiceMachineClient(deps?: Partial<SelectedVoiceMac
   };
 
   return Object.freeze({
+    /**
+     * The dispatched machine is the authority for this call.
+     *
+     * The automatic Voice target is re-derived from mutable ordering (recent
+     * machine paths, liveness) on every read, so with more than one online
+     * machine two reads seconds apart can disagree with no user action. Reading
+     * it a second time after the call discarded an answer the dispatched
+     * machine had already produced successfully, which surfaced as
+     * `credential_unavailable` — an absent credential — for a purely local
+     * ordering change. Attempt currency is enforced by the caller's
+     * `isCurrent()`, not by re-resolving the target.
+     */
     async invoke(method: string, payload: unknown, signal?: AbortSignal | null): Promise<unknown> {
       const machineId = resolved.resolveMachineId();
       if (!machineId) throw new VoiceCredentialClientError('machine_unavailable');
-      const result = await resolved.machineRpc({ machineId, method, payload, ...(signal ? { signal } : {}) });
-      if (resolved.resolveMachineId() !== machineId) throw new VoiceCredentialClientError('machine_unavailable');
-      return result;
+      return await resolved.machineRpc({ machineId, method, payload, ...(signal ? { signal } : {}) });
     },
   });
 }

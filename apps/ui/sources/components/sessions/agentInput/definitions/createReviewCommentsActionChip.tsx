@@ -1,8 +1,11 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Pressable, View } from 'react-native';
 
-import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
+import type {
+    AgentInputExtraActionChip,
+    AgentInputExtraActionChipRenderContext,
+    AgentInputExtraActionPresentation,
+} from '@/components/sessions/agentInput/agentInputContracts';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import {
@@ -14,6 +17,8 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { t } from '@/text';
 
 import { ReviewCommentsDraftsModal } from './ReviewCommentsDraftsModal';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_CHIP_OPTION_ICON_SIZE_PX, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 
 function detachReviewCommentsFromPrompt(params: Readonly<{
     reviewCommentDrafts: readonly ReviewCommentDraft[];
@@ -86,7 +91,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
     onUpdateDraft: (draft: ReviewCommentDraft) => void;
     onDeleteDraft: (draftId: string) => void;
     onClearDrafts: () => void;
-}>): AgentInputExtraActionChip | undefined {
+}>): AgentInputExtraActionPresentation | undefined {
     const reviewCommentDraftCount = params.reviewCommentDrafts.length;
     if (reviewCommentDraftCount <= 0) return undefined;
 
@@ -102,27 +107,29 @@ export function createReviewCommentsActionChip(params: Readonly<{
         });
     };
 
-    return {
+    const attachmentRowItem = includedReviewCommentDrafts.length > 0 ? {
+        kind: 'badge' as const,
+        key: 'review-comments',
+        label,
+        testID: 'agent-input-review-comments-attachment-badge',
+        accessibilityLabel: label,
+        icon: (tint: string) => <Icon name="chat-dots" size={AGENT_INPUT_CHIP_OPTION_ICON_SIZE_PX} color={tint} />,
+        onPress: openDraftsModal,
+        onRemove: () => openReviewCommentsRemovePrompt({
+            reviewCommentDrafts: params.reviewCommentDrafts,
+            onSetDraftIncluded: params.onSetDraftIncluded,
+            onClearDrafts: params.onClearDrafts,
+        }),
+        removeAccessibilityLabel: t('files.reviewComments.detachOrDiscardTitle'),
+    } : undefined;
+
+    const actionChip: AgentInputExtraActionChip = {
         key: 'review-comments',
         controlId: 'reviewComments',
-        composerAttachmentBadge: includedReviewCommentDrafts.length > 0 ? {
-            key: 'review-comments',
-            label,
-            testID: 'agent-input-review-comments-attachment-badge',
-            accessibilityLabel: label,
-            icon: (tint) => <Ionicons name="chatbox-ellipses-outline" size={14} color={tint} />,
-            onPress: openDraftsModal,
-            onRemove: () => openReviewCommentsRemovePrompt({
-                reviewCommentDrafts: params.reviewCommentDrafts,
-                onSetDraftIncluded: params.onSetDraftIncluded,
-                onClearDrafts: params.onClearDrafts,
-            }),
-            removeAccessibilityLabel: t('files.reviewComments.detachOrDiscardTitle'),
-        } : undefined,
         collapsedAction: ({ tint, dismiss }) => ({
             id: 'review-comments',
             label,
-            icon: <Ionicons name="chatbox-ellipses-outline" size={16} color={tint} />,
+            icon: <Icon name="chat-dots" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />,
             onPress: () => {
                 dismiss();
                 openDraftsModal();
@@ -134,7 +141,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
                 style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Ionicons name="chatbox-ellipses-outline" size={14} color={ctx.iconColor} />
+                    <Icon name="chat-dots" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
                     {ctx.showLabel ? (
                         <Text style={ctx.textStyle}>{label}</Text>
                     ) : null}
@@ -142,4 +149,6 @@ export function createReviewCommentsActionChip(params: Readonly<{
             </Pressable>
         ),
     };
+
+    return { actionChip, attachmentRowItem };
 }

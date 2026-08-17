@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, type GestureResponderEvent } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     pressable: {
@@ -73,7 +73,7 @@ export function DrillDownChevron(props: DrillDownChevronProps): React.ReactEleme
             hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
             style={styles.pressable}
         >
-            <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
+            <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
         </Pressable>
     );
 }

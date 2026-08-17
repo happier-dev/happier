@@ -16,7 +16,6 @@ import { Header } from '@/components/navigation/Header';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
@@ -37,6 +36,7 @@ import {
     SESSION_LIST_SURFACE_OWNER_SIDEBAR,
 } from '@/components/sessions/shell/surface/sessionListSurfaceOwnership';
 import { useMainAppTabState } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 interface MainViewProps {
@@ -155,7 +155,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                         hitSlop={15}
                         style={styles.headerButton}
                     >
-                        <Ionicons name="timer-outline" size={22} color={theme.colors.chrome.header.foreground} />
+                        <Icon name="timer" size={20} color={theme.colors.chrome.header.foreground} />
                     </Pressable>
                 ) : null}
                 <Pressable
@@ -164,7 +164,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                     hitSlop={15}
                     style={styles.headerButton}
                 >
-                    <Ionicons name="add-outline" size={28} color={theme.colors.chrome.header.foreground} />
+                    <Icon name="plus" size={29} color={theme.colors.chrome.header.foreground} />
                 </Pressable>
             </View>
         );
@@ -182,7 +182,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                 disabled={!friendsIdentityReady}
                 accessibilityState={{ disabled: !friendsIdentityReady }}
             >
-                <Ionicons name="person-add-outline" size={24} color={theme.colors.chrome.header.foreground} />
+                <Icon name="user-plus" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }
@@ -207,7 +207,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                 hitSlop={15}
                 style={styles.headerButton}
             >
-                <Ionicons name="server-outline" size={24} color={theme.colors.chrome.header.foreground} />
+                <Icon name="hard-drives" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }

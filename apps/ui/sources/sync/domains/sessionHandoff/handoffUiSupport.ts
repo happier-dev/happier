@@ -1,4 +1,9 @@
-import { evaluateVendorHandoffEligibility, isAgentId, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+    evaluateVendorHandoffEligibility,
+    isAgentId,
+    projectSessionMetadataForAgentHandoff,
+    resolveAgentIdFromSessionMetadata,
+} from '@happier-dev/agents';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { readExternalSessionLink } from '../session/external/readExternalSessionLink';
 import { resolveSessionHandoffSourceMachineId } from './resolveSessionHandoffSourceMachineId';
@@ -36,6 +41,6 @@ export function canHandoffConversation(params: Readonly<{ sessionId?: string | n
     return evaluateVendorHandoffEligibility({
         agentId,
         storageMode: sessionStorageMode,
-        metadata,
+        metadata: projectSessionMetadataForAgentHandoff(metadata),
     }).eligible === true;
 }

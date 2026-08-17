@@ -4,16 +4,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 import { VoiceCaptureBusyError } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
+import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
+import type { AgentInputAttachmentsRowItem } from './agentInputContracts';
 
 type MultiTextInputSelection = { start: number; end: number };
 type MultiTextInputState = { text: string; selection: MultiTextInputSelection };
+type ActiveSuggestionsResult = readonly [
+    readonly AutocompleteSuggestion[],
+    number,
+    () => void,
+    () => void,
+];
 
 const multiTextInputHandleMocks = vi.hoisted(() => ({
     blur: vi.fn(),
     focus: vi.fn(),
     setTextAndSelection: vi.fn(),
 }));
-const useActiveSuggestionsMock = vi.hoisted(() => vi.fn(() => [[], -1, () => {}, () => {}] as const));
+const multiTextInputRenderCount = vi.hoisted(() => ({ value: 0 }));
+const useActiveSuggestionsMock = vi.hoisted(() => vi.fn<() => ActiveSuggestionsResult>(
+    () => [[], -1, () => {}, () => {}],
+));
 const dictationState = vi.hoisted(() => ({
     status: 'idle' as 'idle' | 'starting' | 'listening' | 'transcribing',
     failure: null as null | Readonly<{
@@ -26,6 +37,14 @@ const dictationState = vi.hoisted(() => ({
     dismissFailure: vi.fn(),
 }));
 const modalAlertMock = vi.hoisted(() => vi.fn());
+
+// The Agent mark is a rendering boundary that reaches the generated Agent
+// catalog, which this composer harness does not install. Stub it so the send
+// button's own contract — the accessible name, and which mark it draws — is
+// what the test exercises.
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
+}));
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
@@ -105,6 +124,13 @@ vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
 
+// This focused composer graph does not exercise Markdown; the third-party
+// patched streaming module is a genuine package boundary and may be absent
+// before the UI postinstall lane publishes it.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => [],
+}));
+
 vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
@@ -160,6 +186,7 @@ vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
 
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
     MultiTextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
+        multiTextInputRenderCount.value += 1;
         React.useImperativeHandle(ref, () => ({
             setTextAndSelection: (
                 text: string,
@@ -196,10 +223,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: useActiveSuggestionsMock,
 }));
@@ -211,6 +234,7 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 vi.mock('@/components/ui/popover', () => ({
     Popover: () => null,
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS: {},
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
@@ -253,6 +277,11 @@ vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
     computeAcpConfigOptionControls: () => null,
 }));
 
+/** Stands in for a host that owns the field's top-right corner (§2.3). */
+function HostFieldAccessory() {
+    return React.createElement('View', { testID: 'host-field-accessory' });
+}
+
 describe('AgentInput (send button accessibility)', () => {
     afterEach(() => {
         featureEnabledState.voice = true;
@@ -271,17 +300,21 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={['@']}
+            autocompleteKinds={['file', 'vendorPlugin']}
             autocompleteSuggestions={autocompleteSuggestions}
         />);
 
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             null,
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
 
         const input = screen.root.findByType('MultiTextInput' as any);
+        expect(input.props.accessibilityRole).toBe('combobox');
+        expect(input.props.accessibilityState).toEqual({ expanded: false });
+        expect(input.props['aria-controls']).toBe('agent-input-command-menu:list:listbox');
+        expect(input.props['aria-activedescendant']).toBeUndefined();
         await act(async () => {
             input.props.onFocus?.();
         });
@@ -289,7 +322,7 @@ describe('AgentInput (send button accessibility)', () => {
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             '@src',
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
 
         await act(async () => {
@@ -299,7 +332,7 @@ describe('AgentInput (send button accessibility)', () => {
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             '@/src',
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
 
         await act(async () => {
@@ -310,8 +343,301 @@ describe('AgentInput (send button accessibility)', () => {
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
             '@/src',
             autocompleteSuggestions,
-            expect.objectContaining({ clampSelection: true, wrapAround: true }),
+            expect.objectContaining({ wrapAround: true }),
         );
+
+        await screen.unmount();
+    });
+
+    it('publishes one real combobox relationship for the active suggestion identity', async () => {
+        useActiveSuggestionsMock.mockReturnValueOnce([
+            [
+                { kind: 'slashCommand', key: 'goal', text: '/goal' },
+                { kind: 'slashCommand', key: 'help', text: '/help' },
+            ],
+            1,
+            () => {},
+            () => {},
+        ] as const);
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="/h"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompleteKinds={['slashCommand']}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        const input = screen.root.findByType('MultiTextInput' as any);
+        expect(input.props.accessibilityRole).toBe('combobox');
+        expect(input.props.accessibilityState).toEqual({ expanded: true });
+        expect(input.props['aria-haspopup']).toBe('listbox');
+        expect(input.props['aria-autocomplete']).toBe('list');
+        expect(input.props['aria-controls']).toBe('agent-input-command-menu:list:listbox');
+        expect(input.props['aria-activedescendant']).toBe(
+            'agent-input-command-menu:list:command-menu-root:option:slashCommand:help',
+        );
+
+        await screen.unmount();
+    });
+
+    it('keeps a mounted attachment surface update local to its subtree', async () => {
+        let publishSurfaceRevision: ((revision: number) => void) | null = null;
+        function DynamicAttachmentSurface() {
+            const [revision, setRevision] = React.useState(0);
+            publishSurfaceRevision = setRevision;
+            return React.createElement(
+                'Text',
+                { testID: 'dynamic-attachment-surface' },
+                'Surface revision ',
+                revision,
+            );
+        }
+        const attachmentRowItems = [{
+            kind: 'surface',
+            key: 'dynamic-surface',
+            label: 'Dynamic surface',
+            sizing: 'content',
+            renderedContent: <DynamicAttachmentSurface />,
+        }] satisfies readonly AgentInputAttachmentsRowItem[];
+        const { AgentInput } = await import('./AgentInput');
+        multiTextInputRenderCount.value = 0;
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="draft text"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+            attachmentRowItems={attachmentRowItems}
+        />);
+        const inputRendersBeforeSurfaceUpdate = multiTextInputRenderCount.value;
+
+        await act(async () => {
+            publishSurfaceRevision?.(1);
+        });
+
+        expect(screen.findByTestId('dynamic-attachment-surface')?.props.children).toEqual([
+            'Surface revision ',
+            1,
+        ]);
+        expect(multiTextInputRenderCount.value).toBe(inputRendersBeforeSurfaceUpdate);
+        await screen.unmount();
+    });
+
+    it('names the armed Agent switch on the control that commits it', async () => {
+        // Pressing send with a target armed does not only send: it stops the
+        // current runtime and continues this Session with that Agent. The words
+        // live on the send control, at the moment of consequence, and they live
+        // there whether or not the Agent's mark is drawn — a glyph reads as
+        // nothing to a screen reader.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        // `t` is stubbed to its key here; the rendered words are asserted against
+        // the real catalog in agentContinuationSubmitPresentation.test.ts.
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+
+        await screen.unmount();
+    });
+
+    it('keeps the ordinary send name when no Agent switch is armed', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).toBe('common.send');
+
+        await screen.unmount();
+    });
+
+    it('draws every armed Agent\u2019s own mark, with no per-Agent exception', async () => {
+        // A mixed treatment would silently rank Agents as recognisable or not.
+        // The reader has just seen this exact mark beside the Agent\u2019s name in
+        // the rail, so it is never met cold.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'kimi', label: 'Kimi' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+        const marks = send.findAllByType('AgentIcon' as any);
+        expect(marks.map((node) => node.props?.agentId)).toEqual(['kimi']);
+        expect(send.findAllByType('Icon' as any).some((node) => node.props?.name === 'arrow-up'))
+            .toBe(false);
+
+        await screen.unmount();
+    });
+
+    it('becomes a button that names the switch, not a circle with a glyph in it', async () => {
+        // The armed control is the app's standard rounded button growing around its
+        // logo and label, not a bespoke pill: it renders the words as well as the
+        // mark, so the consequence is legible without a screen reader.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        const texts = send.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : []));
+        expect(texts).toContain('session.agentContinuation.sendLabel');
+        expect(send.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
+
+        await screen.unmount();
+    });
+
+    it('keeps the circular send while the composer has nothing to send', async () => {
+        // An arm only presents where pressing send would actually take it. On an
+        // empty composer the same button is Dictation or Stop, so the armed shape
+        // and the armed name would both promise something press does not do.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const send = screen.findByTestId('session-composer-send');
+        if (!send) throw new Error('session-composer-send not found');
+        expect(send.props.accessibilityLabel).not.toBe('session.agentContinuation.sendLabel');
+        expect(send.findAllByType('AgentIcon' as any).length).toBe(0);
+
+        await screen.unmount();
+    });
+
+    it('names the armed engine and model on the chip, and agrees with the send control', async () => {
+        // Selection IS the selection. A picker showing a checkmark on Sonnet 4.6
+        // while the chip still read GPT 5.6 Sol was telling the reader two different
+        // things about one decision.
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                    armedContinuationTarget={{ agentId: 'claude', label: 'Claude', modelLabel: 'Sonnet 4.6' }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        if (!chip) throw new Error('agent-input-agent-chip not found');
+        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['claude']);
+        expect(chip.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
+            .toContain('Sonnet 4.6');
+        // The pair must hold: a chip claiming an armed target while the button does
+        // not announce it would be the same contradiction in the other direction.
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel)
+            .toBe('session.agentContinuation.sendLabel');
+
+        await screen.unmount();
+    });
+
+    it('names the armed Agent while it is still on that Agent\u2019s own model settings', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                    armedContinuationTarget={{ agentId: 'claude', label: 'Claude', modelLabel: null }}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        expect(chip?.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : [])))
+            .toContain('Claude');
+
+        await screen.unmount();
+    });
+
+    it('returns the chip to the running engine when the switch is disarmed', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value="ship it"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    agentType="codex"
+                    onAgentClick={() => {}}
+                    armedContinuationTarget={null}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        if (!chip) throw new Error('agent-input-agent-chip not found');
+        expect(chip.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
+        const labels = chip.findAllByType('Text' as any)
+            .flatMap((node) => (typeof node.props?.children === 'string' ? [node.props.children] : []));
+        expect(labels).not.toContain('Sonnet 4.6');
+        expect(labels).not.toContain('Claude');
 
         await screen.unmount();
     });
@@ -326,7 +652,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -337,7 +663,7 @@ describe('AgentInput (send button accessibility)', () => {
         const images = send.findAllByType('Image' as any);
         expect(images.length).toBe(0);
 
-        const octicons = send.findAllByType('Octicons' as any);
+        const octicons = send.findAllByType('Icon' as any);
         expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(true);
 
         await screen.unmount();
@@ -355,7 +681,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={() => {}}
                     onAbort={() => {}}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -363,13 +689,15 @@ describe('AgentInput (send button accessibility)', () => {
         expect(send).toBeTruthy();
         if (!send) throw new Error('session-composer-send not found');
 
-        const ionicons = send.findAllByType('Ionicons' as any);
-        expect(ionicons.some((n) => n.props?.name === 'stop')).toBe(true);
+        // Both icon families now render as a single `Icon` type, so the original
+        // pair of family-scoped queries collapsed into one. Asserting the same
+        // query is both true and false for 'stop' is unsatisfiable — what the
+        // test actually guarantees is that the button shows Stop and does NOT
+        // still offer Send.
+        const icons = send.findAllByType('Icon' as any);
+        expect(icons.some((n) => n.props?.name === 'stop')).toBe(true);
+        expect(icons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
         expect(send.props.accessibilityLabel).toBe('agentInput.stopCodingTurn');
-
-        const octicons = send.findAllByType('Octicons' as any);
-        expect(octicons.some((n) => n.props?.name === 'stop')).toBe(false);
-        expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
 
         await screen.unmount();
     });
@@ -388,7 +716,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={onSend}
                     onAbort={onAbort}
                     showAbortButton={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -413,7 +741,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -434,7 +762,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={() => {}}
                     submitAccessibilityLabel="automations.create.createButtonTitle"
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -454,7 +782,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -476,7 +804,7 @@ describe('AgentInput (send button accessibility)', () => {
                     onChangeText={() => {}}
                     onSend={onSend}
                     hasSendableAttachments={true}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -502,7 +830,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={firstOnSend}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -513,7 +841,7 @@ describe('AgentInput (send button accessibility)', () => {
                 placeholder="Type"
                 onChangeText={() => {}}
                 onSend={secondOnSend}
-                autocompletePrefixes={[]}
+                autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
             />,
         );
@@ -534,7 +862,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -555,7 +883,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -576,7 +904,11 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    // §2.3: a composer that owns the field's top-right corner moves
+                    // dictation into it. This one hands the corner to the host, which is
+                    // what keeps the microphone on the submit button.
+                    fieldAccessory={<HostFieldAccessory />}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -586,7 +918,7 @@ describe('AgentInput (send button accessibility)', () => {
         const images = send.findAllByType('Image' as any);
         expect(images.length).toBe(1);
 
-        const octicons = send.findAllByType('Octicons' as any);
+        const octicons = send.findAllByType('Icon' as any);
         expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
 
         await screen.unmount();
@@ -602,7 +934,11 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    // §2.3: a composer that owns the field's top-right corner moves
+                    // dictation into it. This one hands the corner to the host, which is
+                    // what keeps the microphone on the submit button.
+                    fieldAccessory={<HostFieldAccessory />}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
 
@@ -612,10 +948,10 @@ describe('AgentInput (send button accessibility)', () => {
         const images = send.findAllByType('Image' as any);
         expect(images.length).toBe(0);
 
-        const ionicons = send.findAllByType('Ionicons' as any);
+        const ionicons = send.findAllByType('Icon' as any);
         expect(ionicons.some((n) => n.props?.name === 'stop-circle')).toBe(true);
 
-        const octicons = send.findAllByType('Octicons' as any);
+        const octicons = send.findAllByType('Icon' as any);
         expect(octicons.some((n) => n.props?.name === 'arrow-up')).toBe(false);
 
         await screen.unmount();
@@ -635,10 +971,10 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={onChangeText}
             onSend={onSend}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
-        await screen.pressByTestIdAsync('session-composer-send');
+        await screen.pressByTestIdAsync('agent-input-dictation');
         dictationState.status = 'listening';
         await screen.update(<AgentInput
             sessionId="session-1"
@@ -646,7 +982,7 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={onChangeText}
             onSend={onSend}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
         const input = screen.root.findByType('MultiTextInput' as any);
@@ -657,7 +993,7 @@ describe('AgentInput (send button accessibility)', () => {
                 selection: { start: 7, end: 15 },
             });
         });
-        await screen.pressByTestIdAsync('session-composer-send');
+        await screen.pressByTestIdAsync('agent-input-dictation');
 
         expect(dictationState.toggle).toHaveBeenCalledTimes(2);
         expect(multiTextInputHandleMocks.setTextAndSelection).toHaveBeenLastCalledWith(
@@ -682,10 +1018,10 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
-        await screen.pressByTestIdAsync('session-composer-send');
+        await screen.pressByTestIdAsync('agent-input-dictation');
 
         expect(modalAlertMock).toHaveBeenCalledWith('voiceAssistant.dictationNoSpeech');
         expect(multiTextInputHandleMocks.setTextAndSelection).not.toHaveBeenCalled();
@@ -703,10 +1039,10 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
-        await screen.pressByTestIdAsync('session-composer-send');
+        await screen.pressByTestIdAsync('agent-input-dictation');
 
         expect(modalAlertMock).not.toHaveBeenCalled();
 
@@ -725,10 +1061,10 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
-        await screen.pressByTestIdAsync('session-composer-send');
+        await screen.pressByTestIdAsync('agent-input-dictation');
 
         expect(modalAlertMock).toHaveBeenCalledWith(
             'common.error',
@@ -753,7 +1089,7 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -778,7 +1114,7 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={onChangeText}
             onSend={onSend}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -803,7 +1139,7 @@ describe('AgentInput (send button accessibility)', () => {
             onChangeText={onChangeText}
             onSend={onSend}
             hasSendableAttachments={true}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -824,7 +1160,7 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -843,7 +1179,7 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Type"
             onChangeText={() => {}}
             onSend={() => {}}
-            autocompletePrefixes={[]}
+            autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
 
@@ -862,7 +1198,7 @@ describe('AgentInput (send button accessibility)', () => {
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
-                    autocompletePrefixes={[]}
+                    autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                     machineName="Machine"
                     currentPath="/tmp/project"

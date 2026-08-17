@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
@@ -22,6 +21,7 @@ import {
     buildKeyboardShortcutToggleDelta,
 } from './keyboardShortcutsSettingsModel';
 import { showKeyboardShortcutCapturePrompt } from './showKeyboardShortcutCapturePrompt';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcutsSettingsView() {
     const { theme } = useUnistyles();
@@ -95,7 +95,7 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
                     testID="settings-keyboard-shortcuts-enabled-row"
                     title={t('settingsKeyboard.enableShortcutsTitle')}
                     subtitle={t('settingsKeyboard.enableShortcutsSubtitle')}
-                    icon={<Ionicons name="keypad-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="squares-four" size={29} color={theme.colors.accent.blue} />}
                     rightElement={(
                         <Switch
                             testID="settings-keyboard-shortcuts-enabled"
@@ -109,7 +109,7 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
                     testID="settings-keyboard-shortcuts-single-key-enabled-row"
                     title={t('settingsKeyboard.singleKeyTitle')}
                     subtitle={t('settingsKeyboard.singleKeySubtitle')}
-                    icon={<Ionicons name="help-outline" size={29} color={theme.colors.accent.orange} />}
+                    icon={<Icon name="question" size={29} color={theme.colors.accent.orange} />}
                     rightElement={(
                         <Switch
                             testID="settings-keyboard-shortcuts-single-key-enabled"
@@ -127,7 +127,7 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
                         testID="settings-keyboard-shortcuts-conflicts"
                         title={t('settingsKeyboard.conflictsTitle', { count: model.conflicts.length })}
                         subtitle={t('settingsKeyboard.conflictsSubtitle', { count: model.conflicts.length })}
-                        icon={<Ionicons name="warning-outline" size={29} color={theme.colors.state.warning.foreground} />}
+                        icon={<Icon name="warning" size={29} color={theme.colors.state.warning.foreground} />}
                         mode="info"
                     />
                 </ItemGroup>
@@ -143,7 +143,7 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
                         testID={`settings-keyboard-shortcut-row-${row.commandId}`}
                         title={t(row.titleKey)}
                         subtitle={row.defaultLabel ?? t('settingsKeyboard.noDefaultShortcut')}
-                        icon={<Ionicons name="radio-button-on-outline" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="radio-button" size={29} color={theme.colors.text.secondary} />}
                         rightElement={(
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                                 <Pressable

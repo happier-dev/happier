@@ -1,9 +1,10 @@
 import type { SessionListLookupStateLike } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { machineCollectionValues, type MachineCollection } from '@/sync/domains/machines/identity/machineCollection';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
-import { isSameMachineLocality } from '@happier-dev/protocol';
+import { isSameMachineLocality, resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol';
 import {
     resolveSessionDisplayTarget,
     resolveSessionRpcTarget,
@@ -29,7 +30,14 @@ export type SessionMachineTargetState = MachineTargetLikeState;
 export type SessionMachineControlTarget = Readonly<{
     machineId: string;
     basePath: string;
+    agentBasePath?: string;
     confidence: 'reachable' | 'metadata_direct';
+}>;
+
+export type SessionMachineTarget = Readonly<{
+    machineId: string;
+    basePath: string;
+    agentBasePath?: string;
 }>;
 
 export type SessionTargetMetadataLike = Readonly<{
@@ -37,6 +45,7 @@ export type SessionTargetMetadataLike = Readonly<{
     path?: string | null;
     host?: string | null;
     homeDir?: string | null;
+    sessionWorkspaceLocationV1?: unknown;
     externalSessionV1?: Readonly<{
         v?: number;
         agentId?: string | null;
@@ -55,16 +64,21 @@ function toSessionTargetMetadataLike(value: unknown): SessionTargetMetadataLike 
     return value && typeof value === 'object' ? value as SessionTargetMetadataLike : null;
 }
 
-function readMachines(state: SessionMachineTargetState): Machine[] {
-    return Object.values(state.machines ?? {});
+/**
+ * The store's own id-keyed record, handed over as-is. Identity resolution needs a lookup, not a
+ * list, and this runs once per session on the store write path — flattening it here rebuilt the
+ * machine index per session.
+ */
+function readMachines(state: SessionMachineTargetState): Readonly<Record<string, Machine>> {
+    return state.machines ?? {};
 }
 
 function resolveUniqueActiveMachineByHost(
-    machines: ReadonlyArray<Machine>,
+    machines: MachineCollection<Machine>,
     host: string | null,
 ): Machine | null {
     if (!host) return null;
-    const matches = machines.filter((machine) => {
+    const matches = machineCollectionValues(machines).filter((machine) => {
         const machineHost = normalizeNonEmptyString(machine.metadata?.host);
         return machine.active === true
             && !machine.revokedAt
@@ -75,12 +89,12 @@ function resolveUniqueActiveMachineByHost(
 }
 
 function resolveUniqueActiveMachineByLocality(input: Readonly<{
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
     sessionHost: string | null;
     sessionHomeDir: string | null;
 }>): Machine | null {
     if (!input.sessionHost || !input.sessionHomeDir) return null;
-    const matches = input.machines.filter((machine) => {
+    const matches = machineCollectionValues(input.machines).filter((machine) => {
         const machineHost = normalizeNonEmptyString(machine.metadata?.host);
         const machineHomeDir = normalizeNonEmptyString(machine.metadata?.homeDir);
         return machine.active === true
@@ -120,7 +134,7 @@ function readSessionTargetInputForMetadata(
 function resolveLegacyHostMachineTarget(input: Readonly<{
     metadata: SessionTargetMetadataLike;
     projectMachineId?: string | null;
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
 }>): { machineId: string; basePath: string } | null {
     if (resolveSessionMachineId(input.metadata)) return null;
     if (normalizeNonEmptyString(input.projectMachineId)) return null;
@@ -134,7 +148,7 @@ function resolveLegacyHostMachineTarget(input: Readonly<{
 
 function resolveSameLocalityReplacementMachineTarget(input: Readonly<{
     metadata: SessionTargetMetadataLike;
-    machines: ReadonlyArray<Machine>;
+    machines: MachineCollection<Machine>;
 }>): { machineId: string; basePath: string } | null {
     if (!resolveSessionMachineId(input.metadata)) return null;
 
@@ -147,6 +161,29 @@ function resolveSameLocalityReplacementMachineTarget(input: Readonly<{
         sessionHomeDir: normalizeNonEmptyString(input.metadata?.homeDir),
     });
     return machine ? { machineId: machine.id, basePath } : null;
+}
+
+function resolveWorkspaceLocationForMachineTarget(
+    metadata: SessionTargetMetadataLike,
+    target: Readonly<{ machineId: string; basePath: string }> | null,
+): SessionMachineTarget | null {
+    if (!target) return null;
+    const resolved = resolveSessionWorkspaceRootForMachine({
+        metadata,
+        machineId: target.machineId,
+        candidatePath: target.basePath,
+    });
+    if (!resolved.agentPath || resolved.machinePath === resolved.agentPath) {
+        return {
+            machineId: target.machineId,
+            basePath: target.basePath,
+        };
+    }
+    return {
+        machineId: target.machineId,
+        basePath: resolved.machinePath,
+        agentBasePath: resolved.agentPath,
+    };
 }
 
 function readPrivateSessionTargetInputs(state: SessionMachineTargetState, sessionId: string) {
@@ -182,16 +219,16 @@ function readPrivateSessionTargetInput(state: SessionMachineTargetState, session
 export function resolveMachineTargetForSessionFromState(
     state: SessionMachineTargetState,
     sessionId: string,
-): { machineId: string; basePath: string } | null {
+): SessionMachineTarget | null {
     const resolvedSessionId = normalizeSessionId(sessionId);
     const inputs = readPrivateSessionTargetInputs(state, resolvedSessionId);
     for (const input of inputs) {
         const target = resolveSessionRpcTarget(input);
         if (!target) continue;
-        return {
+        return resolveWorkspaceLocationForMachineTarget(input.metadata, {
             machineId: target.machineId,
             basePath: target.basePath,
-        };
+        });
     }
     for (const input of inputs) {
         const target = resolveLegacyHostMachineTarget({
@@ -199,14 +236,14 @@ export function resolveMachineTargetForSessionFromState(
             projectMachineId: input.projectMachineId,
             machines: input.machines,
         });
-        if (target) return target;
+        if (target) return resolveWorkspaceLocationForMachineTarget(input.metadata, target);
     }
     for (const input of inputs) {
         const target = resolveSameLocalityReplacementMachineTarget({
             metadata: input.metadata,
             machines: input.machines,
         });
-        if (target) return target;
+        if (target) return resolveWorkspaceLocationForMachineTarget(input.metadata, target);
     }
     return null;
 }
@@ -218,13 +255,13 @@ function hasKnownUnavailableMachineState(machine: Machine | undefined): boolean 
     return machine.active !== true;
 }
 
-function hasConflictingDirectSessionMachine(input: ReturnType<typeof readPrivateSessionTargetInput>, machineId: string): boolean {
+function hasConflictingDirectSessionMachine(input: ReturnType<typeof readPrivateSessionTargetInput>): boolean {
     if (!input) return false;
     const sessionMachineId = normalizeNonEmptyString(input.sessionMachineId);
     const projectMachineId = normalizeNonEmptyString(input.projectMachineId);
     if (!sessionMachineId) return false;
     if (!projectMachineId) return false;
-    return sessionMachineId !== projectMachineId && machineId === projectMachineId;
+    return sessionMachineId !== projectMachineId;
 }
 
 export function resolveMachineControlTargetForSessionFromState(
@@ -244,15 +281,44 @@ export function resolveMachineControlTargetForSessionFromState(
     if (!input) return null;
     const displayTarget = resolveSessionDisplayTarget(input);
     if (!displayTarget) return null;
-    if (hasConflictingDirectSessionMachine(input, displayTarget.machineId)) return null;
+    if (hasConflictingDirectSessionMachine(input)) return null;
 
     const knownMachine = state.machines?.[displayTarget.machineId];
     if (hasKnownUnavailableMachineState(knownMachine)) return null;
 
+    const workspaceTarget = resolveWorkspaceLocationForMachineTarget(input.metadata, displayTarget);
+    if (!workspaceTarget) return null;
     return {
-        machineId: displayTarget.machineId,
-        basePath: displayTarget.basePath,
+        ...workspaceTarget,
         confidence: 'metadata_direct',
+    };
+}
+
+/**
+ * What a session row shows: the machine it is attributed to and the path under it, each falling
+ * back to the session's own metadata when no display target resolves.
+ *
+ * Both values come out of one target resolution. Asking for them separately resolved the same
+ * target — and re-read the project for the same session — twice per row, which is pure waste for
+ * any caller that needs both.
+ */
+export type SessionDisplayIdentity = Readonly<{
+    machineId: string;
+    basePath: string;
+}>;
+
+export function resolveDisplayIdentityForSessionFromState(input: Readonly<{
+    state: SessionMachineTargetState;
+    sessionId?: string | null;
+    metadata?: SessionTargetMetadataLike;
+}>): SessionDisplayIdentity {
+    const sessionId = normalizeNonEmptyString(input.sessionId);
+    const target = sessionId
+        ? resolveSessionDisplayTarget(readSessionDisplayTargetInput(input.state, sessionId))
+        : null;
+    return {
+        machineId: target?.machineId || resolveSessionMachineId(input.metadata) || '',
+        basePath: target?.basePath || normalizeNonEmptyString(input.metadata?.path) || '',
     };
 }
 
@@ -261,15 +327,7 @@ export function resolveDisplayMachineIdForSessionFromState(input: Readonly<{
     sessionId?: string | null;
     metadata?: SessionTargetMetadataLike;
 }>): string {
-    const sessionId = normalizeNonEmptyString(input.sessionId);
-    const target = sessionId
-        ? resolveSessionDisplayTarget(readSessionDisplayTargetInput(input.state, sessionId))
-        : null;
-    if (target?.machineId) return target.machineId;
-    return (
-        resolveSessionMachineId(input.metadata)
-        ?? ''
-    );
+    return resolveDisplayIdentityForSessionFromState(input).machineId;
 }
 
 export function resolveDisplayMachineTargetForSessionFromState(input: Readonly<{
@@ -315,10 +373,5 @@ export function resolveDisplayPathForSessionFromState(input: Readonly<{
     sessionId?: string | null;
     metadata?: SessionTargetMetadataLike;
 }>): string {
-    const sessionId = normalizeNonEmptyString(input.sessionId);
-    const target = sessionId
-        ? resolveSessionDisplayTarget(readSessionDisplayTargetInput(input.state, sessionId))
-        : null;
-    if (target?.basePath) return target.basePath;
-    return normalizeNonEmptyString(input.metadata?.path) ?? '';
+    return resolveDisplayIdentityForSessionFromState(input).basePath;
 }

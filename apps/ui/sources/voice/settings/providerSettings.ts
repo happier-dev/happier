@@ -3,7 +3,11 @@ import type {
   VoiceProviderSettingsEnvelopeV1,
   VoiceProviderSettingsJsonValueV1,
 } from '@happier-dev/protocol';
-import { PluginVoiceProviderContributionV1Schema } from '@happier-dev/protocol';
+import {
+  VoiceProviderContributionSchema,
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+} from '@happier-dev/protocol';
 
 import {
   VoiceLocalDirectSchema,
@@ -14,7 +18,14 @@ import {
   VoiceLocalConversationSchema,
 } from '@/voice/adapters/localConversation/settings';
 import { getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
+import type { BundledVoiceManifestContribution } from '@/voice/registry/bundledVoiceManifestProjection';
+import { indexVoiceProviderPresentations } from '@/voice/registry/bundledVoiceManifestProjection';
+import type { VoiceProviderPresentation } from '@/voice/registry/voiceProviderPresentation';
 import { createExternalVoiceProviderSettingsDescriptor } from '@/voice/settings/externalProviderSettings';
+import {
+  projectPredecessorSpeechProviderConfig,
+  projectPredecessorSpeechProviderSelection,
+} from '@/sync/domains/settings/migrations/speechProviders';
 
 export type VoiceProviderLegacyRootMigration = Readonly<{
   assistantLanguage?: string | null;
@@ -25,6 +36,7 @@ export type VoiceProviderLegacyRootMigration = Readonly<{
 export type VoiceProviderLegacyProjectionContext = Readonly<{
   root: VoiceProviderLegacyRootMigration;
   resolveCredential: (providerId: string, slotId: string) => SecretStringV1 | null;
+  resolveProviderConfig: (providerId: string) => Readonly<Record<string, unknown>> | null;
 }>;
 
 export type VoiceProviderSettingsOwner = Readonly<{
@@ -89,19 +101,8 @@ function cloneJson(value: unknown): VoiceProviderSettingsJsonValueV1 {
   return JSON.parse(JSON.stringify(value)) as VoiceProviderSettingsJsonValueV1;
 }
 
-const PREDECESSOR_STT_PROVIDER_IDS = new Set(['device', 'openai_compat', 'google_gemini', 'local_neural']);
-const PREDECESSOR_TTS_PROVIDER_IDS = new Set(['device', 'openai_compat', 'google_cloud', 'local_neural']);
-
 function asRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
-}
-
-function readSpeechProviderConfig(
-  providers: unknown,
-  providerId: string,
-): Record<string, unknown> {
-  const envelope = asRecord(asRecord(providers)[providerId]);
-  return envelope.schemaVersion === 2 ? asRecord(envelope.config) : {};
 }
 
 function withoutKeys(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -112,38 +113,57 @@ function withoutKeys(value: unknown, keys: readonly string[]): Record<string, un
 
 function projectLegacyLocalSpeechSettings(
   config: unknown,
-  resolveCredential: VoiceProviderLegacyProjectionContext['resolveCredential'],
+  resolveProviderConfig: VoiceProviderLegacyProjectionContext['resolveProviderConfig'],
 ): Record<string, VoiceProviderSettingsJsonValueV1> | null {
   const parsed = VoiceLocalDirectSchema.safeParse(config);
   if (!parsed.success) return null;
   const stt = parsed.data.stt;
   const tts = parsed.data.tts;
-  if (!PREDECESSOR_STT_PROVIDER_IDS.has(stt.provider)
-    || !PREDECESSOR_TTS_PROVIDER_IDS.has(tts.provider)) return null;
+  const predecessorSttProvider = projectPredecessorSpeechProviderSelection('stt', stt.provider);
+  const predecessorTtsProvider = projectPredecessorSpeechProviderSelection('tts', tts.provider);
+  if (!predecessorSttProvider || !predecessorTtsProvider) return null;
+  const googleGemini = projectPredecessorSpeechProviderConfig(
+    'happier.voice.google/gemini-stt',
+    resolveProviderConfig('happier.voice.google/gemini-stt'),
+  ) ?? {};
+  const googleCloud = projectPredecessorSpeechProviderConfig(
+    'happier.voice.google/google-cloud-tts',
+    resolveProviderConfig('happier.voice.google/google-cloud-tts'),
+  ) ?? {};
+  const openAiCompatStt = projectPredecessorSpeechProviderConfig(
+    'happier.voice.openai-compat/stt',
+    resolveProviderConfig('happier.voice.openai-compat/stt'),
+  ) ?? {};
+  const openAiCompatTts = projectPredecessorSpeechProviderConfig(
+    'happier.voice.openai-compat/tts',
+    resolveProviderConfig('happier.voice.openai-compat/tts'),
+  ) ?? {};
 
   return {
     ...parsed.data,
     stt: {
-      ...withoutKeys(stt, ['providers']),
-      openaiCompat: {
-        ...stt.openaiCompat,
-        apiKey: resolveCredential('openai_compat', 'stt_api_key'),
-      },
+      ...stt,
+      provider: predecessorSttProvider,
       googleGemini: {
-        ...readSpeechProviderConfig(stt.providers, 'google_gemini'),
-        apiKey: resolveCredential('google_gemini', 'api_key'),
+        ...googleGemini,
+        apiKey: null,
+      },
+      openaiCompat: {
+        ...openAiCompatStt,
+        apiKey: null,
       },
       localNeural: withoutKeys(stt.localNeural, ['execution']),
     },
     tts: {
-      ...withoutKeys(tts, ['providers']),
-      openaiCompat: {
-        ...tts.openaiCompat,
-        apiKey: resolveCredential('openai_compat', 'tts_api_key'),
-      },
+      ...tts,
+      provider: predecessorTtsProvider,
       googleCloud: {
-        ...readSpeechProviderConfig(tts.providers, 'google_cloud'),
-        apiKey: resolveCredential('google_cloud', 'api_key'),
+        ...googleCloud,
+        apiKey: null,
+      },
+      openaiCompat: {
+        ...openAiCompatTts,
+        apiKey: null,
       },
       localNeural: withoutKeys(tts.localNeural, ['execution']),
     },
@@ -161,36 +181,16 @@ function mergeLegacyLocalSpeechSettings(
     ...migrated.data,
     stt: {
       ...migrated.data.stt,
-      openaiCompat: {
-        ...migrated.data.stt.openaiCompat,
-        insecureLocalOriginConsent: current.data.stt.openaiCompat.insecureLocalOriginConsent,
-        insecureLocalConsentMachineId: current.data.stt.openaiCompat.insecureLocalConsentMachineId,
-        apiKey: current.data.stt.openaiCompat.apiKey,
-      },
       localNeural: {
         ...migrated.data.stt.localNeural,
         execution: current.data.stt.localNeural.execution,
       },
-      providers: {
-        ...current.data.stt.providers,
-        ...migrated.data.stt.providers,
-      },
     },
     tts: {
       ...migrated.data.tts,
-      openaiCompat: {
-        ...migrated.data.tts.openaiCompat,
-        insecureLocalOriginConsent: current.data.tts.openaiCompat.insecureLocalOriginConsent,
-        insecureLocalConsentMachineId: current.data.tts.openaiCompat.insecureLocalConsentMachineId,
-        apiKey: current.data.tts.openaiCompat.apiKey,
-      },
       localNeural: {
         ...migrated.data.tts.localNeural,
         execution: current.data.tts.localNeural.execution,
-      },
-      providers: {
-        ...current.data.tts.providers,
-        ...migrated.data.tts.providers,
       },
     },
   });
@@ -215,7 +215,7 @@ function createBuiltInOwners(): readonly VoiceProviderSettingsOwner[] {
         return parsed.success ? Object.freeze({ config: parsed.data, root: Object.freeze({}) }) : null;
       },
       projectLegacy(config: unknown, context: VoiceProviderLegacyProjectionContext) {
-        return projectLegacyLocalSpeechSettings(config, context.resolveCredential);
+        return projectLegacyLocalSpeechSettings(config, context.resolveProviderConfig);
       },
       mergeLegacy(currentConfig: unknown, migratedConfig: unknown) {
         return mergeLegacyLocalSpeechSettings(currentConfig, migratedConfig);
@@ -249,7 +249,7 @@ function createBuiltInOwners(): readonly VoiceProviderSettingsOwner[] {
       projectLegacy(config: unknown, context: VoiceProviderLegacyProjectionContext) {
         const parsed = VoiceLocalConversationSchema.safeParse(config);
         if (!parsed.success) return null;
-        const localSpeech = projectLegacyLocalSpeechSettings(parsed.data, context.resolveCredential);
+        const localSpeech = projectLegacyLocalSpeechSettings(parsed.data, context.resolveProviderConfig);
         if (!localSpeech) return null;
         const agent = parsed.data.agent;
         return {
@@ -266,10 +266,6 @@ function createBuiltInOwners(): readonly VoiceProviderSettingsOwner[] {
               mode: 'immediate',
               templateId: null,
             },
-            openaiCompat: {
-              ...agent.openaiCompat,
-              chatApiKey: context.resolveCredential('openai_compat', 'chat_api_key'),
-            },
           },
         } as VoiceProviderSettingsJsonValueV1;
       },
@@ -283,14 +279,12 @@ function createBuiltInOwners(): readonly VoiceProviderSettingsOwner[] {
           ...migrated.data,
           stt: mergedSpeech.stt,
           tts: mergedSpeech.tts,
+          // Provider Chat is canonical-only state produced by the current
+          // migration owner. A predecessor whole-object adapter write has no
+          // authority to replace it with its schema default.
           agent: {
             ...migrated.data.agent,
-            openaiCompat: {
-              ...migrated.data.agent.openaiCompat,
-              insecureLocalOriginConsent: current.data.agent.openaiCompat.insecureLocalOriginConsent,
-              insecureLocalConsentMachineId: current.data.agent.openaiCompat.insecureLocalConsentMachineId,
-              chatApiKey: current.data.agent.openaiCompat.chatApiKey,
-            },
+            providerChat: current.data.agent.providerChat,
           },
         }));
       },
@@ -299,18 +293,18 @@ function createBuiltInOwners(): readonly VoiceProviderSettingsOwner[] {
 }
 
 function extractBundledOwner(raw: unknown): VoiceProviderSettingsOwner | null {
-  if (!isRecord(raw) || typeof raw.providerId !== 'string') return null;
-  const publicDeclaration = PluginVoiceProviderContributionV1Schema.safeParse(raw.declaration);
+  if (!isRecord(raw) || typeof raw.pluginId !== 'string') return null;
+  const publicDeclaration = VoiceProviderContributionSchema.safeParse(raw.declaration);
   if (publicDeclaration.success
-    && publicDeclaration.data.kind === 'conversation'
-    && publicDeclaration.data.settings !== undefined
-    && (
-      publicDeclaration.data.settings.fields.length > 0
-      || publicDeclaration.data.settings.connectedServicesBinding !== undefined
-    )) {
+    && publicDeclaration.data.settings !== undefined) {
+    const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+      pluginId: raw.pluginId,
+      localId: publicDeclaration.data.id,
+    }));
     const settings = createExternalVoiceProviderSettingsDescriptor(publicDeclaration.data.settings);
-    const legacyMigration = isRecord(raw.internal) && isRecord(raw.internal.legacySettingsMigration)
-      ? raw.internal.legacySettingsMigration
+    const presentation = isRecord(raw.presentation) ? raw.presentation : null;
+    const legacyMigration = presentation && isRecord(presentation.legacySettingsMigration)
+      ? presentation.legacySettingsMigration
       : null;
     const migrateLegacy = legacyMigration && typeof legacyMigration.migrateLegacy === 'function'
       ? legacyMigration.migrateLegacy as VoiceProviderSettingsOwner['migrateLegacy']
@@ -321,11 +315,8 @@ function extractBundledOwner(raw: unknown): VoiceProviderSettingsOwner | null {
     const mergeLegacy = legacyMigration && typeof legacyMigration.mergeLegacy === 'function'
       ? legacyMigration.mergeLegacy as VoiceProviderSettingsOwner['mergeLegacy']
       : null;
-    const projectAnalytics = isRecord(raw.internal) && typeof raw.internal.projectSettingsAnalytics === 'function'
-      ? raw.internal.projectSettingsAnalytics as NonNullable<VoiceProviderSettingsOwner['projectAnalytics']>
-      : null;
     return Object.freeze({
-      providerId: raw.providerId,
+      providerId,
       currentSchemaVersion: settings.schemaVersion,
       defaultConfig: cloneJson(settings.defaultConfig),
       defaultLegacyConfig: cloneJson(legacyMigration && 'defaultLegacyConfig' in legacyMigration
@@ -357,63 +348,32 @@ function extractBundledOwner(raw: unknown): VoiceProviderSettingsOwner | null {
             >,
           }
         : {}),
-      ...(projectAnalytics
-        ? {
-            projectAnalytics(config: unknown) {
-              const parsed = settings.parseConfig(config);
-              return parsed === null ? Object.freeze({}) : projectAnalytics(parsed);
-            },
-          }
-        : {}),
     });
   }
-  if (!isRecord(raw.internal)) return null;
-  const providerSettings = raw.internal.providerSettings;
-  if (!isRecord(providerSettings)
-    || typeof providerSettings.schemaVersion !== 'number'
-    || !Number.isInteger(providerSettings.schemaVersion)
-    || providerSettings.schemaVersion < 1
-    || typeof providerSettings.parseConfig !== 'function'
-    || typeof providerSettings.migrateLegacy !== 'function'
-    || typeof providerSettings.projectLegacy !== 'function'
-    || typeof providerSettings.mergeLegacy !== 'function'
-    || !('defaultConfig' in providerSettings)
-    || !('defaultLegacyConfig' in providerSettings)) return null;
-  const owner: VoiceProviderSettingsOwner = {
-    providerId: raw.providerId,
-    currentSchemaVersion: providerSettings.schemaVersion,
-    defaultConfig: cloneJson(providerSettings.defaultConfig),
-    defaultLegacyConfig: cloneJson(providerSettings.defaultLegacyConfig),
-    legacyDefaultSelection: providerSettings.legacyDefaultSelection === true,
-    parseConfig: providerSettings.parseConfig as VoiceProviderSettingsOwner['parseConfig'],
-    ...(typeof providerSettings.readLegacySecret === 'function'
-      ? { readLegacySecret: providerSettings.readLegacySecret as NonNullable<VoiceProviderSettingsOwner['readLegacySecret']> }
-      : {}),
-    migrateLegacy: providerSettings.migrateLegacy as VoiceProviderSettingsOwner['migrateLegacy'],
-    projectLegacy: providerSettings.projectLegacy as VoiceProviderSettingsOwner['projectLegacy'],
-    mergeLegacy: providerSettings.mergeLegacy as VoiceProviderSettingsOwner['mergeLegacy'],
-    ...(typeof providerSettings.preserveLegacyEnvelope === 'function'
-      ? { preserveLegacyEnvelope: providerSettings.preserveLegacyEnvelope as NonNullable<VoiceProviderSettingsOwner['preserveLegacyEnvelope']> }
-      : {}),
-    ...(typeof providerSettings.projectAnalytics === 'function'
-      ? { projectAnalytics: providerSettings.projectAnalytics as NonNullable<VoiceProviderSettingsOwner['projectAnalytics']> }
-      : {}),
-  };
-  return Object.freeze(owner);
+  return null;
 }
 
 export function resolveBundledVoiceProviderSettingsOwner(
-  raw: unknown,
+  raw: Readonly<{
+    pluginId: string;
+    declaration?: import('@happier-dev/protocol').VoiceProviderContribution;
+    presentation?: VoiceProviderPresentation;
+  }>,
 ): VoiceProviderSettingsOwner | null {
   return extractBundledOwner(raw);
 }
 
 export function createVoiceProviderSettingsCatalog(input: Readonly<{
-  bundledEntries: readonly unknown[];
+  bundledContributions: readonly BundledVoiceManifestContribution[];
+  bundledPresentations: readonly VoiceProviderPresentation[];
 }>): VoiceProviderSettingsCatalog {
   const owners = [...createBuiltInOwners()];
-  for (const raw of input.bundledEntries) {
-    const owner = extractBundledOwner(raw);
+  const presentations = indexVoiceProviderPresentations(input.bundledPresentations);
+  for (const contribution of input.bundledContributions) {
+    const owner = extractBundledOwner({
+      ...contribution,
+      presentation: presentations.get(contribution.providerId),
+    });
     if (owner) owners.push(owner);
   }
   owners.sort((left, right) => left.providerId.localeCompare(right.providerId));

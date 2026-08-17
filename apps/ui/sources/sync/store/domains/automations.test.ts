@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+    createAutomationDefinitionFromDetail,
+    createAutomationDefinitionSummary,
+    markAutomationDefinitionContentUnavailable,
+} from '@/sync/domains/automations/automationDefinitionProjection';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
 import { createAutomationsDomain } from './automations';
@@ -16,10 +21,66 @@ type AutomationRun = {
     automationId: string;
     state: 'queued' | 'running' | 'succeeded' | 'failed';
     scheduledAt: number;
+    origin?: Readonly<{
+        kind: 'scheduled';
+        scheduledFor: number;
+    }>;
     updatedAt: number;
 };
 
 type State = ReturnType<typeof createAutomationsDomain>;
+
+type PaginatedRunsState = State & {
+    automationRunNextCursorByAutomationId: Record<string, string | null>;
+    setAutomationRuns: (automationId: string, runs: AutomationRun[], nextCursor: string | null) => void;
+    appendAutomationRuns: (
+        automationId: string,
+        expectedCursor: string,
+        runs: AutomationRun[],
+        nextCursor: string | null,
+    ) => void;
+};
+
+const eventDefinitionSummary = {
+    id: 'event-1',
+    name: 'Repository updates',
+    description: null,
+    enabled: true,
+    trigger: {
+        kind: 'pluginEvent' as const,
+        eventRef: { pluginId: 'happier.scm.github', localId: 'repository-event-v1' },
+        sourceSelectorId: 'selector-1',
+        sourceContractVersion: 1,
+        observation: {
+            kind: 'checkpointedPull' as const,
+            watcher: {
+                machineId: 'machine-1',
+                machineInstallationId: 'installation-1',
+                pluginId: 'happier.scm.github',
+                materializationId: 'materialization-1',
+            },
+        },
+    },
+    targetType: 'existingSession' as const,
+    templateVersion: 3,
+    nextRunAt: null,
+    lastRunAt: null,
+    createdAt: 1,
+    updatedAt: 2,
+    assignments: [],
+};
+
+const eventDefinitionDetail = {
+    ...eventDefinitionSummary,
+    triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
+    executionRecipe: {
+        v: 1 as const,
+        templateVersion: 3,
+        template: { t: 'plain' as const, v: { v: 1, prompt: 'Review {{input}}' } },
+        triggerEvidence: null,
+        target: { kind: 'existingSession' as const, sessionId: 'session-1' },
+    },
+};
 
 function createHarness(): {
     state: State;
@@ -50,6 +111,10 @@ function run(input: Partial<AutomationRun> & Pick<AutomationRun, 'id' | 'automat
         automationId: input.automationId,
         state: input.state ?? 'queued',
         scheduledAt: input.scheduledAt ?? 1,
+        origin: input.origin ?? {
+            kind: 'scheduled',
+            scheduledFor: input.scheduledAt ?? 1,
+        },
         updatedAt: input.updatedAt ?? 1,
     };
 }
@@ -70,6 +135,114 @@ describe('createAutomationsDomain', () => {
         expect(Object.keys(harness.get().automations).sort()).toEqual(['a3']);
     });
 
+    it('retains current private definition content across a same-version summary refresh and drops it on a revision change', () => {
+        const harness = createHarness();
+        const current = createAutomationDefinitionFromDetail(eventDefinitionDetail);
+        harness.get().applyAutomations([current]);
+        harness.get().applyAutomations([createAutomationDefinitionSummary({
+            ...eventDefinitionSummary,
+            name: 'Repository updates (renamed)',
+        })]);
+
+        expect(harness.get().automations['event-1']?.detail).toMatchObject({
+            kind: 'available',
+            value: {
+                name: 'Repository updates (renamed)',
+                triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
+                executionRecipe: current.detail.kind === 'available'
+                    ? current.detail.value.executionRecipe
+                    : undefined,
+            },
+        });
+
+        harness.get().applyAutomations([createAutomationDefinitionSummary({
+            ...eventDefinitionSummary,
+            name: 'Repository updates (changed)',
+            templateVersion: 4,
+        })]);
+
+        expect(harness.get().automations['event-1']?.detail).toEqual({
+            kind: 'unloaded',
+            templateVersion: 4,
+        });
+    });
+
+    it('refreshes the list-safe Event catalog status without creating a second detail cache', () => {
+        const harness = createHarness();
+        const currentCatalogStatus = {
+            observedRevision: '7',
+            adoptedRevision: '7',
+            state: 'current' as const,
+            scanStartedAt: 100,
+            nextRetryAt: null,
+        };
+        const reconcilingCatalogStatus = {
+            observedRevision: '8',
+            adoptedRevision: '7',
+            state: 'reconciling' as const,
+            scanStartedAt: 200,
+            nextRetryAt: 300,
+        };
+        harness.get().applyAutomations([createAutomationDefinitionFromDetail({
+            ...eventDefinitionDetail,
+            sourceCatalogStatus: currentCatalogStatus,
+        })]);
+        harness.get().applyAutomations([createAutomationDefinitionSummary({
+            ...eventDefinitionSummary,
+            sourceCatalogStatus: reconcilingCatalogStatus,
+        })]);
+
+        expect(harness.get().automations['event-1']).toMatchObject({
+            sourceCatalogStatus: reconcilingCatalogStatus,
+            detail: {
+                kind: 'available',
+                value: {
+                    sourceCatalogStatus: reconcilingCatalogStatus,
+                    triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
+                },
+            },
+        });
+    });
+
+    it('drops a retained direct detail when a same-revision list snapshot changes its Event source identity', () => {
+        const harness = createHarness();
+        harness.get().applyAutomations([createAutomationDefinitionFromDetail(eventDefinitionDetail)]);
+        harness.get().applyAutomations([createAutomationDefinitionSummary({
+            ...eventDefinitionSummary,
+            trigger: {
+                ...eventDefinitionSummary.trigger,
+                sourceSelectorId: 'selector-2',
+            },
+        })]);
+
+        expect(harness.get().automations['event-1']?.detail).toEqual({
+            kind: 'unloaded',
+            templateVersion: 3,
+        });
+        expect(harness.get().automations['event-1']?.linkedExistingSessionId).toBeNull();
+    });
+
+    it('does not keep a fail-closed content marker when a same-revision list snapshot changes its Event source identity', () => {
+        const harness = createHarness();
+        harness.get().applyAutomations([
+            markAutomationDefinitionContentUnavailable(
+                createAutomationDefinitionSummary(eventDefinitionSummary),
+            ),
+        ]);
+        harness.get().applyAutomations([createAutomationDefinitionSummary({
+            ...eventDefinitionSummary,
+            trigger: {
+                ...eventDefinitionSummary.trigger,
+                sourceSelectorId: 'selector-2',
+            },
+        })]);
+
+        expect(harness.get().automations['event-1']?.detail).toEqual({
+            kind: 'unloaded',
+            templateVersion: 3,
+        });
+    });
+
     it('upserts and removes automations', () => {
         const harness = createHarness();
         harness.get().upsertAutomation(automation({ id: 'a1', name: 'Nightly' }) as any);
@@ -87,7 +260,7 @@ describe('createAutomationsDomain', () => {
         harness.get().setAutomationRuns('a1', [
             run({ id: 'r1', automationId: 'a1', scheduledAt: 10 }),
             run({ id: 'r2', automationId: 'a1', scheduledAt: 20 }),
-        ] as any);
+        ] as any, null);
 
         expect(harness.get().automationRunsByAutomationId.a1?.map((entry) => entry.id)).toEqual(['r2', 'r1']);
 
@@ -103,13 +276,104 @@ describe('createAutomationsDomain', () => {
         expect(harness.get().automationRunsByAutomationId.a1?.[0]?.state).toBe('succeeded');
     });
 
+    it('orders Event runs by their safe occurrence time instead of incidental update churn', () => {
+        const harness = createHarness();
+        harness.get().setAutomationRuns('event-1', [
+            {
+                id: 'older-occurrence',
+                automationId: 'event-1',
+                state: 'queued',
+                origin: {
+                    kind: 'pluginEvent',
+                    occurrenceKey: 'occurrence-older',
+                    sourceSelectorId: 'selector-1',
+                    occurredAt: 100,
+                },
+                dueAt: 100,
+                claimedAt: null,
+                startedAt: null,
+                finishedAt: null,
+                claimedByMachineId: null,
+                leaseExpiresAt: null,
+                attempt: 0,
+                errorCode: null,
+                producedSessionId: null,
+                executionDispatchState: null,
+                executionAttempt: 0,
+                replyHandoffState: 'none',
+                replyHandoffAttempt: 0,
+                replyHandoffDueAt: null,
+                createdAt: 100,
+                updatedAt: 10_000,
+            },
+            {
+                id: 'newer-occurrence',
+                automationId: 'event-1',
+                state: 'queued',
+                origin: {
+                    kind: 'pluginEvent',
+                    occurrenceKey: 'occurrence-newer',
+                    sourceSelectorId: 'selector-1',
+                    occurredAt: 200,
+                },
+                dueAt: 200,
+                claimedAt: null,
+                startedAt: null,
+                finishedAt: null,
+                claimedByMachineId: null,
+                leaseExpiresAt: null,
+                attempt: 0,
+                errorCode: null,
+                producedSessionId: null,
+                executionDispatchState: null,
+                executionAttempt: 0,
+                replyHandoffState: 'none',
+                replyHandoffAttempt: 0,
+                replyHandoffDueAt: null,
+                createdAt: 200,
+                updatedAt: 1,
+            },
+        ] as any, null);
+
+        expect(harness.get().automationRunsByAutomationId['event-1']?.map((entry) => entry.id)).toEqual([
+            'newer-occurrence',
+            'older-occurrence',
+        ]);
+    });
+
+    it('continues only the current opaque run-history cursor and deduplicates an overlapping page', () => {
+        const harness = createHarness();
+        const domain = harness.get() as PaginatedRunsState;
+        domain.setAutomationRuns('a1', [
+            run({ id: 'r3', automationId: 'a1', scheduledAt: 30, state: 'running' }),
+            run({ id: 'r2', automationId: 'a1', scheduledAt: 20 }),
+        ], 'cursor-1');
+
+        domain.appendAutomationRuns('a1', 'stale-cursor', [
+            run({ id: 'r1', automationId: 'a1', scheduledAt: 10 }),
+        ], 'cursor-2');
+        expect(harness.get().automationRunsByAutomationId.a1?.map((entry) => entry.id)).toEqual(['r3', 'r2']);
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1).toBe('cursor-1');
+
+        domain.appendAutomationRuns('a1', 'cursor-1', [
+            run({ id: 'r2', automationId: 'a1', scheduledAt: 20, state: 'succeeded', updatedAt: 2 }),
+            run({ id: 'r1', automationId: 'a1', scheduledAt: 10 }),
+        ], null);
+
+        expect(harness.get().automationRunsByAutomationId.a1?.map((entry) => entry.id)).toEqual(['r3', 'r2', 'r1']);
+        expect(harness.get().automationRunsByAutomationId.a1?.[1]?.state).toBe('succeeded');
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1).toBeNull();
+    });
+
     it('removes run cache when automation is removed', () => {
         const harness = createHarness();
+        const domain = harness.get() as PaginatedRunsState;
         harness.get().upsertAutomation(automation({ id: 'a1' }) as any);
-        harness.get().setAutomationRuns('a1', [run({ id: 'r1', automationId: 'a1' })] as any);
+        domain.setAutomationRuns('a1', [run({ id: 'r1', automationId: 'a1' })], 'cursor-1');
 
         harness.get().removeAutomation('a1');
         expect(harness.get().automationRunsByAutomationId.a1).toBeUndefined();
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1).toBeUndefined();
     });
 
     it('retains only bounded newest runs per automation', () => {
@@ -121,6 +385,7 @@ describe('createAutomationsDomain', () => {
             Array.from({ length: max + 5 }, (_, index) =>
                 run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: index + 1 }),
             ) as any,
+            null,
         );
 
         expect(harness.get().automationRunsByAutomationId.a1).toHaveLength(max);

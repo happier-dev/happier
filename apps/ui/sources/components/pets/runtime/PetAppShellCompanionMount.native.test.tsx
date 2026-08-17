@@ -74,6 +74,15 @@ const activitySourceState = vi.hoisted(() => ({
     } as ActivityAttentionSource,
 }));
 const executePetCompanionActionSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+/**
+ * The host's app state, driveable. The pet's motion is gated on "is anyone looking?", so the
+ * fixture has to be able to answer that question differently over time — a frozen `'active'`
+ * constant cannot fail a gating test in either direction.
+ */
+const appStateHost = vi.hoisted(() => ({
+    current: 'active' as string,
+    listeners: new Set<(state: string) => void>(),
+}));
 
 function createActivitySource(sessions: readonly ReturnType<typeof createSessionFixture>[]): ActivityAttentionSource {
     return {
@@ -110,8 +119,14 @@ vi.mock('react-native', async () => {
             addEventListener: vi.fn(() => ({ remove: vi.fn() })),
         },
         AppState: {
-            currentState: 'active',
-            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+            get currentState() {
+                return appStateHost.current;
+            },
+            addEventListener: (event: string, listener: (state: string) => void) => {
+                if (event !== 'change') return { remove: () => {} };
+                appStateHost.listeners.add(listener);
+                return { remove: () => appStateHost.listeners.delete(listener) };
+            },
         },
         I18nManager: {
             isRTL: false,
@@ -483,5 +498,82 @@ describe('PetAppShellCompanionMount.native', () => {
         expect(applyLocalSettingsSpy).not.toHaveBeenCalledWith(expect.objectContaining({
             petsDismissedCompanionTrayItemKeys: expect.anything(),
         }));
+    });
+});
+
+/**
+ * The pet only animates while someone is looking at it. That is a real product rule — a sprite
+ * ticking at 20 Hz behind a backgrounded app is battery the user never sees — and it is invisible
+ * in a screenshot, so it is pinned here rather than eyeballed.
+ *
+ * "Is anyone looking?" has one owner (`useHostActivelyViewed`). These assert the pet's *behaviour*
+ * through the frame it paints, not which hook it calls, so the gate can be re-homed without
+ * rewriting them — and so a re-homing that quietly changed the answer cannot pass.
+ */
+describe('PetAppShellCompanionMount.native motion gating', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        appStateHost.current = 'active';
+        appStateHost.listeners.clear();
+        vi.resetModules();
+    });
+
+    /** The sprite's atlas offset: it moves only when the frame index does. */
+    function readSpriteOffsetX(screen: Awaited<ReturnType<typeof renderScreen>>): number {
+        return screen.root.findAllByType('SkiaImage')[0]?.props.x as number;
+    }
+
+    async function renderWithAppState(state: string) {
+        appStateHost.current = state;
+        appStateHost.listeners.clear();
+        // The actively-viewed watch samples the host once and keeps that answer for the module's
+        // lifetime, so the fixture has to be in place before the module is first loaded.
+        vi.resetModules();
+        vi.useFakeTimers();
+        const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount.native');
+        const screen = await renderScreen(<PetAppShellCompanionMount />);
+        return screen;
+    }
+
+    async function advance(ms: number): Promise<void> {
+        await act(async () => {
+            vi.advanceTimersByTime(ms);
+        });
+    }
+
+    function emitAppState(state: string): void {
+        appStateHost.current = state;
+        act(() => {
+            for (const listener of [...appStateHost.listeners]) listener(state);
+        });
+    }
+
+    it('animates on a host that has not reported an app state yet', async () => {
+        // Android reports `unknown` until the first foreground transition arrives. Reading that as
+        // "not being looked at" freezes the companion on the first frame for the whole of a cold
+        // start — the pet is on screen, visibly dead, until the user backgrounds the app once.
+        const screen = await renderWithAppState('unknown');
+        const firstFrameOffsetX = readSpriteOffsetX(screen);
+
+        await advance(2_000);
+
+        expect(readSpriteOffsetX(screen)).not.toBe(firstFrameOffsetX);
+    });
+
+    it('stops animating when the app leaves the foreground and resumes when it returns', async () => {
+        const screen = await renderWithAppState('active');
+        await advance(2_000);
+        const movedOffsetX = readSpriteOffsetX(screen);
+        expect(movedOffsetX).not.toBe(0);
+
+        emitAppState('background');
+        // Backgrounded, the frame is pinned: further time buys no new frames.
+        const backgroundedOffsetX = readSpriteOffsetX(screen);
+        await advance(4_000);
+        expect(readSpriteOffsetX(screen)).toBe(backgroundedOffsetX);
+
+        emitAppState('active');
+        await advance(2_000);
+        expect(readSpriteOffsetX(screen)).not.toBe(backgroundedOffsetX);
     });
 });

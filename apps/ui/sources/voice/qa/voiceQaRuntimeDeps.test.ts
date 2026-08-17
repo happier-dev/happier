@@ -23,7 +23,14 @@ const {
     enqueuePendingMessage,
     markPendingDeliveryHandled,
 } = vi.hoisted(() => {
-    const adapterSendTextTurn = vi.fn(async (_params: Readonly<{ localId: string }>) => {});
+    const adapterSendTextTurn = vi.fn(async (params: Readonly<{
+        localId: string;
+        onAccepted(): Promise<void>;
+    }>) => {
+        // Real realtime adapters acknowledge admission before returning; the QA
+        // stub mirrors that contract so the durable row settles.
+        await params.onAccepted();
+    });
     const adapterStart = vi.fn(async () => {});
     const adapterStop = vi.fn(async () => {});
     return {
@@ -71,6 +78,17 @@ vi.mock('@/voice/session/voiceAdapterRegistry', () => ({
 
 vi.mock('@/voice/transcript/voiceConversationTranscript', () => ({
     appendVoiceConversationUserText: (params: unknown) => appendVoiceConversationUserText(params),
+    buildRealtimeConversationTurnMeta: () => ({
+        happier: {
+            kind: 'conversation_turn.v1',
+            payload: { v: 1 },
+            conversationTurnOriginV1: {
+                v: 1,
+                channel: 'realtime_conversation',
+                modality: 'voice',
+            },
+        },
+    }),
 }));
 
 vi.mock('@/sync/domains/state/storage', () => storageModuleMock);
@@ -129,15 +147,29 @@ describe('createDefaultVoiceQaControllerDeps', () => {
             text: 'hello',
             localId: expect.any(String),
             deliveryCommand: 'interrupt_and_send',
+            onAccepted: expect.any(Function),
         });
         const localId = adapterSendTextTurn.mock.calls[0]?.[0]?.localId;
         expect(localId).toEqual(expect.any(String));
-        expect(enqueuePendingMessage).toHaveBeenCalledWith('carrier-s1', 'hello', undefined, undefined, {
+        expect(enqueuePendingMessage).toHaveBeenCalledWith('carrier-s1', 'hello', undefined, {
+            happier: {
+                kind: 'conversation_turn.v1',
+                payload: { v: 1 },
+                conversationTurnOriginV1: {
+                    v: 1,
+                    channel: 'realtime_conversation',
+                    modality: 'voice',
+                },
+            },
+        }, {
             localId,
             deliveryMode: 'external_handoff',
             requestedAction: { v: 1, kind: 'send_now' },
         });
-        expect(markPendingDeliveryHandled).not.toHaveBeenCalled();
+        expect(markPendingDeliveryHandled).toHaveBeenCalledExactlyOnceWith(
+            'carrier-s1',
+            localId,
+        );
         expect(appendVoiceConversationUserText).not.toHaveBeenCalled();
         expect(contextSendTextMessage).toHaveBeenCalledWith('context text');
         expect(contextSendContextualUpdate).toHaveBeenCalledWith('context update');

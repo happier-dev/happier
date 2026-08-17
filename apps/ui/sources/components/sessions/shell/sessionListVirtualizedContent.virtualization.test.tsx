@@ -121,33 +121,21 @@ describe('SessionListVirtualizedContent virtualization', () => {
         expect(typeof virtualizationState.flatListProps.onTouchMove).toBe('function');
     });
 
-    it('uses the canonical Legend-backed VirtualizedList for large web lists without recycling stateful rows', async () => {
+    it('keeps large web session lists on the virtualized FlatList backend', async () => {
         await renderVirtualizedContent({
             nodes: buildNodes(121),
         });
 
-        expect(virtualizationState.flatListProps).toBeNull();
-        expect(virtualizationState.legendListProps).toBeTruthy();
-        expect(virtualizationState.legendListProps.scrollEventThrottle).toBe(32);
-        expect(virtualizationState.legendListProps.recycleItems).toBe(false);
-        // Session cell heights depend on group position (last/single rows
-        // carry the inter-group gap) and density, so recycling pools are
-        // keyed on the HEIGHT CLASS (body vs tail) — a recycled cell can then
-        // never bring a stale height from a different position into view.
-        expect(virtualizationState.legendListProps.getItemType({
-            id: 'session:1',
-            rowViewModel: { isLast: false, isSingle: false },
-        })).toBe('session:default:body');
-        expect(virtualizationState.legendListProps.getItemType({
-            id: 'session:1',
-            rowViewModel: { isLast: true, isSingle: false },
-        })).toBe('session:default:tail');
-        expect(virtualizationState.legendListProps.getItemType({ id: 'session:1' })).toBe('session:default:body');
-        expect(virtualizationState.legendListProps.getItemType({ id: 'header:date:today' })).toBe('header:date');
-        expect(typeof virtualizationState.legendListProps.onWheel).toBe('function');
-        expect(typeof virtualizationState.legendListProps.onTouchMove).toBe('function');
-        expect(virtualizationState.legendListProps.getItemLayout).toBeUndefined();
-        expect(virtualizationState.legendListProps.removeClippedSubviews).toBeUndefined();
+        // A real 300+ row web account reproduced React's nested-update crash
+        // inside Legend's container-layout coordinator. Large lists still need
+        // virtualization; the bounded web escape hatch is therefore FlatList
+        // with virtualization enabled, not the all-rows small-list mode.
+        expect(virtualizationState.flatListProps).toBeTruthy();
+        expect(virtualizationState.legendListProps).toBeNull();
+        expect(virtualizationState.flatListProps.disableVirtualization).toBeUndefined();
+        expect(virtualizationState.flatListProps.scrollEventThrottle).toBe(32);
+        expect(typeof virtualizationState.flatListProps.onWheel).toBe('function');
+        expect(typeof virtualizationState.flatListProps.onTouchMove).toBe('function');
     });
 
     it('keeps native lists on the canonical Legend-backed VirtualizedList with native refresh and scroll tuning', async () => {

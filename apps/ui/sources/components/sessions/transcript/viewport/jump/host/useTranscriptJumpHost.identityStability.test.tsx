@@ -479,6 +479,30 @@ describe('useTranscriptJumpHost identity stability', () => {
         await hook.unmount();
     });
 
+    it('loads a target window for a forked transcript, whose own segment is an ordinary seq range', async () => {
+        const members = createStableMembers();
+        members.listRef.current = {
+            scrollToIndex: vi.fn(),
+            scrollToOffset: vi.fn(),
+        };
+        loadTargetWindowMessagesMock.mockResolvedValue(null);
+        const hook = await renderHook(
+            (deps: JumpHostDeps) => useTranscriptJumpHost(deps),
+            { initialProps: { ...buildDeps(members), forkedTranscriptEnabled: true } as JumpHostDeps },
+        );
+
+        await hook.getCurrent().jumpToTranscriptTarget(
+            { kind: 'seq', seq: 500 },
+            { preferTargetWindow: true },
+        );
+
+        // A fork used to be refused the window outright and fell straight through to
+        // `not-found`, which is why every navigation entry outside the loaded window was
+        // unreachable. Its own segment is numbered like any other session's.
+        expect(loadTargetWindowMessagesMock).toHaveBeenCalledTimes(1);
+        await hook.unmount();
+    });
+
     it('publishes a measured detached viewport after a successful native Legend jump to an older target', async () => {
         const members = createStableMembers();
         members.canonicalWindowedItemsRef.current = [{

@@ -1,43 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
+import type { AgentId } from '@/agents/catalog/catalog';
+import { getAgentPickerIconScale } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Typography } from '@/constants/Typography';
-import { Text } from '@/components/ui/text/Text';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
-import { COMMAND_SUGGESTION_ROW_HEIGHT } from '@/components/autocomplete/commandSuggestionConstants';
+import { Icon } from '@/components/ui/icons/Icon';
 
-
-interface CommandSuggestionProps {
-    command: string;
-    description?: string;
-}
-
-const COMMAND_PREFIX = '/';
-export { COMMAND_SUGGESTION_ROW_HEIGHT };
-
-export const CommandSuggestion = React.memo(({ command, description }: CommandSuggestionProps) => {
-    return (
-        <View testID="agent-input-command-suggestion" style={styles.commandSuggestionContainer}>
-            <Text 
-                style={styles.commandText}
-                numberOfLines={1}
-            >
-                {COMMAND_PREFIX}{command}
-            </Text>
-            {description && (
-                <Text
-                    style={styles.commandSubtitleText}
-                    numberOfLines={1}
-                >
-                    {description}
-                </Text>
-            )}
-        </View>
-    );
-});
 
 interface FileMentionProps {
     fileName: string;
@@ -51,7 +23,7 @@ export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType 
     }, [fileName, filePath]);
 
     const icon = fileType === 'folder'
-        ? <Ionicons name="folder-outline" size={16} color={styles.iconColor.color} />
+        ? <Icon name="folder" size={16} color={styles.iconColor.color} />
         : <FileIcon fileName={name || fileName} size={16} />;
 
     return (
@@ -68,85 +40,46 @@ export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType 
     );
 });
 
-interface VendorPluginMentionSuggestionProps {
-    name: string;
-    displayName: string;
-    description?: string;
-    source?: string;
+interface SessionMentionAgentLogoProps {
+    agentId: AgentId;
+    testID?: string;
 }
 
-export const VendorPluginMentionSuggestion = React.memo((props: VendorPluginMentionSuggestionProps) => {
-    return (
-        <View style={styles.suggestionContainer}>
-            <View style={styles.leadingIcon}>
-                <Ionicons name="extension-puzzle-outline" size={16} color={styles.iconColor.color} />
-            </View>
-            <View style={styles.labelColumn}>
-                <Text style={styles.fileTitleText} numberOfLines={1}>
-                    {props.displayName}
-                </Text>
-                <Text style={styles.filePathText} numberOfLines={1}>
-                    {props.source ?? props.name}
-                </Text>
-            </View>
-        </View>
-    );
-});
+/**
+ * The leading glyph of a session mention row: the logo of the provider running in
+ * that session.
+ *
+ * This is an icon for `CommandMenuRow`, not a competing row — the exception below
+ * still stands. It is a component rather than a bare `<AgentIcon>` element because
+ * the optical size correction must be read at RENDER time: candidate resolution
+ * runs on every keystroke, and in Node-side tests the registry's image assets
+ * cannot be loaded at all, which turned the whole session kind into a failed kind
+ * and emptied the section.
+ */
+export const SessionMentionAgentLogo = React.memo(({ agentId, testID }: SessionMentionAgentLogoProps) => (
+    <AgentIcon
+        agentId={agentId}
+        size={16}
+        style={{ transform: [{ scale: getAgentPickerIconScale(agentId) }] }}
+        testID={testID}
+    />
+));
 
-interface SkillMentionSuggestionProps {
-    name: string;
-    displayName: string;
-    description?: string;
-    source?: string;
-}
-
-export const SkillMentionSuggestion = React.memo((props: SkillMentionSuggestionProps) => {
-    return (
-        <View style={styles.suggestionContainer}>
-            <View style={styles.leadingIcon}>
-                <Ionicons name="sparkles-outline" size={16} color={styles.iconColor.color} />
-            </View>
-            <View style={styles.labelColumn}>
-                <Text style={styles.fileTitleText} numberOfLines={1}>
-                    {props.displayName}
-                </Text>
-                <Text style={styles.filePathText} numberOfLines={1}>
-                    {props.description ?? props.source ?? props.name}
-                </Text>
-            </View>
-        </View>
-    );
-});
+/*
+ * Vendor-plugin, skill and slash-command rows used to live here as three more
+ * bespoke components drawing the same icon + title + subtitle shape
+ * `CommandMenuRow` already draws (SB-6 / D-17). They are gone: the registry
+ * supplies the icon, label and subtitle, and the primitive renders them.
+ * `renderRow` survives only for the file row, which needs
+ * `InlineRepoPathLabel`'s path-aware truncation.
+ */
 
 const styles = StyleSheet.create((theme) => ({
-    commandSuggestionContainer: {
-        flex: 1,
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        justifyContent: 'center',
-        paddingHorizontal: 16,
-        paddingTop: 8,
-        paddingBottom: 8,
-    },
     suggestionContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 8,
         paddingVertical: 4,
-    },
-    commandText: {
-        fontSize: 14,
-        lineHeight: 18,
-        color: theme.colors.text.primary,
-        fontWeight: '600',
-        ...Typography.default('semiBold'),
-    },
-    commandSubtitleText: {
-        marginTop: 2,
-        fontSize: 12,
-        lineHeight: 16,
-        color: theme.colors.text.secondary,
-        ...Typography.default(),
     },
     leadingIcon: {
         width: 16,
@@ -154,10 +87,6 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         marginRight: 8,
-    },
-    labelColumn: {
-        flex: 1,
-        minWidth: 0,
     },
     iconColor: {
         color: theme.colors.text.secondary,

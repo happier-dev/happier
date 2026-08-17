@@ -2,6 +2,10 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import type {
+  PluginContributedActionDescriptor,
+  PluginContributedActionOpenOutcome,
+} from '@/components/plugins/actions/pluginContributedActionController';
 import {
   TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
   TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT,
@@ -22,6 +26,8 @@ const mocks = vi.hoisted(() => ({
 
   suggestionMoveUp: vi.fn(),
   suggestionMoveDown: vi.fn(),
+  suggestions: [] as Array<Record<string, unknown>>,
+  selectedSuggestionIndex: -1,
 
   onChangeText: vi.fn(),
   onSend: vi.fn(),
@@ -217,12 +223,13 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
   StatusDot: () => null,
 }));
 
-vi.mock('@/components/autocomplete/useActiveWord', () => ({
-  useActiveWord: () => ({ word: '', start: 0, end: 0 }),
-}));
-
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-  useActiveSuggestions: () => [[], -1, mocks.suggestionMoveUp, mocks.suggestionMoveDown],
+  useActiveSuggestions: () => [
+    mocks.suggestions,
+    mocks.selectedSuggestionIndex,
+    mocks.suggestionMoveUp,
+    mocks.suggestionMoveDown,
+  ],
 }));
 
 vi.mock('@/components/autocomplete/applySuggestion', () => ({
@@ -230,6 +237,12 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 }));
 
 vi.mock('@/components/ui/popover', () => ({
+  MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS: {
+    web: true,
+    native: true,
+    matchAnchorWidth: false,
+    anchorAlign: 'start',
+  },
   Popover: () => null,
   PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
@@ -278,6 +291,8 @@ describe('AgentInput (history navigation)', () => {
     vi.clearAllMocks();
     mocks.historyIsBrowsing.mockReturnValue(false);
     mocks.historyHasRetainedSession.mockReturnValue(false);
+    mocks.suggestions = [];
+    mocks.selectedSuggestionIndex = -1;
     localSettingState.values = {
       uiBackdropBlurEnabled: 1,
       keyboardShortcutsV2Enabled: true,
@@ -295,7 +310,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -316,6 +331,289 @@ describe('AgentInput (history navigation)', () => {
     expect(mocks.historyReset).toHaveBeenCalledTimes(1);
   });
 
+  it('routes direct and form contributed slash selections through the existing command-menu selection controller', async () => {
+    const directAction = {
+      identity: { pluginId: 'acme.alpha', localId: 'review' },
+      qualifiedActionId: 'acme.alpha/review',
+      title: 'Run Alpha review',
+      description: null,
+      icon: null,
+      priority: 0,
+      placement: 'primary' as const,
+      scope: 'session' as const,
+      scopes: ['session'] as const,
+      slash: { tokens: ['/review'] },
+      inputHints: null,
+      kind: 'direct' as const,
+    };
+    const formAction = {
+      identity: { pluginId: 'acme.beta', localId: 'review' },
+      qualifiedActionId: 'acme.beta/review',
+      title: 'Run Beta review',
+      description: null,
+      placement: 'secondary' as const,
+      scope: 'session' as const,
+      scopes: ['session'] as const,
+      slash: { tokens: ['/review'] },
+      inputHints: {
+        fields: [{ path: 'depth', title: 'Depth', widget: 'integer' as const }],
+      },
+      kind: 'form' as const,
+    };
+    const selectedActions: unknown[] = [];
+
+    const select = async (action: typeof directAction | typeof formAction) => {
+      mocks.suggestions = [{
+        kind: 'slashCommand',
+        key: `plugin-action:${action.qualifiedActionId}`,
+        text: `/${action.identity.pluginId}/${action.identity.localId}`,
+        label: `/${action.identity.pluginId}/${action.identity.localId}`,
+        pluginContributedAction: action,
+      }];
+      mocks.selectedSuggestionIndex = 0;
+      const onContributedActionSuggestionSelect = vi.fn(async (selectedAction: PluginContributedActionDescriptor) => {
+        selectedActions.push(selectedAction);
+        return {
+          kind: 'direct' as const,
+          action: selectedAction,
+          outcome: { ok: true as const, result: null },
+        };
+      });
+      const { AgentInput } = await import('./AgentInput');
+      const screen = await renderScreen(
+        <AgentInput
+          value="/review"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompleteKinds={['slashCommand']}
+          autocompleteSuggestions={async () => []}
+          onContributedActionSuggestionSelect={onContributedActionSuggestionSelect}
+        />,
+      );
+      const input = findMultiTextInput(screen);
+
+      await act(async () => {
+        input.props.onFocus?.();
+      });
+      await act(async () => {
+        input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+      });
+
+      expect(onContributedActionSuggestionSelect).toHaveBeenCalledWith(action);
+    };
+
+    await select(directAction);
+    await select(formAction);
+
+    expect(selectedActions).toEqual([directAction, formAction]);
+    expect(mocks.onSend).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(mocks.onChangeText).toHaveBeenCalledWith(''));
+  });
+
+  it.each([
+    ['stale', { kind: 'stale' as const, reason: 'action_retired' as const }],
+    ['unavailable', { kind: 'unavailable' as const, reason: 'host_unavailable' as const }],
+  ] as const)('preserves a contributed Action slash token when the mounted host reports it %s', async (_kind, outcome) => {
+    const action = {
+      identity: { pluginId: 'acme.alpha', localId: 'review' },
+      qualifiedActionId: 'acme.alpha/review',
+      title: 'Run Alpha review',
+      description: null,
+      icon: null,
+      priority: 0,
+      placement: 'primary' as const,
+      scope: 'session' as const,
+      scopes: ['session'] as const,
+      slash: { tokens: ['/review'] },
+      inputHints: null,
+      kind: 'direct' as const,
+    };
+    mocks.suggestions = [{
+      kind: 'slashCommand',
+      key: 'plugin-action:acme.alpha/review',
+      text: '/acme.alpha/review',
+      label: '/acme.alpha/review',
+      pluginContributedAction: action,
+    }];
+    mocks.selectedSuggestionIndex = 0;
+    const onContributedActionSuggestionSelect = vi.fn(async () => outcome);
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      <AgentInput
+        value="/review"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompleteKinds={['slashCommand']}
+        autocompleteSuggestions={async () => []}
+        onContributedActionSuggestionSelect={onContributedActionSuggestionSelect}
+      />,
+    );
+    const input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onFocus?.();
+    });
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(onContributedActionSuggestionSelect).toHaveBeenCalledWith(action));
+
+    expect(mocks.onChangeText).not.toHaveBeenCalled();
+    expect(mocks.onSend).not.toHaveBeenCalled();
+  });
+
+  it('does not re-enter a deferred contributed Action selection from Enter, Tab, and pointer picker paths', async () => {
+    let resolveSelection: (outcome: PluginContributedActionOpenOutcome) => void = () => {
+      throw new Error('selection resolver was not initialized');
+    };
+    const pendingSelection = new Promise<PluginContributedActionOpenOutcome>((resolve) => {
+      resolveSelection = resolve;
+    });
+    const action = {
+      identity: { pluginId: 'acme.alpha', localId: 'review' },
+      qualifiedActionId: 'acme.alpha/review',
+      title: 'Run Alpha review',
+      description: null,
+      icon: null,
+      priority: 0,
+      placement: 'primary' as const,
+      scope: 'session' as const,
+      scopes: ['session'] as const,
+      slash: { tokens: ['/review'] },
+      inputHints: null,
+      kind: 'direct' as const,
+    };
+    mocks.suggestions = [{
+      kind: 'slashCommand',
+      key: 'plugin-action:acme.alpha/review',
+      text: '/acme.alpha/review',
+      label: '/acme.alpha/review',
+      pluginContributedAction: action,
+    }];
+    mocks.selectedSuggestionIndex = 0;
+    const onContributedActionSuggestionSelect = vi.fn(() => pendingSelection);
+    const [{ AgentInput }, { AgentInputCommandMenu }] = await Promise.all([
+      import('./AgentInput'),
+      import('./commandMenu/AgentInputCommandMenu'),
+    ]);
+    const screen = await renderScreen(
+      <AgentInput
+        value="/review"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompleteKinds={['slashCommand']}
+        autocompleteSuggestions={async () => []}
+        onContributedActionSuggestionSelect={onContributedActionSuggestionSelect}
+      />,
+    );
+    const input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onFocus?.();
+    });
+    const menu = screen.findByType(AgentInputCommandMenu);
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+      input.props.onKeyPress?.({ key: 'Tab', shiftKey: false });
+      menu.props.onSelect?.({}, 0);
+    });
+    expect(onContributedActionSuggestionSelect).toHaveBeenCalledOnce();
+
+    resolveSelection({
+      kind: 'direct',
+      action,
+      outcome: { ok: true, result: null },
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.onSend).not.toHaveBeenCalled();
+  });
+
+  it('does not re-enter a form Action selection while Connected Account options resolve from Enter, Tab, and pointer picker paths', async () => {
+    let resolveFormOpen: (outcome: PluginContributedActionOpenOutcome) => void = () => {
+      throw new Error('form open resolver was not initialized');
+    };
+    // The canonical form controller remains pending while its host-owned Connected
+    // Account options resolve.
+    const pendingFormOpenAfterConnectedAccountOptions = new Promise<PluginContributedActionOpenOutcome>((resolve) => {
+      resolveFormOpen = resolve;
+    });
+    const action: PluginContributedActionDescriptor = {
+      identity: { pluginId: 'acme.channels', localId: 'configure-account' },
+      qualifiedActionId: 'acme.channels/configure-account',
+      title: 'Configure account',
+      description: null,
+      icon: null,
+      priority: 0,
+      placement: 'primary',
+      scope: 'session',
+      scopes: ['session'],
+      slash: { tokens: ['/configure-account'] },
+      inputHints: {
+        fields: [{
+          path: 'account',
+          title: 'Account',
+          widget: 'select',
+          connectedAccountOptions: true,
+        }],
+      },
+      kind: 'form',
+    };
+    mocks.suggestions = [{
+      kind: 'slashCommand',
+      key: 'plugin-action:acme.channels/configure-account',
+      text: '/acme.channels/configure-account',
+      label: '/acme.channels/configure-account',
+      pluginContributedAction: action,
+    }];
+    mocks.selectedSuggestionIndex = 0;
+    const onContributedActionSuggestionSelect = vi.fn(() => pendingFormOpenAfterConnectedAccountOptions);
+    const [{ AgentInput }, { AgentInputCommandMenu }] = await Promise.all([
+      import('./AgentInput'),
+      import('./commandMenu/AgentInputCommandMenu'),
+    ]);
+    const screen = await renderScreen(
+      <AgentInput
+        value="/configure-account"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompleteKinds={['slashCommand']}
+        autocompleteSuggestions={async () => []}
+        onContributedActionSuggestionSelect={onContributedActionSuggestionSelect}
+      />,
+    );
+    const input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onFocus?.();
+    });
+    const menu = screen.findByType(AgentInputCommandMenu);
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+      input.props.onKeyPress?.({ key: 'Tab', shiftKey: false });
+      menu.props.onSelect?.({}, 0);
+    });
+    expect(onContributedActionSuggestionSelect).toHaveBeenCalledOnce();
+    expect(onContributedActionSuggestionSelect).toHaveBeenCalledWith(action);
+
+    resolveFormOpen({
+      kind: 'unavailable',
+      reason: 'host_unavailable',
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.onSend).not.toHaveBeenCalled();
+  });
+
   it('records large-text send flush metadata before sending', async () => {
     const { AgentInput } = await import('./AgentInput');
     const largePrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
@@ -325,7 +623,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -357,7 +655,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           isSendDisabled={true}
           disabled={false}
@@ -385,7 +683,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -420,7 +718,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -455,7 +753,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -482,7 +780,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -518,7 +816,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -554,7 +852,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -585,7 +883,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -614,7 +912,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -647,7 +945,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -683,7 +981,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -719,7 +1017,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -738,7 +1036,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -767,7 +1065,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -800,7 +1098,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -833,7 +1131,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -865,7 +1163,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -903,7 +1201,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -939,7 +1237,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -966,7 +1264,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -994,7 +1292,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1019,7 +1317,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           disabled={false}
           showAbortButton={false}
@@ -1055,7 +1353,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           disabled={false}
           showAbortButton={false}
@@ -1089,7 +1387,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -1135,7 +1433,7 @@ describe('AgentInput (history navigation)', () => {
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
-        autocompletePrefixes={[]}
+        autocompleteKinds={[]}
         autocompleteSuggestions={async () => []}
         isSendDisabled={false}
         disabled={false}
@@ -1173,7 +1471,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           disabled={false}
           showAbortButton={false}
@@ -1212,7 +1510,7 @@ describe('AgentInput (history navigation)', () => {
           onChangeText={mocks.onChangeText}
           placeholder="p"
           onSend={mocks.onSend}
-          autocompletePrefixes={[]}
+          autocompleteKinds={[]}
           autocompleteSuggestions={async () => []}
           sessionId="s1"
           metadata={null}
@@ -1232,5 +1530,39 @@ describe('AgentInput (history navigation)', () => {
     });
 
     expect(mocks.historyPause).not.toHaveBeenCalled();
+  });
+
+  it('renders scoped decoration feedback and makes an edit-and-submit lock non-editable', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+      value="Review this draft"
+      onChangeText={mocks.onChangeText}
+      placeholder="p"
+      onSend={mocks.onSend}
+      autocompleteKinds={[]}
+      autocompleteSuggestions={async () => []}
+      disabled={false}
+      showAbortButton={false}
+      composerDecorations={[{
+        id: 'acme.fixture:mounted-1:analysis',
+        key: 'analysis',
+        decorations: {
+          revision: 1,
+          ranges: [{
+            range: { start: 0, end: 6 },
+            treatment: 'warning',
+            label: 'Review highlighted text',
+          }],
+        },
+      }]}
+      composerInputLock={{
+        mode: 'editAndSubmit',
+        reasons: ['Review required'],
+      }}
+    />);
+
+    expect(findMultiTextInput(screen).props.editable).toBe(false);
+    expect(screen.getTextContent()).toContain('Review required');
+    expect(screen.getTextContent()).toContain('Review highlighted text');
   });
 });

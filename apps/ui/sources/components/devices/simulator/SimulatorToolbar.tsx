@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
 
-import { IconButton } from '@/components/ui/buttons/IconButton';
+import { IconButton, type IconButtonIconName } from '@/components/ui/buttons/IconButton';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -12,7 +12,7 @@ import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator
 import { simulatorStreamStyles } from './styles';
 
 function ToolbarIconButton(props: Readonly<{
-    iconName: React.ComponentProps<typeof IconButton>['iconName'];
+    iconName: IconButtonIconName;
     label: string;
     disabled?: boolean;
     onPress?: () => void;
@@ -77,7 +77,7 @@ export function SimulatorToolbar(props: Readonly<{
                 </View>
                 {showAcquire ? (
                     <ToolbarIconButton
-                        iconName="hand-left-outline"
+                        iconName="hand"
                         label={t('simulatorPreview.toolbar.acquireControl')}
                         onPress={props.actions.acquireLease}
                         testID={`${props.testID}-acquire-lease`}
@@ -87,7 +87,7 @@ export function SimulatorToolbar(props: Readonly<{
             <View testID={`${props.testID}-stream`} style={simulatorStreamStyles.toolbarGroup}>
                 {props.viewModel.controls.canRequestKeyframe ? (
                     <ToolbarIconButton
-                        iconName="refresh-outline"
+                        iconName="arrow-clockwise"
                         disabled={!canWatch}
                         label={t('simulatorPreview.toolbar.refreshFrame')}
                         onPress={canWatch ? props.actions.requestKeyframe : undefined}
@@ -96,7 +96,7 @@ export function SimulatorToolbar(props: Readonly<{
                 ) : null}
                 {props.viewModel.controls.canRequestSnapshot ? (
                     <ToolbarIconButton
-                        iconName="camera-outline"
+                        iconName="camera"
                         disabled={!canWatch}
                         label={t('simulatorPreview.toolbar.snapshot')}
                         onPress={canWatch ? props.actions.requestSnapshot : undefined}
@@ -108,7 +108,7 @@ export function SimulatorToolbar(props: Readonly<{
                         <Text style={simulatorStreamStyles.badgeText}>{t('simulatorPreview.toolbar.quality')}</Text>
                         {props.viewModel.controls.canSetQuality ? (
                             <ToolbarIconButton
-                                iconName="cellular-outline"
+                                iconName="cell-signal-high"
                                 disabled={!canWatch}
                                 label={t('simulatorPreview.toolbar.reduceBandwidth')}
                                 onPress={canWatch ? props.actions.lowerQuality : undefined}
@@ -117,7 +117,7 @@ export function SimulatorToolbar(props: Readonly<{
                         ) : null}
                         {props.viewModel.controls.canSetFps ? (
                             <ToolbarIconButton
-                                iconName="speedometer-outline"
+                                iconName="speedometer"
                                 disabled={!canWatch}
                                 label={t('simulatorPreview.toolbar.fps')}
                                 onPress={canWatch ? props.actions.setFps : undefined}
@@ -126,7 +126,7 @@ export function SimulatorToolbar(props: Readonly<{
                         ) : null}
                         {props.viewModel.controls.canSetScale ? (
                             <ToolbarIconButton
-                                iconName="resize-outline"
+                                iconName="resize"
                                 disabled={!canWatch}
                                 label={t('simulatorPreview.toolbar.scale')}
                                 onPress={canWatch ? props.actions.setScale : undefined}
@@ -140,7 +140,7 @@ export function SimulatorToolbar(props: Readonly<{
                 <View ref={overflowAnchorRef} testID={`${props.testID}-overflow-anchor`}>
                     <IconButton
                         testID={`${props.testID}-overflow`}
-                        iconName="ellipsis-horizontal"
+                        iconName="dots-three"
                         accessibilityLabel={t('simulatorPreview.toolbar.moreControls')}
                         tooltip={t('simulatorPreview.toolbar.moreControls')}
                         size={34}
@@ -157,7 +157,7 @@ export function SimulatorToolbar(props: Readonly<{
                             <View testID={`${props.testID}-overflow-panel`} style={simulatorStreamStyles.toolbarOverflowPanel}>
                                 {showRelease ? (
                                     <ToolbarIconButton
-                                        iconName="lock-open-outline"
+                                        iconName="lock-open"
                                         label={t('simulatorPreview.toolbar.releaseControl')}
                                         onPress={props.actions.releaseLease}
                                         testID={`${props.testID}-release-lease`}
@@ -165,7 +165,7 @@ export function SimulatorToolbar(props: Readonly<{
                                 ) : null}
                                 {showRelease ? (
                                     <ToolbarIconButton
-                                        iconName="time-outline"
+                                        iconName="clock"
                                         label={t('simulatorPreview.toolbar.renewControl')}
                                         onPress={props.actions.renewLease}
                                         testID={`${props.testID}-renew-lease`}
@@ -173,7 +173,7 @@ export function SimulatorToolbar(props: Readonly<{
                                 ) : null}
                                 {showOrientation ? (
                                     <ToolbarIconButton
-                                        iconName="phone-landscape-outline"
+                                        iconName="device-mobile"
                                         label={t('simulatorPreview.toolbar.rotateLeft')}
                                         onPress={props.actions.rotateLeft}
                                         testID={`${props.testID}-rotate-left`}
@@ -181,7 +181,7 @@ export function SimulatorToolbar(props: Readonly<{
                                 ) : null}
                                 {showHardwareButton ? (
                                     <ToolbarIconButton
-                                        iconName="radio-button-on-outline"
+                                        iconName="radio-button"
                                         label={t('simulatorPreview.toolbar.homeButton')}
                                         onPress={props.actions.pressHome}
                                         testID={`${props.testID}-button-home`}
@@ -189,7 +189,7 @@ export function SimulatorToolbar(props: Readonly<{
                                 ) : null}
                                 {showHardwareButton ? (
                                     <ToolbarIconButton
-                                        iconName="arrow-back-outline"
+                                        iconName="arrow-left"
                                         label={t('simulatorPreview.toolbar.backButton')}
                                         onPress={props.actions.pressBack}
                                         testID={`${props.testID}-button-back`}
@@ -197,7 +197,7 @@ export function SimulatorToolbar(props: Readonly<{
                                 ) : null}
                                 {showHardwareButton ? (
                                     <ToolbarIconButton
-                                        iconName="albums-outline"
+                                        iconName="stack"
                                         label={t('simulatorPreview.toolbar.recentButton')}
                                         onPress={props.actions.pressRecent}
                                         testID={`${props.testID}-button-recent`}
@@ -205,7 +205,7 @@ export function SimulatorToolbar(props: Readonly<{
                                 ) : null}
                                 {showHardwareButton ? (
                                     <ToolbarIconButton
-                                        iconName="volume-high-outline"
+                                        iconName="speaker-high"
                                         label={t('simulatorPreview.toolbar.volumeUp')}
                                         onPress={props.actions.pressVolumeUp}
                                         testID={`${props.testID}-button-volume-up`}
@@ -213,7 +213,7 @@ export function SimulatorToolbar(props: Readonly<{
                                 ) : null}
                                 {showHardwareButton ? (
                                     <ToolbarIconButton
-                                        iconName="volume-low-outline"
+                                        iconName="speaker-low"
                                         label={t('simulatorPreview.toolbar.volumeDown')}
                                         onPress={props.actions.pressVolumeDown}
                                         testID={`${props.testID}-button-volume-down`}

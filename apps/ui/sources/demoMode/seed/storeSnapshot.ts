@@ -1,18 +1,23 @@
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import type { Profile } from '@/sync/domains/profiles/profile';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { StorageState } from '@/sync/store/types';
 
-const DEMO_SETTING_KEYS = [
-    'featureToggles',
-    'hideInactiveSessions',
-    'sessionListDensity',
-    'sessionListSectionModeV1',
-    'sessionListAttentionPromotionModeV1',
-    'sessionListWorkingPlacementModeV1',
+import type { DemoWorldSettingKey } from '../world/settings';
+
+// Settings the seeder itself writes (the demo relay target), on top of every
+// setting the demo world declares. Keeping the world list as the source of truth
+// means a new demo setting is restored on teardown by construction.
+const DEMO_SEEDER_SETTING_KEYS = [
     'serverSelectionActiveTargetKind',
     'serverSelectionActiveTargetId',
 ] as const satisfies readonly (keyof Settings)[];
 
-export type DemoSettingKey = typeof DEMO_SETTING_KEYS[number];
+export type DemoSettingKey = DemoWorldSettingKey | typeof DEMO_SEEDER_SETTING_KEYS[number];
+
+export type DemoLocalSettingKey = 'themeProfiles';
+
+export type DemoProfileKey = 'connectedServicesV2';
 
 export type StoreSnapshot = Readonly<{
     sessions: StorageState['sessions'];
@@ -25,6 +30,8 @@ export type StoreSnapshot = Readonly<{
     sessionPending: StorageState['sessionPending'];
     reviewCommentsDraftsBySessionId: StorageState['reviewCommentsDraftsBySessionId'];
     settings: Pick<Settings, DemoSettingKey>;
+    localSettings: Pick<LocalSettings, DemoLocalSettingKey>;
+    profile: Pick<Profile, DemoProfileKey>;
 }>;
 
 function cloneData<T>(value: T): T {
@@ -51,6 +58,24 @@ export function takeStoreSnapshot(state: StorageState): StoreSnapshot {
             sessionListWorkingPlacementModeV1: state.settings.sessionListWorkingPlacementModeV1,
             serverSelectionActiveTargetKind: state.settings.serverSelectionActiveTargetKind,
             serverSelectionActiveTargetId: state.settings.serverSelectionActiveTargetId,
+            executionRunsGuidanceEnabled: state.settings.executionRunsGuidanceEnabled,
+            executionRunsGuidanceMaxChars: state.settings.executionRunsGuidanceMaxChars,
+            executionRunsGuidanceEntries: cloneData(state.settings.executionRunsGuidanceEntries),
+            connectedServicesDefaultProfileByServiceId: cloneData(state.settings.connectedServicesDefaultProfileByServiceId),
+            connectedServicesProfileLabelByKey: cloneData(state.settings.connectedServicesProfileLabelByKey),
+            connectedServicesDefaultAuthByAgentIdV1: cloneData(state.settings.connectedServicesDefaultAuthByAgentIdV1),
+            scmCommitStrategy: state.settings.scmCommitStrategy,
+            scmRemoteConfirmPolicy: state.settings.scmRemoteConfirmPolicy,
+            scmPushRejectPolicy: state.settings.scmPushRejectPolicy,
+            scmCommitMessageGeneratorEnabled: state.settings.scmCommitMessageGeneratorEnabled,
+            scmCommitMessageGeneratorInstructions: state.settings.scmCommitMessageGeneratorInstructions,
+            scmIncludeCoAuthoredBy: state.settings.scmIncludeCoAuthoredBy,
+        },
+        localSettings: {
+            themeProfiles: cloneData(state.localSettings.themeProfiles),
+        },
+        profile: {
+            connectedServicesV2: cloneData(state.profile.connectedServicesV2),
         },
     };
 }
@@ -169,6 +194,14 @@ export function buildStoreStateAfterDemoRestore(params: Readonly<{
         settings: {
             ...params.current.settings,
             ...params.snapshot.settings,
+        },
+        localSettings: {
+            ...params.current.localSettings,
+            ...params.snapshot.localSettings,
+        },
+        profile: {
+            ...params.current.profile,
+            ...params.snapshot.profile,
         },
     };
 }

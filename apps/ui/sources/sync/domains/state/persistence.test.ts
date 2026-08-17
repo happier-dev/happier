@@ -797,6 +797,41 @@ describe('persistence', () => {
     });
 
     describe('new session draft', () => {
+        it('roundtrips contentless plugin composer attachments in the account-scoped new-session draft', () => {
+            saveNewSessionDraft({
+                input: 'Review issue 42',
+                selectedMachineId: 'machine-a',
+                selectedPath: '/repo-a',
+                selectedProfileId: null,
+                selectedSecretId: null,
+                agentType: 'claude',
+                permissionMode: 'default',
+                acpSessionModeId: null,
+                composerAttachments: [{
+                    v: 1,
+                    instanceId: 'issue-42',
+                    attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                    key: '42',
+                    value: { issueId: 42 },
+                    presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+                }],
+                updatedAt: 42,
+            }, sessionLocalScopeA);
+
+            expect(loadNewSessionDraft(sessionLocalScopeA)?.composerAttachments).toEqual([{
+                v: 1,
+                instanceId: 'issue-42',
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                key: '42',
+                value: { issueId: 42 },
+                presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+            }]);
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toBeNull();
+
+            clearNewSessionDraft(sessionLocalScopeA);
+            expect(loadNewSessionDraft(sessionLocalScopeA)).toBeNull();
+        });
+
         it('normalizes legacy modelMode to a target-bound selection and writes canonical-only drafts', () => {
             store.set(
                 'new-session-draft-v1',

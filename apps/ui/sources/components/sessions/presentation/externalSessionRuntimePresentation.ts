@@ -74,6 +74,14 @@ export function resolveExternalSessionCandidateActivityPresentation(
     };
 }
 
+export function resolveExternalSessionStatusPillState(
+    presentation: ExternalSessionRuntimePresentation['externalAgent'],
+): 'live' | 'needsAttention' | 'neutral' {
+    if (presentation.tone === 'live' || presentation.tone === 'ready') return 'live';
+    if (presentation.tone === 'attention' || presentation.tone === 'warning') return 'needsAttention';
+    return 'neutral';
+}
+
 export function readExternalAgentObservationPresentationInput(
     metadata: unknown,
 ): ExternalAgentObservationPresentationInput {

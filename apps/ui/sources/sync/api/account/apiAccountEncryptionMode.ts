@@ -1,10 +1,13 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { backoff } from '@/utils/timing/time';
 import { serverFetch } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { HappyError } from '@/utils/errors/errors';
 import {
     AccountEncryptionModeResponseSchema,
+    AccountEncryptionCurrentnessResponseSchema,
+    type AccountEncryptionCurrentnessResponse,
     type AccountEncryptionModeResponse,
 } from '@happier-dev/protocol';
 
@@ -20,6 +23,8 @@ type AccountEncryptionModeCacheEntry = Readonly<{
 }>;
 
 const accountEncryptionModeCache = new Map<string, AccountEncryptionModeCacheEntry>();
+const accountEncryptionModeCacheInvalidationListeners = new Set<() => void>();
+let accountEncryptionModeCacheRevision = 0;
 
 function normalizeAccountEncryptionMode(raw: unknown): AccountEncryptionMode {
     const value = String(raw ?? '').trim();
@@ -39,7 +44,7 @@ function buildAccountEncryptionModeCacheKey(credentials: AuthCredentials): strin
         snapshot.serverId,
         snapshot.serverUrl,
         String(snapshot.generation),
-        String(credentials.token ?? ''),
+        resolveAuthCredentialsScopeKey(credentials),
     ].join('\u0000');
 }
 
@@ -53,6 +58,82 @@ function pruneAccountEncryptionModeCache(now: number): void {
 
 export function invalidateAccountEncryptionModeCache(): void {
     accountEncryptionModeCache.clear();
+    accountEncryptionModeCacheRevision += 1;
+    for (const listener of [...accountEncryptionModeCacheInvalidationListeners]) {
+        try {
+            listener();
+        } catch {
+            // One observer cannot block the incumbent cache owner from
+            // withdrawing a stale Account disclosure for every other mount.
+        }
+    }
+}
+
+/** Owner-local revision for consumers that must withdraw stale disclosures. */
+export function getAccountEncryptionModeCacheRevision(): number {
+    return accountEncryptionModeCacheRevision;
+}
+
+/**
+ * Observe only cache invalidation. The cache remains the single reader and
+ * value owner; callers re-read through it instead of receiving a second value
+ * channel.
+ */
+export function subscribeAccountEncryptionModeCacheInvalidation(
+    listener: () => void,
+): () => void {
+    accountEncryptionModeCacheInvalidationListeners.add(listener);
+    return () => {
+        accountEncryptionModeCacheInvalidationListeners.delete(listener);
+    };
+}
+
+export async function fetchAccountEncryptionCurrentness(
+    credentials: AuthCredentials,
+    options: Readonly<{
+        request?: (path: string, init: RequestInit) => Promise<Response>;
+        signal?: AbortSignal;
+    }> = {},
+): Promise<AccountEncryptionCurrentnessResponse> {
+    const response = await (options.request ?? ((path, init) =>
+        serverFetch(path, init, { includeAuth: false })))(
+        '/v1/account/encryption/currentness',
+        {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+            signal: options.signal,
+        },
+    );
+    if (!response.ok) {
+        throw new HappyError(
+            'This server must be upgraded before changing account encryption',
+            false,
+            {
+                status: response.status,
+                kind: 'config',
+                code: 'account-encryption-currentness-unavailable',
+            },
+        );
+    }
+    const parsed =
+        AccountEncryptionCurrentnessResponseSchema.safeParse(
+            await response.json().catch(() => null),
+        );
+    if (!parsed.success) {
+        throw new HappyError(
+            'This server returned incomplete account encryption currentness',
+            false,
+            {
+                status: response.status,
+                kind: 'server',
+                code: 'account-encryption-currentness-unavailable',
+            },
+        );
+    }
+    return parsed.data;
 }
 
 export async function fetchAccountEncryptionMode(

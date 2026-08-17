@@ -1,11 +1,12 @@
 import React from 'react';
 import { View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 
 const LINE_ADDED_PREFIX = '+';
 const LINE_REMOVED_PREFIX = '-';
@@ -36,11 +37,10 @@ export function SourceControlStatusBadge({ sessionId }: SourceControlStatusBadge
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, overflow: 'hidden' }}>
             {/* Source-control icon */}
-            <Octicons
+            <Icon
                 name="git-branch"
-                size={16}
-                color={theme.colors.button.secondary.tint}
-            />
+                size={AGENT_INPUT_CHIP_ICON_SIZE_PX}
+                color={theme.colors.button.secondary.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />
 
             {/* Line changes only */}
             {hasLineChanges && (

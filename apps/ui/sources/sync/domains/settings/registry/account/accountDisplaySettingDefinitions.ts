@@ -1,263 +1,76 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
-import { z } from 'zod';
+import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 function bucketCount(value: number, smallMax: number, mediumMax: number): 'small' | 'medium' | 'large' {
-    if (value <= smallMax) return 'small';
-    if (value <= mediumMax) return 'medium';
+    if (value <= smallMax)
+        return 'small';
+    if (value <= mediumMax)
+        return 'medium';
     return 'large';
 }
 
 function bucketBytes(value: number, smallMax: number, mediumMax: number): 'small' | 'medium' | 'large' {
-    if (value <= smallMax) return 'small';
-    if (value <= mediumMax) return 'medium';
+    if (value <= smallMax)
+        return 'small';
+    if (value <= mediumMax)
+        return 'medium';
     return 'large';
 }
 
-export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
-    sessionThinkingDisplayMode: {
-        schema: z.enum(['inline', 'tool', 'hidden']),
-        default: 'inline',
-        description: 'How to display agent thinking messages in the transcript',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    sessionThinkingInlinePresentation: {
-        schema: z.enum(['full', 'summary']),
-        default: 'summary',
-        description: 'When thinking is inline, whether to show a full body or a summary-only row',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    sessionThinkingInlineChrome: {
-        schema: z.enum(['plain', 'card']),
-        default: 'plain',
-        description: 'When thinking is inline, whether to show chrome (card) or render plainly',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    showLineNumbers: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Whether to show line numbers in diff, file preview, and editor views',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    showLineNumbersInToolViews: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Whether to show line numbers in tool view diffs',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    wrapLinesInDiffs: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Whether to wrap long lines in diff, file preview, and editor views',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    sessionReplayStrategy: {
-        schema: z.enum(['recent_messages', 'summary_plus_recent']),
-        default: 'recent_messages',
-        description: 'Replay strategy used for app-level transcript replay',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
+export const ACCOUNT_DISPLAY_SETTING_ANALYTICS = defineAccountSettingAnalytics({
+    sessionThinkingDisplayMode: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    sessionThinkingInlinePresentation: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    sessionThinkingInlineChrome: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    showLineNumbers: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    showLineNumbersInToolViews: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    wrapLinesInDiffs: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    sessionReplayStrategy: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     sessionReplayRecentMessagesCount: {
-        schema: z.number(),
-        default: 250,
-        description: 'Number of recent transcript messages included in app-level replay context',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'person',
-            serializeCurrent: (value: number) => bucketCount(value, 100, 300),
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketCount(value, 100, 300),
     },
     sessionReplayMaxSeedChars: {
-        schema: z.number(),
-        default: 120_000,
-        description: 'Maximum character budget for replay seed prompts (best-effort; oldest items dropped first)',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'person',
-            serializeCurrent: (value: number) => bucketCount(value, 80_000, 200_000),
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketCount(value, 80000, 200000),
     },
-    executionRunsGuidanceEnabled: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Enable execution-run guidance injection into the session system prompt',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
+    executionRunsGuidanceEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     executionRunsGuidanceMaxChars: {
-        schema: z.number(),
-        default: 4_000,
-        description: 'Max character budget for execution-run guidance injection',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'person',
-            serializeCurrent: (value: number) => bucketCount(value, 2_000, 5_000),
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketCount(value, 2000, 5000),
     },
-    attachmentsUploadsUploadLocation: {
-        schema: z.enum(['workspace', 'os_temp']),
-        default: 'workspace',
-        description: 'Where to store uploaded attachments (workspace or OS temp)',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    attachmentsUploadsWorkspaceRelativeDir: {
-        schema: z.string(),
-        default: '.happier/uploads',
-        description: 'Workspace-relative directory for attachments when uploadLocation=workspace',
-        storageScope: 'account',
-    },
-    attachmentsUploadsVcsIgnoreStrategy: {
-        schema: z.enum(['git_info_exclude', 'gitignore', 'none']),
-        default: 'git_info_exclude',
-        description: 'VCS ignore strategy for workspace uploads',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    attachmentsUploadsVcsIgnoreWritesEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Whether the app should attempt to write VCS ignore rules (best-effort)',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
+    attachmentsUploadsUploadLocation: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    attachmentsUploadsVcsIgnoreStrategy: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    attachmentsUploadsVcsIgnoreWritesEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     attachmentsUploadsMaxFileBytes: {
-        schema: z.number(),
-        default: 25 * 1024 * 1024,
-        description: 'Maximum allowed attachment size (bytes)',
-        storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'person',
-            serializeCurrent: (value: number) => bucketBytes(value, 10 * 1024 * 1024, 50 * 1024 * 1024),
-        },
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketBytes(value, 10 * 1024 * 1024, 50 * 1024 * 1024),
     },
-    serverSelectionActiveTargetKind: {
-        schema: z.enum(['server', 'group']).nullable(),
-        default: null,
-        description: 'Explicit active server selection target kind (server/group)',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    sessionTagsEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show tag controls in the session list',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    sessionListWorkingStatusAnimatedTextEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Animate working status text in session rows',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    mobileWorkspaceExperienceV1: {
-        schema: z.enum(['classic', 'cockpit']),
-        default: 'cockpit',
-        description: 'Preferred mobile session workspace experience mode',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    terminalConnectLegacySecretExportEnabled: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Allow terminal connect to fall back to exporting the legacy auth secret (compatibility mode)',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    tabBarGitBadgeMode: {
-        schema: z.enum(['changedFiles', 'diffLines', 'off']),
-        default: 'changedFiles',
-        description: 'What the cockpit Git tab badge shows: changed-file count, added/removed lines, or nothing',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    tabBarFriendsBadgeEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show the friend-request count badge on the Friends tab',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    tabBarInboxBadgeEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show the inbox activity indicator on the Inbox tab',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    tabBarSessionsBadgeEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show the attention indicator on the Sessions tab',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    tabBarOpenTabsBadgeEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show the open-tab count badge on the cockpit Tabs tab',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    tabBarShowLabels: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Show text labels under the bottom tab bar icons (off = icon-only, Instagram-style)',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    tabBarSize: {
-        schema: z.enum(['compact', 'regular', 'large']),
-        default: 'regular',
-        description: 'Bottom tab bar size (icon size + bar height)',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    glassBlurEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Use a translucent blur/glass material for floating glass surfaces — tab bar, jump-to-bottom button, … (off = solid surface)',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
-    },
-    glassBlurIntensity: {
-        schema: z.enum(['light', 'regular', 'strong']),
-        default: 'regular',
-        description: 'Glass surface blur intensity when the blur material is enabled',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
-    composerSurfaceStyle: {
-        schema: z.enum(['standard', 'glass']),
-        default: 'glass',
-        description: 'Composer panel surface style — a glass surface matching the tab bar (surface color + rim + cast shadow), or the standard input surface',
-        storageScope: 'account',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
-    },
+    sessionTagsEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    sessionListWorkingStatusAnimatedTextEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    mobileWorkspaceExperienceV1: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    tabBarGitBadgeMode: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    tabBarFriendsBadgeEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    tabBarInboxBadgeEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    tabBarSessionsBadgeEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    tabBarOpenTabsBadgeEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    tabBarShowLabels: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    tabBarSize: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    glassBlurEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    glassBlurIntensity: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    composerSurfaceStyle: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
 });
-
-export const ACCOUNT_DISPLAY_SETTING_ARTIFACTS = buildSettingArtifacts(ACCOUNT_DISPLAY_SETTING_DEFINITIONS);

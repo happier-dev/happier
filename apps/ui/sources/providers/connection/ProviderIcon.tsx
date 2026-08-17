@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 
-import { SafeIonicons, type SafeIoniconsName } from '@/components/ui/icons/SafeIonicons';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { ICON_REGISTRY } from '@/components/ui/icons/iconRegistry.generated';
 
-function contributedIoniconName(value: string | null | undefined): SafeIoniconsName | null {
-    if (!value || typeof Ionicons?.glyphMap !== 'object' || Ionicons.glyphMap === null) return null;
-    return Object.hasOwn(Ionicons.glyphMap, value) ? value as SafeIoniconsName : null;
+function contributedIconName(value: string | null | undefined): IconName | null {
+    if (!value) return null;
+    return Object.hasOwn(ICON_REGISTRY, value) ? value as IconName : null;
 }
 
 export const ProviderIcon = React.memo(function ProviderIcon(props: Readonly<{
@@ -14,8 +14,8 @@ export const ProviderIcon = React.memo(function ProviderIcon(props: Readonly<{
     color: string;
 }>) {
     return (
-        <SafeIonicons
-            name={contributedIoniconName(props.icon) ?? 'cube-outline'}
+        <Icon
+            name={contributedIconName(props.icon) ?? 'cube'}
             size={props.size}
             color={props.color}
         />

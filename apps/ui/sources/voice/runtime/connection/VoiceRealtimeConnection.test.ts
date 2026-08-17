@@ -173,6 +173,34 @@ describe('VoiceRealtimeConnection implementations', () => {
     expect(pcm.stop).toHaveBeenCalledTimes(1);
   });
 
+  it('closes a websocket PCM connection when its canonical media owner reports a terminal failure', async () => {
+    const fixture = createDriver();
+    const terminalListener = { current: null as ((error: Error) => void) | null };
+    const removeTerminalListener = vi.fn();
+    const pcm = {
+      start: vi.fn(async (_signal: AbortSignal) => {}),
+      stop: vi.fn(async () => {}),
+      subscribeTerminal: vi.fn((listener: (error: Error) => void) => {
+        terminalListener.current = listener;
+        return { remove: removeTerminalListener };
+      }),
+    };
+    const connection = createWebSocketPcmConnection({ driver: fixture.driver, pcm });
+    await connection.connect(new AbortController().signal);
+
+    terminalListener.current?.(Object.assign(new Error('pcm_capture_device_lost'), {
+      code: 'pcm_capture_device_lost',
+    }));
+
+    await vi.waitFor(() => expect(fixture.close).toHaveBeenCalledWith({
+      code: 'error',
+      detail: 'pcm_capture_device_lost',
+    }));
+    expect(connection.state()).toBe('closed');
+    expect(pcm.stop).toHaveBeenCalledTimes(1);
+    expect(removeTerminalListener).toHaveBeenCalledTimes(1);
+  });
+
   it('projects driver-owned duck-only output control for SDK transports', async () => {
     const fixture = createDriver();
     const beginOutputInterruptionCandidate = vi.fn(() => 'ducked' as const);
@@ -465,6 +493,52 @@ describe('VoiceRealtimeConnection implementations', () => {
     vi.unstubAllGlobals();
   });
 
+  it('uses injected native WebRTC primitives without creating a second connection lifecycle', async () => {
+    const peer = new FakeWebRtcPeer();
+    const createPeerConnection = vi.fn(() => peer as unknown as RTCPeerConnection);
+    const fallbackStream = { getAudioTracks: () => [] } as unknown as MediaStream;
+    const createMediaStream = vi.fn(() => fallbackStream);
+    const attachRemoteStream = vi.fn(() => ({
+      dispose: vi.fn(),
+      beginOutputInterruptionCandidate: () => 'unsupported' as const,
+      resolveOutputInterruptionCandidate: vi.fn(),
+    }));
+    const localTrack = { id: 'local-native', stop: vi.fn() } as unknown as MediaStreamTrack;
+    const localStream = { getAudioTracks: () => [localTrack] } as unknown as MediaStream;
+    vi.stubGlobal('RTCPeerConnection', undefined);
+    vi.stubGlobal('MediaStream', undefined);
+
+    try {
+      const connection = createWebRtcConnection({
+        micStream: localStream,
+        duckGain: 0.18,
+        signaling: { exchangeOffer: async () => ({ answerSdp: 'answer-sdp' }) },
+        control: { label: 'oai-events', onOpen: () => undefined },
+        createPeerConnection,
+        createMediaStream,
+        attachRemoteStream,
+      });
+      const connecting = connection.connect(new AbortController().signal);
+      await Promise.resolve();
+      peer.channel.open();
+      await connecting;
+
+      const remoteTrack = { id: 'remote-native' } as MediaStreamTrack;
+      peer.remoteTrack(remoteTrack);
+
+      expect(createPeerConnection).toHaveBeenCalledTimes(1);
+      expect(createMediaStream).toHaveBeenCalledWith([remoteTrack]);
+      expect(attachRemoteStream).toHaveBeenCalledWith(fallbackStream);
+      expect(peer.addTrack).toHaveBeenCalledWith(localTrack, localStream);
+
+      await connection.close({ code: 'user_stop' });
+      expect(localTrack.stop).not.toHaveBeenCalled();
+      expect(peer.close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('fails closed before open when default WebRTC remote audio playback rejects', async () => {
     const peer = new FakeWebRtcPeer();
     const audioBoundary = installRemoteAudioElement(async () => {
@@ -698,10 +772,17 @@ describe('VoiceRealtimeConnection implementations', () => {
     expect(connection.state()).toBe('closed');
   });
 
-  it('owns WebRTC negotiation and awaits ordered initial controls before opening', async () => {
+  it('opens after ordered initial controls even when remote audio playback has not settled', async () => {
     const peer = new FakeWebRtcPeer();
     vi.stubGlobal('RTCPeerConnection', vi.fn(() => peer));
     const exchangeOffer = vi.fn(async () => ({ answerSdp: 'answer-sdp' }));
+    const neverSettlingPlayback = new Promise<void>(() => {});
+    const attachRemoteStream = vi.fn(() => ({
+      playbackStarted: neverSettlingPlayback,
+      dispose: vi.fn(),
+      beginOutputInterruptionCandidate: () => 'ducked' as const,
+      resolveOutputInterruptionCandidate: vi.fn(),
+    }));
     let releaseInitialControl!: () => void;
     const initialControlGate = new Promise<void>((resolve) => {
       releaseInitialControl = resolve;
@@ -718,16 +799,23 @@ describe('VoiceRealtimeConnection implementations', () => {
       duckGain: 0.18,
       signaling: { exchangeOffer },
       control: { label: 'oai-events', onOpen },
+      attachRemoteStream,
     });
 
-    const connecting = connection.connect(new AbortController().signal);
+    let connectSettled = false;
+    const connecting = connection.connect(new AbortController().signal).then(() => {
+      connectSettled = true;
+    });
     await vi.waitFor(() => expect(peer.createDataChannel).toHaveBeenCalledWith('oai-events'));
+    peer.remoteTrack({ id: 'remote-a' } as MediaStreamTrack);
+    expect(attachRemoteStream).toHaveBeenCalledTimes(1);
     peer.channel.open();
     await vi.waitFor(() => expect(peer.channel.sent).toEqual([
       JSON.stringify({ type: 'session.update', sequence: 1 }),
     ]));
     expect(connection.state()).toBe('connecting');
     releaseInitialControl();
+    await vi.waitFor(() => expect(connectSettled).toBe(true));
     await connecting;
 
     expect(connection.state()).toBe('open');

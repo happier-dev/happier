@@ -81,6 +81,7 @@ describe('PopoverPortalTargetProvider (native)', () => {
         const portalRoot = views.find((node: any) => typeof node?.props?.onLayout === 'function');
         expect(portalRoot).toBeTruthy();
         expect(portalRoot?.props?.collapsable).toBe(false);
+        expect(portalRoot?.props?.pointerEvents).toBe('box-none');
     });
 
     it('renders popovers into a screen-local OverlayPortalHost (avoids coordinate-space mismatch in contained modals)', async () => {

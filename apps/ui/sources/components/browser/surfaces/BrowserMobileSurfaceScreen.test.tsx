@@ -9,6 +9,9 @@ import {
 } from '@/components/appShell/panes/details/workspace/detailsWorkspaceReducer';
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 import { createBrowserViewDetailsTab } from './browserSurfaceDetailsTabModel';
+import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { EMPTY_PLUGIN_BROWSER_PROJECTION } from '@/sync/domains/plugins/browser/targets';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
@@ -81,6 +84,16 @@ const target = {
     display: { title: 'Preview' },
 } as const;
 
+const currentPluginProjection = {
+    pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 17 },
+    pluginBrowserProjection: { ...EMPTY_PLUGIN_BROWSER_PROJECTION, generation: 17 },
+    phase: 'current',
+    interactionEnabled: true,
+    machineId: 'machine-projection',
+    serverId: 'server-projection',
+    platform: 'ios',
+} satisfies PluginUiProjectionCurrentness;
+
 function basePane(): AppPaneScopeApi {
     return {
         scopeId: 'session:session_1:mobile-browser',
@@ -146,5 +159,36 @@ describe('BrowserMobileSurfaceScreen (scoped workspace)', () => {
         );
 
         expect(screen.root).toBeTruthy();
+    });
+
+    it('threads the admitted projection, currentness, Browser target, and execution origin into the mobile Browser host', async () => {
+        paneStub.current = paneWithBrowserView();
+        const { BrowserMobileSurfaceScreen } = await import('./BrowserMobileSurfaceScreen');
+        // This forward contract deliberately keeps the RED at the mobile caller:
+        // existing source accepts the object at runtime but drops it before the
+        // browser renderer creates the real BrowserSurfaceHost.
+        const ScreenWithProjection = BrowserMobileSurfaceScreen as unknown as React.ComponentType<
+            React.ComponentProps<typeof BrowserMobileSurfaceScreen> & Readonly<{
+                pluginProjection: PluginUiProjectionCurrentness;
+            }>
+        >;
+
+        const screen = await renderScreen(
+            <ScreenWithProjection
+                sessionId="session_1"
+                scopeId="session:session_1:mobile-browser"
+                pluginProjection={currentPluginProjection}
+            />,
+        );
+
+        const host = screen.root.findAllByType('BrowserSurfaceHostMock')[0];
+        expect(host?.props.pluginUiProjection).toBe(currentPluginProjection.pluginUiProjection);
+        expect(host?.props.pluginUiInteractionEnabled).toBe(true);
+        expect(host?.props.pluginBrowserProjection).toBe(currentPluginProjection.pluginBrowserProjection);
+        expect(host?.props.pluginBrowserActionContext).toEqual({
+            machineId: 'machine-projection',
+            serverId: 'server-projection',
+            sessionId: 'session_1',
+        });
     });
 });

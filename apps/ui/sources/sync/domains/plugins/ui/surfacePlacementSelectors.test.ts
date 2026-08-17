@@ -1,17 +1,114 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import {
+    normalizePluginUiDestinationBindingV1,
+    PluginUiDestinationBindingV1Schema,
+    type PluginUiDestinationBindingInputV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import { normalizePluginUiProjection } from './projection';
 import {
     selectPluginRightSidebarTabPlacements,
+    selectPluginSessionDetailsTabPlacement,
+    selectPluginSurfacePlacementsForBinding,
     selectRenderablePluginRightSidebarTabPlacements,
-    selectPluginSurfacePlacementsForPlacement,
-    selectRenderablePluginSurfacePlacementsForPlacement,
+    selectRenderablePluginSurfacePlacementsForBinding,
 } from './surfacePlacementSelectors';
 
+type PluginUiProjectedEntry = NonNullable<PluginProjectionV2['familiesById']['pluginUi']>['entriesById'][string];
+
+function binding(input: PluginUiDestinationBindingInputV1) {
+    const normalized = normalizePluginUiDestinationBindingV1(input);
+    if (!normalized) {
+        throw new Error('test fixture must use an admitted V2 destination binding');
+    }
+    return PluginUiDestinationBindingV1Schema.parse(normalized);
+}
+
+function placement(input: Readonly<{
+    localId: string;
+    rendererId: string;
+    container: PluginUiDestinationBindingInputV1['container'];
+    target: PluginUiDestinationBindingInputV1['target'];
+    /** Deliberately stale input: V2 has no surface-placement order field. */
+    legacyOrder?: number;
+    availability?: Readonly<{ state: 'available' | 'fallback' | 'blocked' | 'disabled'; reason: string; diagnostics: readonly string[] }>;
+    featureGate?: string;
+}>): PluginUiProjectedEntry {
+    const normalizedBinding = binding({
+        pluginId: 'acme.preview',
+        destinationId: input.localId,
+        rendererId: input.rendererId,
+        container: input.container,
+        target: input.target,
+    });
+    return {
+        id: `surfacePlacement:acme.preview:${input.localId}`,
+        pluginId: 'acme.preview',
+        contributionKind: 'surfacePlacement',
+        descriptorId: input.localId,
+        binding: normalizedBinding,
+        target: normalizedBinding.target,
+        renderer: { kind: 'declarative', contributionId: input.rendererId },
+        display: { titleKey: 'title' },
+        ...(input.legacyOrder === undefined ? {} : { order: input.legacyOrder }),
+        ...(input.featureGate === undefined ? {} : { featureGate: input.featureGate }),
+        availability: input.availability ?? { state: 'available', reason: 'available', diagnostics: [] },
+    };
+}
+
 describe('plugin surface placement selectors', () => {
-    it('selects placements by host-owned placement kind in deterministic order', () => {
+    it('rejects an unqualified Session-details resource identity instead of appointing a plugin', () => {
+        const firstBinding = binding({
+            pluginId: 'acme.one',
+            destinationId: 'inspect',
+            rendererId: 'inspect-renderer',
+            container: 'detailsTab',
+            target: { kind: 'session', sessionIdPath: '/session/id' },
+        });
+        const model = normalizePluginUiProjection({
+            v: 2,
+            generation: 12,
+            installedPackagesById: {},
+            agentsById: {},
+            backendsById: {},
+            actionsById: {},
+            toolsById: {},
+            commandsById: {},
+            resourcesById: {},
+            settingsById: {},
+            familiesById: {
+                pluginUi: {
+                    family: 'pluginUi',
+                    entriesById: {
+                        'surfacePlacement:acme.one:inspect': {
+                            id: 'surfacePlacement:acme.one:inspect',
+                            pluginId: 'acme.one',
+                            contributionKind: 'surfacePlacement',
+                            descriptorId: 'inspect',
+                            binding: firstBinding,
+                            target: firstBinding.target,
+                            renderer: { kind: 'declarative', contributionId: 'inspect-renderer' },
+                            display: { titleKey: 'inspect' },
+                            availability: { state: 'available', reason: 'available', diagnostics: [] },
+                        },
+                    },
+                },
+            },
+            diagnostics: [],
+        });
+
+        expect(selectPluginSessionDetailsTabPlacement(model, 'inspect')).toBeNull();
+        expect(selectPluginSessionDetailsTabPlacement(model, {
+            pluginId: 'acme.one',
+            localId: 'inspect',
+        })).toMatchObject({
+            id: 'surfacePlacement:acme.one:inspect',
+        });
+    });
+
+    it('selects admitted bindings by their host-owned slot in deterministic order', () => {
         const projection: PluginProjectionV2 = {
             v: 2,
             generation: 12,
@@ -27,135 +124,49 @@ describe('plugin surface placement selectors', () => {
                 pluginUi: {
                     family: 'pluginUi',
                     entriesById: {
-                        'surfacePlacement:acme.preview:workspace-late': {
-                            id: 'surfacePlacement:acme.preview:workspace-late',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'workspace-late',
-                            placement: 'workspace.details',
-                            target: { kind: 'workspace' },
-                            renderer: { kind: 'host', rendererId: 'workspaceLate' },
-                            display: { titleKey: 'title' },
-                            order: 30,
-                            availability: { state: 'available', reason: 'available', diagnostics: [] },
-                        },
-                        'surfacePlacement:acme.preview:browser-panel': {
-                            id: 'surfacePlacement:acme.preview:browser-panel',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'browser-panel',
-                            placement: 'browser.panel',
+                        'surfacePlacement:acme.preview:details-late': placement({
+                            localId: 'details-late', rendererId: 'details-late', container: 'detailsTab',
+                            // A retained raw-order reader would put this one first.
+                            target: { kind: 'session', sessionIdPath: '/session/id' }, legacyOrder: 0,
+                        }),
+                        'surfacePlacement:acme.preview:browser-panel': placement({
+                            localId: 'browser-panel', rendererId: 'browser-panel', container: 'browserPanel',
                             target: { kind: 'browser', browserViewIdPath: '/browser/viewId' },
-                            renderer: { kind: 'host', rendererId: 'browserPanel' },
-                            display: { titleKey: 'title' },
-                            order: 20,
-                            availability: { state: 'available', reason: 'available', diagnostics: [] },
-                        },
-                        'surfacePlacement:acme.preview:workspace-early': {
-                            id: 'surfacePlacement:acme.preview:workspace-early',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'workspace-early',
-                            placement: 'workspace.details',
-                            target: { kind: 'workspace' },
-                            renderer: { kind: 'host', rendererId: 'workspaceEarly' },
-                            display: { titleKey: 'title' },
-                            order: 10,
-                            availability: { state: 'available', reason: 'available', diagnostics: [] },
-                        },
-                        'surfacePlacement:acme.preview:settings': {
-                            id: 'surfacePlacement:acme.preview:settings',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'settings',
-                            placement: 'app.settingsPage',
+                        }),
+                        'surfacePlacement:acme.preview:details-early': placement({
+                            localId: 'details-early', rendererId: 'details-early', container: 'detailsTab',
+                            target: { kind: 'session', sessionIdPath: '/session/id' }, legacyOrder: 100,
+                        }),
+                        'surfacePlacement:acme.preview:settings': placement({
+                            localId: 'settings', rendererId: 'settings', container: 'settingsPage',
+                            target: { kind: 'app' }, featureGate: 'plugins.ui.settingsPage',
+                        }),
+                        'surfacePlacement:acme.preview:settings-blocked': placement({
+                            localId: 'settings-blocked', rendererId: 'settings-blocked', container: 'settingsPage',
                             target: { kind: 'app' },
-                            renderer: { kind: 'host', rendererId: 'settings' },
-                            display: { titleKey: 'title' },
-                            order: 10,
-                            featureGate: 'plugins.ui.settingsPage',
-                            availability: { state: 'available', reason: 'available', diagnostics: [] },
-                        },
-                        'surfacePlacement:acme.preview:settings-blocked': {
-                            id: 'surfacePlacement:acme.preview:settings-blocked',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'settings-blocked',
-                            placement: 'app.settingsPage',
-                            target: { kind: 'app' },
-                            renderer: { kind: 'host', rendererId: 'settingsBlocked' },
-                            display: { titleKey: 'title' },
-                            order: 20,
                             availability: { state: 'blocked', reason: 'feature_disabled', diagnostics: ['feature_disabled'] },
-                        },
-                        'surfacePlacement:acme.preview:session-review': {
-                            id: 'surfacePlacement:acme.preview:session-review',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'session-review',
-                            placement: 'session.rightSidebarTab',
-                            target: { kind: 'session' },
-                            renderer: { kind: 'host', rendererId: 'sessionReview' },
-                            display: { titleKey: 'title' },
-                            rightSidebar: {
-                                tabId: 'review',
-                                scope: 'session',
-                                section: 'plugin',
-                                order: 25,
-                                mobile: { enabled: true, surface: 'pluginTab' },
+                        }),
+                        'surfacePlacement:acme.preview:session-review': placement({
+                            localId: 'session-review', rendererId: 'session-review', container: 'rightSidebarTab',
+                            target: { kind: 'session', sessionIdPath: '/session/id' },
+                        }),
+                        'surfacePlacement:acme.preview:session-review-deferred': placement({
+                            localId: 'session-review-deferred', rendererId: 'session-review-deferred', container: 'rightSidebarTab',
+                            target: { kind: 'session', sessionIdPath: '/session/id' },
+                        }),
+                        'surfacePlacement:acme.preview:project-review-unavailable': placement({
+                            localId: 'project-review-unavailable', rendererId: 'project-review', container: 'rightSidebarTab',
+                            target: { kind: 'project', projectIdPath: '/project/id' },
+                            availability: {
+                                state: 'disabled',
+                                reason: 'plugin_destination_collision',
+                                diagnostics: ['plugin_destination_collision'],
                             },
-                            order: 25,
-                            availability: { state: 'available', reason: 'available', diagnostics: [] },
-                        },
-                        'surfacePlacement:acme.preview:session-review-deferred': {
-                            id: 'surfacePlacement:acme.preview:session-review-deferred',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'session-review-deferred',
-                            placement: 'session.rightSidebarTab',
-                            target: { kind: 'session' },
-                            renderer: { kind: 'host', rendererId: 'sessionReviewDeferred' },
-                            display: { titleKey: 'title' },
-                            rightSidebar: {
-                                tabId: 'deferred',
-                                scope: 'session',
-                                section: 'plugin',
-                                order: 35,
-                            },
-                            order: 35,
-                            enabled: { kind: 'pathTruthy', path: '/enabled' },
-                            availability: { state: 'available', reason: 'available', diagnostics: [] },
-                        },
-                        'surfacePlacement:acme.preview:project-review-unavailable': {
-                            id: 'surfacePlacement:acme.preview:project-review-unavailable',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'project-review-unavailable',
-                            placement: 'project.rightSidebarTab',
-                            target: { kind: 'project' },
-                            renderer: { kind: 'host', rendererId: 'projectReview' },
-                            display: { titleKey: 'title' },
-                            rightSidebar: {
-                                tabId: 'project-review',
-                                scope: 'project',
-                                section: 'plugin',
-                                order: 10,
-                            },
-                            order: 10,
-                            availability: { state: 'disabled', reason: 'right_sidebar_tab_id_reserved', diagnostics: ['right_sidebar_tab_id_reserved'] },
-                        },
-                        'surfacePlacement:acme.preview:service-inspector': {
-                            id: 'surfacePlacement:acme.preview:service-inspector',
-                            pluginId: 'acme.preview',
-                            contributionKind: 'surfacePlacement',
-                            descriptorId: 'service-inspector',
-                            placement: 'services.panel',
-                            target: { kind: 'services' },
-                            renderer: { kind: 'host', rendererId: 'serviceInspector' },
-                            display: { titleKey: 'title' },
-                            order: 5,
-                            availability: { state: 'available', reason: 'available', diagnostics: [] },
-                        },
+                        }),
+                        'surfacePlacement:acme.preview:service-inspector': placement({
+                            localId: 'service-inspector', rendererId: 'service-inspector', container: 'servicesPanel',
+                            target: { kind: 'services', machineIdPath: '/machine/id', serverIdPath: '/server/id' },
+                        }),
                     },
                 },
             },
@@ -163,39 +174,36 @@ describe('plugin surface placement selectors', () => {
         };
         const model = normalizePluginUiProjection(projection);
 
-        expect(selectPluginSurfacePlacementsForPlacement(model, 'workspace.details').map((placement) => placement.descriptorId)).toEqual([
-            'workspace-early',
-            'workspace-late',
-        ]);
-        expect(selectPluginSurfacePlacementsForPlacement(model, 'browser.panel').map((placement) => placement.descriptorId)).toEqual([
-            'browser-panel',
-        ]);
-        expect(selectPluginSurfacePlacementsForPlacement(model, 'app.settingsPage').map((placement) => placement.descriptorId)).toEqual([
-            'settings',
-            'settings-blocked',
-        ]);
-        expect(selectPluginRightSidebarTabPlacements(model, 'session').map((placement) => placement.descriptorId)).toEqual([
+        expect(selectPluginSurfacePlacementsForBinding(model, {
+            container: 'detailsTab', targetKind: 'session',
+        }).map((entry) => entry.descriptorId)).toEqual(['details-early', 'details-late']);
+        expect(selectPluginSurfacePlacementsForBinding(model, {
+            container: 'browserPanel', targetKind: 'browser',
+        }).map((entry) => entry.descriptorId)).toEqual(['browser-panel']);
+        expect(selectPluginSurfacePlacementsForBinding(model, {
+            container: 'settingsPage', targetKind: 'app',
+        }).map((entry) => entry.descriptorId)).toEqual(['settings', 'settings-blocked']);
+        expect(selectPluginRightSidebarTabPlacements(model, 'session').map((entry) => entry.descriptorId)).toEqual([
             'session-review',
             'session-review-deferred',
         ]);
-        // Phase 1.1: a declared `enabled` predicate is now EVALUATED to a
-        // visible-but-disabled state, not silently hidden — so the deferred tab
-        // renders (interactivity is gated downstream by the evaluated enabled bit).
-        expect(selectRenderablePluginRightSidebarTabPlacements(model, 'session').map((placement) => placement.descriptorId)).toEqual([
+        expect(selectRenderablePluginRightSidebarTabPlacements(model, 'session').map((entry) => entry.descriptorId)).toEqual([
             'session-review',
             'session-review-deferred',
         ]);
         expect(selectRenderablePluginRightSidebarTabPlacements(model, 'project')).toEqual([]);
-        expect(selectRenderablePluginSurfacePlacementsForPlacement(model, 'app.settingsPage', {
+        expect(selectRenderablePluginSurfacePlacementsForBinding(model, {
+            container: 'settingsPage', targetKind: 'app',
+        }, {
             isFeatureEnabled: (featureId) => featureId === 'plugins.ui.settingsPage',
-        }).map((placement) => placement.descriptorId)).toEqual([
-            'settings',
-        ]);
-        expect(selectRenderablePluginSurfacePlacementsForPlacement(model, 'app.settingsPage', {
+        }).map((entry) => entry.descriptorId)).toEqual(['settings']);
+        expect(selectRenderablePluginSurfacePlacementsForBinding(model, {
+            container: 'settingsPage', targetKind: 'app',
+        }, {
             isFeatureEnabled: () => false,
         })).toEqual([]);
-        expect(selectRenderablePluginSurfacePlacementsForPlacement(model, 'services.panel').map((placement) => placement.descriptorId)).toEqual([
-            'service-inspector',
-        ]);
+        expect(selectRenderablePluginSurfacePlacementsForBinding(model, {
+            container: 'servicesPanel', targetKind: 'services',
+        }).map((entry) => entry.descriptorId)).toEqual(['service-inspector']);
     });
 });

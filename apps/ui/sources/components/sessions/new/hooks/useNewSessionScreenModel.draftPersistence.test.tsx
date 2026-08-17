@@ -7,9 +7,17 @@ import { renderScreen } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import {
+    attachCurrentSessionAuthoringSelectionsRuntimeProjection,
+    mergeCurrentFavoriteModelSelectionsIntoRaw,
+    mergeCurrentRememberedEngineSelectionsIntoRaw,
+    readRetainedFavoriteModelSelectionsV1,
+    readRetainedRememberedEngineSelectionsByScopeV1,
+} from '@/sync/domains/settings/sessionAuthoringSelectionPersistence';
 import { buildRememberedEngineSelectionScopeKey } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import { ProviderConnectionIdSchema, SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
+import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import {
     findCheckoutChip as findSelectionListCheckoutChip,
@@ -174,6 +182,13 @@ const openExternalSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args
 const fireAndForgetState = vi.hoisted(() => ({
     promises: [] as Promise<unknown>[],
 }));
+const activeAccountLifetime = vi.hoisted(() => ({
+    value: Object.freeze({
+        scope: Object.freeze({ serverId: 'server-a', accountId: 'account-a' }),
+        isCurrent: () => true,
+        onRetire: (_cancel: () => void) => Object.freeze({ dispose: () => {} }),
+    }),
+}));
 const tryShowDaemonUnavailableAlertForRpcErrorMock = vi.hoisted(() => vi.fn((_args: unknown) => false));
 const routerPushMock = vi.hoisted(() => vi.fn());
 const routerSetParamsMock = vi.hoisted(() => vi.fn());
@@ -182,6 +197,11 @@ const featureFlags = vi.hoisted(() => ({
     automationsEnabled: false,
     externalSessionsEnabled: false,
     providersEnabled: false,
+}));
+const agentResumeSupportState = vi.hoisted(() => ({ supportsVendorResume: false }));
+const externalSessionBrowseSupportState = vi.hoisted(() => ({ supported: false }));
+const automationActionChipsState = vi.hoisted(() => ({
+    enabled: false,
 }));
 const describeProviderModelsMock = vi.hoisted(() => vi.fn());
 
@@ -408,7 +428,10 @@ const activeServerAccountScopeState = vi.hoisted(() => ({
 
 function getMockStorageState() {
     return {
-        settings: { ...settingsDefaults, ...settingsState },
+        settings: attachCurrentSessionAuthoringSelectionsRuntimeProjection({
+            ...settingsDefaults,
+            ...settingsState,
+        }),
         profileScope: activeServerAccountScopeState.value,
         createSessionActionDraft: createSessionActionDraftMock,
         workspaceLocations: workspaceGraphState.workspaceLocations,
@@ -614,7 +637,33 @@ function installNewSessionScreenModelStorageMock() {
                 ({ ...settingsDefaults, ...settingsState } as any)[key],
                 (next: unknown) => setMockSettingValue(key, next),
             ],
-            useSettings: () => ({ ...settingsDefaults, ...settingsState }) as unknown as import('@/sync/domains/settings/settings').Settings,
+            useCurrentFavoriteModelSelectionsV1Mutable: () => {
+                const settings = getMockStorageState().settings;
+                return [
+                    settings.currentFavoriteModelSelectionsV1,
+                    (next: typeof settings.currentFavoriteModelSelectionsV1) => {
+                        setMockSettingValue('favoriteModelSelectionsV1', mergeCurrentFavoriteModelSelectionsIntoRaw({
+                            rawFavorites: readRetainedFavoriteModelSelectionsV1(settings),
+                            currentFavorites: settings.currentFavoriteModelSelectionsV1,
+                            nextFavorites: next,
+                        }));
+                    },
+                ] as const;
+            },
+            useCurrentRememberedEngineSelectionsByScopeV1Mutable: () => {
+                const settings = getMockStorageState().settings;
+                return [
+                    settings.currentRememberedEngineSelectionsByScopeV1,
+                    (next: typeof settings.currentRememberedEngineSelectionsByScopeV1) => {
+                        setMockSettingValue('lastEngineSelectionsByScopeV1', mergeCurrentRememberedEngineSelectionsIntoRaw({
+                            rawSelections: readRetainedRememberedEngineSelectionsByScopeV1(settings),
+                            currentSelections: settings.currentRememberedEngineSelectionsByScopeV1,
+                            nextSelections: next,
+                        }));
+                    },
+                ] as const;
+            },
+            useSettings: () => getMockStorageState().settings as unknown as import('@/sync/domains/settings/settings').Settings,
         });
     });
 }
@@ -634,6 +683,12 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: unknown[]) =>
         machineContributionRegistryProjectionDescribeMock(...args),
+    machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginActionFormConnectedAccountOptionsResolve: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/scm/scmRepositoryService', () => ({
@@ -658,7 +713,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         resolveAgentIdFromCliDetectKey: () => 'codex',
         getAgentCore: (_agentId: string) => ({
             model: { defaultMode: 'default', allowedModes: ['default', 'gpt-5'], supportsFreeform: true },
-            resume: { supportsVendorResume: false, experimental: false },
+            resume: { supportsVendorResume: agentResumeSupportState.supportsVendorResume, experimental: false },
             sessionStorage: { direct: true, persisted: true },
             cli: { detectKey: String(_agentId) },
         }),
@@ -667,6 +722,25 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         buildNewSessionOptionsFromUiState: () => ({}),
         getNewSessionAgentInputExtraActionChips: () => [],
         getNewSessionRelevantInstallableDepKeys: () => [],
+    };
+});
+
+vi.mock('@/agents/runtime/resumeCapabilities', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        canAgentResume: () => agentResumeSupportState.supportsVendorResume,
+    };
+});
+
+vi.mock('@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        canBrowseExternalSessions: () => externalSessionBrowseSupportState.supported,
+        resolveExternalSessionBrowseLockedSource: () => externalSessionBrowseSupportState.supported
+            ? { kind: 'claudeConfig' }
+            : null,
     };
 });
 
@@ -724,6 +798,17 @@ vi.mock('@/sync/sync', () => ({
         applySettings: () => {},
         refreshMachinesThrottled: async () => {},
         encryptSecretValue: (v: string) => v,
+    },
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
+    ...await importOriginal<any>(),
+    captureActiveServerAccountScopeLifetime: () => {
+        const scope = activeServerAccountScopeState.value;
+        return scope?.serverId === activeAccountLifetime.value.scope.serverId
+            && scope.accountId === activeAccountLifetime.value.scope.accountId
+            ? activeAccountLifetime.value
+            : null;
     },
 }));
 
@@ -869,7 +954,7 @@ vi.mock('@/sync/ops/machineMcpServers', () => ({
 
 vi.mock('@/components/sessions/new/modules/automationFeatureGate', () => ({
     resolveEffectiveAutomationDraft: ({ draft }: any) => draft,
-    shouldShowAutomationActionChips: () => false,
+    shouldShowAutomationActionChips: () => automationActionChipsState.enabled,
 }));
 
 vi.mock('@/components/sessions/new/modules/useNewSessionConnectedServices', () => ({
@@ -997,6 +1082,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     });
 
     beforeEach(() => {
+        clearDaemonMergedProjectionCacheForTests();
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
 
@@ -1021,6 +1107,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         featureFlags.automationsEnabled = false;
         featureFlags.externalSessionsEnabled = false;
         featureFlags.providersEnabled = false;
+        agentResumeSupportState.supportsVendorResume = false;
+        externalSessionBrowseSupportState.supported = false;
+        automationActionChipsState.enabled = false;
         describeProviderModelsMock.mockReset();
         describeProviderModelsMock.mockResolvedValue({
             status: 'success',
@@ -1052,6 +1141,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         ];
         machineListByServerIdState.value = {};
         delete (persistedDraft as any).backendTarget;
+        delete (persistedDraft as any).composerAttachments;
         delete persistedDraft.targetServerId;
         delete persistedDraft.windowsRemoteSessionLaunchModeOverride;
         delete (persistedDraft as any).codexBackendMode;
@@ -1092,7 +1182,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         settingsState.useEnhancedSessionWizard = false;
         settingsState.useProfiles = false;
         (settingsState as any).rememberLastEngineSelectionsV1 = settingsDefaults.rememberLastEngineSelectionsV1;
-        (settingsState as any).lastEngineSelectionsByScopeV1 = settingsDefaults.lastEngineSelectionsByScopeV1;
+        (settingsState as any).lastEngineSelectionsByScopeV1 = readRetainedRememberedEngineSelectionsByScopeV1(settingsDefaults);
         settingsState.lastUsedProfile = null;
         settingsState.profileEnabledById = {};
         settingsState.profiles = [];
@@ -1288,6 +1378,84 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             },
         });
     }
+
+    // Typing is the hottest interaction on this screen. The composer must stay fully controlled and
+    // fully live, but the live text must not be a render dependency of the ~1,900-line screen model:
+    // while it is, every keystroke re-executes the whole hook tree, rebuilds the authoring draft and
+    // authoring context, and invalidates both screen-variant prop builders.
+    //
+    // Both halves belong in one case: publishing the text without re-rendering is only correct if the
+    // draft that gets persisted (and submitted) still carries the text the model never saw.
+    it('publishes live composer text without re-rendering the model, and still persists it', async () => {
+        let model: any = null;
+        let renderCount = 0;
+
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+            renderCount += 1;
+        });
+
+        const promptStore = model?.simpleProps?.promptStore;
+        expect(promptStore?.getPrompt()).toBe('hello');
+
+        const rendersBeforeTyping = renderCount;
+        const observed: string[] = [];
+        const unsubscribe = promptStore.subscribe(() => {
+            observed.push(promptStore.getPrompt());
+        });
+
+        for (const next of ['hello w', 'hello wo', 'hello wor']) {
+            await act(async () => {
+                model?.simpleProps?.setSessionPrompt(next);
+            });
+        }
+
+        unsubscribe();
+
+        // Every keystroke reaches subscribers (the composer input stays live)...
+        expect(observed).toEqual(['hello w', 'hello wo', 'hello wor']);
+        expect(promptStore.getPrompt()).toBe('hello wor');
+        // ...while the screen model itself never re-runs for them.
+        expect(renderCount).toBe(rendersBeforeTyping);
+
+        // ...and the draft that gets written still carries the text the model never rendered.
+        saveNewSessionDraftMock.mockClear();
+        await act(async () => {
+            persistDraftNowRef.current?.();
+        });
+
+        expect(saveNewSessionDraftMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            input: 'hello wor',
+        }));
+    });
+
+    it('hydrates and persists generic composer attachments through the New Session document owner', async () => {
+        const composerAttachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        };
+        (persistedDraft as any).composerAttachments = [composerAttachment];
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.composerDocument?.attachments).toEqual([composerAttachment]);
+
+        saveNewSessionDraftMock.mockClear();
+        await act(async () => {
+            persistDraftNowRef.current?.();
+        });
+
+        expect(saveNewSessionDraftMock).toHaveBeenLastCalledWith(expect.objectContaining({
+            composerAttachments: [composerAttachment],
+        }));
+    });
 
     it('applies the daemon contribution registry projection to agent picker labels without blanking while fetching', async () => {
         let resolveProjection:
@@ -2181,6 +2349,132 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }));
     });
 
+    it('hands a direct Event edit to the incumbent writer with its exact authoring seed and CAS target', async () => {
+        featureFlags.automationsEnabled = true;
+        searchParamsState.value = {
+            dataId: 'event-edit-seed',
+            automation: '1',
+            automationEditId: 'event-automation-1',
+        };
+        tempSessionDataState.value = {
+            prompt: 'Review the repository event',
+            machineId: 'machine-1',
+            directory: '/repo/from-event-definition',
+            automationDraft: {
+                enabled: true,
+                name: 'Repository triage',
+                description: 'Review repository activity',
+                scheduleKind: 'interval',
+                everyMinutes: 60,
+                cronExpr: '0 * * * *',
+                timezone: null,
+            },
+            eventAutomationEditSeed: {
+                automationId: 'event-automation-1',
+                expectedTemplateVersion: 7,
+                name: 'Repository triage',
+                description: 'Review repository activity',
+                enabled: true,
+                eventRef: { pluginId: 'acme.github', localId: 'repository-updated' },
+                source: {
+                    v: 1,
+                    sourceInstanceId: 'repository:acme/widgets',
+                    sourceContractVersion: 3,
+                    sourceConfig: { repository: 'acme/widgets' },
+                    displayLabel: 'acme/widgets',
+                },
+                watcherMaterializationRef: {
+                    machineId: 'watcher-machine',
+                    pluginId: 'acme.github',
+                    materializationId: 'github-materialization',
+                },
+                filter: null,
+                maximumObservationAgeMs: null,
+                prompt: 'Review the repository event',
+                target: {
+                    kind: 'newSession',
+                    spawn: {
+                        executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+                        directory: '/repo/from-event-definition',
+                        agentTarget: {
+                            kind: 'agent',
+                            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                        },
+                        permissionMode: 'default',
+                        configuration: {
+                            mode: { value: null, updatedAtMs: 10 },
+                            model: { value: null, updatedAtMs: 10 },
+                            permissionIntent: { value: 'default', updatedAtMs: 41 },
+                            options: {},
+                        },
+                        terminal: {
+                            mode: 'tmux',
+                            tmux: { sessionName: 'event-review' },
+                        },
+                    },
+                },
+            },
+        };
+
+        await renderNewSessionScreenModel(() => {});
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            automationEditId: 'event-automation-1',
+            eventAutomationEdit: {
+                automationId: 'event-automation-1',
+                expectedTemplateVersion: 7,
+            },
+            authoringDraft: expect.objectContaining({
+                directory: '/repo/from-event-definition',
+                prompt: 'Review the repository event',
+                displayText: 'Review the repository event',
+                agentId: 'codex',
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                permissionMode: 'default',
+                permissionModeUpdatedAt: 41,
+                terminal: expect.objectContaining({
+                    mode: 'tmux',
+                }),
+            }),
+        }));
+    });
+
+    it('does not let an unconfigured Event selection fall through to legacy schedule creation', async () => {
+        featureFlags.automationsEnabled = true;
+        automationActionChipsState.enabled = true;
+        searchParamsState.value = { automation: '1' };
+        persistedDraft.automationDraft = {
+            enabled: true,
+            name: 'Repository triage',
+            description: '',
+            scheduleKind: 'interval',
+            everyMinutes: 60,
+            cronExpr: '0 * * * *',
+            timezone: null,
+        };
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+        expect(model?.simpleProps?.canCreate).toBe(true);
+        const automationChip = model?.simpleProps?.agentInputExtraActionChips?.find(
+            (chip: any) => chip?.key === 'new-session-automate',
+        );
+        expect(automationChip).toBeTruthy();
+        const screen = await renderScreen(automationChip.collapsedContentPopover.renderContent());
+
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-trigger-event' }).props.onPress();
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        });
+
+        expect(model?.simpleProps?.canCreate).toBe(false);
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            eventAutomationDraft: null,
+            eventAutomationEdit: null,
+        }));
+    });
+
     it('lets contextual temp seed data replace persisted selections while preserving draft content', async () => {
         searchParamsState.value = {
             dataId: 'session-config-seed',
@@ -2209,7 +2503,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             model = nextModel;
         });
 
-        expect(model?.simpleProps?.sessionPrompt).toBe('Persisted prompt');
+        expect(model?.simpleProps?.promptStore?.getPrompt()).toBe('Persisted prompt');
         expect(model?.simpleProps?.agentType).toBe('codex');
         expect(model?.simpleProps?.permissionMode).toBe('acceptEdits');
         expect(model?.simpleProps?.selectedPath).toBe('/repo/from-session');
@@ -2222,7 +2516,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 agentId: 'codex',
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 permissionMode: 'acceptEdits',
-                modelId: 'gpt-5',
+                modelSelection: expect.objectContaining({
+                    ref: expect.objectContaining({ modelId: 'gpt-5' }),
+                }),
                 acpSessionModeId: 'plan',
                 resumeSessionId: null,
             }),
@@ -2250,7 +2546,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             authoringDraft: expect.objectContaining({
                 agentId: 'codex',
                 backendTarget: { kind: 'backend', backendId: 'codex' },
-                modelId: null,
+                modelSelection: null,
             }),
         }));
     });
@@ -2398,7 +2694,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             model = nextModel;
         });
 
-        expect(model?.simpleProps?.sessionPrompt).toBe('Old persisted prompt');
+        expect(model?.simpleProps?.promptStore?.getPrompt()).toBe('Old persisted prompt');
         expect(model?.simpleProps?.resumeSessionId).toBe('sess_old');
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
             authoringDraft: expect.objectContaining({
@@ -2420,7 +2716,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             if (typeof cleanup === 'function') cleanup();
         }
 
-        expect(model?.simpleProps?.sessionPrompt).toBe('Focused draft prompt');
+        expect(model?.simpleProps?.promptStore?.getPrompt()).toBe('Focused draft prompt');
         expect(model?.simpleProps?.resumeSessionId).toBe('sess_new');
         expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
             authoringDraft: expect.objectContaining({
@@ -2747,6 +3043,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     });
 
     it('keeps the current route stable and exposes a shared resume popover in the simple panel when resume is available', async () => {
+        agentResumeSupportState.supportsVendorResume = true;
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
@@ -2767,6 +3064,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
         const portalTarget = { tag: 'new-session-parent-modal-target' } as unknown as Element;
         featureFlags.externalSessionsEnabled = true;
+        externalSessionBrowseSupportState.supported = true;
 
         let model: any = null;
         function Probe() {
@@ -2786,6 +3084,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         if (!rendered) {
             throw new Error('expected resume popover content');
         }
+        expect(rendered.props.resumeBrowse).toEqual(expect.objectContaining({ enabled: true }));
 
         const popoverScreen = await renderScreen(rendered);
         await popoverScreen.pressByTestIdAsync('resume-id-browse-trigger');
@@ -2807,6 +3106,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     });
 
     it('hides the direct-sessions resume browse trigger when sessions.direct is disabled', async () => {
+        agentResumeSupportState.supportsVendorResume = true;
+        externalSessionBrowseSupportState.supported = true;
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;

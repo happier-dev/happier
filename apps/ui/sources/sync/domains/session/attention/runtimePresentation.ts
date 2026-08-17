@@ -6,6 +6,10 @@ import type {
 
 export const SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS = 120_000;
 export const SESSION_OPTIMISTIC_PENDING_THINKING_MS = 15_000;
+/**
+ * Safety-net lifetime after the daemon accepts a resume request. The store keeps the explicit
+ * marker for the entire in-flight RPC and normally clears it on authoritative post-attach state.
+ */
 export const SESSION_RESUMING_PRESENTATION_TIMEOUT_MS = 30_000;
 
 export type SessionRuntimeAttentionState =
@@ -98,6 +102,45 @@ function isLegacyThinkingBlockedByTurnProjection(latestTurnStatus: PrimaryTurnSt
     return hasTerminalPrimaryTurnStatus(latestTurnStatus);
 }
 
+/**
+ * Whether the runtime that publishes this session's state is still there to publish it.
+ *
+ * One owner for "live", because it is the precondition of every claim derived from a report the
+ * runtime made. An archived session is not live no matter what its last report said, so a consumer
+ * that re-spells the rule as `active && online` reads an archived session's final in-progress
+ * projection as work still happening.
+ */
+export function isLiveSessionRuntime(
+    input: Pick<SessionRuntimePresentationInput, 'active' | 'presence' | 'archivedAt'>,
+): boolean {
+    const isArchived = typeof input.archivedAt === 'number' && Number.isFinite(input.archivedAt);
+    return !isArchived && input.active === true && input.presence === 'online';
+}
+
+/**
+ * Instant this session's runtime was last observed, once it is gone rather than merely quiet —
+ * and `null` while it is live *or* while the gap is still short enough to be a reconnect blip.
+ *
+ * This is deliberately a death fact and never an inactivity verdict: work the runtime was
+ * performing keeps its last reported state for as long as the runtime might still report again,
+ * however long that is. Only crossing the same staleness bound the rest of the runtime story uses
+ * turns "we have not heard from it" into "it is gone", which is what lets a consumer close work
+ * that has no other closing path — nothing else can ever write the result of a call whose process
+ * exited.
+ *
+ * One owner, because "gone since when" is the precondition of every such retirement and the
+ * instant itself is the bound: a consumer must not retire evidence that is newer than it.
+ */
+export function readSessionRuntimeLostSinceMs(
+    input: Pick<SessionRuntimePresentationInput, 'active' | 'presence' | 'archivedAt' | 'activeAt'>,
+    nowMs: number,
+): number | null {
+    if (isLiveSessionRuntime(input)) return null;
+    const lastObservedAtMs = normalizeRuntimeStatusTimestamp(input.activeAt);
+    if (lastObservedAtMs === null) return null;
+    return nowMs - lastObservedAtMs > SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS ? lastObservedAtMs : null;
+}
+
 export function deriveSessionRuntimePresentationState(
     input: SessionRuntimePresentationInput,
 ): SessionRuntimePresentationState {
@@ -110,7 +153,7 @@ export function deriveSessionRuntimePresentationState(
     const terminalStatus = hasTerminalPrimaryTurnProjection ? latestTurnStatus : null;
     const thinkingAt = normalizeRuntimeStatusTimestamp(input.thinkingAt);
     const optimisticThinkingAt = normalizeRuntimeStatusTimestamp(input.optimisticThinkingAt);
-    const isLiveRuntime = !isArchived && input.active === true && input.presence === 'online';
+    const isLiveRuntime = isLiveSessionRuntime(input);
 
     // The lifecycle projection is the canonical active-turn fact. It is cleared by
     // complete/fail/cancel (including daemon exit settlement), not elapsed wall time.

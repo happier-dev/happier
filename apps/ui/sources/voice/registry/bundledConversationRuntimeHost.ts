@@ -3,20 +3,28 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { randomUUID } from '@/platform/randomUUID';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type {
+  BundledAdmittedCanonicalTranscriptPersistenceEvent,
+  BundledDirectMediaBindingOwnership,
   BundledRealtimeProviderRuntimeHost,
-  BundledVoiceProviderDiagnosticEvent,
-} from '@happier-dev/bundled-voice-runtime-contract';
+  BundledRetiringDirectMediaTranscriptDrain,
+} from './bundledConversationRuntimeContract';
 import {
   AgentSessionRealtimeInspectResultV1Schema,
   describeActionForVoiceTool,
+  SessionLookupByTagsResponseV2Schema,
   VoiceRealtimeJsonValueSchema,
   zodSchemaToJsonSchemaObject,
   type ConnectedServiceBindingsV1,
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
-import type { PluginVoiceHostedConversationService } from '@happier-dev/plugin-sdk/runtime';
+import type { VoiceHostedConversationService } from '@happier-dev/plugin-sdk/voice/client';
 import { realtimeReadOnlyClientTools } from '@/realtime/realtimeClientTools';
-import { fetchHappierVoiceToken, completeHappierVoiceSession } from '@/sync/api/voice/apiVoice';
+import { fetchHappierVoiceToken, completeHappierVoiceSession, releaseHappierVoiceSession } from '@/sync/api/voice/apiVoice';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import {
+  requireCurrentAccountStoredContentServerCompatibility,
+} from '@/sync/api/capabilities/accountStoredContentCompatibility';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -28,20 +36,28 @@ import {
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import {
+  captureSessionRequestAuthorityForServerAccountScope,
+} from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { applyVoiceSessionTargetSelection } from '@/voice/binding/applyVoiceSessionTargetSelection';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
-import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import {
+  bindVoiceRuntimeAttemptBinding,
+  createVoiceRuntimeAttemptBindingOwner,
+  unbindVoiceRuntimeAttemptBindingIfOwned,
+  voiceSessionBindingStore,
+} from '@/voice/binding/voiceConversationBindingStore';
 import { redactVoiceToolResultForProvider } from '@/voice/context/redactVoiceToolResult';
 import { voiceHooks } from '@/voice/context/voiceHooks';
-import { isVoiceQaDebugRuntime } from '@/voice/qa/voiceQaDebugRuntime';
-import { useVoiceQaStore } from '@/voice/qa/voiceQaStore';
 import {
   createSdkHandleConnection,
-  createWebRtcConnection,
   createWebSocketPcmConnection,
 } from '@/voice/runtime/connection/VoiceRealtimeConnection';
+import {
+  createHostWebRtcConnection,
+} from '@/voice/runtime/connection/createHostWebRtcConnection';
 import { createWebSocketPcmMedia } from '@/voice/runtime/connection/WebSocketPcmMedia';
 import { createVoiceConversationController } from '@/voice/runtime/controller/VoiceConversationController';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
@@ -53,8 +69,6 @@ import {
 } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 import { createRealtimeMicSession } from '@/voice/runtime/mic/createRealtimeMicSession';
 import { createRealtimeInboundWatchdog } from '@/voice/runtime/realtime/realtimeInboundWatchdog';
-import { createRealtimeMachineStorageMirror } from '@/voice/runtime/realtime/realtimeMachineStorageMirror';
-import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import { voiceOutputStatusStore } from '@/voice/runtime/outputStatus/voiceOutputStatusStore';
 import {
@@ -64,11 +78,15 @@ import {
   acquireVoiceBackgroundCallAudioMode,
 } from '@/voice/runtime/voiceAudioMode';
 import {
+  admitCanonicalVoiceTranscriptPersistenceEvent,
   beginCanonicalVoiceTranscriptAttempt,
   appendVoiceConversationNoteText,
+  commitAdmittedCanonicalVoiceTranscriptPersistenceEvent,
   deriveCanonicalVoiceTranscriptEntryId,
   projectCanonicalVoiceTranscriptEvent,
+  releaseAdmittedCanonicalVoiceTranscriptPersistenceEvent,
   releaseCanonicalVoiceTranscriptConversation,
+  settleAdmittedCanonicalVoiceTranscriptPersistence,
 } from '@/voice/transcript/voiceConversationTranscript';
 import { acquireBundledConversationRuntimeGeneration } from './bundledConversationRuntimeGeneration';
 import { createDefaultRealtimeToolBarrier } from '@/voice/tools/defaultRealtimeToolBarrier';
@@ -81,6 +99,7 @@ import {
   buildVoiceTranscriptHistorySessionMetadata,
   isVoiceTranscriptHistorySession,
   resolveDirectMediaTranscriptSession,
+  runVoiceTranscriptHistoryCarrierOperation,
   VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
 } from '@/voice/persistence/voiceTranscriptHistorySession';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
@@ -88,7 +107,12 @@ import {
   ensureVoiceConversationSessionForVoiceHome,
   resolveQualifiedAgentBackendTargetForMachine,
 } from '@/voice/persistence/voiceConversationSession';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import {
+  readSessionOwnerMetadataView,
+  resolveSessionOwnerMetadataViewRead,
+} from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { discoverVoiceHistorySession } from '@/voice/history/voiceHistorySessionDiscovery';
+import { getProviderConversationServiceFactory } from './providerConversationService';
 
 function formatHostedLeaseDuration(ms: number): string {
   const bounded = Math.max(0, Math.floor(ms));
@@ -98,7 +122,11 @@ function formatHostedLeaseDuration(ms: number): string {
 }
 import { createAgentSessionRealtimeService } from '@/voice/runtime/agentRealtime/createAgentSessionRealtimeService';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { resolveAgentRealtimeVoiceConversationBinding } from './resolveAgentRealtimeVoiceConversationBinding';
+import {
+  resolveAgentRealtimeVoiceConversationBinding,
+  type AgentRealtimeSessionAvailability,
+  type AgentRealtimeVoiceBindingDeclineCode,
+} from './resolveAgentRealtimeVoiceConversationBinding';
 import { startHostedConversationWithPaywall } from './startHostedConversationWithPaywall';
 
 type ContributionRef = Readonly<{ pluginId: string; localId: string }>;
@@ -118,7 +146,7 @@ function hostedConversationUnavailable(code: string): Error {
 export function createBundledHostedConversationService(input: Readonly<{
   signal: AbortSignal;
   isCurrent(): boolean;
-}>): PluginVoiceHostedConversationService {
+}>): VoiceHostedConversationService {
   const controller = new AbortController();
   let state: 'idle' | 'starting' | 'started' | 'terminal' = 'idle';
   let leaseId: string | null = null;
@@ -226,24 +254,62 @@ export function createBundledHostedConversationService(input: Readonly<{
     },
     async abort() {
       if (state === 'terminal') return;
+      const releasingLeaseId = leaseId;
       state = 'terminal';
       leaseId = null;
       controller.abort();
       detachUpstreamAbort();
-      // The canonical server lease is bounded and conservatively quota-counted.
-      // Aborting an unverified local attempt must not become another binding or
-      // billing writer.
+      if (!releasingLeaseId) return;
+      const credentials = await TokenStorage.getCredentials();
+      if (!credentials) return;
+      await releaseHappierVoiceSession(credentials, { leaseId: releasingLeaseId });
     },
   });
 }
 
-function readCandidateAgentSessionBasis(sessionId: string): Readonly<{
+type CandidateAgentSessionBasis = Readonly<{
   machineId: string | null;
   backendId: string;
-}> | null {
+}>;
+
+/**
+ * Local candidate prefilter for an Agent-realtime conversation.
+ *
+ * Every refusal here is decided entirely on device, before any daemon request,
+ * and each one has a different remedy: a session that is not live (the common
+ * `Inactive (resumable)` target) is `session_unavailable`, while a live session
+ * that simply is not this Agent's does not offer the feature at all. Reducing
+ * them to one boolean is what used to make both indistinguishable from a
+ * transport fault.
+ *
+ * `code: null` is the counterweight: a refusal whose cause is transient has no
+ * typed remedy to name and must stay on the retryable generic fallback, so
+ * naming a cause is only correct when the remedy really is durable.
+ */
+type CandidateAgentSessionReading =
+  | Readonly<{ candidate: true; basis: CandidateAgentSessionBasis }>
+  | Readonly<{ candidate: false; code: AgentRealtimeVoiceBindingDeclineCode | null }>;
+
+function readCandidateAgentSessionBasis(sessionId: string): CandidateAgentSessionReading {
   const session = storage.getState().sessions[sessionId];
-  const metadata = session ? readSessionOwnerMetadataView(session) : null;
-  if (!session || session.active !== true || !metadata) return null;
+  if (!session || session.active !== true) {
+    return Object.freeze({ candidate: false as const, code: 'session_unavailable' as const });
+  }
+  const metadataRead = resolveSessionOwnerMetadataViewRead(session);
+  if (metadataRead.kind !== 'available') {
+    // A layout this build cannot read is a durable client-version fault, so it
+    // names the update remedy. An owner projection that simply has not landed
+    // or decrypted yet is transient: it stays on the untyped retryable fallback
+    // (`code: null`) rather than becoming a never-retryable terminal refusal
+    // for a session a moment's hydration would have made usable.
+    return Object.freeze({
+      candidate: false as const,
+      code: metadataRead.kind === 'unsupported_layout_version'
+        ? 'update_required' as const
+        : null,
+    });
+  }
+  const metadata = metadataRead.metadata;
   const target = metadata.backendTarget;
   const targetRecord = target !== null
     && typeof target === 'object'
@@ -260,35 +326,58 @@ function readCandidateAgentSessionBasis(sessionId: string): Readonly<{
               : resolveAgentIdFromSessionMetadata(metadata)
           )
         : null;
-  if (!backendId) return null;
+  if (!backendId) {
+    return Object.freeze({ candidate: false as const, code: 'feature_unavailable' as const });
+  }
   const machineId = typeof metadata.machineId === 'string'
     ? metadata.machineId.trim() || null
     : null;
-  return Object.freeze({ machineId, backendId });
+  return Object.freeze({
+    candidate: true as const,
+    basis: Object.freeze({ machineId, backendId }),
+  });
+}
+
+const AGENT_REALTIME_SESSION_AVAILABLE = Object.freeze({ available: true as const });
+
+async function readAgentRealtimeSessionCandidacy(
+  sessionId: string,
+  agent: ContributionRef,
+): Promise<AgentRealtimeSessionAvailability> {
+  const reading = readCandidateAgentSessionBasis(sessionId);
+  if (!reading.candidate) return Object.freeze({ available: false as const, code: reading.code });
+  const expectedTarget = await resolveQualifiedAgentBackendTargetForMachine({
+    machineId: reading.basis.machineId,
+    agent,
+  });
+  const live = readCandidateAgentSessionBasis(sessionId);
+  if (!live.candidate) return Object.freeze({ available: false as const, code: live.code });
+  if (
+    live.basis.machineId !== reading.basis.machineId
+    || live.basis.backendId !== reading.basis.backendId
+  ) {
+    // The session was retargeted while its Agent ref was being resolved, so the
+    // session this attempt was about no longer exists in that form.
+    return Object.freeze({ available: false as const, code: 'session_unavailable' as const });
+  }
+  return expectedTarget?.backendId === live.basis.backendId
+    ? AGENT_REALTIME_SESSION_AVAILABLE
+    : Object.freeze({ available: false as const, code: 'feature_unavailable' as const });
 }
 
 async function isCandidateAgentSession(sessionId: string, agent: ContributionRef): Promise<boolean> {
-  const candidate = readCandidateAgentSessionBasis(sessionId);
-  if (!candidate) return false;
-  const expectedTarget = await resolveQualifiedAgentBackendTargetForMachine({
-    machineId: candidate.machineId,
-    agent,
-  });
-  const liveCandidate = readCandidateAgentSessionBasis(sessionId);
-  return liveCandidate !== null
-    && liveCandidate.machineId === candidate.machineId
-    && liveCandidate.backendId === candidate.backendId
-    && expectedTarget?.backendId === liveCandidate.backendId;
+  return (await readAgentRealtimeSessionCandidacy(sessionId, agent)).available;
 }
 
 async function inspectAgentRealtimeSession(input: Readonly<{
   sessionId: string;
   provider: ContributionRef;
   agent: ContributionRef;
-}>): Promise<boolean> {
+}>): Promise<AgentRealtimeSessionAvailability> {
   // Local metadata is only a candidate prefilter. The session-scoped inspect RPC
   // below proves the exact qualified Agent ref through the daemon's normalized projection.
-  if (!await isCandidateAgentSession(input.sessionId, input.agent)) return false;
+  const candidacy = await readAgentRealtimeSessionCandidacy(input.sessionId, input.agent);
+  if (!candidacy.available) return candidacy;
   try {
     const raw = await sessionRpcWithServerScope({
       sessionId: input.sessionId,
@@ -296,9 +385,15 @@ async function inspectAgentRealtimeSession(input: Readonly<{
       payload: { v: 1, provider: input.provider },
     });
     const parsed = AgentSessionRealtimeInspectResultV1Schema.safeParse(raw);
-    return parsed.success && parsed.data.ok && parsed.data.status === 'available';
+    if (!parsed.success) return Object.freeze({ available: false as const, code: null });
+    if (parsed.data.ok) return AGENT_REALTIME_SESSION_AVAILABLE;
+    // The daemon's `reason` is the one typed answer it publishes; its `code` and
+    // `message` are provider-shaped diagnostics and stay out of the projection.
+    // An unclassified refusal has no typed reason to carry, and inventing one
+    // here would be worse than the honest unknown-failure fallback.
+    return Object.freeze({ available: false as const, code: parsed.data.reason ?? null });
   } catch {
-    return false;
+    return Object.freeze({ available: false as const, code: null });
   }
 }
 
@@ -329,6 +424,62 @@ export function getCurrentBundledConversationRuntimeHost(): BundledRealtimeProvi
 
 export function createBundledConversationRuntimeHostLease() {
   const generation = acquireBundledConversationRuntimeGeneration();
+  // This is intentionally not another transcript owner or queue. A permit is
+  // minted synchronously only while this host is current, then remains valid
+  // only for the exact direct-media tail which already crossed provider input
+  // admission. The canonical projector still owns attempt identity, ordering,
+  // persistence, and release.
+  const retiringDirectMediaTranscriptDrains = new WeakSet<object>();
+  const admittedCanonicalTranscriptPersistenceEvents = new WeakMap<
+    BundledAdmittedCanonicalTranscriptPersistenceEvent,
+    NonNullable<ReturnType<typeof admitCanonicalVoiceTranscriptPersistenceEvent>>
+  >();
+  const hasRetiringDirectMediaTranscriptDrain = (
+    drain: BundledRetiringDirectMediaTranscriptDrain | undefined,
+  ): boolean => (
+    drain !== undefined
+    && retiringDirectMediaTranscriptDrains.has(drain as object)
+  );
+  const bindCurrentDirectMediaConversation = (input: Readonly<{
+    adapterId: string;
+    controlSessionId: string;
+    conversationSessionId: string;
+    targetSessionId: string | null;
+  }>) => {
+    if (!generation.isCurrent()) {
+      return Object.freeze({ conversationSessionId: input.conversationSessionId });
+    }
+    const bindingOwnership =
+      createVoiceRuntimeAttemptBindingOwner() as BundledDirectMediaBindingOwnership;
+    bindVoiceRuntimeAttemptBinding({
+      owner: bindingOwnership,
+      binding: {
+        adapterId: input.adapterId,
+        controlSessionId: input.controlSessionId,
+        conversationSessionId: input.conversationSessionId,
+        lifetime: 'runtime_attempt',
+        transcriptMode: 'synthetic',
+        targetSessionId: input.targetSessionId,
+        updatedAt: Date.now(),
+      },
+    });
+    const conversation = {
+      conversationSessionId: input.conversationSessionId,
+    } as Readonly<{
+      conversationSessionId: string;
+      bindingOwnership?: BundledDirectMediaBindingOwnership;
+    }>;
+    // Keep the ownership closure out of the observable direct-media result
+    // shape. Runtime composition can read it, while consumers see the same
+    // stable carrier contract and it cannot leak into persistence/telemetry.
+    Object.defineProperty(conversation, 'bindingOwnership', {
+      configurable: false,
+      enumerable: false,
+      value: bindingOwnership,
+      writable: false,
+    });
+    return Object.freeze(conversation);
+  };
   const canPersistProviderConversationState = (input: Readonly<{
     providerId: string;
     conversationSessionId: string;
@@ -339,8 +490,17 @@ export function createBundledConversationRuntimeHostLease() {
     return binding?.adapterId === input.providerId
       && storage.getState().sessions[input.conversationSessionId] !== undefined;
   };
-  const host = Object.freeze({
+  const host: BundledRealtimeProviderRuntimeHost = Object.freeze({
     globalVoiceSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+    isCurrentGeneration: () => generation.isCurrent(),
+    runCurrentGenerationEffect(callback) {
+      let ran = false;
+      generation.runIfCurrent(() => {
+        ran = true;
+        callback();
+      });
+      return ran;
+    },
     getSettings: () => storage.getState().settings,
     projectVoiceSettings(settings: unknown, providerId: string) {
       const rawVoice = readVoiceSettingsInput(settings);
@@ -391,35 +551,44 @@ export function createBundledConversationRuntimeHostLease() {
     },
     createMachineError: createVoiceMachineError,
     machine: Object.freeze({
-      transitionToAcquiringMic: (controlSessionId: string, adapterId: string) =>
-        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToAcquiringMic({ controlSessionId, adapterId })),
-      transitionToConnecting: (controlSessionId: string, adapterId: string) =>
-        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToConnecting({ controlSessionId, adapterId })),
-      setReconnecting: (controlSessionId: string, adapterId: string, reconnecting: boolean) =>
+      transitionToAcquiringMic: (controlSessionId: string, adapterId: string, attemptId?: number) =>
+        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToAcquiringMic({ controlSessionId, adapterId, attemptId })),
+      transitionToConnecting: (controlSessionId: string, adapterId: string, attemptId?: number) =>
+        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToConnecting({ controlSessionId, adapterId, attemptId })),
+      setReconnecting: (controlSessionId: string, adapterId: string, reconnecting: boolean, attemptId?: number) =>
         generation.runIfCurrent(() => voiceConversationRuntimeMachine.setReconnecting({
           controlSessionId,
           adapterId,
+          attemptId,
           reconnecting,
         })),
-      transitionToConnected: (controlSessionId: string, adapterId: string) =>
-        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId, adapterId })),
-      transitionToSpeaking: (controlSessionId: string, adapterId: string) =>
-        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId, adapterId })),
-      transitionToEnding: (controlSessionId: string, adapterId: string) =>
-        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToEnding({ controlSessionId, adapterId })),
-      transitionToDisconnected: (controlSessionId: string, adapterId: string, error: unknown | null) =>
+      transitionToConnected: (controlSessionId: string, adapterId: string, attemptId?: number) =>
+        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId, adapterId, attemptId })),
+      transitionToSpeaking: (controlSessionId: string, adapterId: string, attemptId?: number) =>
+        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId, adapterId, attemptId })),
+      transitionToEnding: (controlSessionId: string, adapterId: string, attemptId?: number) =>
+        generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToEnding({ controlSessionId, adapterId, attemptId })),
+      transitionToDisconnected: (controlSessionId: string, adapterId: string, error: unknown | null, attemptId?: number) =>
         generation.runIfCurrent(() => voiceConversationRuntimeMachine.transitionToDisconnected({
           controlSessionId,
           adapterId,
+          attemptId,
           error: error as Parameters<typeof voiceConversationRuntimeMachine.transitionToDisconnected>[0]['error'],
         })),
-      setError: (controlSessionId: string, adapterId: string, error: unknown) =>
+      setError: (controlSessionId: string, adapterId: string, error: unknown, attemptId?: number) =>
         generation.runIfCurrent(() => voiceConversationRuntimeMachine.setError({
           controlSessionId,
           adapterId,
+          attemptId,
           error: error as Parameters<typeof voiceConversationRuntimeMachine.setError>[0]['error'],
         })),
-      setMuted: (muted: boolean) => generation.runIfCurrent(() => voiceConversationRuntimeMachine.setMuted(muted)),
+      setMuted: (controlSessionId: string, adapterId: string, attemptId: number, muted: boolean) =>
+        generation.runIfCurrent(() => voiceConversationRuntimeMachine.setMuted({
+          controlSessionId,
+          adapterId,
+          attemptId,
+          micMuted: muted,
+        })),
       getSnapshot: getVoiceConversationRuntimeSnapshot,
       projectSnapshot: (adapterId: string, snapshot: unknown) =>
         deriveLocalVoiceSessionSnapshot(
@@ -434,7 +603,7 @@ export function createBundledConversationRuntimeHostLease() {
     createConversationController: (input: Parameters<typeof createVoiceConversationController>[0]) =>
       createVoiceConversationController(input),
     createSdkHandleConnection,
-    createWebRtcConnection,
+    createWebRtcConnection: createHostWebRtcConnection,
     createWebSocketPcmConnection,
     createWebSocketPcmMedia,
     createToolBarrier: createDefaultRealtimeToolBarrier,
@@ -452,111 +621,213 @@ export function createBundledConversationRuntimeHostLease() {
       adapterId: string;
       controlSessionId: string;
       requestedTargetSessionId: string | null;
+      retiringTranscriptDrain?: BundledRetiringDirectMediaTranscriptDrain;
     }>) {
-      if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
+      if (
+        !generation.isCurrent()
+        && !hasRetiringDirectMediaTranscriptDrain(input.retiringTranscriptDrain)
+      ) {
+        throw new Error('voice_runtime_generation_revoked');
+      }
       const requestedTargetSessionId =
         typeof input.requestedTargetSessionId === 'string'
         && input.requestedTargetSessionId.trim()
           ? input.requestedTargetSessionId.trim()
           : null;
-      const existing = voiceSessionBindingStore.getState().getByControlSessionId(
-        input.controlSessionId,
-      );
-      const existingConversation = existing
-        ? storage.getState().sessions[existing.conversationSessionId] ?? null
-        : null;
-      const existingOwnsRequestedCarrier = requestedTargetSessionId
-        ? existing?.conversationSessionId === requestedTargetSessionId
-        : isVoiceTranscriptHistorySession(existingConversation
-          ? {
-              active: existingConversation.active,
-              metadata: readVoiceSessionOwnerMetadataFromState(
-                storage.getState(),
-                existingConversation.id,
-              ),
-            }
-          : null);
-      if (
-        existing?.adapterId === input.adapterId
-        && existing.lifetime === 'runtime_attempt'
-        && existing.targetSessionId === requestedTargetSessionId
-        && existingOwnsRequestedCarrier
-      ) {
-        if (requestedTargetSessionId) {
+      const acquire = async () => {
+        const existing = voiceSessionBindingStore.getState().getByControlSessionId(
+          input.controlSessionId,
+        );
+        const existingConversation = existing
+          ? storage.getState().sessions[existing.conversationSessionId] ?? null
+          : null;
+        const existingOwnsRequestedCarrier = requestedTargetSessionId
+          ? existing?.conversationSessionId === requestedTargetSessionId
+          : isVoiceTranscriptHistorySession(existingConversation
+            ? {
+                active: existingConversation.active,
+                metadata: readVoiceSessionOwnerMetadataFromState(
+                  storage.getState(),
+                  existingConversation.id,
+                ),
+              }
+            : null);
+        const existingCarrierNeedsHydration = requestedTargetSessionId !== null
+          || (
+            existingConversation?.encryptionMode !== 'plain'
+            && existing !== null
+            && sync.encryption?.getSessionEncryption(existing.conversationSessionId) == null
+          );
+        if (
+          existing?.adapterId === input.adapterId
+          && existing.lifetime === 'runtime_attempt'
+          && existing.targetSessionId === requestedTargetSessionId
+          && existingOwnsRequestedCarrier
+        ) {
+          if (!existingCarrierNeedsHydration) {
+            return bindCurrentDirectMediaConversation({
+              adapterId: input.adapterId,
+              controlSessionId: input.controlSessionId,
+              conversationSessionId: existing.conversationSessionId,
+              targetSessionId: requestedTargetSessionId,
+            });
+          }
+          const existingConversationSessionId = existing.conversationSessionId;
           const hydrated = await sync.ensureSessionVisibleForMessageRoute(
-            requestedTargetSessionId,
+            existingConversationSessionId,
             { forceRefresh: true },
           );
           if (
-            hydrated.kind !== 'available'
-            || hydrated.sessionId !== requestedTargetSessionId
+            hydrated.kind === 'available'
+            && hydrated.sessionId === existingConversationSessionId
           ) {
+            const hydratedConversation =
+              storage.getState().sessions[existingConversationSessionId] ?? null;
+            const hydratedOwnsRequestedCarrier = requestedTargetSessionId
+              ? existingConversationSessionId === requestedTargetSessionId
+              : isVoiceTranscriptHistorySession(hydratedConversation
+                ? {
+                    active: hydratedConversation.active,
+                    metadata: readVoiceSessionOwnerMetadataFromState(
+                      storage.getState(),
+                      existingConversationSessionId,
+                    ),
+                  }
+                : null);
+            if (hydratedOwnsRequestedCarrier) {
+              return bindCurrentDirectMediaConversation({
+                adapterId: input.adapterId,
+                controlSessionId: input.controlSessionId,
+                conversationSessionId: existingConversationSessionId,
+                targetSessionId: requestedTargetSessionId,
+              });
+            }
+          }
+          if (requestedTargetSessionId) {
             throw new Error(
               `Voice transcript target session ${requestedTargetSessionId} could not be hydrated`,
             );
           }
         }
-        return Object.freeze({
-          conversationSessionId: existing.conversationSessionId,
+        const conversationSessionId = await resolveDirectMediaTranscriptSession({
+          ensureTargetSession: async (sessionId) => {
+            const hydrated = await sync.ensureSessionVisibleForMessageRoute(sessionId, {
+              forceRefresh: true,
+            });
+            if (hydrated.kind !== 'available' || hydrated.sessionId !== sessionId) {
+              throw new Error(`Voice transcript target session ${sessionId} could not be hydrated`);
+            }
+          },
+          ensureHistorySession: async () => {
+            const resolved = await sync.ensureHostedSystemSession({
+              tag: VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
+              metadata: buildVoiceTranscriptHistorySessionMetadata(),
+            });
+            const session = storage.getState().sessions[resolved.sessionId] ?? null;
+            if (!session || !isVoiceTranscriptHistorySession({
+              active: session.active,
+              metadata: readVoiceSessionOwnerMetadataFromState(
+                storage.getState(),
+                resolved.sessionId,
+              ),
+            })) {
+              throw new Error('Voice transcript history session identity mismatch');
+            }
+            return resolved.sessionId;
+          },
+        }, { requestedTargetSessionId });
+        const isRetiringDirectMediaDrain = hasRetiringDirectMediaTranscriptDrain(
+          input.retiringTranscriptDrain,
+        );
+        if (!generation.isCurrent() && !isRetiringDirectMediaDrain) {
+          throw new Error('voice_runtime_generation_revoked');
+        }
+        // The replacement generation may already own this control slot. Its
+        // binding and live UI/machine state are authoritative, so the retired
+        // tail may use the resolved carrier only for canonical projection and
+        // must never publish a new runtime binding.
+        if (!generation.isCurrent()) {
+          return Object.freeze({ conversationSessionId });
+        }
+        return bindCurrentDirectMediaConversation({
+          adapterId: input.adapterId,
+          controlSessionId: input.controlSessionId,
+          conversationSessionId,
+          targetSessionId: requestedTargetSessionId,
         });
-      }
-      const conversationSessionId = await resolveDirectMediaTranscriptSession({
-        ensureTargetSession: async (sessionId) => {
-          const hydrated = await sync.ensureSessionVisibleForMessageRoute(sessionId, {
-            forceRefresh: true,
-          });
-          if (hydrated.kind !== 'available' || hydrated.sessionId !== sessionId) {
-            throw new Error(`Voice transcript target session ${sessionId} could not be hydrated`);
-          }
-        },
-        ensureHistorySession: async () => {
-          const resolved = await sync.ensureHostedSystemSession({
-            tag: VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
-            metadata: buildVoiceTranscriptHistorySessionMetadata(),
-          });
-          const session = storage.getState().sessions[resolved.sessionId] ?? null;
-          if (!session || !isVoiceTranscriptHistorySession({
-            active: session.active,
-            metadata: readVoiceSessionOwnerMetadataFromState(
-              storage.getState(),
-              resolved.sessionId,
-            ),
-          })) {
-            throw new Error('Voice transcript history session identity mismatch');
-          }
-          return resolved.sessionId;
-        },
-      }, { requestedTargetSessionId });
-      if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
-      voiceSessionBindingStore.getState().bind({
-        adapterId: input.adapterId,
-        controlSessionId: input.controlSessionId,
-        conversationSessionId,
-        lifetime: 'runtime_attempt',
-        transcriptMode: 'synthetic',
-        targetSessionId: requestedTargetSessionId,
-        updatedAt: Date.now(),
-      });
-      return Object.freeze({ conversationSessionId });
+      };
+      return requestedTargetSessionId
+        ? await acquire()
+        : await runVoiceTranscriptHistoryCarrierOperation(acquire);
     },
-    releaseDirectMediaConversation(input: Readonly<{
+    captureRetiringDirectMediaTranscriptDrain() {
+      if (!generation.isCurrent()) return null;
+      const drain = Object.freeze({}) as unknown as BundledRetiringDirectMediaTranscriptDrain;
+      retiringDirectMediaTranscriptDrains.add(drain as object);
+      return drain;
+    },
+    releaseRetiringDirectMediaTranscriptDrain(
+      drain: BundledRetiringDirectMediaTranscriptDrain,
+    ) {
+      retiringDirectMediaTranscriptDrains.delete(drain as object);
+    },
+    async releaseDirectMediaConversation(input: Readonly<{
       adapterId: string;
       controlSessionId: string;
       conversationSessionId: string;
+      transcriptAttemptIdentity: string;
+      retiringTranscriptDrain?: BundledRetiringDirectMediaTranscriptDrain;
+      bindingOwnership?: BundledDirectMediaBindingOwnership;
     }>) {
-      const binding = voiceSessionBindingStore.getState().getByConversationSessionId(
-        input.conversationSessionId,
+      const isRetiringDirectMediaDrain = hasRetiringDirectMediaTranscriptDrain(
+        input.retiringTranscriptDrain,
       );
-      if (
-        binding?.adapterId !== input.adapterId
-        || binding.controlSessionId !== input.controlSessionId
-        || binding.lifetime !== 'runtime_attempt'
-      ) return;
-      voiceSessionBindingStore.getState().unbind(input.conversationSessionId);
-      releaseCanonicalVoiceTranscriptConversation(input.conversationSessionId);
+      let released = false;
+      try {
+        released = await releaseCanonicalVoiceTranscriptConversation({
+          conversationSessionId: input.conversationSessionId,
+          attemptIdentity: input.transcriptAttemptIdentity,
+        });
+      } finally {
+        if (isRetiringDirectMediaDrain && input.retiringTranscriptDrain) {
+          retiringDirectMediaTranscriptDrains.delete(input.retiringTranscriptDrain as object);
+        }
+      }
+      if (!released) return;
+      // Canonical transcript release may complete after a replacement binds
+      // the exact same carrier. This is an owner compare-and-unbind, never a
+      // field/timestamp comparison: only the precise binding this attempt
+      // installed may be removed, regardless of generation timing.
+      if (!input.bindingOwnership) return;
+      unbindVoiceRuntimeAttemptBindingIfOwned({
+        conversationSessionId: input.conversationSessionId,
+        owner: input.bindingOwnership,
+      });
     },
     resolveConversationSessionId(controlSessionId: string, adapterId: string) {
-      return voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId, adapterId })?.conversationSessionId ?? null;
+      const binding = voiceConversationBindingResolver.resolveByControlSessionId({
+        controlSessionId,
+        adapterId,
+      });
+      if (!binding) return null;
+      if (
+        binding.lifetime === 'runtime_attempt'
+        && binding.targetSessionId === null
+      ) {
+        const session = storage.getState().sessions[binding.conversationSessionId] ?? null;
+        if (!isVoiceTranscriptHistorySession(session
+          ? {
+              active: session.active,
+              metadata: readVoiceSessionOwnerMetadataFromState(
+                storage.getState(),
+                binding.conversationSessionId,
+              ),
+            }
+          : null)) {
+          return null;
+        }
+      }
+      return binding.conversationSessionId;
     },
     canPersistProviderConversationState,
     async createAgentSessionRealtimeService(input: Readonly<{
@@ -605,7 +876,14 @@ export function createBundledConversationRuntimeHostLease() {
           ) {
             throw new Error('agent_realtime_request_aborted');
           }
-          return await sessionRpcWithServerScope({ sessionId, method, payload });
+          return await sessionRpcWithServerScope({
+            sessionId,
+            method,
+            payload,
+            ...(method === SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH
+              ? { timeoutMs: null }
+              : {}),
+          });
         },
       });
     },
@@ -658,7 +936,11 @@ export function createBundledConversationRuntimeHostLease() {
       conversationSessionId: string;
       state: Readonly<{ conversationId: string }> | null;
     }>) {
-      if (!canPersistProviderConversationState(input)) {
+      const session = storage.getState().sessions[input.conversationSessionId] ?? null;
+      if (
+        !canPersistProviderConversationState(input)
+        && !(input.state === null && session)
+      ) {
         throw new Error('voice_provider_conversation_persistence_unavailable');
       }
       await sync.patchSessionMetadataWithRetry(input.conversationSessionId, (metadata) =>
@@ -667,6 +949,80 @@ export function createBundledConversationRuntimeHostLease() {
           state: input.state,
           updatedAt: Date.now(),
         }));
+    },
+    async forgetProviderConversationState(input: Readonly<{ providerId: string }>) {
+      await runVoiceTranscriptHistoryCarrierOperation(async () => {
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('voice_provider_conversation_scope_unavailable');
+        const authority = await captureSessionRequestAuthorityForServerAccountScope({
+          scope,
+          activeRequest: (path, init) => apiSocket.request(path, init),
+        });
+        const conversationSessionId = await discoverVoiceHistorySession({
+          prepareLookup: () => requireCurrentAccountStoredContentServerCompatibility({
+            serverId: authority.scope.serverId,
+          }),
+          lookupByTags: async (tags) => {
+            const response = await authority.request('/v2/sessions/lookup-by-tags', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tags }),
+            });
+            if (!response.ok) {
+              throw new Error('voice_provider_conversation_lookup_failed');
+            }
+            const parsed = SessionLookupByTagsResponseV2Schema.safeParse(await response.json());
+            if (!parsed.success) {
+              throw new Error('voice_provider_conversation_lookup_invalid');
+            }
+            return parsed.data.sessions;
+          },
+          hydrateSession: (sessionId) => sync.ensureSessionVisibleForMessageRoute(
+            sessionId,
+            { forceRefresh: true, authority },
+          ),
+          readHydratedSession: (sessionId) =>
+            storage.getState().sessions[sessionId] ?? null,
+        });
+        if (!conversationSessionId) return;
+        const currentScope = getActiveServerAccountScope();
+        if (
+          currentScope?.serverId !== scope.serverId
+          || currentScope.accountId !== scope.accountId
+        ) {
+          throw new Error('voice_provider_conversation_scope_changed');
+        }
+        const fixedCarrierAttempt = getProviderConversationServiceFactory(
+          host,
+          input.providerId,
+        ).createAttempt(conversationSessionId, {
+          async writeForgottenState() {
+            const writeScope = getActiveServerAccountScope();
+            if (
+              writeScope?.serverId !== scope.serverId
+              || writeScope.accountId !== scope.accountId
+            ) {
+              throw new Error('voice_provider_conversation_scope_changed');
+            }
+            const session = storage.getState().sessions[conversationSessionId] ?? null;
+            if (!session) {
+              throw new Error('voice_provider_conversation_session_unavailable');
+            }
+            const metadata = readSessionOwnerMetadataView(session);
+            if (!readVoiceProviderConversationMetadata(metadata, input.providerId)) return;
+            await sync.patchSessionMetadataWithRetry(
+              conversationSessionId,
+              (currentMetadata) => writeVoiceProviderConversationMetadata(currentMetadata, {
+                providerId: input.providerId,
+                state: null,
+                updatedAt: Date.now(),
+              }),
+              { serverId: scope.serverId },
+            );
+          },
+        });
+        await fixedCarrierAttempt.forget();
+      });
     },
     applyTargetSelection: async (input: Parameters<typeof applyVoiceSessionTargetSelection>[0]) => {
       const operation = generation.runIfCurrent(() => applyVoiceSessionTargetSelection(input));
@@ -685,20 +1041,23 @@ export function createBundledConversationRuntimeHostLease() {
         },
       });
     },
-    createStorageMirror(input: Parameters<BundledRealtimeProviderRuntimeHost['createStorageMirror']>[0]) {
-      return createRealtimeMachineStorageMirror({
-        adapterId: input.adapterId,
-        getSnapshot: () => input.getSnapshot() as ReturnType<typeof getVoiceConversationRuntimeSnapshot>,
-        subscribe: input.subscribe,
-        projectSnapshot: (snapshot) => input.projectSnapshot(snapshot),
-        getStoragePort: () => storage.getState(),
-      });
-    },
-    projectTranscript: ({ conversationSessionId, event, source }: Readonly<{
+    projectTranscript: ({
+      conversationSessionId,
+      event,
+      source,
+      retiringTranscriptDrain,
+    }: Readonly<{
       conversationSessionId: string;
       event: Parameters<typeof projectCanonicalVoiceTranscriptEvent>[0]['event'];
       source?: Parameters<typeof projectCanonicalVoiceTranscriptEvent>[0]['source'];
-    }>) => generation.runIfCurrent(() => {
+      retiringTranscriptDrain?: BundledRetiringDirectMediaTranscriptDrain;
+    }>) => {
+      if (
+        !generation.isCurrent()
+        && !hasRetiringDirectMediaTranscriptDrain(retiringTranscriptDrain)
+      ) {
+        return null;
+      }
       const result = projectCanonicalVoiceTranscriptEvent({
         conversationSessionId,
         event,
@@ -711,12 +1070,70 @@ export function createBundledConversationRuntimeHostLease() {
         itemId: item.itemId,
         role: item.role,
       });
-    }) ?? null,
-    beginTranscriptAttempt: ({ conversationSessionId }: Readonly<{
-      conversationSessionId: string;
-    }>) => generation.runIfCurrent(() => beginCanonicalVoiceTranscriptAttempt({
+    },
+    admitTranscriptPersistenceEvent: ({
       conversationSessionId,
-    })) ?? null,
+      event,
+      source,
+    }: Parameters<BundledRealtimeProviderRuntimeHost['admitTranscriptPersistenceEvent']>[0]) => {
+      if (!generation.isCurrent()) return null;
+      const canonicalAdmission = admitCanonicalVoiceTranscriptPersistenceEvent({
+        conversationSessionId,
+        event,
+        ...(source ? { source } : {}),
+      });
+      if (!canonicalAdmission) return null;
+      const admission = Object.freeze({}) as BundledAdmittedCanonicalTranscriptPersistenceEvent;
+      admittedCanonicalTranscriptPersistenceEvents.set(admission, canonicalAdmission);
+      return admission;
+    },
+    commitAdmittedTranscriptPersistenceEvent: (
+      admission: BundledAdmittedCanonicalTranscriptPersistenceEvent,
+    ): string | null => {
+      const canonicalAdmission = admittedCanonicalTranscriptPersistenceEvents.get(admission);
+      if (!canonicalAdmission) return null;
+      admittedCanonicalTranscriptPersistenceEvents.delete(admission);
+      return commitAdmittedCanonicalVoiceTranscriptPersistenceEvent(canonicalAdmission);
+    },
+    releaseAdmittedTranscriptPersistenceEvent: (
+      admission: BundledAdmittedCanonicalTranscriptPersistenceEvent,
+    ): boolean => {
+      const canonicalAdmission = admittedCanonicalTranscriptPersistenceEvents.get(admission);
+      if (!canonicalAdmission) return false;
+      admittedCanonicalTranscriptPersistenceEvents.delete(admission);
+      return releaseAdmittedCanonicalVoiceTranscriptPersistenceEvent(canonicalAdmission);
+    },
+    settleTranscriptPersistence: async ({
+      conversationSessionId,
+      attemptIdentity,
+      retiringTranscriptDrain,
+    }: Readonly<{
+      conversationSessionId: string;
+      attemptIdentity: string;
+      retiringTranscriptDrain?: BundledRetiringDirectMediaTranscriptDrain;
+    }>) => {
+      if (
+        !generation.isCurrent()
+        && !hasRetiringDirectMediaTranscriptDrain(retiringTranscriptDrain)
+      ) return;
+      await settleAdmittedCanonicalVoiceTranscriptPersistence({
+        conversationSessionId,
+        attemptIdentity,
+      });
+    },
+    beginTranscriptAttempt: ({
+      conversationSessionId,
+      retiringTranscriptDrain,
+    }: Readonly<{
+      conversationSessionId: string;
+      retiringTranscriptDrain?: BundledRetiringDirectMediaTranscriptDrain;
+    }>) => {
+      if (
+        !generation.isCurrent()
+        && !hasRetiringDirectMediaTranscriptDrain(retiringTranscriptDrain)
+      ) return null;
+      return beginCanonicalVoiceTranscriptAttempt({ conversationSessionId });
+    },
     presentHostedLeaseNotice(input: Readonly<{
       controlSessionId: string;
       providerId: string;
@@ -744,23 +1161,6 @@ export function createBundledConversationRuntimeHostLease() {
       generation.runIfCurrent(() => voiceOutputStatusStore.clearAttemptForSession(controlSessionId));
     },
     createInboundWatchdog: createRealtimeInboundWatchdog,
-    runtimeConfig: Object.freeze({
-      handleReadyTimeoutMs: VOICE_RUNTIME_CONFIG_DEFAULTS.realtimeConversationHandleReadyTimeoutMs,
-      watchdogPollMs: VOICE_RUNTIME_CONFIG_DEFAULTS.realtimeWatchdogPollMs,
-      watchdogPlateauMs: VOICE_RUNTIME_CONFIG_DEFAULTS.realtimeWatchdogPlateauMs,
-      inboundStallMs: VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.inboundWatchdog.stallTimeoutMs,
-      awaitingResponseMs: VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.inboundWatchdog.awaitingResponseTimeoutMs,
-    }),
-    ...(isVoiceQaDebugRuntime()
-      ? {
-          diagnostics: Object.freeze({
-            appendSystem: (message: string) => generation.runIfCurrent(() => useVoiceQaStore.getState().appendSystem(message)),
-            appendProviderEvent: (event: BundledVoiceProviderDiagnosticEvent) =>
-              generation.runIfCurrent(() => useVoiceQaStore.getState().appendRealtimeProviderEvent(event)),
-            appendError: (reason: string) => generation.runIfCurrent(() => useVoiceQaStore.getState().appendError(reason)),
-          }),
-        }
-      : {}),
     voiceHooks: Object.freeze({
       onStarted: (sessionId: string) => generation.runIfCurrent(() => voiceHooks.onVoiceStarted(sessionId)) ?? '',
       onStopped: () => { generation.runIfCurrent(() => voiceHooks.onVoiceStopped()); },

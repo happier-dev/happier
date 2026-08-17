@@ -22,7 +22,7 @@ export function resolveExternalSessionBrowseRpcErrorMessage(
         case 'machine_offline':
             return t('newSession.machineOfflineInlineBody');
         case 'agent_unavailable':
-            return t('newSession.daemonRpcUnavailableBody');
+            return t('externalSessions.browseAgentUnavailable');
         case 'invalid_request':
         case 'internal_error':
             return fallbackMessage(operation);

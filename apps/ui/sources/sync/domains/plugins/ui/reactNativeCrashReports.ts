@@ -1,56 +1,53 @@
 import {
     DaemonPluginReactNativeCrashReportRequestV1Schema,
     DaemonPluginReactNativeCrashReportResponseV1Schema,
-    type DaemonPluginReactNativeCrashReportReasonV1,
+    type DaemonPluginReactNativeCrashBindingTokenV1,
+    type DaemonPluginReactNativeCrashReportV1,
 } from '@happier-dev/protocol';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
-import type { PluginReactNativeBundleCacheIdentity } from './reactNativeRuntime';
-
-export type ReactNativeCrashDisableReportInput = Readonly<{
+export type ReactNativeCrashReportInput = Readonly<{
     machineId: string;
     serverId?: string | null;
-    surfaceId: string;
-    cacheIdentity: PluginReactNativeBundleCacheIdentity;
-    disabledReason: DaemonPluginReactNativeCrashReportReasonV1;
-    crashCount: number;
-    startupFailureCount: number;
-    observedAtMs?: number;
-    diagnostics?: readonly string[];
+    report: DaemonPluginReactNativeCrashReportV1;
 }>;
 
-export type ReactNativeCrashDisableReportResult =
-    | Readonly<{ ok: true; disabled: true }>
+type ReactNativeCrashReportRequestFailureReason =
+    | 'unavailable'
+    | 'request_failed'
+    | 'invalid_response'
+    | 'invalid_request'
+    | 'binding_token_mismatch'
+    | 'failure_occurrence_conflict'
+    | 'state_write_failed';
+
+export type ReactNativeCrashReportResult =
+    | Readonly<{
+        ok: true;
+        token: DaemonPluginReactNativeCrashBindingTokenV1;
+        disabled: boolean;
+    }>
     | Readonly<{
         ok: false;
-        reason:
-            | 'unavailable'
-            | 'request_failed'
-            | 'invalid_response'
-            | 'invalid_request'
-            | 'projection_identity_mismatch'
-            | 'state_write_failed';
+        reason: ReactNativeCrashReportRequestFailureReason;
     }>;
 
-export async function reportReactNativeCrashDisableViaMachineRpc(
-    input: ReactNativeCrashDisableReportInput,
-): Promise<ReactNativeCrashDisableReportResult> {
+/**
+ * The daemon owns reconciliation, thresholding, disablement, and reset. This
+ * transport only forwards one exact report/recovery request and exposes the
+ * daemon's authoritative token state to the host consumer.
+ */
+export async function submitReactNativeCrashReportViaMachineRpc(
+    input: ReactNativeCrashReportInput,
+): Promise<ReactNativeCrashReportResult> {
     let payload: ReturnType<typeof DaemonPluginReactNativeCrashReportRequestV1Schema.parse>;
     try {
         payload = DaemonPluginReactNativeCrashReportRequestV1Schema.parse({
             protocolVersion: 1,
             machineId: input.machineId,
-            report: {
-                surfaceId: input.surfaceId,
-                cacheIdentity: input.cacheIdentity,
-                disabledReason: input.disabledReason,
-                crashCount: input.crashCount,
-                startupFailureCount: input.startupFailureCount,
-                ...(input.observedAtMs !== undefined ? { observedAtMs: input.observedAtMs } : {}),
-                ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
-            },
+            report: input.report,
         });
     } catch {
         return { ok: false, reason: 'invalid_request' };
@@ -71,7 +68,11 @@ export async function reportReactNativeCrashDisableViaMachineRpc(
             return { ok: false, reason: 'invalid_response' };
         }
         if (parsed.data.ok) {
-            return { ok: true, disabled: true };
+            return {
+                ok: true,
+                token: parsed.data.token,
+                disabled: parsed.data.disabled,
+            };
         }
         return { ok: false, reason: parsed.data.code };
     } catch {

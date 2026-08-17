@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 
@@ -13,6 +12,8 @@ import type { SelectionListStep } from '@/components/ui/selectionList';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 import {
     WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS,
 } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
@@ -99,7 +100,7 @@ const WindowsRemoteSessionLaunchModeChip = React.memo(function WindowsRemoteSess
                     accessibilityLabel={t('machine.windows.remoteSessionModeTitle')}
                 >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="logo-windows" size={16} color={props.ctx.iconColor} />
+                        <Icon name="windows-logo" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
                         {props.ctx.showLabel ? (
                             <Text numberOfLines={1} style={props.ctx.textStyle}>
                                 {t(selectedOption?.shortLabelKey ?? 'windowsRemoteSessionLaunchMode.shortHidden')}
@@ -145,7 +146,7 @@ export function createWindowsRemoteSessionLaunchModeActionChip(params: Readonly<
             presentation: 'list',
             title: t('machine.windows.remoteSessionModeTitle'),
             label: t(selectedOption?.shortLabelKey ?? 'windowsRemoteSessionLaunchMode.shortHidden'),
-            icon: (tint) => normalizeNodeForView(<Ionicons name="logo-windows" size={16} color={tint} />),
+            icon: (tint) => normalizeNodeForView(<Icon name="windows-logo" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
             rootStep: buildWindowsRemoteSessionLaunchModeRootStep({
                 windowsTerminalAvailable: params.windowsTerminalAvailable,
                 onSelect: params.onModeChange,

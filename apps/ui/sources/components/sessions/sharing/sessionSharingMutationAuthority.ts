@@ -17,6 +17,8 @@ function unavailableSharingMessage(session: Session): string | null {
         acceptedThroughServerSeq: session.acceptedThroughServerSeq ?? null,
         publishedThroughServerSeq: session.publishedThroughServerSeq ?? null,
         materializedThroughSourceAt: session.materializedThroughSourceAt ?? null,
+        transcriptShareable: session.transcriptShareable ?? null,
+        operationPresentation: null,
         operationProgress: null,
     }).sharing;
 

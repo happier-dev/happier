@@ -97,7 +97,7 @@ describe('encryption telemetry', () => {
         });
     });
 
-    it('records session message decrypt cache hits and plaintext bypasses', async () => {
+    it('records session message decrypt cache hits while rejecting a plaintext E2EE mismatch', async () => {
         const encryptor = new AES256Encryption(new Uint8Array(32).fill(11));
         const sessionEncryption = new SessionEncryption(
             'session-message-telemetry',
@@ -128,7 +128,9 @@ describe('encryption telemetry', () => {
         };
 
         syncPerformanceTelemetry.reset();
-        await sessionEncryption.decryptMessages([encryptedMessage, plainMessage]);
+        const [firstEncrypted, firstPlain] = await sessionEncryption.decryptMessages([encryptedMessage, plainMessage]);
+        expect(firstEncrypted?.content).toEqual({ role: 'user', content: { type: 'text', text: 'encrypted' } });
+        expect(firstPlain?.content).toBeNull();
 
         expect(findEvent('sync.encryption.decryptMessages.scan')).toMatchObject({
             count: 1,
@@ -136,8 +138,8 @@ describe('encryption telemetry', () => {
                 messages: 2,
                 toDecrypt: 1,
                 cached: 0,
-                plain: 1,
-                invalid: 0,
+                plain: 0,
+                invalid: 1,
             },
         });
         expect(findEvent('sync.encryption.decryptMessages.decodeCiphertext')).toMatchObject({
@@ -146,16 +148,18 @@ describe('encryption telemetry', () => {
         });
 
         syncPerformanceTelemetry.reset();
-        await sessionEncryption.decryptMessages([encryptedMessage, plainMessage]);
+        const [secondEncrypted, secondPlain] = await sessionEncryption.decryptMessages([encryptedMessage, plainMessage]);
+        expect(secondEncrypted?.content).toEqual({ role: 'user', content: { type: 'text', text: 'encrypted' } });
+        expect(secondPlain?.content).toBeNull();
 
         expect(findEvent('sync.encryption.decryptMessages.scan')).toMatchObject({
             count: 1,
             fields: {
                 messages: 2,
                 toDecrypt: 0,
-                cached: 2,
+                cached: 1,
                 plain: 0,
-                invalid: 0,
+                invalid: 1,
             },
         });
     });

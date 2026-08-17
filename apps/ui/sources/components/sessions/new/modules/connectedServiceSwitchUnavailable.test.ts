@@ -114,14 +114,20 @@ describe('resolveConnectedServiceSwitchUnavailablePresentation (D2 recognition +
         })).toBeNull();
     });
 
-    it('explains WHY using the concrete structured reason and exposes a start-fresh action', () => {
+    it('uses the typed diagnostic copy and exposes a start-fresh action without projecting boundary detail', () => {
         const presentation = resolveConnectedServiceSwitchUnavailablePresentation(makeResumeUnreachableResult());
         if (!presentation) throw new Error('expected a switch-unavailable presentation');
 
-        // The dialog carries the concrete machine-readable reason (so the explanation is grounded in
-        // WHY, not a generic failure), plus the agent id for context.
-        expect(presentation.reason).toBe('no_resumable_session_file');
-        expect(presentation.agentId).toBe('pi');
+        expect(presentation.titleKey).toBe(
+            'connectedServices.diagnostics.title.provider_session_state_unavailable_for_resume',
+        );
+        expect(presentation.bodyKey).toBe(
+            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
+        );
+        expect(presentation).not.toHaveProperty('bodyParams');
+        expect(presentation).not.toHaveProperty('reason');
+        expect(presentation).not.toHaveProperty('agentId');
+        expect(JSON.stringify(presentation)).not.toContain('no_resumable_session_file');
 
         // It offers a distinct, recognizable "start fresh under the new account" action alongside a
         // cancel/dismiss action — asserted by structural action ids, not display copy.
@@ -129,23 +135,6 @@ describe('resolveConnectedServiceSwitchUnavailablePresentation (D2 recognition +
         expect(actionKinds).toContain('start_fresh');
         expect(actionKinds).toContain('dismiss');
 
-        // Title + explanatory body are addressed via i18n keys (we assert keys, not English copy).
-        expect(typeof presentation.titleKey).toBe('string');
-        expect(typeof presentation.bodyKey).toBe('string');
-        expect(presentation.titleKey.length).toBeGreaterThan(0);
-        expect(presentation.bodyKey.length).toBeGreaterThan(0);
-    });
-
-    it('passes the structured reason and agent id as body interpolation params', () => {
-        const presentation = resolveConnectedServiceSwitchUnavailablePresentation(makeResumeUnreachableResult());
-        if (!presentation) throw new Error('expected a switch-unavailable presentation');
-
-        // The explanatory body interpolates the concrete reason + agent so the user sees WHY the
-        // switch could not continue, not just that it failed.
-        expect(presentation.bodyParams).toMatchObject({
-            reason: 'no_resumable_session_file',
-            agentId: 'pi',
-        });
     });
 
     it('uses the shared UX diagnostic actions when the spawn detail carries one', () => {
@@ -169,10 +158,10 @@ describe('resolveConnectedServiceSwitchUnavailablePresentation (D2 recognition +
         } as SpawnSessionResult);
         if (!presentation) throw new Error('expected a switch-unavailable presentation');
 
-        expect(presentation.bodyParams).toMatchObject({
-            reason: 'target_file_missing',
-            agentId: 'pi',
-        });
+        expect(presentation.bodyKey).toBe(
+            'connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume',
+        );
+        expect(JSON.stringify(presentation)).not.toContain('target_file_missing');
         expect(presentation.actions).toEqual([
             { kind: 'dismiss', labelKey: 'common.cancel' },
         ]);
@@ -182,12 +171,13 @@ describe('resolveConnectedServiceSwitchUnavailablePresentation (D2 recognition +
         const presentation = resolveConnectedServiceSwitchUnavailablePresentation(makeGenericUxDiagnosticResult());
         if (!presentation) throw new Error('expected a switch-unavailable presentation');
 
-        expect(presentation.reason).toBe('missing_identity_and_resume_state');
-        expect(presentation.agentId).toBe('codex');
-        expect(presentation.bodyParams).toMatchObject({
-            reason: 'missing_identity_and_resume_state',
-            agentId: 'codex',
-        });
+        expect(presentation.titleKey).toBe(
+            'connectedServices.diagnostics.title.connected_service_materialization_identity_missing',
+        );
+        expect(presentation.bodyKey).toBe(
+            'connectedServices.diagnostics.body.connected_service_materialization_identity_missing',
+        );
+        expect(JSON.stringify(presentation)).not.toContain('missing_identity_and_resume_state');
         expect(presentation.actions.map((action) => action.kind)).toEqual(['start_fresh', 'dismiss']);
     });
 

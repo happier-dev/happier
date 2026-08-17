@@ -1,6 +1,10 @@
 import { Platform } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui';
+
+import type { PluginReactNativeWatchdogSnapshot } from './watchdog';
+
 vi.mock('react-native-mmkv', () => {
     class MMKV {
         static instances: MMKV[] = [];
@@ -62,7 +66,22 @@ describe('React Native watchdog persistence', () => {
         vi.unstubAllGlobals();
     });
 
-    it('roundtrips snapshots through the storage adapter and ignores malformed JSON', async () => {
+    const pendingFailure = {
+        scopeKey: 'server-a\u0000machine-a\u0000account-a',
+        token: {
+            mount: {
+                kind: 'destination',
+                destination: { pluginId: 'acme.preview', localId: 'preview-destination' },
+            },
+            renderer: { pluginId: 'acme.preview', localId: 'native-preview' },
+            artifactDigest: PluginUiArtifactDigestV1Schema.parse(`sha256:${'a'.repeat(64)}`),
+            crashStateEpoch: 4,
+        },
+        failureOccurrenceId: '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac12',
+        failure: 'render_error' as const,
+    } satisfies PluginReactNativeWatchdogSnapshot['pending'][number];
+
+    it('roundtrips only V3 target-scoped pending quarantine snapshots and ignores malformed JSON', async () => {
         const { createPluginReactNativeWatchdogStoragePersistence } = await import('./watchdogPersistence');
         const storage = createMemoryStorage();
         const persistence = createPluginReactNativeWatchdogStoragePersistence({
@@ -71,19 +90,13 @@ describe('React Native watchdog persistence', () => {
         });
 
         persistence.writeSnapshot({
-            v: 1,
-            states: [{
-                surfaceId: 'surface_1',
-                cacheKey: 'cache_1',
-                crashCount: 1,
-                startupFailureCount: 0,
-                disabled: true,
-            }],
+            v: 3,
+            pending: [pendingFailure],
         });
 
         expect(persistence.readSnapshot()).toMatchObject({
-            v: 1,
-            states: [{ surfaceId: 'surface_1', disabled: true }],
+            v: 3,
+            pending: [{ failureOccurrenceId: pendingFailure.failureOccurrenceId }],
         });
 
         storage.store.set('watchdog', '{not-json');
@@ -98,7 +111,7 @@ describe('React Native watchdog persistence', () => {
         });
 
         expect(persistence.readSnapshot()).toBeNull();
-        expect(() => persistence.writeSnapshot({ v: 1, states: [] })).not.toThrow();
+        expect(() => persistence.writeSnapshot({ v: 3, pending: [] })).not.toThrow();
     });
 
     it('uses scoped localStorage on web without constructing MMKV', async () => {
@@ -112,8 +125,8 @@ describe('React Native watchdog persistence', () => {
         const persistence = createDefaultPluginReactNativeWatchdogPersistence();
 
         expect(persistence).toBeDefined();
-        persistence?.writeSnapshot({ v: 1, states: [] });
-        expect(storage.store.has('happier:plugin-react-native-watchdog:state-v1__stack-1')).toBe(true);
+        persistence?.writeSnapshot({ v: 3, pending: [] });
+        expect(storage.store.has('happier:plugin-react-native-watchdog:pending-v3__stack-1')).toBe(true);
 
         const { MMKV } = await import('react-native-mmkv') as unknown as { MMKV: { instances: unknown[] } };
         expect(MMKV.instances).toHaveLength(0);
@@ -128,11 +141,11 @@ describe('React Native watchdog persistence', () => {
         const persistence = createDefaultPluginReactNativeWatchdogPersistence();
 
         expect(persistence).toBeDefined();
-        persistence?.writeSnapshot({ v: 1, states: [] });
+        persistence?.writeSnapshot({ v: 3, pending: [] });
 
         const { MMKV } = await import('react-native-mmkv') as unknown as { MMKV: { instances: Array<{ id?: string; store: Map<string, string> }> } };
         expect(MMKV.instances.at(-1)?.id).toBe('plugin-react-native-watchdog__native-stack');
-        expect(MMKV.instances.at(-1)?.store.has('state-v1')).toBe(true);
+        expect(MMKV.instances.at(-1)?.store.has('pending-v3')).toBe(true);
     });
 
     it('disables persistence instead of throwing when native storage construction fails', async () => {

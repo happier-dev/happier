@@ -229,7 +229,7 @@ export function BrowserAutomationControls(props: Readonly<{
             </View>
             <IconButton
                 testID={`${testID}-cancel`}
-                iconName="close-circle-outline"
+                iconName="x-circle"
                 accessibilityLabel={t('browserAutomation.actions.cancel')}
                 tooltip={t('browserAutomation.actions.cancel')}
                 size={34}

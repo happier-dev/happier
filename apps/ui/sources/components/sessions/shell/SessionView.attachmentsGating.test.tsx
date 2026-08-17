@@ -6,9 +6,10 @@ import { renderScreen } from '@/dev/testkit';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createLiveStorageStoreMock, createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 
@@ -111,26 +112,13 @@ installSessionShellCommonModuleMocks({
   }),
   storage: async () =>
     createStorageModuleStub({
-      storage: Object.assign(
-        (
-          selector?: (value: {
-            sessions: Record<string, unknown>;
-            settings: Record<string, unknown>;
-            sessionListIndexByServerId: Record<string, unknown>;
-          }) => unknown,
-        ) => {
-          const snapshot = { sessions: { s1: sessionState.session }, settings: {}, sessionListIndexByServerId: {} };
-          return typeof selector === 'function' ? selector(snapshot) : snapshot;
-        },
-        {
-          getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListIndexByServerId: {} }),
-          getInitialState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListIndexByServerId: {} }),
-          setState: () => undefined,
-          subscribe: () => () => undefined,
-          destroy: () => undefined,
-        },
-      ),
+      storage: createLiveStorageStoreMock(() => ({
+        sessions: { s1: sessionState.session },
+        settings: settingsDefaults,
+        sessionListIndexByServerId: {},
+      })),
       useSession: () => sessionState.session,
+      useSessionMachineId: () => sessionState.session.metadata?.machineId ?? null,
       useIsDataReady: () => true,
       useRealtimeStatus: () => ({ status: 'connected' }),
       useSessionMessages: () => ({ messages: [], isLoaded: true }),
@@ -162,6 +150,10 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 vi.mock('react-native-safe-area-context', () => ({
+  initialWindowMetrics: {
+    frame: { x: 0, y: 0, width: 0, height: 0 },
+    insets: { top: 0, bottom: 0, left: 0, right: 0 },
+  },
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
@@ -257,24 +249,28 @@ vi.mock('@/voice/session/voiceSession', () => ({
   voiceSessionManager: {},
 }));
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    markSessionViewed: async () => {},
-    fetchPendingMessages: async () => {},
-    publishSessionPermissionModeToMetadata: async () => {},
-    publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-    publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-    publishSessionModelOverrideToMetadata: async () => {},
-    refreshSessions: async () => {},
-    onSessionVisible: () => {},
-    sendMessage: async () => {},
-    enqueuePendingMessage: async () => {},
-    submitMessage: async () => {},
-    encryption: {
-      getMachineEncryption: () => null,
+vi.mock('@/sync/sync', async () => {
+  const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
+  return {
+    sync: {
+      ...createAcceptedExternalSessionTailCursorSyncBoundary(),
+      markSessionViewed: async () => {},
+      fetchPendingMessages: async () => {},
+      publishSessionPermissionModeToMetadata: async () => {},
+      publishSessionAcpSessionModeOverrideToMetadata: async () => {},
+      publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
+      publishSessionModelOverrideToMetadata: async () => {},
+      refreshSessions: async () => {},
+      onSessionVisible: () => {},
+      sendMessage: async () => {},
+      enqueuePendingMessage: async () => {},
+      submitMessage: async () => {},
+      encryption: {
+        getMachineEncryption: () => null,
+      },
     },
-  },
-}));
+  };
+});
 
 vi.mock('@/sync/ops', async (importOriginal) => {
   const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');

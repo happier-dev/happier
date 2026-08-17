@@ -1,15 +1,21 @@
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type {
+    AccountEncryptionFirstKeyRecoveryHandle,
+} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 
-export type AuthCredentialsInvalidationEvent = Readonly<{
+type AuthCredentialsInvalidationServer = Readonly<{
     serverId: string;
     serverUrl: string;
 }>;
 
-export type AuthCredentialsInvalidationInput = Readonly<{
-    serverId: string;
-    serverUrl: string;
-    token?: string;
-}>;
+export type AuthCredentialsInvalidationEvent =
+    | (AuthCredentialsInvalidationServer & Readonly<{
+        kind: 'credentials_removed';
+    }>)
+    | (AuthCredentialsInvalidationServer & Readonly<{
+        kind: 'first_key_recovery_required';
+        recovery: AccountEncryptionFirstKeyRecoveryHandle;
+    }>);
 
 type AuthCredentialsInvalidationListener = (event: AuthCredentialsInvalidationEvent) => void | Promise<void>;
 
@@ -24,14 +30,10 @@ export function subscribeAuthCredentialsInvalidation(
     };
 }
 
-export function notifyAuthCredentialsInvalidated(event: AuthCredentialsInvalidationInput): void {
-    const payload: AuthCredentialsInvalidationEvent = {
-        serverId: event.serverId,
-        serverUrl: event.serverUrl,
-    };
+export function notifyAuthCredentialsInvalidated(event: AuthCredentialsInvalidationEvent): void {
     for (const listener of listeners) {
         fireAndForget(
-            Promise.resolve().then(() => listener(payload)),
+            Promise.resolve().then(() => listener(event)),
             { tag: 'authCredentialsInvalidation.listener' },
         );
     }

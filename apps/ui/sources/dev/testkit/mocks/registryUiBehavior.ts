@@ -1,27 +1,13 @@
+import { CANONICAL_AGENT_IDS } from '@/agents/registry/registryCore';
+
 type RegistryUiBehaviorModule = typeof import('@/agents/registry/registryUiBehavior');
 
 export type RegistryUiBehaviorModuleMock = RegistryUiBehaviorModule;
 export type RegistryUiBehaviorModuleMockOverrides = Partial<RegistryUiBehaviorModule>;
 
-const EMPTY_AGENT_UI_BEHAVIOR_BY_ID = {
-    claude: {},
-    codex: {},
-    opencode: {},
-    antigravity: {},
-    gemini: {},
-    grok: {},
-    auggie: {},
-    qwen: {},
-    kimi: {},
-    kilo: {},
-    kiro: {},
-    cursor: {},
-    ohMyPi: {},
-    pi: {},
-    copilot: {},
-    coderabbit: {},
-    deepsec: {},
-} satisfies RegistryUiBehaviorModule['CANONICAL_AGENTS_UI_BEHAVIOR'];
+const EMPTY_AGENT_UI_BEHAVIOR_BY_ID = Object.freeze(Object.fromEntries(
+    CANONICAL_AGENT_IDS.map((agentId) => [agentId, Object.freeze({})]),
+)) as RegistryUiBehaviorModule['CANONICAL_AGENTS_UI_BEHAVIOR'];
 
 export function createRegistryUiBehaviorModuleMock(
     overrides: RegistryUiBehaviorModuleMockOverrides = {},
@@ -47,7 +33,6 @@ export function createRegistryUiBehaviorModuleMock(
         resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
         resolvePendingDeliveryLabelKeyForSession: () => null,
         resolvePendingDeliveryTransientActionForSession: () => null,
-        resolveProviderSessionArtifactPathFromUiBehavior: () => null,
         resolveSessionGoalActionCapabilityProfile: () => null,
         classifyAgentSessionComposerNonSteerablePayload: () => null,
         isAttachedSessionTerminalAvailableForSession: () => false,

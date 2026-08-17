@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
 /** Canonical UI shadow steps (1 = lowest). Web uses CSS `box-shadow`; native uses a single-shadow approximation. */
-export const SHADOW_LEVELS = [1, 2, 3, 4, 5] as const;
+export const SHADOW_LEVELS = [1, 2, 3, 4, 5, 6] as const;
 export type ShadowLevel = (typeof SHADOW_LEVELS)[number];
 
 export type ShadowElevationToken = Readonly<{
@@ -88,6 +88,17 @@ export function buildLightShadowLevels(): ShadowLevels {
             16,
             10,
         ),
+        // Large floating panels (a full-height overlay pane), not cards. A big surface far from the
+        // backdrop casts a WIDE, FAINT penumbra — reusing level 5 here reads as a hard dark edge
+        // because its blur is tuned for something card-sized. Much larger, much lower opacity.
+        6: token(
+            '0 24px 90px rgba(0, 0, 0, 0.10), 0 8px 30px rgba(0, 0, 0, 0.05)',
+            '#000000',
+            { width: 0, height: 12 },
+            0.14,
+            36,
+            16,
+        ),
     };
 }
 
@@ -99,6 +110,7 @@ export function buildDarkShadowLevels(): ShadowLevels {
         3: token('0 3px 10px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.07)', '#000000', { width: 0, height: 3 }, 0.12, 7, 4),
         4: token('0 5px 16px rgba(0, 0, 0, 0.08), 0 3px 8px rgba(0, 0, 0, 0.09)', '#000000', { width: 0, height: 4 }, 0.16, 10, 6),
         5: token('0 8px 22px rgba(0, 0, 0, 0.10), 0 4px 10px rgba(0, 0, 0, 0.12)', '#000000', { width: 0, height: 8 }, 0.20, 14, 10),
+        6: token('0 24px 90px rgba(0, 0, 0, 0.22), 0 8px 30px rgba(0, 0, 0, 0.12)', '#000000', { width: 0, height: 12 }, 0.26, 36, 16),
     };
 }
 
@@ -146,6 +158,27 @@ export function buildGlassBorderColor(dark: boolean): string {
         // across a large surface like the composer.
         ? 'rgba(255, 255, 255, 0.08)'
         : 'rgba(255, 255, 255, 0.92)';
+}
+
+/**
+ * The seam between a docked side pane and the content sheet it sits beside.
+ *
+ * X-offset only, no spread: the cast has to travel sideways onto the neighbouring pane
+ * rather than pool underneath the sheet. It is deliberately far wider and fainter than a
+ * card shadow — a full-height edge at card opacity reads as a hard dark line.
+ *
+ * Web-only by contract. Native has no sideways-only box-shadow equivalent, and the RN
+ * `shadow*`/`elevation` approximation would paint on all four edges; native separates the
+ * two planes with the seam hairline instead.
+ *
+ * One owner on purpose: this recipe was previously re-typed at three call sites (the app
+ * shell's content sheet and both `MultiPaneHost` docked panes), which is exactly the shape
+ * that lets one quietly fall behind the others.
+ */
+export function buildSeamCastShadow(dark: boolean): string {
+    return dark
+        ? '-5px 0 22px rgba(0, 0, 0, 0.13)'
+        : '-5px 0 22px rgba(0, 0, 0, 0.035)';
 }
 
 /**

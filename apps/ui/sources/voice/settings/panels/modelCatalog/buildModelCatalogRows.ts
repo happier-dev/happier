@@ -43,8 +43,8 @@ export type ModelCatalogRow = Readonly<{
   state: ModelCatalogRowState;
   /** Download progress in [0,1] while `state === 'downloading'`, else null. */
   progress: number | null;
-  /** Resident memory reported by the daemon readiness snapshot, or null. */
-  residentMemoryBytes: number | null;
+  /** Declared size of the artifact whose daemon runtime is loaded, or null; not RSS. */
+  loadedArtifactBytes: number | null;
   /** Daemon-reported install error message, or null. */
   lastError: string | null;
   /** Whether this pack is the selected default for its kind. */
@@ -213,8 +213,8 @@ function buildRowsForKind(
       model: entry.model,
       state,
       progress,
-      residentMemoryBytes:
-        typeof status?.residentMemoryBytes === 'number' ? status.residentMemoryBytes : null,
+      loadedArtifactBytes:
+        typeof status?.loadedArtifactBytes === 'number' ? status.loadedArtifactBytes : null,
       lastError: status?.lastError ?? null,
       isDefault: defaultPackId === entry.packId,
       canInstall: entry.publicationAvailable

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -19,6 +18,7 @@ import { McpWorkspaceRootPickerModal } from './McpWorkspaceRootPickerModal';
 import { McpBindingOverridesEditorModal } from './McpBindingOverridesEditorModal';
 import { McpBindingTargetFields, describeBindingTarget } from './McpBindingTargetFields';
 import { resolveMcpBindingTargetTypeChange } from './resolveMcpBindingTarget';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     groupHeader: {
@@ -69,10 +69,10 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
         props.onChange(updater(props.binding));
     }, [props]);
 
-    const setTargetType = React.useCallback((nextType: McpServerBindingTargetV1['t']) => {
+    const setTargetType = React.useCallback((nextType: McpServerBindingTargetV1['t'], selectedMachineId?: string) => {
         update((current) => {
             const now = Date.now();
-            const nextTarget = resolveMcpBindingTargetTypeChange(current.target, nextType, props.machines);
+            const nextTarget = resolveMcpBindingTargetTypeChange(current.target, nextType, props.machines, selectedMachineId);
             if (!nextTarget) {
                 Modal.alert(t('common.error'), t('settings.mcpServersNoMachineSelected'));
                 return current;
@@ -177,7 +177,7 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
             <Item
                 title={t('settings.mcpServersBindingEnabled')}
                 subtitle={t('settings.mcpServersBindingEnabledSubtitle')}
-                icon={<Ionicons name="toggle-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="toggle-right" size={29} color={theme.colors.accent.blue} />}
                 rightElement={<Switch value={props.binding.enabled} onValueChange={(v) => update((b) => ({ ...b, enabled: v, updatedAt: Date.now() }))} />}
                 onPress={() => update((b) => ({ ...b, enabled: !b.enabled, updatedAt: Date.now() }))}
                 showChevron={false}
@@ -194,14 +194,14 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
             <Item
                 title={t('settings.mcpServersBindingOverridesTitle')}
                 subtitle={overridesSummary}
-                icon={<Ionicons name="options-outline" size={29} color={theme.colors.accent.purple} />}
+                icon={<Icon name="sliders-horizontal" size={29} color={theme.colors.accent.purple} />}
                 onPress={openOverrides}
             />
 
             <Item
                 title={t('common.delete')}
                 subtitle={t('settings.mcpServersBindingDeleteSubtitle')}
-                icon={<Ionicons name="trash-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                icon={<Icon name="trash" size={29} color={theme.colors.state.danger.foreground} />}
                 onPress={props.onDelete}
                 destructive
             />

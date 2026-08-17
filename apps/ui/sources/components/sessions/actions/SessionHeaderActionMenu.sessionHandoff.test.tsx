@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flattenTestStyle, flushHookEffects, renderScreen } from '@/dev/testkit';
 import {
   installSessionActionsCommonModuleMocks,
   resetSessionActionsCommonModuleMockState,
@@ -12,6 +12,7 @@ import {
   SESSION_ACTION_MARK_READ_ID,
   SESSION_ACTION_MARK_UNREAD_ID,
   SESSION_ACTION_RENAME_ID,
+  SESSION_ACTION_RESUME_ID,
 } from './sessionActionIds';
 import {
   EMPTY_PLUGIN_UI_PROJECTION,
@@ -23,7 +24,8 @@ import {
 
 const runSessionHandoffPickerFlowMock = vi.hoisted(() => vi.fn());
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
-const executeSessionForkActionMock = vi.hoisted(() => vi.fn());
+const openSessionForkStrategyFlowMock = vi.hoisted(() => vi.fn());
+const modalAlertMock = vi.hoisted(() => vi.fn());
 const modalPromptMock = vi.hoisted(() => vi.fn(async () => null as string | null));
 const resolveSessionTargetServerIdMock = vi.hoisted(() => vi.fn());
 const preferredServerIdState = vi.hoisted(() => ({
@@ -41,6 +43,7 @@ const sessionSetManualReadStateWithServerScopeMock = vi.hoisted(() => vi.fn(asyn
   _readState: 'read' | 'unread',
   _opts?: { serverId?: string | null },
 ) => ({ success: true })));
+const emitSessionResumeRequestMock = vi.hoisted(() => vi.fn());
 const dropdownRenderCount = vi.hoisted(() => ({
   current: 0,
 }));
@@ -85,6 +88,9 @@ const reachableMachineTargetState = vi.hoisted(() => ({
 }));
 const canForkConversationState = vi.hoisted(() => ({
   current: false,
+}));
+const daemonMergedProjectionState = vi.hoisted(() => ({
+  current: { phase: 'ready', inputs: null } as any,
 }));
 const storageState = vi.hoisted(() => ({
   current: {
@@ -143,6 +149,37 @@ function createHeaderTestStorageStore() {
   return store;
 }
 
+function createExplicitTerminalFollowProjection() {
+  return {
+    generation: 1,
+    installedPackagesById: {
+      'test.follow': { id: 'test.follow', enabled: true },
+    },
+    agentsById: {
+      codex: {
+        id: 'codex',
+        externalSessions: {
+          agent: { pluginId: 'test.follow', localId: 'codex' },
+          generation: 1,
+          operations: {},
+          sources: [{
+            sourceKind: 'codexHome',
+            terminalFollow: { userRowClassification: 'explicitV1' },
+            schema: {
+              fields: [
+                { name: 'kind', kind: 'literal', value: 'codexHome' },
+                { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
+              ],
+            },
+            key: { segments: [{ kind: 'literal', value: 'codexHome' }] },
+            instances: [{ kind: 'default', constants: { home: 'user' } }],
+          }],
+        },
+      },
+    },
+  };
+}
+
 function buildConfiguredInactiveDaemonTransferState() {
   return {
     transfer: {
@@ -181,6 +218,7 @@ installSessionActionsCommonModuleMocks({
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
       spies: {
+        alert: modalAlertMock,
         prompt: modalPromptMock,
       },
     }).module;
@@ -276,6 +314,14 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['claude'],
 }));
 
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+  useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.current,
+}));
+
+vi.mock('@/components/sessions/model/sessionResumeRequests', () => ({
+  emitSessionResumeRequest: (sessionId: string) => emitSessionResumeRequestMock(sessionId),
+}));
+
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
   DropdownMenu: (props: any) => {
     dropdownRenderCount.current += 1;
@@ -327,8 +373,8 @@ vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({
   canForkConversation: () => canForkConversationState.current,
 }));
 
-vi.mock('@/sync/domains/sessionFork/executeSessionForkAction', () => ({
-  executeSessionForkAction: (...args: unknown[]) => executeSessionForkActionMock(...args),
+vi.mock('@/components/sessions/fork/openSessionForkStrategyFlow', () => ({
+  openSessionForkStrategyFlow: (...args: unknown[]) => openSessionForkStrategyFlowMock(...args),
 }));
 
 vi.mock('@/sync/domains/sessionHandoff/handoffUiSupport', () => ({
@@ -398,7 +444,8 @@ describe('SessionHeaderActionMenu handoff', () => {
     resetSessionActionsCommonModuleMockState();
     runSessionHandoffPickerFlowMock.mockReset();
     createDefaultActionExecutorMock.mockReset();
-    executeSessionForkActionMock.mockReset();
+    openSessionForkStrategyFlowMock.mockReset();
+    modalAlertMock.mockReset();
     modalPromptMock.mockReset();
     modalPromptMock.mockResolvedValue(null);
     resolveSessionTargetServerIdMock.mockReset();
@@ -412,6 +459,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     readMachineTargetForSessionMock.mockReset();
     machineRpcWithServerScopeMock.mockReset();
     sessionSetManualReadStateWithServerScopeMock.mockReset();
+    emitSessionResumeRequestMock.mockReset();
     dropdownRenderCount.current = 0;
     storageListeners.current.clear();
     patchSessionMetadataWithRetryMock.mockReset();
@@ -427,13 +475,13 @@ describe('SessionHeaderActionMenu handoff', () => {
     buildActionDraftInputMock.mockReturnValue({ draft: true });
     preferredServerIdState.current = 'server_a';
     runSessionHandoffPickerFlowMock.mockResolvedValue({ ok: true, handoffId: 'handoff_1' });
-    executeSessionForkActionMock.mockResolvedValue({ ok: true, childSessionId: 'sess_child' });
     resolveSessionActionDefaultBackendMock.mockReturnValue({
       backendTarget: { kind: 'agent', agentId: 'claude' },
       defaultBackendId: 'claude',
     });
     voiceSettingState.current = null;
     reachableMachineTargetState.current = null;
+    daemonMergedProjectionState.current = { phase: 'ready', inputs: null };
     storageState.current = {
       settings: {
         voice: null,
@@ -465,6 +513,58 @@ describe('SessionHeaderActionMenu handoff', () => {
     for (const binding of voiceSessionBindingStore.getState().list()) {
       voiceSessionBindingStore.getState().unbind(binding.conversationSessionId);
     }
+  });
+
+  it('offers one standalone resume request for an inactive resumable session', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const resumeRequest = createDeferred<boolean>();
+    emitSessionResumeRequestMock.mockReturnValue(resumeRequest.promise);
+    const session = {
+      id: 'sess_resumable',
+      active: false,
+      seq: 4,
+      metadataLayoutVersion: 1,
+      metadata: { path: '/shared', host: 'shared' },
+      agentState: null,
+      ownerMetadataView: {
+        path: '/workspace',
+        host: 'machine',
+        flavor: 'claude',
+        claudeSessionId: 'claude_vendor_session',
+        claudeTranscriptPath: '/tmp/claude_vendor_session.jsonl',
+      },
+    } as any;
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId={session.id}
+      session={session}
+    />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.map((item: { id: string }) => item.id)).toContain(SESSION_ACTION_RESUME_ID);
+
+    await act(async () => {
+      dropdown.props.onSelect(SESSION_ACTION_RESUME_ID);
+      await Promise.resolve();
+    });
+
+    expect(emitSessionResumeRequestMock).toHaveBeenCalledTimes(1);
+    expect(emitSessionResumeRequestMock).toHaveBeenCalledWith(session.id);
+    const resumeAction = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+    expect(resumeAction).toBeInstanceOf(Promise);
+    let settled = false;
+    void resumeAction?.then(() => {
+      settled = true;
+    });
+    await flushHookEffects();
+    expect(settled).toBe(false);
+
+    resumeRequest.resolve(true);
+    await act(async () => {
+      await resumeAction;
+    });
+    expect(settled).toBe(true);
+    expect(modalAlertMock).not.toHaveBeenCalled();
   });
 
   it('keeps the closed trigger stable when only the session sequence changes', async () => {
@@ -712,7 +812,74 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(toggle).toHaveBeenCalledTimes(1);
   });
 
-  it('surfaces a normalized plugin header action reference and dispatches it through the daemon lease', async () => {
+  function normalizedPluginHeaderActionPresentation(
+    projection: ReturnType<typeof normalizePluginUiProjection>,
+    actionId: string,
+    title: string,
+  ) {
+    const action = projection.sessionHeaderActionsById[actionId];
+    if (!action) throw new Error(`Missing projected plugin header action ${actionId}`);
+    return {
+      action,
+      menuActionId: `plugin-ui:${action.id}`,
+      title,
+      iconName: 'puzzle-piece' as const,
+      enabled: true,
+    };
+  }
+
+  it('uses the Android physical 48dp target instead of overlapping hit slop for direct and menu header controls', async () => {
+    const { Platform } = await import('react-native');
+    const previousPlatform = Platform.OS;
+    (Platform as { OS: string }).OS = 'android';
+    try {
+      const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+      const screen = await renderScreen(<SessionHeaderActionMenu
+        sessionId="sess_1"
+        session={{
+          id: 'sess_1',
+          metadata: { machineId: 'machine_source', flavor: 'claude' },
+        } as any}
+        extraItems={[{ id: 'test.extra', title: 'Extra' }]}
+        pluginHeaderActions={[{
+          action: {} as never,
+          menuActionId: 'plugin-ui:sessionHeaderAction:acme.preview:run-preview',
+          title: 'Preview',
+          iconName: 'puzzle-piece',
+          enabled: true,
+        }]}
+        pluginHeaderActionPlacement="direct"
+      />);
+
+      const directAction = screen.findByProps({
+        testID: 'session-header-plugin-action-plugin-ui:sessionHeaderAction:acme.preview:run-preview',
+      });
+      expect(flattenTestStyle(directAction.props.style({ pressed: false }))).toMatchObject({
+        width: 48,
+        height: 48,
+      });
+      expect(directAction.props.hitSlop).toBeUndefined();
+
+      const dropdown = screen.findByType('DropdownMenu' as any);
+      const menuTrigger = dropdown.props.trigger({
+        open: false,
+        toggle: vi.fn(),
+        openMenu: vi.fn(),
+        closeMenu: vi.fn(),
+        selectedItem: null,
+      }) as any;
+      expect(menuTrigger.props.testID).toBe('session-header-action-menu-trigger');
+      expect(flattenTestStyle(menuTrigger.props.style({ pressed: false }))).toMatchObject({
+        width: 48,
+        height: 48,
+      });
+      expect(menuTrigger.props.hitSlop).toBeUndefined();
+    } finally {
+      (Platform as { OS: string }).OS = previousPlatform;
+    }
+  });
+
+  it('dispatches one normalized executeAction descriptor through both overflow and direct header arms', async () => {
     machineRpcWithServerScopeMock.mockResolvedValue({
       ok: true,
       result: { opened: true },
@@ -730,7 +897,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           title: 'Preview',
           scopes: ['session'],
           surfaces: ['ui'],
-          placement: 'detailsPanel',
+          placementBindings: ['detailsPanel'],
           dangerLevel: 'safe',
           available: true,
         },
@@ -763,13 +930,37 @@ describe('SessionHeaderActionMenu handoff', () => {
                 key: 'title',
                 fallback: 'Preview',
               },
-              action: 'run',
+              command: {
+                kind: 'executeAction',
+                action: { pluginId: 'acme.preview', localId: 'run' },
+              },
             },
           },
         },
       },
       diagnostics: [],
     });
+    const headerAction = normalizedPluginHeaderActionPresentation(
+      pluginUiProjection,
+      'sessionHeaderAction:acme.preview:run-preview',
+      'Preview',
+    );
+    const pluginHeaderScope = {
+      serverId: 'server-projection',
+      machineId: 'machine-projection',
+      generation: 7,
+      interactionEnabled: true,
+    } as const;
+    const overflowPluginHeaderProps = {
+      pluginHeaderActions: [headerAction],
+      pluginHeaderActionPlacement: 'overflow' as const,
+      pluginUiScopedLaunchFacts: pluginHeaderScope,
+    };
+    const directPluginHeaderProps = {
+      pluginHeaderActions: [headerAction],
+      pluginHeaderActionPlacement: 'direct' as const,
+      pluginUiScopedLaunchFacts: pluginHeaderScope,
+    };
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
@@ -783,6 +974,7 @@ describe('SessionHeaderActionMenu handoff', () => {
         },
       } as any}
       pluginUiProjection={pluginUiProjection}
+      {...overflowPluginHeaderProps}
     />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
@@ -795,27 +987,287 @@ describe('SessionHeaderActionMenu handoff', () => {
       ]),
     );
 
+    const rpcCallsBeforeOverflow = machineRpcWithServerScopeMock.mock.calls.length;
     await act(async () => {
       dropdown.props.onSelect('plugin-ui:sessionHeaderAction:acme.preview:run-preview');
       const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
       await pending;
     });
 
-    expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
-      machineId: 'machine_source',
-      serverId: 'server_a',
+    expect(machineRpcWithServerScopeMock.mock.calls).toHaveLength(rpcCallsBeforeOverflow + 1);
+    const expectedActionRpc = {
+      machineId: 'machine-projection',
+      serverId: 'server-projection',
       method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
       payload: {
-        machineId: 'machine_source',
+        machineId: 'machine-projection',
         expectedGeneration: '7',
         qualifiedActionId: 'acme.preview/run',
-        input: {},
+        input: null,
         sessionId: 'sess_1',
         executionSurface: 'ui',
       },
       signal: undefined,
       timeoutMs: undefined,
+    };
+    expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expectedActionRpc);
+
+    await screen.update(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+        },
+      } as any}
+      pluginUiProjection={pluginUiProjection}
+      {...directPluginHeaderProps}
+    />);
+
+    const directAction = screen.findByProps({
+      testID: 'session-header-plugin-action-plugin-ui:sessionHeaderAction:acme.preview:run-preview',
     });
+    expect(directAction.props.accessibilityRole).toBe('button');
+    expect(directAction.props.accessibilityLabel).toBe('Preview');
+    expect(directAction.props.accessibilityState).toEqual({ disabled: false });
+    await act(async () => {
+      directAction.props.onPress();
+      const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+      await pending;
+    });
+
+    expect(machineRpcWithServerScopeMock.mock.calls).toHaveLength(rpcCallsBeforeOverflow + 2);
+    expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith(expectedActionRpc);
+  });
+
+  it('does not transport a header action after its captured scope lifetime retires before either press arm', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValue({
+      ok: true,
+      result: { opened: true },
+    });
+    const pluginUiProjection = normalizePluginUiProjection({
+      v: 2,
+      generation: 7,
+      installedPackagesById: {},
+      agentsById: {},
+      backendsById: {},
+      actionsById: {
+        'acme.preview/run': {
+          id: 'run',
+          pluginId: 'acme.preview',
+          title: 'Preview',
+          scopes: ['session'],
+          surfaces: ['ui'],
+          placementBindings: ['detailsPanel'],
+          dangerLevel: 'safe',
+          available: true,
+        },
+      },
+      toolsById: {},
+      commandsById: {},
+      resourcesById: {},
+      settingsById: {},
+      familiesById: {
+        pluginUi: {
+          family: 'pluginUi',
+          entriesById: {
+            'sessionHeaderAction:acme.preview:run-preview': {
+              id: 'sessionHeaderAction:acme.preview:run-preview',
+              pluginId: 'acme.preview',
+              contributionKind: 'sessionHeaderAction',
+              descriptorId: 'run-preview',
+              title: {
+                key: 'title',
+                fallback: 'Preview',
+              },
+              command: {
+                kind: 'executeAction',
+                action: { pluginId: 'acme.preview', localId: 'run' },
+              },
+            },
+          },
+        },
+      },
+      diagnostics: [],
+    });
+    const headerAction = normalizedPluginHeaderActionPresentation(
+      pluginUiProjection,
+      'sessionHeaderAction:acme.preview:run-preview',
+      'Preview',
+    );
+    const pluginHeaderScope = {
+      serverId: 'server-projection',
+      machineId: 'machine-projection',
+      generation: 7,
+      interactionEnabled: true,
+    } as const;
+    const createRetirableScopeLifetime = () => {
+      let current = true;
+      return {
+        retire: () => {
+          current = false;
+        },
+        isCurrent: () => current,
+      };
+    };
+    const overflowLifetime = createRetirableScopeLifetime();
+    const directLifetime = createRetirableScopeLifetime();
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+        },
+      } as any}
+      pluginUiProjection={pluginUiProjection}
+      pluginUiScopedLaunchFacts={pluginHeaderScope}
+      pluginUiScopeIsCurrent={overflowLifetime.isCurrent}
+      pluginHeaderActions={[headerAction]}
+      pluginHeaderActionPlacement="overflow"
+    />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    const rpcCallsBeforeOverflowPress = machineRpcWithServerScopeMock.mock.calls.length;
+    overflowLifetime.retire();
+    await act(async () => {
+      dropdown.props.onSelect('plugin-ui:sessionHeaderAction:acme.preview:run-preview');
+      const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+      await pending;
+    });
+
+    expect(machineRpcWithServerScopeMock.mock.calls).toHaveLength(rpcCallsBeforeOverflowPress);
+
+    await screen.update(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+        },
+      } as any}
+      pluginUiProjection={pluginUiProjection}
+      pluginUiScopedLaunchFacts={pluginHeaderScope}
+      pluginUiScopeIsCurrent={directLifetime.isCurrent}
+      pluginHeaderActions={[headerAction]}
+      pluginHeaderActionPlacement="direct"
+    />);
+
+    const directAction = screen.findByProps({
+      testID: 'session-header-plugin-action-plugin-ui:sessionHeaderAction:acme.preview:run-preview',
+    });
+    const rpcCallsBeforeDirectPress = machineRpcWithServerScopeMock.mock.calls.length;
+    directLifetime.retire();
+    await act(async () => {
+      directAction.props.onPress();
+      const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+      await pending;
+    });
+
+    expect(machineRpcWithServerScopeMock.mock.calls).toHaveLength(rpcCallsBeforeDirectPress);
+  });
+
+  it('routes one normalized openSurface descriptor through both overflow and direct header arms', async () => {
+    const onOpenPluginSurface = vi.fn(async () => ({
+      ok: true as const,
+    }));
+    const pluginUiProjection = normalizePluginUiProjection({
+      v: 2,
+      generation: 7,
+      installedPackagesById: {},
+      agentsById: {},
+      backendsById: {},
+      actionsById: {},
+      toolsById: {},
+      commandsById: {},
+      resourcesById: {},
+      settingsById: {},
+      familiesById: {
+        pluginUi: {
+          family: 'pluginUi',
+          entriesById: {
+            'sessionHeaderAction:acme.preview:open-preview': {
+              id: 'sessionHeaderAction:acme.preview:open-preview',
+              pluginId: 'acme.preview',
+              contributionKind: 'sessionHeaderAction',
+              descriptorId: 'open-preview',
+              title: 'Open preview',
+              command: {
+                kind: 'openSurface',
+                destination: { pluginId: 'acme.preview', localId: 'preview' },
+              },
+            },
+          },
+        },
+      },
+      diagnostics: [],
+    });
+    const headerAction = normalizedPluginHeaderActionPresentation(
+      pluginUiProjection,
+      'sessionHeaderAction:acme.preview:open-preview',
+      'Open preview',
+    );
+    const overflowPluginHeaderProps = {
+      pluginHeaderActions: [headerAction],
+      pluginHeaderActionPlacement: 'overflow' as const,
+    };
+    const directPluginHeaderProps = {
+      pluginHeaderActions: [headerAction],
+      pluginHeaderActionPlacement: 'direct' as const,
+    };
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        metadata: { machineId: 'machine_source', flavor: 'claude' },
+      } as any}
+      pluginUiProjection={pluginUiProjection}
+      onOpenPluginSurface={onOpenPluginSurface}
+      {...overflowPluginHeaderProps}
+    />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    await act(async () => {
+      dropdown.props.onSelect('plugin-ui:sessionHeaderAction:acme.preview:open-preview');
+      const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+      await pending;
+    });
+
+    expect(onOpenPluginSurface).toHaveBeenCalledWith({
+      destination: { pluginId: 'acme.preview', localId: 'preview' },
+    });
+
+    await screen.update(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        metadata: { machineId: 'machine_source', flavor: 'claude' },
+      } as any}
+      pluginUiProjection={pluginUiProjection}
+      onOpenPluginSurface={onOpenPluginSurface}
+      {...directPluginHeaderProps}
+    />);
+
+    const directAction = screen.findByProps({
+      testID: 'session-header-plugin-action-plugin-ui:sessionHeaderAction:acme.preview:open-preview',
+    });
+    await act(async () => {
+      directAction.props.onPress();
+      const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
+      await pending;
+    });
+
+    expect(onOpenPluginSurface).toHaveBeenCalledTimes(2);
+    expect(onOpenPluginSurface).toHaveBeenLastCalledWith({
+      destination: { pluginId: 'acme.preview', localId: 'preview' },
+    });
+    expect(modalAlertMock).not.toHaveBeenCalled();
   });
 
   it('surfaces manual mark-unread for read sessions and sends it through the selected server scope', async () => {
@@ -1023,10 +1475,9 @@ describe('SessionHeaderActionMenu handoff', () => {
 
   });
 
-  it('executes fork from the header menu and opens the returned child session with the scoped server', async () => {
+  it('opens the fork strategy modal from the header menu and issues no fork effect', async () => {
     canForkConversationState.current = true;
     preferredServerIdState.current = 'server-explicit';
-    executeSessionForkActionMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
     const screen = await renderScreen(<SessionHeaderActionMenu
@@ -1050,19 +1501,51 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     await act(async () => {
       dropdown.props.onSelect('session.fork');
-      const pendingFork = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
-      await pendingFork;
+      // The header defers modal presentation past the current web press dispatch.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flushHookEffects();
     });
 
-    expect(executeSessionForkActionMock).toHaveBeenCalledWith({
-      execute: expect.any(Function),
+    expect(openSessionForkStrategyFlowMock).toHaveBeenCalledTimes(1);
+    const flowArgs = openSessionForkStrategyFlowMock.mock.calls[0]?.[0] as any;
+    expect(flowArgs).toMatchObject({
       sessionId: 'sess_parent',
-      context: {
-        defaultSessionId: 'sess_parent',
-        surface: 'ui',
-        placement: 'session_action_menu',
-      },
+      serverId: 'server-explicit',
+      forkPoint: { type: 'latest' },
     });
+    expect(typeof flowArgs.navigateToSession).toBe('function');
+    expect(typeof flowArgs.navigateToNewSession).toBe('function');
+    // The launcher must not also run the old auto-strategy fork behind the modal.
+    const forkRpcCalls = machineRpcWithServerScopeMock.mock.calls.filter(
+      (call) => String((call[0] as { method?: unknown } | undefined)?.method ?? '').includes('session.fork'),
+    );
+    expect(forkRpcCalls).toHaveLength(0);
+  });
+
+  it('routes a fork child opened from the strategy modal through the scoped session href', async () => {
+    canForkConversationState.current = true;
+    preferredServerIdState.current = 'server-explicit';
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_parent"
+          session={{
+            id: 'sess_parent',
+            serverId: 'server-explicit',
+            metadata: { machineId: 'machine_source', flavor: 'claude' },
+          } as any}
+        />);
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    await act(async () => {
+      dropdown.props.onSelect('session.fork');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flushHookEffects();
+    });
+
+    const flowArgs = openSessionForkStrategyFlowMock.mock.calls[0]?.[0] as any;
+    await act(async () => { await flowArgs.navigateToSession('sess_child'); });
+    expect(sessionActionsModuleState.routerPushSpy)
+      .toHaveBeenCalledWith('/session/sess_child?serverId=server-explicit');
   });
 
   it('fails closed (does not surface session.handoff) when machine transfer is disabled on the selected server', async () => {
@@ -1688,7 +2171,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     );
   });
 
-  it('surfaces a background follow toggle for linked direct sessions and enables it on select', async () => {
+  it('does not surface background follow for a linked session without an explicit projected source opt-in', async () => {
     storageState.current.sessions = {
       s1: {
         id: 's1',
@@ -1725,48 +2208,11 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
-    expect(dropdown.props.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'session.externalSession.backgroundFollow',
-          title: 'session.actionMenu.backgroundFollow',
-          subtitle: 'common.disabled',
-        }),
-      ]),
-    );
-
-    await act(async () => {
-      machineRpcWithServerScopeMock.mockResolvedValueOnce({
-        ok: true,
-        enabled: true,
-        leaseActive: true,
-        updatedAtMs: 1,
-      });
-      dropdown.props.onSelect('session.externalSession.backgroundFollow');
-    });
-    await flushHookEffects({ cycles: 1 });
-
-    expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
-    expect(applySessionMetadataLocallyMock).toHaveBeenCalledWith('s1', expect.any(Function));
-    expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-      machineId: 'machine-1',
-      serverId: 'server_a',
-      method: 'daemon.externalSessions.backgroundFollow.set',
-      payload: expect.objectContaining({
-        sessionId: 's1',
-        agentId: 'codex',
-        remoteSessionId: 'vendor-session-1',
-        enabled: true,
-      }),
-    }));
-    expect((storageState.current.sessions.s1 as any).metadata.externalSessionV1.followPolicyV1).toEqual({
-      v: 1,
-      policy: 'background_follow',
-      updatedAtMs: 1,
-    });
+    expect(dropdown.props.items.find((item: { id: string }) => item.id === 'session.externalSession.backgroundFollow')).toBeUndefined();
+    expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
   });
 
-  it('uses the linked direct-session agent to decide background follow support', async () => {
+  it('does not infer background follow from a session flavor when the linked source has no projection opt-in', async () => {
     storageState.current.sessions = {
       s1: {
         id: 's1',
@@ -1809,18 +2255,14 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const dropdown = screen.findByType('DropdownMenu' as any);
 
-    expect(dropdown.props.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'session.externalSession.backgroundFollow',
-          title: 'session.actionMenu.backgroundFollow',
-          subtitle: 'common.disabled',
-        }),
-      ]),
-    );
+    expect(dropdown.props.items.find((item: { id: string }) => item.id === 'session.externalSession.backgroundFollow')).toBeUndefined();
   });
 
   it('surfaces a disable toggle when background follow is already enabled and turns it off on select', async () => {
+    daemonMergedProjectionState.current = {
+      phase: 'ready',
+      inputs: { pluginProjectionV2: createExplicitTerminalFollowProjection() },
+    };
     storageState.current.sessions = {
       s1: {
         id: 's1',

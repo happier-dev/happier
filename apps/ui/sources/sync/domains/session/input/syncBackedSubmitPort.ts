@@ -1,5 +1,6 @@
 import { resumeSession, sessionSwitch } from '@/sync/ops';
 import { sync as defaultSync } from '@/sync/sync';
+import { storage } from '@/sync/domains/state/storage';
 
 import type { SessionSubmitPort } from './types';
 
@@ -10,6 +11,7 @@ type SyncSubmitRuntime = Pick<
     | 'enqueuePendingMessage'
     | 'sendMessage'
     | 'refreshSessionForSubmit'
+    | 'isSessionTargetRemoteToActiveServer'
     | 'encryption'
 >;
 
@@ -25,9 +27,14 @@ export function createSyncBackedSubmitPort(syncRuntime: SyncSubmitRuntime = defa
         resumeSession: (options) => resumeSession(options),
         refreshSessionForSubmit: (sessionId, options) =>
             syncRuntime.refreshSessionForSubmit(sessionId, options),
+        isSessionTargetRemoteToActiveServer: (sessionId) =>
+            syncRuntime.isSessionTargetRemoteToActiveServer(sessionId),
         switchSessionControlToRemote: async (sessionId) => {
             await sessionSwitch(sessionId, 'remote');
         },
-        canWakeMachineId: (machineId) => Boolean(syncRuntime.encryption.getMachineEncryption(machineId)),
+        canWakeMachineId: (machineId) => Boolean(
+            syncRuntime.encryption?.getMachineEncryption(machineId)
+            || storage.getState().machines[machineId]?.storageMode === 'plain',
+        ),
     };
 }

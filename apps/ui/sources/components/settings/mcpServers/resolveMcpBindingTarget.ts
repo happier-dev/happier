@@ -2,34 +2,38 @@ import type { McpServerBindingTargetV1 } from '@happier-dev/protocol';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
-export function createDefaultMcpBindingTarget(machines: readonly Machine[]): McpServerBindingTargetV1 {
-    const firstMachineId = machines[0]?.id;
-    if (!firstMachineId) {
-        return { t: 'allMachines' };
-    }
-
-    return { t: 'machine', machineId: firstMachineId };
+/**
+ * Creates the initial persisted MCP binding target. The binding itself remains
+ * the feature-owned routing decision for later MCP operations; this draft
+ * default is not a Machine Administration execution target.
+ */
+export function createDefaultMcpBindingTarget(_machines: readonly Pick<Machine, 'id'>[]): McpServerBindingTargetV1 {
+    return { t: 'allMachines' };
 }
 
 export function resolveMcpBindingTargetTypeChange(
     currentTarget: McpServerBindingTargetV1,
     nextType: McpServerBindingTargetV1['t'],
-    machines: readonly Machine[],
+    machines: readonly Pick<Machine, 'id'>[],
+    selectedMachineId?: string,
 ): McpServerBindingTargetV1 | null {
     if (nextType === 'allMachines') {
         return { t: 'allMachines' };
     }
 
-    const fallbackMachineId = currentTarget.t === 'allMachines'
-        ? machines[0]?.id
+    const machineId = currentTarget.t === 'allMachines'
+        ? selectedMachineId
         : currentTarget.machineId;
-    if (!fallbackMachineId) {
+    if (!machineId) {
+        return null;
+    }
+    if (currentTarget.t === 'allMachines' && !machines.some((machine) => machine.id === machineId)) {
         return null;
     }
 
     if (nextType === 'machine') {
-        return { t: 'machine', machineId: fallbackMachineId };
+        return { t: 'machine', machineId };
     }
 
-    return { t: 'workspace', machineId: fallbackMachineId, workspaceRoot: '/' };
+    return { t: 'workspace', machineId, workspaceRoot: '/' };
 }

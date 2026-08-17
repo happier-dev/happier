@@ -266,6 +266,7 @@ describe('uploadAttachmentDraftsToSession', () => {
             kind: 'transfer_finalize_recovery' as const,
             expiresAt: Date.now() + 60_000,
             actions: ['retry_finalize', 'discard_staged'] as const,
+            isActionable: () => true,
             invoke: vi.fn(),
         };
         sessionAttachmentsUploadFileSpy.mockResolvedValueOnce({

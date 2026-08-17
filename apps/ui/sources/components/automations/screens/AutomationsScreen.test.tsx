@@ -1,22 +1,48 @@
 import React from 'react';
+import { Platform } from 'react-native';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    createDeferred,
     findTestInstanceByTypeContainingText,
     flushHookEffects,
     invokeTestInstanceHandler,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (typeof style === 'function') {
+        return flattenStyle(style({ pressed: false }));
+    }
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
+    }
+    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
+}
+
+function findClosestPressableAncestor(instance: ReactTestInstance): ReactTestInstance | null {
+    let current = instance.parent;
+    while (current) {
+        if (String(current.type) === 'Pressable') return current;
+        current = current.parent;
+    }
+    return null;
+}
 
 type AutomationListItem = Readonly<{
     id: string;
     name: string;
     description: string | null;
     enabled: boolean;
-    schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null };
+    trigger: {
+        kind: 'schedule';
+        schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone: string | null };
+    };
     nextRunAt: number | null;
 }>;
 
@@ -139,14 +165,99 @@ describe('AutomationsScreen', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/new?automation=1');
     });
 
-    it('runs an automation and toggles enabled state from row controls', async () => {
+    it('keeps the hydrated automation list visible while the mount refresh is pending', async () => {
+        const refresh = createDeferred<void>();
+        syncSpies.refreshAutomations.mockImplementationOnce(() => refresh.promise);
         automationsState.list = [
             {
                 id: 'a1',
                 name: 'Nightly',
                 description: null,
                 enabled: true,
-                schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null },
+                trigger: {
+                    kind: 'schedule',
+                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
+                },
+                nextRunAt: Date.now() + 60_000,
+            },
+        ];
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+
+        expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(1);
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Nightly')).toBeTruthy();
+
+        refresh.resolve();
+        await flushHookEffects();
+    });
+
+    it('shows an announced retryable error instead of an authoritative empty state after an initial refresh failure', async () => {
+        syncSpies.refreshAutomations.mockRejectedValueOnce(new Error('network unavailable'));
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        const errorState = screen.findAllByProps({ testID: 'automations-refresh-error' })
+            .find((instance) => instance.props.role === 'alert');
+        expect(errorState?.props.role).toBe('alert');
+        expect(errorState?.props['aria-live']).toBe('assertive');
+        expect(screen.findAllByType('SessionGettingStartedGuidance' as any)).toHaveLength(0);
+
+        const retry = screen.findAllByProps({ testID: 'automations-refresh-error-action' })
+            .find((instance) => typeof instance.props.onPress === 'function');
+        if (!retry) throw new Error('Retry action was not found');
+        await act(async () => {
+            retry.props.onPress();
+            await Promise.resolve();
+        });
+        expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps cached automations visible with an announced retry and disables stale mutations after refresh failure', async () => {
+        machinesState.list = [{ id: 'm1' }];
+        automationsState.list = [
+            {
+                id: 'a1',
+                name: 'Nightly',
+                description: null,
+                enabled: true,
+                trigger: {
+                    kind: 'schedule',
+                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
+                },
+                nextRunAt: Date.now() + 60_000,
+            },
+        ];
+        syncSpies.refreshAutomations.mockRejectedValueOnce(new Error('network unavailable'));
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Nightly')).toBeTruthy();
+        const errorState = screen.findByProps({ testID: 'automations-stale-refresh-error' });
+        expect(errorState.props.accessibilityRole).toBe('alert');
+        expect(errorState.props.accessibilityLiveRegion).toBe('assertive');
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' }).props.disabled).toBe(true);
+        expect(screen.findByType('Switch' as any).props.disabled).toBe(true);
+
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'automations-stale-refresh-retry' }));
+        expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps list navigation semantic while its controls remain independent', async () => {
+        automationsState.list = [
+            {
+                id: 'a1',
+                name: 'Nightly',
+                description: null,
+                enabled: true,
+                trigger: {
+                    kind: 'schedule',
+                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
+                },
                 nextRunAt: Date.now() + 60_000,
             },
         ];
@@ -157,19 +268,92 @@ describe('AutomationsScreen', () => {
         await flushHookEffects();
 
         const runNow = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
-        await pressTestInstanceAsync(runNow);
-        expect(syncSpies.runAutomationNow).toHaveBeenCalledWith('a1');
+        expect(findClosestPressableAncestor(runNow)).toBeNull();
 
         const toggle = screen.findByType('Switch' as any);
+        expect(toggle.props.accessibilityLabel).toContain('Nightly');
+        expect(toggle.props.accessibilityLabel).toContain('automations.detail.pauseAutomation');
         invokeTestInstanceHandler(toggle, 'onValueChange', false);
         expect(syncSpies.pauseAutomation).toHaveBeenCalledWith('a1');
 
-        const card = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Nightly');
-        expect(card).toBeTruthy();
-        // First press after a control interaction is ignored to prevent accidental navigation.
-        await pressTestInstanceAsync(card);
-        await pressTestInstanceAsync(card);
+        const row = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Nightly');
+        expect(row).toBeTruthy();
+        expect(row?.props.accessibilityRole).toBe('button');
+        expect(typeof row?.props.onPress).toBe('function');
+        if (!row) throw new Error('Automation row was not found');
+        await act(async () => {
+            row.props.onPress();
+        });
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalled();
         expect(routerPushSpy).toHaveBeenCalledWith('/automations/a1');
     });
+
+    it('submits each list Run now action once while its request is pending', async () => {
+        const runNow = createDeferred<void>();
+        syncSpies.runAutomationNow.mockImplementationOnce(() => runNow.promise);
+        automationsState.list = [
+            {
+                id: 'a1',
+                name: 'Nightly',
+                description: null,
+                enabled: true,
+                trigger: {
+                    kind: 'schedule',
+                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
+                },
+                nextRunAt: Date.now() + 60_000,
+            },
+        ];
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        const runNowButton = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        await act(async () => {
+            runNowButton.props.onPress();
+            runNowButton.props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(syncSpies.runAutomationNow).toHaveBeenCalledTimes(1);
+        const pendingRunNowButton = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        expect(pendingRunNowButton.props.disabled).toBe(true);
+        expect(pendingRunNowButton.props.accessibilityState).toEqual(expect.objectContaining({
+            disabled: true,
+            busy: true,
+        }));
+
+        await act(async () => {
+            runNow.resolve();
+            await runNow.promise;
+        });
+    });
+
+    it('keeps the list Run now action at the canonical interactive target size', async () => {
+        automationsState.list = [
+            {
+                id: 'a1',
+                name: 'Nightly',
+                description: null,
+                enabled: true,
+                trigger: {
+                    kind: 'schedule',
+                    schedule: { kind: 'interval', everyMs: 900_000, scheduleExpr: null, timezone: null },
+                },
+                nextRunAt: Date.now() + 60_000,
+            },
+        ];
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        const runNow = screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle' });
+        const style = flattenStyle(runNow.props.style);
+        const minimum = resolveMinimumInteractiveTargetSize(Platform.OS);
+        expect(Math.max(Number(style.width ?? 0), Number(style.minWidth ?? 0))).toBeGreaterThanOrEqual(minimum);
+        expect(Math.max(Number(style.height ?? 0), Number(style.minHeight ?? 0))).toBeGreaterThanOrEqual(minimum);
+    });
+
 });

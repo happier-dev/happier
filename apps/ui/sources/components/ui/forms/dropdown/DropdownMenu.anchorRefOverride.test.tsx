@@ -93,4 +93,23 @@ describe('DropdownMenu (anchorRef override)', () => {
         const popover = screen.findByType('Popover' as any) as any;
         expect(popover.props.anchorRef).toBe(anchorRef);
     });
+
+    it('passes a press-point rect anchor to Popover when provided', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const anchor = {
+            kind: 'rect',
+            rect: { left: 120, top: 360, height: 1 },
+        } as const;
+
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange: () => {},
+            items: [],
+            onSelect: () => {},
+            popoverAnchor: anchor,
+        }));
+
+        const popover = screen.findByType('Popover' as any) as any;
+        expect(popover.props.anchor).toEqual(anchor);
+    });
 });

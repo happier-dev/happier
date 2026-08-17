@@ -37,19 +37,37 @@ const DISABLED_DIAGNOSTICS = {
 } as const;
 
 describe('voice settings mixed-version persistence', () => {
-    it('round-trips Dictation only through the canonical Voice root without leaking inline credentials', () => {
+    it('keeps qualified credential bindings only on the canonical Voice root', () => {
+        const binding = {
+            contribution: {
+                pluginId: 'happier.voice.openai',
+                localId: 'realtime-openai',
+            },
+            credentialSlotId: 'api_key',
+            credentialSource: { kind: 'savedSecret' },
+            credentialBindings: { account: { api_key: 'saved-openai' } },
+        } as const;
+
+        const parsed = settingsParse({
+            voiceSettingsV1: {
+                providerId: 'happier.voice.openai/realtime-openai',
+                credentialBindings: [binding],
+            },
+        });
+
+        expect(parsed.voiceSettingsV1.credentialBindings).toEqual([binding]);
+        expect(parsed.voiceSettingsV1.credentialBindings[0]).not.toHaveProperty('providerId');
+        expect(parsed.voice.credentialBindings).toEqual([]);
+    });
+
+    it('round-trips the current qualified Dictation selector only through the canonical Voice root', () => {
         const parsed = settingsParse({
             voice: {
                 dictation: {
                     sttBinding: 'explicit',
                     language: 'de-CH',
                     stt: {
-                        provider: 'openai_compat',
-                        openaiCompat: {
-                            baseUrl: 'https://speech.example.test/v1',
-                            model: 'whisper-dictation',
-                            apiKey: { _isSecretValue: true, value: 'must-not-persist' },
-                        },
+                        provider: 'happier.voice.openai-compat/stt',
                     },
                 },
             },
@@ -62,25 +80,20 @@ describe('voice settings mixed-version persistence', () => {
             sttBinding: 'explicit',
             language: 'de-CH',
             stt: {
-                provider: 'openai_compat',
-                openaiCompat: {
-                    baseUrl: 'https://speech.example.test/v1',
-                    model: 'whisper-dictation',
-                    apiKey: null,
-                },
+                provider: 'happier.voice.openai-compat/stt',
             },
         });
+        expect((canonical.dictation as { stt: unknown }).stt).not.toHaveProperty('openaiCompat');
         expect(predecessor).not.toHaveProperty('dictation');
-        expect(JSON.stringify(persisted)).not.toContain('must-not-persist');
 
         expect(settingsParse(persisted).voice.dictation).toMatchObject({
             sttBinding: 'explicit',
             language: 'de-CH',
-            stt: { provider: 'openai_compat' },
+            stt: { provider: 'happier.voice.openai-compat/stt' },
         });
     });
 
-    it('converts released Voice secret fields into SavedSecrets and canonical bindings', () => {
+    it('migrates released OpenAI-compatible speech secrets by role while keeping Chat separate', () => {
         const legacySecret = { _isSecretValue: true as const, value: 'legacy-key' };
         const parsed = settingsParse({
             schemaVersion: 7,
@@ -102,22 +115,47 @@ describe('voice settings mixed-version persistence', () => {
         expect(parsed.secrets.map((secret) => secret.id).sort()).toEqual([
             'voice:google_cloud:api_key',
             'voice:google_gemini:api_key',
+            'voice:happier.voice.openai-compat/stt:api_key',
+            'voice:happier.voice.openai-compat/tts:api_key',
             'voice:openai_compat:chat_api_key',
-            'voice:openai_compat:stt_api_key',
-            'voice:openai_compat:tts_api_key',
             'voice:realtime_elevenlabs:api_key',
         ]);
-        expect(parsed.voice.credentialBindings).toEqual(expect.arrayContaining([
-            expect.objectContaining({ providerId: 'realtime_elevenlabs', credentialBindings: { account: { api_key: 'voice:realtime_elevenlabs:api_key' } } }),
-            expect.objectContaining({ providerId: 'google_gemini', credentialBindings: { account: { api_key: 'voice:google_gemini:api_key' } } }),
-            expect.objectContaining({ providerId: 'google_cloud', credentialBindings: { account: { api_key: 'voice:google_cloud:api_key' } } }),
-            expect.objectContaining({ providerId: 'openai_compat' }),
+        expect(parsed.voice.credentialBindings).toEqual([]);
+        expect(parsed.voice.credentialBindings).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ providerId: expect.any(String) }),
         ]));
-        expect(parsed.voice.credentialBindings.find((binding) => binding.providerId === 'openai_compat')?.credentialBindings.account).toEqual({
-            stt_api_key: 'voice:openai_compat:stt_api_key',
-            tts_api_key: 'voice:openai_compat:tts_api_key',
-            chat_api_key: 'voice:openai_compat:chat_api_key',
-        });
+        expect(parsed.voiceSettingsV1.credentialBindings).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                contribution: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },
+                credentialSlotId: 'api_key',
+            }),
+            expect.objectContaining({
+                contribution: { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' },
+                credentialSlotId: 'api_key',
+            }),
+            expect.objectContaining({
+                contribution: { pluginId: 'happier.voice.openai-compat', localId: 'stt' },
+                credentialSlotId: 'api_key',
+                credentialBindings: {
+                    account: { api_key: 'voice:happier.voice.openai-compat/stt:api_key' },
+                },
+            }),
+            expect.objectContaining({
+                contribution: { pluginId: 'happier.voice.openai-compat', localId: 'tts' },
+                credentialSlotId: 'api_key',
+                credentialBindings: {
+                    account: { api_key: 'voice:happier.voice.openai-compat/tts:api_key' },
+                },
+            }),
+        ]));
+        expect(parsed.voiceSettingsV1.credentialBindings).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                contribution: { pluginId: 'happier.voice.openai-compat', localId: 'chat' },
+            }),
+        ]));
+        expect(parsed.voiceSettingsV1.credentialBindings).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ providerId: expect.any(String) }),
+        ]));
         expect(JSON.stringify(parsed.voice)).not.toContain('legacy-key');
     });
 
@@ -233,35 +271,136 @@ describe('voice settings mixed-version persistence', () => {
         expect(reparsed.voice.credentialBindings).toEqual([]);
     });
 
-    it('does not let a raw predecessor marker suppress normal legacy migration', () => {
+    it('keeps malformed and colliding released OpenAI-compatible speech secrets inert by role', () => {
+        const existingSecret = { _isSecretValue: true as const, value: 'existing-stt-key' };
+        const collidingSttSecret = { _isSecretValue: true as const, value: 'different-stt-key' };
+        const malformedTtsSecret = { malformed: true };
         const parsed = settingsParse({
+            secrets: [{
+                id: 'voice:happier.voice.openai-compat/stt:api_key',
+                name: 'Existing OpenAI-compatible STT key',
+                kind: 'apiKey',
+                encryptedValue: existingSecret,
+                createdAt: 1,
+                updatedAt: 1,
+            }],
             voice: {
-                [VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER]: true,
+                providerId: 'local_direct',
                 adapters: {
-                    realtime_elevenlabs: {
-                        billingMode: 'byo',
-                        byo: {
-                            agentId: 'agent-from-predecessor',
-                            apiKey: { _isSecretValue: true, value: 'legacy-key' },
+                    local_direct: {
+                        stt: {
+                            provider: 'openai_compat',
+                            openaiCompat: {
+                                baseUrl: 'https://stt.collision.test/v1',
+                                model: 'collision-whisper',
+                                apiKey: collidingSttSecret,
+                            },
+                        },
+                        tts: {
+                            provider: 'openai_compat',
+                            openaiCompat: {
+                                baseUrl: 'https://tts.malformed.test/v1',
+                                model: 'malformed-tts',
+                                voice: 'malformed-voice',
+                                format: 'wav',
+                                apiKey: malformedTtsSecret,
+                            },
                         },
                     },
                 },
             },
         });
 
-        expect(parsed.secrets).toHaveLength(1);
-        expect(parsed.voice.credentialBindings).toEqual([
+        expect(parsed.secrets.map((secret) => secret.id)).toEqual([
+            'voice:happier.voice.openai-compat/stt:api_key',
+        ]);
+        expect(parsed.voiceSettingsV1.credentialBindings).not.toEqual(expect.arrayContaining([
             expect.objectContaining({
-                providerId: 'realtime_elevenlabs',
+                contribution: { pluginId: 'happier.voice.openai-compat', localId: 'stt' },
+            }),
+            expect.objectContaining({
+                contribution: { pluginId: 'happier.voice.openai-compat', localId: 'tts' },
+            }),
+        ]));
+        expect((parsed.voice as VoiceSettings & { adapters?: unknown }).adapters).toEqual({
+            local_direct: {
+                stt: { openaiCompat: { apiKey: collidingSttSecret } },
+                tts: { openaiCompat: { apiKey: malformedTtsSecret } },
+            },
+        });
+        expect((parsed.voice as VoiceSettings & Record<string, unknown>)[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER]).toBe(true);
+        expect(parsed.voice.providers['happier.voice.openai-compat/stt']?.config).toMatchObject({
+            baseUrl: 'https://stt.collision.test/v1',
+            model: 'collision-whisper',
+        });
+        expect(parsed.voice.providers['happier.voice.openai-compat/tts']?.config).toMatchObject({
+            baseUrl: 'https://tts.malformed.test/v1',
+            model: 'malformed-tts',
+            voiceName: 'malformed-voice',
+            format: 'wav',
+        });
+        expect(JSON.stringify(parsed.voice.providers)).not.toContain('different-stt-key');
+
+        const persisted = normalizeVoiceSettingsServerDelta(parsed) as Record<string, unknown>;
+        const reparsed = settingsParse(persisted);
+        expect(((persisted.voiceSettingsV1 as { adapters?: unknown }).adapters)).toEqual({
+            local_direct: {
+                stt: { openaiCompat: { apiKey: collidingSttSecret } },
+                tts: { openaiCompat: { apiKey: malformedTtsSecret } },
+            },
+        });
+        expect((reparsed.voice as VoiceSettings & { adapters?: unknown }).adapters).toEqual({
+            local_direct: {
+                stt: { openaiCompat: { apiKey: collidingSttSecret } },
+                tts: { openaiCompat: { apiKey: malformedTtsSecret } },
+            },
+        });
+    });
+
+    it('does not let a raw predecessor marker suppress normal legacy migration', () => {
+        const rawVoice = {
+            [VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER]: true,
+            adapters: {
+                realtime_elevenlabs: {
+                    billingMode: 'byo',
+                    byo: {
+                        agentId: 'agent-from-predecessor',
+                        apiKey: { _isSecretValue: true, value: 'legacy-key' },
+                    },
+                },
+            },
+        };
+        expect(voiceSettingsParse(rawVoice).providers[
+            'happier.voice.elevenlabs/realtime-elevenlabs'
+        ]).toMatchObject({
+            schemaVersion: 1,
+            config: {
+                billingMode: 'byo',
+                byo: { agentId: 'agent-from-predecessor' },
+            },
+        });
+        const parsed = settingsParse({
+            voice: rawVoice,
+        });
+
+        expect(parsed.secrets).toHaveLength(1);
+        expect(parsed.voiceSettingsV1.credentialBindings).toEqual([
+            expect.objectContaining({
+                contribution: {
+                    pluginId: 'happier.voice.elevenlabs',
+                    localId: 'realtime-elevenlabs',
+                },
+                credentialSlotId: 'api_key',
                 credentialBindings: { account: { api_key: 'voice:realtime_elevenlabs:api_key' } },
             }),
         ]);
         expect((parsed.voice as VoiceSettings & { adapters?: unknown }).adapters).toBeUndefined();
         expect((parsed.voice as VoiceSettings & Record<string, unknown>)[VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER]).toBeUndefined();
-        expect(parsed.voice.providers.realtime_elevenlabs?.config).toMatchObject({
+        expect(parsed.voice.providers['happier.voice.elevenlabs/realtime-elevenlabs']?.config).toMatchObject({
             billingMode: 'byo',
-            byo: { agentId: 'agent-from-predecessor' },
+            agentId: 'agent-from-predecessor',
         });
+        expect(parsed.voice.providers.realtime_elevenlabs).toBeUndefined();
     });
 
     it('keeps a predecessor key that conflicts with an existing binding inert', () => {
@@ -291,7 +430,7 @@ describe('voice settings mixed-version persistence', () => {
             },
         });
 
-        expect(parsed.voice.credentialBindings[0]?.credentialBindings.account?.api_key).toBe('saved:elevenlabs');
+        expect(parsed.voiceSettingsV1.credentialBindings[0]?.credentialBindings.account?.api_key).toBe('saved:elevenlabs');
         expect(JSON.stringify(parsed.voice.providers)).not.toContain('predecessor-key');
         expect(JSON.stringify((parsed.voice as VoiceSettings & { adapters?: unknown }).adapters)).toContain('predecessor-key');
     });

@@ -1,9 +1,15 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import type {
+    PluginProjectionAction,
+    PluginProjectionEntry,
+} from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import type { PluginContributedActionCurrentSnapshot } from '@/components/plugins/actions/pluginContributedActionController';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -79,8 +85,8 @@ vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => 
     extractWorkspaceFileMentions: () => [],
 }));
 
-vi.mock('@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow', () => ({
-    LinkedWorkspaceFilesRow: () => null,
+vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({
+    StructuredReferencesRow: () => null,
 }));
 
 vi.mock('@/components/tools/shell/views/ToolView', () => ({
@@ -144,6 +150,109 @@ describe('MessageView timestamps', () => {
         );
 
         expect(screen.findAllByTestId('transcript-message-timestamp:m1')).toHaveLength(0);
+    });
+
+    it('projects eligible whole-message Actions through user, assistant, and structured MessageActionRows', async () => {
+        vi.resetModules();
+        const { MessageView } = await import('./MessageView');
+        const {
+            createPluginMessageActionHost,
+            PluginMessageActionHostProvider,
+        } = await import('./messageActions/PluginMessageActions');
+        const action: PluginProjectionAction = {
+            id: 'open-preview',
+            title: 'Open preview',
+            description: null,
+            icon: null,
+            scopes: ['message'],
+            surfaces: ['ui'],
+            placementBindings: ['rowAction'],
+            inputHints: null,
+            inputSchema: null,
+            priority: null,
+            dangerLevel: 'safe',
+            confirmation: null,
+            available: true,
+        };
+        const entry: PluginProjectionEntry = {
+            pluginId: 'acme.preview',
+            title: 'Preview',
+            description: null,
+            version: '1.0.0',
+            enabled: true,
+            generation: 7,
+            generationLabel: '7',
+            status: null,
+            provenance: null,
+            diagnostics: [],
+            actions: [action],
+            resources: [],
+            editableSettingsGroups: [],
+        };
+        const actionSnapshot: PluginContributedActionCurrentSnapshot = {
+            pluginProjectionById: { 'acme.preview': entry },
+            host: {
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                expectedGeneration: 7,
+                sessionId: 's1',
+                isCurrent: () => true,
+            },
+        };
+        const host = createPluginMessageActionHost({
+            resolveCurrent: () => actionSnapshot,
+            sessionId: 's1',
+        });
+
+        const rows = [
+            {
+                kind: 'user-text' as const,
+                id: 'user-row',
+                localId: 'local-user-row',
+                createdAt: 1,
+                text: 'user message',
+            },
+            {
+                kind: 'agent-text' as const,
+                id: 'assistant-row',
+                localId: 'local-assistant-row',
+                createdAt: 2,
+                text: 'assistant message',
+            },
+            {
+                kind: 'agent-text' as const,
+                id: 'structured-row',
+                localId: 'local-structured-row',
+                createdAt: 3,
+                text: '',
+                structuredPresentation: createMessageStructuredPresentationV1({
+                    owner: { pluginId: 'acme.preview', contributionLocalId: 'report-card' },
+                    snapshot: { kind: 'status', label: 'Report', value: 'Ready' },
+                }),
+            },
+        ];
+
+        for (const row of rows) {
+            const screen = await renderScreen(
+                <PluginMessageActionHostProvider host={host}>
+                    <MessageView
+                        sessionId="s1"
+                        metadata={null}
+                        message={{
+                            ...row,
+                            messageActionReference: {
+                                v: 1,
+                                sessionId: 's1',
+                                messageId: row.id,
+                                observedRevision: 'revision-1',
+                            },
+                        }}
+                    />
+                </PluginMessageActionHostProvider>,
+            );
+
+            expect(screen.findByTestId('plugin-message-action:acme.preview/open-preview')).toBeTruthy();
+        }
     });
 
     it('exports transcript message views through React memo boundaries', async () => {

@@ -11,6 +11,10 @@ import type {
 import type {
     VoiceMachineErrorKind,
 } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
+import type {
+    VoiceAudioSessionCoordinator,
+    VoiceAudioSessionPlatformEvent,
+} from '@happier-dev/audio-stream-native';
 
 export const VOICE_DICTATION_LIMITS = Object.freeze({
     // Dictation is one utterance, not a conversational session. One minute is
@@ -34,6 +38,7 @@ const TRANSCRIPTION_DEADLINE = Symbol('voice_dictation_transcription_deadline');
 
 export type VoiceDictationFailureReason =
     | 'capture_failed'
+    | 'provider_unavailable'
     | 'capture_start_deadline_exceeded'
     | 'capture_duration_exceeded'
     | 'transcription_deadline_exceeded'
@@ -74,6 +79,7 @@ type DictationCaptureOwner = Pick<
 type ActiveDictation = {
     sessionId: string;
     provider: LocalVoiceCaptureProvider;
+    executionMachineId: string | null;
     settings: any;
     abortController: AbortController;
     phase: 'starting' | 'listening' | 'transcribing';
@@ -99,6 +105,8 @@ export type VoiceDictationController = Readonly<{
 export function createVoiceDictationController(deps: Readonly<{
     captureOwner: DictationCaptureOwner;
     getSettings: () => any;
+    nativeAudioSessionCoordinator?: VoiceAudioSessionCoordinator | null;
+    resolveExecutionMachineId?: () => string | null;
     transcribeRecordedAudio: (
         params: RecordedAudioTranscriptionRequest,
     ) => Promise<string | null>;
@@ -117,6 +125,7 @@ export function createVoiceDictationController(deps: Readonly<{
     };
     let active: ActiveDictation | null = null;
     let nextFailureId = 1;
+    let nativeLifecycleWork = Promise.resolve();
 
     const publish = (next: VoiceDictationSnapshot): void => {
         if (
@@ -330,6 +339,13 @@ export function createVoiceDictationController(deps: Readonly<{
         });
         try {
             const stopped = await stopCapture(attempt);
+            if (stopped.provider === 'recorded_audio') {
+                // `stopCapture` may finish after navigation/native lifecycle
+                // cancellation. Retain its late artifact before the terminal
+                // currentness check so the shared `finally` cleanup cannot
+                // leak the temporary recording.
+                attempt.recordedAudioUri = stopped.uri;
+            }
             if (
                 attempt.cancelled
                 || attempt.failed
@@ -340,7 +356,6 @@ export function createVoiceDictationController(deps: Readonly<{
 
             let rawText: string | null;
             if (stopped.provider === 'recorded_audio') {
-                attempt.recordedAudioUri = stopped.uri;
                 if (!stopped.uri) {
                     rawText = null;
                 } else {
@@ -370,6 +385,7 @@ export function createVoiceDictationController(deps: Readonly<{
                         deps.transcribeRecordedAudio({
                             sessionId: attempt.sessionId,
                             uri: stopped.uri,
+                            executionMachineId: attempt.executionMachineId,
                             settings: attempt.settings,
                             signal: attempt.abortController.signal,
                         }),
@@ -461,6 +477,29 @@ export function createVoiceDictationController(deps: Readonly<{
         ]);
     };
 
+    const isTerminalNativeLifecycleEvent = (
+        event: VoiceAudioSessionPlatformEvent,
+    ): boolean => (
+        event.kind === 'interruption_began'
+        || (event.kind === 'interruption_ended' && !event.shouldResume)
+        || (event.kind === 'focus_changed' && event.state === 'lost_permanent')
+        || (event.kind === 'lifecycle_changed' && event.state === 'background')
+    );
+
+    deps.nativeAudioSessionCoordinator?.subscribe((event) => {
+        if (!isTerminalNativeLifecycleEvent(event)) return;
+        // The coordinator already rejects stale native generations. Retain the
+        // exact active attempt so queued cleanup cannot terminate a later retry.
+        const attempt = active;
+        if (!attempt) return;
+        nativeLifecycleWork = nativeLifecycleWork
+            .catch(() => undefined)
+            .then(async () => {
+                if (active !== attempt) return;
+                await cancel(attempt.sessionId);
+            });
+    });
+
     const start = async (
         sessionId: string,
     ): Promise<VoiceDictationToggleResult> => {
@@ -471,6 +510,7 @@ export function createVoiceDictationController(deps: Readonly<{
         const attempt: ActiveDictation = {
             sessionId,
             provider: plan.provider,
+            executionMachineId: deps.resolveExecutionMachineId?.() ?? null,
             settings,
             abortController: new AbortController(),
             phase: 'starting',
@@ -555,7 +595,9 @@ export function createVoiceDictationController(deps: Readonly<{
             }
             failAttempt(attempt, {
                 kind: error.kind,
-                reason: 'capture_failed',
+                reason: error.kind === 'provider_error'
+                    ? 'provider_unavailable'
+                    : 'capture_failed',
             });
             void cleanup(attempt);
         },

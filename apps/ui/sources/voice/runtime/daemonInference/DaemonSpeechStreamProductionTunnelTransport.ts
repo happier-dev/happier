@@ -69,6 +69,7 @@ import { createServerScopedRelaySocket } from '@/sync/runtime/orchestration/serv
 import { createDaemonSpeechStreamCarrierAdapter } from './DaemonSpeechStreamCarrier';
 import { createDaemonSpeechStreamTunnelTransport } from './DaemonSpeechStreamTunnelTransport';
 import { daemonSpeechStreamDiagnostics } from './daemonSpeechStreamDiagnostics';
+import { readDaemonSpeechStreamQaRouteRequirement } from './daemonSpeechStreamQaRouteRequirement';
 import type {
   DaemonVoiceInferenceStreamingSttTransportFactoryInput,
   DaemonVoiceInferenceStreamingSttTransportSelection,
@@ -117,6 +118,7 @@ export type ProductionVoiceMediaTunnelInput = Readonly<{
   requestId: string;
   authority: VoiceMediaApplicationAuthorityV1;
   signal: AbortSignal | null;
+  requiredRouteKind?: 'server_relay';
 }>;
 
 export type OpenedProductionVoiceMediaTunnel = Readonly<{
@@ -974,10 +976,11 @@ export async function openProductionVoiceMediaTunnel(
   const directPeerEnabled = serverFeatures
     ? readServerEnabledBit(serverFeatures, 'machines.tunnel.directPeer') === true
     : false;
+  const shouldAttemptDirect = directPeerEnabled && input.requiredRouteKind !== 'server_relay';
   let signingUnavailable: PeerRouteSigningIdentityUnavailable | null = null;
   let directProofVersion: 1 | 2 | null = null;
   let negotiatedEndpoint: PeerLoopbackEndpointCandidateV1 | null = null;
-  if (directPeerEnabled) {
+  if (shouldAttemptDirect) {
     const signingReadiness = resolvePeerRouteSigningReadiness(credentials);
     if (signingReadiness.status === 'unavailable') {
       const preflight = resolvePeerRouteCallerProofNegotiation({ credentials, serverFeatures });
@@ -1023,7 +1026,7 @@ export async function openProductionVoiceMediaTunnel(
     machineId: input.machineTarget.machineId,
     requestId: input.requestId,
   });
-  if (directPeerEnabled && directProofVersion !== null) {
+  if (shouldAttemptDirect && directProofVersion !== null) {
       const endpoint = negotiatedEndpoint ?? readEndpointFromMachineState({
         serverId: server.serverId,
         machineId: input.machineTarget.machineId,
@@ -1077,10 +1080,12 @@ export async function openProductionVoiceMediaTunnel(
 export async function createProductionDaemonSpeechStreamingSttTransport(
   input: DaemonVoiceInferenceStreamingSttTransportFactoryInput,
 ): Promise<DaemonVoiceInferenceStreamingSttTransportSelection | null> {
+  const requiredRouteKind = readDaemonSpeechStreamQaRouteRequirement(input.sessionId);
   const opened = await openProductionVoiceMediaTunnel({
     machineTarget: input.machineTarget,
     requestId: input.requestId,
     signal: input.signal,
+    ...(requiredRouteKind ? { requiredRouteKind } : {}),
     authority: {
       v: 1,
       applicationKind: 'speech_transcription',
@@ -1089,7 +1094,12 @@ export async function createProductionDaemonSpeechStreamingSttTransport(
         createSpeechTranscriptionApplicationAuthorityDigestV1(input.requestId),
     },
   });
-  if (!opened) return null;
+  if (!opened) {
+    if (requiredRouteKind === 'server_relay') {
+      throw new Error('voice_qa_required_server_relay_unavailable');
+    }
+    return null;
+  }
   return createSelection({
     stream: opened.stream,
     routeKind: opened.routeKind,

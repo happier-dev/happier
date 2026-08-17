@@ -7,7 +7,7 @@ import {
 import { installPluginUiHostRuntimeExternalsGlobal } from '../shared/hostRuntimeExternals';
 import type {
     PluginReactNativeLoaderBackend,
-    RepackInstalledArtifactModuleReference,
+    PluginReactNativeExecutableModuleReference,
 } from './loader';
 import type { PluginReactNativeExecutableExport } from './loader';
 import { resolvePluginReactNativeExecutableExport } from './moduleNamespace';
@@ -43,7 +43,7 @@ function loaderError(code: string, diagnostics: readonly string[]): Error {
 
 function resolveReactNativeWebExecutableExport(
     namespace: PluginWebModuleNamespace,
-    moduleReference?: RepackInstalledArtifactModuleReference,
+    moduleReference?: PluginReactNativeExecutableModuleReference,
 ): PluginReactNativeExecutableExport {
     const exportName = moduleReference?.exportName ?? 'renderSurface';
     const exported = resolvePluginReactNativeExecutableExport(namespace, exportName);
@@ -55,7 +55,7 @@ function resolveReactNativeWebExecutableExport(
 
 async function instantiateReactNativeWebModule(
     bytes: Uint8Array,
-    moduleReference: RepackInstalledArtifactModuleReference | undefined,
+    moduleReference: PluginReactNativeExecutableModuleReference | undefined,
     importModule: (url: string) => Promise<PluginWebModuleNamespace>,
 ): Promise<PluginReactNativeExecutableExport> {
     installPluginUiHostRuntimeExternalsGlobal();

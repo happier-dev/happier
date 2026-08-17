@@ -424,6 +424,46 @@ function resolveBadgeModel(params: LocalActivityBadgeSnapshotSelectorParams, now
     };
 }
 
+/**
+ * The store slices this selector's derivation reads. Identity of each is the cheapest sound proof
+ * that a commit cannot have moved the badge: the store replaces a slice object whenever any record
+ * inside it changes.
+ */
+type BadgeSnapshotSourceIdentity = Readonly<{
+    concurrentSessionListCacheByServerId: StorageState['concurrentSessionListCacheByServerId'];
+    deltaRevision: number | null;
+    isDataReady: boolean;
+    sessionListIndexByServerId: StorageState['sessionListIndexByServerId'];
+    sessionListRenderables: StorageState['sessionListRenderables'];
+    sessionMessages: StorageState['sessionMessages'];
+    sessions: StorageState['sessions'];
+}>;
+
+function readBadgeSnapshotSourceIdentity(state: StorageState): BadgeSnapshotSourceIdentity {
+    return {
+        concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+        deltaRevision: state.sessionListRenderableDelta?.revision ?? null,
+        isDataReady: state.isDataReady,
+        sessionListIndexByServerId: state.sessionListIndexByServerId,
+        sessionListRenderables: state.sessionListRenderables,
+        sessionMessages: state.sessionMessages,
+        sessions: state.sessions,
+    };
+}
+
+function isSameBadgeSnapshotSourceIdentity(
+    previous: BadgeSnapshotSourceIdentity,
+    state: StorageState,
+): boolean {
+    return previous.sessions === state.sessions
+        && previous.sessionListRenderables === state.sessionListRenderables
+        && previous.sessionListIndexByServerId === state.sessionListIndexByServerId
+        && previous.concurrentSessionListCacheByServerId === state.concurrentSessionListCacheByServerId
+        && previous.sessionMessages === state.sessionMessages
+        && previous.isDataReady === state.isDataReady
+        && previous.deltaRevision === (state.sessionListRenderableDelta?.revision ?? null);
+}
+
 export function createLocalActivityBadgeSnapshotSelector(
     params: LocalActivityBadgeSnapshotSelectorParams,
 ): (state: StorageState) => LocalActivityBadgeSnapshot {
@@ -435,11 +475,24 @@ export function createLocalActivityBadgeSnapshotSelector(
     let previousSnapshot: LocalActivityBadgeSnapshot | null = null;
     let previousDeltaRevision: number | null = null;
     let previousNowMs: number | null = null;
+    let previousSourceIdentity: BadgeSnapshotSourceIdentity | null = null;
 
     return (state) => {
+        const renderableDelta = state.sessionListRenderableDelta;
+        // A store commit that moved none of this badge's sources cannot change its snapshot, so it
+        // must cost O(1) rather than the full O(sessions) signature pass below. Every store slice the
+        // derivation reads is listed here; narrowing the set would let a real change be skipped.
+        if (
+            previousSnapshot !== null
+            && previousSourceIdentity !== null
+            && isSameBadgeSnapshotSourceIdentity(previousSourceIdentity, state)
+        ) {
+            return previousSnapshot;
+        }
+        previousSourceIdentity = readBadgeSnapshotSourceIdentity(state);
+
         const now = new Date();
         const nowMs = now.getTime();
-        const renderableDelta = state.sessionListRenderableDelta;
         if (
             previousSnapshot
             && renderableDelta

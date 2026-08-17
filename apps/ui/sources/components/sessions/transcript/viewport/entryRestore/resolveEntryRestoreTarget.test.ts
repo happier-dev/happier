@@ -237,8 +237,12 @@ describe('resolve entry restore target', () => {
         }))).toEqual({ kind: 'none', reason: 'content-fits-viewport' });
     });
 
-    it('still resolves anchors while an under-filled fill has not settled', () => {
-        expect(resolveEntryRestoreTarget(buildParams({
+    it('keeps an anchored restore alive while an under-filled fill has not settled', () => {
+        // An under-filled UNSETTLED list must not take the final
+        // `content-fits-viewport` verdict, which would close the transaction and
+        // permanently forfeit the restore. It stays a WAIT verdict, and the same
+        // anchor resolves as soon as the fill produces a scrollable range.
+        const underFilled = buildParams({
             contentMeasured: { contentHeight: 500, layoutHeight: 800 },
             fillSettled: false,
             snapshot: {
@@ -246,7 +250,94 @@ describe('resolve entry restore target', () => {
                 offsetY: 120,
                 anchor: { itemId: 'msg:m-20', messageId: 'm-20', itemOffsetPx: 84 },
             },
-        }))).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 84 });
+        });
+
+        expect(resolveEntryRestoreTarget(underFilled)).toEqual({ kind: 'none', reason: 'content-unmeasured' });
+
+        expect(resolveEntryRestoreTarget({
+            ...underFilled,
+            contentMeasured: { contentHeight: 4_000, layoutHeight: 800 },
+        })).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 84 });
+    });
+
+    describe('anchor writes require a measured scrollable range', () => {
+        const anchoredSnapshot = {
+            shouldFollowBottom: false,
+            offsetY: 600,
+            anchor: { itemId: 'msg:m-20', messageId: 'm-20', itemOffsetPx: 84 },
+        } as const;
+
+        it('waits instead of issuing an anchor write into a list with no scrollable range', () => {
+            // Native arms the entry with the content height ZEROED by construction,
+            // so an anchor target resolved on the data fact alone becomes a
+            // scrollToIndex into a list that can only land at offset 0 — and the
+            // entry transaction counts that landing as its one authorized write.
+            expect(resolveEntryRestoreTarget(buildParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 0, layoutHeight: 800 },
+                fillSettled: false,
+            }))).toEqual({ kind: 'none', reason: 'content-unmeasured' });
+
+            // Measured, but the scrollable range is exactly zero.
+            expect(resolveEntryRestoreTarget(buildParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 800, layoutHeight: 800 },
+                fillSettled: false,
+            }))).toEqual({ kind: 'none', reason: 'content-unmeasured' });
+
+            // Under-filled while the fill has not settled.
+            expect(resolveEntryRestoreTarget(buildParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 500, layoutHeight: 800 },
+                fillSettled: false,
+            }))).toEqual({ kind: 'none', reason: 'content-unmeasured' });
+
+            // Content measured but the viewport is not laid out yet.
+            expect(resolveEntryRestoreTarget(buildParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 4_000, layoutHeight: 0 },
+                fillSettled: false,
+            }))).toEqual({ kind: 'none', reason: 'content-unmeasured' });
+        });
+
+        it('waits for the same geometry before restoring through a nearest surviving anchor', () => {
+            expect(resolveEntryRestoreTarget(buildParams({
+                snapshot: {
+                    shouldFollowBottom: false,
+                    offsetY: 600,
+                    anchor: { itemId: 'msg:m-25', messageId: 'm-25', itemOffsetPx: 48 },
+                },
+                contentMeasured: { contentHeight: 0, layoutHeight: 800 },
+                fillSettled: false,
+            }))).toEqual({ kind: 'none', reason: 'content-unmeasured' });
+        });
+
+        it('issues the anchor write on the first resolve that carries a real scrollable range', () => {
+            // The wait verdict is a no-op at the owner, so the existing re-drive
+            // (layout effect keyed on list content/layout height) re-resolves these
+            // same params once geometry exists.
+            const unmeasured = buildParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 0, layoutHeight: 800 },
+                fillSettled: false,
+            });
+            expect(resolveEntryRestoreTarget(unmeasured)).toEqual({ kind: 'none', reason: 'content-unmeasured' });
+
+            expect(resolveEntryRestoreTarget({
+                ...unmeasured,
+                contentMeasured: { contentHeight: 801, layoutHeight: 800 },
+            })).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 84 });
+        });
+
+        it('gates on the measured range and not on fill settle', () => {
+            // A real scrollable range restores immediately, mid-fill: waiting for
+            // fillSettled would push the write past the first-paint cover deadline.
+            expect(resolveEntryRestoreTarget(buildParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 4_000, layoutHeight: 800 },
+                fillSettled: false,
+            }))).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 84 });
+        });
     });
 
     it('returns none for an empty transcript', () => {

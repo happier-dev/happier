@@ -5,9 +5,13 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { normalizeVoiceSettingsServerDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import {
   ConnectedServiceCredentialRecordV1Schema,
+  AccountEncryptionMigrateUnsignedRequestSchema,
+  attachAccountEncryptionMigrateProofSignatureV1,
+  createAccountEncryptionMigrateProofSigningInputV1,
   assertConnectedServiceCredentialRecordBinding,
   sealAccountScopedBlobCiphertext,
   sealConnectedServiceCredentialCiphertext,
+  type ConnectedServiceCredentialRevisionBoundaryV1,
   type ConnectedServiceId,
   type QualifiedConnectedAccountConfigurationSnapshotV4,
   type QualifiedConnectedAccountCredentialSnapshotV4,
@@ -25,13 +29,15 @@ import {
 } from '@/sync/domains/automations/automationTemplateTransport';
 
 import {
-  AccountEncryptionMigrateRequestSchema,
   type AccountEncryptionMigrateRequest,
 } from '@/sync/api/account/apiAccountEncryptionMigrate';
 import {
   qualifiedConnectedAccountLegacyProjectionKeys,
   resealQualifiedConnectedAccountMigrationCredentials,
 } from './resealQualifiedConnectedAccountMigrationCredentials';
+import type {
+  AccountEncryptionMigrationStorageDirectives,
+} from './buildAccountEncryptionMigrationStorageDirectives';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -42,16 +48,27 @@ type ConnectedServiceCredentialMetadataInput = Readonly<{
 
 export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonly<{
   credentials: AuthCredentials;
-  keyProof: NonNullable<AccountEncryptionMigrateRequest['keyProof']>;
+  accountId: string;
+  expectedAccountVersion: number;
+  expectedSigningKeyFingerprint: string | null;
+  expectedContentKeyFingerprint: string | null;
+  keyProof: Readonly<{
+    v: 1;
+    publicKey: string;
+    contentPublicKey: string;
+    contentPublicKeySig: string;
+    sign: (input: Uint8Array) => string;
+  }>;
   expectedSettingsVersion: number;
   settings: Settings;
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
-  automations: ReadonlyArray<Readonly<{ id: string; templateCiphertext: string }>>;
+  automations: ReadonlyArray<Readonly<{ id: string; templateVersion: number; templateCiphertext: string }>>;
+  storageDirectives: AccountEncryptionMigrationStorageDirectives;
   fetchConnectedServiceCredentialPlain: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     content: Readonly<{ t: 'plain'; v: unknown }>;
     metadata?: ConnectedServiceCredentialMetadataInput;
-  }>>;
+  }> & ConnectedServiceCredentialRevisionBoundaryV1>;
   fetchQualifiedConnectedAccountCredential?: (
     ref: QualifiedConnectedAccountRef,
   ) => Promise<QualifiedConnectedAccountCredentialSnapshotV4>;
@@ -102,6 +119,14 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
         serviceId: profile.serviceId,
         profileId: profile.profileId,
       });
+      if (
+        fetched.revisionSemantics !== 'revisioned'
+        || !fetched.credentialRevision
+      ) {
+        throw new Error(
+          `Connected service credential revision is unavailable (${profile.serviceId}/${profile.profileId})`,
+        );
+      }
       if (!fetched?.content || fetched.content.t !== 'plain') {
         throw new Error(`Unexpected connected service credential envelope (${profile.serviceId}/${profile.profileId})`);
       }
@@ -127,6 +152,7 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
         profileId: profile.profileId,
         kind: 'sealed',
         sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
+        expectedCredentialRevision: fetched.credentialRevision,
         metadata: {
           kind: record.kind,
           providerEmail,
@@ -179,7 +205,11 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
       if (!envelope) throw new Error(`Invalid automation template envelope (${automation.id})`);
 
       if (envelope.kind === AUTOMATION_TEMPLATE_ENVELOPE_KIND) {
-        templates.push({ automationId: automation.id, templateCiphertext: automation.templateCiphertext });
+        templates.push({
+          automationId: automation.id,
+          expectedTemplateVersion: automation.templateVersion,
+          templateCiphertext: automation.templateCiphertext,
+        });
         continue;
       }
 
@@ -198,16 +228,43 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
           }),
       });
 
-      templates.push({ automationId: automation.id, templateCiphertext: encryptedTemplateCiphertext });
+      templates.push({
+        automationId: automation.id,
+        expectedTemplateVersion: automation.templateVersion,
+        templateCiphertext: encryptedTemplateCiphertext,
+      });
     }
     return { action: 'migrate' as const, templates };
   })();
-  return AccountEncryptionMigrateRequestSchema.parse({
-    toMode: 'e2ee',
-    expectedSettingsVersion: params.expectedSettingsVersion,
-    settingsContent: { t: 'encrypted', c: settingsCiphertext },
-    connectedServices,
-    automations,
-    keyProof: params.keyProof,
+  const unsignedRequest =
+    AccountEncryptionMigrateUnsignedRequestSchema.parse({
+      toMode: 'e2ee',
+      expectedAccountVersion: params.expectedAccountVersion,
+      expectedSigningKeyFingerprint:
+        params.expectedSigningKeyFingerprint,
+      expectedContentKeyFingerprint:
+        params.expectedContentKeyFingerprint,
+      expectedSettingsVersion: params.expectedSettingsVersion,
+      settingsContent: { t: 'encrypted', c: settingsCiphertext },
+      connectedServices,
+      automations,
+      keyProof: {
+        v: 1,
+        publicKey: params.keyProof.publicKey,
+        contentPublicKey: params.keyProof.contentPublicKey,
+        contentPublicKeySig: params.keyProof.contentPublicKeySig,
+      },
+      ...params.storageDirectives,
+    });
+  const signature = params.keyProof.sign(
+    createAccountEncryptionMigrateProofSigningInputV1({
+      request: unsignedRequest,
+      accountId: params.accountId,
+      sourceMode: 'plain',
+    }),
+  );
+  return attachAccountEncryptionMigrateProofSignatureV1({
+    request: unsignedRequest,
+    signature,
   });
 }

@@ -198,9 +198,6 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: Record<string, unknown>) => React.createElement('Avatar', props),
 }));
 
-vi.mock('@/components/ui/icons/DependabotIcon', () => ({
-    DependabotIcon: (props: Record<string, unknown>) => React.createElement('DependabotIcon', props),
-}));
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
     MachineCliGlyphs: (props: Record<string, unknown>) => React.createElement('MachineCliGlyphs', props),

@@ -11,7 +11,7 @@ import { useMessagesByIds } from '@/sync/domains/state/storage';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { ToolCallsGroupViewWithSessionCommon } from '@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView';
 import { TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveToolCallsGroupStatus } from '@/components/sessions/transcript/toolCalls/units/toolCallsGroupChrome';
@@ -96,6 +96,13 @@ export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsG
         props.onSetExpanded({ toolCallsGroupId: props.toolCallsGroupId, toolMessageIds: props.toolMessageIds, expanded });
     }, [props.onSetExpanded, props.toolCallsGroupId, props.toolMessageIds]);
     const webPrependAnchorId = toolMessagesForSession[toolMessagesForSession.length - 1]?.id ?? props.toolCallsGroupId;
+    // Composed at render time so the user's content-width preference keeps applying;
+    // the module-scope stylesheet below evaluates once.
+    const centeredContentMaxWidthStyle = useLayoutMaxWidthStyle();
+    const centeredContentStyle = React.useMemo(
+        () => [styles.centeredContent, centeredContentMaxWidthStyle],
+        [centeredContentMaxWidthStyle],
+    );
 
     if (toolMessagesForSession.length === 0) return null;
 
@@ -103,7 +110,7 @@ export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsG
         <View testID={`${TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX}${webPrependAnchorId}`}>
             <TranscriptEnterWrapper id={props.toolCallsGroupId} createdAt={createdAt}>
                 <View style={styles.centered}>
-                    <View style={styles.centeredContent}>
+                    <View style={centeredContentStyle}>
                         <ToolCallsGroupViewWithSessionCommon
                             id={props.toolCallsGroupId}
                             status={status}
@@ -138,6 +145,5 @@ const styles = StyleSheet.create(() => ({
     centeredContent: {
         flexGrow: 1,
         flexBasis: 0,
-        maxWidth: layout.maxWidth,
     },
 }));

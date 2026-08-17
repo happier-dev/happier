@@ -6,18 +6,25 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { clearTempData, peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
-import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
-import type { SessionOrganizationFolder } from '@happier-dev/protocol';
-import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import type {
+    SessionOrganizationProjection,
+    UiSessionOrganizationFolder,
+    UiSessionOrganizationTag,
+} from '@/sync/domains/session/organization';
+import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { SessionOrganizationContentEnvelopeSchema } from '@happier-dev/protocol';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let mockSessionId = 'session-1';
 let mockServerId: string | undefined;
 let mockSession: any = null;
+let mockProfile = { ...profileDefaults };
 let isDataReady = true;
 let routeHydrationState: SessionRouteHydrationState = { kind: 'available', sessionId: 'session-1' };
 let sessionIsConnected = true;
@@ -59,8 +66,6 @@ const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
 const modalPromptSpy = vi.fn(async () => 'urgent, review');
 const applySessionListRenderablePatchesSpy = vi.fn();
-const setPinnedSessionKeysV1Spy = vi.fn();
-const setSessionTagsV1Spy = vi.fn();
 const openMoveSheetSpy = vi.fn(async () => null as any);
 const setSessionFolderAssignmentSpy = vi.fn(async () => undefined);
 const setSessionPinSpy = vi.fn(async () => undefined);
@@ -93,11 +98,11 @@ const resolveSessionOrganizationMutationScopeSpy = vi.fn(
     }),
 );
 let hideInactiveSessions = false;
-let pinnedSessionKeysV1: unknown = null;
-let sessionTagsV1: unknown = null;
-let sessionFoldersV1: unknown = null;
-let acpCatalogSettingsV1: unknown = null;
-let backendEnabledByTargetKey: unknown = null;
+let organizationPinnedSessionKeys: unknown = null;
+let organizationTagsBySessionKey: unknown = null;
+let organizationFolders: unknown = null;
+let acpCatalogSettingsV1: Settings['acpCatalogSettingsV1'] | null = null;
+let backendEnabledByTargetKey: Settings['backendEnabledByTargetKey'] | null = null;
 let resolvedServerId = 'server-1';
 let sessionHandoffFeatureEnabled = false;
 let sessionFoldersFeatureEnabled = false;
@@ -163,33 +168,60 @@ function stripServerSessionKey(serverId: string, keyRaw: unknown): string | null
     return sessionId || null;
 }
 
-function buildSessionOrganizationProjectionFromLegacyFixtures(serverIdRaw: unknown): SessionOrganizationProjection {
+function buildSessionOrganizationProjectionFromFixtures(serverIdRaw: unknown): SessionOrganizationProjection {
     const serverId = typeof serverIdRaw === 'string' && serverIdRaw.trim()
         ? serverIdRaw.trim()
         : 'server-1';
-    const pinnedSessionIds = Array.isArray(pinnedSessionKeysV1)
-        ? pinnedSessionKeysV1
+    const pinnedSessionIds = Array.isArray(organizationPinnedSessionKeys)
+        ? organizationPinnedSessionKeys
             .map((key) => stripServerSessionKey(serverId, key))
             .filter((sessionId): sessionId is string => sessionId != null)
         : [];
-    const tagAssignmentsBySessionId = isPlainRecord(sessionTagsV1)
-        ? Object.fromEntries(
-            Object.entries(sessionTagsV1)
-                .map(([key, tags]) => {
-                    const sessionId = stripServerSessionKey(serverId, key);
-                    return sessionId && Array.isArray(tags) ? [sessionId, tags] : null;
-                })
-                .filter((entry): entry is [string, string[]] => entry != null),
-        )
-        : {};
-    const folders = isPlainRecord(sessionFoldersV1) && Array.isArray(sessionFoldersV1.folders)
-        ? sessionFoldersV1.folders
+    const tagIdByLabel = new Map<string, string>();
+    const tagsById: Record<string, UiSessionOrganizationTag> = {};
+    const tagAssignmentsBySessionId: Record<string, string[]> = {};
+    if (isPlainRecord(organizationTagsBySessionKey)) {
+        for (const [key, tags] of Object.entries(organizationTagsBySessionKey)) {
+            const sessionId = stripServerSessionKey(serverId, key);
+            if (!sessionId || !Array.isArray(tags)) continue;
+            const tagIds: string[] = [];
+            for (const tag of tags) {
+                if (typeof tag !== 'string') continue;
+                let tagId = tagIdByLabel.get(tag);
+                if (!tagId) {
+                    tagId = `fixture-tag-${tagIdByLabel.size + 1}`;
+                    tagIdByLabel.set(tag, tagId);
+                    tagsById[tagId] = {
+                        tagId,
+                        tagKey: tagId,
+                        sortKey: null,
+                        display: { t: 'plain', v: { label: tag } },
+                        displayState: { status: 'available', value: { label: tag } },
+                        archivedAt: null,
+                        createdAt: 1,
+                        updatedAt: 1,
+                    };
+                }
+                tagIds.push(tagId);
+            }
+            tagAssignmentsBySessionId[sessionId] = tagIds;
+        }
+    }
+    const folders = isPlainRecord(organizationFolders) && Array.isArray(organizationFolders.folders)
+        ? organizationFolders.folders
         : [];
-    const folderEntries: Array<[string, SessionOrganizationFolder]> = [];
+    const folderEntries: Array<[string, UiSessionOrganizationFolder]> = [];
     for (const folder of folders) {
         if (!isPlainRecord(folder)) continue;
         const folderId = typeof folder.id === 'string' ? folder.id.trim() : '';
         if (!folderId) continue;
+        const parsedWorkspace = SessionOrganizationContentEnvelopeSchema.safeParse({
+            t: 'plain',
+            v: folder.workspace,
+        });
+        const workspace = parsedWorkspace.success && parsedWorkspace.data.t === 'plain'
+            ? parsedWorkspace.data.v
+            : null;
         folderEntries.push([folderId, {
             folderId,
             folderKey: folderId,
@@ -199,7 +231,16 @@ function buildSessionOrganizationProjectionFromLegacyFixtures(serverIdRaw: unkno
                 t: 'plain',
                 v: {
                     name: typeof folder.name === 'string' ? folder.name : folderId,
-                    workspace: folder.workspace,
+                    workspace,
+                },
+            },
+            displayState: {
+                status: 'available',
+                value: {
+                    name: typeof folder.name === 'string'
+                        ? folder.name
+                        : null,
+                    workspace,
                 },
             },
             sortKey: typeof folder.sortKey === 'string' ? folder.sortKey : null,
@@ -219,7 +260,7 @@ function buildSessionOrganizationProjectionFromLegacyFixtures(serverIdRaw: unkno
         ])),
         foldersById,
         folderAssignmentsBySessionId: {},
-        tagsById: {},
+        tagsById,
         tagAssignmentsBySessionId,
         orderEntriesByScopeKey: {},
         labelsByLabelKey: {},
@@ -281,6 +322,7 @@ installSessionRouteCommonModuleMocks({
                     }),
                 } as any,
                 useSession: (sessionId: string) => useSessionSpy(sessionId),
+                useProfile: () => mockProfile,
                 useIsDataReady: () => isDataReady,
                 useAllSessions: () => allSessionsState.current,
                 useAllMachines: () => allMachinesState.current,
@@ -295,15 +337,6 @@ installSessionRouteCommonModuleMocks({
                     if (key === 'hideInactiveSessions') {
                         return hideInactiveSessions;
                     }
-                    if (key === 'pinnedSessionKeysV1') {
-                        return pinnedSessionKeysV1;
-                    }
-                    if (key === 'sessionTagsV1') {
-                        return sessionTagsV1;
-                    }
-                    if (key === 'sessionFoldersV1') {
-                        return sessionFoldersV1;
-                    }
                     if (key === 'acpCatalogSettingsV1') {
                         return acpCatalogSettingsV1;
                     }
@@ -312,17 +345,8 @@ installSessionRouteCommonModuleMocks({
                     }
                     return null;
                 } }),
-                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    if (key === 'pinnedSessionKeysV1') {
-                        return [pinnedSessionKeysV1, setPinnedSessionKeysV1Spy];
-                    }
-                    if (key === 'sessionTagsV1') {
-                        return [sessionTagsV1, setSessionTagsV1Spy];
-                    }
-                    return [null, vi.fn()];
-                }),
                 useSessionOrganizationProjection: (serverId: string | null | undefined) =>
-                    buildSessionOrganizationProjectionFromLegacyFixtures(serverId),
+                    buildSessionOrganizationProjectionFromFixtures(serverId),
             },
         }),
 });
@@ -378,6 +402,11 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
+    machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
@@ -446,7 +475,6 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
 }));
 vi.mock('@/sync/domains/settings/actionsSettings', () => ({ isActionEnabledInState: () => true }));
 vi.mock('@/sync/domains/sessionFork/forkUiSupport', () => ({ canForkConversation: () => true }));
-vi.mock('@/sync/domains/sessionFork/executeSessionForkAction', () => ({ executeSessionForkAction: vi.fn() }));
 vi.mock('@/sync/domains/sessionHandoff/handoffUiSupport', () => ({ canHandoffConversation: () => true }));
 vi.mock('@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow', () => ({ runSessionHandoffPickerFlow: vi.fn() }));
 vi.mock('@happier-dev/protocol', async (importOriginal) => {
@@ -499,6 +527,7 @@ describe('/session/[id]/info', () => {
         mockSessionId = 'session-1';
         mockServerId = undefined;
         mockSession = null;
+        mockProfile = { ...profileDefaults };
         isDataReady = true;
         routeHydrationState = { kind: 'available', sessionId: 'session-1' };
         sessionIsConnected = true;
@@ -516,8 +545,6 @@ describe('/session/[id]/info', () => {
         modalConfirmSpy.mockClear();
         modalPromptSpy.mockClear();
         modalPromptSpy.mockResolvedValue('urgent, review');
-        setPinnedSessionKeysV1Spy.mockClear();
-        setSessionTagsV1Spy.mockClear();
         openMoveSheetSpy.mockClear();
         openMoveSheetSpy.mockResolvedValue(null);
         setSessionFolderAssignmentSpy.mockClear();
@@ -541,9 +568,9 @@ describe('/session/[id]/info', () => {
         resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation(() => null);
         machineRpcWithServerScopeSpy.mockRejectedValue(new Error('unreachable'));
         hideInactiveSessions = false;
-        pinnedSessionKeysV1 = null;
-        sessionTagsV1 = null;
-        sessionFoldersV1 = null;
+        organizationPinnedSessionKeys = null;
+        organizationTagsBySessionKey = null;
+        organizationFolders = null;
         acpCatalogSettingsV1 = null;
         backendEnabledByTargetKey = null;
         resolvedServerId = 'server-1';
@@ -700,10 +727,10 @@ describe('/session/[id]/info', () => {
             supported: true,
             projection: {
                 v: 1,
-                providersById: {
+                agentsById: {
                     claude: {
-                        providerId: 'claude',
-                        title: 'Claude Provider',
+                        id: 'claude',
+                        title: 'Claude Agent',
                         subtitle: null,
                         channel: 'stable',
                         isBuiltIn: true,
@@ -711,8 +738,8 @@ describe('/session/[id]/info', () => {
                 },
                 backendsById: {
                     claude: {
-                        backendId: 'claude',
-                        providerId: 'claude',
+                        id: 'claude',
+                        agentId: 'claude',
                         title: 'Claude (daemon)',
                         subtitle: null,
                         catalogAgentId: 'claude',
@@ -1087,8 +1114,8 @@ describe('/session/[id]/info', () => {
 
     it('surfaces pin and tag actions from the session view quick actions', async () => {
         mockServerId = 'server-b';
-        pinnedSessionKeysV1 = [];
-        sessionTagsV1 = { 'server-1:session-1': ['existing'] };
+        organizationPinnedSessionKeys = [];
+        organizationTagsBySessionKey = { 'server-1:session-1': ['existing'] };
         mockSession = {
             id: 'session-1',
             active: false,
@@ -1113,7 +1140,6 @@ describe('/session/[id]/info', () => {
             sessionId: 'session-1',
             pinned: true,
         }));
-        expect(setPinnedSessionKeysV1Spy).not.toHaveBeenCalled();
 
         await screen.pressByTestIdAsync('session-info-session-tags-edit');
         expect(modalPromptSpy).toHaveBeenCalledWith(
@@ -1129,12 +1155,11 @@ describe('/session/[id]/info', () => {
             sessionId: 'session-1',
             tags: ['urgent', 'review'],
         }));
-        expect(setSessionTagsV1Spy).not.toHaveBeenCalled();
     });
 
     it('surfaces the existing info-screen error when organization mutation scope is unavailable', async () => {
         mockServerId = 'server-b';
-        pinnedSessionKeysV1 = [];
+        organizationPinnedSessionKeys = [];
         mockSession = {
             id: 'session-1',
             active: false,
@@ -1165,7 +1190,7 @@ describe('/session/[id]/info', () => {
     it('surfaces move-to-folder from the session view when folder targets match the session workspace', async () => {
         mockServerId = 'server-1';
         sessionFoldersFeatureEnabled = true;
-        sessionFoldersV1 = {
+        organizationFolders = {
             v: 1,
             folders: [{
                 id: 'folder-1',
@@ -1728,7 +1753,7 @@ describe('/session/[id]/info', () => {
     it('stops without archiving even when inactive sessions are hidden and unpinned', async () => {
         mockServerId = 'server-b';
         hideInactiveSessions = true;
-        pinnedSessionKeysV1 = [];
+        organizationPinnedSessionKeys = [];
         mockSession = {
             id: 'session-1',
             active: true,
@@ -1799,7 +1824,7 @@ describe('/session/[id]/info', () => {
     it('stops with the cached owning server id when route scope and preferred scope are unavailable', async () => {
         mockServerId = undefined;
         hideInactiveSessions = true;
-        pinnedSessionKeysV1 = [];
+        organizationPinnedSessionKeys = [];
         resolvedServerId = 'server-cache-info';
         resolveSessionTargetServerIdSpy.mockReturnValue(null);
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache-info');
@@ -1823,7 +1848,7 @@ describe('/session/[id]/info', () => {
     it('stops with the cached owning server id before a stale route server id', async () => {
         mockServerId = 'server-stale-route';
         hideInactiveSessions = true;
-        pinnedSessionKeysV1 = [];
+        organizationPinnedSessionKeys = [];
         resolvedServerId = 'server-preferred';
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache-info');
         mockSession = {
@@ -1846,7 +1871,7 @@ describe('/session/[id]/info', () => {
     it('stops without prompting to archive when the session is pinned', async () => {
         mockServerId = 'server-b';
         hideInactiveSessions = true;
-        pinnedSessionKeysV1 = ['server-1:session-1'];
+        organizationPinnedSessionKeys = ['server-1:session-1'];
         resolvedServerId = 'server-1';
         mockSession = {
             id: 'session-1',
@@ -2025,5 +2050,49 @@ describe('/session/[id]/info', () => {
             .filter((node: any) => node.props?.title === 'sessionInfo.renameSession');
 
         expect(renameItems).toHaveLength(0);
+    });
+
+    it('routes a session owner to remote permission grant management with the current server scope', async () => {
+        mockServerId = 'server-owner';
+        mockProfile = { ...profileDefaults, id: 'current-account' };
+        mockSession = {
+            id: 'session-1',
+            owner: 'current-account',
+            active: false,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            archivedAt: null,
+        };
+
+        const screen = await renderInfoScreen();
+
+        expect(screen.findByTestId('session-info-remote-permission-grants')).toBeTruthy();
+        await act(async () => {
+            screen.pressByTestId('session-info-remote-permission-grants');
+        });
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/permissions?serverId=server-owner');
+    });
+
+    it('does not expose remote permission grant management to a shared admin approver', async () => {
+        mockServerId = 'server-shared';
+        mockProfile = { ...profileDefaults, id: 'current-account' };
+        mockSession = {
+            id: 'session-1',
+            owner: 'other-account',
+            accessLevel: 'admin',
+            canApprovePermissions: true,
+            active: false,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            archivedAt: null,
+        };
+
+        const screen = await renderInfoScreen();
+
+        expect(screen.findByTestId('session-info-remote-permission-grants')).toBeNull();
     });
 });

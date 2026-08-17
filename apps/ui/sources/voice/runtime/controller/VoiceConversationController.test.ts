@@ -205,6 +205,53 @@ describe('VoiceConversationController', () => {
     await controller.stop();
   });
 
+  it('prepares provider authority after resource preflight but before media acquisition', async () => {
+    const order: string[] = [];
+    const fixture = createConnectionFixture('webrtc');
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({
+        preflight: async () => {
+          order.push('provider-preflight');
+          return { kind: 'ready' };
+        },
+        prepare: async () => {
+          order.push('provider-prepare');
+          return {
+            kind: 'prepared',
+            session: { config: {}, safeMetadata: null },
+          };
+        },
+      }),
+      machine: createMachineFixture().machine,
+      createConnection: async () => {
+        order.push('create-connection');
+        return fixture.connection;
+      },
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+      resources: {
+        preflight: async () => {
+          order.push('resource-preflight');
+        },
+        prepare: async () => {
+          order.push('resource-prepare');
+        },
+        release: async () => {},
+      },
+    });
+
+    await controller.start({ controlSessionId: 'pre-media-provider-authority' });
+
+    expect(order).toEqual([
+      'provider-preflight',
+      'resource-preflight',
+      'provider-prepare',
+      'resource-prepare',
+      'create-connection',
+    ]);
+    await controller.stop();
+  });
+
   it('releases attempt resources exactly once for declined starts and connected stops', async () => {
     const declinedPreflight = vi.fn(async () => {});
     const declinedPrepare = vi.fn(async () => {});
@@ -279,7 +326,7 @@ describe('VoiceConversationController', () => {
       code: 'mic_permission_denied',
     });
     expect(release).toHaveBeenCalledTimes(1);
-    expect(prepare).not.toHaveBeenCalled();
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(machine.transitions).toEqual(['connecting', 'disconnected']);
   });
 
@@ -315,6 +362,46 @@ describe('VoiceConversationController', () => {
     expect(createConnection).not.toHaveBeenCalled();
     expect(controller.getOwnedControlSessionId()).toBeNull();
     expect(machine.transitions).toEqual(['connecting', 'failed']);
+  });
+
+  it.each([
+    'session_refresh_failed',
+    'session_metadata_wait_timed_out',
+    'metadata_write_rejected',
+  ] as const)('preserves the bounded %s diagnostic when a coded start failure is recorded', async (reason) => {
+    const failed = vi.fn<VoiceConversationControllerDeps['machine']['failed']>();
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({
+        prepare: async () => {
+          throw Object.assign(new Error('private provider or transport detail'), {
+            code: 'VOICE_CONVERSATION_METADATA_COMMIT_FAILED',
+            reason,
+            cause: { secret: 'must-not-be-recorded' },
+          });
+        },
+      }),
+      machine: {
+        connecting: vi.fn(),
+        connected: vi.fn(),
+        ending: vi.fn(),
+        disconnected: vi.fn(),
+        failed,
+      },
+      createConnection: async () => createConnectionFixture().connection,
+      isSelectionCurrent: () => true,
+      onCanonicalEvent: async () => {},
+    });
+
+    await expect(controller.start({ controlSessionId: `metadata-${reason}` })).resolves.toEqual({
+      status: 'failed',
+      code: 'VOICE_CONVERSATION_METADATA_COMMIT_FAILED',
+    });
+    expect(failed).toHaveBeenCalledWith({
+      controlSessionId: `metadata-${reason}`,
+      attemptId: 1,
+      code: 'VOICE_CONVERSATION_METADATA_COMMIT_FAILED',
+      diagnosticReason: reason,
+    });
   });
 
   it('redacts an unsafe resource-preflight error code to the generic connection failure', async () => {
@@ -762,6 +849,7 @@ describe('VoiceConversationController', () => {
     await Promise.resolve();
     const stoppedBeforeStaleCleanup = replacementStopSettled;
     expect(controller.getOwnedControlSessionId()).toBe('shared-control-session');
+    expect(controller.getOwnedAttemptId()).toBe(2);
     expect(firstConnection.connect).toHaveBeenCalledTimes(1);
     expect(firstConnection.close).toHaveBeenCalledTimes(1);
     expect(secondConnection.connect).toHaveBeenCalledTimes(1);
@@ -772,6 +860,7 @@ describe('VoiceConversationController', () => {
     await replacementStop;
     expect(stoppedBeforeStaleCleanup).toBe(false);
     expect(controller.getOwnedControlSessionId()).toBe('shared-control-session');
+    expect(controller.getOwnedAttemptId()).toBe(2);
     expect(machine.transitions.at(-1)).toBe('connected');
     expect(releasePrepared).toHaveBeenCalledWith({
       controlSessionId: 'shared-control-session',
@@ -782,6 +871,7 @@ describe('VoiceConversationController', () => {
 
     await controller.stop();
     expect(secondConnection.close).toHaveBeenCalledTimes(1);
+    expect(controller.getOwnedAttemptId()).toBeNull();
   });
 
   it('does not publish failed A terminal state after same-session replacement B connects', async () => {
@@ -1544,5 +1634,61 @@ describe('VoiceConversationController', () => {
     expect(sessionLifecycle.ended).toHaveBeenCalledTimes(1);
     await controller.stop();
     expect(sessionLifecycle.ended).toHaveBeenCalledTimes(2);
+  });
+
+  it('ends the conversation when the selection goes stale under a live control stream', async () => {
+    const fixture = createConnectionFixture('webrtc');
+    fixture.events.push({ type: 'provider_event' });
+    let selectionCurrent = true;
+    const machine = createMachineFixture();
+    const controller = createVoiceConversationController({
+      adapter: createAdapter({
+        decodeControl: () => {
+          selectionCurrent = false;
+          return [{ type: 'input_speech_started' }];
+        },
+      }),
+      machine: machine.machine,
+      createConnection: async () => fixture.connection,
+      isSelectionCurrent: () => selectionCurrent,
+      onCanonicalEvent: async () => {},
+    });
+
+    await controller.start({ controlSessionId: 'stale-selection-control-stream' });
+
+    // A WebRTC provider keeps its media tracks alive independently of the
+    // control channel, so abandoning the pump without ending the attempt leaves
+    // the user still heard and still hearing while every transcript, tool call,
+    // and turn edge stops forever.
+    await vi.waitFor(() => expect(machine.transitions).toContain('disconnected'));
+    expect(fixture.close).toHaveBeenCalledWith({
+      code: 'replaced',
+      detail: 'voice_provider_not_selected',
+    });
+  });
+
+  it('ends the conversation when the selection goes stale under a live transport stream', async () => {
+    const fixture = createConnectionFixture('webrtc');
+    fixture.transportEvents.push({ type: 'webrtc_ice_state', state: 'connected' });
+    let selectionCurrent = true;
+    const machine = createMachineFixture();
+    const controller = createVoiceConversationController({
+      adapter: createAdapter(),
+      machine: machine.machine,
+      createConnection: async () => fixture.connection,
+      isSelectionCurrent: () => selectionCurrent,
+      onCanonicalEvent: async () => {},
+      onTransportEvent: async () => {
+        selectionCurrent = false;
+      },
+    });
+
+    await controller.start({ controlSessionId: 'stale-selection-transport-stream' });
+
+    await vi.waitFor(() => expect(machine.transitions).toContain('disconnected'));
+    expect(fixture.close).toHaveBeenCalledWith({
+      code: 'replaced',
+      detail: 'voice_provider_not_selected',
+    });
   });
 });

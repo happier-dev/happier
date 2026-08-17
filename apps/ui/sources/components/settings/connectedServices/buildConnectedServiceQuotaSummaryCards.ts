@@ -2,8 +2,6 @@ import { t } from '@/text';
 
 import type { ConnectedServiceQuotaSummary } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 
-import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
-
 export type ConnectedServiceQuotaSummaryCardMeter = Readonly<{
     key: string;
     label: string;
@@ -40,7 +38,7 @@ export function buildConnectedServiceQuotaSummaryCards(
 
         return {
             key: summary.key,
-            title: resolveConnectedServiceDisplayName(summary.serviceId, t),
+            title: summary.serviceLabel,
             value: formatRemainingPct(summary.primaryMeter?.remainingPct ?? null),
             subtitle: subtitleParts.join(' · ') || t('usage.noData.title'),
             meters: summary.meters.map((meter) => ({

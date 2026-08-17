@@ -119,7 +119,7 @@ vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
 }));
 
 vi.mock('@/sync/domains/workspaces/files/workspaceFileSearch', () => ({
-    workspaceFileSearchCache: { clearCache: (workspaceCacheKey: string) => clearWorkspaceFileSearchCacheSpy(workspaceCacheKey) },
+    workspaceFileSearchCache: { clearCache: (scope: unknown) => clearWorkspaceFileSearchCacheSpy(scope) },
     searchWorkspaceFiles: vi.fn(async () => []),
 }));
 
@@ -294,7 +294,13 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             screen.pressByTestId('repository-tree-refresh');
         });
 
-        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith('server:m1:/repo');
+        // Cleared BY SCOPE: the search cache derives its own key, so the refresh cannot name a
+        // different workspace than the one the tree is reading.
+        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith({
+            serverId: 'server',
+            machineId: 'm1',
+            rootPath: '/repo',
+        });
         expect(clearWorkspaceRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
         // Tree list remounts when switching between search-results and tree view.
         expect(mountCount.current).toBe(2);
@@ -318,7 +324,13 @@ describe('SessionRepositoryTreeBrowserView (toolbar)', () => {
             latestTransferOptions.onAfterUploadSuccess();
         });
 
-        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith('server:m1:/repo');
+        // Cleared BY SCOPE: the search cache derives its own key, so the refresh cannot name a
+        // different workspace than the one the tree is reading.
+        expect(clearWorkspaceFileSearchCacheSpy).toHaveBeenCalledWith({
+            serverId: 'server',
+            machineId: 'm1',
+            rootPath: '/repo',
+        });
         expect(clearWorkspaceRepositoryDirectoryCacheSpy).toHaveBeenCalledWith({ workspaceCacheKey: 'server:m1:/repo' });
         expect(screen.findAllByTestId('workspace-repository-tree-list')).toHaveLength(1);
         expect(reloadCount.current).toBe(2);

@@ -7,6 +7,7 @@ import { CodeBlockViewFrame } from './CodeBlockViewFrame';
 import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighlighter';
 import { Text } from '@/components/ui/text/Text';
 import { resolveCodeMonoFontFamily } from '../codeTypography';
+import { normalizeHappierCodeLanguage } from '@happier-dev/plugin-ui/presentation';
 
 import type { CodeBlockViewProps } from './codeBlockViewTypes';
 
@@ -24,7 +25,8 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     scrollTestID,
 }) => {
     const { theme } = useUnistyles();
-    const syntax = useCodeSyntaxHighlighting({ language });
+    const normalizedLanguage = normalizeHappierCodeLanguage(language) ?? null;
+    const syntax = useCodeSyntaxHighlighting({ language: normalizedLanguage });
 
     const maxBytes = syntax.maxBytes ?? 0;
     const maxLines = syntax.maxLines ?? 0;
@@ -63,7 +65,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
     return (
         <CodeBlockViewFrame
             code={code}
-            language={language}
+            language={normalizedLanguage}
             showHeaderRow={showHeaderRow}
             selectable={selectable}
             wrap={wrap}

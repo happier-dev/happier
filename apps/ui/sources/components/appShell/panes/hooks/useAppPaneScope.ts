@@ -1,15 +1,23 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { useAppPaneContext } from '../AppPaneProvider';
+import { usePaneOverlayFocusReturnRef } from './usePaneOverlayFocusReturnRef';
 import type { DetailsTab } from '../model/appPaneReducer';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { resolveDetailsTabOpenAs, type LastPreviewOpen } from './resolveDetailsTabOpenAs';
 import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
 import type {
     DetailsWorkspaceAxis,
+    DetailsWorkspaceOverlayState,
     DetailsWorkspacePlacement,
 } from '../details/workspace/detailsWorkspaceTypes';
 import type { PaneScopeState } from '../model/appPaneReducer';
+import type { SelectedPaneDestinationV1 } from '../model/selectedPaneDestination';
+import type {
+    PluginUiDestinationReferenceV1,
+    PluginUiInstanceKeyV1,
+} from '@happier-dev/protocol/plugins/ui';
+import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
 
 type AppPaneScopeDetailsStateView = {
     isOpen: boolean;
@@ -20,6 +28,7 @@ type AppPaneScopeDetailsStateView = {
     root?: ReturnType<typeof buildDetailsWorkspaceStateView>['root'];
     focusedGroupId?: string | null;
     maximizedGroupId?: string | null;
+    overlay?: DetailsWorkspaceOverlayState | null;
 };
 
 type AppPaneScopeStateView = {
@@ -28,23 +37,48 @@ type AppPaneScopeStateView = {
     bottom: PaneScopeState['bottom'];
 };
 
+/** Native capture handlers accepted by the React Native host at the scope boundary. */
+export type NativeOverlayFocusReturnCaptureProps = Readonly<{
+    onFocusCapture: (event: unknown) => void;
+    onTouchStartCapture: (event: unknown) => void;
+}>;
+
 export type AppPaneScopeApi = {
     scopeId: string;
     scopeState: AppPaneScopeStateView | null;
+    /** Native input capture props for the scope root that contains a pane opener. */
+    overlayFocusReturnCaptureProps?: NativeOverlayFocusReturnCaptureProps;
+    /** Ephemeral command-time focus for a Right overlay presentation. */
+    rightOverlayFocusReturnRef?: FocusReturnMutableRef;
+    /** Ephemeral command-time focus for the retained Details overlay. */
+    detailsOverlayFocusReturnRef?: FocusReturnMutableRef;
+    /** Ephemeral command-time focus for a Bottom overlay presentation. */
+    bottomOverlayFocusReturnRef?: FocusReturnMutableRef;
     openRight: (options?: Readonly<{ tabId?: string }>) => void;
     closeRight: () => void;
     setRightTab: (tabId: string) => void;
+    selectRightDestination: (destination: SelectedPaneDestinationV1) => void;
     setRightTabState: (tabId: string, nextState: unknown) => void;
     openBottom: (options?: Readonly<{ tabId?: string }>) => void;
     closeBottom: () => void;
     setBottomTab: (tabId: string) => void;
+    selectBottomDestination: (destination: SelectedPaneDestinationV1) => void;
     setBottomTabState: (tabId: string, nextState: unknown) => void;
     openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
-    replaceDetailsTab: (tabKey: string, tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
+    replaceDetailsTab: (tabKey: string, tab: DetailsTab, options?: Readonly<{
+        intent?: 'default' | 'pinned' | 'preview';
+        restoreSourceOnRehydrate?: boolean;
+    }>) => void;
     setDetailsTabState: (tabKey: string, nextState: unknown) => void;
     pinDetailsTab: (tabKey: string) => void;
     unpinDetailsTab: (tabKey: string) => void;
     closeDetails: () => void;
+    /** The host-owned full-bleed Details workspace overlay. */
+    openDetailsOverlay?: (input: Readonly<{
+        destination: PluginUiDestinationReferenceV1;
+        instanceKey?: PluginUiInstanceKeyV1;
+    }>) => void;
+    closeDetailsOverlay?: () => void;
     closeDetailsTab: (tabKey: string) => void;
     setActiveDetailsTab: (tabKey: string) => void;
     splitDetailsGroup?: (options: Readonly<{
@@ -70,9 +104,25 @@ function getScopeState(state: ReturnType<typeof useAppPaneContext>['state'], sco
 }
 
 export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
-    const { state, dispatch } = useAppPaneContext();
+    const { state, dispatch, overlayFocusReturnOwner } = useAppPaneContext();
     const scopeState = getScopeState(state, scopeId);
+    const rightOverlayFocusReturnRef = usePaneOverlayFocusReturnRef(scopeId, 'right');
+    const detailsOverlayFocusReturnRef = usePaneOverlayFocusReturnRef(scopeId, 'details');
+    const bottomOverlayFocusReturnRef = usePaneOverlayFocusReturnRef(scopeId, 'bottom');
     const detailsPaneTabsBehavior = useLocalSetting('detailsPaneTabsBehavior');
+    const recordNativeFocusTarget = React.useCallback((event: unknown) => {
+        const target = (event as Readonly<{
+            nativeEvent?: Readonly<{ target?: unknown }>;
+        }>).nativeEvent?.target;
+        overlayFocusReturnOwner.recordNativeFocusTarget(scopeId, target);
+    }, [overlayFocusReturnOwner, scopeId]);
+    const overlayFocusReturnCaptureProps = React.useMemo<NativeOverlayFocusReturnCaptureProps | undefined>(() => {
+        if (Platform.OS === 'web' || typeof document !== 'undefined') return undefined;
+        return {
+            onFocusCapture: recordNativeFocusTarget,
+            onTouchStartCapture: recordNativeFocusTarget,
+        };
+    }, [recordNativeFocusTarget]);
 
     const lastPreviewOpenRef = React.useRef<LastPreviewOpen | null>(null);
     const detailsTabsRef = React.useRef<ReadonlyArray<{ key: string; isPreview: boolean; isPinned: boolean }> | null>(null);
@@ -92,6 +142,10 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         dispatch({ type: 'setRightTab', scopeId, tabId });
     }, [dispatch, scopeId]);
 
+    const selectRightDestination = React.useCallback((destination: SelectedPaneDestinationV1) => {
+        dispatch({ type: 'selectRightDestination', scopeId, destination });
+    }, [dispatch, scopeId]);
+
     const setRightTabState = React.useCallback((tabId: string, nextState: unknown) => {
         dispatch({ type: 'setRightTabState', scopeId, tabId, nextState });
     }, [dispatch, scopeId]);
@@ -106,6 +160,10 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
 
     const setBottomTab = React.useCallback((tabId: string) => {
         dispatch({ type: 'setBottomTab', scopeId, tabId });
+    }, [dispatch, scopeId]);
+
+    const selectBottomDestination = React.useCallback((destination: SelectedPaneDestinationV1) => {
+        dispatch({ type: 'selectBottomDestination', scopeId, destination });
     }, [dispatch, scopeId]);
 
     const setBottomTabState = React.useCallback((tabId: string, nextState: unknown) => {
@@ -135,10 +193,20 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         dispatch({ type: 'setDetailsTabState', scopeId, tabKey, nextState });
     }, [dispatch, scopeId]);
 
-    const replaceDetailsTab = React.useCallback((tabKey: string, tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => {
+    const replaceDetailsTab = React.useCallback((tabKey: string, tab: DetailsTab, options?: Readonly<{
+        intent?: 'default' | 'pinned' | 'preview';
+        restoreSourceOnRehydrate?: boolean;
+    }>) => {
         const intent = options?.intent ?? 'default';
         const openAs = intent === 'pinned' || intent === 'preview' ? intent : undefined;
-        dispatch({ type: 'replaceDetailsTab', scopeId, tabKey, tab, openAs });
+        dispatch({
+            type: 'replaceDetailsTab',
+            scopeId,
+            tabKey,
+            tab,
+            openAs,
+            ...(options?.restoreSourceOnRehydrate ? { restoreSourceOnRehydrate: true } : {}),
+        });
     }, [dispatch, scopeId]);
 
     const pinDetailsTab = React.useCallback((tabKey: string) => {
@@ -151,6 +219,22 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
 
     const closeDetails = React.useCallback(() => {
         dispatch({ type: 'closeDetails', scopeId });
+    }, [dispatch, scopeId]);
+
+    const openDetailsOverlay = React.useCallback((input: Readonly<{
+        destination: PluginUiDestinationReferenceV1;
+        instanceKey?: PluginUiInstanceKeyV1;
+    }>) => {
+        dispatch({
+            type: 'openDetailsOverlay',
+            scopeId,
+            destination: input.destination,
+            ...(input.instanceKey === undefined ? {} : { instanceKey: input.instanceKey }),
+        });
+    }, [dispatch, scopeId]);
+
+    const closeDetailsOverlay = React.useCallback(() => {
+        dispatch({ type: 'closeDetailsOverlay', scopeId });
     }, [dispatch, scopeId]);
 
     const closeDetailsTab = React.useCallback((tabKey: string) => {
@@ -195,16 +279,27 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         dispatch({ type: 'closeDetailsGroup', scopeId, groupId });
     }, [dispatch, scopeId]);
 
-    return {
+    // The api object lands in `useCallback`/`useMemo` dependency lists across its callsites
+    // (`useOpenAttachedSessionTerminal`, `SessionHeaderTranscriptNavigationButton`, ...), whose
+    // results are then compared by identity further up — notably by `SessionHeaderActionMenu`'s
+    // `onSelectExtraItem` guard. Returning a fresh literal per render invalidated all of them on
+    // every host render, so the comparator never held.
+    return React.useMemo(() => ({
         scopeId,
         scopeState,
+        overlayFocusReturnCaptureProps,
+        rightOverlayFocusReturnRef,
+        detailsOverlayFocusReturnRef,
+        bottomOverlayFocusReturnRef,
         openRight,
         closeRight,
         setRightTab,
+        selectRightDestination,
         setRightTabState,
         openBottom,
         closeBottom,
         setBottomTab,
+        selectBottomDestination,
         setBottomTabState,
         openDetailsTab,
         replaceDetailsTab,
@@ -212,6 +307,8 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         pinDetailsTab,
         unpinDetailsTab,
         closeDetails,
+        openDetailsOverlay,
+        closeDetailsOverlay,
         closeDetailsTab,
         setActiveDetailsTab,
         splitDetailsGroup,
@@ -220,5 +317,38 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         focusDetailsGroup,
         setMaximizedDetailsGroup,
         closeDetailsGroup,
-    };
+    }), [
+        scopeId,
+        scopeState,
+        overlayFocusReturnCaptureProps,
+        rightOverlayFocusReturnRef,
+        detailsOverlayFocusReturnRef,
+        bottomOverlayFocusReturnRef,
+        openRight,
+        closeRight,
+        setRightTab,
+        selectRightDestination,
+        setRightTabState,
+        openBottom,
+        closeBottom,
+        setBottomTab,
+        selectBottomDestination,
+        setBottomTabState,
+        openDetailsTab,
+        replaceDetailsTab,
+        setDetailsTabState,
+        pinDetailsTab,
+        unpinDetailsTab,
+        closeDetails,
+        openDetailsOverlay,
+        closeDetailsOverlay,
+        closeDetailsTab,
+        setActiveDetailsTab,
+        splitDetailsGroup,
+        setDetailsSplitRatio,
+        moveDetailsTabToGroup,
+        focusDetailsGroup,
+        setMaximizedDetailsGroup,
+        closeDetailsGroup,
+    ]);
 }

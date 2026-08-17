@@ -4,7 +4,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { testRunner, TestSuite, TestResult } from '@/dev/testRunner';
-import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 
 // Import all test files here
@@ -14,6 +13,7 @@ import '@/sync/encryption/encryptor.appspec';
 import '@/encryption/aes.appspec';
 import '@/encryption/base64.appspec';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 interface TestRunState {
     running: boolean;
@@ -103,7 +103,7 @@ export default function TestsScreen() {
                 <Item
                     title="Run All Tests"
                     subtitle={`${suites.length} test suites available`}
-                    icon={<Ionicons name="play-circle-outline" size={28} color="#34C759" />}
+                    icon={<Icon name="play-circle" size={29} color="#34C759" />}
                     onPress={runAllTests}
                     loading={state.running}
                     showChevron={false}
@@ -126,13 +126,13 @@ export default function TestsScreen() {
                             subtitle={hasRun ? `${passedCount}/${testCount} tests passed` : 'Not run'}
                             icon={
                                 hasRun ? (
-                                    <Ionicons 
-                                        name={passed ? "checkmark-circle" : "close-circle"} 
-                                        size={28} 
+                                    <Icon
+                                        name={passed ? "check-circle" : "x-circle"}
+                                        size={29}
                                         color={passed ? "#34C759" : "#FF3B30"} 
                                     />
                                 ) : (
-                                    <Ionicons name="ellipse-outline" size={28} color="#8E8E93" />
+                                    <Icon name="circle" size={29} color="#8E8E93" />
                                 )
                             }
                             onPress={() => runSuite(suiteName)}
@@ -153,9 +153,9 @@ export default function TestsScreen() {
                                 alignItems: 'center',
                                 gap: 12
                             }}>
-                                <Ionicons 
-                                    name={test.passed ? "checkmark-circle" : "close-circle"} 
-                                    size={24} 
+                                <Icon
+                                    name={test.passed ? "check-circle" : "x-circle"}
+                                    size={24}
                                     color={test.passed ? "#34C759" : "#FF3B30"} 
                                 />
                                 <View style={{ flex: 1 }}>

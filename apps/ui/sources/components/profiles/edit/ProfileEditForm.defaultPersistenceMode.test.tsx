@@ -25,10 +25,10 @@ installProfileEditFormModuleMocks({
             useAllMachines: () => [],
             useMachine: () => null,
             useSettings: () => ({ opencodeBackendMode: 'server' }),
+            useCurrentSecretBindingsByProfileIdMutable: () => [{}, vi.fn()] as const,
             useSettingMutable: (key: string) => {
                 if (key === 'favoriteMachines') return [[], vi.fn()] as const;
                 if (key === 'secrets') return [[], vi.fn()] as const;
-                if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
                 return [[], vi.fn()] as const;
             },
         });

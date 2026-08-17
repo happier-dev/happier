@@ -132,10 +132,11 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
     }
 
     // Demo settings are presentation-only. Applying them through
-    // `applySettingsLocal` would write the temporary demo target and UI choices
-    // to durable MMKV, while teardown restores only the in-memory snapshot.
-    // Project the seeded settings directly into the demo-owned store lifetime,
-    // just like the non-persisted review drafts below.
+    // `applySettingsLocal`, `applyLocalSettings`, or `applyProfile` would write
+    // the temporary demo target, UI choices, theme profiles, and connected
+    // accounts to durable MMKV, while teardown restores only the in-memory
+    // snapshot. Project every seeded slice directly into the demo-owned store
+    // lifetime, just like the non-persisted review drafts below.
     storage.setState((current) => ({
         ...current,
         settings: {
@@ -143,6 +144,14 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
             ...world.settings,
             serverSelectionActiveTargetKind: 'server',
             serverSelectionActiveTargetId: demoServerProfile.id,
+        },
+        localSettings: {
+            ...current.localSettings,
+            ...world.localSettings,
+        },
+        profile: {
+            ...current.profile,
+            ...world.profile,
         },
     }));
     const state = storage.getState();

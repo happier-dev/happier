@@ -14,6 +14,7 @@ import {
     PROVIDER_CONNECTION_STATUS_VARIANT,
 } from '@/providers/connection/presentation';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type ConnectionStatus = keyof typeof PROVIDER_CONNECTION_STATUS_KEY;
 
@@ -52,7 +53,7 @@ export function ProviderConnectionsCatalogSection(props: Readonly<{
         return (
             <ItemGroup title={t('settingsProviders.title')}>
                 <EmptyState
-                    icon={<SafeIonicons name="search-outline" size={29} color={props.textColor} />}
+                    icon={<Icon name="magnifying-glass" size={29} color={props.textColor} />}
                     title={t('settingsProviders.searchEmptyTitle')}
                     subtitle={t('settingsProviders.searchEmptyDescription')}
                 />
@@ -60,7 +61,7 @@ export function ProviderConnectionsCatalogSection(props: Readonly<{
         );
     }
     return (
-        <ItemGroupColumns columns={2} collapseBelow="expanded" paddingHorizontal={0} paddingVertical={0}>
+        <ItemGroupColumns columns={2} paddingHorizontal={0} paddingVertical={0}>
             <ItemGroupColumn>
                 {props.configured.length > 0 ? (
                     <ItemGroup title={`${t('settingsProviders.configuredTitle')} · ${props.configured.length}`} footer={t('settingsProviders.configuredFooter')}>
@@ -93,7 +94,7 @@ export function ProviderConnectionsCatalogSection(props: Readonly<{
                 ) : (
                     <ItemGroup title={t('settingsProviders.configuredTitle')}>
                         <EmptyState
-                            icon={<SafeIonicons name="cloud-outline" size={29} color={props.textColor} />}
+                            icon={<Icon name="cloud" size={29} color={props.textColor} />}
                             title={t('settingsProviders.emptyTitle')}
                             subtitle={t('settingsProviders.emptyDescription')}
                         />

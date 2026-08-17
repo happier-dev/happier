@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Octicons } from '@expo/vector-icons';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -11,6 +10,7 @@ import type { ScmStatusSummary } from '@/components/sessions/sourceControl/statu
 import { t } from '@/text';
 
 import { instrumentStripStyles } from './instrumentStripStyles';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const GIT_HIT_SLOP = { top: 12, bottom: 12, left: 8, right: 8 } as const;
 
@@ -57,7 +57,7 @@ export const GitDeltaInstrument = React.memo(function GitDeltaInstrument(props: 
     const body = (
         <View style={instrumentStripStyles.instrumentSlot}>
             {showBranchIcon ? normalizeNodeForView(
-                <Octicons name="git-branch" size={12} color={theme.colors.text.secondary} />,
+                <Icon name="git-branch" size={14} color={theme.colors.text.secondary} />,
             ) : null}
             {isCleanRepo ? null : git.hasLineChanges ? (
                 <View style={instrumentStripStyles.instrumentSlot}>

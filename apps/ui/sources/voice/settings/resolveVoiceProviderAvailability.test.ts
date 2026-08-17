@@ -10,9 +10,66 @@ vi.mock('react-native', () => ({
     },
 }));
 
-import { resolveVoiceProviderAvailability } from './resolveVoiceProviderAvailability';
+import {
+    resolveVoiceDeviceSpeechRolePath,
+    resolveVoiceProviderAvailability,
+} from './resolveVoiceProviderAvailability';
 
 describe('resolveVoiceProviderAvailability', () => {
+    it('projects passive Device recognition only for STT roles', () => {
+        const local = {
+            browserSpeech: { support: 'unavailable' as const, onDevice: 'unsupported' as const },
+            nativeDevice: { requested: true, speechRecognition: 'available' as const },
+        };
+
+        expect(resolveVoiceDeviceSpeechRolePath({
+            role: 'dictation_stt',
+            platformOs: 'web',
+            local,
+        })).toMatchObject({
+            runnable: false,
+            reason: 'browser_speech_unsupported',
+        });
+        expect(resolveVoiceDeviceSpeechRolePath({
+            role: 'conversation_stt',
+            platformOs: 'ios',
+            local,
+        })).toMatchObject({
+            runnable: true,
+            reason: null,
+        });
+        expect(resolveVoiceDeviceSpeechRolePath({
+            role: 'dictation_stt',
+            platformOs: 'web',
+            local: {
+                ...local,
+                browserSpeech: { support: 'cloud_only', onDevice: 'unsupported' },
+            },
+        })).toMatchObject({
+            runnable: true,
+            readiness: 'cloud_only',
+            reason: 'browser_speech_cloud_only',
+            privacy: 'cloud_or_remote',
+        });
+        expect(resolveVoiceDeviceSpeechRolePath({
+            role: 'dictation_stt',
+            platformOs: 'web',
+            local: {
+                ...local,
+                browserSpeech: { support: 'unknown', onDevice: 'unknown' },
+            },
+        })).toMatchObject({
+            runnable: false,
+            readiness: 'unknown',
+            reason: 'browser_speech_on_device_unknown',
+        });
+        expect(resolveVoiceDeviceSpeechRolePath({
+            role: 'conversation_tts',
+            platformOs: 'ios',
+            local,
+        })).toBeNull();
+    });
+
     it('keeps the mode list stable and disables only hosted Happier Voice when the server does not support it', () => {
         const availability = resolveVoiceProviderAvailability({
             happierVoiceSupported: false,

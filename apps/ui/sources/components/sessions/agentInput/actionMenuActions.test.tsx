@@ -36,7 +36,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: null,
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             machineName: undefined,
             currentPath: '',
             onMachineClick: () => {},
@@ -59,7 +59,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Configured backend',
             onAgentClick: () => {},
             onMachineClick: () => {},
@@ -89,7 +89,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             onMachineClick: () => {},
@@ -128,6 +128,72 @@ describe('buildAgentInputActionMenuActions', () => {
         ]);
     });
 
+    it('keeps no, one, or many plugin controls after incumbent host groups in the collapsed menu', () => {
+        const base = {
+            actionBarIsCollapsed: true,
+            hasAnyActions: true,
+            tint: '#fff',
+            agentId: 'codex' as any,
+            profileLabel: 'Default',
+            profileIcon: 'user-circle',
+            agentLabel: 'Codex',
+            onAgentClick: () => {},
+            onMachineClick: () => {},
+            machineName: 'Builder',
+            onPathClick: () => {},
+            currentPath: '/tmp',
+            dismiss: () => {},
+            blurInput: () => {},
+        } as const;
+
+        expect(buildAgentInputActionMenuActions(base).map((action) => action.id)).toEqual([
+            'agent',
+            'machine',
+            'path',
+        ]);
+
+        expect(buildAgentInputActionMenuActions({
+            ...base,
+            extraControlActions: {
+                'plugin:fixture/only': {
+                    id: 'plugin:fixture/only',
+                    label: 'Only plugin control',
+                    icon: null,
+                    onPress: () => {},
+                },
+            },
+        }).map((action) => action.id)).toEqual([
+            'agent',
+            'machine',
+            'path',
+            'plugin:fixture/only',
+        ]);
+
+        expect(buildAgentInputActionMenuActions({
+            ...base,
+            extraControlActions: {
+                'plugin:fixture/second': {
+                    id: 'plugin:fixture/second',
+                    label: 'Second plugin control',
+                    icon: null,
+                    onPress: () => {},
+                },
+                'plugin:fixture/first': {
+                    id: 'plugin:fixture/first',
+                    label: 'First plugin control',
+                    icon: null,
+                    onPress: () => {},
+                },
+            },
+        }).map((action) => action.id)).toEqual([
+            'agent',
+            'machine',
+            'path',
+            'plugin:fixture/second',
+            'plugin:fixture/first',
+        ]);
+    });
+
     it('places attachments ahead of machine and path in the collapsed control menu order', () => {
         const actions = buildAgentInputActionMenuActions({
             actionBarIsCollapsed: true,
@@ -135,7 +201,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -169,7 +235,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             sessionId: 'session-1',
@@ -197,7 +263,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -231,7 +297,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -265,7 +331,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -299,7 +365,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -333,7 +399,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -376,7 +442,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -410,7 +476,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             extraControlActions: {
@@ -444,7 +510,7 @@ describe('buildAgentInputActionMenuActions', () => {
             tint: '#fff',
             agentId: 'codex' as any,
             profileLabel: 'Default',
-            profileIcon: 'person-outline',
+            profileIcon: 'user-circle',
             agentLabel: 'Codex',
             onAgentClick: () => {},
             sessionModeLabel: 'Build',
@@ -460,6 +526,6 @@ describe('buildAgentInputActionMenuActions', () => {
             'mode',
             'stop',
         ]);
-        expect((actions[1]?.icon as any)?.props?.name).toBe('rocket');
+        expect((actions[1]?.icon as any)?.props?.name).toBe('rocket-launch');
     });
 });

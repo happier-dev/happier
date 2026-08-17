@@ -37,15 +37,15 @@ describe('sessionStop', () => {
     mockSessionRpcWithServerScope.mockReset();
   });
 
-  it('returns an explicit upgrade recovery when the runner stop RPC is unavailable', async () => {
+  it('reports unavailable control without claiming the runtime needs an upgrade', async () => {
     mockResolvePreferredServerIdForSessionId.mockReturnValue('server-a');
     mockSessionRpcWithServerScope.mockRejectedValue(new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
     const res = await sessionStop('sid-1');
     expect(res).toEqual({
       success: false,
       message: 'RPC method not available',
-      code: 'session_stop_unsupported',
-      recovery: 'upgrade_runtime',
+      code: 'session_stop_control_unavailable',
+      recovery: 'retry_when_runtime_available',
     });
     expect(mockSessionRpcWithServerScope).toHaveBeenCalledWith({
       method: 'killSession',

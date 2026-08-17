@@ -5,7 +5,7 @@ import { useNavigation, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { t } from '@/text';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { sync } from '@/sync/sync';
 import { storage, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
@@ -43,7 +43,6 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     padding: 16,
     paddingBottom: 64,
-    maxWidth: layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
@@ -71,6 +70,10 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId: string | null }>) => {
+  // Composed at render time: the module-scope stylesheet evaluates once, so a
+  // baked-in `layout.maxWidth` would freeze the user's content-width preference.
+  const contentMaxWidthStyle = useLayoutMaxWidthStyle();
+  const contentStyle = React.useMemo(() => [styles.content, contentMaxWidthStyle], [contentMaxWidthStyle]);
   const { theme } = useUnistyles();
   const router = useRouter();
   const navigation = useNavigation();
@@ -273,7 +276,7 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
 
   return (
     <View style={styles.container}>
-      <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ItemList containerStyle={contentStyle} keyboardShouldPersistTaps="handled">
         <ItemGroup title={t('promptLibrary.general')}>
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
             <Text style={styles.fieldLabel}>{t('promptLibrary.skillNameLabel')}</Text>
@@ -325,14 +328,14 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
                   actions.push({
                     id: 'edit',
                     title: t('common.edit'),
-                    icon: 'pencil-outline',
+                    icon: 'pencil',
                     onPress: () => router.push(editPath),
                   });
                 }
                 actions.push({
                   id: 'delete',
                   title: t('common.delete'),
-                  icon: 'trash-outline',
+                  icon: 'trash',
                   destructive: true,
                   onPress: () => removeSupportingFile(entry.path),
                 });

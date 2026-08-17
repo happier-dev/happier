@@ -19,7 +19,7 @@ export type PendingMessageVisualStateKind =
 export type PendingMessageVisualState = Readonly<{
     kind: PendingMessageVisualStateKind;
     showSpinner: boolean;
-    iconName: 'cloud-upload-outline' | 'time-outline' | 'navigate-outline' | 'alert-circle-outline';
+    iconName: 'cloud-arrow-up' | 'clock' | 'navigation-arrow' | 'warning-circle';
     deliveryBlockedPresentation?: PendingDeliveryBlockedReasonPresentation;
     deliveryMutationPolicy?: 'effect_possible';
     queuedRequestedAction?: 'enqueue' | 'steer_if_active' | 'steer_now' | 'send_now';
@@ -45,6 +45,37 @@ export type PendingDeliveryBlockedReasonPresentation = Readonly<{
     labelKey: TranslationKeyNoParams;
     isUnknown: boolean;
 }>;
+
+/**
+ * The IN-FLOW chrome a pending row paints for its current delivery state — i.e. the only part of its
+ * delivery presentation that can change the row's HEIGHT.
+ *
+ * F-P2 (2026-08-10). The status chip (`PendingMessagesTranscriptBlock` `pendingAffordanceChip`) is
+ * `position: 'absolute'`, so every state that only swaps the chip's icon/spinner/label — including
+ * the whole `queuedReason` vocabulary, which this block paints INSIDE that chip — leaves the row's
+ * box byte-identical. `blockedDeliveryNotice` is the single in-flow status notice this block paints.
+ * This matters because `ChatListInternal` wires Legend's vendored `getItemSizeVersion` to
+ * `transcriptRowShellSignature`, and `validateItemSizeVersion` DELETES `sizesKnown` + `sizes`
+ * whenever that version moves: keying the pending row on `visualState.kind` threw away its measured
+ * height on every step of a send while the painted box never changed.
+ *
+ * The block SELECTS its notice from this descriptor, so there is one decision-maker rather than a
+ * mapping restated in the renderer, the size key and the estimator. Counterpart of
+ * `groupedToolCallRowPaintDependsOnGroupExpansion` for the pending row.
+ */
+export type PendingMessageHeightBearingChrome =
+    /** Chip only — absolutely positioned, cannot move the row. */
+    | 'none'
+    /** `blockedDeliveryNotice`. */
+    | 'blocked-notice';
+
+export function resolvePendingMessageHeightBearingChrome(
+    visualState: PendingMessageVisualState,
+): PendingMessageHeightBearingChrome {
+    // Read off the presentation the block itself renders the notice from, not off a list of kinds,
+    // so a state that starts carrying a blocked presentation cannot drop out of the size version.
+    return visualState.deliveryBlockedPresentation !== undefined ? 'blocked-notice' : 'none';
+}
 
 const blockedReasonLabelKeys = {
     terminal_composer_draft: 'session.pendingMessages.deliveryBlockedReasons.terminalComposerDraft',
@@ -97,28 +128,28 @@ export function getPendingMessageVisualState(
         return {
             kind: 'materializing',
             showSpinner: true,
-            iconName: 'navigate-outline',
+            iconName: 'navigation-arrow',
         };
     }
 
     const hasDurableServerPendingTruth = message.source === 'server_pending';
     if (!hasDurableServerPendingTruth && message.pendingOutboxOperation === 'cancel') {
         return message.sendState === 'failed'
-            ? { kind: 'cancel_failed', showSpinner: false, iconName: 'alert-circle-outline' }
-            : { kind: 'cancelling', showSpinner: true, iconName: 'time-outline' };
+            ? { kind: 'cancel_failed', showSpinner: false, iconName: 'warning-circle' }
+            : { kind: 'cancelling', showSpinner: true, iconName: 'clock' };
     }
     if (!hasDurableServerPendingTruth && message.sendState === 'failed') {
         return {
             kind: 'send_failed',
             showSpinner: false,
-            iconName: 'alert-circle-outline',
+            iconName: 'warning-circle',
         };
     }
     if (!hasDurableServerPendingTruth && message.sendState === 'unconfirmed') {
         return {
             kind: 'send_unconfirmed',
             showSpinner: true,
-            iconName: 'cloud-upload-outline',
+            iconName: 'cloud-arrow-up',
         };
     }
 
@@ -126,7 +157,7 @@ export function getPendingMessageVisualState(
         return {
             kind: 'saving',
             showSpinner: true,
-            iconName: 'cloud-upload-outline',
+            iconName: 'cloud-arrow-up',
         };
     }
 
@@ -138,7 +169,7 @@ export function getPendingMessageVisualState(
         return {
             kind: 'blocked',
             showSpinner: false,
-            iconName: 'alert-circle-outline',
+            iconName: 'warning-circle',
             deliveryBlockedPresentation: getPendingDeliveryBlockedReasonPresentation(message),
             ...(deliveryMutationPolicy ? { deliveryMutationPolicy } : {}),
         };
@@ -148,7 +179,7 @@ export function getPendingMessageVisualState(
         return {
             kind: 'delivering',
             showSpinner: false,
-            iconName: 'navigate-outline',
+            iconName: 'navigation-arrow',
             deliveryMutationPolicy: getDeliveryMutationPolicy({ status: 'external_handoff' }),
         };
     }
@@ -157,7 +188,7 @@ export function getPendingMessageVisualState(
         return {
             kind: 'delivering',
             showSpinner: true,
-            iconName: 'navigate-outline',
+            iconName: 'navigation-arrow',
             deliveryMutationPolicy: getDeliveryMutationPolicy({ status: 'delivering' }),
         };
     }
@@ -177,10 +208,10 @@ export function getPendingMessageVisualState(
         iconName:
             queuedRequestedAction === 'steer_now'
             || queuedRequestedAction === 'send_now'
-                ? 'navigate-outline'
+                ? 'navigation-arrow'
                 : queuedReason === 'unsupported_action'
-                    ? 'alert-circle-outline'
-                    : 'time-outline',
+                    ? 'warning-circle'
+                    : 'clock',
         queuedRequestedAction,
         ...(queuedReason ? { queuedReason } : {}),
     };

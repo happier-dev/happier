@@ -2,7 +2,6 @@ import * as React from 'react';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { Pressable, View, Platform, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { Octicons } from '@expo/vector-icons';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 
@@ -15,6 +14,7 @@ import { PierreScrollRootVirtualizerProvider } from '@/components/ui/code/diff/p
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const LINE_ADDED_PREFIX = '+';
 const LINE_REMOVED_PREFIX = '-';
@@ -435,7 +435,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                                     ];
                                 }}
                             >
-                                <Octicons name="file" size={14} color={styles.openFileIcon.color as any} />
+                                <Icon name="file" size={14} color={styles.openFileIcon.color as any} />
                             </Pressable>
                         ) : null}
                     </View>

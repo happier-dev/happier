@@ -489,10 +489,7 @@ pub struct DesktopBrowserDrainDiagnosticsResult {
 }
 
 impl DesktopBrowserDrainDiagnosticsResult {
-    pub(crate) fn success(
-        availability: DesktopBrowserAvailability,
-        messages: Vec<String>,
-    ) -> Self {
+    pub(crate) fn success(availability: DesktopBrowserAvailability, messages: Vec<String>) -> Self {
         Self {
             ok: true,
             availability,

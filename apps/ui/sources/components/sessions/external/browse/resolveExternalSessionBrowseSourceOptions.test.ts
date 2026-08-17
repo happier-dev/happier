@@ -1,4 +1,5 @@
 import { readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
+import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -12,7 +13,6 @@ const externalSessionBrowseModulePromise = import('./resolveExternalSessionBrows
 const CODEX_SOURCE_DECLARATION = {
     sourceKind: 'codexHome',
     schema: {
-        passthrough: true,
         fields: [
             { name: 'kind', kind: 'literal', value: 'codexHome' },
             { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
@@ -83,7 +83,6 @@ function createProjection(agentIds: readonly string[]): PluginProjectionV2 {
                         : [{
                             sourceKind: `${agentId}Archive`,
                             schema: {
-                                passthrough: false,
                                 fields: [{ name: 'kind', kind: 'literal', value: `${agentId}Archive` }],
                             },
                             key: { segments: [{ kind: 'literal', value: `${agentId}Archive` }] },
@@ -95,7 +94,77 @@ function createProjection(agentIds: readonly string[]): PluginProjectionV2 {
     });
 }
 
+function createOpenCodeProjection(): PluginProjectionV2 {
+    const contribution = OPENCODE_PLUGIN_MANIFEST.contributes.agents.find(
+        (candidate) => candidate.id === 'opencode',
+    );
+    return PluginProjectionV2Schema.parse({
+        v: 2,
+        generation: 21,
+        installedPackagesById: {
+            'happier.agent.opencode': {
+                id: 'happier.agent.opencode',
+                displayName: 'OpenCode',
+                enabled: true,
+                source: { kind: 'bundled', locator: 'happier.agent.opencode' },
+            },
+        },
+        agentsById: {
+            opencode: {
+                id: 'opencode',
+                title: 'OpenCode',
+                externalSessions: {
+                    agent: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+                    generation: 21,
+                    operations: {
+                        listCandidates: true,
+                        resolveLinkIdentity: true,
+                        pageTranscript: true,
+                        readAfterTranscript: true,
+                    },
+                    sources: contribution?.surfaces.externalSession.sources ?? [],
+                },
+            },
+        },
+    });
+}
+
 describe('resolveExternalSessionBrowseSourceOptions', () => {
+    it('admits background follow only for an explicit projected source declaration', async () => {
+        const { supportsExternalSessionBackgroundFollow } = await externalSessionBrowseModulePromise;
+        const projection = createProjection(['codex']);
+        const source = { kind: 'codexHome', home: 'user' } as const;
+
+        expect(supportsExternalSessionBackgroundFollow({
+            providerId: 'codex',
+            source,
+            projection,
+        })).toBe(false);
+
+        const optedInProjection = PluginProjectionV2Schema.parse({
+            ...projection,
+            agentsById: {
+                ...projection.agentsById,
+                codex: {
+                    ...projection.agentsById.codex!,
+                    externalSessions: {
+                        ...projection.agentsById.codex!.externalSessions!,
+                        sources: [{
+                            ...CODEX_SOURCE_DECLARATION,
+                            terminalFollow: { userRowClassification: 'explicitV1' },
+                        }],
+                    },
+                },
+            },
+        });
+
+        expect(supportsExternalSessionBackgroundFollow({
+            providerId: 'codex',
+            source,
+            projection: optedInProjection,
+        })).toBe(true);
+    });
+
     it('resolves a non-bundled auxiliary-only Agent from the daemon projection without static Agent catalog membership', async () => {
         const { listExternalSessionBrowseProviderIds, resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
         const projection = PluginProjectionV2Schema.parse({
@@ -132,7 +201,6 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                         sources: [{
                             sourceKind: 'syntheticArchive',
                             schema: {
-                                passthrough: false,
                                 fields: [{ name: 'kind', kind: 'literal', value: 'syntheticArchive' }],
                             },
                             key: { segments: [{ kind: 'literal', value: 'syntheticArchive' }] },
@@ -329,6 +397,51 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                 source: { kind: 'codexHome', home: 'user' },
             }),
         ]);
+    });
+
+    it('offers the OpenCode managed default plus an attach source bound to the active server setting', async () => {
+        const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
+        const projection = createOpenCodeProjection();
+        const resolve = (settings: Readonly<Record<string, unknown>>) => resolveExternalSessionBrowseSourceOptions({
+            providerId: 'opencode',
+            profile: null,
+            settings: { connectedServicesProfileLabelByKey: {}, ...settings },
+            projection,
+            activeServerId: 'cloud',
+        });
+
+        const managedDefault = { key: 'opencode:default', source: { kind: 'opencodeServer' } };
+
+        expect(resolve({})).toEqual([expect.objectContaining(managedDefault)]);
+        expect(resolve({
+            opencodeServerBaseUrl: 'http://127.0.0.1:9999',
+            opencodeServerBaseUrlByServerIdV1: { cloud: 'http://127.0.0.1:4096' },
+        })).toEqual([
+            expect.objectContaining(managedDefault),
+            expect.objectContaining({
+                key: 'opencode:opencodeServer:setting:opencodeServerBaseUrl',
+                source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
+                detail: 'http://127.0.0.1:4096/',
+            }),
+        ]);
+        // A server the user runs off this machine is a browsable source; only
+        // a malformed or credential-bearing URL yields nothing.
+        expect(resolve({
+            opencodeServerBaseUrlByServerIdV1: { cloud: 'http://10.0.0.7:4096' },
+        })).toEqual([
+            expect.objectContaining(managedDefault),
+            expect.objectContaining({
+                key: 'opencode:opencodeServer:setting:opencodeServerBaseUrl',
+                source: { kind: 'opencodeServer', baseUrl: 'http://10.0.0.7:4096/' },
+                detail: 'http://10.0.0.7:4096/',
+            }),
+        ]);
+        expect(resolve({ opencodeServerBaseUrl: 'nonsense' })).toEqual([
+            expect.objectContaining(managedDefault),
+        ]);
+        expect(resolve({
+            opencodeServerBaseUrlByServerIdV1: { cloud: 'https://opencode:secret@example.com' },
+        })).toEqual([expect.objectContaining(managedDefault)]);
     });
 
     it('resolves provider-owned link ensure extras through registered browse behavior', async () => {

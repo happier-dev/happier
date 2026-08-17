@@ -50,6 +50,7 @@ import {
 } from '@/sync/ops/machineExternalSessions';
 import { t } from '@/text';
 import { presentExternalSessionOperationActionError } from '@/components/sessions/external/progress/externalSessionOperationActionErrorPresentation';
+import { PluginTranscriptActivityCard } from '@/components/sessions/transcript/PluginTranscriptActivityCard';
 
 type Ref<T> = { current: T };
 
@@ -117,6 +118,8 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         messagesById,
         metadata,
         onDismissExternalSessionOperation,
+        onDismissPluginTranscriptActivity,
+        onOpenPluginTranscriptActivityAction,
         onExternalSessionOperationActionResult,
         onEditPendingMessage,
         onToggleMessagePin,
@@ -308,6 +311,17 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                             onDismiss={onDismissExternalSessionOperation}
                         />
                     )}
+                </TranscriptEnterWrapper>
+            ));
+        }
+        if (item.kind === 'plugin-transcript-activity') {
+            return wrapTranscriptItemForAnchor(item, (
+                <TranscriptEnterWrapper id={item.id} createdAt={item.createdAt}>
+                    <PluginTranscriptActivityCard
+                        activity={item}
+                        onDismiss={onDismissPluginTranscriptActivity}
+                        onOpenAction={onOpenPluginTranscriptActivityAction}
+                    />
                 </TranscriptEnterWrapper>
             ));
         }
@@ -529,6 +543,8 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         metadata,
         operationRowCapabilities,
         onDismissExternalSessionOperation,
+        onDismissPluginTranscriptActivity,
+        onOpenPluginTranscriptActivityAction,
         onExternalSessionOperationActionResult,
         onEditPendingMessage,
         onToggleMessagePin,

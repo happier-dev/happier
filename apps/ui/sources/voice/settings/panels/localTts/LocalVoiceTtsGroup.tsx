@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -9,21 +8,27 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
+import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFailureMessage';
 import { primeWebAudioPlayback } from '@/voice/output/webAudioContext';
-import { getLocalTtsProviderSpec, localTtsProviderSpecs } from '@/voice/settings/panels/localTts/providers/registry';
+import { getLocalTtsProviderSpec, useLocalTtsProviderSpecs } from '@/voice/settings/panels/localTts/providers/registry';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function LocalVoiceTtsGroup(props: {
   cfgTts: VoiceLocalTtsSettings;
   setTts: (next: VoiceLocalTtsSettings) => void;
+  voice: VoiceSettings;
+  setVoice: (next: VoiceSettings) => void;
   networkTimeoutMs: number;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  showProcessingDisclosure?: boolean;
 }) {
   const { theme } = useUnistyles();
+  const providerSpecs = useLocalTtsProviderSpecs();
   const [openMenu, setOpenMenu] = React.useState<null | 'ttsProvider'>(null);
   const [testStatus, setTestStatus] = React.useState<'idle' | 'speaking'>('idle');
 
@@ -47,11 +52,11 @@ export function LocalVoiceTtsGroup(props: {
         itemTrigger={{
           title: t('settingsVoice.local.ttsProvider'),
         }}
-        items={localTtsProviderSpecs.map((spec) => ({
+        items={providerSpecs.map((spec) => ({
           id: spec.id,
           title: spec.title,
           subtitle: spec.subtitle,
-          icon: <Ionicons name={spec.iconName as any} size={22} color={theme.colors.text.secondary} />,
+          icon: <Icon name={spec.iconName as any} size={20} color={theme.colors.text.secondary} />,
         }))}
         onSelect={(id) => {
           setCfg({ provider: id as any });
@@ -85,9 +90,12 @@ export function LocalVoiceTtsGroup(props: {
         <providerSpec.Settings
           cfgTts={cfg}
           setTts={props.setTts}
+          voice={props.voice}
+          setVoice={props.setVoice}
           networkTimeoutMs={props.networkTimeoutMs}
           popoverBoundaryRef={props.popoverBoundaryRef}
           daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+          showProcessingDisclosure={props.showProcessingDisclosure}
         />
       ) : (
         <Item title={t('common.unavailable')} />
@@ -106,7 +114,12 @@ export function LocalVoiceTtsGroup(props: {
               const sample = t('settingsVoice.local.testTtsSample');
               const selectedProvider = getLocalTtsProviderSpec(cfg.provider);
               if (!selectedProvider) throw new Error('voice_tts_provider_unavailable');
-              await selectedProvider.test({ cfgTts: cfg, networkTimeoutMs: props.networkTimeoutMs, sample });
+              await selectedProvider.test({
+                cfgTts: cfg,
+                voice: props.voice,
+                networkTimeoutMs: props.networkTimeoutMs,
+                sample,
+              });
             } catch (err) {
               fireAndForget(Promise.resolve().then(() => Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err))), {
                 tag: 'LocalVoiceTtsGroup.alert.testTtsFailed',

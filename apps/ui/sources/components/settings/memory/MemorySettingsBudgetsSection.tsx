@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -8,6 +7,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBudgetsSection(props: Readonly<{
     settings: MemorySettingsV1;
@@ -25,7 +25,7 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
                 testID="memory-settings-budget-light"
                 title={t('memorySearchSettings.budgets.lightTitle')}
                 subtitle={t('memorySearchSettings.budgets.mbLabel', { mb: settings.budgets.maxDiskMbLight })}
-                icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="hard-drives" size={29} color={theme.colors.accent.blue} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
                         t('memorySearchSettings.budgets.lightPromptTitle'),
@@ -50,7 +50,7 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
                 testID="memory-settings-budget-deep"
                 title={t('memorySearchSettings.budgets.deepTitle')}
                 subtitle={t('memorySearchSettings.budgets.mbLabel', { mb: settings.budgets.maxDiskMbDeep })}
-                icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.purple} />}
+                icon={<Icon name="hard-drives" size={29} color={theme.colors.accent.purple} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
                         t('memorySearchSettings.budgets.deepPromptTitle'),

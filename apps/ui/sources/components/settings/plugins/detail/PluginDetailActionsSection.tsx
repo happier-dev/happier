@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -7,6 +6,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
 import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export function PluginDetailActionsSection(props: Readonly<{
     installed: InstalledPluginEntry;
@@ -23,8 +23,8 @@ export function PluginDetailActionsSection(props: Readonly<{
                 title={props.installed.enabled ? t('common.disable') : t('common.enable')}
                 subtitle={props.installed.enabled ? t('common.enabled') : t('common.disabled')}
                 icon={(
-                    <Ionicons
-                        name={props.installed.enabled ? 'close-circle-outline' : 'checkmark-circle-outline'}
+                    <Icon
+                        name={props.installed.enabled ? 'x-circle' : 'check-circle'}
                         size={29}
                         color={theme.colors.text.secondary}
                     />
@@ -37,7 +37,7 @@ export function PluginDetailActionsSection(props: Readonly<{
                 <Item
                     testID={`settings.plugins.detail.${props.installed.pluginId}.action.rollback`}
                     title={t('settingsPlugins.rollback')}
-                    icon={<Ionicons name="return-down-back-outline" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="arrow-elbow-down-left" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction('rollback', props.installed.pluginId)}
                     disabled={!props.canRunActions || props.actionInFlight}
                     showChevron={false}
@@ -46,7 +46,7 @@ export function PluginDetailActionsSection(props: Readonly<{
             <Item
                 testID={`settings.plugins.detail.${props.installed.pluginId}.action.uninstall`}
                 title={t('settingsPlugins.uninstall')}
-                icon={<Ionicons name="trash-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="trash" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => props.onAction('uninstall', props.installed.pluginId)}
                 disabled={!props.canRunActions || props.actionInFlight}
                 showChevron={false}
@@ -54,7 +54,7 @@ export function PluginDetailActionsSection(props: Readonly<{
             <Item
                 testID={`settings.plugins.detail.${props.installed.pluginId}.action.forgetTrust`}
                 title={t('settingsPlugins.forgetTrust')}
-                icon={<Ionicons name="shield-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="shield" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => props.onAction('forgetTrust', props.installed.pluginId)}
                 disabled={!props.canRunActions || props.actionInFlight}
                 showChevron={false}

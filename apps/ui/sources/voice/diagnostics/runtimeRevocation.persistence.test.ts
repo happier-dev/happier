@@ -22,6 +22,7 @@ vi.mock('./client', () => ({
 }));
 
 import {
+  applyVoiceDiagnosticsMachinePolicy,
   declareVoiceDiagnosticsMachinePolicyIntent,
   disableVoiceDiagnosticsOnMachine,
   resetVoiceDiagnosticsRevocationForTests,
@@ -55,6 +56,13 @@ describe('voice diagnostics revocation reload continuity', () => {
   });
 
   it('restores an unresolved former-machine shutdown after process state is lost and clears it only on acknowledgement', async () => {
+    // A durable shutdown obligation represents a prior enabled (or otherwise
+    // already tracked) machine policy, not a first default-off reconciliation.
+    configure.mockResolvedValueOnce({ settings });
+    await applyVoiceDiagnosticsMachinePolicy({
+      machineId: 'machine-former',
+      settings,
+    });
     configure.mockRejectedValueOnce(new Error('former_machine_unreachable'));
     const intent = declareVoiceDiagnosticsMachinePolicyIntent({
       machineId: 'machine-former',

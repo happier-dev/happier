@@ -54,7 +54,51 @@ export function decryptSecretValueWithKeys(
   return decryptSecretValueWithKeysV1(input, keys);
 }
 
+export class LocalSettingsSecretUnavailableError extends Error {
+  readonly code = 'local_secret_unavailable' as const;
+
+  constructor() {
+    super('Local settings secret key is unavailable');
+    this.name = 'LocalSettingsSecretUnavailableError';
+  }
+}
+
+function hasUnsealedSecretValue(input: unknown): boolean {
+  if (!input || typeof input !== 'object') return false;
+  const pending: object[] = [input as object];
+  const seen = new WeakSet<object>();
+
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+
+    if (
+      !Array.isArray(current)
+      && (current as Record<string, unknown>)._isSecretValue === true
+      && typeof (current as Record<string, unknown>).value === 'string'
+    ) {
+      return true;
+    }
+
+    for (const child of Array.isArray(current)
+      ? current
+      : Object.values(current as Record<string, unknown>)) {
+      if (child && typeof child === 'object') pending.push(child as object);
+    }
+  }
+
+  return false;
+}
+
+export function assertNoUnsealedSettingsSecretValues(input: unknown): void {
+  if (hasUnsealedSecretValue(input)) {
+    throw new LocalSettingsSecretUnavailableError();
+  }
+}
+
 export function sealSecretsDeep<T>(input: T, key: Uint8Array | null): T {
+  if (!key) assertNoUnsealedSettingsSecretValues(input);
   return sealSecretsDeepV1(input, key, getRandomBytes);
 }
 

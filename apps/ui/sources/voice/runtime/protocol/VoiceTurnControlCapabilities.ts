@@ -1,12 +1,16 @@
-import type {
-  VoiceTurnControlAction,
-  VoiceTurnControlCapabilities,
-} from '@happier-dev/bundled-voice-runtime-contract';
+import type { VoiceTurnControlAction } from '@happier-dev/plugin-sdk/voice/client';
 
-export type {
-  VoiceTurnControlAction,
-  VoiceTurnControlCapabilities,
-} from '@happier-dev/bundled-voice-runtime-contract';
+export type VoiceTurnControlCapabilities = Readonly<{
+  cancelResponse: 'unsupported' | 'immediate';
+  truncatePlayback: 'unsupported' | 'played_ms' | 'audio_samples';
+  clearInput: boolean;
+  stopSession: boolean;
+  resumption: 'none' | 'resume';
+  replay: 'none' | 'stable_ids';
+  exactMessage: boolean;
+}>;
+
+export type { VoiceTurnControlAction };
 
 export type VoiceTurnControlActionAvailability =
   | Readonly<{ status: 'available'; basis?: 'played_ms' | 'audio_samples'; strategy?: 'resume' | 'stable_ids' }>

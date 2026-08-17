@@ -1,41 +1,41 @@
 import type { ComponentProps } from 'react';
 import { getRelayAccessProviderDescriptor, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
-import { Ionicons } from '@expo/vector-icons';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import type { TranslationKey } from '@/text';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 export type RelayAccessProviderUiDefinition = Readonly<{
     titleKey: TranslationKey;
     subtitleKey: TranslationKey;
-    iconName: ComponentProps<typeof Ionicons>['name'];
+    iconName: IconName;
 }>;
 
 export const relayAccessProviderUiCatalog: Readonly<Record<RelayAccessProviderId, RelayAccessProviderUiDefinition>> = Object.freeze({
     localOnly: {
         titleKey: 'settings.relayAccess.providers.localOnly.title',
         subtitleKey: 'settings.relayAccess.providers.localOnly.subtitle',
-        iconName: 'lock-closed-outline',
+        iconName: 'lock',
     },
     lan: {
         titleKey: 'settings.relayAccess.providers.lan.title',
         subtitleKey: 'settings.relayAccess.providers.lan.subtitle',
-        iconName: 'wifi-outline',
+        iconName: 'wifi-high',
     },
     tailscaleServe: {
         titleKey: 'settings.relayAccess.providers.tailscaleServe.title',
         subtitleKey: 'settings.relayAccess.providers.tailscaleServe.subtitle',
-        iconName: 'shield-checkmark-outline',
+        iconName: 'shield-check',
     },
     tailscaleFunnel: {
         titleKey: 'settings.relayAccess.providers.tailscaleFunnel.title',
         subtitleKey: 'settings.relayAccess.providers.tailscaleFunnel.subtitle',
-        iconName: 'globe-outline',
+        iconName: 'globe',
     },
     cloudflareNamed: {
         titleKey: 'settings.relayAccess.providers.cloudflareNamed.title',
         subtitleKey: 'settings.relayAccess.providers.cloudflareNamed.subtitle',
-        iconName: 'cloud-outline',
+        iconName: 'cloud',
     },
 } satisfies Record<RelayAccessProviderId, RelayAccessProviderUiDefinition>);
 

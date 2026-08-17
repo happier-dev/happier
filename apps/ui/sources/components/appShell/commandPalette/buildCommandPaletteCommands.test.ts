@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 
 import type { Command } from './types';
+import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
 
 const createSessionActionDraftSpy = vi.fn();
@@ -29,6 +30,120 @@ function buildSettingsWithExecutionRunsEnabled() {
 }
 
 describe('buildCommandPaletteCommands', () => {
+  it('delegates every compact catalog destination to its host activation owner without collapsing qualified plugin pages', async () => {
+    const pushes: string[] = [];
+    const compactActivations: string[] = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    const compactDestinations = [
+      {
+        kind: 'builtin',
+        id: 'browseExistingSessions',
+        title: 'Browse existing sessions',
+        icon: 'folder-open',
+        group: 'sessions',
+        order: 0,
+        routePath: '/external/browse',
+        availability: 'available',
+      },
+      {
+        kind: 'plugin',
+        container: 'appPage',
+        id: 'plugin:acme.notes:notes',
+        destination: { pluginId: 'acme.notes', localId: 'notes' },
+        title: 'Acme notes',
+        icon: 'note',
+        group: 'plugins',
+        order: 10,
+        routePath: '/plugins/acme.notes/notes',
+        availability: 'available',
+      },
+      {
+        kind: 'plugin',
+        container: 'appPage',
+        id: 'plugin:beta.notes:notes',
+        destination: { pluginId: 'beta.notes', localId: 'notes' },
+        title: 'Beta notes',
+        icon: 'note',
+        group: 'plugins',
+        order: 20,
+        routePath: '/plugins/beta.notes/notes',
+        availability: 'unavailable',
+        unavailableReason: 'plugin_disabled',
+      },
+    ] as const;
+    const input = {
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      nav: {
+        push: (path: string) => pushes.push(path),
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+      compactAppDestinations: compactDestinations,
+      onActivateCompactAppDestination: (destination: CompactAppDestination) => {
+        compactActivations.push(destination.id);
+      },
+    };
+
+    const commands = buildCommandPaletteCommands(input);
+    const destinationCommands = commands.filter((command) => command.id.startsWith('app-destination:'));
+
+    expect(destinationCommands.map((command) => command.id)).toEqual([
+      'app-destination:browseExistingSessions',
+      'app-destination:plugin:acme.notes:notes',
+      'app-destination:plugin:beta.notes:notes',
+    ]);
+    const unavailableDestinationCommand = destinationCommands.find((command) => (
+      command.id === 'app-destination:plugin:beta.notes:notes'
+    ));
+    expect(unavailableDestinationCommand?.subtitle).toEqual(expect.any(String));
+    expect(unavailableDestinationCommand?.subtitle).not.toBe('plugin_disabled');
+
+    for (const command of destinationCommands) {
+      await command.action();
+    }
+    expect(compactActivations).toEqual([
+      'browseExistingSessions',
+      'plugin:acme.notes:notes',
+      'plugin:beta.notes:notes',
+    ]);
+    expect(pushes).toEqual([]);
+  });
+
+  it('does not republish compact destinations the user hid in the canonical catalog', () => {
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      nav: { push: () => {}, navigateToSession: () => {} },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+      compactAppDestinations: [{
+        kind: 'plugin',
+        container: 'appPage',
+        id: 'plugin:acme.notes:hidden',
+        destination: { pluginId: 'acme.notes', localId: 'hidden' },
+        title: 'Hidden notes',
+        icon: 'note',
+        group: 'plugins',
+        order: 10,
+        routePath: '/plugins/acme.notes/hidden',
+        availability: 'available',
+        visibility: 'hidden',
+      }],
+      onActivateCompactAppDestination: () => {},
+    });
+
+    expect(commands.some((command) => command.id === 'app-destination:plugin:acme.notes:hidden')).toBe(false);
+  });
+
   it('includes ActionSpec-derived commands when enabled (execution runs + voice)', async () => {
     const pushes: string[] = [];
     const executorCalls: Array<{ actionId: string }> = [];

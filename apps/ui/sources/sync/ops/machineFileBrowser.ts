@@ -14,6 +14,7 @@ import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/se
 type MachineFileBrowserOpts = Readonly<{
     serverId?: string | null;
     timeoutMs?: number | null;
+    signal?: AbortSignal;
 }>;
 
 function throwUnsupportedResponse(method: string): never {
@@ -47,6 +48,7 @@ export async function machineFilesystemListRoots(
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS,
             payload: undefined,
+            ...(opts?.signal ? { signal: opts.signal } : {}),
         });
         const parsed = DaemonFilesystemListRootsResponseSchema.safeParse(response);
         if (!parsed.success) {
@@ -54,6 +56,7 @@ export async function machineFilesystemListRoots(
         }
         return parsed.data;
     } catch (error) {
+        if (opts?.signal?.aborted) throw error;
         return toMachineFileBrowserRootsRpcError(error);
     }
 }
@@ -71,6 +74,7 @@ export async function machineFilesystemListDirectory(
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
             payload,
+            ...(opts?.signal ? { signal: opts.signal } : {}),
         });
         const parsed = DaemonFilesystemListDirectoryResponseSchema.safeParse(response);
         if (!parsed.success) {
@@ -78,6 +82,7 @@ export async function machineFilesystemListDirectory(
         }
         return parsed.data;
     } catch (error) {
+        if (opts?.signal?.aborted) throw error;
         return toMachineFileBrowserDirectoryRpcError(error);
     }
 }

@@ -1,5 +1,6 @@
 import type { Machine, Session } from '../../domains/state/storageTypes';
 import {
+    areMachineDisplayRenderablesEqual,
     buildMachineDisplayRenderableFromMachine,
     type MachineDisplayRenderable,
 } from '../../domains/machines/machineDisplayRenderable';
@@ -11,15 +12,15 @@ import { resolveMachineSessionListIndexImpact } from './machineSessionListIndexI
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 import { buildActiveServerSessionListIndex } from '../sessionListIndex/buildSessionListIndexWithServerScope';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
-import { areServerProfileIdentifiersEquivalent } from '../../domains/server/serverProfiles';
+import {
+    areServerProfileIdentifiersEquivalent,
+} from '../../domains/server/serverProfiles';
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { invalidateCachedTransferRoutesForMachine } from '../../domains/transfers/runtime/transferRouteCache';
 import {
-    resolveWarmCacheAccountScope,
-    type MachineDisplayCacheEntryV1,
-    saveMachineDisplayWarmCacheEntries,
-} from '../../domains/state/warmCachePersistence';
-import { buildMachineDisplayCacheEntriesFromRenderables } from '../../domains/state/warmCacheAdapters';
+    scheduleMachineDisplayWarmCacheSave,
+    scheduleMachineListDisplayWarmCacheSave,
+} from '../../domains/state/machineDisplayWarmCacheWriter';
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
 import { areStoredMachinesEqual, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
 
@@ -49,53 +50,16 @@ type MachinesDomainDependencies = Readonly<{
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
 }>;
 
-let pendingWarmMachineCacheSave: {
-    activeServerId: string;
-    accountId: string;
-    entries: Record<string, MachineDisplayCacheEntryV1>;
-} | null = null;
-let pendingWarmMachineCacheSaveTimer: ReturnType<typeof setTimeout> | null = null;
-
-function scheduleWarmMachineCacheSave(
-    state: MachinesDomain & MachinesDomainDependencies,
-    previousEntries?: Record<string, MachineDisplayCacheEntryV1>,
+function scheduleActiveWarmMachineCacheSave(
+    state: Pick<MachinesDomain & MachinesDomainDependencies, 'machineDisplayById' | 'profile'>,
 ): void {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    const accountId = resolveWarmCacheAccountScope(state.profile?.id);
-    if (!activeServerId || !accountId) return;
-    pendingWarmMachineCacheSave = {
-        activeServerId,
-        accountId,
-        entries: buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {}, previousEntries),
-    };
-    if (pendingWarmMachineCacheSaveTimer) return;
-    pendingWarmMachineCacheSaveTimer = setTimeout(() => {
-        pendingWarmMachineCacheSaveTimer = null;
-        const pending = pendingWarmMachineCacheSave;
-        pendingWarmMachineCacheSave = null;
-        if (!pending) return;
-        saveMachineDisplayWarmCacheEntries(pending.activeServerId, pending.accountId, pending.entries);
-    }, 0);
-}
-
-function areMachineDisplaysEqual(
-    previous: MachineDisplayRenderable | null | undefined,
-    next: MachineDisplayRenderable | null | undefined,
-): boolean {
-    if (previous === next) return true;
-    if (!previous || !next) return previous === next;
-    return previous.id === next.id
-        && previous.updatedAt === next.updatedAt
-        && previous.active === next.active
-        && previous.activeAt === next.activeAt
-        && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
-        && previous.metadataVersion === next.metadataVersion
-        && (previous.replacedByMachineId ?? null) === (next.replacedByMachineId ?? null)
-        && (previous.replacedAt ?? null) === (next.replacedAt ?? null)
-        && (previous.replacementReason ?? null) === (next.replacementReason ?? null)
-        && (previous.replacementSource ?? null) === (next.replacementSource ?? null)
-        && (previous.replacementActorUserId ?? null) === (next.replacementActorUserId ?? null)
-        && areSessionValuesDeepEqual(previous.metadata ?? null, next.metadata ?? null);
+    if (!activeServerId) return;
+    scheduleMachineDisplayWarmCacheSave({
+        serverId: activeServerId,
+        accountId: state.profile?.id,
+        machineDisplays: state.machineDisplayById ?? {},
+    });
 }
 
 function mergeMachineListById(
@@ -181,6 +145,15 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         : { ...state.machineListStatusByServerId, [sourceServerId]: 'idle' as const })
                     : state.machineListStatusByServerId;
 
+                const scopedMachines = sourceServerId ? machineListByServerId[sourceServerId] : null;
+                if (!shouldUpdateActiveProjection && sourceServerId && Array.isArray(scopedMachines)) {
+                    scheduleMachineListDisplayWarmCacheSave({
+                        serverId: sourceServerId,
+                        accountId: state.profile.id,
+                        machines: scopedMachines,
+                    });
+                }
+
                 if (!shouldUpdateActiveProjection) {
                     return {
                         ...state,
@@ -220,7 +193,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         }
                         const nextDisplay = buildMachineDisplayRenderableFromMachine(machine);
                         const previousDisplay = state.machineDisplayById[machine.id];
-                        if (!areMachineDisplaysEqual(previousDisplay, nextDisplay)) {
+                        if (!areMachineDisplayRenderablesEqual(previousDisplay, nextDisplay)) {
                             if (mergedMachineDisplays === state.machineDisplayById) {
                                 mergedMachineDisplays = { ...state.machineDisplayById };
                             }
@@ -311,7 +284,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     machineListStatusByServerId,
                 };
                 if (mergedMachineDisplays !== state.machineDisplayById) {
-                    scheduleWarmMachineCacheSave(nextState as MachinesDomain & MachinesDomainDependencies);
+                    scheduleActiveWarmMachineCacheSave(nextState as MachinesDomain & MachinesDomainDependencies);
                 }
                 return nextState;
             }),
@@ -324,7 +297,6 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 }
 
                 const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [machine.id, machine]));
-                const previousEntries = buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {});
                 const previousIndexByServerId = state.sessionListIndexByServerId ?? {};
                 const previousActiveIndex = activeServerId ? (previousIndexByServerId[activeServerId] ?? null) : null;
                 const nextSessionListIndex = activeServerId
@@ -351,7 +323,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     machineDisplayById: nextMachineDisplays,
                     sessionListIndexByServerId: nextSessionListIndexByServerId,
                 };
-                scheduleWarmMachineCacheSave(nextState as MachinesDomain & MachinesDomainDependencies, previousEntries);
+                scheduleActiveWarmMachineCacheSave(nextState as MachinesDomain & MachinesDomainDependencies);
                 return nextState;
             }),
     };

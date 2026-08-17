@@ -33,6 +33,38 @@ installFilesContentCommonModuleMocks({
     },
 });
 
+// `@legendapp/list` is a third-party boundary. It is stubbed here exactly as the
+// sibling SearchResultsList suites stub it: the list keeps its real auxiliary
+// contract (header, rows via `renderItem`, `ListEmptyComponent` when empty) so
+// the assertions below still exercise the component's own rendering. Without
+// this the real web build mounts and its passive effect calls
+// `requestAnimationFrame`, which the node test environment does not provide.
+vi.mock('@legendapp/list/react-native', async () => {
+    const ReactModule = await import('react');
+    return {
+        LegendList: ReactModule.forwardRef((props: any, _ref) => {
+            const renderAuxiliary = (component: any) => {
+                if (!component) return null;
+                if (ReactModule.isValidElement(component)) return component;
+                return ReactModule.createElement(component);
+            };
+            const data: any[] = Array.isArray(props.data) ? props.data : [];
+            const items = data.map((item: any, index: number) => ReactModule.createElement(
+                'LegendListItem',
+                { key: props.keyExtractor?.(item, index) ?? String(index) },
+                props.renderItem?.({ item, index }),
+            ));
+            return ReactModule.createElement(
+                'LegendList',
+                props,
+                renderAuxiliary(props.ListHeaderComponent),
+                ...items,
+                data.length === 0 ? renderAuxiliary(props.ListEmptyComponent) : null,
+            );
+        }),
+    };
+});
+
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
     Ionicons: 'Ionicons',

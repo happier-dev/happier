@@ -3,8 +3,15 @@ import { providerSessionTranslations } from './providerSessionTranslations';
 import { externalSessionOperationTranslations } from './externalSessionOperationTranslations';
 import { externalSessionSettingsTranslations } from './externalSessionSettingsTranslations';
 import { pluginPermissionTranslations } from './pluginPermissionTranslations';
+import { sessionRemotePermissionGrantTranslations } from './sessionRemotePermissionGrantTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
+import { voiceDiagnosticsConsentTranslations } from './voiceDiagnosticsConsentTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
+import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
+import { pluginAccountDataEraseTranslations } from './pluginAccountDataEraseTranslations';
+import { pluginAccountReleaseSelectionTranslations } from './pluginAccountReleaseSelectionTranslations';
+import { pluginInvocationLogTranslations } from './pluginInvocationLogTranslations';
+import { eventAutomationComposerTranslations } from './eventAutomationComposerTranslations';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Создайте сервер, импортируйте JSON хоста или установите рекомендуемый пресет.',
@@ -104,7 +111,7 @@ const mcpServersUxTranslationExtension = {
   mcpServersDeliveryNativeTitle: 'Нативный MCP',
   mcpServersDeliveryNativeSubtitle: 'Этот бэкенд получает инструменты Happier как нативные MCP-серверы.',
   mcpServersDeliveryShellBridgeTitle: 'Оболочечный мост Happier',
-  mcpServersDeliveryShellBridgeSubtitle: 'Этот бэкенд вызывает инструменты Happier через мост `happier tools`.',
+  mcpServersDeliveryShellBridgeSubtitle: 'Этот бэкенд вызывает инструменты Happier через мост happier tools.',
   mcpServersDeliveryUnsupportedTitle: 'Не поддерживается',
   mcpServersDeliveryUnsupportedSubtitle: 'Этот бэкенд пока не получает инструменты Happier.',
 } as const;
@@ -622,7 +629,14 @@ export const ru = {
     },
     voice: voiceReadinessTranslations.ru,
     pluginPermissions: pluginPermissionTranslations.ru,
+    sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.ru,
     pluginSurfaces: {
+        state: {
+            loading: { title: 'Загрузка содержимого плагина', reason: 'Пока Happier загружает последнее обновление, отображается доступное содержимое.' },
+            refreshing: { title: 'Обновление содержимого плагина', reason: 'Пока Happier проверяет обновления, отображается последнее доступное содержимое.' },
+            stale: { title: 'Содержимое плагина может быть устаревшим', reason: 'Отображается последнее доступное содержимое. Повторите попытку, чтобы проверить обновления.' },
+            offline: { title: 'Содержимое плагина недоступно в сети', reason: 'До повторного подключения последнее доступное содержимое отображается только для чтения.' },
+        },
         offlineSnapshot: {
             accessibilityLabel: ({ title }: { title: string }) =>
                 `Офлайн-снимок ${title}. До повторного подключения содержимое доступно только для чтения.`,
@@ -632,6 +646,12 @@ export const ru = {
                 accessibilityLabel: 'Панель плагина',
                 untitled: 'Панель плагина',
             },
+        },
+        appPage: {
+            title: 'Страницы плагинов',
+            subtitle: 'Полноэкранные разделы, предоставленные установленными плагинами.',
+            empty: 'Нет доступных страниц плагинов.',
+            unknown: 'Эта страница плагина недоступна. Плагин может загружаться, быть отключён или удалён.',
         },
         appScopeRightSidebar: {
             empty: 'Нет доступных вкладок плагинов приложения.',
@@ -1050,6 +1070,17 @@ export const ru = {
   },
 
   automations: {
+    list: {
+      interval: ({ minutes, timezone }: { minutes: number; timezone: string | null }) => `Каждые ${minutes} мин${timezone ? ` (${timezone})` : ""}`,
+      cron: ({ expression, timezone }: { expression: string | null; timezone: string | null }) => `Cron${expression ? `: ${expression}` : ""}${timezone ? ` (${timezone})` : ""}`,
+      schedule: "Расписание",
+      event: ({ eventId }: { eventId: string }) => `Событие: ${eventId}`,
+      manual: "Вручную",
+      conversationTrigger: "Триггер разговора",
+      noNextRun: "Следующий запуск не запланирован",
+      nextRun: ({ time }: { time: string }) => `Следующий запуск: ${time}`,
+      nextRunPending: "Следующий запуск ожидается",
+    },
     openA11y: "Открыть автоматизации",
     gate: {
       disabledTitle: "Автоматизации отключены",
@@ -1179,6 +1210,10 @@ export const ru = {
         active: "Активна",
         paused: "Приостановлена",
       },
+      event: {
+        watcherTitle: "Наблюдатель событий",
+        watcherUnwatched: "Нет наблюдателя",
+      },
       actionsGroupTitle: "Действия",
       runNowTitle: "Запустить сейчас",
       runNowQueuedBadge: "В очереди",
@@ -1200,10 +1235,53 @@ export const ru = {
       deleteFailed: "Не удалось удалить автоматизацию.",
       assignmentsUpdateFailed: "Не удалось обновить назначения машин.",
       recentRunsTitle: "Недавние запуски",
+      loadMoreRuns: "Загрузить ещё запуски",
       runMeta: {
+        originTitle: "Происхождение",
+        origin: {
+          scheduled: "Запланированный",
+          manual: "Ручной",
+          pluginEvent: "Событие",
+          conversation: "Разговор",
+        },
+        occurred: ({ time }: { time: string }) => `Произошло: ${time}`,
+        invoked: ({ time }: { time: string }) => `Вызвано: ${time}`,
+        admitted: ({ time }: { time: string }) => `Принято: ${time}`,
+        occurrenceTitle: "Идентификатор события",
+        sourceTitle: "Источник наблюдения",
         scheduled: ({ time }: { time: string }) => `Запланировано: ${time}`,
         updated: ({ time }: { time: string }) => `Обновлено: ${time}`,
         error: ({ message }: { message: string }) => `Ошибка: ${message}`,
+      },
+      runDetail: {
+        title: "Сведения о принятии",
+        recipe: "Принятый рецепт",
+        recipeAbsent: "Приватные сведения о принятии не были сохранены.",
+        templateVersion: "Версия шаблона",
+        event: "Событие",
+        conversation: "Разговор",
+        sourceInstance: "Экземпляр источника",
+        filter: "Фильтр",
+        filterMatched: "Совпало",
+        payload: "Данные",
+        input: "Ввод",
+        target: "Зафиксированная цель",
+        outputCeiling: "Лимит вывода",
+        existingSession: ({ sessionId }: { sessionId: string }) => `Существующая сессия: ${sessionId}`,
+        newSession: ({ machineId, directory }: { machineId: string; directory: string }) => `Новая сессия на ${machineId}: ${directory}`,
+        executionRun: ({ permissionMode }: { permissionMode: string }) => `Запуск выполнения · ${permissionMode}`,
+        prompt: "Зафиксированный запрос",
+        result: "Итоговый результат",
+        resultAbsent: "Итоговый результат не был записан.",
+        failureDetail: "Подробности ошибки",
+        failureDetailAbsent: "Приватные подробности ошибки не были сохранены.",
+        predecessorSummary: "Есть сводка предшественника, но она недоступна в этих сведениях.",
+        currentnessUnavailable: "Приватные сведения о запуске временно недоступны, пока меняется шифрование аккаунта.",
+        materialUnavailable: "На этом устройстве нет текущего ключа шифрования аккаунта.",
+        modeMismatch: "Сохранённые приватные сведения используют другой режим шифрования аккаунта.",
+        contentInvalid: "Сохранённые приватные сведения недействительны.",
+        invalidTemplate: "Принятый шаблон недействителен. Этот запуск не будет отправлен или повторён.",
+        outcomeUnknown: "Результат отправки неизвестен. Happier не будет повторно отправлять зафиксированную цель.",
       },
     },
     create: {
@@ -1253,7 +1331,9 @@ export const ru = {
     actions: "Действия",
     moreActions: "Другие действия",
     moreActionsHint: "Открывает меню с другими действиями",
+    destructiveActionHint: "Это действие необратимо и не может быть отменено.",
     cancel: "Отмена",
+    submit: "Отправить",
     close: "Закрыть",
     open: "Открыть",
     done: "Готово",
@@ -1265,6 +1345,7 @@ export const ru = {
     saveAs: "Сохранить как",
 		    error: "Ошибка",
 		    success: "Успешно",
+		    warning: "Предупреждение",
 		    info: "Инфо",
 		    comingSoon: "Скоро",
 		    ok: "ОК",
@@ -1273,6 +1354,7 @@ export const ru = {
         previous: "Предыдущий",
         next: "Следующий",
 	    start: "Запустить",
+	    run: "Выполнить",
 	    create: "Создать",
     rename: "Переименовать",
     remove: "Удалить",
@@ -1357,7 +1439,19 @@ export const ru = {
     resizableDockedPane: {
       resizeA11y: "Изменить размер панели",
       resizeHint:
-        "Используйте стрелки влево и вправо, чтобы изменить размер",
+        "Используйте стрелки клавиатуры или действия регулировки, чтобы изменить размер",
+    },
+    modalPane: {
+      right: "Правая боковая панель",
+      details: "Панель сведений",
+      bottom: "Нижняя панель",
+      dismiss: ({ pane }: { pane: string }) => `Закрыть ${pane}`,
+    },
+    pluginUi: {
+      loading: "Загрузка",
+      empty: "Нечего показать",
+      error: "Что-то пошло не так",
+      moreActions: "Дополнительные действия",
     },
   },
 
@@ -1420,6 +1514,7 @@ export const ru = {
       "Будет создан новый аккаунт и повторно привязан провайдер. Старую зашифрованную историю восстановить нельзя.",
     lostAccessConfirmButton: "Сбросить и продолжить",
     secretKeyPlaceholder: "XXXXX-XXXXX-XXXXX...",
+    secretKeyInputLabel: "Секретный ключ",
     linkNewDeviceTitle: "Привязать новое устройство",
     linkNewDeviceSubtitle: "Отсканируйте QR-код, отображаемый на новом устройстве, чтобы привязать его к этой учетной записи",
     linkNewDeviceQrInstructions: "Откройте Happier на новом устройстве и отобразите QR-код",
@@ -1471,7 +1566,7 @@ export const ru = {
         pasteDoctorJson: {
           title: "CLI doctor JSON (необязательно)",
           subtitle:
-            "Если машина недоступна из UI, выполните `happier doctor --json` на компьютере и вставьте сюда.",
+            "Если машина недоступна из UI, выполните happier doctor --json на компьютере и вставьте сюда.",
           placeholder: "{ \"capturedAt\": \"...\", ... }",
           invalid: ({ error }: { error: string }) => `Некорректный doctor JSON: ${error}`,
           valid: "Doctor JSON выглядит корректным и будет приложен к отчёту.",
@@ -1914,6 +2009,7 @@ export const ru = {
 
   settings: {
     title: "Настройки",
+    overview: 'Обзор',
 
     // Main settings hub category groups
     profileAndAccount: 'Профиль и аккаунт',
@@ -2054,8 +2150,6 @@ export const ru = {
       executionRunsSubtitle: "Запуски выполнения на разных машинах",
       connectedServices: "Подключенные сервисы",
       connectedServicesSubtitle: "Подписки Claude/Codex и OAuth‑профили",
-      channelBridges: "Мосты каналов",
-      channelBridgesSubtitle: "Подключайте внешние чаты (Telegram) к сессиям",
       featuresTitle: "Возможности",
       featuresSubtitle: "Включить или отключить функции приложения",
       pets: "Питомцы",
@@ -2626,7 +2720,7 @@ export const ru = {
       copyReportSubtitle: "Скопировать безопасный JSON‑отчёт для поддержки",
     },
     pasteDoctorJson: {
-      footer: "Совет: выполните `happier doctor --json` на компьютере и вставьте сюда.",
+      footer: "Совет: выполните happier doctor --json на компьютере и вставьте сюда.",
       placeholder: "{ \"capturedAt\": \"...\", ... }",
       parse: "Проверить вставленный JSON",
       ok: "Вставленный doctor JSON выглядит корректным.",
@@ -2813,6 +2907,7 @@ export const ru = {
                 provider_account_adoption_mismatch: 'Провайдер не переключил аккаунт',
                 post_switch_verification_failed: 'Аккаунт провайдера не удалось проверить',
                 connected_service_credential_reconnect_required: "Подключенную учетную запись нужно переподключить",
+                connected_service_credential_refresh_unavailable: "Обновление подключенной учетной записи временно недоступно",
                 claude_subscription_missing_claude_code_scope: 'Для доступа к Claude Code нужно переподключение',
         claude_subscription_native_auth_materialization_failed: 'Не удалось подготовить учетные данные Claude Code',
         claude_subscription_setup_token_not_supported_for_unified: 'Токен настройки Claude не может запустить режим Unified',
@@ -2834,17 +2929,16 @@ export const ru = {
                 provider_account_adoption_mismatch: 'Провайдер остался в другом аккаунте',
                 post_switch_verification_failed: 'Аккаунт провайдера не удалось проверить',
                 connected_service_credential_reconnect_required: "Подключенную учетную запись нужно переподключить",
+                connected_service_credential_refresh_unavailable: "Не удалось временно обновить подключенную учетную запись",
                 claude_subscription_missing_claude_code_scope: 'Переподключите подписку Claude для Claude Code',
         claude_subscription_native_auth_materialization_failed: 'Не удалось подготовить нативную авторизацию Claude Code',
         claude_subscription_setup_token_not_supported_for_unified: 'Переподключите Claude через OAuth для режима Unified',
       },
       body: {
         default: "Проверьте подключённые аккаунты и повторите попытку.",
-        provider_session_state_unavailable_for_resume: ({ reason, agentId }: { reason: string; agentId: string }) =>
-          `Проверьте подключенные аккаунты, затем начните новую сессию с выбранным аккаунтом или продолжите с текущим. ${agentId}: ${reason}.`,
+        provider_session_state_unavailable_for_resume: 'Проверьте подключенные аккаунты, затем начните новую сессию с выбранным аккаунтом или продолжите с текущим.',
         connected_service_materialization_identity_missing: 'В этой сессии нет идентификатора подключённого сервиса, нужного для повторного использования материализованного состояния провайдера. Начните заново с выбранным аккаунтом или продолжите с текущим.',
-        resume_reachability_inputs_missing: ({ reason, agentId }: { reason: string; agentId: string }) =>
-          `Демон не смог проверить состояние возобновления провайдера, потому что отсутствовали необходимые данные. ${agentId}: ${reason}.`,
+        resume_reachability_inputs_missing: 'Демон не смог проверить состояние возобновления провайдера, потому что отсутствовали необходимые данные.',
         metadata_update_failed: 'Сессия не смогла сохранить новый выбор аутентификации. Повторите попытку после завершения синхронизации сессии.',
         no_eligible_group_member: 'Сейчас в этой группе нет аккаунта, подходящего для резерва. Проверьте подключённые аккаунты и при необходимости переподключите профиль.',
         recovery_retry_scheduled: 'Happier запланировал повтор восстановления провайдера. Можно повторить сейчас или проверить подключённые аккаунты.',
@@ -2852,6 +2946,7 @@ export const ru = {
                 provider_account_adoption_mismatch: 'После переключения провайдер остался в другом аккаунте. Проверьте подключённые аккаунты или повторите переключение.',
                 post_switch_verification_failed: 'Happier не смог проверить, что провайдер принял выбранный аккаунт. Проверьте подключённые аккаунты или повторите переключение.',
                 connected_service_credential_reconnect_required: "Выбранную подключенную учетную запись нужно переподключить, прежде чем эту сессию можно будет возобновить. Переподключите профиль и повторите попытку.",
+                connected_service_credential_refresh_unavailable: "Не удалось обновить выбранную подключенную учетную запись. Повторите попытку через некоторое время.",
                 claude_subscription_missing_claude_code_scope: 'Этот профиль Claude был подключен до выдачи областей Claude Code. Переподключите его, затем повторите сессию или переключение группы.',
         claude_subscription_native_auth_materialization_failed: 'Happier не смог создать файл нативных учетных данных Claude Code для этого профиля. Переподключите профиль или выберите другого участника группы.',
         claude_subscription_setup_token_not_supported_for_unified: 'Режим Claude Unified должен запускать CLI Claude с нативными учетными данными OAuth. Переподключите этот профиль через OAuth вместо токена настройки.',
@@ -3124,7 +3219,6 @@ export const ru = {
       setProfileLabelTitle: "Задать метку профиля",
       setProfileLabelSubtitle:
         "Необязательная метка, отображаемая в списках авторизации",
-      addOauthProfileTitle: "Добавить профиль OAuth",
       addOauthProfileSubtitle: "Подключить новый профиль аккаунта",
       addOauthProfileDeviceTitle: "Добавить через аутентификацию устройства",
       addOauthProfileDeviceSubtitle: "Рекомендуется для web/удалённых сред",
@@ -3256,6 +3350,10 @@ export const ru = {
         removeMember: "Удалить участника",
         removeMemberConfirmTitle: "Удалить участника",
         removeMemberConfirmBody: ({ profileId }: { profileId: string }) => `Удалить "${profileId}" из этой группы?`,
+        runtimeFallbackUnsupported: 'Автоматическое переключение недоступно для этого подключённого сервиса.',
+        removeMembersConfirmBody: ({ count, members }: { count: number; members: string }) => `Удалить ${count === 1 ? "этого участника" : `этих участников (${count})`} из этого пула?\n\n${members}`,
+        manageMembersTitle: 'Управление участниками',
+        manageMembersSubtitle: ({ count, total }: { count: number; total: number }) => `${count} из ${total} аккаунтов`,
       },
       groupDetail: {
         routeTitle: "Группа",
@@ -3314,6 +3412,7 @@ export const ru = {
       status: "Статус",
       email: "Эл. почта",
       accountId: "ID аккаунта",
+      providerAccountId: "ID аккаунта провайдера",
       quotaTitle: "Квоты",
       defaultSubtitle: "Этот профиль выбран по умолчанию",
       setDefaultSubtitle: "Использовать этот профиль по умолчанию",
@@ -3396,7 +3495,7 @@ export const ru = {
           "Введите директорию относительно workspace (без абсолютных путей, без ..).",
         invalidDirectoryTitle: "Некорректная директория",
         invalidDirectoryMessage:
-          "Используйте относительный путь, например `.happier/uploads`.",
+          "Используйте относительный путь, например .happier/uploads.",
       },
     },
     sourceControlIgnore: {
@@ -4520,7 +4619,7 @@ export const ru = {
                     },
                     server: {
                         title: "Подключение к серверу",
-                        footer: "Оставьте пустым, чтобы использовать управляемый Happier жизненный цикл сервера OpenCode. Укажите абсолютный URL http(s), чтобы подключиться к существующему серверу OpenCode."
+                        footer: "Оставьте пустым, чтобы использовать управляемый Happier жизненный цикл сервера OpenCode. Укажите абсолютный HTTPS URL для любого сервера, который вы запускаете сами, или HTTP только для localhost. Пароль укажите в поле ниже, а не в URL."
                     }
                 },
                 fields: {
@@ -4540,7 +4639,11 @@ export const ru = {
                     },
                     opencodeServerBaseUrl: {
                         title: "URL существующего сервера OpenCode",
-                        subtitle: "Необязательное переопределение для пользовательского сервера OpenCode."
+                        subtitle: "Необязательное переопределение для сервера, который вы запускаете сами. HTTPS может использовать любой хост; HTTP ограничен localhost."
+                    },
+                    opencodeServerPassword: {
+                        title: "Пароль существующего сервера OpenCode",
+                        subtitle: "Указывайте только если ваш сервер OpenCode запущен с OPENCODE_SERVER_PASSWORD. Хранится в зашифрованном виде на этом устройстве и никогда не синхронизируется."
                     }
                 }
             },
@@ -4834,15 +4937,6 @@ export const ru = {
     settingsNavSidebarDescription:
       "Показывать боковую панель навигации по настройкам (web/tablet)",},
 
-  settingsChannelBridges: {
-    unsupported: "Мосты каналов не поддерживаются в этой среде.",
-    enableInFeatures: "Включить мосты каналов",
-    enableInFeaturesSubtitle: "Мосты каналов — экспериментальная функция и по умолчанию отключены.",
-    description: "Мосты каналов позволяют привязывать внешние чаты (Telegram) к сессиям и пересылать сообщения агенту.",
-    telegramTitle: "Telegram",
-    telegramFooter: "Настройте Telegram через CLI, затем управляйте привязками в Telegram с помощью /sessions, /attach, /detach, /help.",
-  },
-
   settingsFeatures: {
     // Features settings screen
     experiments: "Эксперименты",
@@ -4924,8 +5018,6 @@ export const ru = {
     expHomeScreenWidgetsSubtitle: 'Включить виджеты главного экрана для активности Happier',
     expConnectedServicesQuotas: "Квоты подключённых сервисов",
     expConnectedServicesQuotasSubtitle: "Показывать бейджи квот и счётчики использования подключённых сервисов",
-    expChannelBridges: "Мосты каналов",
-    expChannelBridgesSubtitle: "Подключайте Telegram и другие чаты к сессиям Happier (экспериментально)",
     expMemorySearch: "Поиск по памяти",
     expMemorySearchSubtitle: "Включить экраны и настройки локального поиска по памяти",
     expSessionsDirect: "Внешние сессии",
@@ -5006,6 +5098,7 @@ export const ru = {
       fileNotFound: "Файл не найден",
       invalidFormat: "Неверный формат",
       operationFailed: "Операция не выполнена",
+      signupDisabled: "На этом сервере отключено создание новых аккаунтов. Войдите в существующий аккаунт или попросите администратора сервера включить регистрацию.",
       failedToForkSession: "Не удалось создать ветку сессии",
       daemonUnavailableTitle: "Демон недоступен",
       daemonUnavailableBody:
@@ -5226,7 +5319,8 @@ export const ru = {
     sessionStartedMessage: "Сессия успешно запущена.",
     sessionSpawningFailed: "Ошибка создания сессии - ID сессии не получен.",
     failedToStart:
-      "Не удалось запустить сессию. Убедитесь, что daemon запущен на целевой машине.",
+      "Не удалось запустить сеанс. Повторите попытку или проверьте выбранную машину и настройки сеанса.",
+    actionMethodUnavailable: "Обновите Happier на целевой машине, чтобы создать новый сеанс.",
     sessionTimeout:
       "Время запуска сессии истекло. Машина может работать медленно или daemon не отвечает.",
     notConnectedToServer:
@@ -5238,9 +5332,6 @@ export const ru = {
     launchStillPendingBody:
       "Happier ещё не подтвердил новую сессию. Запрос на запуск сохранён. Повторите попытку, чтобы продолжить тот же запуск без создания дубликата сессии.",
     connectedServiceSwitchUnavailable: {
-      title: "Переключение недоступно",
-      body: ({ reason, agentId }: { reason: string; agentId: string }) =>
-        `Эту сессию нельзя продолжить под новой учётной записью, поскольку её предыдущий разговор ${agentId} не удалось перенести (${reason}).\n\nВместо этого вы можете начать заново под новой учётной записью — это запустит новый разговор без предыдущей истории.`,
       startFreshAction: "Начать заново под новой учётной записью",
     },
     startingSession: "Запуск сессии...",
@@ -5547,10 +5638,18 @@ export const ru = {
         title: "Политика хранения",
         summary: "Сводка",
         keepForever: "Без автоматического удаления",
+        automaticDeletionEnabled: "Автоматическое удаление включено",
+        detailsUnavailable: "Автоматическое удаление включено, но этот клиент не может показать все активные политики",
+        singlePolicySummary: ({ domain, policy }: { domain: string; policy: string }) => `${domain}: ${policy}`,
+        relayCleanupSummary: ({ policies }: { policies: string }) => `Этот Relay очищает ${policies}.`,
+        relayCleanupAfterDays: ({ domain, count }: { domain: string; count: number }) => `${domain} через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}`,
+        relayCleanupInactiveSessionsAfterDays: ({ count }: { count: number }) => `неактивные сессии через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}`,
         deleteInactiveSessionsDays: ({ count }: { count: number }) => `Удаляет неактивные сессии через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}.`,
         deleteOlderThanDays: ({ count }: { count: number }) => `Удаляет данные через ${count} ${plural({ count, one: 'день', few: 'дня', many: 'дней' })}.`,
         sessionNotice: ({ count }: { count: number }) => `Этот Relay удаляет неактивные сессии после ${count} ${plural({ count, one: 'дня', few: 'дней', many: 'дней' })} бездействия.`,
         sessions: "Сессии",
+        sidechainMessages: "Транскрипты субагентов",
+        usageEvents: "События использования",
         accountChanges: "Изменения аккаунта",
         voiceSessionLeases: "Аренды голосовых сессий",
         feedItems: "Элементы ленты",
@@ -5960,6 +6059,7 @@ export const ru = {
         recentlyActive: 'Недавно был активен',
         externalStatusUnknown: 'Внешний статус неизвестен',
     readyForReview: "готово к проверке",
+    canceled: "Отменено",
     offline: "не в сети",
     lastSeen: ({ time }: { time: string }) => `в сети ${time}`,
     actionRequired: "требуется действие",
@@ -6031,6 +6131,8 @@ export const ru = {
       replyNotLoaded: "Ответ не загружен",
       awaitingReply: "Ожидание ответа",
       loadingBody: "Загрузка навигации по диалогу…",
+      railScrollUpA11y: "Прокрутить навигацию вверх",
+      railScrollDownA11y: "Прокрутить навигацию вниз",
       emptyPinnedHint: "Наведите курсор на сообщение и выберите значок закрепления, чтобы закрепить его.",
       emptyPinnedPrivacy: "Закрепленные сообщения сохраняются только на этом устройстве.",
     },
@@ -6155,10 +6257,11 @@ export const ru = {
     staleRunner: {
       banner: {
         title: "Раннер сеанса устарел",
-        body: "Этот сеанс все еще работает на старой CLI Happier. Перезапустите раннер, чтобы использовать текущий runtime демона.",
+        body: "Этот сеанс все еще работает на старом коде среды выполнения. Перезапустите раннер, чтобы использовать текущий runtime демона.",
         pendingBody: "Перезапускаем раннер сеанса на текущем runtime демона.",
         busyBody: "Раннер сейчас занят. Повторите попытку после завершения текущей работы.",
         failedBody: "Не удалось перезапустить раннер. Сеанс остается доступен на текущем раннере.",
+        unavailableBody: "Перезапуск недоступен для этого сеанса. Сеанс может продолжить работу на текущем раннере.",
       },
       actions: {
         restart: "Перезапустить раннер",
@@ -6180,6 +6283,57 @@ export const ru = {
     },
     toolCalls: "Вызовы инструментов",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
+    agentContinuation: {
+      currentAgentAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Ведёт эту сессию.`,
+      currentAgentLastUsedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Последний раз использовался в этой сессии.`,
+      currentAgentLastReportedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Последний раз сообщался для этой сессии.`,
+      armedAccessibilityLabel: ({ agent }: { agent: string }) => `${agent}. Выбран для следующего сообщения.`,
+      detailTitle: ({ agent }: { agent: string }) => `Продолжить с ${agent}`,
+      sendLabel: ({ agent }: { agent: string }) => `Продолжить с ${agent}`,
+      detailDescription: 'Разговор сохраняется. Ничего не отправится до вашего следующего сообщения.',
+      announcement: ({ agent }: { agent: string }) => `${agent} выбран для следующего сообщения. Ничего не отправлено.`,
+      dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Эта сессия продолжена с ${from_} на ${to}`,
+      checking: "Проверка доступности…",
+      unavailable: {
+        unsupportedSession: ({ agent }: { agent: string }) => `Эту сессию нельзя продолжить с ${agent}.`,
+        updateCli: "Обновите CLI на этой машине, чтобы сменить агента.",
+        updateOrReconnect: "Обновите или переподключите CLI, чтобы сменить агента.",
+        targetNoSessions: ({ agent }: { agent: string }) => `${agent} не может вести сессию.`,
+        targetNotProven: ({ agent }: { agent: string }) => `Переключение на ${agent} пока не поддерживается.`,
+        targetUnavailable: ({ agent }: { agent: string }) => `${agent} недоступен на этой машине.`,
+      },
+      transition: {
+        rejected: {
+          unsupportedOperation: 'Эта сессия не поддерживает смену агента. Ничего не отправлено.',
+          forbidden: 'У вас нет прав менять агента этой сессии. Ничего не отправлено.',
+          sameTarget: ({ agent }: { agent: string }) => `Эта сессия уже работает с ${agent}. Ничего не отправлено.`,
+          staleSelection: 'Сессия изменилась, пока вы выбирали. Ничего не отправлено — попробуйте ещё раз.',
+          targetUnavailable: ({ agent }: { agent: string }) => `${agent} недоступен на этой машине. Ничего не отправлено.`,
+          sourceNotIdle: ({ agent }: { agent: string }) => `${agent} ещё работает. Ничего не отправлено — попробуйте, когда он закончит.`,
+          sourceStopFailed: ({ agent }: { agent: string }) => `Не удалось остановить ${agent}, поэтому ничего не изменилось. Ничего не отправлено.`,
+        },
+        conflictingDestination: ({ agent }: { agent: string }) => `Ничего не отправлено. У этого сообщения уже есть другой адресат, поэтому оно не может заодно переключить сессию на ${agent}. Уберите одно из двух и отправьте снова.`,
+        sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} остановлен, но переключение на ${agent} не завершилось. Ваше сообщение не отправлено.`,
+        switched: ({ agent }: { agent: string }) => `Теперь эта сессия — ${agent}, но ваше сообщение не отправлено. Отправьте его ещё раз.`,
+        /** Compact status for the collapsed composer banner badge. */
+        badgeLabel: 'Смена агента',
+        /** Delegates to the Session’s existing resume owner; never a second start path. */
+        resumeAction: 'Возобновить сессию',
+        unknown: 'Happier не смог подтвердить результат. Проверьте сессию, прежде чем отправлять снова.',
+      },
+    },
+    sourceContext: {
+        chipLabel: ({ session }: { session: string }) => `Из ${session}`,
+        unknownSession: "другой сессии",
+        detailTitle: "Продолжение другой сессии",
+        detailBodyLatest: ({ session }: { session: string }) => `Разговор из ${session} будет перенесён как контекст этой новой сессии.`,
+        detailBodyAtMessage: ({ session }: { session: string }) => `Разговор из ${session}, до выбранного сообщения, будет перенесён как контекст этой новой сессии.`,
+        carriedOver: "Разговор будет перенесён",
+        removeAction: "Убрать",
+        removeA11y: "Убрать исходный разговор",
+        keepAction: "Оставить",
+        serverMismatch: "Этот разговор находится на другом сервере Happier. Вернитесь к нему или уберите исходный разговор, чтобы начать заново.",
+    },
     forking: {
       dividerTitle: "Ветка из предыдущего контекста",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `Ветка из ${parent}`,
@@ -6187,6 +6341,44 @@ export const ru = {
       openParent: "Открыть",
       openParentA11y: "Открыть родительскую сессию",
       forkFromMessageA11y: "Создать ветку от этого сообщения",
+      strategy: {
+          title: "Создать ветку сессии",
+          subtitleLatest: "Ответвиться от текущего состояния этого разговора.",
+          subtitleFromMessage: "Ответвиться от этого места в разговоре.",
+          recommended: "Рекомендуется",
+          native: {
+              title: "Нативная ветка",
+              subtitle: "Агент ветвит собственный разговор. Ближе всего к оригиналу.",
+          },
+          replay: {
+              title: "Ветка через Replay",
+              subtitle: "Happier воспроизводит разговор как контекст для новой сессии.",
+          },
+          configure: {
+              title: "Настроить новую сессию",
+              subtitle: "Выберите другого агента, модель, машину или папку и перенесите этот разговор.",
+          },
+          progress: {
+              creatingNative: "Создание нативной ветки…",
+              creatingReplay: "Создание ветки Replay…",
+              opening: "Открытие ветки…",
+              stalledTitle: "Ветка создана",
+              stalledBody: "Она ещё не появилась здесь. Попробуйте открыть её снова.",
+              openAction: "Открыть ветку",
+          },
+          unknown: {
+              title: "Happier не смог подтвердить создание ветки",
+              body: "Запрос отправлен, поэтому ветка может уже существовать. Проверьте это вместо повторной попытки: вторая попытка может создать дубликат.",
+              checkAction: "Проверить ветку",
+              checking: "Поиск вашей ветки…",
+              noneFound: "Подходящей ветки пока нет. Возможно, она ещё запускается — можно проверить снова.",
+              ambiguous: "Найдено несколько подходящих веток. Откройте список сессий и выберите нужную.",
+          },
+          failure: {
+              updateRequired: "Обновите или переподключите CLI на этой машине, чтобы создать ветку этой сессии.",
+              generic: "Happier не смог создать ветку.",
+          },
+      },
 	    },
 	    transcriptGap: {
 	      earlierMessages: "Более ранние сообщения",
@@ -6524,6 +6716,7 @@ export const ru = {
           sendDiscardedFailed: "Не удалось отправить отброшенное сообщение",
           reorderFailed: "Не удалось изменить порядок отложенных сообщений",
           retryDeliveryFailed: "Не удалось повторить отложенную доставку",
+          actionConflict: "Состояние ожидающего сообщения изменилось во время выполнения действия. Проверьте его текущее состояние и повторите попытку.",
           discardFailed: "Не удалось отбросить отложенную доставку",
           markHandledFailed: "Не удалось отметить отложенную доставку обработанной",
         },
@@ -6704,6 +6897,7 @@ export const ru = {
       tapToEnd: "Нажмите, чтобы завершить",
       startDictation: "Начать диктовку",
       startVoice: "Запустить голос",
+      startGlobalVoice: "Запустить глобальный голос",
       endVoice: "Завершить голос",
       transcribing: "Расшифровка…",
       endDictation: "Завершить диктовку",
@@ -6719,6 +6913,16 @@ export const ru = {
           selectSessionToStart: "Выберите сессию, чтобы запустить голос",
           targetSession: "Целевая сессия",
           conversationalTranscriptUnavailable: "Расшифровка разговора недоступна для этого голосового сеанса",
+          orbLabel: "Голос",
+          orbStartHint: "Начинает голосовой разговор. Проведите вверх, чтобы открыть разговор.",
+          orbEndHint: "Завершает голосовой разговор. Уже начатая работа над кодом продолжается. Проведите вверх, чтобы открыть разговор.",
+          orbMinimiseHint: "Сворачивает голос",
+          orbExpand: "Развернуть голос",
+          orbCollapse: "Свернуть голос",
+          delegatedWorking: "Работает…",
+          composerStartHint: "Начинает голосовой разговор об этой сессии.",
+          composerGlobalStartHint: "Начинает голосовой разговор, не привязанный ни к одной сессии.",
+          composerEndHint: "Завершает голосовой разговор. Уже начатая работа над кодом продолжается.",
           noTarget: "Сессия не выбрана",
           clearTarget: "Очистить цель",
           a11y: {
@@ -6805,6 +7009,17 @@ export const ru = {
         },},
 
     agentInput: {
+        chipPicker: {
+            selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Выбрано.`,
+        },
+        suggestionGroups: {
+            files: 'Файлы',
+            plugins: 'Плагины',
+            sessions: 'Сессии',
+            references: 'Ссылки',
+            skills: 'Навыки',
+            commands: 'Команды',
+        },
       stopCodingTurn: "Остановить ход программирования",
         nonSteerableSend: {
             title: 'Агент занят',
@@ -6902,6 +7117,8 @@ export const ru = {
         running: ({ model }: { model: string }) => `Запущена: ${model}`,
         lastUsed: ({ model }: { model: string }) => `Последняя использованная: ${model}`,
         lastReported: ({ model }: { model: string }) => `Последняя сообщённая: ${model}`,
+        applyTimingNextMessage: "Применится со следующего сообщения",
+        applyTimingNewSession: "Применится при запуске новой сессии",
         selectedForResume: "Выбранная модель будет использоваться после возобновления этой сессии.",
         configureInCli: "Настройте модели в настройках CLI",
         unavailable: "Обнаружение моделей недоступно для этого провайдера на этой машине.",
@@ -7146,6 +7363,12 @@ export const ru = {
       updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `Обновить субагента ${id} → ${status}`,
       updateTaskWithId: ({ id }: { id: string }) => `Обновить субагента ${id}`,
       updateTask: "Обновить субагента",
+    },
+    taskOutputView: {
+      waitingForTask: "Ожидание завершения фоновой задачи.",
+    },
+    taskStopView: {
+      stoppedCommandLabel: "Остановленная команда",
     },
     taskView: {
       moreTools: ({ count }: { count: number }) => `+${count} ещё инструментов`,
@@ -7701,6 +7924,7 @@ export const ru = {
           generatedVideoA11y: ({ name }: { name: string }) => `Открыть сгенерированное видео ${name}`,
           attachmentVideoA11y: ({ name }: { name: string }) => `Открыть прикрепленное видео ${name}`,
           toolArtifactVideoA11y: ({ name }: { name: string }) => `Открыть видео артефакта инструмента ${name}`,
+          previewImageA11y: ({ name, current, total }: { name: string; current: number; total: number }) => `Изображение ${current} из ${total}: ${name}`,
 
           previewUnavailableA11y: "Media preview unavailable",
           unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,},
@@ -8959,6 +9183,14 @@ settingsSession: {
 	        identityDisplayAgentLogoSubtitle: 'Показывать логотип агента каждой сессии.',
 	        identityDisplayNoneTitle: 'Нет',
 	        identityDisplayNoneSubtitle: 'Скрыть идентификатор в строках сессий.',
+	        headerIdentityDisplayTitle: 'Идентификатор в заголовке сессии',
+	        headerIdentityDisplaySubtitle: 'Выберите, что отображается перед названием внутри сессии.',
+	        headerIdentityDisplayAvatarTitle: 'Аватар',
+	        headerIdentityDisplayAvatarSubtitle: 'Показывать сгенерированный аватар сессии.',
+	        headerIdentityDisplayAgentLogoTitle: 'Логотип агента',
+	        headerIdentityDisplayAgentLogoSubtitle: 'Показывать логотип агента, выполняющего сессию.',
+	        headerIdentityDisplayNoneTitle: 'Ничего',
+	        headerIdentityDisplayNoneSubtitle: 'Начинать заголовок с названия сессии.',
 	        activeColorTitle: 'Активный цвет заголовка',
 	        activeColorSubtitle: 'Выберите, какие сессии используют активный цвет заголовка.',
 	        activeColorActivityAndAttentionTitle: 'Активность и внимание',
@@ -9614,6 +9846,13 @@ settingsSession: {
     consoleSubtitle: "Открывает сессию в стандартном окне консоли Windows.",
   },
   settingsVoice: {
+    ...voiceDiagnosticsConsentTranslations.ru,
+    intents: {
+      dictation: { title: 'Диктовка', subtitle: 'Преобразуйте одну голосовую фразу в текст поля ввода.' },
+      conversations: { title: 'Голосовые разговоры', subtitle: 'Выберите провайдера и настройте основные параметры.' },
+      privacy: { title: 'Конфиденциальность и данные', subtitle: 'Проверьте обработку провайдером, передачу контекста и историю голоса.', processingTitle: 'Обработка провайдером' },
+      advanced: { title: 'Дополнительно', subtitle: 'Настройте интерфейс Voice, машину выполнения и диагностику.' },
+    },
     history: {
       title: 'История голоса',
       sectionTitle: 'История',
@@ -9651,6 +9890,8 @@ settingsSession: {
       clearFailed: 'Не удалось очистить историю голоса.',
       errorTitle: 'История голоса недоступна',
       errorBody: 'Happier не удалось загрузить зашифрованную историю этой учётной записи. Проверьте подключение и повторите попытку.',
+      upgradeRequiredTitle: 'Для загрузки истории голоса требуется обновление',
+      upgradeRequiredBody: 'Этот сервер не поддерживает формат зашифрованной истории, используемый этой учётной записью. Обновите Happier на сервере, затем перезагрузите страницу.',
       supersededTitle: 'Активная учётная запись изменилась',
       supersededBody: 'Запрос был остановлен до того, как смог использовать другую учётную запись. Перезагрузите страницу для безопасного продолжения.',
       retry: 'Повторить',
@@ -9703,6 +9944,11 @@ settingsSession: {
     },
     realtimeProviders: {
       ...voiceProviderPrivacyTranslations.ru,
+      operationFailed: 'Не удалось обновить настройку. Повторите попытку.',
+      operationFailedUnsaved: 'Не удалось обновить настройку. Изменения не сохранены.',
+      operationFailedVoiceNotFound: 'Выбранный голос недоступен в подключённом аккаунте. Выберите другой голос и снова выполните это действие. Изменения не сохранены.',
+      operationFailedStage: ({ stage }: { stage: string }) => `Неудавшийся шаг: ${stage}`,
+      operationFailedStatus: ({ status }: { status: number }) => `Ответ провайдера: HTTP ${status}`,
       codex: {
         sectionTitle: "Аккаунт Codex Live",
         accountTitle: "Глобальный голосовой аккаунт",
@@ -9717,6 +9963,8 @@ settingsSession: {
       activityFeedEnabledSubtitle: "Показывать недавние голосовые события на экране",
       activityFeedAutoExpandOnStart: "Авто-раскрытие при старте",
       activityFeedAutoExpandOnStartSubtitle: "Автоматически раскрывать фид при запуске голоса",
+      orbEnabled: "Плавающая сфера голоса",
+      orbEnabledSubtitle: "Показывать перетаскиваемого голосового компаньона на этом устройстве. Голос по-прежнему доступен из боковой панели и поля ввода.",
       scopeTitle: "Скоуп голоса по умолчанию",
       scopeSubtitle: "Выберите: глобально (аккаунт) или в рамках сессии по умолчанию.",
       scopeGlobal: "Глобально (аккаунт)",
@@ -9818,14 +10066,6 @@ settingsSession: {
         "Введите ваш API-ключ ElevenLabs. Он хранится на устройстве в зашифрованном виде.",
       apiKeyPlaceholder: "xi-api-ключ",
       voiceSearchPlaceholder: "Поиск голосов",
-      speakerBoostTitle: "Усиление голоса",
-      speakerBoostSubtitle: "Улучшить чёткость и присутствие (необязательно).",
-      speakerBoostAuto: "Авто",
-      speakerBoostAutoSubtitle: "Использовать настройку ElevenLabs по умолчанию.",
-      speakerBoostOn: "Вкл",
-      speakerBoostOnSubtitle: "Принудительно включить усиление голоса.",
-      speakerBoostOff: "Выкл",
-      speakerBoostOffSubtitle: "Принудительно отключить усиление голоса.",
       voiceGroupTitle: "Голос",
       voiceGroupFooter:
         "Выберите, как говорит ваш агент ElevenLabs. Изменения применяются при обновлении агента.",
@@ -9898,21 +10138,13 @@ settingsSession: {
               "Введите число от 0 до 1. Оставьте пустым, чтобы использовать по умолчанию.",
             invalid: "Введите число от 0 до 1.",
           },
-          style: {
-            title: "Стиль",
-            subtitle: "0–1. Пусто = по умолчанию.",
-            promptTitle: "Стиль (0–1)",
-            promptBody:
-              "Введите число от 0 до 1. Оставьте пустым, чтобы использовать по умолчанию.",
-            invalid: "Введите число от 0 до 1.",
-          },
           speed: {
             title: "Скорость",
-            subtitle: "0.5–2. Пусто = по умолчанию.",
-            promptTitle: "Скорость (0.5–2)",
+            subtitle: "0.7–1.2. Пусто = по умолчанию.",
+            promptTitle: "Скорость (0.7–1.2)",
             promptBody:
-              "Введите число от 0.5 до 2. Оставьте пустым, чтобы использовать по умолчанию.",
-            invalid: "Введите число от 0.5 до 2.",
+              "Введите число от 0.7 до 1.2. Оставьте пустым, чтобы использовать по умолчанию.",
+            invalid: "Введите число от 0.7 до 1.2.",
           },
         },
         getStartedTitle: "Начать",
@@ -9931,12 +10163,20 @@ settingsSession: {
       apiKeyTitle: "Ключ API",
       promptTitle: "Подключить этого голосового провайдера",
       promptDescription: "Вставьте ключ API провайдера. Он будет сохранён в вашей учётной записи и отправлен только на адрес провайдера, объявленный плагином; код выполнения плагина ключ не получает.",
-      footer: "Ключ хранится в вашей учётной записи. Хост отправляет его на объявленный адрес провайдера; код плагина получает только результат операции.",
+      footer: "Сохранённые ключи хранятся в вашей учётной записи. Хост отправляет их на объявленный адрес провайдера; код плагина получает только результат операции.",
+      rawPromptDescription: "Вставьте ключ API провайдера. Код плагина в объявленной среде выполнения этого провайдера получает выбранные учётные данные напрямую и может использовать или копировать их.",
+      rawFooter: "Прямой доступ к учётным данным позволяет коду плагина в объявленной среде выполнения напрямую получить выбранные учётные данные и использовать или копировать их. Проверьте доступ перед использованием.",
+      rawCredentialAccessReviewBody: ({ pluginId, localId, credentialSlot, source, realm, phase }: { pluginId: string; localId: string; credentialSlot: string; source: string; realm: string; phase: string }) =>
+        `Код плагина для ${pluginId}/${localId} получает выбранные учётные данные ${source} для ${credentialSlot} во время ${phase} в среде выполнения ${realm}. Он может использовать или копировать их.`,
       ready: "Ключ API сохранён",
       missing: "Требуется ключ API",
       unavailable: "Настройка учётных данных недоступна",
     },
     local: {
+      voiceCredential: {
+        useSavedSecretTitle: "Использовать сохранённый секрет",
+        useSavedSecretSubtitle: "Выберите ключ, уже сохранённый в этом аккаунте.",
+      },
       title: "Локальный OSS голос",
       footer:
         "Настройте OpenAI-совместимые эндпоинты для распознавания речи (STT) и озвучивания (TTS).",
@@ -10601,7 +10841,7 @@ settingsSession: {
           installSubtitle: "Нажмите, чтобы установить на демон",
           setDefaultSubtitle: "Нажмите, чтобы использовать по умолчанию",
           unknownSubtitle: "Статус недоступен",
-          memory: ({ size }: { size: string }) => `${size} в памяти`,
+          modelFiles: ({ size }: { size: string }) => `Файлы модели: ${size}`,
           removeConfirmTitle: "Удалить пакет модели",
           removeConfirmBody: ({ name }: { name: string }) => `Удалить файлы на стороне демона для ${name}?`,
           state: {
@@ -11443,7 +11683,7 @@ settingsSession: {
     machine: {
     offlineUnableToSpawn: "Запуск отключён: машина офлайн",
     offlineHelp:
-      "• Убедитесь, что компьютер онлайн\n• Выполните `happier daemon status` для диагностики\n• Используете последнюю версию CLI? Выполните `happier self update`",
+      "• Убедитесь, что компьютер онлайн\n• Выполните happier daemon status для диагностики\n• Используете последнюю версию CLI? Выполните happier self update",
     launchNewSessionInDirectory: "Запустить новую сессию в папке",
     customPathPlaceholder: "Введите свой путь",
     tools: {
@@ -11626,10 +11866,13 @@ settingsSession: {
     },},
 
   message: {
+      sessionReferenceUnavailable: "Сессия недоступна",
+      sessionReferenceOpen: ({ name }: { name: string }) => `Открыть сессию ${name}`,
     switchedToMode: ({ mode }: { mode: string }) =>
       `Переключено в режим ${mode}`,
     discarded: "Отброшено",
     recoveredHistory: "Восстановленная история",
+    pluginAttribution: ({ pluginId }: { pluginId: string }) => `От плагина ${pluginId}`,
     unknownEvent: "Неизвестное событие",
     runtimeConfigOutcomeAppliesBeforeNextMessage: 'Применится перед вашим следующим сообщением',
     runtimeConfigOutcomeQueuedUntilReady: 'В очереди до готовности',
@@ -11697,11 +11940,6 @@ settingsSession: {
     directTakeoverDialogDirectBody: "Управляйте этой сессией в Happier без импорта стенограммы в Happier.",
     directTakeoverDialogPersistTitle: "Взять под контроль и импортировать",
     directTakeoverDialogPersistBody: "Импортируйте стенограмму в Happier и продолжайте с полным набором возможностей сеанса Happier.",
-    directTakeoverDialogForceStopTitle: "Сначала попробовать остановить локальный процесс",
-    directTakeoverDialogForceStopBody: "Happier обнаружил доверенный локальный процесс для этой сессии. Включите это, если хотите, чтобы Happier остановил его перед захватом.",
-    directTakeoverForceStopConfirmTitle: "Сначала остановить локальный процесс?",
-    directTakeoverForceStopConfirmBody: "Happier обнаружил доверенный локальный процесс для этой прямой сессии. Остановить его перед захватом здесь?",
-    directTakeoverForceStopConfirmAction: "Остановить и взять под контроль",
 
     externalSessionTakeoverAvailable:
       "Эта внешняя сессия готова к перехвату управления в Happier.",
@@ -11731,7 +11969,7 @@ settingsSession: {
         yesForCommandPrefix:
           "Да, больше не спрашивать для этого префикса команды",
         yesForSubcommand: "Да, больше не спрашивать для этой подкоманды",
-        yesForCommandName: "Да, больше не спрашивать для этой команды",
+        yesForCommandName: "Да, разрешать все совпадающие команды в этой сессии",
         stop: "Остановить",
         noTellClaude: "Нет, дать обратную связь",
       },
@@ -12205,13 +12443,13 @@ settingsSession: {
       claudeCode: {
         title: "Claude Code",
         instructions:
-          "Запустите `claude`, затем введите `/login`, чтобы войти.",
+          "Запустите claude, затем введите /login, чтобы войти.",
         warning:
-          "Примечание: установка `ANTHROPIC_AUTH_TOKEN` переопределяет вход через CLI.",
+          "Примечание: установка ANTHROPIC_AUTH_TOKEN переопределяет вход через CLI.",
       },
       codex: {
         title: "Codex",
-        instructions: "Выполните `codex login`, чтобы войти.",
+        instructions: "Выполните codex login, чтобы войти.",
       },
     },
     requirements: {
@@ -12504,11 +12742,19 @@ settingsSession: {
       },
     },
   },
-    settingsPlugins: {
+   settingsPlugins: {
+      ...pluginWebhookAdministrationTranslations['ru'],
+      ...pluginAccountDataEraseTranslations.ru,
+      ...pluginAccountReleaseSelectionTranslations.ru,
+      ...pluginInvocationLogTranslations.ru,
+      ...eventAutomationComposerTranslations.ru,
     title: "Каталог плагинов",
     subtitle: "Просматривайте отобранные дескрипторы плагинов и управляйте установленными плагинами на этом устройстве.",
     appPanelsTitle: "Панели плагинов",
     appPanelsSubtitle: "Открывайте панели приложения, добавленные установленными плагинами.",
+    executionOriginReleaseContentConflict: "Содержимое релиза не совпадает. Опубликуйте новую версию.",
+    readOnlyProjectionUnavailable: "Сведения о плагинах из кэша доступны только для чтения: устройство доступно, но не удалось загрузить его реестр плагинов. Повторите попытку, чтобы управлять плагинами.",
+    readOnlyAccountRecovery: "Сведения об учетной записи плагина доступны, но сведения для конкретного устройства недоступны, пока не станет доступна совместимая установка плагина.",
     readOnlySnapshot: "Пока это устройство отключено, сведения о плагинах из кэша доступны только для чтения. Подключите устройство снова, чтобы управлять плагинами.",
     viewSelectorLabel: "Представления управления плагинами",
     views: { installed: "Установленные", discover: "Обзор", development: "Разработка", diagnostics: "Диагностика" },
@@ -12519,12 +12765,26 @@ settingsSession: {
     developmentCreate: "Создать плагин",
     developmentCreateSubtitle: "Создаёт локальный шаблон плагина на этом компьютере.",
     developmentCreateSucceeded: "Шаблон плагина создан.",
+    developmentSourceInstall: "Разрабатывать локальную папку плагина",
+    developmentSourceInstallSubtitle: "Разрешите демону на этом компьютере собирать и запускать плагин из вашей папки. Сначала вы подтверждаете конкретную папку.",
+    developmentSourceInstallTitle: "Папка плагина",
+    developmentSourceInstallBody: "Укажите полный путь к папке проекта плагина на этом компьютере.",
+    developmentSourceInstallSucceeded: "Источник разработки одобрен и спроецирован.",
+    developmentSourceInstallFailed: ({ outcome }: { outcome: string }) => `Источник разработки не установлен (${outcome}).`,
+    developmentTrustSourceRootTitle: "Доверять этой папке плагина?",
+    developmentTrustSourceRootBody: ({ path }: { path: string }) => `Happier установит зависимости, соберёт и выполнит код из:\n\n${path}\n\nПродолжайте, только если доверяете всему в этой папке и всему, что она может загрузить. Сам плагин вы проверите на следующем шаге.`,
+    developmentTrustSourceRootConfirm: "Доверять папке",
     developmentCreateDirectoryTitle: "Папка плагина",
     developmentCreateDirectoryBody: "Введите новую абсолютную папку на выбранном компьютере. Папка ещё не должна существовать.",
     developmentCreateNameTitle: "Название плагина",
     developmentCreateNameBody: "Введите отображаемое название плагина.",
     developmentCreateIdTitle: "ID плагина",
     developmentCreateIdBody: "Введите строчное пространство имён владельца с точками, не относящееся к happier.*.",
+    developmentCreateSurfaceTitle: "Поверхность интерфейса плагина",
+    developmentCreateSurfaceBody: "Выберите поверхность интерфейса, с которой начинается этот плагин. React Native также отрисовывается в вебе.",
+    developmentCreateSurfaceReactNative: "React Native",
+    developmentCreateSurfaceHostedWeb: "Размещённый веб",
+    developmentCreateSurfaceNone: "Без интерфейса",
     developmentCreateConfirmTitle: "Создать шаблон плагина?",
     developmentCreateConfirmBody: ({ pluginId, targetDir }: { pluginId: string; targetDir: string }) => `Создать ${pluginId} в ${targetDir}?`,
     developmentWatchConfigured: "Разрешение на наблюдение настроено",
@@ -12563,6 +12823,7 @@ settingsSession: {
     unknownValue: ({ value }: { value: string }) => `Другое: ${value}`,
     emptySubtitle: "Этот каталог не вернул дескрипторов.",
     detailTitle: "Сведения о плагине",
+    managePlugin: "Управлять плагином",
     provenanceTitle: "Источник и доверие",
     diagnosticsTitle: "Диагностика плагина",
     registryDiagnosticsTitle: "Диагностика реестра",
@@ -12570,6 +12831,10 @@ settingsSession: {
     unsupportedDescriptorField: "Это поле дескриптора не поддерживается этой версией Happier.",
     noDescriptors: "Для этого раздела нет спроецированных дескрипторов, отображаемых хостом.",
     marketplaceInstallReviewTitle: ({ name, version }: { name: string; version: string }) => `Установить и доверять ${name} ${version}?`,
+    marketplaceInstallReviewBlockedNewerVersions: 'Более новые версии заблокированы до загрузки:',
+    marketplaceInstallReviewRawCredentialAccess: ({ details }: { details: string }) => `Прямой доступ к учётным данным Voice:\n${details}`,
+    marketplaceInstallReviewRawCredentialAccessItem: ({ contribution, credential, source, realm, phase, request }: { contribution: string; credential: string; source: string; realm: string; phase: string; request: string }) =>
+      `${contribution}: ${credential}; источник ${source}; среда ${realm}; этап ${phase}; запрос ${request}. Код плагина в среде ${realm} получает выбранные учётные данные напрямую и может использовать или копировать их.`,
     marketplaceInstallReviewBody: ({ identity, verification, executableRealms, contributions, uiArtifacts, requiredAccess, optionalAccess, compatibility }: { identity: string; verification: string; executableRealms: string; contributions: string; uiArtifacts: string; requiredAccess: string; optionalAccess: string; compatibility: string }) => `Идентификация:\n${identity}\n\nСигналы проверки:\n${verification}\n\nИсполняемый код: ${executableRealms}\nВозможности: ${contributions}\nАртефакты интерфейса: ${uiArtifacts}\n\nДоверенный код демона и React Native выполняется с полномочиями приложения или процесса и может напрямую использовать файлы, сеть, окружение и процессы. Указанный ниже доступ к хосту описывает сервисы, посредником для которых выступает Happier; это не песочница для исполняемого кода плагина.\n\nОбязательные раскрытия и кооперативные сервисы:\n${requiredAccess}\n\nНеобязательные ресурсы хоста (по умолчанию отключены):\n${optionalAccess}\n\nСовместимость и обновления:\n${compatibility}`,
     marketplaceInstallDecisionFailed: ({ outcome }: { outcome: string }) => `Плагин не установлен (${outcome}).`,
     marketplaceChangeDecisionFailed: ({ action, outcome }: { action: string; outcome: string }) => `${action}: сбой (${outcome}).`,
@@ -12716,15 +12981,46 @@ settingsSession: {
     unavailable: "React Native UI плагина недоступен",
     disabled: "React Native UI плагина отключен",
     fallback: "Используется fallback плагина",
+    reset: {
+      requested: {
+        title: "Сброс интерфейса плагина",
+        reason: "Happier ожидает подтверждения сброса.",
+      },
+      awaitingProjection: {
+        title: "Ожидание сброса плагина",
+        reason: "Happier ожидает обновлённое состояние плагина.",
+      },
+      complete: {
+        title: "Интерфейс плагина сброшен",
+        reason: "Интерфейс плагина снова доступен.",
+      },
+      failed: {
+        title: "Не удалось сбросить интерфейс плагина",
+        reason: "Попробуйте выполнить сброс ещё раз.",
+      },
+    },
   },
     pluginRuntime: {
         unavailableGeneric: 'Это представление плагина сейчас недоступно.',
         crashLoop: 'Плагин остановлен после повторных сбоев.',
         disabledByPolicy: 'Это представление плагина отключено текущими настройками или несовместимостью.',
+        hostedWebUnavailableTitle: 'Размещенное представление плагина недоступно',
+        hostedWebPolicyDenied: 'Это представление плагина недоступно на этой поверхности. Проверьте настройки доступности или используйте поддерживаемую поверхность.',
+        hostedWebSandboxUnavailable: 'Этот плагин не объявляет параметры изоляции, необходимые для показа этого представления. Обновите плагин и повторите попытку.',
+        hostedWebSecurityUnavailable: 'Настройки безопасности плагина нельзя применить в этом представлении. Обновите плагин или используйте поддерживаемый хост.',
+        hostedWebFrameOriginUnavailable: 'Happier не удалось установить доверенный адрес для этого представления. Обновите страницу и повторите попытку.',
+        hostedWebBridgeNonceUnavailable: 'Happier не удалось установить безопасное соединение с этим представлением. Обновите страницу и повторите попытку.',
+        hostedWebBridgeTimeout: 'Это представление плагина не завершило подключение. Обновите страницу и повторите попытку.',
+        hostedWebEndpointPolicyDenied: 'Адрес этого представления заблокирован политикой безопасности. Проверьте настройки плагина или используйте поддерживаемый хост.',
         missingRequirement: 'Для этого представления плагина не хватает требования на этом устройстве.',
     },
     settingsSearch: {
     placeholder: "Поиск настроек",
+  },
+    onboardingJourney: {
+        accessibility: {
+            skipToContent: "Перейти к содержимому",
+        },
   },} as const;
 
 export type TranslationsRu = typeof ru;

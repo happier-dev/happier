@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -6,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type BrowserSurfaceUnavailableReason =
     | 'disabled'
@@ -33,7 +33,7 @@ export function BrowserSurfaceFallback(props: Readonly<{
                 backgroundColor: theme.colors.surface.base,
             }}
         >
-            <Ionicons name="globe-outline" size={22} color={theme.colors.text.secondary} />
+            <Icon name="globe" size={20} color={theme.colors.text.secondary} />
             <Text
                 style={{
                     marginTop: 10,

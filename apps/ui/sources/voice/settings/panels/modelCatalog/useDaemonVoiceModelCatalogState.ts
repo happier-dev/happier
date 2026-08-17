@@ -296,7 +296,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             licenseId: review.licenseId,
             licenseSourceUrl: review.licenseSourceUrl,
             licenseTextDigest: review.licenseTextDigest,
-            artifactDigest: review.artifactDigest,
+            artifactBinding: review.artifactBinding,
         };
         if (machineScope) await client.acceptModelPackLicense(input, machineScope);
         else await client.acceptModelPackLicense(input);

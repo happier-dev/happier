@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
@@ -32,6 +31,7 @@ import {
 
 import type { ScmStashEntry } from '@happier-dev/protocol';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type StashDiffState = Readonly<{
     stashRef: string | null;
@@ -352,9 +352,9 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
             title: resolveScmStashPrimaryLabel(stash),
             subtitle: resolveStashSelectorSubtitle(stash) ?? undefined,
             icon: (
-                <Octicons
+                <Icon
                     name={resolveScmStashIconName(stash)}
-                    size={18}
+                    size={16}
                     color={theme.colors.text.secondary}
                 />
             ),
@@ -485,9 +485,9 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                             itemTrigger={{
                                 title: t('files.stash.detailsTitle'),
                                 icon: (
-                                    <Octicons
+                                    <Icon
                                         name={selectedStash ? resolveScmStashIconName(selectedStash) : 'archive'}
-                                        size={18}
+                                        size={16}
                                         color={theme.colors.text.secondary}
                                     />
                                 ),
@@ -517,7 +517,7 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                                 opacity: pressed || operationBusy ? 0.78 : 1,
                             })}
                         >
-                            <Octicons name="upload" size={14} color={theme.colors.text.secondary} />
+                            <Icon name="upload" size={14} color={theme.colors.text.secondary} />
                             <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                                 {t('files.stash.restore')}
                             </Text>
@@ -543,7 +543,7 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                                 opacity: pressed || operationBusy ? 0.78 : 1,
                             })}
                         >
-                            <Octicons name="trash" size={14} color={theme.colors.text.secondary} />
+                            <Icon name="trash" size={14} color={theme.colors.text.secondary} />
                             <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                                 {t('files.stash.discard')}
                             </Text>

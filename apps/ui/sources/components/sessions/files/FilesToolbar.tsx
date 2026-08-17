@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ChangedFilesPresentation, ChangedFilesViewMode } from '@/scm/scmAttribution';
 import { ChangedFilesViewModeMenu } from './ChangedFilesViewModeMenu';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type FilesToolbarProps = {
     theme: any;
@@ -30,6 +31,31 @@ type FilesToolbarProps = {
     showScmToggle?: boolean;
     showAttributionReliabilityNotice?: boolean;
 };
+
+/**
+ * Module scope, not a render-body component: a component minted inside `FilesToolbar` would be a new
+ * type on every SCM status update, remounting the badge each time instead of updating it.
+ */
+function ChangedFilesCountBadge(props: Readonly<{ count: number; theme: FilesToolbarProps['theme'] }>) {
+    if (props.count <= 0) return null;
+    return (
+        <View
+            style={{
+                minWidth: 20,
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                // The canonical badge shape: background-only, 8px radius.
+                borderRadius: 8,
+                borderWidth: 0,
+                backgroundColor: props.theme.colors.state.neutral.background,
+            }}
+        >
+            <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
+                {String(props.count)}
+            </Text>
+        </View>
+    );
+}
 
 export function FilesToolbar(props: FilesToolbarProps) {
     const {
@@ -63,56 +89,6 @@ export function FilesToolbar(props: FilesToolbarProps) {
         !showAllRepositoryFiles
         && (changedFilesCount > 0 || hasScopedChangedFilesView);
 
-    const chipStyle = (active: boolean) => ({
-        paddingVertical: 8,
-        paddingHorizontal: 10,
-        borderRadius: 12,
-        backgroundColor: active ? theme.colors.surface.inset : theme.colors.surface.base,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-    }) as const;
-
-    const Chip = (p: {
-        active: boolean;
-        label: string;
-        icon: React.ReactNode;
-        badge?: React.ReactNode;
-        onPress: () => void;
-    }) => {
-        return (
-            <Pressable onPress={p.onPress} style={chipStyle(p.active)}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-                    {p.icon}
-                    <Text style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
-                        {p.label}
-                    </Text>
-                    {p.badge}
-                </View>
-            </Pressable>
-        );
-    };
-
-    const CountBadge = ({ count }: { count: number }) => {
-        if (count <= 0) return null;
-        return (
-            <View
-                style={{
-                    minWidth: 20,
-                    paddingHorizontal: 6,
-                    paddingVertical: 2,
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border.default,
-                    backgroundColor: theme.colors.surface.inset,
-                }}
-            >
-                <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
-                    {String(count)}
-                </Text>
-            </View>
-        );
-    };
-
     return (
         <View
             style={{
@@ -133,7 +109,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     borderColor: theme.colors.border.default,
                 }}
             >
-                <Octicons name="search" size={16} color={theme.colors.text.secondary} style={{ marginRight: 8 }} />
+                <Icon name="magnifying-glass" size={16} color={theme.colors.text.secondary} style={{ marginRight: 8 }} />
                 <TextInput
                     value={searchQuery}
                     onChangeText={onSearchQueryChange}
@@ -150,17 +126,19 @@ export function FilesToolbar(props: FilesToolbarProps) {
             </View>
 
             <View style={{ flexDirection: 'row', marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <Chip
+                <ToolbarButton
+                    size="md"
                     active={!showAllRepositoryFiles}
                     label={t('files.toolbar.changedFiles')}
-                    icon={<Octicons name="diff" size={14} color={theme.colors.text.secondary} />}
-                    badge={!showAllRepositoryFiles ? <CountBadge count={changedFilesCount} /> : undefined}
+                    icon={<Icon name="git-diff" size={14} color={theme.colors.text.secondary} />}
+                    trailing={!showAllRepositoryFiles ? <ChangedFilesCountBadge count={changedFilesCount} theme={theme} /> : undefined}
                     onPress={onShowChangedFiles}
                 />
-                <Chip
+                <ToolbarButton
+                    size="md"
                     active={showAllRepositoryFiles}
                     label={t('files.toolbar.allRepositoryFiles')}
-                    icon={<Octicons name="repo" size={14} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="book-bookmark" size={14} color={theme.colors.text.secondary} />}
                     onPress={onShowAllRepositoryFiles}
                 />
 
@@ -176,35 +154,39 @@ export function FilesToolbar(props: FilesToolbarProps) {
                             onChangedFilesViewMode={onChangedFilesViewMode}
                         />
 
-                        <Chip
+                        <ToolbarButton
+                            size="md"
                             active={changedFilesPresentation === 'review'}
                             label={t('files.toolbar.review')}
-                            icon={<Octicons name="diff" size={14} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="git-diff" size={14} color={theme.colors.text.secondary} />}
                             onPress={() => onChangedFilesPresentationChange('review')}
                         />
-                        <Chip
+                        <ToolbarButton
+                            size="md"
                             active={changedFilesPresentation === 'list'}
                             label={t('files.toolbar.list')}
-                            icon={<Octicons name="list-unordered" size={14} color={theme.colors.text.secondary} />}
+                            icon={<Icon name="list-bullets" size={14} color={theme.colors.text.secondary} />}
                             onPress={() => onChangedFilesPresentationChange('list')}
                         />
                     </>
                 ) : null}
 
                 {showScmToggle ? (
-                    <Chip
+                    <ToolbarButton
+                        size="md"
                         active={scmPanelExpanded}
                         label={t('files.toolbar.scm')}
-                        icon={<Octicons name="git-branch" size={14} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="git-branch" size={14} color={theme.colors.text.secondary} />}
                         onPress={onToggleScmPanel}
                     />
                 ) : null}
 
                 {onRefresh ? (
-                    <Chip
+                    <ToolbarButton
+                        size="md"
                         active={false}
                         label={t('common.refresh')}
-                        icon={<Octicons name="sync" size={14} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="arrows-clockwise" size={14} color={theme.colors.text.secondary} />}
                         onPress={onRefresh}
                     />
                 ) : null}

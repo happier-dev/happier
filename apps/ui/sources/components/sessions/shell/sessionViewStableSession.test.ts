@@ -466,18 +466,21 @@ describe('buildSessionViewShellSessionSignature', () => {
         ['acceptedThroughServerSeq', 12],
         ['publishedThroughServerSeq', 12],
         ['materializedThroughSourceAt', 1_000],
+        ['transcriptShareable', true],
     ] as const)('changes when transcript authority fact %s changes', (field, value) => {
         const base = createSession({
             currentStorageState: 'machine_only',
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: null,
             materializedThroughSourceAt: null,
+            transcriptShareable: false,
         });
         const changed = createSession({
             currentStorageState: 'machine_only',
             acceptedThroughServerSeq: null,
             publishedThroughServerSeq: null,
             materializedThroughSourceAt: null,
+            transcriptShareable: false,
             [field]: value,
         });
 

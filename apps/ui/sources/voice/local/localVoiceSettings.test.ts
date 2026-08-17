@@ -58,36 +58,24 @@ describe('localVoiceSettings', () => {
     ).toBe(true);
   });
 
-  it('parses legacy STT and TTS adapter settings through the canonical schemas', () => {
-    expect(
-      parseLocalVoiceSttSettings({
+  it('normalizes legacy speech selections without retaining inline provider configuration', () => {
+    const stt = parseLocalVoiceSttSettings({
         useDeviceStt: true,
         baseUrl: ' http://legacy-stt.example/v1 ',
-      }),
-    ).toMatchObject({
-      provider: 'device',
-      openaiCompat: {
-        baseUrl: 'http://legacy-stt.example/v1',
-      },
     });
-
-    expect(
-      parseLocalVoiceTtsSettings({
+    const tts = parseLocalVoiceTtsSettings({
         baseUrl: ' http://legacy-tts.example/v1 ',
         model: 'tts-1-hd',
         voice: 'alloy',
-      }),
-    ).toMatchObject({
-      provider: 'openai_compat',
-      openaiCompat: {
-        baseUrl: 'http://legacy-tts.example/v1',
-        model: 'tts-1-hd',
-        voice: 'alloy',
-      },
     });
+
+    expect(stt.provider).toBe('device');
+    expect(tts.provider).toBe('happier.voice.openai-compat/tts');
+    expect(stt).not.toHaveProperty('openaiCompat');
+    expect(tts).not.toHaveProperty('openaiCompat');
   });
 
-  it('migrates legacy Google speech fields into versioned provider envelopes without retaining vendor fields', () => {
+  it('normalizes legacy Google selections without retaining nested provider settings', () => {
     const stt = parseLocalVoiceSttSettings({
       provider: 'google_gemini',
       googleGemini: { model: 'gemini-test', language: 'fr' },
@@ -97,31 +85,17 @@ describe('localVoiceSettings', () => {
       googleCloud: { voiceName: 'fr-FR-Test-A', languageCode: 'fr-FR', format: 'wav' },
     });
 
-    expect(stt).toMatchObject({
-      provider: 'google_gemini',
-      providers: {
-        google_gemini: {
-          schemaVersion: 1,
-          config: { model: 'gemini-test', language: 'fr' },
-        },
-      },
-    });
-    expect(tts).toMatchObject({
-      provider: 'google_cloud',
-      providers: {
-        google_cloud: {
-          schemaVersion: 1,
-          config: { voiceName: 'fr-FR-Test-A', languageCode: 'fr-FR', format: 'wav' },
-        },
-      },
-    });
+    expect(stt.provider).toBe('happier.voice.google/gemini-stt');
+    expect(tts.provider).toBe('happier.voice.google/google-cloud-tts');
     expect(stt).not.toHaveProperty('googleGemini');
     expect(tts).not.toHaveProperty('googleCloud');
+    expect(stt).not.toHaveProperty('providers');
+    expect(tts).not.toHaveProperty('providers');
   });
 
-  it('preserves unknown provider envelopes inertly across disable and reinstall parsing', () => {
+  it('preserves an unknown provider selection but contracts its nested settings intermediary', () => {
     const stored = {
-      provider: 'acme_speech',
+      provider: 'acme.voice/speech',
       providers: {
         acme_speech: {
           schemaVersion: 7,
@@ -133,26 +107,26 @@ describe('localVoiceSettings', () => {
     const whileDisabled = parseLocalVoiceSttSettings(stored);
     const afterReinstall = parseLocalVoiceSttSettings(JSON.parse(JSON.stringify(whileDisabled)));
 
-    expect(whileDisabled.provider).toBe('acme_speech');
-    expect(whileDisabled.providers.acme_speech).toEqual(stored.providers.acme_speech);
+    expect(whileDisabled.provider).toBe('acme.voice/speech');
+    expect(whileDisabled).not.toHaveProperty('providers');
     expect(afterReinstall).toEqual(whileDisabled);
   });
 
-  it('rejects provider records that exceed the host storage bounds', () => {
+  it('ignores nested provider records regardless of their retired intermediary payload', () => {
     const tooManyProviders = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [
       `provider_${index}`,
       { schemaVersion: 1, config: {} },
     ]));
-    expect(() => parseLocalVoiceSttSettings({
-      provider: 'openai_compat',
+    expect(parseLocalVoiceSttSettings({
+      provider: 'happier.voice.openai-compat/stt',
       providers: tooManyProviders,
-    })).toThrow();
+    })).toMatchObject({ provider: 'happier.voice.openai-compat/stt' });
 
-    expect(() => parseLocalVoiceTtsSettings({
-      provider: 'openai_compat',
+    expect(parseLocalVoiceTtsSettings({
+      provider: 'happier.voice.openai-compat/tts',
       providers: {
         acme_speech: { schemaVersion: 1, config: { payload: 'é'.repeat(140_000) } },
       },
-    })).toThrow();
+    })).toMatchObject({ provider: 'happier.voice.openai-compat/tts' });
   });
 });

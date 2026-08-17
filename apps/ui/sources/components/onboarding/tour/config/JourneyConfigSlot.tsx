@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -149,6 +149,15 @@ function renderMaybeText(value: React.ReactNode): React.ReactNode {
     return value;
 }
 
+type WebKeyboardEvent = Readonly<{
+    key?: string;
+    nativeEvent?: Readonly<{
+        key?: string;
+    }>;
+    preventDefault?: () => void;
+    stopPropagation?: () => void;
+}>;
+
 function ConfigActionButton(props: Readonly<{
     label: React.ReactNode;
     onPress: JourneyConfigAction;
@@ -159,15 +168,31 @@ function ConfigActionButton(props: Readonly<{
 }>): React.ReactElement {
     const styles = stylesheet;
     const disabled = props.disabled === true;
+    const invokePress = (): void => {
+        void props.onPress();
+    };
+    const handleWebEnterKeyDown = (event: WebKeyboardEvent): void => {
+        if (disabled || (event.key ?? event.nativeEvent?.key) !== 'Enter') {
+            return;
+        }
+
+        // The controlled web runtime supplies the Enter key path without its
+        // usual native-button click. Keep activation owned by this common
+        // Journey action boundary, and consume the key so a browser that does
+        // synthesize the click cannot advance twice.
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        invokePress();
+    };
     return (
         <Pressable
             testID={props.testID}
             accessibilityRole="button"
             accessibilityState={{ disabled }}
             disabled={disabled}
-            onPress={() => {
-                void props.onPress();
-            }}
+            onPress={invokePress}
+            // @ts-expect-error React Native's Pressable props omit RNW's keyboard hook.
+            onKeyDown={Platform.OS === 'web' ? handleWebEnterKeyDown : undefined}
             style={({ pressed }) => [
                 styles.actionButton,
                 props.primary ? styles.primaryActionButton : null,

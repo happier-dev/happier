@@ -141,8 +141,10 @@ describe('PlanChecklistCard', () => {
             }),
         );
 
-        const icons = screen.findAllByType('Ionicons' as never);
-        expect(icons.some((icon) => icon.props.name === 'checkmark-circle')).toBe(true);
+        // The seam `Icon` is a memo'd plain function component, so react-test-renderer resolves
+        // its fiber `type` to the inner render function rather than the string 'Icon' or the
+        // memo wrapper reference; match by rendered props instead (see Item.mode.test.tsx).
+        expect(screen.findAllByProps({ name: 'check-circle' }).length).toBeGreaterThan(0);
     });
 
     it('does not force satisfied items to render as done when they remain selectable', async () => {
@@ -164,9 +166,8 @@ describe('PlanChecklistCard', () => {
             }),
         );
 
-        const icons = screen.findAllByType('Ionicons' as never);
-        expect(icons.some((icon) => icon.props.name === 'checkmark-circle')).toBe(false);
-        expect(icons.some((icon) => icon.props.name === 'ellipse-outline')).toBe(true);
+        expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
+        expect(screen.findAllByProps({ name: 'circle' }).length).toBeGreaterThan(0);
     });
 
     it('renders satisfied selected items as done even when the row remains selectable', async () => {
@@ -188,8 +189,7 @@ describe('PlanChecklistCard', () => {
             }),
         );
 
-        const icons = screen.findAllByType('Ionicons' as never);
-        expect(icons.some((icon) => icon.props.name === 'checkmark-circle')).toBe(true);
+        expect(screen.findAllByProps({ name: 'check-circle' }).length).toBeGreaterThan(0);
     });
 
     it('renders execution status and row-scoped logs without changing the container', async () => {

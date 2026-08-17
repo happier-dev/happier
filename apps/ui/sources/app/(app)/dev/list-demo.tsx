@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export default function ListDemoScreen() {
     const [isEnabled, setIsEnabled] = React.useState(false);
@@ -32,18 +32,18 @@ export default function ListDemoScreen() {
             <ItemGroup title="With Icons">
                 <Item 
                     title="Settings"
-                    icon={<Ionicons name="settings-outline" size={28} color="#007AFF" />}
+                    icon={<Icon name="sliders-horizontal" size={29} color="#007AFF" />}
                     onPress={() => {}}
                 />
                 <Item 
                     title="Notifications"
-                    icon={<Ionicons name="notifications-outline" size={28} color="#FF9500" />}
+                    icon={<Icon name="bell" size={29} color="#FF9500" />}
                     detail="5"
                     onPress={() => {}}
                 />
                 <Item 
                     title="Privacy"
-                    icon={<Ionicons name="lock-closed-outline" size={28} color="#34C759" />}
+                    icon={<Icon name="lock" size={29} color="#34C759" />}
                     subtitle="Control your privacy settings"
                     onPress={() => {}}
                 />

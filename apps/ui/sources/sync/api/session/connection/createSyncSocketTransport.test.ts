@@ -78,6 +78,10 @@ describe('createSyncSocketTransport', () => {
                     token: 'token-a',
                     clientType: 'user-scoped',
                     clientPurpose: 'sync',
+                    accountStoredContentCompatibility: {
+                        v: 1,
+                        protocolVersion: 3,
+                    },
                 }),
                 transports: ['websocket'],
                 forceNew: true,

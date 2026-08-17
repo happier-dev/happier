@@ -6,13 +6,14 @@ import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 const Ionicons = SafeIonicons;
 
 type UsageActionChipProps = Readonly<{
     label: string;
     testID?: string;
-    iconName?: React.ComponentProps<typeof Ionicons>['name'];
+    iconName?: IconName;
     accessory?: React.ReactNode;
     onPress: () => void;
 }>;
@@ -50,7 +51,7 @@ export const UsageActionChip = React.memo(function UsageActionChip(props: UsageA
             onPress={onPress}
         >
             {iconName ? (
-                <Ionicons name={iconName} size={14} color={theme.colors.text.secondary} />
+                <Icon name={iconName} size={14} color={theme.colors.text.secondary} />
             ) : null}
             <View>
                 <Text style={styles.chipText}>{label}</Text>

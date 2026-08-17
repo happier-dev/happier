@@ -2,23 +2,17 @@ import * as React from 'react';
 
 import type { PeerMediationObservabilityScopeV1 } from '@happier-dev/protocol';
 
-import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
-import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
-import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import { useProfile } from '@/sync/store/hooks';
+import {
+    useSessionPanePluginRuntime,
+    type SessionPanePluginRuntimeState,
+    type SessionPaneSurfaceScope,
+} from './useSessionPanePluginRuntime';
 
-export type SessionDetailsPanelPluginRuntimeState = Readonly<{
-    pluginUiProjection: PluginUiProjectionModel | null;
-    pluginBrowserProjection: PluginBrowserProjectionModel | null;
-    interactionEnabled: boolean;
+export type SessionDetailsPanelPluginRuntimeState = SessionPanePluginRuntimeState & Readonly<{
     peerMediationObservabilityScope: PeerMediationObservabilityScopeV1 | null;
-    platform: LocalServicePreviewPlatform;
-    machineId: string | null;
-    serverId: string | null;
 }>;
 
 function readProfileId(profile: unknown): string | null {
@@ -31,54 +25,44 @@ function readProfileId(profile: unknown): string | null {
 
 export function useSessionDetailsPanelPluginRuntime(params: Readonly<{
     sessionId: string;
+    /**
+     * AppPane's registered driver is the authority for target/projection facts.
+     * Direct screen renders omit this and retain their incumbent local lookup.
+     */
+    paneSurfaceScope?: SessionPaneSurfaceScope;
     pluginUiProjection?: PluginUiProjectionModel | null;
     peerMediationObservabilityScope?: PeerMediationObservabilityScopeV1 | null;
     platform?: LocalServicePreviewPlatform;
 }>): SessionDetailsPanelPluginRuntimeState {
-    const machineTarget = useSessionMachineTarget(params.sessionId);
-    const serverId = usePreferredServerIdForSession(params.sessionId);
-    const profile = useProfile();
-    const scopedProjection = useScopedPluginUiProjection({
-        machineId: machineTarget?.machineId ?? null,
-        serverId,
+    const pluginRuntime = useSessionPanePluginRuntime({
+        sessionId: params.sessionId,
+        paneSurfaceScope: params.paneSurfaceScope,
+        pluginUiProjection: params.pluginUiProjection,
+        platform: params.platform,
     });
-    const explicitProjectionProvided = params.pluginUiProjection !== undefined;
-    const pluginUiProjection = explicitProjectionProvided
-        ? params.pluginUiProjection ?? null
-        : scopedProjection.pluginUiProjection;
-    const pluginBrowserProjection = scopedProjection.pluginBrowserProjection;
+    const profile = useProfile();
 
     const profileId = readProfileId(profile);
     const derivedObservabilityScope = React.useMemo<PeerMediationObservabilityScopeV1 | null>(() => {
-        if (!machineTarget?.machineId || !profileId) {
+        if (!pluginRuntime.machineId || !profileId) {
             return null;
         }
         return {
             kind: 'machine',
             accountId: profileId,
-            machineId: machineTarget.machineId,
+            machineId: pluginRuntime.machineId,
         };
-    }, [machineTarget?.machineId, profileId]);
+    }, [pluginRuntime.machineId, profileId]);
 
     return React.useMemo(() => ({
-        pluginUiProjection,
-        pluginBrowserProjection,
-        interactionEnabled: scopedProjection.interactionEnabled,
+        ...pluginRuntime,
         peerMediationObservabilityScope:
             params.peerMediationObservabilityScope !== undefined
                 ? params.peerMediationObservabilityScope
                 : derivedObservabilityScope,
-        platform: resolveLocalServicePreviewPlatform(params.platform),
-        machineId: machineTarget?.machineId ?? null,
-        serverId,
     }), [
         derivedObservabilityScope,
-        machineTarget?.machineId,
         params.peerMediationObservabilityScope,
-        params.platform,
-        pluginBrowserProjection,
-        pluginUiProjection,
-        scopedProjection.interactionEnabled,
-        serverId,
+        pluginRuntime,
     ]);
 }

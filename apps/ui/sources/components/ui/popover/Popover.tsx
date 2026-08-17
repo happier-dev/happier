@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Keyboard, Platform, StyleSheet as RNStyleSheet, View, type StyleProp, type ViewProps, type ViewStyle, useWindowDimensions } from 'react-native';
+import { BackHandler, Keyboard, Platform, StyleSheet as RNStyleSheet, View, type StyleProp, type ViewProps, type ViewStyle, useWindowDimensions } from 'react-native';
 import { usePopoverBoundaryRef } from './PopoverBoundary';
 import { usePopoverScrollSourceRef } from './PopoverScrollSource';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
@@ -16,12 +16,15 @@ import {
     resolveOverlayMotionPreset,
     useOverlayPresence,
 } from '@/components/ui/overlays/motion/overlayMotion';
+import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
+import { useNativeBackLayerDescendant } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import type {
     PopoverAnchor,
     PopoverBackdropEffect,
     PopoverBackdropOptions,
+    PopoverCloseReason,
     PopoverOutsidePointerEventsMode,
     PopoverPlacement,
     PopoverPortalOptions,
@@ -31,10 +34,16 @@ import type {
 } from './_types';
 import { getFallbackBoundaryRect, measureInWindow, measureLayoutRelativeTo } from './measure';
 import { resolvePortalRelativeAnchorRect } from './resolvePortalRelativeAnchor';
-import { resolvePlacement } from './positioning';
 import { PopoverBackdrop } from './backdrop';
 import { tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
+import {
+    readDocumentFocusReturnTarget,
+    restoreFocusToBestTarget,
+    useFocusReturnFallbackRef,
+    type FocusReturnTarget,
+} from '@/keyboard/focusReturn';
+import { resolveHappierPopoverPlacement } from '@happier-dev/plugin-ui/presentation';
 
 const ViewWithWheel = View as unknown as React.ComponentType<ViewProps & { onWheel?: any }>;
 
@@ -42,6 +51,7 @@ export type {
     PopoverAnchor,
     PopoverBackdropEffect,
     PopoverBackdropOptions,
+    PopoverCloseReason,
     PopoverOutsidePointerEventsMode,
     PopoverPlacement,
     PopoverPortalOptions,
@@ -51,6 +61,7 @@ export type {
 } from './_types';
 
 type WindowRect = PopoverWindowRect;
+type PopoverLayoutProps = Omit<PopoverRenderProps, 'requestClose'>;
 
 const RECT_UPDATE_TOLERANCE = 1;
 const NATIVE_PORTAL_SHADOW_OUTSET = 16;
@@ -115,7 +126,7 @@ function createWebPopoverModalPortalTarget(): HTMLElement | null {
     return target;
 }
 
-function arePopoverRenderPropsEqual(a: PopoverRenderProps, b: PopoverRenderProps): boolean {
+function arePopoverRenderPropsEqual(a: PopoverLayoutProps, b: PopoverLayoutProps): boolean {
     return a.placement === b.placement && a.maxHeight === b.maxHeight && a.maxWidth === b.maxWidth;
 }
 
@@ -133,11 +144,13 @@ function areWindowRectsEqual(a: WindowRect | null, b: WindowRect | null): boolea
 
 type PopoverCommonProps = Readonly<{
     open: boolean;
-    /** Web-only: move focus to the first interactive descendant after the popover opens. */
+    /** Move focus into the popover after it opens when the content is menu-like. */
     autoFocusOnOpen?: boolean;
     anchorRef?: React.RefObject<any>;
     anchor?: PopoverAnchor;
     focusReturnRef?: React.RefObject<any>;
+    /** Explicit physical target for menu-like autofocus; falls back to the content wrapper. */
+    initialFocusRef?: React.RefObject<any>;
     boundaryRef?: React.RefObject<any> | null;
     /**
      * Web-only: scroll container to subscribe to for anchor-tracking recomputes.
@@ -201,6 +214,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         anchorRef: anchorRefLegacy,
         anchor: anchorProp,
         focusReturnRef: focusReturnRefProp,
+        initialFocusRef: initialFocusRefProp,
         boundaryRef: boundaryRefProp,
         followScrollRef: followScrollRefProp,
         placement = 'auto',
@@ -277,6 +291,19 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         portalIdRef.current = `popover-${Math.random().toString(36).slice(2)}`;
     }
     const contentContainerRef = React.useRef<any>(null);
+    const focusReturnFallbackRef = useFocusReturnFallbackRef<FocusReturnTarget>();
+    const activationFocusReturnRef = React.useRef<FocusReturnTarget>(null);
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web' || !open || typeof document === 'undefined') {
+            activationFocusReturnRef.current = null;
+            return;
+        }
+
+        // Positioning can be anchored to a non-focusable wrapper. Capture the
+        // actual activation target before this menu moves focus into its portal
+        // so close can still return there after the portal unmounts.
+        activationFocusReturnRef.current = readDocumentFocusReturnTarget(document);
+    }, [open]);
     const popoverModalPortalTargetRef = React.useRef<HTMLElement | null>(null);
     if (popoverModalPortalTargetRef.current === null) {
         popoverModalPortalTargetRef.current = createWebPopoverModalPortalTarget();
@@ -382,6 +409,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         return null;
     }, [getDomElementFromNode, shouldPortalWeb]);
 
+    const focusInitialTarget = React.useCallback((): boolean => {
+        const target = initialFocusRefProp?.current as { focus?: () => void } | null | undefined;
+        if (typeof target?.focus !== 'function') return false;
+        target.focus();
+        return true;
+    }, [initialFocusRefProp]);
+
     React.useEffect(() => {
         if (Platform.OS !== 'web' || !open || !autoFocusOnOpen || typeof document === 'undefined') {
             return;
@@ -394,18 +428,26 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         const focusFirstInteractiveDescendant = () => {
             if (cancelled) return;
 
+            // Menus nominate their roving row through the adapter. Prefer it
+            // over generic DOM discovery so controlled radio selection and
+            // initial keyboard focus remain one fact.
+            if (focusInitialTarget()) return;
+
             const content = getContentDomElement();
             const activeElement = document.activeElement;
             if (content && activeElement && content.contains(activeElement)) {
                 return;
             }
 
-            const target = content
-                ? Array.from(content.querySelectorAll<HTMLElement>(WEB_POPOVER_FOCUSABLE_SELECTOR)).find((candidate) => (
+            const focusableCandidates = content
+                ? Array.from(content.querySelectorAll<HTMLElement>(WEB_POPOVER_FOCUSABLE_SELECTOR)).filter((candidate) => (
                     candidate.getAttribute('aria-disabled') !== 'true'
                     && !candidate.hasAttribute('disabled')
-                )) ?? null
-                : null;
+                ))
+                : [];
+            const target = focusableCandidates.find((candidate) => (
+                candidate.getAttribute('aria-selected') === 'true'
+            )) ?? focusableCandidates[0] ?? null;
             if (target) {
                 target.focus();
                 return;
@@ -422,7 +464,61 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             cancelled = true;
             if (retryTimer !== null) clearTimeout(retryTimer);
         };
-    }, [autoFocusOnOpen, getContentDomElement, open]);
+    }, [autoFocusOnOpen, focusInitialTarget, getContentDomElement, open]);
+
+    React.useEffect(() => {
+        if (Platform.OS === 'web' || !open || !autoFocusOnOpen) {
+            return;
+        }
+
+        // Native portal nodes are committed through the incumbent OverlayPortal
+        // layout effect. Defer one microtask so a portal-host state update can
+        // attach this ref first; callers never need their own focus lifecycle.
+        let cancelled = false;
+        queueMicrotask(() => {
+            if (cancelled) return;
+            if (!focusInitialTarget()) {
+                contentContainerRef.current?.focus?.();
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [autoFocusOnOpen, focusInitialTarget, open]);
+
+    const requestClose = React.useCallback((reason: PopoverCloseReason) => {
+        onRequestClose?.();
+        if (reason !== 'dismiss') {
+            const restored = restoreFocusToBestTarget(resolvedFocusReturnRef, activationFocusReturnRef);
+            if (!restored) {
+                restoreFocusToBestTarget(undefined, focusReturnFallbackRef);
+            }
+        }
+    }, [focusReturnFallbackRef, onRequestClose, resolvedFocusReturnRef]);
+
+    const requestAndroidBackClose = React.useCallback(() => {
+        requestClose('back');
+    }, [requestClose]);
+
+    useNativeBackLayerDescendant(Platform.OS === 'android' && open && typeof onRequestClose === 'function');
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'android' || !open || !onRequestClose) {
+            return;
+        }
+
+        // React Native dispatches Android hardware Back in reverse registration
+        // order and stops at the first `true`. Registering each active Popover
+        // with the platform stack therefore preserves nested/topmost ordering
+        // without creating a second overlay authority.
+        const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+            requestAndroidBackClose();
+            return true;
+        });
+        return () => {
+            subscription.remove();
+        };
+    }, [onRequestClose, open, requestAndroidBackClose]);
 
     const getBoundaryDomElement = React.useCallback((): HTMLElement | null => {
         const boundaryNode = boundaryRef?.current as any;
@@ -509,7 +605,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const webPortalOffsetX = (webPortalTargetRect?.left ?? webPortalTargetRect?.x ?? 0) - portalScrollLeft;
     const webPortalOffsetY = (webPortalTargetRect?.top ?? webPortalTargetRect?.y ?? 0) - portalScrollTop;
 
-    const [computed, setComputed] = React.useState<PopoverRenderProps>(() => ({
+    const [computed, setComputed] = React.useState<PopoverLayoutProps>(() => ({
         maxHeight: maxHeightCap,
         maxWidth: maxWidthCap,
         placement: placement === 'auto' || placement === 'auto-vertical' || placement === 'auto-horizontal' ? 'top' : placement,
@@ -786,7 +882,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             const availableLeft = (anchorRect.x - effectiveBoundaryRect.x) - gap;
             const availableRight = (effectiveBoundaryRect.x + effectiveBoundaryRect.width - (anchorRect.x + anchorRect.width)) - gap;
 
-            const resolvedPlacement = resolvePlacement({
+            const resolvedPlacement = resolveHappierPopoverPlacement({
                 placement,
                 preferredMinAvailable: placement === 'auto-horizontal' ? maxWidthCap : maxHeightCap,
                 available: {
@@ -826,7 +922,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 return false;
             }
 
-            const nextComputed: PopoverRenderProps = {
+            const nextComputed: PopoverLayoutProps = {
                 placement: resolvedPlacement,
                 maxHeight: nextMaxHeight,
                 maxWidth: nextMaxWidth,
@@ -1025,6 +1121,26 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
     const fixedPositionOnWeb = (Platform.OS === 'web' ? ('fixed' as any) : 'absolute') as ViewStyle['position'];
 
+    /**
+     * Single owner of "how tall is the coordinate space this popover lays out in".
+     *
+     * On native with an overlay portal, both the content container and the backdrop are children of
+     * `OverlayPortalHost`'s `absoluteFill` inside the screen-local portal root, and `anchorRectState`
+     * is portal-relative (see `resolvePortalRelativeAnchorRect`). Anything derived from that anchor
+     * must be measured against the portal root's height, not the window's — on an iOS
+     * `containedModal` the two differ by the presentation inset plus the nav header.
+     *
+     * Every consumer (placement pinning here, the above-anchor dismiss frame in `backdrop.tsx`)
+     * reads this value so the two can never disagree again.
+     */
+    const portalSpaceHeight = React.useMemo(() => {
+        if (Platform.OS === 'web' || !shouldPortalNative) return windowHeight;
+        const nativePortalHeight = portalTarget?.layout?.height;
+        return typeof nativePortalHeight === 'number' && nativePortalHeight > 0
+            ? nativePortalHeight
+            : windowHeight;
+    }, [portalTarget?.layout?.height, shouldPortalNative, windowHeight]);
+
     const placementStyle: ViewStyle = (() => {
         // On web, optional: render as a viewport-fixed overlay so it can escape any overflow:hidden ancestors.
         // This is especially important for headers/sidebars which often clip overflow.
@@ -1122,18 +1238,11 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         position === 'absolute'
                             ? (anchorRectState.y - webPortalOffsetY)
                             : anchorRectState.y;
-                    const portalHeight = (() => {
-                        if (Platform.OS !== 'web') {
-                            const nativePortalHeight = portalTarget?.layout?.height;
-                            return (typeof nativePortalHeight === 'number' && nativePortalHeight > 0)
-                                ? nativePortalHeight
-                                : windowHeight;
-                        }
-
-                        return position === 'absolute'
+                    const portalHeight = Platform.OS !== 'web'
+                        ? portalSpaceHeight
+                        : (position === 'absolute'
                             ? (webPortalTargetRect?.height ?? windowHeight)
-                            : windowHeight;
-                    })();
+                            : windowHeight);
                     const boundaryBottomInPortalSpace =
                         position === 'absolute'
                             ? boundaryRect.y + boundaryRect.height - webPortalOffsetY
@@ -1368,14 +1477,18 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const backdropPointerEventsEnabled =
         !overlayPresence.exiting
         && (!(shouldPortalWeb || shouldPortalNative) || portalOpacity !== 0);
+    const contentPointerEvents = resolveOverlayPointerEvents(
+        overlayPresence.exiting || ((shouldPortalWeb || shouldPortalNative) && portalOpacity === 0)
+            ? 'none'
+            : 'auto',
+    );
 
     useEscapeLayer({
         enabled: Platform.OS === 'web' && open && typeof onRequestClose === 'function',
         priority: ESCAPE_LAYER_PRIORITIES.popover,
         allowEditableTarget: true,
-        focusReturnRef: resolvedFocusReturnRef,
         onEscape: () => {
-            onRequestClose?.();
+            requestClose('escape');
             return true;
         },
     });
@@ -1398,7 +1511,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             if (!contentEl && !anchorEl) return;
             if (anchorEl && anchorEl.contains(target)) {
                 if (props.closeOnAnchorPress) {
-                    onRequestClose();
+                    requestClose('dismiss');
                 }
                 return;
             }
@@ -1408,13 +1521,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 // Prevent nested Radix/Vaul "outside click" logic from also dismissing the underlying modal.
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                onRequestClose();
+                requestClose('dismiss');
                 return;
             }
 
             // On web, allow the outside click to be handled by its actual target (for example: another
             // chip trigger). Close the popover in the next task to avoid interfering with the click.
-            setTimeout(() => onRequestClose(), 0);
+            setTimeout(() => requestClose('dismiss'), 0);
         };
 
         if (shouldAttachPointerDownCapture) {
@@ -1433,6 +1546,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         onRequestClose,
         open,
         props.closeOnAnchorPress,
+        requestClose,
     ]);
 
     const content = shouldRender ? (
@@ -1448,7 +1562,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 backdropAnchorOverlay={backdropAnchorOverlay}
                 backdropStyle={backdropStyle}
                 closeOnBackdropPan={closeOnBackdropPan}
-                onRequestClose={onRequestClose}
+                onRequestClose={() => requestClose('dismiss')}
                 shouldPortal={shouldPortal}
                 shouldPortalWeb={shouldPortalWeb}
                 portal={props.portal}
@@ -1459,11 +1573,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 anchorRect={anchorRectState}
                 windowWidth={windowWidth}
                 windowHeight={windowHeight}
+                portalSpaceHeight={portalSpaceHeight}
                 webPortalOffsetX={webPortalOffsetX}
                 webPortalOffsetY={webPortalOffsetY}
             />
             <ViewWithWheel
                 ref={contentContainerRef}
+                focusable={Platform.OS !== 'web' && autoFocusOnOpen}
                 {...(shouldPortalWeb
                     ? ({
                         onClick: stopPortaledInteractionPropagationOnWeb,
@@ -1484,8 +1600,10 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     { maxWidth: contentContainerMaxWidth },
                     (shouldPortalWeb || shouldPortalNative) ? { opacity: portalOpacity } : null,
                     shouldPortal ? { zIndex: portalZ + 1 } : null,
+                    // The legacy prop used to take precedence over caller-owned styles.
+                    contentPointerEvents.webStyle,
                 ]}
-                pointerEvents={overlayPresence.exiting || ((shouldPortalWeb || shouldPortalNative) && portalOpacity === 0) ? 'none' : 'auto'}
+                pointerEvents={contentPointerEvents.nativePointerEvents}
                 onLayout={(e) => {
                     // Used to improve portal alignment (especially left/right centering)
                     const layout = e?.nativeEvent?.layout;
@@ -1499,6 +1617,24 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         }
                         return prev;
                     });
+
+                    // Measurement recovery.
+                    //
+                    // `recompute` retries on a fixed budget of animation frames. That budget encodes a
+                    // *time* assumption ("layout settles within ~6 frames") which does not hold when the
+                    // popover opens inside a freshly-presented contained modal, or while the JS thread is
+                    // saturated. When it expires with no valid geometry, `anchorRectState` stays null,
+                    // `portalOpacity` stays 0 and the popover is mounted but invisible and untappable —
+                    // permanently, because nothing else re-runs `recompute` unless one of its inputs
+                    // (window size, keyboard inset, portal-root layout, caps) happens to change.
+                    //
+                    // This layout event IS the platform reporting that the popover subtree now has
+                    // geometry, so it re-arms measurement. It is self-terminating rather than a retry
+                    // loop: it only fires while no anchor rect has ever been measured, and an unchanged
+                    // layout emits no further events.
+                    if (!anchorRectState) {
+                        void recompute();
+                    }
                 }}
             >
                 {Platform.OS === 'web' && shouldPortalWeb ? (
@@ -1521,7 +1657,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                                 kind="popover"
                                 direction={popoverMotionDirection}
                             >
-                                {children(computed)}
+                                {children({ ...computed, requestClose })}
                             </OverlayMotionFrame>
                         </ModalPortalTargetProvider>
                     </>
@@ -1531,7 +1667,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         kind="popover"
                         direction={popoverMotionDirection}
                     >
-                        {children(computed)}
+                        {children({ ...computed, requestClose })}
                     </OverlayMotionFrame>
                 )}
             </ViewWithWheel>

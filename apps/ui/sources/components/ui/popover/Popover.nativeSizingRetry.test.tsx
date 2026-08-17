@@ -1,6 +1,7 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { findPopoverContentView, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
@@ -85,6 +86,70 @@ describe('Popover (native sizing retries)', () => {
             expect(screen).toBeTruthy();
             expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
             expect(renders.at(-1)?.maxHeight).toBeGreaterThan(0);
+        });
+    });
+
+    it('recovers when the popover subtree lays out after the frame-retry budget is exhausted', async () => {
+        const { Popover } = await import('./Popover');
+
+        let boundaryMeasureCalls = 0;
+        const anchorRef = {
+            current: {
+                measure: (cb: any) => cb(0, 0, 100, 40, 0, 700),
+            },
+        } as any;
+        const boundaryRef = {
+            current: {
+                measure: (cb: any) => {
+                    boundaryMeasureCalls += 1;
+                    // Outlast the frame-retry budget (6 attempts): every attempt sees a boundary that
+                    // ends above the anchor, so `maxHeight` would be 0 and the measurement is rejected.
+                    // This is the contained-modal / probe-driven shape: the subtree is not laid out
+                    // yet while the retry frames burn down.
+                    if (boundaryMeasureCalls <= 6) return cb(0, 0, 1000, 700, 0, 0);
+                    // Layout has settled: availableBottom = 848 - (700 + 40) - 8 = 100.
+                    return cb(0, 0, 1000, 848, 0, 0);
+                },
+            },
+        } as any;
+
+        const renders: Array<{ maxHeight: number }> = [];
+
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderScreen(
+                React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    boundaryRef,
+                    placement: 'bottom',
+                    gap: 8,
+                    maxHeightCap: 300,
+                    backdrop: false,
+                    children: (renderProps: any) => {
+                        renders.push({ maxHeight: renderProps.maxHeight });
+                        return React.createElement('PopoverChild');
+                    },
+                }),
+            );
+
+            await flushHookEffects({ cycles: 1, turns: 8 });
+
+            // The budget is spent and nothing ever measured: the popover is stuck at its initial cap,
+            // mounted at opacity 0 with pointerEvents none — invisible and untappable forever.
+            expect(boundaryMeasureCalls).toBe(6);
+            expect(renders.at(-1)?.maxHeight).toBe(300);
+
+            // The popover subtree lays out. That is a real platform signal that geometry is now
+            // available, and it must re-arm measurement instead of leaving a permanently dead popover.
+            const contentView = findPopoverContentView(screen);
+            expect(contentView).toBeTruthy();
+            await act(async () => {
+                contentView?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 240, height: 180 } } });
+            });
+            await flushHookEffects({ cycles: 2, turns: 8 });
+
+            expect(boundaryMeasureCalls).toBeGreaterThan(6);
+            expect(renders.at(-1)?.maxHeight).toBe(100);
         });
     });
 });

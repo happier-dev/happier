@@ -24,17 +24,14 @@ export function createBuiltinVoiceAdapterAssembly(input: Readonly<{
   const bundledEntries =
     input.bundledEntries ?? BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES;
   const hostLease = createBundledConversationRuntimeHostLease();
-  let bundled: ReturnType<typeof createBundledConversationRuntimes>;
-  try {
-    bundled = createBundledConversationRuntimes({
-      bundledEntries,
-      hostedConversationEntries: BUNDLED_FIRST_PARTY_HOSTED_CONVERSATION_RUNTIME_ENTRIES,
-      host: hostLease.host,
-    });
-  } catch (error) {
-    hostLease.revoke();
-    throw error;
-  }
+  // Composition excludes an unhealthy leaf instead of failing the assembly, so
+  // the shell that mounts this assembly keeps booting and every healthy
+  // provider stays available.
+  const bundled = createBundledConversationRuntimes({
+    bundledEntries,
+    hostedConversationEntries: BUNDLED_FIRST_PARTY_HOSTED_CONVERSATION_RUNTIME_ENTRIES,
+    host: hostLease.host,
+  });
   let disposePromise: Promise<void> | null = null;
   return Object.freeze({
     adapters: Object.freeze([

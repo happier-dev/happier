@@ -34,7 +34,7 @@ describe('TokenStorage (web)', () => {
         await expect(TokenStorage.getCredentials()).resolves.toBeNull();
     });
 
-    it('returns null when stored credentials are missing secret/encryption (token-only record)', async () => {
+    it('returns a genuine token-only credential without manufacturing encryption material', async () => {
         const storage = installStorage();
         vi.doMock('@/sync/domains/server/serverProfiles', () => ({
             areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
@@ -46,7 +46,25 @@ describe('TokenStorage (web)', () => {
         storage.setItemMock('auth_credentials__srv_localhost-3009', JSON.stringify({ token: 't' }));
 
         const { TokenStorage } = await import('./tokenStorage');
-        await expect(TokenStorage.getCredentials()).resolves.toBeNull();
+        await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 't' });
+    });
+
+    it('persists token-only credentials without recovery or Account encryption material', async () => {
+        const storage = installStorage();
+        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+            areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
+            getActiveServerId: () => 'localhost-3009',
+            getActiveServerUrl: () => 'http://localhost:3009',
+            listServerProfiles: () => [{ id: 'localhost-3009', serverUrl: 'http://localhost:3009' }],
+        }));
+
+        const { TokenStorage } = await import('./tokenStorage');
+        await expect(TokenStorage.setCredentials({ token: 'token-only' })).resolves.toBe(true);
+
+        expect(storage.store.get('auth_credentials__srv_localhost-3009')).toBe(
+            JSON.stringify({ token: 'token-only' }),
+        );
+        await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: 'token-only' });
     });
 
     it('returns false when localStorage.setItem throws', async () => {

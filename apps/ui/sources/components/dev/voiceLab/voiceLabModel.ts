@@ -1,4 +1,12 @@
-import type { VoiceLightStop } from './voiceLabTokens';
+import type { VoiceControlAction, VoiceControlId }
+    from '@/components/voice/controls/VoiceControls';
+
+// Re-exported so lab modules keep one import site for lab vocabulary. The
+// canonical owner is the controls module; this is an alias, not a second source.
+export type { VoiceControlAction, VoiceControlId };
+import type { VoiceEnergyDirection } from '@/components/voice/light/useVoiceEnergy';
+
+import type { VoiceLightStop } from '@/components/voice/light/voiceLightTokens';
 
 /**
  * The state vocabulary the Voice design lab renders.
@@ -42,21 +50,6 @@ export type VoiceLabStateId =
     | 'ended';
 
 /** Where the light energy travels. This is what makes state legible without colour. */
-export type VoiceEnergyDirection =
-    /** No energy. */
-    | 'none'
-    /** Gathering toward the centre — the user is being heard. */
-    | 'inward'
-    /** Radiating from the centre — Happier is speaking. */
-    | 'outward'
-    /** Slow orbital drift — considering. */
-    | 'orbit'
-    /** Still and dense — delegated work is running somewhere else. */
-    | 'deep'
-    /** A single held crescent — something needs a decision. */
-    | 'hold'
-    /** Irregular, searching — the connection is unhealthy. */
-    | 'unsettled';
 
 export type VoiceLabStateSpec = Readonly<{
     id: VoiceLabStateId;
@@ -356,7 +349,7 @@ export const VOICE_LAB_STATE_BY_ID: Readonly<Record<VoiceLabStateId, VoiceLabSta
  * controls that provider cannot honour. The correct treatment is **absent**,
  * not disabled-with-a-tooltip, and never silently mapped onto End Voice.
  */
-export type VoiceLabProviderId = 'realtime_codex' | 'realtime_openai' | 'local_conversation';
+export type VoiceLabProviderId = 'happier.agent.codex/realtime-codex' | 'happier.voice.openai/realtime-openai' | 'local_conversation';
 
 export type VoiceLabProviderSpec = Readonly<{
     id: VoiceLabProviderId;
@@ -370,14 +363,14 @@ export type VoiceLabProviderSpec = Readonly<{
 
 export const VOICE_LAB_PROVIDERS: readonly VoiceLabProviderSpec[] = [
     {
-        id: 'realtime_codex',
+        id: 'happier.agent.codex/realtime-codex',
         label: 'Codex Live',
         cancelResponse: false,
         bargeIn: false,
         note: 'interruptionPolicy: disabled — neither Interrupt nor Cancel response may render',
     },
     {
-        id: 'realtime_openai',
+        id: 'happier.voice.openai/realtime-openai',
         label: 'OpenAI Realtime',
         cancelResponse: true,
         bargeIn: true,
@@ -407,26 +400,7 @@ export const VOICE_LAB_PROVIDER_BY_ID: Readonly<Record<VoiceLabProviderId, Voice
  *  - **Return to session is session-variant only** (`getVoiceAgentSessionTeleport
  *    Availability`). It must never appear in a sidebar concept.
  */
-export type VoiceControlId =
-    | 'start'
-    | 'end'
-    | 'mute'
-    | 'cancelTurn'
-    | 'bargeIn'
-    | 'stopCodingTurn'
-    | 'openConversation'
-    | 'openPermission'
-    | 'returnToSession'
-    | 'retry'
-    | 'provider'
-    | 'settings';
-
-export type VoiceControlWeight = 'primary' | 'secondary' | 'contextual' | 'terminal';
-
-export type VoiceControlSpec = Readonly<{
-    id: VoiceControlId;
-    label: string;
-    weight: VoiceControlWeight;
+export type VoiceControlSpec = VoiceControlAction & Readonly<{
     states: readonly VoiceLabStateId[];
     /** True when this control depends on a signal the model does not expose yet. */
     proposed?: boolean;

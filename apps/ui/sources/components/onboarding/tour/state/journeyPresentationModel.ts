@@ -3,6 +3,7 @@ import {
     JOURNEY_SKIP_TO_SETUP_TARGET,
     getJourneyBeatsForSurface,
     journeyBeatById,
+    resolveNearestVisibleBeatId,
 } from './journeyBeats';
 
 export type JourneyActBoundary = Readonly<{
@@ -42,8 +43,14 @@ function resolveCurrentBeat(
     visibleBeats: readonly JourneyBeat[],
     currentBeatId: JourneyBeatId | null | undefined,
 ): Readonly<{ currentBeat: JourneyBeat; currentIndex: number }> {
-    const requestedIndex = currentBeatId
-        ? visibleBeats.findIndex((beat) => beat.id === currentBeatId)
+    // A beat the cut does not play resolves through the script-order owner, so a
+    // cut change under a mid-journey user preserves their progress instead of
+    // restarting the journey at its first beat.
+    const resolvedBeatId = currentBeatId
+        ? resolveNearestVisibleBeatId(visibleBeats, currentBeatId)
+        : null;
+    const requestedIndex = resolvedBeatId
+        ? visibleBeats.findIndex((beat) => beat.id === resolvedBeatId)
         : -1;
     const currentIndex = requestedIndex >= 0 ? requestedIndex : 0;
     const currentBeat = visibleBeats[currentIndex];

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AccessibilityInfo, Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -18,18 +18,15 @@ import { Modal } from '@/modal';
 import {
   isVoiceDiagnosticsSessionCaptureAllowed,
   resolveVoiceDiagnosticsCaptureAuthorizationId,
-  setVoiceDiagnosticsSessionCaptureAllowed,
 } from './capturePolicy';
 import {
   useVoiceDiagnosticsRuntimeStatus,
-  type VoiceDiagnosticsRevocationObligation,
 } from './runtimeStatus';
 import {
   retryVoiceDiagnosticsRevocation,
   revokeVoiceDiagnosticsSessionAuthorization,
 } from './runtimeRevocation';
 
-const announcedIosFailures = new Map<string, VoiceDiagnosticsRevocationObligation>();
 const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 function isCurrentWebFocusTarget(target: FocusReturnTarget): boolean {
@@ -66,6 +63,7 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
   React.useEffect(() => {
     setSessionAllowed(isVoiceDiagnosticsSessionCaptureAllowed(props.sessionId));
   }, [props.sessionId]);
+  const sessionCaptureAllowed = sessionAllowed && isVoiceDiagnosticsSessionCaptureAllowed(props.sessionId);
 
   const obligation = React.useMemo(() => {
     const matchingSession = props.sessionId
@@ -81,7 +79,7 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
   }, [props.sessionId, runtimeStatus.revocationObligations]);
   const explicitConsent = diagnostics.enabled && diagnostics.consentVersion === 1;
   const runtimeMayCapture = runtimeStatus.phase !== 'inactive_confirmed';
-  const activeForSession = explicitConsent && runtimeMayCapture && (!props.sessionId || sessionAllowed);
+  const activeForSession = explicitConsent && runtimeMayCapture && (!props.sessionId || sessionCaptureAllowed);
   const canStartSessionOptOut = Boolean(props.sessionId && runtimeStatus.machineId && runtimeMayCapture);
   const showsAction = Boolean(obligation || canStartSessionOptOut);
   const restoreAcknowledgedFocus = React.useCallback(() => {
@@ -115,20 +113,6 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
     focusedActionTargetRef.current = null;
     focusLostOnActionRemovalRef.current = false;
   });
-  React.useEffect(() => {
-    const currentFailures = new Map<string, VoiceDiagnosticsRevocationObligation>(runtimeStatus.revocationObligations
-      .filter((candidate) => candidate.status === 'failed')
-      .map((candidate) => [`${candidate.key}:${candidate.revision}`, candidate] as const));
-    for (const announcedId of announcedIosFailures.keys()) {
-      if (!currentFailures.has(announcedId)) announcedIosFailures.delete(announcedId);
-    }
-    if (Platform.OS !== 'ios') return;
-    for (const [announcementId, failure] of currentFailures) {
-      if (announcedIosFailures.get(announcementId) === failure) continue;
-      announcedIosFailures.set(announcementId, failure);
-      AccessibilityInfo.announceForAccessibility(tLoose('settingsVoice.diagnostics.shutdownFailedIndicator'));
-    }
-  }, [runtimeStatus.revocationObligations]);
   if (!obligation && !activeForSession) return null;
 
   const indicatorKey = obligation
@@ -143,35 +127,42 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
 
   return (
     <View
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 24 }}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        flexWrap: 'wrap',
+        gap: 6,
+        minHeight: 24,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+      }}
     >
-      <View
-        accessibilityElementsHidden
-        style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.status.error }}
-      />
-      <Text
-        accessibilityLiveRegion={obligation?.status === 'failed' ? 'assertive' : undefined}
-        accessibilityRole={obligation?.status === 'failed' ? 'alert' : undefined}
-        style={{ color: theme.colors.text.secondary, fontSize: 12 }}
-      >
-        {tLoose(indicatorKey)}
-      </Text>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+        <View
+          accessibilityElementsHidden
+          style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.status.error }}
+        />
+        <Text style={{ color: theme.colors.text.secondary, fontSize: 12, flexShrink: 1 }}>
+          {tLoose(indicatorKey)}
+        </Text>
+      </View>
       {showsAction ? (
-        <>
-          <Pressable
-            ref={actionRef as any}
-            accessibilityRole="button"
-            accessibilityLabel={tLoose(obligation
-              ? 'settingsVoice.diagnostics.retryShutdown'
-              : 'settingsVoice.diagnostics.sessionOptOut')}
-            disabled={obligation?.status === 'pending'}
-            style={{
-              minWidth: minimumInteractiveTargetSize,
-              minHeight: minimumInteractiveTargetSize,
-              justifyContent: 'center',
-              paddingHorizontal: 6,
-            }}
-            onPress={() => {
+        <Pressable
+          ref={actionRef as any}
+          accessibilityRole="button"
+          accessibilityLabel={tLoose(obligation
+            ? 'settingsVoice.diagnostics.retryShutdown'
+            : 'settingsVoice.diagnostics.sessionOptOut')}
+          disabled={obligation?.status === 'pending'}
+          style={{
+            minWidth: minimumInteractiveTargetSize,
+            minHeight: minimumInteractiveTargetSize,
+            alignSelf: 'flex-start',
+            maxWidth: '100%',
+            justifyContent: 'center',
+            paddingHorizontal: 6,
+          }}
+          onPress={() => {
               if (actionInFlightRef.current) return;
               actionInFlightRef.current = true;
               focusedActionTargetRef.current = isCurrentWebFocusTarget(actionRef.current)
@@ -191,7 +182,6 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
                     restoreAcknowledgedFocus();
                     if (obligation.target.kind === 'session_authorization') {
                       const targetSessionId = obligation.target.sessionId;
-                      setVoiceDiagnosticsSessionCaptureAllowed(targetSessionId, false);
                       if (mountedRef.current && currentSessionIdRef.current === targetSessionId) {
                         setSessionAllowed(false);
                       }
@@ -215,17 +205,15 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
                   if (!result.ok) throw result.error;
                   if (!result.acknowledged) return;
                   restoreAcknowledgedFocus();
-                  setVoiceDiagnosticsSessionCaptureAllowed(targetSessionId, false);
                   if (mountedRef.current && currentSessionIdRef.current === targetSessionId) {
                     setSessionAllowed(false);
                   }
                 } catch {
                   if (!mountedRef.current) return;
+                  if (obligation) return;
                   await Modal.alert(
                     tLoose('common.error'),
-                    tLoose(obligation
-                      ? 'settingsVoice.diagnostics.shutdownFailedIndicator'
-                      : 'settingsVoice.diagnostics.sessionOptOutFailed'),
+                    tLoose('settingsVoice.diagnostics.sessionOptOutFailed'),
                   );
                 } finally {
                   actionInFlightRef.current = false;
@@ -233,15 +221,14 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
                   focusLostOnActionRemovalRef.current = false;
                 }
               })();
-            }}
-          >
-            <Text style={{ color: theme.colors.text.secondary, fontSize: 11, textDecorationLine: 'underline' }}>
-              {tLoose(obligation
-                ? 'settingsVoice.diagnostics.retryShutdown'
-                : 'settingsVoice.diagnostics.sessionOptOut')}
-            </Text>
-          </Pressable>
-        </>
+          }}
+        >
+          <Text style={{ color: theme.colors.text.secondary, fontSize: 11, flexShrink: 1, textDecorationLine: 'underline' }}>
+            {tLoose(obligation
+              ? 'common.retry'
+              : 'settingsVoice.diagnostics.sessionOptOut')}
+          </Text>
+        </Pressable>
       ) : null}
     </View>
   );

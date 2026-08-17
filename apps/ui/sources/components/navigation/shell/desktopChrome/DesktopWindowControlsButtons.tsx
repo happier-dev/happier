@@ -1,8 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { desktopSidebarChromeStyles } from './desktopSidebarChromeStyles';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export type DesktopWindowControlsButtonsProps = Readonly<{
     layout?: 'row' | 'column';
@@ -25,7 +25,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 accessibilityRole="button"
                 style={styles.windowControlsButton}
             >
-                <Ionicons name="remove" size={16} color={theme.colors.chrome.header.foreground} />
+                <Icon name="minus" size={16} color={theme.colors.chrome.header.foreground} />
             </Pressable>
             <Pressable
                 testID="desktop-window-controls-toggle-maximize"
@@ -33,8 +33,8 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 accessibilityRole="button"
                 style={styles.windowControlsButton}
             >
-                <Ionicons
-                    name={props.isMaximized ? 'contract-outline' : 'expand-outline'}
+                <Icon
+                    name={props.isMaximized ? 'arrows-in' : 'arrows-out'}
                     size={14}
                     color={theme.colors.chrome.header.foreground}
                 />
@@ -45,7 +45,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 accessibilityRole="button"
                 style={styles.windowControlsButton}
             >
-                <Ionicons name="close" size={16} color={theme.colors.chrome.header.foreground} />
+                <Icon name="x" size={16} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         </View>
     );

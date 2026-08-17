@@ -18,7 +18,13 @@ export type ResizableDockedPaneProps = Readonly<{
 
 export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) => {
     const resizeEdge = props.resizeEdge ?? 'left';
-    const { effectiveSizePx, canResize, panHandlers, webHandleProps } = useResizableDockedPaneCore({
+    const {
+        effectiveSizePx,
+        canResize,
+        panHandlers,
+        webHandleProps,
+        accessibilityHandleProps,
+    } = useResizableDockedPaneCore({
         axis: 'x',
         resizeEdge: resizeEdge === 'left' ? 'start' : 'end',
         sizePx: props.widthPx,
@@ -43,11 +49,13 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
             {canResize ? (
                 <ResizablePaneDividerHandle
                     axis="x"
+                    edge={resizeEdge === 'left' ? 'start' : 'end'}
                     interactionProps={Platform.OS === 'web'
                         ? ({
                             ...webHandleProps,
                         } as any)
                         : panHandlers as any}
+                    accessibilityHandleProps={accessibilityHandleProps}
                     style={{
                         position: 'absolute',
                         ...(resizeEdge === 'left' ? { left: 0 } : { right: 0 }),

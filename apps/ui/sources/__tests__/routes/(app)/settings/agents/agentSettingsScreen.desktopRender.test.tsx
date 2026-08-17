@@ -10,6 +10,24 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const applySettingsMock = vi.fn();
+const administrationTargetState = vi.hoisted(() => ({
+    selectedTarget: {
+        serverIdentityId: 'server1',
+        machineId: 'm1',
+    },
+    executionTarget: {
+        target: {
+            serverIdentityId: 'server1',
+            machineId: 'm1',
+        },
+        serverId: 'server1',
+        machine: {
+            id: 'm1',
+            metadata: { displayName: 'Machine One', host: 'm1', homeDir: '/Users/m1' },
+            daemonStateVersion: 0,
+        },
+    },
+}));
 
 let settingsState: Record<string, unknown> = {};
 let localSettingsState: Record<string, unknown> = {};
@@ -179,6 +197,22 @@ vi.mock('@/hooks/machine/useCapabilityInstallability', () => ({
     useCapabilityInstallability: () => ({ kind: 'installable' }),
 }));
 
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.selectedTarget,
+        resolveExecutionTarget: () => administrationTargetState.executionTarget,
+        candidates: [],
+        selectTarget: vi.fn(),
+        clearTarget: vi.fn(),
+    }),
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
+}));
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
@@ -227,6 +261,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
             }
         };
     },
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: string | null | undefined, right: string | null | undefined) => left === right,
 }));
 
 vi.mock('@/utils/platform/tauri', () => ({

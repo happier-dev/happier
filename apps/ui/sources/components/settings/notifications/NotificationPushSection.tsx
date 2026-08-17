@@ -1,12 +1,12 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { Icon } from '@/components/ui/icons/Icon';
 
 type NotificationPushSectionProps = Readonly<{
     pushEnabled: boolean;
@@ -30,7 +30,7 @@ export function NotificationPushSection({
                 testID="settings-notifications-push-enabled"
                 title={t('common.enabled')}
                 subtitle={t('settingsNotifications.push.enabledSubtitle')}
-                icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.accent.blue} />}
+                icon={<Icon name="bell" size={29} color={theme.colors.accent.blue} />}
                 rightElement={(
                     <Switch
                         value={pushEnabled}
@@ -43,7 +43,7 @@ export function NotificationPushSection({
                 testID="settings-notifications-push-troubleshoot"
                 title={t('settingsNotifications.push.troubleshootTitle')}
                 subtitle={t('settingsNotifications.push.troubleshootSubtitle')}
-                icon={<Ionicons name="help-circle-outline" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="question" size={29} color={theme.colors.text.secondary} />}
                 onPress={openPushTroubleshooting}
             />
         </ItemGroup>

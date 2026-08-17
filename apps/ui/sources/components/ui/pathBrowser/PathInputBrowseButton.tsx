@@ -17,7 +17,7 @@ export function PathInputBrowseButton(props: Readonly<{
             accessibilityLabel={props.accessibilityLabel ?? t('newSession.pathPicker.enterPathTitle')}
             disabled={props.disabled}
             onPress={props.onPress}
-            iconName="folder-open-outline"
+            iconName="folder-open"
         />
     );
 }

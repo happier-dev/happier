@@ -140,7 +140,7 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
     const sessionMetadata = session?.metadata;
     const externalSessionLink = readExternalSessionLink(sessionMetadata);
     const externalSessionIdentity = externalSessionLink
-        ? resolveExternalSessionIdentityPresentation(sessionMetadata)
+        ? resolveExternalSessionIdentityPresentation(sessionMetadata, reachableDisplay?.machineId)
         : null;
     const externalSessionRuntime = externalSessionLink && sessionStatus
         ? resolveExternalSessionRuntimePresentation({
@@ -259,8 +259,8 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.externalSessionRuntime?.externalAgent.state ?? '',
         viewModel.externalSessionRuntime?.externalAgent.nextExpiryAtMs ?? '',
         viewModel.externalSessionIdentity?.agentId ?? '',
-        viewModel.externalSessionIdentity?.machineLabel ?? '',
-        viewModel.externalSessionIdentity?.storageLabel ?? '',
+        viewModel.externalSessionIdentity?.identityLabel ?? '',
+        viewModel.externalSessionIdentity?.rowMetadataLabel ?? '',
         viewModel.isIdentityLoading ? '1' : '0',
         viewModel.nextRuntimeFreshnessAtMs ?? '',
         viewModel.hasUnreadMessages ? '1' : '0',

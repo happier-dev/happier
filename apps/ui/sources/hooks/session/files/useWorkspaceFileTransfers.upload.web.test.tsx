@@ -267,6 +267,7 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
             kind: 'transfer_finalize_recovery' as const,
             expiresAt: Date.now() + 60_000,
             actions: ['retry_finalize', 'discard_staged'] as const,
+            isActionable: () => true,
             invoke: vi.fn(),
         };
         uploadDaemonWorkspaceFileFromReaderMock.mockResolvedValueOnce({
@@ -319,6 +320,7 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
             kind: 'transfer_finalize_recovery' as const,
             expiresAt: Date.now() + 60_000,
             actions: ['retry_finalize', 'discard_staged'] as const,
+            isActionable: () => true,
             invoke: vi.fn(),
         };
         uploadDaemonWorkspaceFileFromReaderMock.mockResolvedValueOnce({
@@ -370,5 +372,46 @@ describe('useWorkspaceFileTransfers upload pipeline', () => {
             await expect(firstUpload).resolves.toEqual({ ok: true });
         });
         expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('aborts an in-flight upload on true unmount and keeps late completion inert', async () => {
+        callDaemonWorkspaceStatFileRpcMock.mockResolvedValue({ success: true, exists: false });
+        const transfer: { signal: AbortSignal | null } = { signal: null };
+        uploadDaemonWorkspaceFileFromReaderMock.mockImplementation(async (params: Readonly<{
+            signal?: AbortSignal | null;
+        }>) => await new Promise((resolve) => {
+            transfer.signal = params.signal ?? null;
+            params.signal?.addEventListener('abort', () => resolve({
+                success: false,
+                error: 'Upload canceled',
+            }), { once: true });
+        }));
+        const onAfterUploadSuccess = vi.fn();
+        const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
+        const hook = await renderHook(
+            (props: Parameters<typeof useWorkspaceFileTransfers>[0]) => useWorkspaceFileTransfers(props),
+            {
+                initialProps: {
+                    workspaceScope: { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' },
+                    onAfterUploadSuccess,
+                },
+            },
+        );
+        const file = new File([new TextEncoder().encode('hello')], 'hello.txt', { type: 'text/plain' });
+        let pending!: Promise<{ ok: boolean; error?: string }>;
+        await act(async () => {
+            pending = hook.getCurrent().startUploads({
+                destinationDir: 'workspace/files',
+                entries: [{ kind: 'web', file, relativePath: 'hello.txt' }],
+            });
+            await Promise.resolve();
+        });
+        await vi.waitFor(() => expect(uploadDaemonWorkspaceFileFromReaderMock).toHaveBeenCalledTimes(1));
+
+        await hook.unmount();
+
+        expect(transfer.signal?.aborted).toBe(true);
+        await expect(pending).resolves.toEqual({ ok: false, error: 'Upload canceled' });
+        expect(onAfterUploadSuccess).not.toHaveBeenCalled();
     });
 });

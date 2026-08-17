@@ -3,7 +3,11 @@ import { listAccountPets } from "@/sync/api/pets/apiAccountPets";
 import { getServerFeaturesSnapshot } from "@/sync/api/capabilities/serverFeaturesClient";
 import { readServerEnabledBit } from "@happier-dev/protocol";
 
-import type { AccountPetMetadata } from "./accountPetLibraryTypes";
+import type {
+    AccountPetMetadata,
+    AccountPetsListResponse,
+} from "./accountPetLibraryTypes";
+import { resolveAccountPetReadAdmission } from "./resolveAccountPetReadAdmission";
 
 type AccountPetsSyncDecisionParams = Readonly<{
     serverId?: string;
@@ -13,7 +17,11 @@ type AccountPetsSyncDecisionParams = Readonly<{
 export type FetchAndApplyAccountPetsResult =
     | Readonly<{ status: "applied"; count: number }>
     | Readonly<{ status: "disabled" }>
-    | Readonly<{ status: "cancelled" }>;
+    | Readonly<{ status: "cancelled" }>
+    | Readonly<{
+        status: "unavailable";
+        reason: "custom_pet_sync_unavailable";
+    }>;
 
 export type FetchAndApplyAccountPetsParams = Readonly<{
     credentials: AuthCredentials;
@@ -21,7 +29,7 @@ export type FetchAndApplyAccountPetsParams = Readonly<{
     timeoutMs?: number;
     shouldContinue?: () => boolean;
     resolvePetsSyncEnabled?: (params: AccountPetsSyncDecisionParams) => Promise<boolean>;
-    listPets?: (credentials: AuthCredentials) => Promise<AccountPetMetadata[]>;
+    listPets?: (credentials: AuthCredentials) => Promise<AccountPetsListResponse>;
     applyAccountPets: (pets: AccountPetMetadata[]) => void;
 }>;
 
@@ -57,10 +65,24 @@ export async function fetchAndApplyAccountPets(
         return { status: "disabled" };
     }
 
+    const admission = await resolveAccountPetReadAdmission(params.credentials);
+    if (!shouldContinue()) return { status: "cancelled" };
+    if (admission.status === "unavailable") return admission;
+
     const listPets = params.listPets ?? listAccountPets;
-    const pets = await listPets(params.credentials);
+    const result = await listPets(params.credentials);
     if (!shouldContinue()) return { status: "cancelled" };
 
-    params.applyAccountPets(pets);
-    return { status: "applied", count: pets.length };
+    if (!result.ok) {
+        if (result.errorCode === "custom_pet_sync_unavailable") {
+            return {
+                status: "unavailable",
+                reason: "custom_pet_sync_unavailable",
+            };
+        }
+        throw new Error(result.errorCode);
+    }
+
+    params.applyAccountPets(result.pets);
+    return { status: "applied", count: result.pets.length };
 }

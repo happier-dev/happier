@@ -101,7 +101,7 @@ describe('VoiceTranscriptProjector', () => {
             },
         });
 
-        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState as any }, 'carrier-s1');
+        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState }, 'carrier-s1');
         expect(stored).toHaveLength(1);
     });
 
@@ -142,7 +142,7 @@ describe('VoiceTranscriptProjector', () => {
             text: 'repeat me',
         });
 
-        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState as any }, 'carrier-s1');
+        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState }, 'carrier-s1');
         expect(stored).toHaveLength(2);
         expect(first?.id).not.toBe(second?.id);
     });
@@ -192,7 +192,7 @@ describe('VoiceTranscriptProjector', () => {
             },
         });
 
-        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState as any }, 'carrier-s1');
+        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState }, 'carrier-s1');
         expect(optimistic?.id).toBe('voice-turn-provisional:carrier-s1:user:1');
         expect(stored).toHaveLength(1);
         expect(stored[0]).toMatchObject({
@@ -251,7 +251,7 @@ describe('VoiceTranscriptProjector', () => {
             text: 'Tool result: sendSessionMessage succeeded',
         });
 
-        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState as any }, 'carrier-s1');
+        const stored = readStoredSessionMessages({ sessionMessages: sessionMessagesState }, 'carrier-s1');
         expect(stored).toHaveLength(2);
         expect(first?.id).not.toBe(second?.id);
     });

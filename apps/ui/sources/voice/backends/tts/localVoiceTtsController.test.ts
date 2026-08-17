@@ -1,4 +1,12 @@
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { createExternalVoiceProviderSettingsDescriptor } from '@/voice/settings/externalProviderSettings';
+import {
+    commitExternalVoiceProviderRegistration,
+    removeExternalVoiceProviderRegistration,
+} from '@/voice/registry/externalVoiceProviderRegistrations';
+import type { VoiceProviderRegistryEntry } from '@/voice/registry/providerRegistry';
 
 const resolveDaemonVoiceInferenceExecutionSpy = vi.fn<
     (_params: unknown) => Promise<'device' | 'daemon'>
@@ -11,6 +19,15 @@ const speakDeviceTextSpy = vi.fn(
 );
 const stopDeviceSpeechSpy = vi.fn((_stopper?: unknown) => undefined);
 const speakKokoroTextSpy = vi.fn(async (_params: unknown) => undefined);
+const bundledSpeechSynthesizeSpy = vi.fn(async (_params: unknown) => ({
+    bytes: new Uint8Array([1, 2, 3]),
+    mimeType: 'audio/wav' as const,
+}));
+const playAudioBytesWithStopperSpy = vi.fn(async (params: Readonly<{
+    onPlaybackStarted?: () => void;
+}>) => {
+    params.onPlaybackStarted?.();
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -50,11 +67,15 @@ vi.mock('@/voice/output/KokoroTtsController', () => ({
 }));
 
 vi.mock('@/voice/credentials/bundledSpeechClient', () => ({
-    bundledSpeechDaemonClient: { transcribe: vi.fn(), synthesize: vi.fn() },
+    bundledSpeechDaemonClient: {
+        transcribe: vi.fn(),
+        synthesize: (params: unknown) => bundledSpeechSynthesizeSpy(params),
+    },
 }));
 
-vi.mock('@/voice/output/TtsController', () => ({
-    speakOpenAiCompatText: vi.fn(),
+vi.mock('@/voice/output/playAudioBytesWithStopper', () => ({
+    playAudioBytesWithStopper: (params: Readonly<{ onPlaybackStarted?: () => void }>) =>
+        playAudioBytesWithStopperSpy(params),
 }));
 
 import { createLocalVoiceTtsController } from './localVoiceTtsController';
@@ -69,6 +90,151 @@ describe('localVoiceTtsController', () => {
         speakDeviceTextSpy.mockResolvedValue(undefined);
         speakKokoroTextSpy.mockReset();
         speakKokoroTextSpy.mockResolvedValue(undefined);
+        bundledSpeechSynthesizeSpy.mockReset();
+        bundledSpeechSynthesizeSpy.mockResolvedValue({
+            bytes: new Uint8Array([1, 2, 3]),
+            mimeType: 'audio/wav',
+        });
+        playAudioBytesWithStopperSpy.mockClear();
+    });
+
+    it('dispatches a current external dual-role speech provider through normal Local Voice TTS', async () => {
+        const declaration = VoiceProviderContributionSchema.parse({
+            id: 'speech',
+            title: 'External speech',
+            kind: 'speech',
+            roles: ['conversation_stt', 'conversation_tts'],
+            platforms: ['web'],
+            settings: {
+                schemaVersion: 2,
+                fields: [
+                    {
+                        id: 'model',
+                        title: 'Model',
+                        schema: { type: 'string', minLength: 1, maxLength: 256 },
+                        default: 'external-model',
+                        presentation: { control: 'text' },
+                    },
+                    {
+                        id: 'voiceName',
+                        title: 'Voice',
+                        schema: { type: 'string', minLength: 1, maxLength: 256 },
+                        default: 'external-voice',
+                        presentation: { control: 'text' },
+                    },
+                    {
+                        id: 'format',
+                        title: 'Format',
+                        schema: { type: 'string', enum: ['mp3', 'wav'] },
+                        default: 'wav',
+                        presentation: {
+                            control: 'select',
+                            options: [
+                                { value: 'mp3', title: 'MP3' },
+                                { value: 'wav', title: 'WAV' },
+                            ],
+                        },
+                    },
+                ],
+            },
+        });
+        if (declaration.kind !== 'speech') throw new Error('expected speech declaration');
+
+        const pluginId = 'acme.external';
+        const providerId = `${pluginId}/${declaration.id}`;
+        const token = {};
+        const providerSettings = createExternalVoiceProviderSettingsDescriptor(declaration.settings);
+        const descriptor = {
+            kind: 'voice.speech-engine.v1',
+            pluginId,
+            providerId,
+            settingsSectionId: providerId,
+            roles: declaration.roles,
+            requirements: ['execution_machine'],
+            supportedPlatforms: declaration.platforms,
+            role: 'both',
+            declaration,
+            catalogs: declaration.catalogs,
+            limits: declaration.limits,
+            presentation: {
+                providerId,
+                settingsSectionId: providerId,
+                createSettingsSpec: () => ({
+                    titleKey: 'External speech',
+                    subtitleKey: 'External speech',
+                    detailKey: 'External speech',
+                    iconName: 'extension',
+                    fields: declaration.settings.fields.map((field) => ({
+                        fieldId: field.id,
+                        titleKey: typeof field.title === 'string' ? field.title : field.id,
+                        subtitleKey: typeof field.title === 'string' ? field.title : field.id,
+                    })),
+                    test: null,
+                }),
+            },
+            providerSettings,
+            source: { kind: 'external', pluginId, localId: declaration.id },
+        } satisfies VoiceProviderRegistryEntry;
+        commitExternalVoiceProviderRegistration({
+            token,
+            pluginId,
+            localId: declaration.id,
+            providerId,
+            descriptor,
+            adapter: null,
+        });
+
+        const onSpeaking = vi.fn();
+        const controller = createLocalVoiceTtsController();
+        const request = {
+            sessionId: 'session-external',
+            text: 'speak through both roles',
+            settings: {
+                voice: {
+                    providers: {
+                        [providerId]: {
+                            schemaVersion: 2,
+                            config: providerSettings.defaultConfig,
+                        },
+                    },
+                },
+            },
+            tts: {
+                provider: providerId,
+                localNeural: {
+                    model: 'kokoro',
+                    assetId: null,
+                    voiceId: null,
+                    speed: null,
+                    execution: 'auto',
+                },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+            },
+            networkTimeoutMs: 15_000,
+            registerPlaybackStopper: () => () => {},
+            onSpeaking,
+        } as const;
+
+        try {
+            await expect(controller.speak(request)).resolves.toBeUndefined();
+            expect(bundledSpeechSynthesizeSpy).toHaveBeenCalledWith(expect.objectContaining({
+                entry: expect.objectContaining({ providerId, role: 'both' }),
+                input: 'speak through both roles',
+                model: 'external-model',
+                voiceName: 'external-voice',
+                format: 'wav',
+            }));
+            expect(playAudioBytesWithStopperSpy).toHaveBeenCalledTimes(1);
+            expect(onSpeaking).toHaveBeenCalledTimes(1);
+
+            removeExternalVoiceProviderRegistration(token);
+            await expect(controller.speak(request)).rejects.toMatchObject({
+                code: 'provider_unavailable',
+            });
+        } finally {
+            removeExternalVoiceProviderRegistration(token);
+        }
     });
 
     it('delegates provider routing through the configured TTS controller map', async () => {
@@ -81,7 +247,7 @@ describe('localVoiceTtsController', () => {
             controllers: {
                 device: { speak: deviceSpeakSpy },
                 local_neural: { speak: localNeuralSpeakSpy },
-                google_cloud: { speak: googleCloudSpeakSpy },
+                'happier.voice.google/google-cloud-tts': { speak: googleCloudSpeakSpy },
                 openai_compat: { speak: openAiCompatSpeakSpy },
             },
         });
@@ -92,7 +258,6 @@ describe('localVoiceTtsController', () => {
             settings: {},
             tts: {
                 provider: 'local_neural',
-                openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                 localNeural: {
                     model: 'kokoro',
                     assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -100,7 +265,6 @@ describe('localVoiceTtsController', () => {
                     speed: 1,
                     execution: 'daemon',
                 },
-                providers: {},
                 autoSpeakReplies: true,
                 bargeInEnabled: true,
             },
@@ -144,7 +308,6 @@ describe('localVoiceTtsController', () => {
                 settings: {},
                 tts: {
                     provider: 'local_neural',
-                    openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
                     localNeural: {
                         model: 'kokoro',
                         assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -152,7 +315,6 @@ describe('localVoiceTtsController', () => {
                         speed: 1,
                         execution: 'daemon',
                     },
-                    providers: {},
                     autoSpeakReplies: true,
                     bargeInEnabled: true,
                 },
@@ -195,7 +357,6 @@ describe('localVoiceTtsController', () => {
         settings: {},
         tts: {
           provider: 'local_neural',
-          openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
           localNeural: {
             model: 'kokoro',
             assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -203,7 +364,6 @@ describe('localVoiceTtsController', () => {
             speed: 1,
             execution: 'daemon',
           },
-          providers: {},
           autoSpeakReplies: true,
           bargeInEnabled: true,
         },
@@ -234,7 +394,6 @@ describe('localVoiceTtsController', () => {
       settings: {},
       tts: {
         provider: 'local_neural',
-        openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
         localNeural: {
           model: 'kokoro',
           assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -242,7 +401,6 @@ describe('localVoiceTtsController', () => {
           speed: 1,
           execution: 'device',
         },
-        providers: {},
         autoSpeakReplies: true,
         bargeInEnabled: true,
       },
@@ -277,7 +435,6 @@ describe('localVoiceTtsController', () => {
       settings: {},
       tts: {
         provider: 'local_neural',
-        openaiCompat: { baseUrl: null, insecureLocalOriginConsent: null, insecureLocalConsentMachineId: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
         localNeural: {
           model: 'kokoro',
           assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
@@ -285,7 +442,6 @@ describe('localVoiceTtsController', () => {
           speed: 1,
           execution: 'daemon',
         },
-        providers: {},
         autoSpeakReplies: true,
         bargeInEnabled: true,
       },

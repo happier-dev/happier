@@ -90,7 +90,7 @@ describe('voiceQaSessionResolution', () => {
 
   it('classifies a registered conversation provider by capability instead of a vendor id', () => {
     expect(resolveConfiguredVoiceQaProvider({
-      voice: { providerId: 'realtime_elevenlabs' },
+      voice: { providerId: 'happier.voice.elevenlabs/realtime-elevenlabs' },
     })).toBe('realtime_conversation');
   });
 });

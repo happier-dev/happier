@@ -1,7 +1,4 @@
-import type {
-  VoiceRealtimeConnection,
-  VoiceRealtimeProtocolAdapter,
-} from '@happier-dev/bundled-voice-runtime-contract';
+import type { VoiceRealtimeConnection } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceRealtimeJsonValue,
   VoiceTranscriptCanonicalEventV1,
@@ -12,6 +9,7 @@ import {
   matchesVoiceFixtureTranscript,
   readVoiceFixturePcm16,
 } from '../../../../../../packages/tests/src/testkit/voice/voiceFixture';
+import type { VoiceRealtimeProtocolAdapter } from '@/voice/runtime/protocol/VoiceRealtimeProtocolAdapter';
 
 import { createVoiceConversationController } from './VoiceConversationController';
 

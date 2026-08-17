@@ -1,16 +1,19 @@
-import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { areSessionListRenderableExternalSessionIdentitiesEqual } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol';
 
 import type {
-    MachineDisplayCacheEntryV1,
     SessionListCacheEntryV1,
 } from './warmCachePersistence';
 
 const EMPTY_WARM_CACHE_ENTRIES: Record<string, never> = {};
 const EMPTY_SESSION_LIST_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Record<string, SessionListCacheEntryV1>;
-const EMPTY_MACHINE_DISPLAY_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Record<string, MachineDisplayCacheEntryV1>;
+
+export {
+    buildMachineDisplayCacheEntriesFromRenderables,
+    buildMachineDisplayCacheEntryFromRenderable,
+    buildMachineDisplayRenderableFromCacheEntry,
+} from './machineDisplayWarmCacheAdapters';
 
 function normalizeNonNegativeInteger(value: number | null | undefined): number | null {
     return typeof value === 'number' && Number.isFinite(value)
@@ -277,13 +280,16 @@ export function buildSessionListCacheEntryFromRenderable(
             ? previousEntry.hiddenSystemSession === true
             : legacyMetadata?.hiddenSystemSession === true,
         keepVisibleWhenInactive: session.keepVisibleWhenInactive === true,
+        // Verbatim, not `=== true`: coercing an absent flag to `false` would claim
+        // "no pending requests" for a row that is simply not hydrated yet, and it makes the
+        // entry builder non-idempotent, so every save cycle rewrites an unchanged blob.
         hasPendingPermissionRequests: preserveAgentState
-            ? previousEntry.hasPendingPermissionRequests === true
+            ? previousEntry.hasPendingPermissionRequests
             : typeof session.hasPendingPermissionRequests === 'boolean'
                 ? session.hasPendingPermissionRequests
                 : undefined,
         hasPendingUserActionRequests: preserveAgentState
-            ? previousEntry.hasPendingUserActionRequests === true
+            ? previousEntry.hasPendingUserActionRequests
             : typeof session.hasPendingUserActionRequests === 'boolean'
                 ? session.hasPendingUserActionRequests
                 : undefined,
@@ -315,11 +321,13 @@ export function buildSessionListCacheEntriesFromRenderables(
 
     let nextEntries = previousEntries;
     let didChange = false;
+    let addedCount = 0;
 
     for (const sessionId of sessionIds) {
         const session = sessions[sessionId];
         const previousEntry = previousEntries[sessionId];
         const nextEntry = buildSessionListCacheEntryFromRenderable(session, previousEntry);
+        if (!previousEntry) addedCount += 1;
         if (!previousEntry || !areSessionListCacheEntriesEqual(nextEntry, previousEntry)) {
             if (!didChange) {
                 nextEntries = { ...previousEntries };
@@ -329,7 +337,9 @@ export function buildSessionListCacheEntriesFromRenderables(
         }
     }
 
-    if (countOwnEntries(previousEntries) !== sessionIds.length) {
+    // Equal counts do not prove equal membership ({a,b} -> {b,c} leaves `a` stranded), so
+    // the eviction scan must also run whenever the incoming set added an id.
+    if (addedCount > 0 || countOwnEntries(previousEntries) !== sessionIds.length) {
         if (!didChange) {
             nextEntries = { ...previousEntries };
             didChange = true;
@@ -348,114 +358,66 @@ export function buildSessionListCacheEntriesFromRenderables(
     return didChange ? nextEntries : previousEntries;
 }
 
-export function buildMachineDisplayRenderableFromCacheEntry(entry: MachineDisplayCacheEntryV1): MachineDisplayRenderable {
-    return {
-        id: entry.machineId,
-        updatedAt: entry.updatedAt,
-        active: entry.active,
-        activeAt: entry.activeAt,
-        revokedAt: entry.revokedAt,
-        metadataVersion: entry.metadataVersion,
-        metadata: {
-            displayName: entry.displayName ?? null,
-            host: entry.host ?? null,
-            homeDir: entry.homeDir ?? null,
-        },
-    };
+/**
+ * Upper bound on the number of session rows the warm cache persists. The blob is parsed
+ * before first paint, so it must not grow with the account's total session count; the
+ * window comfortably exceeds the 50-row first page the server returns.
+ */
+export const SESSION_LIST_WARM_CACHE_MAX_ENTRIES = 200;
+
+function readSessionListWindowOrderingKey(session: SessionListRenderableSession | undefined): number {
+    if (!session) return 0;
+    const meaningfulActivityAt = session.meaningfulActivityAt;
+    if (typeof meaningfulActivityAt === 'number' && Number.isFinite(meaningfulActivityAt)) {
+        return meaningfulActivityAt;
+    }
+    return typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
 }
 
-function shouldPreserveMachineDisplayMetadataFromPreviousEntry(
-    machine: MachineDisplayRenderable,
-    previousEntry: MachineDisplayCacheEntryV1 | undefined,
-): previousEntry is MachineDisplayCacheEntryV1 {
-    return machine.metadata == null && Boolean(previousEntry);
+/**
+ * The retained window, on the server's own list ordering key
+ * (`meaningfulActivityAt desc, id desc` — `V2_SESSION_LIST_ORDER_BY`), so the warm cache
+ * holds exactly the rows the first page would show.
+ */
+function selectRetainedSessionListWarmCacheIds(
+    sessions: Record<string, SessionListRenderableSession>,
+    sessionIds: readonly string[],
+): readonly string[] {
+    if (sessionIds.length <= SESSION_LIST_WARM_CACHE_MAX_ENTRIES) {
+        return sessionIds;
+    }
+    return [...sessionIds]
+        .sort((left, right) => {
+            const leftKey = readSessionListWindowOrderingKey(sessions[left]);
+            const rightKey = readSessionListWindowOrderingKey(sessions[right]);
+            if (leftKey !== rightKey) return rightKey - leftKey;
+            return left < right ? 1 : left > right ? -1 : 0;
+        })
+        .slice(0, SESSION_LIST_WARM_CACHE_MAX_ENTRIES);
 }
 
-export function buildMachineDisplayCacheEntryFromRenderable(
-    machine: MachineDisplayRenderable,
-    previousEntry?: MachineDisplayCacheEntryV1,
-): MachineDisplayCacheEntryV1 {
-    const preserveMetadata = shouldPreserveMachineDisplayMetadataFromPreviousEntry(machine, previousEntry);
-    const nextEntry: MachineDisplayCacheEntryV1 = {
-        machineId: machine.id,
-        metadataVersion: preserveMetadata ? previousEntry.metadataVersion : machine.metadataVersion,
-        updatedAt: machine.updatedAt,
-        active: machine.active,
-        activeAt: machine.activeAt,
-        revokedAt: machine.revokedAt ?? null,
-        displayName: preserveMetadata ? previousEntry.displayName ?? null : machine.metadata?.displayName ?? null,
-        host: preserveMetadata ? previousEntry.host ?? null : machine.metadata?.host ?? null,
-        homeDir: preserveMetadata ? previousEntry.homeDir ?? null : machine.metadata?.homeDir ?? null,
-    };
-
-    return previousEntry && areMachineDisplayCacheEntriesEqual(nextEntry, previousEntry) ? previousEntry : nextEntry;
-}
-
-function areMachineDisplayCacheEntriesEqual(
-    nextEntry: MachineDisplayCacheEntryV1,
-    previousEntry: MachineDisplayCacheEntryV1,
-): boolean {
-    return (
-        nextEntry.metadataVersion === previousEntry.metadataVersion
-        && nextEntry.updatedAt === previousEntry.updatedAt
-        && nextEntry.active === previousEntry.active
-        && nextEntry.activeAt === previousEntry.activeAt
-        && nextEntry.revokedAt === previousEntry.revokedAt
-        && nextEntry.displayName === previousEntry.displayName
-        && nextEntry.host === previousEntry.host
-        && nextEntry.homeDir === previousEntry.homeDir
-    );
-}
-
-export function buildMachineDisplayCacheEntriesFromRenderables(
-    machines: Record<string, MachineDisplayRenderable>,
-    previousEntries?: Record<string, MachineDisplayCacheEntryV1>,
-): Record<string, MachineDisplayCacheEntryV1> {
-    const machineIds = Object.keys(machines);
-    if (machineIds.length === 0) {
-        return previousEntries && Object.keys(previousEntries).length === 0 ? previousEntries : EMPTY_MACHINE_DISPLAY_CACHE_ENTRIES;
+/**
+ * The warm-cache **persistence** projection: the same entries as
+ * `buildSessionListCacheEntriesFromRenderables`, restricted to the retained window.
+ * The uncapped builder stays the owner of the in-memory metadata fallback
+ * (`cachedSessionListEntries`), where narrowing coverage past the window would silently
+ * drop metadata the next fetch still needs.
+ *
+ * An oversized blob written before this window existed is not trimmed on load: the first
+ * save after boot rewrites the key at its bounded size, so it costs exactly one boot.
+ */
+export function buildPersistedSessionListCacheEntriesFromRenderables(
+    sessions: Record<string, SessionListRenderableSession>,
+    previousEntries?: Record<string, SessionListCacheEntryV1>,
+): Record<string, SessionListCacheEntryV1> {
+    const sessionIds = Object.keys(sessions);
+    const retainedIds = selectRetainedSessionListWarmCacheIds(sessions, sessionIds);
+    if (retainedIds.length === sessionIds.length) {
+        return buildSessionListCacheEntriesFromRenderables(sessions, previousEntries);
     }
-
-    if (!previousEntries) {
-        const nextEntries: Record<string, MachineDisplayCacheEntryV1> = {};
-        for (const machineId of machineIds) {
-            const machine = machines[machineId];
-            nextEntries[machineId] = buildMachineDisplayCacheEntryFromRenderable(machine);
-        }
-        return nextEntries;
+    const retained: Record<string, SessionListRenderableSession> = {};
+    for (const sessionId of retainedIds) {
+        retained[sessionId] = sessions[sessionId];
     }
-
-    let nextEntries = previousEntries;
-    let didChange = false;
-
-    for (const machineId of machineIds) {
-        const machine = machines[machineId];
-        const previousEntry = previousEntries[machineId];
-        const nextEntry = buildMachineDisplayCacheEntryFromRenderable(machine, previousEntry);
-        if (!previousEntry || !areMachineDisplayCacheEntriesEqual(nextEntry, previousEntry)) {
-            if (!didChange) {
-                nextEntries = { ...previousEntries };
-                didChange = true;
-            }
-            nextEntries[machineId] = nextEntry;
-        }
-    }
-
-    if (countOwnEntries(previousEntries) !== machineIds.length) {
-        if (!didChange) {
-            nextEntries = { ...previousEntries };
-            didChange = true;
-        }
-
-        for (const previousMachineId in previousEntries) {
-            if (
-                Object.prototype.hasOwnProperty.call(previousEntries, previousMachineId)
-                && machines[previousMachineId] === undefined
-            ) {
-                delete nextEntries[previousMachineId];
-            }
-        }
-    }
-
-    return didChange ? nextEntries : previousEntries;
+    return buildSessionListCacheEntriesFromRenderables(retained, previousEntries);
 }

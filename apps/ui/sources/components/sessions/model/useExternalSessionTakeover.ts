@@ -15,20 +15,28 @@ import { t } from '@/text';
 import {
     createExternalSessionTranscriptLiveSourceKeyFromLink,
 } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
+import { resolveExternalSessionTakeoverTargetDirectory } from '@/components/sessions/external/takeover/resolveExternalSessionTakeoverTargetDirectory';
 
 type DirectTakeoverMode = 'direct' | 'persisted';
+type TakeoverIdempotencyEntry = Readonly<{
+    targetDirectory: string;
+    idempotencyKey: string;
+}>;
 
 type UseExternalSessionTakeoverParams = Readonly<{
     sessionId: string;
     hasWriteAccess: boolean;
     externalSessionRuntime:
         Pick<UseExternalSessionRuntimeResult, 'externalSessionLink' | 'sessionServerId' | 'status' | 'refreshNow'>;
+    targetMachineHomeDir?: string | null;
+    targetDirectorySuggestion?: string | null;
+    targetMachinePlatform?: string | null;
 }>;
 
 type UseExternalSessionTakeoverResult = Readonly<{
     takeoverInFlight: DirectTakeoverMode | null;
     takeoverPreflightInFlight: boolean;
-    requestTakeover: (mode: DirectTakeoverMode) => Promise<boolean>;
+    requestTakeover: (mode: DirectTakeoverMode, targetDirectory: string) => Promise<boolean>;
     requestTakeoverPreflight: () => Promise<boolean>;
     ensureReadyForSend: () => Promise<boolean>;
 }>;
@@ -40,7 +48,7 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
     const preflightGenerationRef = React.useRef(0);
     const preflightPromiseRef = React.useRef<Promise<boolean> | null>(null);
     const takeoverIdempotencyKeysRef = React.useRef<
-        Record<DirectTakeoverMode, string | null>
+        Record<DirectTakeoverMode, TakeoverIdempotencyEntry | null>
     >({ direct: null, persisted: null });
     const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
     const takeoverScopeKey = React.useMemo(() => {
@@ -50,6 +58,35 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
             ?? JSON.stringify(link);
         return `${normalizedSessionId}:${authorityKey}`;
     }, [normalizedSessionId, params.externalSessionRuntime.externalSessionLink]);
+    const currentTakeoverScopeKeyRef = React.useRef(takeoverScopeKey);
+    currentTakeoverScopeKeyRef.current = takeoverScopeKey;
+    const takeoverDialogTarget = React.useMemo(() => {
+        const link = params.externalSessionRuntime.externalSessionLink;
+        if (!link) return null;
+        const machineHomeDir = params.targetMachineHomeDir?.trim()
+            ? params.targetMachineHomeDir
+            : '';
+        return {
+            machineId: link.machineId,
+            machineHomeDir,
+            initialDirectory:
+                params.targetDirectorySuggestion?.trim()
+                    ? params.targetDirectorySuggestion
+                    : machineHomeDir,
+            ...(params.targetMachinePlatform
+                ? { machinePlatform: params.targetMachinePlatform }
+                : {}),
+            ...(params.externalSessionRuntime.sessionServerId
+                ? { serverId: params.externalSessionRuntime.sessionServerId }
+                : {}),
+        };
+    }, [
+        params.externalSessionRuntime.externalSessionLink,
+        params.externalSessionRuntime.sessionServerId,
+        params.targetDirectorySuggestion,
+        params.targetMachineHomeDir,
+        params.targetMachinePlatform,
+    ]);
 
     React.useEffect(() => {
         mountedRef.current = true;
@@ -59,6 +96,7 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
             direct: null,
             persisted: null,
         };
+        setTakeoverInFlight(null);
         setTakeoverPreflightInFlight(false);
         return () => {
             mountedRef.current = false;
@@ -75,9 +113,28 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
 
     const requestTakeover = React.useCallback(async (
         mode: DirectTakeoverMode,
+        targetDirectory: string,
     ): Promise<boolean> => {
+        const requestGeneration = preflightGenerationRef.current;
+        const requestScopeKey = takeoverScopeKey;
+        const isRequestCurrent = () => (
+            mountedRef.current
+            && preflightGenerationRef.current === requestGeneration
+            && currentTakeoverScopeKeyRef.current === requestScopeKey
+        );
+        if (!isRequestCurrent()) {
+            return false;
+        }
         if (!params.hasWriteAccess) {
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
+            return false;
+        }
+
+        const normalizedTargetDirectory = resolveExternalSessionTakeoverTargetDirectory(
+            targetDirectory,
+            params.targetMachineHomeDir,
+        );
+        if (!normalizedTargetDirectory) {
             return false;
         }
 
@@ -87,6 +144,9 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
         }
 
         const latestStatus = await readLatestStatus();
+        if (!isRequestCurrent()) {
+            return false;
+        }
         if (!latestStatus) {
             return false;
         }
@@ -112,13 +172,19 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                 );
                 return false;
             }
-            takeoverIdempotencyKeysRef.current[mode] ??= randomUUID();
+            const existingIdempotencyEntry = takeoverIdempotencyKeysRef.current[mode];
+            const idempotencyEntry = existingIdempotencyEntry?.targetDirectory === normalizedTargetDirectory
+                ? existingIdempotencyEntry
+                : {
+                    targetDirectory: normalizedTargetDirectory,
+                    idempotencyKey: randomUUID(),
+                };
+            takeoverIdempotencyKeysRef.current[mode] = idempotencyEntry;
             const takeoverInput = {
                 machineId: externalSessionLink.machineId,
                 request: {
                     v: 1 as const,
-                    idempotencyKey:
-                        takeoverIdempotencyKeysRef.current[mode],
+                    idempotencyKey: idempotencyEntry.idempotencyKey,
                     sessionId: normalizedSessionId,
                     source: {
                         machineId: externalSessionLink.machineId,
@@ -131,9 +197,13 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                     targetStorageMode: mode === 'persisted'
                         ? 'persisted' as const
                         : 'external-linked' as const,
+                    targetDirectory: normalizedTargetDirectory,
                     targetRuntimeMode: 'terminal' as const,
                 },
             };
+            if (!isRequestCurrent()) {
+                return false;
+            }
             const result = mode === 'persisted'
                 ? await machineExternalSessionTakeoverPersist({
                     machineId: externalSessionLink.machineId,
@@ -143,57 +213,96 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                     takeoverInput,
                     { serverId },
                 );
+            if (
+                takeoverIdempotencyKeysRef.current[mode]?.idempotencyKey
+                    === idempotencyEntry.idempotencyKey
+                && takeoverIdempotencyKeysRef.current[mode]?.targetDirectory
+                    === normalizedTargetDirectory
+            ) {
+                takeoverIdempotencyKeysRef.current[mode] = null;
+            }
+            if (!isRequestCurrent()) {
+                return false;
+            }
             if (!result.ok) {
                 Modal.alert(t('common.error'), result.error.message);
                 return false;
             }
 
+            if (!isRequestCurrent()) {
+                return false;
+            }
             await Promise.all([
                 params.externalSessionRuntime.refreshNow(),
                 sync.refreshSessionMessages(normalizedSessionId),
                 sync.refreshSessions(),
             ]);
 
-            return true;
+            return isRequestCurrent();
         } catch (error) {
-            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
+            if (isRequestCurrent()) {
+                Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
+            }
             return false;
         } finally {
-            setTakeoverInFlight(null);
+            if (isRequestCurrent()) {
+                setTakeoverInFlight(null);
+            }
         }
-    }, [normalizedSessionId, params.externalSessionRuntime, params.hasWriteAccess, readLatestStatus]);
+    }, [normalizedSessionId, params.externalSessionRuntime, params.hasWriteAccess, params.targetMachineHomeDir, readLatestStatus, takeoverScopeKey]);
 
     const ensureReadyForSend = React.useCallback(async (): Promise<boolean> => {
+        const requestGeneration = preflightGenerationRef.current;
+        const requestScopeKey = takeoverScopeKey;
+        const isRequestCurrent = () => (
+            mountedRef.current
+            && preflightGenerationRef.current === requestGeneration
+            && currentTakeoverScopeKeyRef.current === requestScopeKey
+        );
         const externalSessionLink = params.externalSessionRuntime.externalSessionLink;
         if (!externalSessionLink) {
-            return true;
+            return isRequestCurrent();
         }
 
         let latestStatus: Awaited<ReturnType<typeof readLatestStatus>>;
         try {
             latestStatus = await readLatestStatus();
         } catch (error) {
+            if (!isRequestCurrent()) {
+                return false;
+            }
             if (isTerminalAuthError(error)) {
                 throw error;
             }
-            return true;
+            Modal.alert(t('common.error'), t('chatFooter.externalSessionStatusUnavailable'));
+            return false;
+        }
+        if (!isRequestCurrent()) {
+            return false;
         }
         if (!latestStatus) {
-            return true;
+            Modal.alert(t('common.error'), t('chatFooter.externalSessionStatusUnavailable'));
+            return false;
         }
         if (latestStatus.runnerActive) {
-            return true;
+            return isRequestCurrent();
         }
         if (!latestStatus.machineOnline) {
             Modal.alert(t('common.error'), t('chatFooter.externalSessionMachineOffline'));
             return false;
         }
 
+        if (!isRequestCurrent()) {
+            return false;
+        }
         const resolution = await showExternalSessionTakeoverDialog({
             canTakeOverDirect: latestStatus.canTakeOverDirect,
             canTakeOverPersist: latestStatus.canTakeOverPersist,
-            canForceStop: false,
+            ...(takeoverDialogTarget ? { target: takeoverDialogTarget } : {}),
         });
+        if (!isRequestCurrent()) {
+            return false;
+        }
         if (!resolution.action) {
             return false;
         }
@@ -201,12 +310,15 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
             return false;
         }
 
-        await requestTakeover(resolution.action);
+        if (!resolution.targetDirectory) {
+            return false;
+        }
+        await requestTakeover(resolution.action, resolution.targetDirectory);
         // Start only creates/returns the durable operation. Admission and
         // spawn require an explicit operation Resume, so this send attempt
         // must not emit output against the still-linked external authority.
         return false;
-    }, [params.externalSessionRuntime, readLatestStatus, requestTakeover]);
+    }, [params.externalSessionRuntime, readLatestStatus, requestTakeover, takeoverDialogTarget, takeoverScopeKey]);
 
     const requestTakeoverPreflight = React.useCallback((): Promise<boolean> => {
         if (preflightPromiseRef.current) {
@@ -214,6 +326,12 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
         }
 
         const requestGeneration = preflightGenerationRef.current;
+        const requestScopeKey = takeoverScopeKey;
+        const isRequestCurrent = () => (
+            mountedRef.current
+            && preflightGenerationRef.current === requestGeneration
+            && currentTakeoverScopeKeyRef.current === requestScopeKey
+        );
         let preflightPromise: Promise<boolean> | null = null;
         preflightPromise = (async (): Promise<boolean> => {
             setTakeoverPreflightInFlight(true);
@@ -225,16 +343,17 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                         takeoverReadiness: 'fresh',
                     });
                 } catch (error) {
+                    if (!isRequestCurrent()) {
+                        return false;
+                    }
                     if (isTerminalAuthError(error)) {
                         throw error;
                     }
-                    if (mountedRef.current && preflightGenerationRef.current === requestGeneration) {
-                        Modal.alert(t('common.error'), t('chatFooter.externalSessionStatusUnavailable'));
-                    }
+                    Modal.alert(t('common.error'), t('chatFooter.externalSessionStatusUnavailable'));
                     return false;
                 }
 
-                if (!mountedRef.current || preflightGenerationRef.current !== requestGeneration) {
+                if (!isRequestCurrent()) {
                     return false;
                 }
                 if (!latestStatus) {
@@ -250,12 +369,10 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                         await showExternalSessionTakeoverDialog({
                             canTakeOverDirect: false,
                             canTakeOverPersist: false,
-                            canForceStop: false,
                             runningProcessPid: latestStatus.trustedPid ?? null,
-                        });
+                    });
                     if (
-                        !mountedRef.current
-                        || preflightGenerationRef.current !== requestGeneration
+                        !isRequestCurrent()
                         || runningResolution.action !== 'recheck'
                     ) {
                         return false;
@@ -270,30 +387,35 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                 const resolution = await showExternalSessionTakeoverDialog({
                     canTakeOverDirect: latestStatus.canTakeOverDirect,
                     canTakeOverPersist: latestStatus.canTakeOverPersist,
-                    canForceStop: false,
+                    ...(takeoverDialogTarget ? { target: takeoverDialogTarget } : {}),
                 });
                 if (
-                    !mountedRef.current
-                    || preflightGenerationRef.current !== requestGeneration
+                    !isRequestCurrent()
                     || resolution.action === 'recheck'
                     || !resolution.action
                 ) {
                     return false;
                 }
 
-                return requestTakeover(resolution.action);
+                if (!resolution.targetDirectory) {
+                    return false;
+                }
+                return requestTakeover(
+                    resolution.action,
+                    resolution.targetDirectory,
+                );
             }
         })().finally(() => {
             if (preflightPromiseRef.current !== preflightPromise) return;
             preflightPromiseRef.current = null;
-            if (mountedRef.current && preflightGenerationRef.current === requestGeneration) {
+            if (isRequestCurrent()) {
                 setTakeoverPreflightInFlight(false);
             }
         });
 
         preflightPromiseRef.current = preflightPromise;
         return preflightPromise;
-    }, [readLatestStatus, requestTakeover]);
+    }, [readLatestStatus, requestTakeover, takeoverDialogTarget, takeoverScopeKey]);
 
     return React.useMemo(() => ({
         takeoverInFlight,

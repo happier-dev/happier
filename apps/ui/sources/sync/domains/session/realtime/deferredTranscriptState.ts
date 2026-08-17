@@ -121,6 +121,41 @@ export function readDeferredTranscriptDurableSeq(state: DeferredTranscriptState,
     return normalizeSeq(state.deferredDurableSeqBySessionId[sessionId]);
 }
 
+/**
+ * Remove only stale rows which a targeted refetch actually normalized. This
+ * deliberately leaves the generic deferred-newer cursor intact, and retains a
+ * conservative stale lower bound while any exact row remains unresolved.
+ */
+export function clearResolvedStaleTranscriptMessageIds(
+    state: DeferredTranscriptState,
+    sessionId: string,
+    resolvedMessageIds: ReadonlySet<string>,
+): DeferredTranscriptState {
+    if (!sessionId || resolvedMessageIds.size === 0) return state;
+    const existing = state.staleMessageIdsBySessionId[sessionId] ?? [];
+    if (existing.length === 0) return state;
+
+    const remaining = existing.filter((messageId) => !resolvedMessageIds.has(messageId));
+    if (remaining.length === existing.length) return state;
+    if (remaining.length > 0) {
+        return {
+            ...state,
+            staleMessageIdsBySessionId: {
+                ...state.staleMessageIdsBySessionId,
+                [sessionId]: remaining,
+            },
+        };
+    }
+
+    const { [sessionId]: _stale, ...staleMessageIdsBySessionId } = state.staleMessageIdsBySessionId;
+    const { [sessionId]: _staleMinSeq, ...staleMinSeqBySessionId } = state.staleMinSeqBySessionId;
+    return {
+        ...state,
+        staleMessageIdsBySessionId,
+        staleMinSeqBySessionId,
+    };
+}
+
 export function clearDeferredTranscriptStateForSession(
     state: DeferredTranscriptState,
     sessionId: string,

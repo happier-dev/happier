@@ -1,6 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
 
@@ -28,8 +29,21 @@ const mockState = vi.hoisted(() => ({
     itemSpy: vi.fn(),
     machinesState: { 'machine-1': createMachineRecord() } as Record<string, unknown>,
     machineTargetSessionsState: {} as Record<string, unknown>,
+    machineControlTargetBySession: {} as Record<string, { machineId: string; basePath: string }>,
+    modalAlertSpy: vi.fn(),
     multiTextInputSpy: vi.fn(),
     machineSpawnNewSessionMock: vi.fn(async (_params: unknown) => ({ type: 'error', errorCode: 'unexpected', errorMessage: 'noop' })),
+    sessionSpawnNewActionMock: vi.fn<(input: unknown, context: unknown) => Promise<unknown>>(async (_input, _context) => ({
+        ok: true as const,
+        result: {
+            type: 'success' as const,
+            disposition: 'created' as const,
+            sessionId: 'session-new',
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            initialInput: { status: 'notRequested' as const },
+        },
+    })),
     openMachinePathBrowserModalMock: vi.fn<(params: unknown) => Promise<string | null>>(async () => '/Users/test/project'),
     projectForSession: {} as Record<string, { key?: { machineId?: string; rootPath?: string } } | null>,
     routeParamsRef: { current: { id: 'machine-1' } as Record<string, string> },
@@ -47,6 +61,12 @@ const {
 }));
 
 installMachineDetailsCommonModuleMocks({
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: { alert: mockState.modalAlertSpy },
+        }).module;
+    },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
@@ -118,11 +138,19 @@ vi.mock('@/sync/ops', () => ({
     machineRevokeFromAccount: vi.fn(async () => ({ ok: true })),
 }));
 
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+    createFrontDoorActionExecute: () => async (_actionId: unknown, input: unknown, context: unknown) =>
+        mockState.sessionSpawnNewActionMock(input, context),
+}));
+
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
         machineContributionRegistryProjectionDescribe(...args),
+    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
+    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
@@ -164,6 +192,7 @@ vi.mock('@/utils/path/pathUtils', () => ({
     resolveAbsolutePath: (value: string, homeDir: string) => {
         const trimmed = value.trim();
         if (!trimmed) return '';
+        if (trimmed === '~') return homeDir;
         if (trimmed.startsWith('~/')) return `${homeDir}/${trimmed.slice(2)}`;
         if (trimmed.startsWith('/')) return trimmed;
         return `${homeDir}/${trimmed}`;
@@ -184,12 +213,26 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions', ()
 }));
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => {
+        const controlTarget = mockState.machineControlTargetBySession[sessionId];
+        if (controlTarget) return controlTarget;
         const project = mockState.projectForSession[sessionId];
         return project?.key == null
             ? null
             : {
                 machineId: project.key.machineId ?? null,
                 basePath: project.key.rootPath ?? null,
+            };
+    },
+    readMachineControlTargetForSession: (sessionId: string) => {
+        const controlTarget = mockState.machineControlTargetBySession[sessionId];
+        if (controlTarget) return { ...controlTarget, confidence: 'reachable' };
+        const project = mockState.projectForSession[sessionId];
+        return project?.key == null
+            ? null
+            : {
+                machineId: project.key.machineId ?? null,
+                basePath: project.key.rootPath ?? null,
+                confidence: 'reachable',
             };
     },
     readDisplayMachineIdForSession: ({ sessionId, metadata }: { sessionId: string; metadata?: any }) => {
@@ -207,12 +250,26 @@ describe('MachineDetailScreen path browser', () => {
         vi.resetModules();
         mockState.activeServerIdRef.current = 'server-a';
         mockState.machineSpawnNewSessionMock.mockClear();
+        mockState.modalAlertSpy.mockReset();
+        mockState.sessionSpawnNewActionMock.mockReset();
+        mockState.sessionSpawnNewActionMock.mockResolvedValue({
+            ok: true,
+            result: {
+                type: 'success',
+                disposition: 'created',
+                sessionId: 'session-new',
+                executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+                organizationPlacement: { folderId: null, tagIds: [] },
+                initialInput: { status: 'notRequested' },
+            },
+        });
         mockState.openMachinePathBrowserModalMock.mockClear();
         mockState.multiTextInputSpy.mockClear();
         mockState.itemSpy.mockClear();
         mockState.routeParamsRef.current = { id: 'machine-1' };
         mockState.sessionsState = [];
         mockState.machineTargetSessionsState = {};
+        mockState.machineControlTargetBySession = {};
         mockState.machinesState = {
             'machine-1': createMachineRecord(),
         };
@@ -310,12 +367,40 @@ describe('MachineDetailScreen path browser', () => {
         );
     });
 
-    it('spawns using the persisted configured backend target instead of rebuilding a built-in target from lastUsedAgent', async () => {
-        mockState.settingsState = {
-            lastUsedAgent: 'codex',
-            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+    it('shows the machine workspace path instead of the agent sandbox path in recents', async () => {
+        mockState.sessionsState = [
+            {
+                id: 'session-mapped',
+                active: false,
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 20,
+                metadata: {
+                    machineId: 'machine-1',
+                    path: '/home/coder/project',
+                    homeDir: '/home/coder',
+                },
+            },
+        ];
+        mockState.machineControlTargetBySession = {
+            'session-mapped': {
+                machineId: 'machine-1',
+                basePath: '/Users/test/workspace/project',
+            },
         };
 
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
+        await renderScreen(React.createElement(MachineDetailScreen));
+
+        expect(mockState.itemSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: '~/workspace/project',
+            }),
+        );
+    });
+
+    it('creates through the strict V2 Action instead of the private machine spawn helper', async () => {
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
 
@@ -335,16 +420,51 @@ describe('MachineDetailScreen path browser', () => {
             await startButtons[0].props.onPress();
         });
 
-        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            backendTarget: {
-                kind: 'backend',
-                backendId: 'review-bot',
-                configuredBackendId: 'review-bot',
-            },
-        }));
+        expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
+            creationKey: expect.any(String),
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+            directory: '/Users/test',
+        }), { surface: 'ui' });
+        expect(mockState.machineSpawnNewSessionMock).not.toHaveBeenCalled();
+    });
+
+    it('shows typed update guidance when the selected machine has an older CLI', async () => {
+        mockState.sessionSpawnNewActionMock.mockResolvedValue({
+            ok: false,
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            error: 'RPC method not available',
+        });
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        const startButtons = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        );
+
+        expect(startButtons[0]).toBeTruthy();
+
+        await act(async () => {
+            await startButtons[0].props.onPress();
+        });
+
+        expect(mockState.modalAlertSpy).toHaveBeenCalledWith(
+            'common.error',
+            'newSession.actionMethodUnavailable',
+        );
+        expect(mockState.machineSpawnNewSessionMock).not.toHaveBeenCalled();
     });
 
     it('does not let machine detail supply a custom custody fingerprint', async () => {
+        mockState.sessionSpawnNewActionMock.mockResolvedValue({
+            ok: true,
+            result: {
+                type: 'pending',
+                retryWithSameCreationKey: true,
+                outcome: 'unknown',
+            },
+        });
         const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
 
@@ -361,8 +481,18 @@ describe('MachineDetailScreen path browser', () => {
             await startButtons[0].props.onPress();
         });
 
-        expect(mockState.machineSpawnNewSessionMock.mock.calls[0]?.[0]).not.toHaveProperty('spawnAttemptKey');
-        expect(mockState.machineSpawnNewSessionMock.mock.calls[1]?.[0]).not.toHaveProperty('spawnAttemptKey');
+        expect(mockState.modalAlertSpy).toHaveBeenCalledWith(
+            'common.error',
+            'newSession.launchStillPendingBody',
+        );
+        expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledTimes(2);
+        const [firstInput] = mockState.sessionSpawnNewActionMock.mock.calls[0] ?? [];
+        const [retryInput] = mockState.sessionSpawnNewActionMock.mock.calls[1] ?? [];
+        expect(firstInput).not.toHaveProperty('spawnAttemptKey');
+        expect(retryInput).not.toHaveProperty('spawnAttemptKey');
+        expect(retryInput).toEqual(expect.objectContaining({
+            creationKey: (firstInput as { creationKey?: unknown })?.creationKey,
+        }));
     });
 
     it('lets a structurally ready machine without synthetic spawn readiness reach the spawn operation', async () => {
@@ -395,9 +525,9 @@ describe('MachineDetailScreen path browser', () => {
             await startButtons[0]?.props.onPress();
         });
 
-        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-        }));
+        expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+        }), { surface: 'ui' });
     });
 
     it('falls back to the preferred built-in target when the stored configured backend is stale', async () => {
@@ -426,9 +556,9 @@ describe('MachineDetailScreen path browser', () => {
             await startButtons[0].props.onPress();
         });
 
-        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'codex' },
-        }));
+        expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
+            agentTarget: expect.objectContaining({ kind: 'agent' }),
+        }), { surface: 'ui' });
     });
 
     it('falls back to the preferred built-in target when lastUsedAgent is legacy customAcp even when merged projection lists discovered plugin backends', async () => {
@@ -479,9 +609,9 @@ describe('MachineDetailScreen path browser', () => {
             serverId: 'server-a',
             timeoutMs: 10_000,
         }));
-        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'claude' },
-        }));
+        expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
+            agentTarget: expect.objectContaining({ kind: 'agent' }),
+        }), { surface: 'ui' });
     });
 
     it('uses the requested route server when spawning a new session', async () => {
@@ -503,8 +633,8 @@ describe('MachineDetailScreen path browser', () => {
             await startButtons[0].props.onPress();
         });
 
-        expect(mockState.machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server-b',
-        }));
+        expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
+            executionTarget: { serverId: 'server-b', machineId: 'machine-1' },
+        }), { surface: 'ui' });
     });
 });

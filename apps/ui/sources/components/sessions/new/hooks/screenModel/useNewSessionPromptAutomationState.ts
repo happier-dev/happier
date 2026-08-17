@@ -6,6 +6,8 @@ import {
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
 
+import { useNewSessionPromptStore, type NewSessionPromptStore } from './newSessionPromptStore';
+
 type PersistedAuthoringDraftLike = Readonly<{
     displayText?: string | null;
     automation?: unknown;
@@ -33,7 +35,7 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
 }>): Readonly<{
-    sessionPrompt: string;
+    promptStore: NewSessionPromptStore;
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
     automationDraft: NewSessionAutomationDraft;
     setAutomationDraft: React.Dispatch<React.SetStateAction<NewSessionAutomationDraft>>;
@@ -43,7 +45,9 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     const hydratedSessionPrompt = React.useMemo(() => {
         return params.hydratedTempAuthoringDraft?.displayText || params.prompt || params.hydratedPersistedAuthoringDraft?.displayText || '';
     }, [params.hydratedPersistedAuthoringDraft?.displayText, params.hydratedTempAuthoringDraft?.displayText, params.prompt]);
-    const [sessionPrompt, setSessionPromptState] = React.useState(hydratedSessionPrompt);
+    // RENDER CHURN: the live text is owned outside the render graph. The composer input
+    // subscribes to this store and re-renders per keystroke; the screen model does not.
+    const promptStore = useNewSessionPromptStore(() => hydratedSessionPrompt);
     // Once the user edits the prompt, their live text is the single source of truth for this
     // screen instance. Later hydration echoes (debounced auto-persist read-backs, focus-driven
     // draft reloads, or another mounted new-session screen writing the same scope key) must not
@@ -52,8 +56,8 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     const hasUserEditedSessionPromptRef = React.useRef(false);
     const setSessionPrompt = React.useCallback<React.Dispatch<React.SetStateAction<string>>>((next) => {
         hasUserEditedSessionPromptRef.current = true;
-        setSessionPromptState(next);
-    }, []);
+        promptStore.setPrompt(next);
+    }, [promptStore]);
     // Explicit re-entry (a fresh temp-draft handoff or a deep link carrying a prompt) is a
     // deliberate hydration request, not a stale echo — let it apply over live text again.
     const hydrationRequestKey = `${params.dataId ?? ''}\u0000${params.prompt ?? ''}`;
@@ -145,8 +149,8 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
 
     React.useEffect(() => {
         if (hasUserEditedSessionPromptRef.current) return;
-        setSessionPromptState(hydratedSessionPrompt);
-    }, [hydratedSessionPrompt]);
+        promptStore.setPrompt(hydratedSessionPrompt);
+    }, [hydratedSessionPrompt, promptStore]);
 
     React.useEffect(() => {
         if (!params.automationFeatureEnabled) return;
@@ -194,7 +198,7 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     ]);
 
     return {
-        sessionPrompt,
+        promptStore,
         setSessionPrompt,
         automationDraft,
         setAutomationDraft,

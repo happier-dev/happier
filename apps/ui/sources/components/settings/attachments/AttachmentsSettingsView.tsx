@@ -1,5 +1,4 @@
 import React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -9,8 +8,9 @@ import { Modal } from '@/modal';
 import { t, type TranslationKey } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
-type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+type IoniconName = IconName;
 
 const UPLOAD_LOCATION_OPTIONS: ReadonlyArray<{
     id: 'workspace' | 'os_temp';
@@ -22,13 +22,13 @@ const UPLOAD_LOCATION_OPTIONS: ReadonlyArray<{
         id: 'workspace',
         titleKey: 'settingsAttachments.uploadLocation.options.workspace.title',
         subtitleKey: 'settingsAttachments.uploadLocation.options.workspace.subtitle',
-        iconName: 'folder-outline',
+        iconName: 'folder',
     },
     {
         id: 'os_temp',
         titleKey: 'settingsAttachments.uploadLocation.options.osTemp.title',
         subtitleKey: 'settingsAttachments.uploadLocation.options.osTemp.subtitle',
-        iconName: 'cloud-upload-outline',
+        iconName: 'cloud-arrow-up',
     },
 ];
 
@@ -42,19 +42,19 @@ const VCS_IGNORE_OPTIONS: ReadonlyArray<{
         id: 'git_info_exclude',
         titleKey: 'settingsAttachments.sourceControlIgnore.options.gitInfoExclude.title',
         subtitleKey: 'settingsAttachments.sourceControlIgnore.options.gitInfoExclude.subtitle',
-        iconName: 'shield-checkmark-outline',
+        iconName: 'shield-check',
     },
     {
         id: 'gitignore',
         titleKey: 'settingsAttachments.sourceControlIgnore.options.gitignore.title',
         subtitleKey: 'settingsAttachments.sourceControlIgnore.options.gitignore.subtitle',
-        iconName: 'git-branch-outline',
+        iconName: 'git-branch',
     },
     {
         id: 'none',
         titleKey: 'settingsAttachments.sourceControlIgnore.options.none.title',
         subtitleKey: 'settingsAttachments.sourceControlIgnore.options.none.subtitle',
-        iconName: 'alert-circle-outline',
+        iconName: 'warning-circle',
     },
 ];
 
@@ -102,7 +102,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                     <Item
                         title={t('settingsAttachments.fileUploads.title')}
                         subtitle={t('common.disabled')}
-                        icon={<Ionicons name="attach-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                        icon={<Icon name="paperclip" size={29} color={theme.colors.state.danger.foreground} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -111,7 +111,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
     }
 
     const renderIcon = (iconName: IoniconName) => (
-        <Ionicons name={iconName} size={29} color={theme.colors.text.secondary} />
+        <Icon name={iconName} size={29} color={theme.colors.text.secondary} />
     );
 
     return (
@@ -126,7 +126,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                         title={t(option.titleKey)}
                         subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveUploadLocation === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        rightElement={effectiveUploadLocation === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setUploadLocation(option.id)}
                         showChevron={false}
                     />
@@ -137,7 +137,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                 <Item
                     title={t('settingsAttachments.workspaceDirectory.uploadsDirectory.title')}
                     subtitle={effectiveWorkspaceRelativeDir}
-                    icon={renderIcon('folder-outline')}
+                    icon={renderIcon('folder')}
                     onPress={async () => {
                         const raw = await Modal.prompt(
                             t('settingsAttachments.workspaceDirectory.uploadsDirectory.promptTitle'),
@@ -165,7 +165,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                         title={t(option.titleKey)}
                         subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
-                        rightElement={effectiveIgnoreStrategy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        rightElement={effectiveIgnoreStrategy === option.id ? <Icon name="check" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setVcsIgnoreStrategy(option.id)}
                         showChevron={false}
                     />
@@ -173,7 +173,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                 <Item
                     title={t('settingsAttachments.sourceControlIgnore.writeIgnoreRules.title')}
                     subtitle={vcsIgnoreWritesEnabled === false ? t('common.disabled') : t('common.enabled')}
-                    icon={renderIcon('create-outline')}
+                    icon={renderIcon('pencil-simple')}
                     showChevron={false}
                     onPress={() => setVcsIgnoreWritesEnabled(!(vcsIgnoreWritesEnabled === false))}
                 />
@@ -183,7 +183,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                 <Item
                     title={t('settingsAttachments.limits.maxAttachmentSize.title')}
                     subtitle={typeof maxFileBytes === 'number' ? String(maxFileBytes) : t('common.default')}
-                    icon={renderIcon('resize-outline')}
+                    icon={renderIcon('resize')}
                     onPress={async () => {
                         const raw = await Modal.prompt(
                             t('settingsAttachments.limits.maxAttachmentSize.promptTitle'),

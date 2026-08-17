@@ -4,6 +4,7 @@ export function isAutomationSocketUpdateType(type: string): boolean {
         || type === 'automation-delete'
         || type === 'automation-run-updated'
         || type === 'automation-assignment-updated'
+        || type === 'automation-source-status-updated'
     );
 }
 

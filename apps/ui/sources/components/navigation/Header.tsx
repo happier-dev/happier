@@ -10,6 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 interface HeaderProps {
@@ -116,8 +117,8 @@ interface ExtendedNavigationOptions extends Partial<NativeStackHeaderProps['opti
 const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void }> = ({ tintColor = '#000', onPress }) => {
     return (
         <Pressable onPress={onPress} hitSlop={15} accessibilityRole="button">
-            <SafeIonicons
-                name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
+            <Icon
+                name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                 size={24}
                 color={tintColor}
             />

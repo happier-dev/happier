@@ -25,19 +25,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontWeight: '700',
         textTransform: 'uppercase',
     },
+    // The canonical badge shape (components/ui/status/StatusPill): background-only, 8px radius. A
+    // bordered capsule counting agents was a different species from every other count in the app.
     countPill: {
         minWidth: 22,
         height: 22,
         paddingHorizontal: 8,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
+        borderRadius: 8,
+        borderWidth: 0,
+        backgroundColor: theme.colors.state.neutral.background,
         alignItems: 'center',
         justifyContent: 'center',
     },
     countText: {
-        color: theme.colors.text.secondary,
+        color: theme.colors.state.neutral.foreground,
         fontSize: 12,
         fontWeight: '700',
     },

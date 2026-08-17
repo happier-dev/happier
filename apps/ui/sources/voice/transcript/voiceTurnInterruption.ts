@@ -1,4 +1,7 @@
-import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import {
+    readStoredSessionMessages,
+    type SessionMessagesStateLike,
+} from '@/sync/domains/messages/readStoredSessionMessages';
 import { storage } from '@/sync/domains/state/storage';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
@@ -37,7 +40,9 @@ export function __resetVoiceTurnInterruptions(): void {
     interruptionVersion += 1;
 }
 
-type StoreLike = Readonly<{ sessionMessages?: Record<string, unknown> }>;
+type StoreLike = Readonly<{
+    sessionMessages?: Record<string, SessionMessagesStateLike<unknown>>;
+}>;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -71,19 +76,23 @@ function isAssistantTranscriptTurn(record: Readonly<Record<string, unknown>>): b
     });
 }
 
-function hasExactAssistantEntry(
+function resolveExactAssistantEntryId(
     state: StoreLike,
     conversationSessionId: string,
     assistantEntryId: string,
-): boolean {
-    const messages = readStoredSessionMessages(state as any, conversationSessionId);
+): string | null {
+    const messages = readStoredSessionMessages(state, conversationSessionId);
     for (const message of messages) {
         const record = readRecord(message);
         if (!record || !isAssistantTranscriptTurn(record)) continue;
-        const entryId = resolveEntryId(record);
-        if (entryId === assistantEntryId) return true;
+        const matchesProjectedIdentity = (
+            record.realID === assistantEntryId
+            || record.localId === assistantEntryId
+            || record.id === assistantEntryId
+        );
+        if (matchesProjectedIdentity) return resolveEntryId(record);
     }
-    return false;
+    return null;
 }
 
 export function markVoiceConversationAssistantTurnInterrupted(params: Readonly<{
@@ -94,8 +103,11 @@ export function markVoiceConversationAssistantTurnInterrupted(params: Readonly<{
     const conversationSessionId = normalizeNonEmptyString(params.conversationSessionId);
     const assistantEntryId = normalizeNonEmptyString(params.assistantEntryId);
     if (!conversationSessionId || !assistantEntryId) return;
-    const state = (params.getState ?? (() => storage.getState() as StoreLike))();
-    if (hasExactAssistantEntry(state, conversationSessionId, assistantEntryId)) {
-        recordInterruptedEntry(assistantEntryId);
-    }
+    const state = (params.getState ?? (() => storage.getState()))();
+    const authoritativeEntryId = resolveExactAssistantEntryId(
+        state,
+        conversationSessionId,
+        assistantEntryId,
+    );
+    if (authoritativeEntryId) recordInterruptedEntry(authoritativeEntryId);
 }

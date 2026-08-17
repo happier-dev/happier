@@ -1,3 +1,4 @@
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -34,11 +35,18 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: runtimeFetchMock,
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: getCredentialsForServerUrlMock,
-    },
-}));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const actual = await importOriginal<
+        typeof import('@/auth/storage/tokenStorage')
+    >();
+    return {
+        ...actual,
+        TokenStorage: {
+            ...actual.TokenStorage,
+            getCredentialsForServerUrl: getCredentialsForServerUrlMock,
+        },
+    };
+});
 
 vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
     createEncryptionFromAuthCredentials: createEncryptionFromAuthCredentialsMock,
@@ -50,10 +58,22 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdFo
 
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
-import { createSessionShare, getSessionShares } from './apiSharing';
+import {
+    createPublicShare,
+    createSessionShare,
+    getSessionShares,
+} from './apiSharing';
 
 function expectHeaderValue(headers: HeadersInit | undefined, key: string, value: string) {
     expect(new Headers(headers).get(key)).toBe(value);
+}
+
+function tokenForSub(sub: string): string {
+    const payload = globalThis.btoa(JSON.stringify({ sub }))
+        .replaceAll('+', '-')
+        .replaceAll('/', '_')
+        .replaceAll('=', '');
+    return `e30.${payload}.signature`;
 }
 
 describe('apiSharing server-scoped session routes', () => {
@@ -71,7 +91,8 @@ describe('apiSharing server-scoped session routes', () => {
         const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = tokenForSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({ shares: [] }), {
             status: 200,
@@ -88,7 +109,12 @@ describe('apiSharing server-scoped session routes', () => {
         );
         const sharesCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/sessions/session-1/shares');
         expect(sharesCall).toBeTruthy();
-        expectHeaderValue(sharesCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(sharesCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
+        expectHeaderValue(
+            sharesCall?.[1]?.headers,
+            'x-happier-account-stored-content-protocol',
+            String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
+        );
     });
 
     it('creates session shares through the preferred owner server and preserves the request body', async () => {
@@ -96,7 +122,8 @@ describe('apiSharing server-scoped session routes', () => {
         const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'owner-token', secret: 'owner-secret' });
+        const ownerToken = tokenForSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
             share: {
@@ -136,7 +163,49 @@ describe('apiSharing server-scoped session routes', () => {
         );
         const createCall = runtimeFetchMock.mock.calls.find((call) => call[0] === 'https://owner.example/v1/sessions/session-1/shares');
         expect(createCall).toBeTruthy();
-        expectHeaderValue(createCall?.[1]?.headers, 'Authorization', 'Bearer owner-token');
+        expectHeaderValue(createCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
         expectHeaderValue(createCall?.[1]?.headers, 'Content-Type', 'application/json');
+        expectHeaderValue(
+            createCall?.[1]?.headers,
+            'x-happier-account-stored-content-protocol',
+            String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
+        );
+    });
+
+    it('creates a public share through the preferred owner server with the current declaration', async () => {
+        const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
+        const ownerServer = upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
+        setActiveServerId(activeServer.id, { scope: 'device' });
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
+        const ownerToken = tokenForSub('owner-account');
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
+        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({
+            publicShare: { id: 'public-share-1' },
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        const publicShare = await createPublicShare(
+            { token: 'active-token', secret: 'active-secret' },
+            'session-1',
+            { token: 'public-token' },
+        );
+
+        expect(publicShare.id).toBe('public-share-1');
+        expect(serverFetchMock).not.toHaveBeenCalled();
+        const requestCall = runtimeFetchMock.mock.calls.find(([input]) =>
+            String(input) === 'https://owner.example/v1/sessions/session-1/public-share');
+        expect(requestCall?.[1]).toEqual(expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ token: 'public-token' }),
+        }));
+        expectHeaderValue(requestCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
+        expectHeaderValue(
+            requestCall?.[1]?.headers,
+            'x-happier-account-stored-content-protocol',
+            String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
+        );
     });
 });

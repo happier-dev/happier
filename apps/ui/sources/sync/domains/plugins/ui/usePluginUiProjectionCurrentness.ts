@@ -1,7 +1,11 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 
+import {
+    createInstalledPluginUiReactNativeRuntimeProjectionSource,
+    type PluginUiReactNativeRuntimeProjectionSource,
+} from '@/components/plugins/reactNative/projectionInvalidation';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
+import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import {
     EMPTY_PLUGIN_BROWSER_PROJECTION,
     resolvePluginBrowserProjectionState,
@@ -21,8 +25,13 @@ import {
     useEndpointStatus,
     useMachineCliDetectionTarget,
 } from '@/sync/domains/state/storage';
+import {
+    captureActiveServerAccountScopeLifetime,
+    type ActiveServerAccountScopeLifetime,
+} from '@/sync/domains/scope/activeServerAccountScope';
 
 const PLUGIN_UI_PROJECTION_TIMEOUT_MS = 5_000;
+const PLUGIN_UI_PROJECTION_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000] as const;
 
 type ProjectionConnectionState = Readonly<{
     targetKey: string | null;
@@ -30,9 +39,29 @@ type ProjectionConnectionState = Readonly<{
     reconnectSequence: number;
 }>;
 
+/**
+ * A projection's explicit consumer-facing establishment state. Consumers must
+ * branch on this owner-provided fact rather than treating an empty model or a
+ * disabled interaction channel as an unavailable destination.
+ */
+export type PluginUiProjectionPhase =
+    | 'establishing'
+    | 'current'
+    | 'retainedOffline'
+    | 'unavailable';
+
 type LoadedProjectionState = Readonly<{
     targetKey: string | null;
+    /**
+     * The opaque Account lifetime which admitted this snapshot. Keeping the
+     * lifetime by identity prevents an identical server/machine/generation
+     * projection from crossing an Account switch without copying Account data
+     * into a projection key or creating a second epoch.
+     */
+    accountLifetime: ActiveServerAccountScopeLifetime | null;
     authorityKey: string | null;
+    /** `retainedOffline` is derived only when this current snapshot loses authority. */
+    phase: Exclude<PluginUiProjectionPhase, 'retainedOffline'>;
     pluginUiProjection: PluginUiProjectionModel;
     pluginBrowserProjection: PluginBrowserProjectionModel;
 }>;
@@ -40,14 +69,21 @@ type LoadedProjectionState = Readonly<{
 export type PluginUiProjectionCurrentness = Readonly<{
     pluginUiProjection: PluginUiProjectionModel | null;
     pluginBrowserProjection: PluginBrowserProjectionModel | null;
+    phase: PluginUiProjectionPhase;
     interactionEnabled: boolean;
     machineId: string | null;
     serverId: string | null;
     platform: LocalServicePreviewPlatform;
 }>;
 
-function resolvePlatform(): LocalServicePreviewPlatform {
-    return Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'web';
+/**
+ * The host platform every projection currentness reports. Exported because the
+ * app-scope union has no single machine hook to read it from, and a second
+ * `Platform.OS` mapping beside this one would be exactly the split-brain §8
+ * forbids.
+ */
+export function resolvePluginUiProjectionPlatform(): LocalServicePreviewPlatform {
+    return resolveLocalServicePreviewPlatform();
 }
 
 function advanceProjectionConnectionState(
@@ -73,6 +109,43 @@ function advanceProjectionConnectionState(
     };
 }
 
+function createEmptyLoadedProjectionState(
+    targetKey: string | null,
+    accountLifetime: ActiveServerAccountScopeLifetime | null,
+): LoadedProjectionState {
+    return {
+        targetKey,
+        accountLifetime,
+        authorityKey: null,
+        phase: targetKey ? 'establishing' : 'unavailable',
+        pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
+        pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION,
+    };
+}
+
+function createUnavailableLoadedProjectionState(
+    targetKey: string,
+    accountLifetime: ActiveServerAccountScopeLifetime | null,
+): LoadedProjectionState {
+    return {
+        targetKey,
+        accountLifetime,
+        authorityKey: null,
+        phase: 'unavailable',
+        pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
+        pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION,
+    };
+}
+
+function isAccountLifetimeCurrent(
+    accountLifetime: ActiveServerAccountScopeLifetime | null,
+): boolean {
+    // Legacy/no-Account UI states have no Account-scoped projection to retire.
+    // Once a lifetime is captured, its currentness is mandatory for every
+    // projection cache entry and late RPC settlement.
+    return accountLifetime?.isCurrent() ?? true;
+}
+
 /**
  * Canonical client owner for daemon-described plugin UI/browser projection
  * currentness. A locally observed reconnect advances an owner-scoped request
@@ -83,7 +156,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     serverId?: string | null;
     enabled?: boolean;
 }>): PluginUiProjectionCurrentness {
-    const platform = resolvePlatform();
+    const platform = resolvePluginUiProjectionPlatform();
     const machineId = typeof params.machineId === 'string' && params.machineId.trim().length > 0
         ? params.machineId
         : null;
@@ -92,6 +165,10 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         : null;
     const enabled = params.enabled !== false;
     const targetKey = enabled && machineId ? `${serverId ?? 'default'}:${machineId}` : null;
+    // This is the one incumbent ServerAccountScope lifetime. Its identity is
+    // deliberately owner-local currentness, not an Account id or UI epoch.
+    const accountLifetime = targetKey ? captureActiveServerAccountScopeLifetime() : null;
+    const accountLifetimeCurrent = isAccountLifetimeCurrent(accountLifetime);
     const target = React.useMemo(() => (
         targetKey && machineId ? { machineId, serverId } : null
     ), [machineId, serverId, targetKey]);
@@ -116,19 +193,21 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     }
 
     const subscribeProjectionInvalidation = React.useCallback((listener: () => void) => (
-        target
+        target && accountLifetimeCurrent
             ? subscribeMachineContributionRegistryProjectionInvalidation(target, listener)
             : () => {}
-    ), [target]);
+    ), [accountLifetime, accountLifetimeCurrent, target]);
     const getProjectionInvalidationRevision = React.useCallback(() => (
-        target ? getMachineContributionRegistryProjectionRevision(target) : 0
-    ), [target]);
+        target && accountLifetimeCurrent
+            ? getMachineContributionRegistryProjectionRevision(target)
+            : 0
+    ), [accountLifetime, accountLifetimeCurrent, target]);
     const projectionInvalidationRevision = React.useSyncExternalStore(
         subscribeProjectionInvalidation,
         getProjectionInvalidationRevision,
         getProjectionInvalidationRevision,
     );
-    const authorityKey = targetKey && online
+    const authorityKey = targetKey && online && accountLifetimeCurrent
         ? [
             targetKey,
             machineCliDetectionTarget.daemonStateVersion,
@@ -138,39 +217,48 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         : null;
     const currentAuthorityKeyRef = React.useRef(authorityKey);
     currentAuthorityKeyRef.current = authorityKey;
-    const [loadedProjection, setLoadedProjection] = React.useState<LoadedProjectionState>({
-        targetKey: null,
-        authorityKey: null,
-        pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-        pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION,
-    });
+    const currentAccountLifetimeRef = React.useRef(accountLifetime);
+    currentAccountLifetimeRef.current = accountLifetime;
+    const currentPluginUiProjectionRef = React.useRef<PluginUiProjectionModel | null>(null);
+    const [loadedProjection, setLoadedProjection] = React.useState<LoadedProjectionState>(() => (
+        createEmptyLoadedProjectionState(null, null)
+    ));
+
+    React.useEffect(() => {
+        if (!accountLifetime) return;
+        const retirement = accountLifetime.onRetire(() => {
+            // Reset-time retirement must immediately fence both the visible
+            // cache and pending RPC settlement. A successor lifetime owns its
+            // own cache; an old callback may never clear it.
+            if (currentAccountLifetimeRef.current !== accountLifetime) return;
+            currentAccountLifetimeRef.current = null;
+            currentAuthorityKeyRef.current = null;
+            setLoadedProjection((previous) => (
+                previous.accountLifetime !== accountLifetime
+                    ? previous
+                    : createEmptyLoadedProjectionState(null, null)
+            ));
+        });
+        return () => retirement.dispose();
+    }, [accountLifetime]);
 
     React.useEffect(() => {
         if (!target || !targetKey) {
             setLoadedProjection((previous) => (
                 previous.targetKey === null
+                    && previous.accountLifetime === null
                     && previous.pluginUiProjection === EMPTY_PLUGIN_UI_PROJECTION
                     && previous.pluginBrowserProjection === EMPTY_PLUGIN_BROWSER_PROJECTION
                     ? previous
-                    : {
-                        targetKey: null,
-                        authorityKey: null,
-                        pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-                        pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION,
-                    }
+                    : createEmptyLoadedProjectionState(null, null)
             ));
             return;
         }
 
         setLoadedProjection((previous) => (
-            previous.targetKey === targetKey
+            previous.targetKey === targetKey && previous.accountLifetime === accountLifetime
                 ? previous
-                : {
-                    targetKey,
-                    authorityKey: null,
-                    pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
-                    pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION,
-                }
+                : createEmptyLoadedProjectionState(targetKey, accountLifetime)
         ));
 
         if (!authorityKey) {
@@ -178,58 +266,159 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         }
 
         let cancelled = false;
-        void machineContributionRegistryProjectionDescribe(target.machineId, {
-            serverId: target.serverId,
-            timeoutMs: PLUGIN_UI_PROJECTION_TIMEOUT_MS,
-            requestEpoch: authorityKey,
-        }).then((result) => {
-            if (cancelled || currentAuthorityKeyRef.current !== authorityKey || !result.supported) {
-                return;
-            }
-            setLoadedProjection((previous) => {
-                if (
-                    previous.targetKey !== targetKey
-                    || currentAuthorityKeyRef.current !== authorityKey
-                ) {
-                    return previous;
+        let activeRequestController: AbortController | null = null;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        let retryAttempts = 0;
+
+        const isRequestCurrent = (): boolean => (
+            !cancelled
+            && currentAuthorityKeyRef.current === authorityKey
+            && currentAccountLifetimeRef.current === accountLifetime
+            && isAccountLifetimeCurrent(accountLifetime)
+        );
+
+        const scheduleRetry = (): void => {
+            if (!isRequestCurrent() || retryTimer !== null) return;
+            const delayMs = PLUGIN_UI_PROJECTION_RETRY_BACKOFF_MS[
+                Math.min(retryAttempts, PLUGIN_UI_PROJECTION_RETRY_BACKOFF_MS.length - 1)
+            ]!;
+            retryAttempts += 1;
+            retryTimer = setTimeout(() => {
+                retryTimer = null;
+                requestProjection();
+            }, delayMs);
+        };
+
+        const requestProjection = (): void => {
+            if (!isRequestCurrent()) return;
+            const controller = new AbortController();
+            activeRequestController = controller;
+            void machineContributionRegistryProjectionDescribe(target.machineId, {
+                serverId: target.serverId,
+                timeoutMs: PLUGIN_UI_PROJECTION_TIMEOUT_MS,
+                signal: controller.signal,
+                requestEpoch: authorityKey,
+            }).then((result) => {
+                if (!isRequestCurrent()) return;
+                if (!result.supported) {
+                    if (result.reason === 'error') {
+                        scheduleRetry();
+                        return;
+                    }
+                    setLoadedProjection((previous) => {
+                        if (
+                            previous.targetKey !== targetKey
+                            || previous.accountLifetime !== accountLifetime
+                            || !isRequestCurrent()
+                        ) {
+                            return previous;
+                        }
+                        return createUnavailableLoadedProjectionState(targetKey, accountLifetime);
+                    });
+                    return;
                 }
-                return {
-                    targetKey,
-                    authorityKey,
-                    pluginUiProjection: resolvePluginUiProjectionState(
-                        previous.pluginUiProjection,
-                        result.projection,
-                    ),
-                    pluginBrowserProjection: resolvePluginBrowserProjectionState(
-                        previous.pluginBrowserProjection,
-                        result.projection,
-                    ),
-                };
+                retryAttempts = 0;
+                setLoadedProjection((previous) => {
+                    if (
+                        previous.targetKey !== targetKey
+                        || previous.accountLifetime !== accountLifetime
+                        || !isRequestCurrent()
+                    ) {
+                        return previous;
+                    }
+                    return {
+                        targetKey,
+                        accountLifetime,
+                        authorityKey,
+                        phase: 'current',
+                        pluginUiProjection: resolvePluginUiProjectionState(
+                            previous.pluginUiProjection,
+                            result.projection,
+                            { reuseSameGeneration: previous.authorityKey === authorityKey },
+                        ),
+                        pluginBrowserProjection: resolvePluginBrowserProjectionState(
+                            previous.pluginBrowserProjection,
+                            result.projection,
+                        ),
+                    };
+                });
+            }).catch(() => {
+                // Keep the last-known snapshot, but retry a current transient
+                // describe failure without allowing it to regain authority.
+                scheduleRetry();
+            }).finally(() => {
+                if (activeRequestController === controller) activeRequestController = null;
             });
-        }).catch(() => {
-            // Keep the last-known snapshot, but never grant it current authority.
-        });
+        };
+
+        requestProjection();
 
         return () => {
             cancelled = true;
+            if (retryTimer !== null) clearTimeout(retryTimer);
+            activeRequestController?.abort();
         };
-    }, [authorityKey, target, targetKey]);
+    }, [accountLifetime, authorityKey, target, targetKey]);
 
-    const pluginUiProjection = targetKey && loadedProjection.targetKey === targetKey
-        ? loadedProjection.pluginUiProjection
-        : null;
-    const interactionEnabled = Boolean(
-        authorityKey
+    const hasLoadedCurrentScope = Boolean(
+        targetKey
+        && accountLifetimeCurrent
         && loadedProjection.targetKey === targetKey
-        && loadedProjection.authorityKey === authorityKey,
+        && loadedProjection.accountLifetime === accountLifetime,
     );
+    const phase: PluginUiProjectionPhase = !targetKey || !accountLifetimeCurrent
+        ? 'unavailable'
+        : !hasLoadedCurrentScope
+            ? 'establishing'
+            : loadedProjection.phase === 'unavailable'
+                ? 'unavailable'
+                : !authorityKey
+                    ? loadedProjection.phase === 'current'
+                        ? 'retainedOffline'
+                        : 'establishing'
+                    : loadedProjection.phase === 'current' && loadedProjection.authorityKey === authorityKey
+                        ? 'current'
+                        : 'establishing';
+    const interactionEnabled = phase === 'current';
     const pluginBrowserProjection = interactionEnabled
         ? loadedProjection.pluginBrowserProjection
         : null;
 
+    const currentPluginUiProjection = hasLoadedCurrentScope && phase !== 'unavailable'
+        ? loadedProjection.pluginUiProjection
+        : null;
+    currentPluginUiProjectionRef.current = currentPluginUiProjection;
+    const reactNativeRuntimeProjectionSourceRef = React.useRef<PluginUiReactNativeRuntimeProjectionSource | null>(null);
+
+    React.useEffect(() => {
+        const source = createInstalledPluginUiReactNativeRuntimeProjectionSource();
+        reactNativeRuntimeProjectionSourceRef.current = source;
+        return () => {
+            if (reactNativeRuntimeProjectionSourceRef.current === source) {
+                reactNativeRuntimeProjectionSourceRef.current = null;
+            }
+            source.dispose();
+        };
+    }, []);
+
+    React.useEffect(() => {
+        const source = reactNativeRuntimeProjectionSourceRef.current;
+        if (!source) return;
+        source.update({
+            projection: currentPluginUiProjection,
+            accountLifetime,
+            isCurrent: () => (
+                currentAccountLifetimeRef.current === accountLifetime
+                && currentPluginUiProjectionRef.current === currentPluginUiProjection
+                && isAccountLifetimeCurrent(accountLifetime)
+            ),
+        });
+    }, [accountLifetime, currentPluginUiProjection]);
+
     return React.useMemo(() => ({
-        pluginUiProjection,
+        pluginUiProjection: currentPluginUiProjection,
         pluginBrowserProjection,
+        phase,
         interactionEnabled,
         machineId,
         serverId,
@@ -237,9 +426,10 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     }), [
         interactionEnabled,
         machineId,
+        phase,
         platform,
         pluginBrowserProjection,
-        pluginUiProjection,
+        currentPluginUiProjection,
         serverId,
     ]);
 }

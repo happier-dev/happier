@@ -493,7 +493,7 @@ describe('SetupThisComputerChecklistStep', () => {
 
         const pendingNode = screen.findByTestId('setup-this-computer-checklist-row-setup.thisComputer.stage.installTools-status-slot');
         expect(pendingNode?.findAll((node) => node.children.includes('1'))).toHaveLength(1);
-        const statusIcons = screen.findAllByType('Ionicons' as never).map((icon) => icon.props.name);
+        const statusIcons = screen.findAllByType('Icon' as never).map((icon) => icon.props.name);
         expect(statusIcons).not.toContain('ellipse-outline');
     });
 

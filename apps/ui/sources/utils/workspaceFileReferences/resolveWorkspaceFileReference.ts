@@ -1,5 +1,9 @@
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
-import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
+import {
+    isAbsoluteLocalPath,
+    normalizeLocalPathForComparison,
+    resolvePathRelativeToRoot,
+} from '@/utils/path/resolvePathRelativeToRoot';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 export type WorkspaceFileReferenceAnchor = Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>;
@@ -13,20 +17,6 @@ export type ResolvedWorkspaceFileReference = Readonly<{
 }>;
 
 const LOOPBACK_HTTP_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0:0:0:0:0:0:0:1']);
-
-function collapseRepeatedSlashesPreservingUncPrefix(path: string): string {
-    if (path.startsWith('//')) {
-        return `//${path.slice(2).replace(/\/{2,}/g, '/')}`;
-    }
-    return path.replace(/^([a-z]:)\/{2,}/i, (_match, drive: string) => `${drive}/`).replace(/\/{2,}/g, '/');
-}
-
-function normalizeLocalPathForComparison(value: string): string | null {
-    const withForwardSlashes = value.trim().replace(/\\/g, '/');
-    const withoutBrowserExpandedDriveSlash = withForwardSlashes.replace(/^\/+([A-Za-z]:\/)/, '$1');
-    const normalized = normalizeFileSystemPath(withoutBrowserExpandedDriveSlash);
-    return normalized ? collapseRepeatedSlashesPreservingUncPrefix(normalized) : null;
-}
 
 function normalizeRelativePath(value: string): string {
     return value.trim().replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/{2,}/g, '/');
@@ -131,21 +121,6 @@ function readUrlPath(rawUrl: string): string | null {
     }
 }
 
-function isAbsoluteLocalPath(path: string): boolean {
-    return path.startsWith('/') || /^[A-Za-z]:\//.test(path) || path.startsWith('//');
-}
-
-function isSameOrChildPath(candidate: string, root: string): boolean {
-    if (candidate === root) return true;
-    const prefix = root === '/' ? '/' : `${root}/`;
-    return candidate.startsWith(prefix);
-}
-
-function relativizeWorkspacePath(candidate: string, root: string): string {
-    if (candidate === root) return '.';
-    return root === '/' ? candidate.slice(1) : candidate.slice(root.length + 1);
-}
-
 export function isWorkspaceFileReferenceAnchorForFile(params: Readonly<{
     anchor: WorkspaceFileReferenceAnchor;
     filePath: string;
@@ -193,8 +168,8 @@ export function resolveWorkspaceFileReference(params: Readonly<{
     const workspacePath = typeof params.workspacePath === 'string' ? normalizeLocalPathForComparison(params.workspacePath) : null;
     if (!workspacePath) return null;
 
-    if (!isSameOrChildPath(normalizedCandidate, workspacePath)) return null;
-    const relative = relativizeWorkspacePath(normalizedCandidate, workspacePath);
+    const relative = resolvePathRelativeToRoot({ path: normalizedCandidate, root: workspacePath });
+    if (relative === null) return null;
     if (!isSafeWorkspaceRelativePath(relative)) return null;
     return withOptionalAnchor(relative, parsed);
 }

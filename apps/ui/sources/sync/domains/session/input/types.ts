@@ -6,8 +6,15 @@ import type {
     SessionMessageDirectBypassReason,
 } from '@/sync/domains/session/control/submitMode';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { ResumeSessionOptions, ResumeSessionResult } from '@/sync/ops/sessions';
-import type { PendingRequestedActionV1 } from '@happier-dev/protocol';
+import type {
+    PendingRequestedActionV1,
+    SessionInputAdmissionRejectionCodeV1,
+} from '@happier-dev/protocol';
+
+export const SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE =
+    'session_input_target_update_required' satisfies SessionInputAdmissionRejectionCodeV1;
 
 export type SubmitResultType =
     | 'success'
@@ -67,6 +74,12 @@ export type SessionMessageCallerSurface =
     | 'pending_message_send_now'
     | 'sync_submit_message';
 
+/**
+ * Trusted in-process admission selector. This never crosses Action/plugin JSON
+ * or a server wire shape; the canonical Message record builder consumes it.
+ */
+export type SessionMessageHostAdmissionOrigin = 'voice';
+
 export type SubmitSessionUserMessageOptions = Readonly<{
     sessionId: string;
     session: Session;
@@ -89,7 +102,10 @@ export type SubmitSessionUserMessageOptions = Readonly<{
     requestRemoteControlAfterPendingEnqueue?: boolean;
     onOutboundHandoff?: (handoff: SubmitSessionOutboundHandoff) => void;
     callerSurface?: SessionMessageCallerSurface | null;
+    hostAdmissionOrigin?: SessionMessageHostAdmissionOrigin;
     nowMs?: number;
+    agentTargetKey?: string | null;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     /** `sessionNonSteerableSendPrompt` setting; `off` restores legacy silent steering (G4). */
     nonSteerableSendPrompt?: 'on' | 'off';
     /** `sessionPermissionModeApplyTiming` setting; `next_prompt` skips the mode-change steer gate. */
@@ -137,6 +153,7 @@ export interface SessionSubmitPort {
         metaOverrides?: Record<string, unknown>,
         options?: Readonly<{
             localId?: string | null;
+            hostAdmissionOrigin?: SessionMessageHostAdmissionOrigin;
             onLocalPendingProjectionCreated?: (event: DirectMessageLocalPendingProjection) => void;
             requestedAction: PendingRequestedActionV1;
         }>,
@@ -149,6 +166,7 @@ export interface SessionSubmitPort {
         options?: Readonly<{
             profileId?: string | null;
             localId?: string | null;
+            hostAdmissionOrigin?: SessionMessageHostAdmissionOrigin;
             bypassPendingQueueReason?: DirectMessageBypassReason;
             onLocalPendingProjectionCreated?: (event: DirectMessageLocalPendingProjection) => void;
         }>,
@@ -166,4 +184,10 @@ export interface SessionSubmitPort {
     ): Promise<void> | void;
     switchSessionControlToRemote?(sessionId: string): Promise<void>;
     canWakeMachineId?(machineId: string): boolean;
+    /**
+     * Source-owned routing fact for the current active server. Host admission
+     * uses it only to prevent an incompatible remote target from taking the
+     * active-socket direct fallback.
+     */
+    isSessionTargetRemoteToActiveServer(sessionId: string): boolean;
 }

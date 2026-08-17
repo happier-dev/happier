@@ -24,6 +24,28 @@ const mocks = vi.hoisted(() => ({
         error: null as null | ReturnType<typeof createProviderErrorV1>,
     },
 }));
+const administrationTargetState = vi.hoisted(() => ({
+    selectedTarget: {
+        serverIdentityId: 'server-a',
+        machineId: 'machine-a',
+    } as { serverIdentityId: string; machineId: string } | null,
+    executionTarget: {
+        target: {
+            serverIdentityId: 'server-a',
+            machineId: 'machine-a',
+        },
+        serverId: 'server-a',
+        machine: {
+            id: 'machine-a',
+            metadata: null,
+            daemonStateVersion: 0,
+        },
+    } as {
+        target: { serverIdentityId: string; machineId: string };
+        serverId: string;
+        machine: { id: string; metadata: null; daemonStateVersion: number };
+    } | null,
+}));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
 installProviderSettingsStorageBoundary(providerHarness);
@@ -32,6 +54,17 @@ const routerPush = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', () => ({ useRouter: () => ({ back: vi.fn(), push: routerPush }) }));
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: 'server-a' }) }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => ({
+        selectedTarget: administrationTargetState.selectedTarget,
+        resolveExecutionTarget: () => administrationTargetState.executionTarget,
+    }),
+}));
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
+}));
 
 describe('AgentModelsScreen provider settings safety', () => {
     beforeEach(() => {
@@ -41,6 +74,22 @@ describe('AgentModelsScreen provider settings safety', () => {
         mocks.projectionRequestCount = 0;
         mocks.mutate.mockReset();
         routerPush.mockReset();
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-a',
+            machineId: 'machine-a',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-a',
+                machineId: 'machine-a',
+            },
+            serverId: 'server-a',
+            machine: {
+                id: 'machine-a',
+                metadata: null,
+                daemonStateVersion: 0,
+            },
+        };
         providerHarness.state.settings = mocks.settings;
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, async () => {
             mocks.projectionRequestCount += 1;
@@ -51,6 +100,38 @@ describe('AgentModelsScreen provider settings safety', () => {
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE, async (request, next) => (
             await mocks.mutate({ serverId: 'server-a', request: request.payload }) ?? await next()
         ));
+    });
+
+    it('uses the canonical Administration exact target instead of the active-server fallback', async () => {
+        administrationTargetState.selectedTarget = {
+            serverIdentityId: 'server-selected',
+            machineId: 'machine-selected',
+        };
+        administrationTargetState.executionTarget = {
+            target: {
+                serverIdentityId: 'server-selected',
+                machineId: 'machine-selected',
+            },
+            serverId: 'server-selected',
+            machine: {
+                id: 'machine-selected',
+                metadata: null,
+                daemonStateVersion: 0,
+            },
+        };
+        mocks.settings = { schemaVersion: 7, providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1 };
+        providerHarness.state.settings = mocks.settings;
+
+        const { AgentModelsScreen } = await import('./AgentModelsScreen');
+        const screen = await renderScreen(<AgentModelsScreen agentTargetKey="backend:codex" runtimeAgentId={null} />);
+
+        expect(screen.findByType('MachineAdministrationTargetSelector' as any)).toBeTruthy();
+        expect(providerHarness.state.requests.find(
+            (request) => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+        )).toMatchObject({
+            machineId: 'machine-selected',
+            serverId: 'server-selected',
+        });
     });
 
     it('renders projected rows supplied through the shared Provider RPC boundary and real manager', async () => {

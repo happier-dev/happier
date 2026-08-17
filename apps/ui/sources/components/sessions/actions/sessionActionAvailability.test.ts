@@ -10,11 +10,76 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_RESUME_ID,
     SESSION_ACTION_STOP_ID,
 } from './sessionActionIds';
 import { listVisibleSessionActionIds } from './sessionActionAvailability';
 
+function createOwnedRawSession(overrides: Partial<Session> = {}): Session {
+    return {
+        id: 'session_resume',
+        active: false,
+        archivedAt: null,
+        owner: 'current_user',
+        accessLevel: undefined,
+        seq: 4,
+        lastViewedSessionSeq: 4,
+        latestTurnStatus: 'completed',
+        createdAt: 1,
+        updatedAt: 1,
+        activeAt: 0,
+        metadataLayoutVersion: 1,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: { path: '/shared', host: 'shared' },
+        ownerMetadataView: null,
+        agentState: null,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 0,
+        ...overrides,
+    };
+}
+
 describe('session action availability', () => {
+    it('offers standalone Resume only for an inactive resumable owner metadata view', () => {
+        const createTarget = (overrides: Partial<Session>) => createSessionActionTarget({
+            session: createOwnedRawSession(overrides),
+            currentUserId: 'current_user',
+            isConnected: overrides.active === true,
+            resumeCapabilityOptions: { accountSettings: {} },
+        });
+        const resumableTarget = createTarget({
+            ownerMetadataView: {
+                path: '/workspace',
+                host: 'machine',
+                flavor: 'claude',
+                claudeSessionId: 'claude_vendor_session',
+                claudeTranscriptPath: '/tmp/claude_vendor_session.jsonl',
+            },
+        });
+        const activeTarget = createTarget({
+            active: true,
+            ownerMetadataView: {
+                path: '/workspace',
+                host: 'machine',
+                flavor: 'claude',
+                claudeSessionId: 'claude_vendor_session',
+                claudeTranscriptPath: '/tmp/claude_vendor_session.jsonl',
+            },
+        });
+        const nonResumableTarget = createTarget({
+            ownerMetadataView: { path: '/workspace', host: 'machine', flavor: 'unknown-provider' },
+        });
+
+        expect(listVisibleSessionActionIds({ target: resumableTarget, surface: 'sessionHeader' }))
+            .toContain(SESSION_ACTION_RESUME_ID);
+        expect(listVisibleSessionActionIds({ target: activeTarget, surface: 'sessionHeader' }))
+            .not.toContain(SESSION_ACTION_RESUME_ID);
+        expect(listVisibleSessionActionIds({ target: nonResumableTarget, surface: 'sessionHeader' }))
+            .not.toContain(SESSION_ACTION_RESUME_ID);
+    });
+
     it('keeps session-info shared actions as a superset of row lifecycle actions', () => {
         const session: SessionListRenderableSession = {
             id: 'session_1',

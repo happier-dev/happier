@@ -1,4 +1,8 @@
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import {
+  PluginJsonValueV2Schema,
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+} from '@happier-dev/protocol';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
@@ -8,7 +12,7 @@ import {
 import { resolveVoiceExecutionMachineId } from '@/voice/settings/executionMachine';
 import type { VoiceAccountOperationAttemptService } from './accountVoiceOperationService';
 
-const MAX_ACTION_RESPONSE_BYTES = 64 * 1024;
+const DEFAULT_MAX_ACTION_RESPONSE_BYTES = 64 * 1024;
 
 type DescribeProjection = typeof machineContributionRegistryProjectionDescribe;
 type ExecuteAction = typeof machinePluginStructuredMessageActionExecute;
@@ -37,7 +41,10 @@ function composeSignal(left: AbortSignal, right: AbortSignal): Readonly<{
   });
 }
 
-function parseActionResponse(value: unknown): Readonly<{
+function parseActionResponse(
+  value: unknown,
+  maxBodyBytes: number,
+): Readonly<{
   status: number;
   finalUrl: string;
   headers: Readonly<Record<string, string>>;
@@ -86,7 +93,7 @@ function parseActionResponse(value: unknown): Readonly<{
     throw operationError('voice_account_operation_invalid_response');
   }
   const body = new TextEncoder().encode(JSON.stringify(parsedBody.data));
-  if (body.byteLength > MAX_ACTION_RESPONSE_BYTES) {
+  if (body.byteLength > maxBodyBytes) {
     throw operationError('voice_account_operation_invalid_response');
   }
   return Object.freeze({
@@ -100,6 +107,7 @@ function parseActionResponse(value: unknown): Readonly<{
 export function createDaemonActionVoiceOperationService(input: Readonly<{
   pluginId: string;
   actionLocalId: string;
+  availabilityOperationId?: string;
   conversationSessionId: string | null;
   signal: AbortSignal;
   isCurrent(): boolean;
@@ -107,6 +115,7 @@ export function createDaemonActionVoiceOperationService(input: Readonly<{
   resolveServerId?: () => string | null;
   describeProjection?: DescribeProjection;
   execute?: ExecuteAction;
+  resolveResponseMaxBytes?: (operationId: string) => number | null;
 }>): VoiceAccountOperationAttemptService {
   const resolveMachineId = input.resolveMachineId ?? resolveVoiceExecutionMachineId;
   const resolveServerId = input.resolveServerId
@@ -114,7 +123,15 @@ export function createDaemonActionVoiceOperationService(input: Readonly<{
   const describeProjection =
     input.describeProjection ?? machineContributionRegistryProjectionDescribe;
   const execute = input.execute ?? machinePluginStructuredMessageActionExecute;
-  const qualifiedActionId = `${input.pluginId}/${input.actionLocalId}`;
+  // One qualification owner (§8): the canonical contribution-identity builder,
+  // never a template string, so identity normalization cannot diverge between the
+  // projection lookup and the daemon front door.
+  const qualifiedActionId = buildQualifiedPluginContributionKey(
+    createPluginContributionIdentity({
+      pluginId: input.pluginId,
+      localId: input.actionLocalId,
+    }),
+  );
   const assertCurrent = (machineId: string, serverId: string | null): void => {
     if (
       !input.isCurrent()
@@ -163,7 +180,26 @@ export function createDaemonActionVoiceOperationService(input: Readonly<{
   };
   return Object.freeze({
     async inspectAvailability() {
-      await inspectAvailability(input.signal);
+      const availability = await inspectAvailability(input.signal);
+      if (!input.availabilityOperationId) return;
+      const executed = await execute(availability.machineId, {
+        serverId: availability.serverId,
+        expectedGeneration: availability.expectedGeneration,
+        qualifiedActionId,
+        input: PluginJsonValueV2Schema.parse({
+          operationId: input.availabilityOperationId,
+          parameters: {},
+        }),
+        executionSurface: 'ui',
+        signal: input.signal,
+      });
+      assertCurrent(availability.machineId, availability.serverId);
+      if (!executed.supported) {
+        throw operationError('voice_account_operation_unavailable');
+      }
+      if (!executed.result.ok) {
+        throw operationError(executed.result.code);
+      }
     },
     async request(request) {
       const signals = composeSignal(input.signal, request.signal);
@@ -190,7 +226,17 @@ export function createDaemonActionVoiceOperationService(input: Readonly<{
         if (!executed.result.ok) {
           throw operationError(executed.result.code);
         }
-        return parseActionResponse(executed.result.result);
+        const maxResponseBytes = input.resolveResponseMaxBytes?.(
+          request.operationId,
+        ) ?? DEFAULT_MAX_ACTION_RESPONSE_BYTES;
+        if (
+          !Number.isInteger(maxResponseBytes)
+          || maxResponseBytes < 1
+          || maxResponseBytes > 8 * 1024 * 1024
+        ) {
+          throw operationError('voice_account_operation_unauthorized');
+        }
+        return parseActionResponse(executed.result.result, maxResponseBytes);
       } finally {
         signals.dispose();
       }

@@ -1,6 +1,7 @@
 import {
     SecretStringV1Schema,
-    VoiceCredentialBindingV1Schema,
+    SessionTmuxMachineOverrideSchema,
+    TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES,
 } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
@@ -12,8 +13,7 @@ import {
 } from '@/agents/catalog/agentUniverse';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
-import { SessionTmuxMachineOverrideSchema } from '../registry/account/accountRuntimeSettingDefinitions';
-import { TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES } from '../registry/account/accountTranscriptToolSettingDefinitions';
+import { PredecessorVoiceCredentialBindingV1Schema } from '../voiceCredentialBindingCompatibility';
 import { VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER } from '../voiceSettings';
 import { migrateAccountFeatureToggles } from './accountSettingsFeatureToggleMigration';
 import { normalizeAccountSettingsServerSelection } from './accountSettingsServerSelectionNormalization';
@@ -63,34 +63,54 @@ function migrateLegacyVoiceSavedSecrets(input: Record<string, unknown>, next: Re
     const adapters = ownRecord(rawVoice.adapters);
     if (!adapters) return;
 
+    const selectedSpeechAdapter = rawVoice.providerId === 'local_direct'
+        || rawVoice.providerId === 'local_conversation'
+        ? rawVoice.providerId
+        : null;
+    const speechAdapterIds = selectedSpeechAdapter === null
+        ? ['local_direct', 'local_conversation'] as const
+        : [
+            selectedSpeechAdapter,
+            selectedSpeechAdapter === 'local_direct' ? 'local_conversation' : 'local_direct',
+        ] as const;
     const candidates = [
-        { providerId: 'realtime_elevenlabs', slotId: 'api_key', path: ['realtime_elevenlabs', 'byo', 'apiKey'], canonicalPath: ['providers', 'realtime_elevenlabs', 'config', 'byo', 'apiKey'] },
-        { providerId: 'google_gemini', slotId: 'api_key', path: ['local_direct', 'stt', 'googleGemini', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'stt', 'providers', 'google_gemini', 'config', 'apiKey'] },
-        { providerId: 'google_cloud', slotId: 'api_key', path: ['local_direct', 'tts', 'googleCloud', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'tts', 'providers', 'google_cloud', 'config', 'apiKey'] },
-        { providerId: 'openai_compat', slotId: 'stt_api_key', path: ['local_direct', 'stt', 'openaiCompat', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'stt', 'openaiCompat', 'apiKey'] },
-        { providerId: 'openai_compat', slotId: 'tts_api_key', path: ['local_direct', 'tts', 'openaiCompat', 'apiKey'], canonicalPath: ['providers', 'local_direct', 'config', 'tts', 'openaiCompat', 'apiKey'] },
+        { providerId: 'realtime_elevenlabs', slotId: 'api_key', path: ['realtime_elevenlabs', 'byo', 'apiKey'], canonicalPath: ['providers', 'happier.voice.elevenlabs/realtime-elevenlabs', 'config', 'byo', 'apiKey'] },
+        { providerId: 'google_gemini', slotId: 'api_key', path: ['local_direct', 'stt', 'googleGemini', 'apiKey'] },
+        { providerId: 'google_cloud', slotId: 'api_key', path: ['local_direct', 'tts', 'googleCloud', 'apiKey'] },
+        ...speechAdapterIds.flatMap((adapterId) => [
+            { providerId: 'happier.voice.openai-compat/stt', slotId: 'api_key', path: [adapterId, 'stt', 'openaiCompat', 'apiKey'] },
+            { providerId: 'happier.voice.openai-compat/tts', slotId: 'api_key', path: [adapterId, 'tts', 'openaiCompat', 'apiKey'] },
+        ]),
         { providerId: 'openai_compat', slotId: 'chat_api_key', path: ['local_conversation', 'agent', 'openaiCompat', 'chatApiKey'], canonicalPath: ['providers', 'local_conversation', 'config', 'agent', 'openaiCompat', 'chatApiKey'] },
     ] as const;
     const secrets = Array.isArray(next.secrets) ? [...next.secrets] : [];
-    const bindings = Array.isArray(voice.credentialBindings)
-        ? [...voice.credentialBindings]
+    const rawPredecessorBindings = Array.isArray(rawVoice.credentialBindings)
+        ? rawVoice.credentialBindings.flatMap((candidate) => {
+            const parsed = PredecessorVoiceCredentialBindingV1Schema.safeParse(candidate);
+            return parsed.success ? [parsed.data] : [];
+        })
         : [];
+    const bindings = rawPredecessorBindings.length > 0
+        ? [...rawPredecessorBindings]
+        : Array.isArray(voice.credentialBindings)
+            ? [...voice.credentialBindings]
+            : [];
     const preservedAdapters: Record<string, unknown> = {};
 
     for (const candidate of candidates) {
         const rawSecret = readPath(adapters, candidate.path);
         if (rawSecret == null) continue;
         const existingBindingIndex = bindings.findIndex((entry) => {
-            const parsed = VoiceCredentialBindingV1Schema.safeParse(entry);
+            const parsed = PredecessorVoiceCredentialBindingV1Schema.safeParse(entry);
             return parsed.success && parsed.data.providerId === candidate.providerId;
         });
         const existingBinding = existingBindingIndex < 0
             ? null
-            : VoiceCredentialBindingV1Schema.safeParse(bindings[existingBindingIndex]);
+            : PredecessorVoiceCredentialBindingV1Schema.safeParse(bindings[existingBindingIndex]);
         const parsedSecret = SecretStringV1Schema.safeParse(rawSecret);
         if (!parsedSecret.success) {
             writePath(preservedAdapters, candidate.path, rawSecret);
-            deletePath(voice, candidate.canonicalPath);
+            if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
             continue;
         }
         const boundSecretId = existingBinding?.success
@@ -101,14 +121,14 @@ function migrateLegacyVoiceSavedSecrets(input: Record<string, unknown>, next: Re
             if (JSON.stringify(ownRecord(boundSecret)?.encryptedValue) !== JSON.stringify(parsedSecret.data)) {
                 writePath(preservedAdapters, candidate.path, rawSecret);
             }
-            deletePath(voice, candidate.canonicalPath);
+            if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
             continue;
         }
         const secretId = `voice:${candidate.providerId}:${candidate.slotId}`;
         const colliding = secrets.find((entry) => ownRecord(entry)?.id === secretId);
         if (colliding && JSON.stringify(ownRecord(colliding)?.encryptedValue) !== JSON.stringify(parsedSecret.data)) {
             writePath(preservedAdapters, candidate.path, rawSecret);
-            deletePath(voice, candidate.canonicalPath);
+            if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
             continue;
         }
         if (!colliding) {
@@ -134,7 +154,7 @@ function migrateLegacyVoiceSavedSecrets(input: Record<string, unknown>, next: Re
         };
         if (existingBindingIndex >= 0) bindings[existingBindingIndex] = replacement;
         else bindings.push(replacement);
-        deletePath(voice, candidate.canonicalPath);
+        if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
     }
 
     next.secrets = secrets;
@@ -237,38 +257,6 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         }
     } else if (!(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES as readonly unknown[]).includes(next.transcriptMessageTimestampDisplayMode)) {
         next.transcriptMessageTimestampDisplayMode = 'hover_web_hidden_mobile';
-    }
-
-    if (!('backendEnabledByTargetKey' in input)) {
-        const byTargetKey = next.backendEnabledByTargetKey && typeof next.backendEnabledByTargetKey === 'object'
-            ? { ...(next.backendEnabledByTargetKey as Record<string, boolean>) }
-            : {};
-        const legacyByAgent = input.backendEnabledById;
-        if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of listAgentUniverseIds()) {
-                const raw = (legacyByAgent as Record<string, unknown>)[agentId];
-                if (typeof raw === 'boolean') {
-                    byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
-                }
-            }
-        }
-        next.backendEnabledByTargetKey = byTargetKey;
-    }
-
-    if (!('backendCliSourcePreferenceByTargetKey' in input)) {
-        const byTargetKey = next.backendCliSourcePreferenceByTargetKey && typeof next.backendCliSourcePreferenceByTargetKey === 'object'
-            ? { ...(next.backendCliSourcePreferenceByTargetKey as Record<string, 'system-first' | 'managed-first'>) }
-            : {};
-        const legacyByAgent = input.backendCliSourcePreferenceById;
-        if (legacyByAgent && typeof legacyByAgent === 'object' && !Array.isArray(legacyByAgent)) {
-            for (const agentId of listAgentUniverseIds()) {
-                const raw = (legacyByAgent as Record<string, unknown>)[agentId];
-                if (raw === 'system-first' || raw === 'managed-first') {
-                    byTargetKey[buildAgentUniverseBackendTargetKey(agentId)] = raw;
-                }
-            }
-        }
-        next.backendCliSourcePreferenceByTargetKey = byTargetKey;
     }
 
     if (!('sessionDefaultPermissionModeByTargetKey' in input)) {

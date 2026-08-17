@@ -34,7 +34,7 @@ const routerBackSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
-const latestAgentInputProps = vi.hoisted(() => ({
+const latestComposerProps = vi.hoisted(() => ({
     value: null as any,
 }));
 const latestContextSectionProps = vi.hoisted(() => ({
@@ -53,10 +53,10 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
 }));
 
-vi.mock('@/components/sessions/agentInput', () => ({
-    AgentInput: (props: any) => {
-        latestAgentInputProps.value = props;
-        return React.createElement('AgentInput', props);
+vi.mock('@/components/automations/shared/ExistingSessionAutomationComposer', () => ({
+    ExistingSessionAutomationComposer: (props: any) => {
+        latestComposerProps.value = props;
+        return React.createElement('ExistingSessionAutomationComposer', props);
     },
 }));
 
@@ -155,9 +155,7 @@ vi.mock('@/sync/http/client', () => ({
 }));
 
 async function flushRender(): Promise<void> {
-    await act(async () => {
-        await flushHookEffects({ cycles: 1, turns: 1 });
-    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 }
 
 function setStorageForSession(input: {
@@ -193,7 +191,7 @@ function setStorageForSession(input: {
             return {
                 key: {
                     machineId: projectMachineId,
-                    path: sessionPath,
+                    rootPath: sessionPath,
                 },
             };
         },
@@ -234,7 +232,7 @@ function setStorageForSessionWithMachineReplacement(input: {
             return {
                 key: {
                     machineId: input.replacementMachineId,
-                    path: sessionPath,
+                    rootPath: sessionPath,
                 },
             };
         },
@@ -242,22 +240,25 @@ function setStorageForSessionWithMachineReplacement(input: {
 }
 
 function getComposerProps() {
-    const composer = latestAgentInputProps.value;
+    const composer = latestComposerProps.value;
     if (!composer) {
-        throw new Error('AgentInput props were not captured');
+        throw new Error('Existing-session automation composer props were not captured');
     }
     return composer;
 }
 
 async function setComposerText(value: string): Promise<void> {
+    const { updateSessionAuthoringDraftPrompt } = await import('@/components/sessions/authoring/draft/updateSessionAuthoringDraftFields');
     await act(async () => {
-        getComposerProps().onChangeText(value);
+        getComposerProps().onChangeDraft((current: any) => current
+            ? updateSessionAuthoringDraftPrompt(current, value)
+            : current);
     });
 }
 
 async function submitComposer(): Promise<void> {
     await act(async () => {
-        await getComposerProps().onSend();
+        await getComposerProps().onSubmit();
     });
 }
 
@@ -275,6 +276,7 @@ describe('SessionAutomationCreateScreen', () => {
                 homeDir: '/tmp',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         setStorageForSession({
@@ -287,7 +289,7 @@ describe('SessionAutomationCreateScreen', () => {
         syncSpies.getSessionEncryptionKeyBase64ForResume.mockClear();
         syncSpies.getCredentials.mockClear();
         syncSpies.encryption.encryptAutomationTemplateRaw.mockClear();
-        latestAgentInputProps.value = null;
+        latestComposerProps.value = null;
         latestContextSectionProps.value = null;
         routerBackSpy.mockReset();
         routerReplaceSpy.mockReset();
@@ -320,6 +322,7 @@ describe('SessionAutomationCreateScreen', () => {
                 homeDir: '/tmp',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         setStorageForSessionWithMachineReplacement({
@@ -354,7 +357,7 @@ describe('SessionAutomationCreateScreen', () => {
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        expect(latestAgentInputProps.value?.submitAccessibilityLabel).toBe('Create automation');
+        expect(latestComposerProps.value?.submitAccessibilityLabel).toBe('Create automation');
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Create automation')).toBeUndefined();
     });
 
@@ -367,7 +370,7 @@ describe('SessionAutomationCreateScreen', () => {
         expect(screen.findAllByType('AutomationSettingsForm')).toHaveLength(0);
         expect(screen.findAllByType('Switch')).toHaveLength(0);
 
-        const automationChip = latestAgentInputProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
+        const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
         expect(automationChip).toBeTruthy();
         expect(automationChip?.collapsedContentPopover?.renderContent).toBeTypeOf('function');
     });
@@ -378,7 +381,7 @@ describe('SessionAutomationCreateScreen', () => {
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const automationChip = latestAgentInputProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
+        const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
         const popoverContent = automationChip?.collapsedContentPopover?.renderContent?.();
         const popoverScreen = await renderScreen(popoverContent);
         const toggle = popoverScreen.findByType('Switch');
@@ -395,7 +398,7 @@ describe('SessionAutomationCreateScreen', () => {
         }));
     });
 
-    it('creates an existing-session automation with an envelope that includes existingSessionId and the reachable machine target', async () => {
+    it('seals existingSessionId in the existing-session automation template for the reachable machine target', async () => {
         sessionState.session = {
             id: 's1',
             active: false,
@@ -406,6 +409,7 @@ describe('SessionAutomationCreateScreen', () => {
                 homeDir: '/tmp',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         setStorageForSessionWithMachineReplacement({
@@ -421,7 +425,7 @@ describe('SessionAutomationCreateScreen', () => {
 
         await setComposerText('Do the thing');
 
-        const automationChip = latestAgentInputProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
+        const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
         const popoverContent = automationChip?.collapsedContentPopover?.renderContent?.();
         const popoverScreen = await renderScreen(popoverContent);
         const name = popoverScreen.findByProps({ testID: 'automation-sentence-name-input' });
@@ -438,7 +442,10 @@ describe('SessionAutomationCreateScreen', () => {
 
         const envelope = JSON.parse(String(input.templateCiphertext));
         expect(envelope.kind).toBe('happier_automation_template_encrypted_v1');
-        expect(envelope.existingSessionId).toBe('s1');
+        expect(envelope).not.toHaveProperty('existingSessionId');
+        expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledWith(expect.objectContaining({
+            existingSessionId: 's1',
+        }));
     });
 
     it('creates an existing-session automation from persisted session metadata when machine inventory has not hydrated yet', async () => {
@@ -452,6 +459,7 @@ describe('SessionAutomationCreateScreen', () => {
                 homeDir: '/tmp',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         setStorageForSession({
@@ -528,8 +536,12 @@ describe('SessionAutomationCreateScreen', () => {
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelId: 'gpt-5',
-            modelUpdatedAt: 456,
+            modelSelection: expect.objectContaining({
+                updatedAt: 456,
+                ref: expect.objectContaining({
+                    modelId: 'gpt-5',
+                }),
+            }),
             terminal: { mode: 'tmux', tmux: { sessionName: 'happy-dev' } },
             codexBackendMode: 'acp',
             existingSessionId: 's1',
@@ -565,6 +577,7 @@ describe('SessionAutomationCreateScreen', () => {
                 homeDir: '/tmp',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-plain-1',
+                claudeTranscriptPath: '/tmp/claude-session-plain-1.jsonl',
             },
         };
         setStorageForSession({
@@ -592,7 +605,7 @@ describe('SessionAutomationCreateScreen', () => {
         const input = syncSpies.createAutomation.mock.calls[0][0];
         const envelope = JSON.parse(String(input.templateCiphertext));
         expect(envelope.kind).toBe('happier_automation_template_plain_v1');
-        expect(envelope.existingSessionId).toBe('s_plain');
+        expect(envelope.payload.existingSessionId).toBe('s_plain');
         expect(envelope.payload.sessionEncryptionMode).toBe('plain');
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).not.toHaveBeenCalled();
     });
@@ -633,7 +646,7 @@ describe('SessionAutomationCreateScreen', () => {
         });
         expect(screen.findAllByType('AutomationSettingsForm')).toHaveLength(0);
         expect(screen.findAllByType('ExistingSessionAutomationContextSection')).toHaveLength(0);
-        expect(screen.findAllByType('AgentInput')).toHaveLength(0);
+        expect(screen.findAllByType('ExistingSessionAutomationComposer')).toHaveLength(0);
         expect(syncSpies.createAutomation).not.toHaveBeenCalled();
     });
 
@@ -648,6 +661,7 @@ describe('SessionAutomationCreateScreen', () => {
                 homeDir: '/tmp',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
         setStorageForSession({
@@ -689,6 +703,7 @@ describe('SessionAutomationCreateScreen', () => {
                 homeDir: '/tmp',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
+                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
             },
         };
 
@@ -697,11 +712,23 @@ describe('SessionAutomationCreateScreen', () => {
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
+        const {
+            updateSessionAuthoringDraftModelMode,
+            updateSessionAuthoringDraftPermissionMode,
+            updateSessionAuthoringDraftPrompt,
+        } = await import('@/components/sessions/authoring/draft/updateSessionAuthoringDraftFields');
         await act(async () => {
-            getComposerProps().onChangeText('Send the automation heartbeat');
-            getComposerProps().onPermissionModeChange?.('acceptEdits');
-            getComposerProps().onModelModeChange?.('gpt-5');
-            await getComposerProps().onSend();
+            const composer = getComposerProps();
+            composer.onChangeDraft((current: any) => current
+                ? updateSessionAuthoringDraftPrompt(current, 'Send the automation heartbeat')
+                : current);
+            composer.onChangeDraft((current: any) => current
+                ? updateSessionAuthoringDraftPermissionMode(current, 'acceptEdits', 1)
+                : current);
+            composer.onChangeDraft((current: any) => current
+                ? updateSessionAuthoringDraftModelMode(current, 'gpt-5', 1)
+                : current);
+            await composer.onSubmit();
         });
 
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledTimes(1);
@@ -710,7 +737,11 @@ describe('SessionAutomationCreateScreen', () => {
                 prompt: 'Send the automation heartbeat',
                 displayText: 'Send the automation heartbeat',
                 permissionMode: 'acceptEdits',
-                modelId: 'gpt-5',
+                modelSelection: expect.objectContaining({
+                    ref: expect.objectContaining({
+                        modelId: 'gpt-5',
+                    }),
+                }),
             }),
         );
     });

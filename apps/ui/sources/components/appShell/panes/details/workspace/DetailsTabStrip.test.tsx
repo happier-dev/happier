@@ -1,8 +1,10 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
 
 vi.mock('@/text', async () => {
@@ -71,6 +73,8 @@ function group(tab: DetailsTabState): DetailsWorkspaceGroupView {
 
 const testIds = {
     tab: (k: string) => `tab-${k}`,
+    tabPin: (k: string) => `tab-pin-${k}`,
+    tabUnpin: (k: string) => `tab-unpin-${k}`,
     tabClose: (k: string) => `tab-close-${k}`,
     tabFavicon: (k: string) => `tab-favicon-${k}`,
     tabSpinner: (k: string) => `tab-spinner-${k}`,
@@ -122,4 +126,109 @@ describe('DetailsTabStrip chrome absorption for browser-view tabs', () => {
         close?.props.onPress({});
         expect(pane.closeDetailsTab).toHaveBeenCalledWith(tab.key);
     });
+
+    it('exposes the group tabs as a selected tablist rather than independent buttons', async () => {
+        const { DetailsTabStrip } = await import('./DetailsTabStrip');
+        const activeTab = browserViewTab();
+        const inactiveTab: DetailsTabState = {
+            key: 'file:readme',
+            kind: 'file',
+            title: 'README.md',
+            isPinned: false,
+            isPreview: false,
+            resource: { kind: 'file', path: 'README.md' },
+        };
+        const screen = await renderScreen(
+            <DetailsTabStrip
+                pane={createPane()}
+                group={{
+                    ...group(activeTab),
+                    tabKeys: [activeTab.key, inactiveTab.key],
+                    tabs: [activeTab, inactiveTab],
+                }}
+                testIds={testIds}
+            />,
+        );
+
+        expect(screen.root.findAllByProps({ accessibilityRole: 'tablist' })).toHaveLength(1);
+        expect(screen.findByTestId('tab-browser-view_bs_bv')?.props).toMatchObject({
+            accessibilityRole: 'tab',
+            accessibilityState: { selected: true },
+            'aria-selected': true,
+        });
+        expect(screen.findByTestId('tab-file_readme')?.props).toMatchObject({
+            accessibilityRole: 'tab',
+            accessibilityState: { selected: false },
+            'aria-selected': false,
+        });
+    });
+
+    it('uses the shared platform target size for the tab and its pin and close controls', async () => {
+        const { DetailsTabStrip } = await import('./DetailsTabStrip');
+        const originalPlatform = Platform.OS;
+        const tab = { ...browserViewTab(), isPreview: true };
+
+        try {
+            for (const platform of ['android', 'ios', 'web'] as const) {
+                Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+                const screen = await renderScreen(
+                    <DetailsTabStrip
+                        pane={createPane()}
+                        group={group(tab)}
+                        testIds={testIds}
+                    />,
+                );
+                const targetSize = resolveMinimumInteractiveTargetSize(platform);
+
+                for (const testID of [
+                    'tab-browser-view_bs_bv',
+                    'tab-pin-browser-view_bs_bv',
+                    'tab-close-browser-view_bs_bv',
+                ]) {
+                    const target = screen.findByTestId(testID);
+                    expect(target).not.toBeNull();
+                    const style = flattenStyle(target?.props.style);
+                    expect(style.minWidth).toBe(targetSize);
+                    expect(style.minHeight).toBe(targetSize);
+                }
+
+                await screen.unmount();
+            }
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
+    });
+
+    it('keeps pin and close targets in a sibling action region rather than over the tab target', async () => {
+        const { DetailsTabStrip } = await import('./DetailsTabStrip');
+        const tab = { ...browserViewTab(), isPreview: true };
+        const screen = await renderScreen(
+            <DetailsTabStrip
+                pane={createPane()}
+                group={group(tab)}
+                testIds={testIds}
+            />,
+        );
+        const tabTarget = screen.findByTestId('tab-browser-view_bs_bv');
+        const pin = screen.findByTestId('tab-pin-browser-view_bs_bv');
+        const close = screen.findByTestId('tab-close-browser-view_bs_bv');
+        const actionRegion = close?.parent;
+        if (!tabTarget || !pin || !close || !actionRegion) {
+            throw new Error('Expected the tab and both trailing action targets');
+        }
+
+        expect(flattenStyle(tabTarget.props.style).flex).toBe(1);
+        expect(flattenStyle(actionRegion.props.style).position).toBeUndefined();
+        expect(pin.props.hitSlop).toBeUndefined();
+        expect(close.props.hitSlop).toBeUndefined();
+    });
 });
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({ ...acc, ...flattenStyle(entry) }), {});
+    }
+    if (typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}

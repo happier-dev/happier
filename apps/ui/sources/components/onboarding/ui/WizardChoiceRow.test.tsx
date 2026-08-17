@@ -1,5 +1,5 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -67,7 +67,7 @@ describe('WizardChoiceRow', () => {
             testID: 'wizard-choice',
             title: 'Cloud',
             subtitle: 'Hosted relay',
-            icon: 'cloud-outline',
+            icon: 'cloud',
             badge: 'Recommended',
             selected: true,
             onPress,
@@ -94,7 +94,7 @@ describe('WizardChoiceRow', () => {
             testID: 'wizard-choice',
             title: 'Offline Relay',
             subtitle: 'https://unreachable.example.test',
-            icon: 'link-outline',
+            icon: 'link',
             badge: 'Unavailable',
             selected: true,
             disabled: true,
@@ -129,7 +129,7 @@ describe('WizardChoiceRow', () => {
             testID: 'wizard-choice',
             title: 'Offline Relay',
             subtitle: 'https://unreachable.example.test',
-            icon: 'link-outline',
+            icon: 'link',
             badge: 'Unreachable',
             selected: false,
             disabled: false,
@@ -141,13 +141,11 @@ describe('WizardChoiceRow', () => {
             onPress,
         }));
 
-        const row = screen.findByTestId('wizard-choice');
         const overflowTrigger = screen.findByTestId('wizard-choice-menu');
         expect(overflowTrigger).toBeTruthy();
 
         await act(async () => {
             overflowTrigger!.props.onPress?.({} as any);
-            row?.props.onPress?.();
         });
 
         expect(onPress).toHaveBeenCalledTimes(0);
@@ -160,12 +158,12 @@ describe('WizardChoiceRow', () => {
             testID: 'wizard-choice',
             title: 'Relay',
             subtitle: 'Hosted relay',
-            icon: 'cloud-outline',
+            icon: 'cloud',
             selected: true,
             onPress: vi.fn(),
         }));
 
-        const iconColors = screen.findAllByType('Ionicons' as any)
+        const iconColors = screen.findAllByType('Icon' as any)
             .map((icon) => icon.props.color)
             .filter((color): color is string => typeof color === 'string');
 
@@ -173,11 +171,7 @@ describe('WizardChoiceRow', () => {
         expect(iconColors).not.toContain('#007aff');
     });
 
-    it('opts the row out of the web button role when it contains interactive trailing controls', async () => {
-        // F-QAVISUAL-1: SelectableRow defaults webRole to 'button' (a real <button> on
-        // react-native-web); with the overflow-menu trigger inside, that emits invalid
-        // nested-button markup. Rows with interactive trailing content must use the
-        // established `webRole="presentation"` escape hatch instead.
+    it('keeps radio semantics while moving interactive trailing controls outside the row activation', async () => {
         vi.resetModules();
         vi.doMock('react-native', installReactNativeWebMock({ Platform: { OS: 'web' } }));
 
@@ -187,8 +181,9 @@ describe('WizardChoiceRow', () => {
             testID: 'wizard-choice',
             title: 'Relay',
             subtitle: 'http://relay.example.test',
-            icon: 'link-outline',
+            icon: 'link',
             selected: false,
+            accessibilityRole: 'radio',
             menuActions: [{
                 id: 'remove',
                 title: 'Remove',
@@ -199,7 +194,16 @@ describe('WizardChoiceRow', () => {
 
         const row = screen.findByTestId('wizard-choice');
         expect(row).toBeTruthy();
-        expect(row?.props.role).toBe('presentation');
+        expect(row?.props.role).toBe('radio');
+        expect(row?.props['aria-checked']).toBe(false);
+        expect(row?.props.accessibilityState).toEqual({ checked: false });
+
+        const overflowTrigger = screen.findByTestId('wizard-choice-menu');
+        let ancestor: ReactTestInstance | null = overflowTrigger?.parent ?? null;
+        while (ancestor) {
+            expect(ancestor.type).not.toBe('Pressable');
+            ancestor = ancestor.parent;
+        }
     });
 
     it('keeps the plain row on the web button role when there is no interactive trailing content', async () => {
@@ -212,7 +216,7 @@ describe('WizardChoiceRow', () => {
             testID: 'wizard-choice',
             title: 'Cloud',
             subtitle: 'Hosted relay',
-            icon: 'cloud-outline',
+            icon: 'cloud',
             selected: true,
             onPress: vi.fn(),
         }));
@@ -232,7 +236,7 @@ describe('WizardChoiceRow', () => {
             testID: 'wizard-choice',
             title: 'Relay',
             subtitle: 'http://relay.example.test',
-            icon: 'link-outline',
+            icon: 'link',
             selected: false,
             menuActions: [{
                 id: 'remove',

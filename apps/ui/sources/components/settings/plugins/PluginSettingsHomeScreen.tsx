@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, ScrollView, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -13,6 +12,9 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import type { PluginScaffoldUiMode } from '@happier-dev/protocol';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 import {
     CatalogEntriesSection,
@@ -24,8 +26,11 @@ import { buildPluginDetailRoute } from './model/pluginDetailRoute';
 import { createPluginSettingsViews } from './model/pluginMarketplaceModel';
 import { usePluginSettingsScreenState } from './model/usePluginSettingsScreenState';
 import { NpmRegistryProfilesSection } from './NpmRegistryProfilesSection';
+import { PluginAccountDataEraseRecoverySection } from './PluginAccountDataEraseRecoverySection';
 import { PluginReadOnlySnapshotNotice } from './PluginReadOnlySnapshotNotice';
 import { NativeAppPluginPanelsSettingsEntry } from './NativeAppPluginPanelsSettingsEntry';
+import { PluginAppPagesSettingsEntry } from './PluginAppPagesSettingsEntry';
+import { Icon } from '@/components/ui/icons/Icon';
 
 const stylesheet = StyleSheet.create((theme) => ({
     viewSelector: {
@@ -86,22 +91,86 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             { placeholder: 'com.example.my-plugin', confirmText: t('common.next'), cancelText: t('common.cancel') },
         ))?.trim();
         if (!pluginId) return;
+        // The scaffold's UI mode is part of what the author is creating, so the
+        // in-app lifecycle asks for it. Without this step every plugin created
+        // from the app is a non-UI plugin and no later in-app step can add a
+        // surface to it.
+        let ui: PluginScaffoldUiMode | undefined;
+        let uiChosen = false;
+        await Modal.alertAsync(
+            t('settingsPlugins.developmentCreateSurfaceTitle'),
+            t('settingsPlugins.developmentCreateSurfaceBody'),
+            [
+                {
+                    text: t('settingsPlugins.developmentCreateSurfaceReactNative'),
+                    onPress: () => { ui = 'reactNative'; uiChosen = true; },
+                },
+                {
+                    text: t('settingsPlugins.developmentCreateSurfaceHostedWeb'),
+                    onPress: () => { ui = 'hostedWeb'; uiChosen = true; },
+                },
+                {
+                    text: t('settingsPlugins.developmentCreateSurfaceNone'),
+                    onPress: () => { ui = undefined; uiChosen = true; },
+                },
+            ],
+        );
+        if (!uiChosen) return;
         const confirmed = await Modal.confirm(
             t('settingsPlugins.developmentCreateConfirmTitle'),
             t('settingsPlugins.developmentCreateConfirmBody', { pluginId, targetDir }),
             { confirmText: t('settingsPlugins.developmentCreate'), cancelText: t('common.cancel') },
         );
         if (!confirmed) return;
-        state.runDevelopmentCreate({ targetDir, displayName, pluginId });
+        state.runDevelopmentCreate({ targetDir, displayName, pluginId, ...(ui ? { ui } : {}) });
+    }, [state]);
+    // Adopting an existing folder is the step that turns a created (or cloned)
+    // plugin project into a running development source. The path the user types
+    // here is the exact thing the daemon will be asked to trust, so it is echoed
+    // back verbatim in the trust decision rather than being summarised.
+    const developPluginSourceRoot = React.useCallback(async () => {
+        if (!state.daemonOperationsAvailable || !state.developmentSourceInstallAvailable) return;
+        const sourceRootPath = (await Modal.prompt(
+            t('settingsPlugins.developmentSourceInstallTitle'),
+            t('settingsPlugins.developmentSourceInstallBody'),
+            { confirmText: t('common.continue'), cancelText: t('common.cancel') },
+        ))?.trim();
+        if (!sourceRootPath) return;
+        state.runDevelopmentSourceInstall(sourceRootPath);
     }, [state]);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
-            {state.isReadOnlySnapshot ? (
-                <PluginReadOnlySnapshotNotice testID="settings.plugins.marketplace.readOnlySnapshot" />
+            {state.readOnlySnapshotNotice ? (
+                <PluginReadOnlySnapshotNotice
+                    testID="settings.plugins.marketplace.readOnlySnapshot"
+                    reason={state.readOnlySnapshotNotice.reason}
+                    onRetry={state.refreshPluginTruth}
+                />
             ) : null}
 
+            <PluginAccountDataEraseRecoverySection
+                testID="settings.plugins.accountDataErase"
+            />
+
+            <MachineAdministrationTargetSelector
+                selection={state.administrationTargetSelection}
+                testIDPrefix="settings.plugins.administration.target"
+            />
+
+            <ItemGroup>
+                <Item
+                    testID="settings.plugins.webhooks"
+                    title={t('settingsPlugins.webhookAdministration.title')}
+                    subtitle={t('settingsPlugins.webhookAdministration.footer')}
+                    icon={<Icon name="link" size={29} color={theme.colors.accent.indigo} />}
+                    onPress={() => router.push(SETTINGS_ROUTES.pluginWebhooks)}
+                />
+            </ItemGroup>
+
             <NativeAppPluginPanelsSettingsEntry />
+
+            <PluginAppPagesSettingsEntry />
 
             <View style={styles.viewSelector}>
                 <ScrollView
@@ -162,7 +231,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                             testID="settings.plugins.marketplace.loadCatalog"
                             title={t('settingsPlugins.loadCatalog')}
                             subtitle={state.loadingCatalog ? t('common.loading') : undefined}
-                            icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
+                            icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => {
                                 void state.loadCatalog();
                             }}
@@ -174,6 +243,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
 
                     <NpmRegistryProfilesSection
                         daemonOperationsAvailable={state.daemonOperationsAvailable}
+                        targetSelection={state.administrationTargetSelection}
                         marketplaceSources={state.marketplaceSourceRegistry?.sources ?? []}
                         onSetMarketplaceSourceProfile={state.setMarketplaceSourceProfile}
                     />
@@ -215,10 +285,14 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                 <DevelopmentPluginsSection
                     developmentPlugins={state.developmentPlugins}
                     createAvailable={state.developmentCreateAvailable}
+                    sourceInstallAvailable={state.developmentSourceInstallAvailable}
                     canRunActions={state.daemonOperationsAvailable}
                     isPluginActionInFlight={state.isPluginActionInFlight}
                     onCreate={() => {
                         void createDevelopmentPlugin();
+                    }}
+                    onDevelopSourceRoot={() => {
+                        void developPluginSourceRoot();
                     }}
                     onRunAction={state.runDevelopmentAction}
                 />

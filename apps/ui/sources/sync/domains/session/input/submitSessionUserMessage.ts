@@ -20,6 +20,7 @@ import type {
     SubmitSessionUserMessageOptions,
     SubmitSessionUserMessageResult,
 } from './types';
+import { SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE } from './types';
 import { recordSessionMessageDeliveryDecision } from './sessionMessageDeliveryTelemetry';
 import {
     canSendUserMessageToSession,
@@ -45,7 +46,8 @@ function getErrorCode(error: unknown): string | undefined {
     if (!error || typeof error !== 'object' || Array.isArray(error)) {
         return undefined;
     }
-    const code = (error as Readonly<Record<string, unknown>>).errorCode;
+    const record = error as Readonly<Record<string, unknown>>;
+    const code = record.errorCode ?? record.code;
     return typeof code === 'string' && code.trim().length > 0 ? code : undefined;
 }
 
@@ -110,7 +112,9 @@ function resolveSubmitDecision(opts: SubmitSessionUserMessageOptions): SessionMe
         forceImmediate: opts.forceImmediate,
         providerNonSteerableReason: classifyAgentSessionComposerNonSteerablePayload({
             session: opts.session,
+            agentTargetKey: opts.agentTargetKey ?? null,
             metaOverrides: opts.metaOverrides,
+            currentRunnerProcessIdentity: opts.currentRunnerProcessIdentity ?? null,
         }),
         // G4 payload honesty: give the delivery decision the payload facts and the explicit
         // per-message user choices from the busy-send affordance.
@@ -197,6 +201,26 @@ function rejectUnsupportedPendingQueue(): SubmitSessionUserMessageResult {
         wake: { attempted: false, state: 'not_needed' },
         errorCode: 'PENDING_QUEUE_UNSUPPORTED',
         errorMessage: 'The pending queue is unavailable for this session. Update the agent runtime or send this message immediately.',
+    };
+}
+
+function shouldRejectUnsupportedRemoteVoiceTarget(
+    port: SessionSubmitPort,
+    opts: SubmitSessionUserMessageOptions,
+): boolean {
+    return opts.hostAdmissionOrigin === 'voice'
+        && !usesExistingDurablePendingMessage(opts)
+        && isPendingQueueSubmitKnownUnsupported(opts.session)
+        && port.isSessionTargetRemoteToActiveServer(opts.sessionId);
+}
+
+function rejectUnsupportedRemoteVoiceTarget(): SubmitSessionUserMessageResult {
+    return {
+        type: 'rejected',
+        persistence: 'none',
+        wake: { attempted: false, state: 'not_needed' },
+        errorCode: SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE,
+        errorMessage: 'The selected remote session requires an updated agent runtime before Voice can send a message.',
     };
 }
 
@@ -331,6 +355,7 @@ async function directSend(
         const sendOptions = {
             profileId: opts.profileId ?? undefined,
             localId: opts.localId ?? undefined,
+            ...(opts.hostAdmissionOrigin ? { hostAdmissionOrigin: opts.hostAdmissionOrigin } : {}),
             bypassPendingQueueReason,
             onLocalPendingProjectionCreated: opts.onOutboundHandoff
                 ? ({ localId }: { localId: string }) => {
@@ -405,6 +430,7 @@ async function enqueuePending(
             withSessionUserMessageDeliveryIntentMeta(opts.metaOverrides, decision.intent),
             {
                 localId: opts.localId,
+                ...(opts.hostAdmissionOrigin ? { hostAdmissionOrigin: opts.hostAdmissionOrigin } : {}),
                 requestedAction,
                 onLocalPendingProjectionCreated: opts.onOutboundHandoff
                     ? ({ localId }) => markOutboundHandoff(localId)
@@ -528,6 +554,10 @@ export async function submitSessionUserMessage(
         supportRefreshSucceeded: resolved.supportRefreshSucceeded,
     });
 
+    if (shouldRejectUnsupportedRemoteVoiceTarget(port, effectiveOpts)) {
+        return rejectUnsupportedRemoteVoiceTarget();
+    }
+
     if (shouldRejectUnsupportedPendingQueue(effectiveOpts, mode)) {
         return rejectUnsupportedPendingQueue();
     }
@@ -549,12 +579,12 @@ export async function submitSessionUserMessage(
             }
             await port.updatePendingRequestedAction(effectiveOpts.sessionId, localId, requestedAction);
         } catch (error) {
-            const errorMessage = getErrorMessage(error, 'Failed to update pending action');
+            const failure = getSubmitSendFailure(error, 'Failed to update pending action');
             return {
                 type: 'wake_failed',
                 persistence: 'pending',
-                wake: { attempted: true, state: 'failed', errorMessage },
-                errorMessage,
+                wake: { attempted: true, state: 'failed', errorMessage: failure.errorMessage },
+                ...failure,
                 localId,
             };
         }

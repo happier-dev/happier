@@ -1,32 +1,31 @@
 import * as React from 'react';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import type { TranslationKey } from '@/text';
-
-import { DesktopSettingsIonicon, type DesktopSettingsIoniconName } from './DesktopSettingsIonicon';
 
 export type ChoiceOption<T extends string | number> = Readonly<{
     value: T;
     titleKey: TranslationKey;
-    icon: DesktopSettingsIoniconName;
+    icon: IconName;
 }>;
 
 export const VISIBILITY_MODE_OPTIONS: readonly ChoiceOption<'attention_only' | 'active_sessions' | 'always_when_enabled'>[] = [
     {
         value: 'attention_only',
         titleKey: 'settingsDesktop.overlay.visibilityAttentionOnlyTitle',
-        icon: 'alert-circle-outline',
+        icon: 'warning-circle',
     },
     {
         value: 'active_sessions',
         titleKey: 'settingsDesktop.overlay.visibilityActiveSessionsTitle',
-        icon: 'pulse-outline',
+        icon: 'pulse',
     },
     {
         value: 'always_when_enabled',
         titleKey: 'settingsDesktop.overlay.visibilityAlwaysWhenEnabledTitle',
-        icon: 'sparkles-outline',
+        icon: 'sparkle',
     },
 ];
 
@@ -34,17 +33,17 @@ export const PRESENTATION_MODE_OPTIONS: readonly ChoiceOption<'automatic' | 'not
     {
         value: 'automatic',
         titleKey: 'settingsDesktop.overlay.presentationAutomaticTitle',
-        icon: 'sparkles-outline',
+        icon: 'sparkle',
     },
     {
         value: 'notch_integrated',
         titleKey: 'settingsDesktop.overlay.presentationNotchIntegratedTitle',
-        icon: 'remove-circle-outline',
+        icon: 'minus-circle',
     },
     {
         value: 'floating_overlay',
         titleKey: 'settingsDesktop.overlay.presentationFloatingOverlayTitle',
-        icon: 'albums-outline',
+        icon: 'stack',
     },
 ];
 
@@ -52,22 +51,22 @@ export const AUTO_HIDE_DELAY_OPTIONS: readonly ChoiceOption<3000 | 6000 | 10000 
     {
         value: 3000,
         titleKey: 'settingsDesktop.overlay.autoHideDelay3sTitle',
-        icon: 'time-outline',
+        icon: 'clock',
     },
     {
         value: 6000,
         titleKey: 'settingsDesktop.overlay.autoHideDelay6sTitle',
-        icon: 'time-outline',
+        icon: 'clock',
     },
     {
         value: 10000,
         titleKey: 'settingsDesktop.overlay.autoHideDelay10sTitle',
-        icon: 'time-outline',
+        icon: 'clock',
     },
     {
         value: 30000,
         titleKey: 'settingsDesktop.overlay.autoHideDelay30sTitle',
-        icon: 'time-outline',
+        icon: 'clock',
     },
 ];
 
@@ -75,12 +74,12 @@ export const PLACEMENT_MODE_OPTIONS: readonly ChoiceOption<'anchored' | 'custom'
     {
         value: 'anchored',
         titleKey: 'settingsDesktop.overlay.placementAnchoredTitle',
-        icon: 'pin-outline',
+        icon: 'push-pin',
     },
     {
         value: 'custom',
         titleKey: 'settingsDesktop.overlay.placementCustomTitle',
-        icon: 'move-outline',
+        icon: 'arrows-out-cardinal',
     },
 ];
 
@@ -88,42 +87,42 @@ export const ANCHOR_OPTIONS: readonly ChoiceOption<'top_center' | 'top_left' | '
     {
         value: 'top_center',
         titleKey: 'settingsDesktop.overlay.anchorTopCenterTitle',
-        icon: 'remove-circle-outline',
+        icon: 'minus-circle',
     },
     {
         value: 'top_left',
         titleKey: 'settingsDesktop.overlay.anchorTopLeftTitle',
-        icon: 'arrow-up-left-box-outline',
+        icon: 'arrow-elbow-up-left',
     },
     {
         value: 'top_right',
         titleKey: 'settingsDesktop.overlay.anchorTopRightTitle',
-        icon: 'arrow-up-right-box-outline',
+        icon: 'arrow-elbow-up-right',
     },
     {
         value: 'bottom_center',
         titleKey: 'settingsDesktop.overlay.anchorBottomCenterTitle',
-        icon: 'remove-circle-outline',
+        icon: 'minus-circle',
     },
     {
         value: 'bottom_left',
         titleKey: 'settingsDesktop.overlay.anchorBottomLeftTitle',
-        icon: 'arrow-down-left-box-outline',
+        icon: 'arrow-elbow-down-left',
     },
     {
         value: 'bottom_right',
         titleKey: 'settingsDesktop.overlay.anchorBottomRightTitle',
-        icon: 'arrow-down-right-box-outline',
+        icon: 'arrow-elbow-down-right',
     },
     {
         value: 'left_center',
         titleKey: 'settingsDesktop.overlay.anchorLeftCenterTitle',
-        icon: 'chevron-back-outline',
+        icon: 'caret-left',
     },
     {
         value: 'right_center',
         titleKey: 'settingsDesktop.overlay.anchorRightCenterTitle',
-        icon: 'chevron-forward-outline',
+        icon: 'caret-right',
     },
 ];
 
@@ -134,7 +133,7 @@ export function buildChoiceDropdownItems<T extends string | number>(
     return choices.map((choice) => ({
         id: String(choice.value),
         title: t(choice.titleKey),
-        icon: <DesktopSettingsIonicon name={choice.icon} size={29} color={color} />,
+        icon: <Icon name={choice.icon} size={29} color={color} />,
     }));
 }
 

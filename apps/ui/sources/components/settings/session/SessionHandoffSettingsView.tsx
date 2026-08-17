@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -20,6 +19,7 @@ import {
     type SessionHandoffDefaultsV1,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const SessionHandoffSettingsView = React.memo(function SessionHandoffSettingsView() {
     const { theme } = useUnistyles();
@@ -58,7 +58,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                             ? t('settingsSession.handoff.workspaceTransfer.enabledSubtitle')
                             : t('settingsSession.handoff.workspaceTransfer.disabledSubtitle')
                     }
-                    icon={<Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />}
+                    icon={<Icon name="folder-open" size={29} color={theme.colors.accent.blue} />}
                     rightElement={<Switch value={defaults.workspaceTransferEnabled} onValueChange={(next) => updateDefaults({ workspaceTransferEnabled: next })} />}
                     showChevron={false}
                     onPress={() => updateDefaults({ workspaceTransferEnabled: !defaults.workspaceTransferEnabled })}
@@ -77,7 +77,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                     itemTrigger={{
                         title: t('settingsSession.handoff.workspaceTransfer.strategy.title'),
                         subtitle: t('settingsSession.handoff.workspaceTransfer.strategy.subtitle'),
-                        icon: <Ionicons name="git-branch-outline" size={29} color={theme.colors.accent.blue} />,
+                        icon: <Icon name="git-branch" size={29} color={theme.colors.accent.blue} />,
                     }}
                     items={SESSION_HANDOFF_WORKSPACE_TRANSFER_STRATEGY_OPTIONS.map((item) => ({
                         id: item.id,
@@ -85,9 +85,9 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                         subtitle: t(item.subtitleKey),
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons
-                                    name={item.id === 'sync_changes' ? 'git-compare-outline' : 'archive-outline'}
-                                    size={22}
+                                <Icon
+                                    name={item.id === 'sync_changes' ? 'git-diff' : 'archive'}
+                                    size={20}
                                     color={theme.colors.text.secondary}
                                 />
                             </View>
@@ -112,7 +112,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                     itemTrigger={{
                         title: t('settingsSession.handoff.conflictPolicy.title'),
                         subtitle: t('settingsSession.handoff.conflictPolicy.subtitle'),
-                        icon: <Ionicons name="git-compare-outline" size={29} color={theme.colors.accent.orange} />,
+                        icon: <Icon name="git-diff" size={29} color={theme.colors.accent.orange} />,
                     }}
                     items={SESSION_HANDOFF_CONFLICT_POLICY_OPTIONS.map((item) => ({
                         id: item.id,
@@ -120,9 +120,9 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                         subtitle: t(item.subtitleKey),
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons
-                                    name={item.id === 'replace_existing' ? 'swap-horizontal-outline' : 'copy-outline'}
-                                    size={22}
+                                <Icon
+                                    name={item.id === 'replace_existing' ? 'arrows-left-right' : 'copy'}
+                                    size={20}
                                     color={theme.colors.text.secondary}
                                 />
                             </View>
@@ -147,7 +147,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                     itemTrigger={{
                         title: t('settingsSession.handoff.includeIgnoredMode.title'),
                         subtitle: t('settingsSession.handoff.includeIgnoredMode.subtitle'),
-                        icon: <Ionicons name="filter-outline" size={29} color={theme.colors.accent.indigo} />,
+                        icon: <Icon name="funnel-simple" size={29} color={theme.colors.accent.indigo} />,
                     }}
                     items={SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS.map((item) => ({
                         id: item.id,
@@ -155,9 +155,9 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                         subtitle: t(item.subtitleKey),
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons
-                                    name={item.id === 'include_selected' ? 'filter-outline' : 'eye-off-outline'}
-                                    size={22}
+                                <Icon
+                                    name={item.id === 'include_selected' ? 'funnel-simple' : 'eye-slash'}
+                                    size={20}
                                     color={theme.colors.text.secondary}
                                 />
                             </View>
@@ -211,7 +211,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                     itemTrigger={{
                         title: t('settingsSession.handoff.directTargetMode.title'),
                         subtitle: t('settingsSession.handoff.directTargetMode.subtitle'),
-                        icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.green} />,
+                        icon: <Icon name="arrows-left-right" size={29} color={theme.colors.accent.green} />,
                     }}
                     items={SESSION_HANDOFF_DIRECT_TARGET_MODE_OPTIONS.map((item) => ({
                         id: item.id,
@@ -219,9 +219,9 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                         subtitle: t(item.subtitleKey),
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons
-                                    name={item.id === 'convert_to_persisted' ? 'save-outline' : 'arrow-redo-outline'}
-                                    size={22}
+                                <Icon
+                                    name={item.id === 'convert_to_persisted' ? 'floppy-disk' : 'arrow-right'}
+                                    size={20}
                                     color={theme.colors.text.secondary}
                                 />
                             </View>

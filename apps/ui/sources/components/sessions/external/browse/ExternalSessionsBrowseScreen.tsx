@@ -7,7 +7,6 @@ import {
     type ExternalSessionsAgentId,
     type ExternalSessionsSource,
 } from '@happier-dev/protocol';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -23,12 +22,12 @@ import { PopoverScope } from '@/components/ui/popover';
 import { Modal } from '@/modal';
 import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
 import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
 
-import { readExternalSessionBrowseCandidatePath } from './buildExternalSessionBrowseCandidatePresentation';
 import { getPreferredExternalSessionBrowseProviderId } from './getPreferredExternalSessionBrowseProviderId';
 import {
     listExternalSessionBrowseProviderIds,
@@ -38,8 +37,10 @@ import {
     resolveExternalSessionBrowseSourceOptions,
 } from './resolveExternalSessionBrowseSourceOptions';
 import { ExternalSessionBrowseCandidatesList } from './ExternalSessionBrowseCandidatesList';
+import { Icon } from '@/components/ui/icons/Icon';
 import {
     readExternalSessionBrowseCandidateKey,
+    readExternalSessionBrowseCandidatePath,
     useExternalSessionBrowseCandidates,
     type ExternalSessionBrowseCandidate,
 } from './useExternalSessionBrowseCandidates';
@@ -112,12 +113,14 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const machines = useAllMachines();
     const profile = useProfile();
     const settings = useSettings();
+    const activeServerId = useActiveServerSnapshot().serverId;
     const externalSessionsSettings = readExternalSessionsSettingsV1(
         useSetting('externalSessionsSettingsV1'),
     );
     const autoLinkMutationPendingRef = React.useRef(false);
     const linkingSessionIdRef = React.useRef<string | null>(null);
     const [autoLinkMutationPending, setAutoLinkMutationPending] = React.useState(false);
+    const [daemonProjectionRefreshKey, setDaemonProjectionRefreshKey] = React.useState(0);
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => (
         lockScope?.machineId ?? getPreferredMachineId(machines, null)
     ));
@@ -128,6 +131,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: effectiveSelectedMachineId,
         serverId: lockScope?.serverId ?? null,
+        refreshKey: daemonProjectionRefreshKey,
         retainInputsAcrossScopeChange: true,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
@@ -177,6 +181,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 settings,
                 projection: daemonMergedProjectionInputs?.pluginProjectionV2,
                 source: lockScope.source,
+                activeServerId,
             });
             return [{
                 key: 'locked',
@@ -191,8 +196,9 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             profile,
             settings,
             projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+            activeServerId,
         });
-    }, [daemonMergedProjectionInputs?.pluginProjectionV2, lockScope, profile, selectedProviderId, settings]);
+    }, [activeServerId, daemonMergedProjectionInputs?.pluginProjectionV2, lockScope, profile, selectedProviderId, settings]);
     const [selectedSourceKey, setSelectedSourceKey] = React.useState<string | null>(() => (
         lockScope ? 'locked' : sourceOptions[0]?.key ?? null
     ));
@@ -270,7 +276,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         id: machine.id,
         title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
         subtitle: machine.active ? t('status.activeNow') : t('status.offline'),
-        icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.text.secondary} />,
+        icon: <Icon name="desktop" size={16} color={theme.colors.text.secondary} />,
     })), [machines, theme.colors.text.secondary]);
     const providerMenuItems = React.useMemo(() => providers.map((provider) => ({
         id: provider.id,
@@ -281,7 +287,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         id: sourceOption.key,
         title: sourceOption.label,
         subtitle: sourceOption.detail,
-        icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.text.secondary} />,
+        icon: <Icon name="folder-open" size={16} color={theme.colors.text.secondary} />,
     })), [sourceOptions, theme.colors.text.secondary]);
     const formatMachineTriggerSubtitle = React.useCallback((selectedItem: Readonly<{ title: string; subtitle?: React.ReactNode }> | null) => {
         if (!selectedItem) return null;
@@ -310,24 +316,72 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
 
     const {
         candidates,
+        candidatesAuthoritative,
         nextCursor,
+        paginationRequestKey,
         loading,
         loadingMore,
         searchAugmenting,
         searchIncomplete,
+        annotationsIncomplete,
         preparation,
+        preparationStopped,
+        cancelled,
         autoLinkPolicyScope,
         error,
         loadMore,
         cancelPreparation,
         reload,
     } = useExternalSessionBrowseCandidates({
-        machineId: daemonMergedProjectionReady ? effectiveSelectedMachineId : null,
+        machineId: effectiveSelectedMachineId,
         serverId: lockScope?.serverId ?? null,
         providerId: selectedProviderId,
         source: selectedSource,
         searchTerm: candidateSearchTerm,
+        enabled: daemonMergedProjectionReady,
     });
+    const rootRefreshFailed = error !== null && nextCursor === null;
+    /**
+     * Whether a candidate on screen may be acted on. This is a capability fact about
+     * the listing's authority, not a liveness fact about how much of it has arrived:
+     * linking needs a machine, an Agent, a source and the candidate's own identity,
+     * and a row the current scope's still-building index has already served carries
+     * all four. Such a row opens while the rest of the index keeps building.
+     *
+     * `loading` must never gate this. It is also true for every progress round-trip
+     * of an in-progress index — thousands of them on a large corpus — and the rows
+     * that index serves are live throughout. Rows retained from a superseded request
+     * keep their inert treatment through `candidatesAuthoritative`, which is false
+     * until the request owning the current scope has published.
+     */
+    const candidateActionsAllowed = daemonMergedProjectionReady
+        && candidatesAuthoritative
+        && !rootRefreshFailed;
+    const candidateActionAuthorityKey = React.useMemo(() => JSON.stringify({
+        machineId: effectiveSelectedMachineId,
+        serverId: lockScope?.serverId ?? null,
+        providerId: selectedProviderId,
+        source: selectedSource,
+        interaction,
+    }), [
+        effectiveSelectedMachineId,
+        interaction,
+        lockScope?.serverId,
+        selectedProviderId,
+        selectedSource,
+    ]);
+    const candidateActionAuthorityRef = React.useRef({
+        key: candidateActionAuthorityKey,
+        generation: 0,
+    });
+    if (candidateActionAuthorityRef.current.key !== candidateActionAuthorityKey) {
+        candidateActionAuthorityRef.current = {
+            key: candidateActionAuthorityKey,
+            generation: candidateActionAuthorityRef.current.generation + 1,
+        };
+    }
+    const candidateActionAuthorityGeneration = candidateActionAuthorityRef.current.generation;
+    const linkRequestTokenRef = React.useRef(0);
     const autoLinkPolicyEnabled = React.useMemo(() => {
         if (!effectiveSelectedMachineId || !autoLinkPolicyScope) return false;
         return externalSessionsSettings?.autoLinkSourcePolicies.some((policy) => (
@@ -391,8 +445,29 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         const machine = machines.find((candidate) => candidate.id === effectiveSelectedMachineId);
         return machine?.metadata?.displayName || machine?.metadata?.host || machine?.id || null;
     }, [effectiveSelectedMachineId, machines]);
+    const selectedMachineHomeDir = React.useMemo(() => {
+        const machine = machines.find((candidate) => candidate.id === effectiveSelectedMachineId);
+        return machine?.metadata?.homeDir ?? null;
+    }, [effectiveSelectedMachineId, machines]);
 
-    const handleOpenCandidate = React.useCallback(async (candidate: ExternalSessionBrowseCandidate) => {
+    React.useEffect(() => {
+        linkRequestTokenRef.current += 1;
+        linkingSessionIdRef.current = null;
+        setLinkingSessionId(null);
+    }, [candidateActionAuthorityGeneration]);
+
+    const handleOpenCandidate = React.useCallback(async (
+        candidate: ExternalSessionBrowseCandidate,
+        selectionAuthorityGeneration: number,
+    ) => {
+        if (!candidateActionsAllowed) return;
+        /**
+         * A press captured before the browse scope changed carries the previous
+         * scope's machine, Agent and source. Every branch below acts on that
+         * captured scope — navigating, picking, or creating a link — so the
+         * authority check belongs at entry, not only after the link round trip.
+         */
+        if (candidateActionAuthorityRef.current.generation !== selectionAuthorityGeneration) return;
         if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource) return;
         if (linkingSessionIdRef.current !== null) return;
         if (interaction === 'pickRemoteSessionId') {
@@ -404,8 +479,14 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             return;
         }
         const candidateKey = readExternalSessionBrowseCandidateKey(candidate);
+        const requestToken = linkRequestTokenRef.current + 1;
+        linkRequestTokenRef.current = requestToken;
         linkingSessionIdRef.current = candidateKey;
         setLinkingSessionId(candidateKey);
+        const requestIsCurrent = () => (
+            linkRequestTokenRef.current === requestToken
+            && candidateActionAuthorityRef.current.generation === selectionAuthorityGeneration
+        );
         try {
             const linkEnsureExtras = resolveExternalSessionBrowseLinkEnsureRequestExtras({
                 providerId: selectedProviderId,
@@ -433,6 +514,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             const result = lockScope?.serverId
                 ? await machineExternalSessionLinkEnsure(request, { serverId: lockScope.serverId })
                 : await machineExternalSessionLinkEnsure(request);
+            if (!requestIsCurrent()) return;
             if (!result.ok) {
                 Modal.alert(
                     t('common.error'),
@@ -442,15 +524,18 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             }
             router.push(`/session/${result.sessionId}` as any);
         } catch (linkError) {
+            if (!requestIsCurrent()) return;
             Modal.alert(
                 t('common.error'),
                 resolveExternalSessionBrowseThrownErrorMessage(linkError, 'link'),
             );
         } finally {
-            linkingSessionIdRef.current = null;
-            setLinkingSessionId(null);
+            if (linkRequestTokenRef.current === requestToken) {
+                linkingSessionIdRef.current = null;
+                setLinkingSessionId(null);
+            }
         }
-    }, [effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
+    }, [candidateActionsAllowed, effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
 
     return (
         <PopoverScope boundaryRef={popoverBoundaryRef}>
@@ -485,7 +570,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                                     popoverBoundaryRef={popoverBoundaryRef}
                                     itemTrigger={{
                                         title: t('externalSessions.browseMachines'),
-                                        icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.text.secondary} />,
+                                        icon: <Icon name="desktop" size={16} color={theme.colors.text.secondary} />,
                                         subtitleFormatter: formatMachineTriggerSubtitle,
                                         showSelectedDetail: false,
                                         itemProps: {
@@ -510,7 +595,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                                     popoverBoundaryRef={popoverBoundaryRef}
                                     itemTrigger={{
                                         title: t('externalSessions.browseAgents'),
-                                        icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
+                                        icon: <Icon name="cpu" size={16} color={theme.colors.text.secondary} />,
                                         subtitleFormatter: formatSelectedTitleSubtitle,
                                         showSelectedDetail: false,
                                         itemProps: {
@@ -535,7 +620,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                                     popoverBoundaryRef={popoverBoundaryRef}
                                     itemTrigger={{
                                         title: t('externalSessions.browseSources'),
-                                        icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.text.secondary} />,
+                                        icon: <Icon name="folder-open" size={16} color={theme.colors.text.secondary} />,
                                         subtitleFormatter: formatSelectedTitleSubtitle,
                                         showSelectedDetail: false,
                                         itemProps: {
@@ -598,21 +683,38 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                     error={error}
                     offline={selectedMachineIsOffline}
                     nextCursor={nextCursor}
+                    paginationRequestKey={paginationRequestKey}
                     loadingMore={loadingMore}
                     searchAugmenting={searchAugmenting}
                     searchIncomplete={searchIncomplete}
+                    annotationsIncomplete={annotationsIncomplete}
                     preparation={preparation}
+                    preparationStopped={preparationStopped}
+                    cancelled={cancelled}
                     linkingSessionId={linkingSessionId}
+                    candidateActionsDisabled={!candidateActionsAllowed}
                     agentId={selectedAgentProjection?.iconAgentId ?? selectedProviderId}
                     agentLabel={selectedAgentProjection?.title ?? null}
                     machineLabel={selectedMachineLabel}
+                    machineHomeDir={selectedMachineHomeDir}
                     sourceLabel={selectedSourceLabel}
+                    projectionPhase={daemonMergedProjection.phase === 'idle'
+                        ? 'ready'
+                        : daemonMergedProjection.phase}
+                    browseCapabilityAvailable={browseProviderIds.length > 0}
                     searchQuery={searchQuery}
                     onSearchQueryChange={setSearchQuery}
-                    onSelectCandidate={(candidate) => { void handleOpenCandidate(candidate); }}
+                    selectionAuthorityGeneration={candidateActionAuthorityGeneration}
+                    onSelectCandidate={(candidate, selectionAuthorityGeneration) => {
+                        void handleOpenCandidate(candidate, selectionAuthorityGeneration);
+                    }}
                     onLoadMore={() => { void loadMore(); }}
                     onCancelPreparation={cancelPreparation}
                     onRetry={() => {
+                        if (daemonMergedProjection.phase !== 'ready' && effectiveSelectedMachineId) {
+                            setDaemonProjectionRefreshKey((current) => current + 1);
+                            return;
+                        }
                         void (nextCursor ? loadMore() : reload());
                     }}
                     onRequestClose={props.onRequestClose ?? (() => router.back())}

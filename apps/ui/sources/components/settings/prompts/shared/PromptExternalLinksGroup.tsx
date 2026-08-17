@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -13,6 +12,7 @@ import { t } from '@/text';
 
 import { buildPromptAssetExportHref } from './buildPromptAssetExportHref';
 import { describePromptExternalLinkSubtitle, describePromptExternalLinkTitle } from './promptExternalLinkPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
 
 export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksGroup(props: Readonly<{
     artifactId: string | null;
@@ -46,7 +46,7 @@ export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksG
                 testID={props.manageItemTestID}
                 title={t('promptLibrary.manageExternalAssets')}
                 subtitle={props.manageItemSubtitle}
-                icon={<Ionicons name="cloud-upload-outline" size={22} color={theme.colors.accent.blue} />}
+                icon={<Icon name="cloud-arrow-up" size={20} color={theme.colors.accent.blue} />}
                 onPress={() => openManageScreen()}
             />
 
@@ -65,7 +65,7 @@ export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksG
                         testID={`${props.linkTestIDPrefix}.${index}`}
                         title={title}
                         subtitle={subtitle}
-                        icon={<Ionicons name="link-outline" size={22} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="link" size={20} color={theme.colors.text.secondary} />}
                         onPress={() => openManageScreen(link)}
                         rightElement={(
                             <ItemRowActions
@@ -75,7 +75,7 @@ export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksG
                                     {
                                         id: 'manage',
                                         title: t('promptLibrary.manageExternalAssets'),
-                                        icon: 'cloud-upload-outline',
+                                        icon: 'cloud-arrow-up',
                                         onPress: () => openManageScreen(link),
                                     },
                                 ]}

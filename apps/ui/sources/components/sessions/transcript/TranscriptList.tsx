@@ -32,6 +32,12 @@ import {
 import {
     readExternalSessionOperationPresentationFromMetadata,
 } from '@/components/sessions/transcript/items/externalSessionOperationMetadata';
+import {
+    useExternalSessionOperationTranscriptDismissal,
+} from '@/components/sessions/transcript/items/useExternalSessionOperationTranscriptDismissal';
+import type {
+    ExternalSessionOperationActionRef,
+} from '@/components/sessions/external/progress/ExternalImportProgressCard';
 
 type TranscriptInteraction = {
     canSendMessages: boolean;
@@ -64,12 +70,15 @@ const ListFooter = React.memo((props: {
     bottomNotice?: TranscriptBottomNotice | null;
     externalSessionOperationPresentation:
         ExternalSessionOperationSharedPresentationV1 | null;
+    onDismissExternalSessionOperation:
+        (actionRef: ExternalSessionOperationActionRef) => void;
 }) => {
     return (
         <View>
             {props.externalSessionOperationPresentation ? (
                 <ExternalSessionOperationSharedCard
                     presentation={props.externalSessionOperationPresentation}
+                    onDismiss={props.onDismissExternalSessionOperation}
                 />
             ) : null}
             <ChatFooter
@@ -107,6 +116,22 @@ export const TranscriptList = React.memo((props: {
         ),
         [props.metadata],
     );
+    const {
+        dismissal: externalSessionOperationDismissal,
+        onDismiss: onDismissExternalSessionOperation,
+    } = useExternalSessionOperationTranscriptDismissal({
+        sessionId: props.sessionId,
+        presentation: externalSessionOperationPresentation,
+    });
+    const visibleExternalSessionOperationPresentation =
+        externalSessionOperationPresentation
+        && externalSessionOperationDismissal?.sessionId === props.sessionId
+        && externalSessionOperationDismissal.operationId
+            === externalSessionOperationPresentation.operationId
+        && externalSessionOperationDismissal.revision
+            === externalSessionOperationPresentation.revision
+            ? null
+            : externalSessionOperationPresentation;
     const sessionThinkingDisplayMode = transcriptSessionCommon.messageDisplay.sessionThinkingDisplayMode;
     const sessionThinkingInlinePresentation = transcriptSessionCommon.messageDisplay.sessionThinkingInlinePresentation;
     const shellFrame = React.useMemo(() => resolveReadOnlyTranscriptListShellFrame({
@@ -150,15 +175,19 @@ export const TranscriptList = React.memo((props: {
             <ListFooter
                 bottomNotice={props.bottomNotice ?? null}
                 externalSessionOperationPresentation={
-                    externalSessionOperationPresentation
+                    visibleExternalSessionOperationPresentation
+                }
+                onDismissExternalSessionOperation={
+                    onDismissExternalSessionOperation
                 }
             />
         ),
     }), [
-        externalSessionOperationPresentation,
+        onDismissExternalSessionOperation,
         props.bottomNotice,
         props.isLoaded,
         shellFrame,
+        visibleExternalSessionOperationPresentation,
     ]);
 
     const thinkingDefaultExpanded =

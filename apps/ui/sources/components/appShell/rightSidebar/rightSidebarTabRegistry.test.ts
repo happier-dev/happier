@@ -1,48 +1,94 @@
 import { describe, expect, it } from 'vitest';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import {
     getRightSidebarBuiltinTab,
     resolveRightSidebarActiveTab,
+    resolveRightSidebarTabSelection,
     resolveRightSidebarMobileSurface,
     resolveRightSidebarTabs,
 } from './rightSidebarTabRegistry';
 
+const REVIEW_PLUGIN_ID = 'acme.review';
+const APP_PLUGIN_ID = 'acme.panels';
+const BROWSER_PLUGIN_ID = 'acme.browser';
+
+function rightSidebarBinding(
+    pluginId: string,
+    destinationId: string,
+    targetKind: 'app' | 'session' | 'project',
+): PluginUiSurfacePlacementProjection['binding'] {
+    const binding = normalizePluginUiDestinationBindingV1({
+        pluginId,
+        destinationId,
+        rendererId: `${destinationId}-renderer`,
+        container: 'rightSidebarTab',
+        target: { kind: targetKind },
+    });
+    if (!binding) {
+        throw new Error('test fixture must use an admitted V2 right-sidebar binding');
+    }
+    return binding;
+}
+
+const reviewSidebarBinding = rightSidebarBinding(REVIEW_PLUGIN_ID, 'review-panel', 'session');
+const disabledReviewSidebarBinding = rightSidebarBinding(REVIEW_PLUGIN_ID, 'blocked-review', 'session');
+const appSidebarBinding = rightSidebarBinding(APP_PLUGIN_ID, 'app-panel', 'app');
+
 const reviewSidebarPlacement = {
-    id: 'pluginUi:review:surfacePlacement:review-panel',
-    pluginId: 'review',
+    id: `surfacePlacement:${REVIEW_PLUGIN_ID}:review-panel`,
+    pluginId: REVIEW_PLUGIN_ID,
     contributionKind: 'surfacePlacement',
     descriptorId: 'review-panel',
-    placement: 'session.rightSidebarTab',
-    target: { kind: 'session' },
+    binding: reviewSidebarBinding,
+    target: reviewSidebarBinding.target,
     renderer: { kind: 'host', rendererId: 'review.panel' },
     display: { developerFallback: 'Review' },
     availability: { state: 'available', reason: 'available', diagnostics: [] },
-    order: 15,
-    rightSidebar: {
-        tabId: 'review',
-        scope: 'session',
-        order: 15,
-        mobile: { enabled: true, surface: 'pluginTab' },
-        lifecycle: { retention: 'unmountOnDisable', unmountOnGenerationChange: true },
-        disabledPolicy: 'disable',
-        collisionPolicy: 'reject',
-    },
+    headerActions: [],
 } satisfies PluginUiSurfacePlacementProjection;
 
 const disabledReviewSidebarPlacement = {
     ...reviewSidebarPlacement,
-    id: 'pluginUi:review:surfacePlacement:blocked-review-panel',
-    descriptorId: 'blocked-review-panel',
+    id: `surfacePlacement:${REVIEW_PLUGIN_ID}:blocked-review`,
+    descriptorId: 'blocked-review',
+    binding: disabledReviewSidebarBinding,
+    target: disabledReviewSidebarBinding.target,
     availability: {
         state: 'disabled',
         reason: 'feature_disabled',
         diagnostics: ['feature_disabled'],
     },
-    rightSidebar: {
-        ...reviewSidebarPlacement.rightSidebar,
-        tabId: 'blocked-review',
-        order: 16,
+} satisfies PluginUiSurfacePlacementProjection;
+
+const appSidebarPlacement = {
+    id: `surfacePlacement:${APP_PLUGIN_ID}:app-panel`,
+    pluginId: APP_PLUGIN_ID,
+    contributionKind: 'surfacePlacement',
+    descriptorId: 'app-panel',
+    binding: appSidebarBinding,
+    target: appSidebarBinding.target,
+    renderer: { kind: 'host', rendererId: 'app.panel' },
+    display: { developerFallback: 'App panel' },
+    availability: { state: 'available', reason: 'available', diagnostics: [] },
+    headerActions: [],
+    // This is exactly the canonical app-union stamp. It models a selected
+    // current app contribution while another eligible machine is establishing.
+    hostOrigin: {
+        machineId: 'machine-a',
+        serverId: 'server-1',
+        generation: 3,
+        phase: 'current',
+        interactionEnabled: true,
+        executionOrigin: {
+            serverIdentityId: 'srv_test',
+            materializationRef: {
+                pluginId: APP_PLUGIN_ID,
+                machineId: 'machine-a',
+                materializationId: 'machine-a:acme.panels',
+            },
+        },
     },
 } satisfies PluginUiSurfacePlacementProjection;
 
@@ -131,6 +177,51 @@ describe('rightSidebarTabRegistry', () => {
         expect(resolveRightSidebarActiveTab('browser', mobileTabs)).toBe('browser');
     });
 
+    it('keeps a restored plugin selection unresolved until its projection is current, then tombstones it when absent', () => {
+        const tabs = resolveRightSidebarTabs({
+            scope: 'session',
+            terminalTabAvailable: false,
+        });
+
+        expect(resolveRightSidebarTabSelection({
+            activeTabId: `plugin:${REVIEW_PLUGIN_ID}:review-panel`,
+            tabs,
+            projectionPhase: 'establishing',
+        })).toEqual({
+            kind: 'unresolved',
+            tabId: `plugin:${REVIEW_PLUGIN_ID}:review-panel`,
+        });
+
+        expect(resolveRightSidebarTabSelection({
+            activeTabId: `plugin:${REVIEW_PLUGIN_ID}:review-panel`,
+            tabs,
+            projectionPhase: 'current',
+        })).toEqual({
+            kind: 'unavailable',
+            tabId: `plugin:${REVIEW_PLUGIN_ID}:review-panel`,
+            reason: 'plugin_destination_unavailable',
+        });
+    });
+
+    it('keeps an already-published app tab available while another app member is establishing', () => {
+        const tabs = resolveRightSidebarTabs({
+            scope: 'app',
+            pluginPlacements: [appSidebarPlacement],
+        });
+
+        // The aggregate catalog is incomplete, but this selected tab has an
+        // exact current origin. Treating it as unresolved would unnecessarily
+        // blank a known-current surface while machine-b describes another one.
+        expect(resolveRightSidebarTabSelection({
+            activeTabId: `plugin:${APP_PLUGIN_ID}:app-panel`,
+            tabs,
+            projectionPhase: 'establishing',
+        })).toMatchObject({
+            kind: 'available',
+            tab: { id: `plugin:${APP_PLUGIN_ID}:app-panel` },
+        });
+    });
+
     it('removes the Browser tab on desktop while keeping it on mobile (D1)', () => {
         const desktopSession = resolveRightSidebarTabs({
             scope: 'session',
@@ -184,49 +275,43 @@ describe('rightSidebarTabRegistry', () => {
 
         expect(tabs.map((tab) => tab.id)).toEqual([
             'git',
-            'plugin:review:review',
             'files',
             'agents',
             'navigation',
             'services',
+            `plugin:${REVIEW_PLUGIN_ID}:review-panel`,
         ]);
-        expect(tabs.find((tab) => tab.id === 'plugin:review:review')).toMatchObject({
+        expect(tabs.find((tab) => tab.id === `plugin:${REVIEW_PLUGIN_ID}:review-panel`)).toMatchObject({
             owner: 'plugin',
             label: 'Review',
             plugin: {
-                pluginId: 'review',
+                pluginId: REVIEW_PLUGIN_ID,
                 descriptorId: 'review-panel',
             },
         });
     });
 
-    it('falls back away from disabled plugin tabs while keeping their disabled tab state', () => {
+    it('falls back away from disabled plugin tabs that the current host policy hides', () => {
         const tabs = resolveRightSidebarTabs({
             scope: 'session',
             terminalTabAvailable: false,
             pluginPlacements: [disabledReviewSidebarPlacement],
         });
 
-        expect(tabs.find((tab) => tab.id === 'plugin:review:blocked-review')).toMatchObject({
-            disabledReason: 'feature_disabled',
-        });
-        expect(resolveRightSidebarActiveTab('plugin:review:blocked-review', tabs)).toBe('git');
+        expect(tabs.find((tab) => tab.id === `plugin:${REVIEW_PLUGIN_ID}:blocked-review`)).toBeUndefined();
+        expect(resolveRightSidebarActiveTab(`plugin:${REVIEW_PLUGIN_ID}:blocked-review`, tabs)).toBe('git');
     });
 
     it('resolves app-scope plugin right-sidebar tabs through the shared registry', () => {
+        const appSidebarBinding = rightSidebarBinding(APP_PLUGIN_ID, 'app-panel', 'app');
         const appSidebarPlacement = {
             ...reviewSidebarPlacement,
-            id: 'pluginUi:acme:surfacePlacement:app-panel',
-            pluginId: 'acme',
+            id: `surfacePlacement:${APP_PLUGIN_ID}:app-panel`,
+            pluginId: APP_PLUGIN_ID,
             descriptorId: 'app-panel',
-            placement: 'app.rightSidebarTab',
-            target: { kind: 'app' },
+            binding: appSidebarBinding,
+            target: appSidebarBinding.target,
             renderer: { kind: 'host', rendererId: 'descriptorPanel' },
-            rightSidebar: {
-                ...reviewSidebarPlacement.rightSidebar,
-                tabId: 'app-tab',
-                scope: 'app',
-            },
         } satisfies PluginUiSurfacePlacementProjection;
 
         const tabs = resolveRightSidebarTabs({
@@ -235,10 +320,48 @@ describe('rightSidebarTabRegistry', () => {
         });
 
         // No app-scope built-in tabs exist; only the plugin tab resolves for scope 'app'.
-        expect(tabs.map((tab) => tab.id)).toEqual(['plugin:acme:app-tab']);
-        expect(tabs.find((tab) => tab.id === 'plugin:acme:app-tab')).toMatchObject({
+        expect(tabs.map((tab) => tab.id)).toEqual([`plugin:${APP_PLUGIN_ID}:app-panel`]);
+        expect(tabs.find((tab) => tab.id === `plugin:${APP_PLUGIN_ID}:app-panel`)).toMatchObject({
             owner: 'plugin',
-            plugin: { pluginId: 'acme', descriptorId: 'app-panel' },
+            plugin: { pluginId: APP_PLUGIN_ID, descriptorId: 'app-panel' },
         });
+    });
+
+    // UI-D25: plugin tab ids are qualified `plugin:<pluginId>:<slug>`, so a plugin slug
+    // spelled like a built-in tab id cannot collide with it. The tab must therefore stay
+    // fully usable and merge alongside the built-in tab of the same NAME, not be reserved
+    // away by a raw-slug guard.
+    it('admits a plugin tab whose slug matches a built-in tab id, alongside that built-in tab', () => {
+        const builtInNamedBinding = rightSidebarBinding(BROWSER_PLUGIN_ID, 'browser', 'session');
+        const builtInNamedPlacement = {
+            ...reviewSidebarPlacement,
+            id: `surfacePlacement:${BROWSER_PLUGIN_ID}:browser`,
+            pluginId: BROWSER_PLUGIN_ID,
+            descriptorId: 'browser',
+            binding: builtInNamedBinding,
+            target: builtInNamedBinding.target,
+            display: { developerFallback: 'Acme Browser' },
+        } satisfies PluginUiSurfacePlacementProjection;
+
+        const tabs = resolveRightSidebarTabs({
+            scope: 'session',
+            terminalTabAvailable: false,
+            // Mobile presentation is the one that publishes the built-in `browser` tab (D1),
+            // so both ids are live at once here.
+            presentation: 'mobile',
+            pluginPlacements: [builtInNamedPlacement],
+        });
+
+        expect(tabs.map((tab) => tab.id)).toContain('browser');
+        const pluginTab = tabs.find((tab) => tab.id === `plugin:${BROWSER_PLUGIN_ID}:browser`);
+        expect(pluginTab).toMatchObject({
+            owner: 'plugin',
+            label: 'Acme Browser',
+            plugin: { pluginId: BROWSER_PLUGIN_ID, descriptorId: 'browser' },
+        });
+        expect(pluginTab?.disabledReason).toBeUndefined();
+        // It is selectable, which a reserved/disabled tab never is.
+        expect(resolveRightSidebarActiveTab(`plugin:${BROWSER_PLUGIN_ID}:browser`, tabs))
+            .toBe(`plugin:${BROWSER_PLUGIN_ID}:browser`);
     });
 });

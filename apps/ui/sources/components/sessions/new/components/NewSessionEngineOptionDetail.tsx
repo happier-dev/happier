@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 
 import {
     readProviderSettingsFromAccountSettingsV1,
@@ -10,6 +11,7 @@ import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/g
 import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
@@ -25,7 +27,11 @@ import {
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
-import { findModelOptionForEffectiveModelId } from '@/sync/domains/models/modelOptions';
+import {
+    findModelOptionForEffectiveModelId,
+    resolveCanonicalModelOptionId,
+    resolveCanonicalNativeModelSelectionRef,
+} from '@/sync/domains/models/modelOptions';
 import { t } from '@/text';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import {
@@ -50,6 +56,12 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      * New-session wants one refresh button that can also refresh CLI detection.
      */
     refreshProbe?: OptionPickerProbeState | null;
+    /**
+     * One short line under the model section's label. Surface-supplied because it
+     * is the only part of this pane whose truth depends on the caller: nothing is
+     * running on the New Session screen, and something is in a live Session.
+     */
+    modelSummary?: string;
     selectedModelId?: string | null;
     selectedModelSelection?: SessionModelSelectionV1 | null;
     selectedSessionModeId?: string | null;
@@ -71,8 +83,17 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
         modelSelection: SessionModelSelectionV1 | null;
         sessionModeId: string;
         configOverrides: Readonly<Record<string, string>>;
+        /**
+         * What this pane CALLS the selected model, or null while the selection is the
+         * Agent's own settings rather than a named model.
+         *
+         * Published because a surface that has to name the choice elsewhere — the
+         * composer's engine chip, once an Agent switch is armed — must use the words
+         * the reader just read here. Resolving the label again from a second model
+         * list is how the same model ends up with two names in one screen.
+         */
+        modelLabel: string | null;
     }>) => void;
-    onModelSelectionChange?: () => void;
 }>;
 
 function normalizeSelectedOptionId(value: string | null | undefined): string {
@@ -103,11 +124,12 @@ function EngineFavoriteToggle(props: Readonly<{
     return (
         <IconButton
             testID="new-session-engine-favorite-toggle"
-            iconName={props.favorite ? 'star' : 'star-outline'}
+            iconName={'star'}
             accessibilityLabel={actionLabel}
             tooltip={actionLabel}
-            size={44}
             iconSize={20}
+            minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+            interactiveTargetGapPx={4}
             tone={props.favorite ? 'primary' : 'default'}
             variant="plain"
             onPress={props.onToggle}
@@ -193,8 +215,13 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         setSelectedModelSelection(nextSelection.modelSelection);
         setSelectedSessionModeId(nextSelection.sessionModeId);
         setSelectedConfigOverrides(nextSelection.configOverrides);
-        props.onSelectionChange?.(nextSelection);
-    }, [props.onSelectionChange]);
+        props.onSelectionChange?.({
+            ...nextSelection,
+            modelLabel: nextSelection.modelId === 'default'
+                ? null
+                : resolveEffectiveModelLabel(modelOptions, nextSelection.modelId),
+        });
+    }, [modelOptions, props.onSelectionChange]);
 
     const catalogAgentId = React.useMemo<AgentId | null>(() => {
         if (isAgentId(props.runtimeCarrierAgentId)) {
@@ -214,15 +241,25 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     const canEnterCustomModel = preflightModels?.unavailable === true
         ? false
         : preflightModels?.supportsFreeform === true || providerSupportsFreeform;
+    const canonicalSelectedModelId = React.useMemo(() => (
+        selectedModelSelection?.ref.providerConnectionId
+            ? selectedModelId
+            : resolveCanonicalModelOptionId(modelOptions, selectedModelId)
+    ), [modelOptions, selectedModelId, selectedModelSelection?.ref.providerConnectionId]);
     const effectiveModelLabel = React.useMemo(
-        () => resolveEffectiveModelLabel(modelOptions, selectedModelId),
-        [modelOptions, selectedModelId],
+        () => resolveEffectiveModelLabel(modelOptions, canonicalSelectedModelId),
+        [canonicalSelectedModelId, modelOptions],
     );
+    // The caller's one line leads, then anything the probe has to report. One
+    // section label, one subtitle, then the models — never a paragraph.
     const modelNotes = React.useMemo(
-        () => preflightModels?.unavailable === true && modelProbe.phase === 'idle'
-            ? [t('agentInput.model.unavailable')]
-            : [],
-        [modelProbe.phase, preflightModels?.unavailable],
+        () => [
+            ...(props.modelSummary ? [props.modelSummary] : []),
+            ...(preflightModels?.unavailable === true && modelProbe.phase === 'idle'
+                ? [t('agentInput.model.unavailable')]
+                : []),
+        ],
+        [modelProbe.phase, preflightModels?.unavailable, props.modelSummary],
     );
     const configNotes = React.useMemo(
         () => configOptionsUnavailable
@@ -243,7 +280,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     );
 
     const selectedModelOptionControls = React.useMemo(() => {
-        const selectedModel = findModelOptionForEffectiveModelId(modelOptions, selectedModelId);
+        const selectedModel = findModelOptionForEffectiveModelId(modelOptions, canonicalSelectedModelId);
         if (!selectedModel?.modelOptions?.length) return null;
         return computeAcpConfigOptionControlsForProvider({
             providerId,
@@ -252,7 +289,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 Object.entries(selectedConfigOverrides).map(([optionId, value]) => [optionId, { value }]),
             ),
         }) ?? null;
-    }, [modelOptions, providerId, selectedConfigOverrides, selectedModelId]);
+    }, [canonicalSelectedModelId, modelOptions, providerId, selectedConfigOverrides]);
 
     const sanitizeConfigOverridesForModel = React.useCallback((
         modelId: string,
@@ -272,6 +309,40 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         builtInAgentId: props.backendTarget.configuredBackendId ? null : catalogAgentId,
     }), [props.backendTarget, catalogAgentId]);
     const agentTargetKey = favoriteBackendIdentity.backendTargetKey;
+    const canonicalSelectedRef = React.useMemo(() => {
+        if (selectedModelSelection) {
+            return resolveCanonicalNativeModelSelectionRef(modelOptions, selectedModelSelection.ref);
+        }
+        if (canonicalSelectedModelId === 'default') return null;
+        return {
+            agentTargetKey,
+            providerConnectionId: null,
+            modelId: canonicalSelectedModelId,
+        };
+    }, [agentTargetKey, canonicalSelectedModelId, modelOptions, selectedModelSelection]);
+
+    React.useEffect(() => {
+        if (canonicalSelectedModelId === selectedModelId) return;
+        if (selectedModelSelection?.ref.providerConnectionId) return;
+        publishSelection({
+            ...selectionRef.current,
+            modelId: canonicalSelectedModelId,
+            modelSelection: canonicalSelectedRef
+                ? { v: 1, updatedAt: Date.now(), ref: canonicalSelectedRef }
+                : null,
+            configOverrides: sanitizeConfigOverridesForModel(
+                canonicalSelectedModelId,
+                selectionRef.current.configOverrides,
+            ),
+        });
+    }, [
+        canonicalSelectedModelId,
+        canonicalSelectedRef,
+        publishSelection,
+        sanitizeConfigOverridesForModel,
+        selectedModelId,
+        selectedModelSelection?.ref.providerConnectionId,
+    ]);
     const providersFeatureEnabled = useFeatureEnabled('providers', {
         scopeKind: 'spawn',
         serverId: props.capabilityServerId,
@@ -324,6 +395,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     const providerPicker = (
         <SessionModelPicker
             fillAvailableSpace
+            multiColumn
             agentTargetKey={agentTargetKey}
             nativeModels={modelOptions}
             providerGroups={providerGroups}
@@ -334,9 +406,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 ? providerProjection.data?.currentSelectionRecovery ?? null
                 : null}
             hiddenNativeModelKeys={hiddenNativeModelKeys}
-            selected={selectedModelSelection?.ref ?? (selectedModelId === 'default'
-                ? null
-                : { agentTargetKey, providerConnectionId: null, modelId: selectedModelId })}
+            selected={canonicalSelectedRef}
             effectiveLabel={selectedModelSelection?.ref.providerConnectionId
                 ? providerGroups.flatMap((group) => group.rows)
                     .find((row) => sessionModelSelectionKey(row.ref) === sessionModelSelectionKey(selectedModelSelection.ref))
@@ -380,15 +450,20 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 });
             } : undefined}
             onSelect={(ref) => {
-                const modelId = ref?.modelId ?? 'default';
+                const selectedId = ref?.modelId ?? 'default';
+                const modelId = ref?.providerConnectionId
+                    ? selectedId
+                    : resolveCanonicalModelOptionId(modelOptions, selectedId);
+                const canonicalRef = ref && modelId !== ref.modelId
+                    ? { ...ref, modelId }
+                    : ref;
                 const configOverrides = sanitizeConfigOverridesForModel(modelId, selectionRef.current.configOverrides);
                 publishSelection({
                     ...selectionRef.current,
                     modelId,
-                    modelSelection: ref ? { v: 1, updatedAt: Date.now(), ref } : null,
+                    modelSelection: canonicalRef ? { v: 1, updatedAt: Date.now(), ref: canonicalRef } : null,
                     configOverrides,
                 });
-                props.onModelSelectionChange?.();
             }}
         />
     );

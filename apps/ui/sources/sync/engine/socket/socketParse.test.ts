@@ -26,6 +26,33 @@ describe('socketParse', () => {
         expect((res!.body as any).sid).toBe('s1');
     });
 
+    it('round-trips the content-free Automation source-status invalidation through the protocol container parser', () => {
+        const res = parseUpdateContainer({
+            id: 'u-automation-source-status',
+            seq: 124,
+            createdAt: 1_001,
+            body: {
+                t: 'automation-source-status-updated',
+            },
+        });
+
+        expect(res).toEqual({
+            id: 'u-automation-source-status',
+            seq: 124,
+            createdAt: 1_001,
+            body: { t: 'automation-source-status-updated' },
+        });
+        expect(parseUpdateContainer({
+            id: 'u-automation-source-status-private',
+            seq: 125,
+            createdAt: 1_002,
+            body: {
+                t: 'automation-source-status-updated',
+                automationId: 'must-not-cross-the-socket-boundary',
+            },
+        })).toBeNull();
+    });
+
     it('returns null for a non-container non-sharing update body', () => {
         const res = parseUpdateContainer({
             t: 'new-message',

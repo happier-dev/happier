@@ -105,6 +105,7 @@ import { flushHookEffects } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { Encryption } from '@/sync/encryption/encryption';
+import { apiSocket } from '@/sync/api/session/apiSocket';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
@@ -214,8 +215,20 @@ describe('sync.create initial awaits', () => {
         });
         const fetchSpy = vi.fn<typeof fetch>(async (input) => {
             const url = String(input);
+            if (url.endsWith('/health')) {
+                return jsonResponse({ status: 'ok' });
+            }
             if (url.includes('/v1/features')) {
                 return jsonResponse(features);
+            }
+            if (url.includes('/v1/account/encryption/currentness')) {
+                return jsonResponse({
+                    mode: 'plain',
+                    version: 1,
+                    signingKeyFingerprint: null,
+                    contentKeyFingerprint: null,
+                    updatedAt: 1,
+                });
             }
             if (url.includes('/v1/account/pets')) {
                 return jsonResponse({ ok: true, pets: [pet] });
@@ -248,10 +261,23 @@ describe('sync.create initial awaits', () => {
         await createPromise;
         await flushHookEffects({ cycles: 8, turns: 2, advanceTimersMs: 10 });
 
+        const requestedUrls = fetchSpy.mock.calls.map(([input]) => String(input));
+        expect(requestedUrls).toEqual(expect.arrayContaining([
+            expect.stringContaining('/v1/account/encryption/currentness'),
+            expect.stringContaining('/v1/account/pets'),
+        ]));
         expect(storage.getState().accountPetsById['pet-1']).toMatchObject({
             accountPetId: 'pet-1',
             digest: 'sha256:pkg',
         });
+        const currentnessCallIndex = fetchSpy.mock.calls.findIndex(([input]) =>
+            String(input).includes('/v1/account/encryption/currentness'),
+        );
+        const petsCallIndex = fetchSpy.mock.calls.findIndex(([input]) =>
+            String(input).includes('/v1/account/pets'),
+        );
+        expect(currentnessCallIndex).toBeGreaterThanOrEqual(0);
+        expect(petsCallIndex).toBeGreaterThan(currentnessCallIndex);
         expect(fetchSpy.mock.calls.some(([input]) => String(input).includes('/v1/account/pets'))).toBe(true);
     });
 
@@ -300,18 +326,10 @@ describe('sync.create initial awaits', () => {
         expect(resolved).toBe(true);
 
         await promise;
+        // Routing is no longer forwarded from here: Encryption resolves it from SyncTuning
+        // at construction, so it reaches every instance instead of only this one. What sync
+        // still owns — and what this pins — is the active account's scope binding.
         expect(configureNativeCryptoWorkerSpy).toHaveBeenCalledWith({
-            routing: {
-                mode: 'auto',
-                maxBatchSize: 32,
-                minBatchSize: 2,
-                minPayloadBytes: 0,
-                timeoutMs: 1234,
-                logFallbacks: true,
-                telemetryEnabled: true,
-                streamingSampleRate: 0.5,
-                capabilityStalenessMs: 60_000,
-            },
             scope: {
                 accountId: 'server-test',
                 serverId: expect.any(String),
@@ -438,5 +456,30 @@ describe('sync.create initial awaits', () => {
 
         expect(storage.getState().endpointStatus).toBe('online');
         expect(resumeSpy).toHaveBeenCalledWith('server-reachable');
+    });
+
+    it('starts a token-only plaintext account without constructing account encryption material', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        const { sync, syncCreate, syncSwitchServer } = await import('./sync');
+        const credentials: AuthCredentials = {
+            token: buildTokenWithSub('plain-account'),
+        };
+
+        await TokenStorage.setCredentials(credentials);
+        await syncSwitchServer(null);
+
+        const createPromise = syncCreate(credentials);
+        await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 2_500 });
+        await createPromise;
+
+        expect(sync.encryption).toBeNull();
+        expect(trackMocks.initializeTracking).not.toHaveBeenCalled();
+        expect(apiSocket.initialize).toHaveBeenLastCalledWith(
+            expect.objectContaining({ token: credentials.token }),
+            null,
+        );
     });
 });

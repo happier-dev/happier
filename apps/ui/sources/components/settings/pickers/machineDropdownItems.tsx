@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { Ionicons } from '@expo/vector-icons';
 
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -44,7 +43,7 @@ export function getMachineDropdownMenuItems(params: Readonly<{
             title: params.autoTitle ?? 'Auto',
             subtitle: params.autoSubtitle ?? 'Automatically choose a stable machine.',
             icon: renderDropdownItemIcon({
-                name: 'sparkles-outline',
+                name: 'sparkle',
                 color: params.iconColor,
                 size: iconSize,
             }),
@@ -58,7 +57,7 @@ export function getMachineDropdownMenuItems(params: Readonly<{
             title: getMachineLabel(machine, params.unknownMachineLabel ?? 'Unknown machine'),
             subtitle: getMachineSubtitle(machine, params.onlineLabel ?? 'Online', params.offlineLabel ?? 'Offline'),
             icon: renderDropdownItemIcon({
-                name: 'desktop-outline',
+                name: 'desktop',
                 color: params.iconColor,
                 size: iconSize,
             }),
